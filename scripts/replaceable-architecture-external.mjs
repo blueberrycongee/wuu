@@ -33,7 +33,7 @@ try {
   cpSync(join(root, "scripts/replaceable-architecture-acceptance/fixtures/provider.ts"), join(fixture, "provider.ts"));
   writeFileSync(join(fixture, "package.json"), JSON.stringify({ name: "independent-state-provider", private: true, type: "module", dependencies: { "@wuu/plugin-sdk": `file:${join(output, packed[0].filename)}` } }));
   command("npm", ["install", "--no-audit", "--no-fund", "--bin-links=false"], fixture);
-  command("go", ["test", "-race", "-count=1", "-v", "./scripts/replaceable-architecture-acceptance", "-run", "TestAcceptance(SelectedProviderLifecycle|ProviderErrorParity|ProviderQueryParity|OpenStateLegacyMigration|OpenStateNativeFactorySelection|CleanupMethodAdmission|SharedNativeAuthority|SharedNativeAuthorityProcess|ExternalAuthoritySwitch|AuthorityPreflightPreservesActiveGeneration)$"], root, { WUU_REPLACEABLE_FIXTURE: fixture });
+  command("go", ["test", "-race", "-count=1", "-v", "./scripts/replaceable-architecture-acceptance", "-run", "TestAcceptance(ChildStateProviderParity|BrowserStateProviderParity|SelectedProviderLifecycle|ProviderErrorParity|ProviderQueryParity|OpenStateLegacyMigration|OpenStateNativeFactorySelection|CleanupMethodAdmission|SharedNativeAuthority|SharedNativeAuthorityProcess|ExternalAuthoritySwitch|AuthorityPreflightPreservesActiveGeneration)$"], root, { WUU_REPLACEABLE_FIXTURE: fixture });
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

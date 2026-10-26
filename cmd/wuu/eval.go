@@ -74,20 +74,35 @@ func runEval(args []string) error {
 	liveCodexOAuth := fs.Bool("live-codex-oauth", false, "run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials")
 	freeze := fs.String("freeze", "", "write a frozen experiment plan without running tasks")
 	plan := fs.String("plan", "", "run a frozen experiment plan without filtering its task list")
+	candidateHost := fs.String("candidate-host", "", "run a rebuilt host executable at a fresh-task checkpoint under this controller")
 	candidate := fs.String("candidate", "", "load a local TypeScript file or plugin package for this experiment")
 	artifacts := fs.String("artifacts", "", "new directory for durable experiment evidence")
+	controller := fs.String("experiment-controller", "", "JSON executable controller identity for tasks, setup, score and acceptance")
+	policy := fs.String("experiment-policy", "", "JSON experiment admission and acceptance policy, frozen before execution")
+	decisionOutput := fs.String("decision-output", "", "exclusive path for durable comparison decision")
 	compare := fs.String("compare", "", "compare baseline,candidate experiment report paths")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if *compare != "" {
-		return compareEvalExperiments(*compare)
+		return compareEvalExperimentsTo(*compare, *decisionOutput)
 	}
-	if *freeze != "" || *plan != "" {
-		return runEvalExperiment(evalExperimentOptions{Freeze: *freeze, Plan: *plan, Candidate: *candidate, Artifacts: *artifacts,
-			Workdir: *workdir, Provider: *providerName, Model: *modelOverride, Tasks: *taskFilter, MaxSteps: *maxSteps,
-			Timeout: *timeout, LiveCodex: *liveCodexOAuth, KeepWorkdirs: *keepWorkdirs})
+	if *decisionOutput != "" {
+		return errors.New("--decision-output requires --compare")
+	}
+	if (*controller != "" || *policy != "") && *freeze == "" {
+		return errors.New("--experiment-controller and --experiment-policy require --freeze; existing plans are immutable")
+	}
+
+	if *freeze != "" || *plan != "" || *candidateHost != "" {
+		opts := evalExperimentOptions{Freeze: *freeze, Plan: *plan, Candidate: *candidate, Artifacts: *artifacts,
+			Controller: *controller, Policy: *policy, Workdir: *workdir, Provider: *providerName, Model: *modelOverride,
+			Tasks: *taskFilter, MaxSteps: *maxSteps, Timeout: *timeout, LiveCodex: *liveCodexOAuth, KeepWorkdirs: *keepWorkdirs}
+		if *candidateHost != "" {
+			return runEvalHostCandidate(*candidateHost, opts)
+		}
+		return runEvalExperiment(opts)
 	}
 	if *candidate != "" || *artifacts != "" {
 		return errors.New("--candidate and --artifacts require --plan")
@@ -445,7 +460,7 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 			}
 		}()
 	}
-	if cfg.Task.IsolateWuuHome {
+	if cfg.Task.IsolateWuuHome && cfg.WuuHome == "" {
 		defer setTemporaryEnv("WUU_HOME", filepath.Join(taskRoot, ".wuu-home"))()
 	}
 
@@ -462,7 +477,15 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 		return result
 	}
 
-	runtimeConfig := cfg.Config
+	var runtimeConfig config.Config
+	configBytes, configErr := json.Marshal(cfg.Config)
+	if configErr == nil {
+		configErr = json.Unmarshal(configBytes, &runtimeConfig)
+	}
+	if configErr != nil {
+		result.Error = configErr.Error()
+		return result
+	}
 	if cfg.Task.Configure != nil {
 		runtimeConfig = cfg.Task.Configure(taskRoot, runtimeConfig)
 	}

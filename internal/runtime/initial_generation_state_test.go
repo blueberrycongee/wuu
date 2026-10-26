@@ -20,7 +20,7 @@ func TestInitialGenerationActivationFailure(t *testing.T) {
 			name = "selected-state-provider"
 		}
 		t.Run(name, func(t *testing.T) {
-			modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.default-loop", "wuu.prompt.default", "wuu.compaction.default")
+			modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.default-loop", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native")
 			id := "example.failed-activation"
 			if required {
 				id = "example.documents"
@@ -122,7 +122,7 @@ func TestInitialGenerationStateCaptureSurvivesConstruction(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				modules := append(testStateModules(), kernelHostModule, "example.initial-state")
 				if constructor == "NewSession" {
-					modules = append(modules, sessionExecutionConsumer, "wuu.default-loop", "wuu.prompt.default", "wuu.compaction.default")
+					modules = append(modules, sessionExecutionConsumer, "wuu.default-loop", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native")
 				}
 				cfg := config.Default()
 				cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}

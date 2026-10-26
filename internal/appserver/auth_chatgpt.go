@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
-	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/siwc"
@@ -45,19 +43,10 @@ func (s *Server) modelServices() (*runtime.StateServices, func(), error) {
 	return services, release, nil
 }
 
-func (s *Server) buildStreamClientWithServices(services *runtime.StateServices, provider config.ProviderConfig, name string) (providers.StreamClient, error) {
-	if strings.EqualFold(strings.TrimSpace(provider.Type), "chatgpt") {
-		manager := services.ChatGPT
-		if manager == nil {
-			return nil, errors.New("selected ChatGPT credential manager is unavailable")
-		}
-		client, err := chatgpt.New(chatgpt.ClientConfig{AccountID: provider.ChatGPTAccountID, AccessToken: manager.AccessToken, BindRequest: manager.BindRequest, HTTPClient: s.chatGPTHTTP})
-		if err != nil {
-			return nil, err
-		}
-		return providers.AdaptStreamClient(client), nil
-	}
-	return providerfactory.BuildStreamClient(provider, name, providerfactory.Bindings{Credentials: services.Credentials, ChatGPT: services.ChatGPT})
+// Validate unsaved connection settings through the selected provider. Validation
+// never installs a client; saved changes publish a new model generation.
+func (s *Server) validateModelConfigurationWithServices(services *runtime.StateServices, provider config.ProviderConfig, name string) error {
+	return services.ValidateModelConfiguration(context.Background(), provider, name)
 }
 
 // A login entry keeps only its terminal receipt after releasing the generation.

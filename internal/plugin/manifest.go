@@ -713,8 +713,8 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 		if err := pluginhost.ValidateServiceDescriptor(service); err != nil {
 			return nil, fmt.Errorf("desktop: %w", err)
 		}
-		if service.Name != "ui.shell" || service.Version != "1.0.0" || len(service.Methods) != 1 || service.Methods[0].Name != "describe" {
-			return nil, fmt.Errorf("desktop service %q must implement ui.shell 1.0.0 describe", service.Name)
+		if !strings.HasPrefix(service.Name, "ui.") || service.Version != "1.0.0" || len(service.Methods) != 1 || service.Methods[0].Name != "describe" {
+			return nil, fmt.Errorf("desktop service %q must implement a ui.* 1.0.0 describe contract", service.Name)
 		}
 		if seen[service.Name] {
 			return nil, fmt.Errorf("duplicate desktop service %q", service.Name)

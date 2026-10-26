@@ -290,6 +290,8 @@ func main() {
 				})
 			}
 			respond(req.ID, map[string]any{})
+		case "account/rateLimits/read":
+			respond(req.ID, map[string]any{"rateLimits": map[string]any{}})
 		case "thread/unsubscribe":
 			respond(req.ID, map[string]any{})
 		default:

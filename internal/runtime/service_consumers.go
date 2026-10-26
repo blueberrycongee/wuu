@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
@@ -19,6 +20,7 @@ import (
 const (
 	toolExecutionConsumer    = "wuu.tool-execution"
 	sessionExecutionConsumer = "wuu.session-execution"
+	modelExecutionConsumer   = "wuu.model-execution"
 )
 
 // Native entry points participate as consumers independently of the services
@@ -46,7 +48,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		profile = "default"
 	}
 	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
-		requirements: []pluginhost.ServiceRequirement{{Name: titleservice.ServiceName, MajorVersion: 1}, {Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
+		requirements: []pluginhost.ServiceRequirement{{Name: pluginprotocol.AgentPolicyService, MajorVersion: 1, Required: true}, {Name: titleservice.ServiceName, MajorVersion: 1}, {Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
 	state := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
 		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
@@ -55,7 +57,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
 		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor, Required: true},
 	}}
-	return []pluginhost.Client{tool, loop, state}
+	return []pluginhost.Client{tool, loop, state, &runtimeServiceConsumer{id: modelExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: selectedModelService, MajorVersion: 1, Required: true}, {Name: capacityPolicyService, MajorVersion: 1, Required: true}, {Name: capacityResourceService, MajorVersion: 1, Required: true}}}, &runtimeServiceConsumer{id: engineExecutionConsumer, state: pluginhost.StatePrepared}}
 }
 
 func (c *runtimeServiceConsumer) ID() string { return c.id }

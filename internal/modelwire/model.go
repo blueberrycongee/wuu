@@ -4,6 +4,7 @@ package modelwire
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
@@ -126,6 +127,10 @@ func ProviderItemFromWire(in pluginprotocol.ModelProviderItemV1) (out providers.
 }
 
 func ToolCallToWire(in providers.ToolCall) (out pluginprotocol.ModelToolCallV1) {
+	if in.Display != nil {
+		out.Display = &pluginprotocol.ModelToolCallDisplayV1{Kind: in.Display.Kind, Label: in.Display.Label, Text: in.Display.Text, Capability: in.Display.Capability, LabelTranslations: maps.Clone(in.Display.LabelTranslations)}
+	}
+
 	out.ID = in.ID
 	out.Name = in.Name
 	out.Arguments = in.Arguments
@@ -137,6 +142,10 @@ func ToolCallToWire(in providers.ToolCall) (out pluginprotocol.ModelToolCallV1) 
 }
 
 func ToolCallFromWire(in pluginprotocol.ModelToolCallV1) (out providers.ToolCall) {
+	if in.Display != nil {
+		out.Display = &providers.ToolCallDisplay{Kind: in.Display.Kind, Label: in.Display.Label, Text: in.Display.Text, Capability: in.Display.Capability, LabelTranslations: maps.Clone(in.Display.LabelTranslations)}
+	}
+
 	out.ID = in.ID
 	out.ProviderItemID = in.ProviderItemID
 	out.ProviderItemProvider = in.ProviderItemProvider
@@ -356,7 +365,7 @@ func ChatResponseFromWire(in pluginprotocol.ModelResponseV1) (out providers.Chat
 // RequestToWire copies only the versioned model input. Retry authority,
 // credentials, routing leases, transcript addresses and local paths stay in Go.
 func RequestToWire(in providers.ChatRequest) pluginprotocol.LogicalModelRequestV1 {
-	out := pluginprotocol.LogicalModelRequestV1{Messages: []pluginprotocol.ModelMessageV1{}, Tools: []pluginprotocol.ModelToolV1{}, Version: 1, Adapter: in.Adapter, Provider: in.Provider, Model: in.Model, Temperature: in.Temperature, MaxTokens: in.MaxTokens, Effort: in.Effort, ProviderOptions: providers.CloneRequestObject(in.ProviderOptions), ProviderStateScope: in.ProviderStateScope, MediaInput: MediaInputPolicyToWire(in.MediaInput), NativeDeferredToolDiscovery: in.NativeDeferredToolDiscovery, ForceToolName: in.ForceToolName}
+	out := pluginprotocol.LogicalModelRequestV1{Messages: []pluginprotocol.ModelMessageV1{}, Tools: []pluginprotocol.ModelToolV1{}, Version: 1, ResumeSampling: in.ResumeSampling, Adapter: in.Adapter, Provider: in.Provider, Model: in.Model, Temperature: in.Temperature, MaxTokens: in.MaxTokens, Effort: in.Effort, ProviderOptions: providers.CloneRequestObject(in.ProviderOptions), ProviderStateScope: in.ProviderStateScope, MediaInput: MediaInputPolicyToWire(in.MediaInput), NativeDeferredToolDiscovery: in.NativeDeferredToolDiscovery, ForceToolName: in.ForceToolName}
 	for _, message := range in.Messages {
 		out.Messages = append(out.Messages, ChatMessageToWire(message))
 	}
@@ -417,6 +426,7 @@ func ApplyRequest(base providers.ChatRequest, in pluginprotocol.LogicalModelRequ
 
 func requestFromWire(base providers.ChatRequest, in pluginprotocol.LogicalModelRequestV1) providers.ChatRequest {
 	out := base
+	out.ResumeSampling = in.ResumeSampling
 	out.Adapter = in.Adapter
 	out.Provider = in.Provider
 	out.Model = in.Model

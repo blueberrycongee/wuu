@@ -1,10 +1,11 @@
+import { translateCurrent } from "../i18n";
 import { initialState } from "../AppState";
 import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { ApplicationDesktop } from "./ApplicationDesktop";
 import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import { ApplicationBrowser } from "./ApplicationBrowser";
-import { ApplicationController } from "./ApplicationController";
+import { ApplicationController } from "./ApplicationController.test-support";
 import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import * as React from "react";
@@ -23,6 +24,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
   const service: HostApplicationService = {
     contractVersion: 1,
+    workbench: new ApplicationController().workbench,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
     get environment() { return new ApplicationController().environment; },
     get artifacts() { return new ApplicationController().artifacts; },
@@ -143,7 +145,7 @@ describe("application shell assembly", () => {
       await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "user:custom-shell", generation: "one", id: "shell" }} />));
       expect(container.textContent).toBe("Installed shell body");
       await act(async () => host.unload("user:custom-shell"));
-      expect(container.textContent).toContain("Selected application shell is unavailable");
+      expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));
     } finally { act(() => root.unmount()); host.unload("body"); host.unload("user:custom-shell"); }
   });
 
@@ -180,19 +182,22 @@ describe("application shell assembly", () => {
     const createViewHost = vi.fn(() => ({ getStorage: vi.fn(() => new Promise<string>(resolve => { finish = resolve; })),
       setStorage: vi.fn().mockResolvedValue(undefined), getSetting: vi.fn().mockResolvedValue("setting"), executeCommand: execute,
       openView: vi.fn().mockResolvedValue(undefined), closeView: vi.fn().mockResolvedValue(undefined) }));
-    const { host } = fixture({ createLegacyViewHost: createViewHost });
+    const { host, service } = fixture();
+    const workbench = Object.create(service.workbench);
+    workbench.createViewHostAPI = createViewHost;
+    Object.defineProperty(service, "workbench", { value: workbench });
     let application!: ApplicationServiceV1;
     const activate = () => host.activateGeneration({ pluginId: "legacy-source", generation: "same", register: api => {
       application = api.application; api.registerUISlot({ id: "content.preview", cardinality: "one" });
     } });
     await activate();
     expect(host.getUISlot("legacy-source/content.preview")?.application).toBe(application);
-    const old = host.createLegacyViewHost({ pluginId: "legacy-source", generation: "same", viewTypeId: "view", tabId: "tab" });
+    const old = application.workbench.createViewHostAPI({ id: "tab", pluginId: "legacy-source", generation: "same", viewTypeId: "view", region: "primary", persistence: "session", context: {} });
     const reading = old.getStorage("key");
     const rejected = expect(reading).rejects.toThrow();
     await activate(); finish("old value"); await rejected;
     await expect(old.executeCommand("command")).rejects.toThrow(); expect(execute).not.toHaveBeenCalled();
-    const next = host.createLegacyViewHost({ pluginId: "legacy-source", generation: "same" });
+    const next = application.workbench.createViewHostAPI({ id: "tab", pluginId: "legacy-source", generation: "same", viewTypeId: "view", region: "primary", persistence: "session", context: {} });
     await next.executeCommand("command"); expect(execute).toHaveBeenCalledOnce();
     host.unload("legacy-source");
   });
@@ -324,10 +329,10 @@ describe("application shell assembly", () => {
     render("default");
     expect(container.textContent).toBe("default navigation");
     act(() => host.unload("default"));
-    expect(container.textContent).toContain("Selected UI surface is unavailable");
+    expect(container.textContent).toBe("");
     expect(container.textContent).not.toContain("Implicit default");
     act(() => host.unload("shell"));
-    expect(container.textContent).toContain("Selected application shell is unavailable");
+    expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));
     act(() => root.unmount());
   });
 
@@ -343,7 +348,8 @@ describe("application shell assembly", () => {
       api.registerUIContribution({ id: "broken", target: "shell/body", order: 0, render: broken });
       api.registerUIContribution({ id: "healthy", target: "shell/body", order: 1, render: () => <span>Healthy sibling</span> });
     } });
-    const root = createRoot(document.createElement("div"));
+    const container = document.createElement("div");
+    const root = createRoot(container);
     const logging = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "source", id: "ui.shell" }} />));
@@ -354,6 +360,8 @@ describe("application shell assembly", () => {
       expect(reports.at(-1)).toMatchObject({ phase: "render", status: "failed" });
       if (target === "root") expect(reports.some(item => item.phase === "render" && item.status === "active")).toBe(false);
       expect(JSON.stringify(reports)).not.toContain("private render detail");
+      expect(container.textContent).not.toContain("private render detail");
+      if (target === "nested") expect(container.querySelector("[role=alert]")).toBeNull();
     } finally { act(() => root.unmount()); logging.mockRestore(); }
   });
 

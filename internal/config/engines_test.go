@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -136,11 +135,17 @@ func TestUpdateEnginesSettingsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEnginesConfigRejectsUnknownAndRetainsDisabledDefault(t *testing.T) {
+func TestEnginesConfigAcceptsExternalAndRetainsDisabledDefault(t *testing.T) {
 	base := Default()
 	base.Engines = &EnginesConfig{DefaultEngine: "other"}
-	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("Validate unknown default = %v", err)
+	if err := base.Validate(); err != nil {
+		t.Fatalf("external default rejected: %v", err)
+	}
+	for _, id := range []string{"../other", "two engines", "a/b", "Other", ".", "a\nb", "1engine", "engine_foo", "a..b", "a."} {
+		base.Engines.DefaultEngine = id
+		if err := base.Validate(); err == nil {
+			t.Fatalf("invalid external ID %q accepted", id)
+		}
 	}
 	disabled := false
 	base.Engines = &EnginesConfig{

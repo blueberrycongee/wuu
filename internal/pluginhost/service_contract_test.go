@@ -22,6 +22,7 @@ func TestValidateServiceDescriptor(t *testing.T) {
 		wantErrSub string
 	}{
 		{name: "valid", mutate: func(*ServiceDescriptor) {}},
+		{name: "underscored method", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "history_fork" }},
 		{name: "PascalCase method and schema", mutate: func(d *ServiceDescriptor) {
 			d.Methods[0] = ServiceMethodDescriptor{Name: "ReadControl", InputSchema: "session.domain.ReadControl.input.v1", OutputSchema: "session.domain.ReadControl.output.v1"}
 		}},

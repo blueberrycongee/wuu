@@ -1,6 +1,7 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "common.actionInterrupted": "Action was interrupted. Please try again.",
   "settings.engineRuntime": "Runtime configuration",
   "settings.engineUpdateGuide": "Update guide",
   "settings.engineUpdateGuideHint": "This engine is installed outside Wuu. Follow its installation source to update the executable in use.",
@@ -742,6 +743,10 @@ export const enUS = {
   "common.unknown": "Unknown",
   "common.close": "Close",
   "plugins.viewTabs": "Plugin views",
+  "plugins.activationReportUnavailable": "Plugin status could not be reported. Check plugin diagnostics in Settings.",
+  "plugins.applicationUnavailable": "The application could not be loaded. Reconnect to retry; plugin details are available in Settings.",
+  "plugins.connectionUnavailable": "The connection could not be restored. Reconnect to retry.",
+  "plugins.surfaceUnavailable": "A plugin view could not be displayed. Check its details in Settings.",
   "plugins.viewUnavailable": "This plugin view is unavailable.",
   "common.loading": "Loading",
   "common.loadingEllipsis": "Loading…",
@@ -2154,6 +2159,7 @@ export const enUS = {
   "skills.pluginSettingsNamed": "{name} settings",
   "skills.pluginContributionIsolated": "Plugin contribution isolated",
   "skills.pluginContributionDetail": "{contribution}: {message}",
+  "skills.pluginRuntimeRequestFailed": "Plugin request failed",
   "skills.pluginDiagnosticsFailed": "Could not read plugin diagnostics",
   "skills.pluginConflictTitle": "Plugin contribution conflict",
   "skills.pluginConflictTarget": "{kind}: {target}",

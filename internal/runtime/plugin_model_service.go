@@ -178,7 +178,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 			}
 		}
 	}
-	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: runtimeSession.credentials, ChatGPT: runtimeSession.chatGPTManager})
+	client, err := selectedRouteClient(host, selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: runtimeSession.credentials, ChatGPT: runtimeSession.chatGPTManager})
 	if err != nil {
 		return nil, serviceError("service_unavailable", "configured model client is unavailable")
 	}
@@ -206,6 +206,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
+	client = pluginModelPipelineClient(host, client, independentModelOrigin(scope, request))
 	response, err := modelrequest.Execute(ctx, client, request, modelrequest.Options{AllowUnboundedOutput: input.AllowUnboundedOutput})
 	binding.Generation.recordModelCompletionError(request.Execution.JournalError())
 	if err != nil {

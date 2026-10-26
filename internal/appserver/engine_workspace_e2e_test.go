@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -36,10 +35,7 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 	requests := filepath.Join(t.TempDir(), "requests.jsonl")
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
 	t.Setenv("WUU_TEST_CODEX_WORKSPACE_STATE", filepath.Join(t.TempDir(), "native-state.json"))
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.RootDir = project
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntimeAt(t, project, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() { srv.Close() })

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -132,12 +131,10 @@ func (c *compositionService) bindSession(ctx context.Context, caller composition
 		return nil, err
 	}
 	defer binding.Close()
-	if target, found, err := binding.Sessions.Find(input.Session); err != nil {
+	if _, found, err := binding.Sessions.Find(input.Session); err != nil {
 		return nil, err
 	} else if !found {
 		return nil, serviceError("session_not_found", "product session does not exist")
-	} else if input.ID != "" && agentengine.NormalizeEngineID(target.EngineID) != agentengine.EngineWuu {
-		return nil, serviceError("invalid_params", "product compositions require the native Wuu engine")
 	}
 	c.parent.mu.RLock()
 	owner := c.parent.stateOwner
@@ -264,7 +261,7 @@ func (s *Session) CheckSessionComposition(ctx context.Context, binding *State, s
 	return id, selected.available(binding)
 }
 
-func (s *Session) productThreadRuntime(binding *State, sessionID, root string, selected ThreadModelSelection) (*ThreadRuntime, bool, error) {
+func (s *Session) productThreadRuntime(binding *State, sessionID, root string, selected ThreadModelSelection, capabilityOnly ...bool) (*ThreadRuntime, bool, error) {
 	id, err := s.SessionCompositionID(context.Background(), binding, sessionID)
 	if err != nil {
 		return nil, true, err
@@ -310,7 +307,12 @@ func (s *Session) productThreadRuntime(binding *State, sessionID, root string, s
 	}
 	defer scope.runtime.releasePluginGeneration(shadow.pluginGeneration)
 	shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
-	thread, err := shadow.NewThreadRuntimeForRootModel(sessionID, root, selected)
+	var thread *ThreadRuntime
+	if len(capabilityOnly) > 0 && capabilityOnly[0] {
+		thread, err = shadow.NewThreadCapabilityRuntime(sessionID, root, selected)
+	} else {
+		thread, err = shadow.NewThreadRuntimeForRootModel(sessionID, root, selected)
+	}
 	if err != nil {
 		return nil, true, errors.Join(err, release())
 	}

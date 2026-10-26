@@ -59,14 +59,17 @@ func (c *cleanupServiceClient) Close(ctx context.Context) error { return c.clean
 
 func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 	provider := &fakeServiceProcess{id: "storage", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
-	stateService := ServiceDescriptor{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "save"}}}
+	stateService := ServiceDescriptor{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "save", InputSchema: "fixture.save.input.v1", OutputSchema: "fixture.save.output.v1"}}}
 	consumer := &cleanupServiceClient{fakeServiceProcess: &fakeServiceProcess{
 		id: "workflow", state: StateActive, provided: []ServiceDescriptor{stateService},
-		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}, {Name: stateService.Name, MajorVersion: 1, Required: true}},
+		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}},
 	}}
 	observer := &fakeServiceProcess{id: "observer", state: StateActive, required: []ServiceRequirement{{Name: stateService.Name, MajorVersion: 1, Required: true}}}
 	host := New(provider, consumer, observer)
 	registry, conflicts := BuildServiceRegistry(provider, consumer, observer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
 	host.AttachServiceRegistry(registry, conflicts)
 	registry.Activate()
 	consumer.cleanup = func(ctx context.Context) error {
@@ -81,7 +84,9 @@ func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 		if _, err := host.CallService(ctx, observer.id, stateService.Name, "save", nil); err == nil {
 			return errors.New("retiring provider accepted new native work during shutdown")
 		}
-		if _, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err != nil {
+		// A provider cleans up its own state directly; requiring its own
+		// service would be an invalid public dependency declaration.
+		if _, err := consumer.InvokeService(ctx, ServiceInvokeParams{Service: stateService.Name, Method: "save"}); err != nil {
 			return err
 		}
 		_, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: "search.provider", Method: "query"})

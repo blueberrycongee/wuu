@@ -53,7 +53,7 @@ func TestStreamingDriverProcess(t *testing.T) {
 	provider := testRuntimePlugin("streaming-evidence")
 	provider.Root, provider.Runtime.Command = fixture, node
 	provider.Runtime.Args = []string{"streaming.ts"}
-	modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.prompt.default", "wuu.compaction.default", provider.ID)
+	modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", provider.ID)
 	home, stateDir := testWorkspaceState(t, root)
 	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "streaming", home, stateDir, nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
 	if err != nil {
@@ -129,7 +129,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	var selection *composition.Config
 	if profile == "default" {
 		selectedProfile = ""
-		modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.prompt.default", "wuu.compaction.default", provider.ID)
+		modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", provider.ID)
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
 	home, stateDir := testWorkspaceState(t, root)

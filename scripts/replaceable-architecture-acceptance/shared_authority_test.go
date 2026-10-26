@@ -22,7 +22,7 @@ func TestAcceptanceSharedNativeAuthority(t *testing.T) {
 			defer cancel()
 			home, root := t.TempDir(), t.TempDir()
 			t.Setenv("WUU_HOME", home)
-			modules := []string{"wuu.session-state", provider}
+			modules := []string{"wuu.session-state", "wuu.session.default", provider}
 			opts := wuuruntime.StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: persistence.ServiceName, Major: 1, Provider: provider}}}}}
 			first, err := wuuruntime.OpenState(ctx, opts)
 			require.NoError(t, err)

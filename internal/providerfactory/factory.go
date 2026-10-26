@@ -22,14 +22,15 @@ import (
 	"github.com/blueberrycongee/wuu/internal/siwc"
 )
 
-// sharedProviderCoordinator coordinates every inference client built by this
-// process, regardless of whether the caller is a foreground turn, sub-agent,
-// title generator, or compaction job.
-var sharedProviderCoordinator = providers.NewProviderCoordinator(providers.DefaultProviderCoordinatorConfig())
+// Native transport clients record every physical submission through their
+// bound attempt. Runtime admission is selected at the common model receipt
+// boundary, shared with external adapters; there is no process-global policy.
 
 // Bindings captures services owned by the calling generation. The caller keeps
 // them alive for every client and login operation and owns their cleanup.
 type Bindings struct {
+	// Context is used only during construction; refresh receives its current request context.
+	Context     context.Context
 	Credentials credentialstore.Store
 	ChatGPT     *siwc.Manager
 }
@@ -219,7 +220,11 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 	var store *authstorage.Store
 	if len(bindings) == 1 {
 		bound = bindings[0]
-		store = authstorage.NewBound(context.Background(), bound.Credentials)
+		buildContext := bound.Context
+		if buildContext == nil {
+			buildContext = context.Background()
+		}
+		store = authstorage.NewBound(buildContext, bound.Credentials)
 	}
 	profile, err := resolveProviderProfile(provider)
 	if err != nil {
@@ -242,7 +247,7 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 				return nil, fmt.Errorf("no ChatGPT account credentials: selected credential manager is unavailable")
 			}
 			manager := bound.ChatGPT
-			account, err := manager.Account(context.Background(), provider.ChatGPTAccountID)
+			account, err := manager.Account(constructionContext(bound.Context), provider.ChatGPTAccountID)
 			if err != nil {
 				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)
 			}
@@ -254,7 +259,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 				AccessToken:  manager.AccessToken,
 				BindRequest:  manager.BindRequest,
 				StreamConfig: providerStreamTransportConfig(provider),
-				Coordinator:  sharedProviderCoordinator,
 			})
 		}
 		if profile.Auth == authGrokBuild {
@@ -264,7 +268,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 				APIKey:               resolveExplicitAPIKey(provider),
 				Headers:              provider.Headers,
 				StreamConfig:         providerStreamTransportConfig(provider),
-				Coordinator:          sharedProviderCoordinator,
 				ReuseGrokCredentials: provider.ReuseGrokCredentials,
 			})
 			if newErr != nil {
@@ -280,7 +283,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 				Headers:               provider.Headers,
 				StreamConfig:          providerStreamTransportConfig(provider),
 				StreamTransport:       providerStreamTransportMode(provider),
-				Coordinator:           sharedProviderCoordinator,
 				ReuseCodexCredentials: provider.ReuseCodexCredentials,
 				NativeCompaction:      provider.NativeCompaction,
 			})
@@ -296,7 +298,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 				Headers:         provider.Headers,
 				StreamConfig:    providerStreamTransportConfig(provider),
 				StreamTransport: providerStreamTransportMode(provider),
-				Coordinator:     sharedProviderCoordinator,
 			})
 			if newErr != nil {
 				return nil, newErr
@@ -314,7 +315,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 			Headers:            provider.Headers,
 			StreamConfig:       providerStreamTransportConfig(provider),
 			ResponsesTransport: providerStreamTransportMode(provider),
-			Coordinator:        sharedProviderCoordinator,
 		})
 		if newErr != nil {
 			return nil, newErr
@@ -332,7 +332,6 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 			Headers:                         provider.Headers,
 			MaxTokens:                       providerModelOutputLimit(provider),
 			StreamConfig:                    providerStreamTransportConfig(provider),
-			Coordinator:                     sharedProviderCoordinator,
 			CacheCreationInputTokensOmitted: provider.CacheCreationInputTokensOmitted,
 			InputTokensIncludeCacheRead:     provider.InputTokensIncludeCacheRead,
 		})
@@ -552,4 +551,18 @@ func defaultAPIKeyEnv(providerType string) string {
 	default:
 		return ""
 	}
+}
+
+func constructionContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+// NativeCompactionSupported reports configured protocol support without opening
+// credentials, connections or submitting a request.
+func NativeCompactionSupported(provider config.ProviderConfig) bool {
+	profile, err := resolveProviderProfile(provider)
+	return err == nil && profile.Auth == authCodexOAuth && (provider.NativeCompaction == nil || *provider.NativeCompaction)
 }

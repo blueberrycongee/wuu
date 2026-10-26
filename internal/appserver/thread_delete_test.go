@@ -325,6 +325,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	artifactDir := statepath.SessionArtifactDir(ownerRuntime.StateDir, rootID)
 	workerClient := newBlockingStreamClient("nested done")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		Documents:         ownerRuntime.Documents,
 		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
@@ -1312,4 +1313,20 @@ func (d *sideDeleteFaultDocuments) Read(ctx context.Context, q persistence.Query
 func sideDeleteStageCount(d persistence.Documents, id string) (int, error) {
 	v, err := d.Read(context.Background(), persistence.Query{Namespace: "wuu.sidethread.deleting.v1", Keys: []string{id}})
 	return len(v.Documents), err
+}
+
+func TestDurableChildMigrationIncludesEveryArtifactRoot(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	rootID := "multi-root-child-migration"
+	empty, populated := t.TempDir(), t.TempDir()
+	harnessDir := filepath.Join(statepath.SessionArtifactDir(populated, rootID), "harness")
+	if err := harness.NewStore(harnessDir).UpsertQueueItem(harness.QueueItem{ID: "queued", Kind: "agent_spawn"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := srv.threadHasDurableActiveAgents(rootID, empty, populated)
+	if err != nil || !active {
+		t.Fatalf("later legacy root omitted: active=%v err=%v", active, err)
+	}
 }

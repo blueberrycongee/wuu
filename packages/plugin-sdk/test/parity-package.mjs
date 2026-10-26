@@ -39,10 +39,10 @@ try {
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
   for (const name of ['tools', 'sessions', 'journal', 'turn-state', 'prompt', 'compaction', 'title']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
-  for (const name of ['shell', 'navigation']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
-  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
-  const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs'), join(authorSDK, 'test/parity-policies.test.mjs')], {
-    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js'), WUU_PARITY_COMPACTION_ENTRY: join(project, 'compaction.js'), WUU_PARITY_TITLE_ENTRY: join(project, 'title.js')},
+  for (const name of ['shell', 'navigation', 'application']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
+  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx', 'application.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs'), join(authorSDK, 'test/parity-policies.test.mjs'), join(authorSDK, 'test/parity-application.test.mjs')], {
+    env: {...process.env, WUU_PARITY_APPLICATION_ENTRY: join(project, 'application.js'), WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js'), WUU_PARITY_COMPACTION_ENTRY: join(project, 'compaction.js'), WUU_PARITY_TITLE_ENTRY: join(project, 'title.js')},
   });
   await writeFile(join(output, 'public-sdk-check.log'), checked.stdout);
   const tarball = await readFile(join(temporary, packed));

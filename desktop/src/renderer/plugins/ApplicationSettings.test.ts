@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
-import { ApplicationController } from "./ApplicationController";
+import { ApplicationController } from "./ApplicationController.test-support";
 import { ApplicationSettings } from "./ApplicationSettings";
 
 function fixture() {

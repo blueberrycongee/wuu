@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
-import { ApplicationController } from "../plugins/ApplicationController";
+import { ApplicationController } from "../plugins/ApplicationController.test-support";
 import { PluginHost } from "../plugins/PluginHost";
 import { DefaultNavigationSurface } from "./DefaultNavigationSurface";
 

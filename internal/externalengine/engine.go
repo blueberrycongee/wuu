@@ -25,7 +25,7 @@ func New(entry enginecatalog.Entry, binary, root string) *Engine {
 }
 
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	return agentengine.Descriptor{ID: agentengine.EngineID(e.entry.ID), Version: "1", Capabilities: []string{"native-tool-loop", "native-session-resume", "interactive-approval", e.entry.Protocol}}, nil
+	return agentengine.Descriptor{ID: agentengine.EngineID(e.entry.ID), Version: "1", Capabilities: []string{"native-tool-loop", "native-session-resume", "interactive-approval", "model-options", "default-permission-unconfined", e.entry.Protocol}}, nil
 }
 
 func (e *Engine) Open(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, error) {

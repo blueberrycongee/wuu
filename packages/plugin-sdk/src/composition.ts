@@ -1,4 +1,4 @@
-import type { ProductComposition, RuntimeHost, ServiceBinding, ServiceRequirement } from "./index.js";
+import type { ProductComposition, RuntimeHost, ServiceBinding, ServiceRequirement, ServiceRegistrySnapshot } from "./index.js";
 
 export const COMPOSITION_SERVICE = "host.composition";
 
@@ -47,6 +47,7 @@ export interface CompositionView {
     readonly services?: readonly ServiceBinding[];
   };
   readonly modules: readonly { id: string; state: string; error?: string }[];
+  readonly services: ServiceRegistrySnapshot;
   readonly plugins: readonly { id: string; fingerprint: string }[];
 }
 

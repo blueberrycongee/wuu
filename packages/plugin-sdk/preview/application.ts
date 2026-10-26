@@ -1,3 +1,4 @@
+import { previewWorkbench } from "./contributions.js";
 import type { ApplicationWebWorkspaceV1 } from '../dist/ui-web-workspace.js';
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from '../dist/index.js';
 
@@ -68,6 +69,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   // These disabled services never publish changes; external-store reads must retain identity.
   const empty = Object.freeze([]);
   const service: ApplicationServiceV1 = {
+    workbench: previewWorkbench,
     contractVersion: 1,
     environment: { getSnapshot: () => environment, subscribe: () => () => {}, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable, generateCommitMessage: unavailable, createPullRequest: unavailable, listChanges: unavailable, readDiff: unavailable, scheduleStatusRefresh: () => {} },
     artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },

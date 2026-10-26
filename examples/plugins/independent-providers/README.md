@@ -19,6 +19,17 @@ or call a built-in provider.
   This custom shell does not demonstrate replacement of the default product's
   navigation, composer, conversation or settings implementations.
 
+- `application.tsx` independently owns `ui.application` and `ui.shell`. It reads
+  actual workspace/session listings and bounded visible history using only the SDK,
+  keeps navigation state and a versioned checkpoint, and revokes consumer scopes
+  on stop. Select both services from `independent-application`; do not combine this
+  specialized explorer with default-product surfaces. Unsupported snapshot facets,
+  auxiliary services and actions throw explicit errors. It neither starts models
+  nor edits sessions. History stops before the latest completed turn and excludes
+  that boundary turn. This demonstrates application replacement, **not feature
+  parity with the default product**. Package tests use labeled fixture data; they
+  are not evidence of production IPC routing or visual acceptance.
+
 From the repository root, run:
 
 ```sh

@@ -85,6 +85,13 @@ func TestPluginDiagnosticsAdmitInventoryRenderersAndKeepFailures(t *testing.T) {
 	if err := srv.refreshExtensions(cfg); err != nil {
 		t.Fatal(err)
 	}
+	for _, record := range srv.extensionInventory(rt.ExtensionSnapshot()) {
+		if record.ID == "wuu.default-shell" {
+			if len(record.ResolvedRequiredDependencies) != 1 || record.ResolvedRequiredDependencies[0] != "wuu.default-application" {
+				t.Fatalf("renderer must consume the authoritative required service edge: %+v", record)
+			}
+		}
+	}
 	modules := rt.NativeRendererModules()
 	if len(modules) == 0 {
 		t.Fatal("no admitted renderer modules")

@@ -1,8 +1,8 @@
+import type { ApplicationWorkbenchV1, UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationEventEffects } from "./ApplicationEventEffects";
 import { deriveActiveSessionHints } from "../activeSessionHint";
 import type { ApplicationDesktopPetTargetV1 } from "../../../../packages/plugin-sdk/src/ui-desktop";
 import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
-import type { PluginHost } from "./PluginHost";
 import { ApplicationEnvironment } from "./ApplicationEnvironment";
 import { readWorkspaceBrowserNavigation, subscribeWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
 import { ENABLE_EMBEDDED_BROWSER } from "../FeatureFlags";
@@ -110,7 +110,7 @@ export class ApplicationController implements HostApplicationService {
     return this.artifactsOwner ??= new ApplicationArtifacts(window.wuu, this.previewContent);
   }
   private composerPresentationOwner?: ApplicationComposerPresentation;
-  createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => PluginHost) {
+  createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => UIContributionRegistryV1) {
     return (this.composerPresentationOwner ??= new ApplicationComposerPresentation({
       getState: () => this.state, updateState: this.updateState, subscribeState: this.subscribeState, getPluginHost,
     })).createScope(signal);
@@ -256,7 +256,16 @@ export class ApplicationController implements HostApplicationService {
       return this.invoke("preview.open-file", { context, path });
     } });
   }
-  readonly settingsControls = createApplicationSettingsControls();
+  private settingsControlsOwner?: ReturnType<typeof createApplicationSettingsControls>;
+  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench }); }
+  get contributions(): UIContributionRegistryV1 {
+    if (!this.dependencies) throw new Error("Application contribution registry is unavailable");
+    return this.dependencies.contributions;
+  }
+  get workbench(): ApplicationWorkbenchV1 {
+    if (!this.dependencies) throw new Error("Application workbench provider is unavailable");
+    return this.dependencies.workbench;
+  }
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
       const item = this.knownThread(target.threadId)?.turns.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
@@ -437,7 +446,7 @@ export class ApplicationController implements HostApplicationService {
   }
   private streamPublication?: number;
 
-  constructor(state?: AppState) {
+  constructor(state?: AppState, private readonly dependencies?: { readonly contributions: UIContributionRegistryV1; readonly workbench: ApplicationWorkbenchV1 }) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
     this.sidebarCache = createSidebarThreadCache(() => this.state.projects, status => { throw new Error(status); });
     this.pendingComposer = createComposerPendingState({ getAppState: () => this.state,
@@ -461,6 +470,7 @@ export class ApplicationController implements HostApplicationService {
     });
     this.applicationNavigation = new ApplicationNavigation({ getState: () => this.state, updateState: this.updateState,
       getWebWorkspace: () => this.webWorkspace, subscribeState: this.subscribeState,
+      getContributions: () => this.contributions, getWorkbench: () => this.workbench,
       changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: () => this.mutationActions(),
       getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
@@ -476,6 +486,17 @@ export class ApplicationController implements HostApplicationService {
     this.snapshot = this.project();
     this.sidebarCache.subscribe(() => this.publish());
     this.pendingComposer.subscribe(() => { this.rememberDraftResources(); this.publish(); this.reconcileSubmission(); });
+  }
+
+  /** Called after stopping the writer; includes unsent drafts that have not reached AppState yet. */
+  exportCheckpoint() {
+    const drafts = captureComposerDrafts(this.state, this.state.secondaryThread
+      ? { primary: this.composerDraftForPane("primary"), secondary: this.composerDraftForPane("secondary") }
+      : this.composerDraftForPane("primary"));
+    return { state: persistComposerDrafts(this.state, drafts), settings: { ...this.settings }, preview: this.preview };
+  }
+  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"] }): void {
+    this.settings = checkpoint.settings; this.preview = checkpoint.preview; this.publish();
   }
 
   getState = (): AppState => this.state;
@@ -571,11 +592,13 @@ export class ApplicationController implements HostApplicationService {
       if (stopped) return;
       stopped = true;
       if (--this.consumers !== 0) return;
+      // Materialize submission recovery while projection dependencies are still
+      // live, then fence the retired controller before disposing those services.
+      this.submissionOwner?.dispose();
+      this.submissionOwner = undefined;
       this.lifetime?.abort();
       this.clearPreviewVisibility?.();
       this.conversationDetails.stop();
-      this.submissionOwner?.dispose();
-      this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
@@ -915,6 +938,9 @@ export class ApplicationController implements HostApplicationService {
           allowThreadAutoActivation: false, running: false, status: "ready" };
       });
     } catch (error) {
+      // A retired selection cannot report failures into its replacement view.
+      // Match the stale-success path without hiding the current owner's failure.
+      if (request !== this.navigationRequest) return;
       // Restore transport selection as well as the visible source after a failed
       // cross-workspace load. A newer navigation owns transport recovery instead.
       if (switchedContext && sourceContext && request === this.navigationRequest) {
@@ -924,6 +950,7 @@ export class ApplicationController implements HostApplicationService {
             initialized: undefined, activeContext: undefined, activeProjectId: undefined, status: String(restoreError) }));
         }
       }
+      if (request !== this.navigationRequest) return;
       throw error;
     } finally {
       this.finishNavigation(request);
@@ -1532,9 +1559,4 @@ export class ApplicationController implements HostApplicationService {
       locale, status: Object.freeze({ contractVersion: 1, items: Object.freeze([Object.freeze({ id: "connection", label: state.status, kind: status === "error" ? "error" as const : "info" as const })]) }),
     });
   }
-}
-
-let desktopApplication: ApplicationController | undefined;
-export function getDesktopApplication(): ApplicationController {
-  return desktopApplication ??= new ApplicationController();
 }

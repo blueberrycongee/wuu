@@ -14,6 +14,7 @@ type Dependency struct {
 	Provider string `json:"provider"`
 	Required bool   `json:"required"`
 	Service  string `json:"service,omitempty"`
+	Major    int    `json:"major,omitempty"`
 }
 
 // SetPackageRequirements seeds the same graph used by resolved service edges.
@@ -59,7 +60,7 @@ func (h *Host) resolveServiceDependencies(registry *ServiceRegistry) {
 				continue
 			}
 			if provider.pluginID != id {
-				dependencies[id] = append(dependencies[id], Dependency{Provider: provider.pluginID, Required: requirement.Required, Service: key.name})
+				dependencies[id] = append(dependencies[id], Dependency{Provider: provider.pluginID, Required: requirement.Required, Service: key.name, Major: key.major})
 			}
 		}
 	}

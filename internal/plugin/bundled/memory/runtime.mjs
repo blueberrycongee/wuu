@@ -489,11 +489,11 @@ function scopedRuntimeHost(host, execution) {
   return {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
-      const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
-        ...execution.executionId ? { execution_id: execution.executionId } : {}
+        ...options?.cleanup ? { execution_id: void 0, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}
       }, { signal });
     }
   };
@@ -552,7 +552,10 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method, params } : kernelServiceCall(id, method, params);
+      const frame = method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup) {
+        frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
+      }
       void this.send(frame).catch(fail);
     });
   }

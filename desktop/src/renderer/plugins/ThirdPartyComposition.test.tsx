@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ThemeTokens } from "../../shared/workbench";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 import { createUIComposition } from "./ApplicationShell";
-import { ApplicationController } from "./ApplicationController";
+import { ApplicationController } from "./ApplicationController.test-support";
 import { registerConversationSlots } from "../ConversationSlots";
 
 interface ExampleManifest {

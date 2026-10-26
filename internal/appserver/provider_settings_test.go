@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,18 +16,53 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 // Settings edit a service without choosing it: a key, endpoint, or model
 // choice saved for one service must leave the workspace default where it was.
 
-func writeProviderSettingsConfig(t *testing.T, rt *runtime.Session, body string) {
+func writeProviderSettingsConfig(t *testing.T, rt *runtime.Session, body string, factories ...runtime.NativeProviderFactory) *runtime.Session {
 	t.Helper()
 	if err := os.WriteFile(rt.ConfigPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	bindConfigSourceForTest(t, rt)
+	cfg, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatalf("load settings fixture: %v", err)
+	}
+	home := os.Getenv("HOME")
+	// Replace only the declared credential implementation; publication must
+	// retain NewSession's complete provider factories and lifecycle ownership.
+	credentials := runtime.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true,
+		Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) {
+				return nativeCredentialFixture(t, home), nil
+			}), nil
+		},
+	}
+	selected, err := runtime.NewSession(runtime.Options{RootDir: rt.RootDir, HomeDir: home, WuuHome: t.TempDir(),
+		Config: cfg, ConfigPath: rt.ConfigPath, ConfigLoadMode: runtime.ConfigLoadFile, NonInteractive: true,
+		NativeProviders: append(factories, credentials)})
+	if err != nil {
+		t.Fatalf("open selected settings runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := selected.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	return selected
+}
+
+func newProviderSettingsServer(t *testing.T, rt *runtime.Session, out *lockedBuffer) *Server {
+	t.Helper()
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	return server
 }
 
 func readProviderSettingsConfig(t *testing.T, rt *runtime.Session) config.Config {
@@ -73,15 +110,43 @@ const twoProviderSettingsConfig = `{
 
 func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	requests := make(chan struct{}, 4)
+	defaultEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if request.Model != "fake-model" || r.Header.Get("Authorization") != "Bearer old-key" {
+			t.Errorf("default route changed: model=%q authorization=%q", request.Model, r.Header.Get("Authorization"))
+		}
+		requests <- struct{}{}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"default-route"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer defaultEndpoint.Close()
+	editedEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("default model used the edited provider")
+		http.Error(w, "wrong provider", 400)
+	}))
+	defer editedEndpoint.Close()
+	body := strings.ReplaceAll(twoProviderSettingsConfig, "https://example.test/v1", defaultEndpoint.URL)
+	body = strings.ReplaceAll(body, "https://gateway.example.test/v1", editedEndpoint.URL)
+	rt = writeProviderSettingsConfig(t, rt, body)
+	held, err := rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
 	defaultClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProviderSettingsServer(t, rt, out)
 	idle := newThreadState("idle-thread", nil, "gateway", "gateway-model", rt.RootDir, false, time.Now().UTC())
 	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "gateway-model"}}
 	srv.threads[idle.ID] = idle
 
-	response := requestProviderSettings(t, srv, out, "key", `{"provider":"gateway","base_url":"https://edge.example.test/v1","api_key":"gateway-key","keep_selection":true}`)
+	response := requestProviderSettings(t, srv, out, "key", fmt.Sprintf(`{"provider":"gateway","base_url":%q,"api_key":"gateway-key","keep_selection":true}`, editedEndpoint.URL+"/updated"))
 	if response["error"] != nil {
 		t.Fatalf("keep_selection update: %v", response["error"])
 	}
@@ -92,18 +157,31 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 	if rt.ProviderName != "fake-provider" || rt.Model != "fake-model" || rt.StreamRunner.Model != "fake-model" {
 		t.Fatalf("runtime selection moved: provider=%q model=%q runner=%q", rt.ProviderName, rt.Model, rt.StreamRunner.Model)
 	}
-	if rt.StreamRunner.Client != defaultClient {
-		t.Fatal("the default runtime adopted another provider's client")
+	if rt.StreamRunner.Client == defaultClient {
+		t.Fatal("saved configuration did not publish a successor model graph")
+	}
+	// Both the retained old generation and successor must route the unchanged
+	// default to its own endpoint and credentials, not to the edited provider.
+	for _, client := range []providers.StreamClient{defaultClient, rt.StreamRunner.Client} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		response, err := client.Chat(ctx, providers.ChatRequest{Messages: []providers.ChatMessage{{Role: "user", Content: "route probe"}}})
+		cancel()
+		if err != nil || response.Content != "default-route" {
+			t.Fatalf("default route response=%+v err=%v", response, err)
+		}
+	}
+	if len(requests) != 2 {
+		t.Fatalf("default route requests=%d", len(requests))
 	}
 	gateway := providerSummaryNamed(t, result.Providers, "gateway")
-	if gateway.BaseURL != "https://edge.example.test/v1" || !gateway.APIKeyConfigured || gateway.Model != "gateway-model" {
+	if gateway.BaseURL != editedEndpoint.URL+"/updated" || !gateway.APIKeyConfigured || gateway.Model != "gateway-model" {
 		t.Fatalf("gateway summary = %+v", gateway)
 	}
 	cfg := readProviderSettingsConfig(t, rt)
 	if cfg.DefaultProvider != "fake-provider" || cfg.Agent.Variant != "high" {
 		t.Fatalf("persisted selection moved: default=%q variant=%q", cfg.DefaultProvider, cfg.Agent.Variant)
 	}
-	if saved := cfg.Providers["gateway"]; saved.BaseURL != "https://edge.example.test/v1" || saved.Model != "gateway-model" || saved.APIKey != "" {
+	if saved := cfg.Providers["gateway"]; saved.BaseURL != editedEndpoint.URL+"/updated" || saved.Model != "gateway-model" || saved.APIKey != "" {
 		t.Fatalf("gateway config = %+v", saved)
 	}
 	store := selectedAuthFixture(t, rt)
@@ -120,9 +198,9 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 
 func TestServerKeepSelectionCreatesProviderUnselected(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	rt = writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProviderSettingsServer(t, rt, out)
 
 	response := requestProviderSettings(t, srv, out, "create", `{"provider":"deepseek","model":"deepseek-v4-pro","base_url":"https://api.deepseek.com","api_key":"sk-deepseek","type":"openai-compatible","create_provider":true,"keep_selection":true}`)
 	if response["error"] != nil {
@@ -151,10 +229,10 @@ func TestServerKeepSelectionCreatesProviderUnselected(t *testing.T) {
 
 func TestServerKeepSelectionOnTheDefaultProviderRebuildsItsConnection(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	rt = writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProviderSettingsServer(t, rt, out)
 
 	response := requestProviderSettings(t, srv, out, "rotate", `{"provider":"fake-provider","api_key":"rotated-key","keep_selection":true}`)
 	if response["error"] != nil {
@@ -193,13 +271,13 @@ func TestServerKeepSelectionOnTheDefaultProviderRebuildsItsConnection(t *testing
 
 func TestServerAddModelRestoresRemovedAndCustomChoices(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, `{
+	rt = writeProviderSettingsConfig(t, rt, `{
   "default_provider": "fake-provider",
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "api_key": "k", "model": "fake-model", "models": {"old": {"name": "Old model", "disabled": true}, "fake-model": {}}}}
 }
 `)
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProviderSettingsServer(t, rt, out)
 	choices := func(summary ProviderSummary) []string {
 		ids := make([]string, 0, len(summary.Models))
 		for _, model := range summary.Models {
@@ -271,9 +349,9 @@ func TestServerAddModelRestoresRemovedAndCustomChoices(t *testing.T) {
 
 func TestServerModelCatalogProvidersListsConnectableServices(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	rt = writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProviderSettingsServer(t, rt, out)
 	request := func(id, params string) map[string]any {
 		t.Helper()
 		line := `{"id":"` + id + `","method":"config/model-catalog/providers","params":` + params + `}`
@@ -363,10 +441,10 @@ func TestServerCreatesCodexProviderFromLocalLogin(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(auth), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+			rt = writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 			oldClient := rt.StreamRunner.Client
 			out := &lockedBuffer{}
-			srv := New(rt, out)
+			srv := newProviderSettingsServer(t, rt, out)
 			response := requestProviderSettings(t, srv, out, "create-codex", fmt.Sprintf(`{"provider":"chatgpt","model":"gpt-5.5","type":"openai-codex","create_provider":true,"reuse_codex_credentials":true,"keep_selection":%t}`, keepSelection))
 			if response["error"] != nil {
 				t.Fatalf("create Codex provider: %v", response["error"])
@@ -384,8 +462,8 @@ func TestServerCreatesCodexProviderFromLocalLogin(t *testing.T) {
 			wantProvider, wantModel := "chatgpt", "gpt-5.5"
 			if keepSelection {
 				wantProvider, wantModel = "fake-provider", "fake-model"
-				if rt.StreamRunner.Client != oldClient || cfg.Agent.Variant != "high" {
-					t.Fatal("saving Codex changed the existing runtime or variant")
+				if rt.StreamRunner.Client == oldClient || cfg.Agent.Variant != "high" {
+					t.Fatal("saving Codex did not publish a successor graph or changed the variant")
 				}
 			}
 			if cfg.DefaultProvider != wantProvider || rt.ProviderName != wantProvider || rt.Model != wantModel || result.Provider != wantProvider || result.Model != wantModel {
@@ -423,10 +501,10 @@ func TestServerRejectsCodexCreationWithoutUsableLocalLogin(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+			rt = writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 			oldClient := rt.StreamRunner.Client
 			out := &lockedBuffer{}
-			response := requestProviderSettings(t, New(rt, out), out, "reject-codex", `{"provider":"chatgpt","model":"gpt-5.5","type":"openai-codex","create_provider":true,"keep_selection":true`+tc.extra+`}`)
+			response := requestProviderSettings(t, newProviderSettingsServer(t, rt, out), out, "reject-codex", `{"provider":"chatgpt","model":"gpt-5.5","type":"openai-codex","create_provider":true,"keep_selection":true`+tc.extra+`}`)
 			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, response)
 			}
@@ -465,10 +543,10 @@ func TestServerReusesExistingCodexProviderOnlyWithLocalLogin(t *testing.T) {
 						"my-chatgpt":{"type":"openai-codex","base_url":"https://chatgpt.com/backend-api/codex","model":"gpt-5.5","reuse_codex_credentials":%t,"models":{"custom-model":{"disabled":true}}}
 					}
 				}`, alreadyEnabled)
-					writeProviderSettingsConfig(t, rt, body)
+					rt = writeProviderSettingsConfig(t, rt, body)
 					oldClient := rt.StreamRunner.Client
 					out := &lockedBuffer{}
-					srv := New(rt, out)
+					srv := newProviderSettingsServer(t, rt, out)
 					params := `{"provider":"my-chatgpt","model":"gpt-5.5","reuse_codex_credentials":true,"keep_selection":true}`
 					if method == MethodConfigCodexCredentials {
 						params = `{"provider":"my-chatgpt"}`
@@ -503,7 +581,7 @@ func TestServerReusesExistingCodexProviderOnlyWithLocalLogin(t *testing.T) {
 							t.Fatalf("existing provider login status = %+v", summary)
 						}
 					}
-					if ((!available || method == MethodConfigModelUpdate) && rt.StreamRunner.Client != oldClient) || rt.ProviderName != "fake-provider" || rt.Model != "fake-model" {
+					if (!available && rt.StreamRunner.Client != oldClient) || (available && (method == MethodConfigModelUpdate || !alreadyEnabled) && rt.StreamRunner.Client == oldClient) || rt.ProviderName != "fake-provider" || rt.Model != "fake-model" {
 						t.Fatal("credential reuse changed workspace runtime")
 					}
 				})

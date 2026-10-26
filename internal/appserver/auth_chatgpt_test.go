@@ -23,9 +23,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -119,7 +121,23 @@ func TestChatGPTRegistrationConnectionDiscoveryInferenceSignOut(t *testing.T) {
 	defer inference.Close()
 	endpoint, _ := url.Parse(inference.URL)
 	rt := newTestRuntime(t, &fakeClient{})
-	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	// The selected test adapter validates the injected issuer's account through
+	// its public contract. Native validation owns a different issuer namespace;
+	// copying fixture tokens there would not represent this account binding.
+	var settings config.Config
+	if err := json.Unmarshal([]byte(twoProviderSettingsConfig), &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings.Composition = &composition.Config{Version: composition.Version, Services: []composition.Binding{{Service: "model.adapter", Major: 1, Provider: "fixture.model-configuration"}}}
+	settingsBody, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt = writeProviderSettingsConfig(t, rt, string(settingsBody), runtime.NativeProviderFactory{ID: "fixture.model-configuration", DefaultEnabled: true,
+		Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return &chatGPTConfigurationFixture{manager: manager}, nil
+		},
+	})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -364,4 +382,34 @@ func TestChatGPTCatalogUsesLoginGenerationConfig(t *testing.T) {
 	if err != nil || len(nextView.Config.Providers["chatgpt"].ChatGPTModels) != 0 {
 		t.Fatalf("old login changed new configuration: %v", err)
 	}
+}
+
+// This model provider exposes only configuration validation. Real inference in
+// this test remains the explicit ChatGPT client using the loopback transport.
+type chatGPTConfigurationFixture struct {
+	embeddedModelConfigurationFixture
+	manager *siwc.Manager
+}
+
+func (f *chatGPTConfigurationFixture) InvokeCapability(ctx context.Context, p pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+	var input pluginprotocol.ModelAdapterInput
+	if err := json.Unmarshal(p.Input, &input); err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	if input.Operation == "validate" {
+		var provider config.ProviderConfig
+		if err := json.Unmarshal(input.Configuration, &provider); err != nil {
+			return pluginhost.CapabilityInvokeResult{}, err
+		}
+		if provider.Type == "chatgpt" {
+			account, err := f.manager.Account(ctx, provider.ChatGPTAccountID)
+			if err != nil {
+				return pluginhost.CapabilityInvokeResult{}, err
+			}
+			if !account.Connected || !account.PlanEnabled {
+				return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("fixture account is not connected with direct plan access")
+			}
+		}
+	}
+	return f.embeddedModelConfigurationFixture.InvokeCapability(ctx, p)
 }

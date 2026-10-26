@@ -105,6 +105,9 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 		CompactThresholdPct: settings.CompactThresholdPercent, CompactKeepRecentTokens: settings.CompactKeepRecentTokens,
 		ForceInitialCompact: settings.ForceInitialCompact, CompactOnly: settings.CompactOnly,
 	}
+	if settings.HasPolicy {
+		cfg.EvaluatePolicy = turn.EvaluatePolicy
+	}
 	cfg.RequestContextStore = driverResourceContextStore{turn: turn, identity: RequestContextCheckpoint{Provider: request.Provider, Model: request.Model, DriverID: i.descriptor.ID, DriverVersion: i.descriptor.Version}}
 	if settings.DisableAutoCompact {
 		cfg.MaxContextTokens, cfg.CompactThresholdTokens = 0, 0

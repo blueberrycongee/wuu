@@ -11,10 +11,7 @@ import {
   type PluginGenerationApi,
 } from "./PluginHost";
 import { settleOnAbort } from "./activation";
-import { getDesktopApplication } from "./ApplicationController";
-import type { LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
-import { DesktopWorkbench, type WorkbenchServices, WorkbenchController } from "./Workbench";
-import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
+import { PluginHostService, createDesktopCompositionRoot } from "./composition";
 
 interface DesktopPluginModule {
   activate(api: PluginGenerationApi): void | Promise<void>;
@@ -29,35 +26,8 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
-  renderLegacyWorkbench: input => React.createElement(LegacyWorkbenchLayers, input),
-  createLegacyViewHost: identity => desktopWorkbenchController.createViewHostAPI({
-    id: identity.tabId ?? `renderer:${identity.pluginId}`,
-    pluginId: identity.pluginId, generation: identity.generation, viewTypeId: identity.viewTypeId ?? "renderer",
-    region: "primary", persistence: "session", context: { ...identity.context },
-  }),
   reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
-  application: {
-    contractVersion: 1,
-    get environment() { return getDesktopApplication().environment; },
-    get artifacts() { return getDesktopApplication().artifacts; },
-    setPreviewVisibility: (open, signal) => getDesktopApplication().setPreviewVisibility(open, signal),
-    createComposerPresentationScope: (signal, getPluginHost) => getDesktopApplication().createComposerPresentationScope(signal, getPluginHost),
-    createDesktopScope: signal => getDesktopApplication().createDesktopScope(signal),
-    get webWorkspace() { return getDesktopApplication().webWorkspace; },
-    get onboarding() { return getDesktopApplication().onboarding; },
-    get browser() { return getDesktopApplication().browser; },
-    get fileSelection() { return getDesktopApplication().fileSelection; },
-    get projects() { return getDesktopApplication().projects; },
-    get terminals() { return getDesktopApplication().terminals; },
-    get catalog() { return getDesktopApplication().catalog; },
-    get previewContent() { return getDesktopApplication().previewContent; },
-    get conversationText() { return getDesktopApplication().conversationText; },
-    get settingsControls() { return getDesktopApplication().settingsControls; },
-    getSnapshot: () => getDesktopApplication().getSnapshot(),
-    subscribe: listener => getDesktopApplication().subscribe(listener),
-    invoke: (action, input, options) => getDesktopApplication().invoke(action, input, options),
-  },
   invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
@@ -116,43 +86,13 @@ export const desktopPluginHost = new PluginHost({
         id: thread.id,
         title: thread.title || thread.preview || thread.id,
         updatedAt: thread.updated_at,
+        latestCompletedTurnId: thread.latest_completed_turn_id,
         pinned: thread.pinned === true,
       }));
   },
 });
 export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
-const desktopWorkbenchServices: WorkbenchServices = {
-  getSetting: async (pluginId, generation, key) => {
-    if (!window.wuu?.getPluginSetting) throw new Error("Plugin settings service is unavailable");
-    return (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value;
-  },
-  getStorage: async (pluginId, generation, key, scope) => {
-    if (!window.wuu?.getPluginStorage) throw new Error("Plugin storage service is unavailable");
-    return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value;
-  },
-  setStorage: async (pluginId, generation, key, value, scope) => {
-    if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
-    await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
-  },
-};
-export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost, desktopWorkbenchServices);
-void desktopCompositionRoot.plugin(WorkbenchService, desktopWorkbenchController);
-
-function LegacyWorkbenchLayers({ application, context }: LegacyWorkbenchRenderInput): React.ReactNode {
-  React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
-  const inventory = application.catalog.getSnapshot().inventory;
-  const services = React.useMemo<WorkbenchServices>(() => ({
-    ...desktopWorkbenchServices,
-    openSettings: () => { void application.invoke("settings.open", { pageId: "providers" }).catch(error => console.error("Plugin settings navigation failed", error)); },
-    disablePlugin: pluginId => application.catalog.update({ id: pluginId, action: "disable" }),
-    requestRegionVisible: region => { void application.invoke("navigation.reveal-region", { region }).catch(error => console.error("Plugin region reveal failed", error)); },
-  }), [application]);
-  React.useEffect(() => () => desktopWorkbenchController.updateServices(desktopWorkbenchServices), []);
-  return React.createElement(DesktopWorkbench, { host: desktopPluginHost, controller: desktopWorkbenchController,
-    inventory, services, settingsOnly: context.settingsOnly === true });
-}
-
 export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();
   private desiredPlugins = new Map<string, ExtensionInventoryRecord>();
@@ -213,8 +153,9 @@ export class DesktopPluginRuntime {
     this.syncController?.abort();
     const controller = new AbortController();
     this.syncController = controller;
+    let preparedApplication: { id: string; stage: Awaited<ReturnType<PluginHost["prepareGeneration"]>> } | undefined;
     const unload = (id: string): Promise<void> | undefined => {
-      const cleanup = this.host.unloadAndWait(id);
+      const cleanup = this.host.unloadAndWait(id, preparedApplication?.id === id);
       this.activeGenerations.delete(id);
       this.activeDependencies.delete(id);
       this.pendingDependencies.delete(id);
@@ -248,7 +189,7 @@ export class DesktopPluginRuntime {
     );
     const packages = new Map([...candidates.values()].map((plugin) => [plugin.provenance.plugin_id, plugin.id]));
     const requiredDependencies = new Map([...candidates.values()].map((plugin) => [
-      plugin.id, (plugin.requires ?? []).map((id) => packages.get(id)),
+      plugin.id, (plugin.resolved_required_dependencies ?? plugin.requires ?? []).map((id) => packages.get(id)),
     ] as const));
     const valid = new Map<string, boolean>();
     const visiting = new Set<string>();
@@ -291,6 +232,41 @@ export class DesktopPluginRuntime {
       const signature = dependencySignature(id, live);
       return (active !== undefined && active !== signature) || (pending !== undefined && pending !== signature);
     };
+
+    const activationOptions = (plugin: ExtensionInventoryRecord) => ({
+      pluginId: plugin.id, manifestId: plugin.provenance.plugin_id ?? plugin.id,
+      generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation,
+      contributions: desktopContributionDeclarations(plugin), signal: controller.signal,
+      register: async (api: PluginGenerationApi) => {
+        const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint: plugin.fingerprint! });
+        api.signal.throwIfAborted();
+        if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== plugin.fingerprint) throw new Error("Desktop plugin module identity mismatch");
+        const loadedModule = await this.loadModule(loaded.url);
+        api.signal.throwIfAborted();
+        await requireDesktopPluginModule(loadedModule).activate(api);
+        api.signal.throwIfAborted();
+      },
+    });
+    const selectedApplication = this.host.getApplicationBinding();
+    const applicationPlugin = selectedApplication && desired.get(selectedApplication.pluginId);
+    if (applicationPlugin?.desktop && this.activeGenerations.get(applicationPlugin.id) !== desktopGeneration(applicationPlugin)) {
+      try {
+        const stage = await this.host.prepareGeneration(activationOptions(applicationPlugin));
+        if (epoch !== this.syncEpoch) { stage.dispose(); return []; }
+        preparedApplication = { id: applicationPlugin.id, stage };
+      } catch (error) {
+        const effective = this.host.applicationProviders.current;
+        if (effective?.graphGeneration && applicationPlugin.graph_generation && effective.graphGeneration !== applicationPlugin.graph_generation) {
+          // The Go commit cannot be rolled back by retaining JavaScript objects. In
+          // particular, native bridge calls must not let an old writer enter the new graph.
+          try { await this.host.applicationProviders.select(undefined); }
+          catch (cleanupError) { error = new AggregateError([error, cleanupError], "Renderer preparation and previous-writer suspension failed"); }
+          this.host.applicationProviders.reportFailure(`Go graph ${applicationPlugin.graph_generation} is committed, but renderer activation failed: ${String(error)}. Previous business writer suspended; repair or restore the composition to resume`);
+        } else this.host.applicationProviders.reportFailure(`Renderer preparation failed; retained the previous local activation: ${String(error)}`);
+        this.host.reportApplicationActivationFailure(applicationPlugin.id, applicationPlugin.fingerprint!, applicationPlugin.graph_generation, error);
+        return [{ pluginId: applicationPlugin.id, fingerprint: applicationPlugin.fingerprint!, error }];
+      }
+    }
 
     const previousDesired = this.desiredPlugins;
     this.desiredPlugins = desired;
@@ -349,26 +325,8 @@ export class DesktopPluginRuntime {
         this.pendingDependencies.set(plugin.id, pending);
         try {
           if (epoch !== this.syncEpoch) return false;
-          await this.host.activateGeneration({
-            pluginId: plugin.id,
-            manifestId: plugin.provenance.plugin_id ?? plugin.id,
-            generation: fingerprint,
-            graphGeneration: plugin.graph_generation,
-            contributions: desktopContributionDeclarations(plugin),
-            signal: controller.signal,
-            register: async (api) => {
-              const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint });
-              api.signal.throwIfAborted();
-              if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== fingerprint) {
-                throw new Error("Desktop plugin module identity mismatch");
-              }
-              const loadedModule = await this.loadModule(loaded.url);
-              api.signal.throwIfAborted();
-              const module = requireDesktopPluginModule(loadedModule);
-              await module.activate(api);
-              api.signal.throwIfAborted();
-            },
-          });
+          if (preparedApplication?.id === plugin.id) await preparedApplication.stage.activate();
+          else await this.host.activateGeneration(activationOptions(plugin));
           if (epoch === this.syncEpoch) {
             this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
             this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
@@ -386,7 +344,9 @@ export class DesktopPluginRuntime {
           if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) {
             return false;
           }
-          // Failed staging leaves the previous generation live; only inventory removal disables it.
+          if (selectedApplication?.pluginId === plugin.id) this.host.reportApplicationActivationFailure(plugin.id, fingerprint!, plugin.graph_generation, error);
+          // Module registration can survive a failed candidate; business writers obey
+          // the stronger committed-graph suspension boundary reported above.
           failures.push({ pluginId: plugin.id, fingerprint, error });
           return false;
         } finally {
@@ -433,6 +393,7 @@ export function useDesktopPluginRuntime(
     desktopPluginHost.publishHostEvent(event);
   }), []);
   useEffect(() => {
+    if (inventory === undefined) return;
     let current = true;
     syncExtensionTheme(safeMode ? [] : inventory);
     syncShellSkins(inventory, safeMode);
@@ -493,6 +454,7 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
+  if (url === "wuu-builtin:default-application") return import("./DefaultApplicationProvider");
   if (url === "wuu-builtin:default-shell") return import("./DefaultApplicationShell");
   if (url === "wuu-builtin:default-settings") return import("../modules/DefaultSettingsSurface");
   if (url === "wuu-builtin:default-navigation") return import("../modules/DefaultNavigationSurface");

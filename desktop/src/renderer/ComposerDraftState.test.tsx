@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createScopedTestApplication } from "./test-support/ScopedApplication";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import type { ComposerDraftState } from "./AppState";
 import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, createThreadSessionTab, initialState, sessionTabDraftForThread, threadSessionTabID, type AppState } from "./AppState";
 import type { Thread } from "../shared/protocol";

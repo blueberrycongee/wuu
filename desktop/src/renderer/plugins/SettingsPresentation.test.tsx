@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { InitializeResult } from "../../shared/protocol";
 import { SETTINGS_ACTIONS, type PresentationHost, type SettingsSnapshotV1 } from "../../shared/workbench";
+import { WorkbenchController } from "./Workbench";
 import { desktopPluginHost } from "./DesktopPluginRuntime";
 import {
   createSettingsSnapshot,
@@ -20,11 +21,18 @@ const PAGES = Object.freeze([
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
+let workbench: WorkbenchController;
 
-beforeEach(() => { window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} }; });
+beforeEach(async () => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
+  await desktopPluginHost.activateGeneration({ pluginId: "settings-presentation-fixture", generation: "one", graphGeneration: "test-graph",
+    register: api => { workbench = new WorkbenchController(api.contributions); } });
+});
 
 afterEach(() => {
   act(() => root?.unmount());
+  workbench.dispose();
+  desktopPluginHost.unload("settings-presentation-fixture");
   container?.remove();
   root = undefined;
   container = undefined;
@@ -134,6 +142,7 @@ function renderPresentation(overrides: Partial<Parameters<typeof SettingsPresent
     root = createRoot(container);
   }
   const props: Parameters<typeof SettingsPresentation>[0] = {
+    controller: workbench,
     initialized: initializedWithSecrets(),
     activePageId: "providers",
     availablePages: PAGES,

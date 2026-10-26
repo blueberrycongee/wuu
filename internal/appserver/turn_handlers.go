@@ -219,7 +219,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		th.mu.Lock()
 		engineID := agentengine.NormalizeEngineID(th.EngineID)
 		th.mu.Unlock()
-		if engineID != agentengine.EngineWuu {
+		if !s.engineHasCapability(th, engineID, "host-managed-continuation") {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("compact is unavailable for %s engine threads", engineID))
 		}
 		if len(images) > 0 || len(files) > 0 {
@@ -1267,19 +1267,16 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	// External loops still use a host-owned capability runtime. They do not
 	// create a native model client or workers and cannot run remote tools.
-	if engineID != agentengine.EngineWuu {
+	if !s.engineHasCapability(th, engineID, "host-managed-continuation") {
 		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
 			return nil, err
 		} else if remote != nil {
-			return nil, errors.New("selected execution environment requires the built-in engine")
+			return nil, errors.New("selected execution environment requires host-managed continuation")
 		}
 	}
 	compositionID, err := s.rt.CheckSessionComposition(context.Background(), th.state, th.ID)
 	if err != nil {
 		return nil, err
-	}
-	if compositionID != "" && engineID != agentengine.EngineWuu {
-		return nil, errors.New("product compositions require the native Wuu engine; unbind the composition before using an external engine")
 	}
 	th.mu.Lock()
 	existing := th.execRuntime
@@ -1345,7 +1342,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		PermissionMode: permissionMode,
 	}
 	var threadRuntime *runtime.ThreadRuntime
-	if engineID == agentengine.EngineWuu {
+	if s.engineHasCapability(th, engineID, "host-managed-continuation") {
 		threadRuntime, err = s.rt.NewThreadRuntimeForState(th.state, th.ID, browserWorkdir, selection)
 	} else {
 		threadRuntime, err = s.rt.NewThreadCapabilityRuntimeForState(th.state, th.ID, browserWorkdir, selection)
@@ -2693,7 +2690,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if capabilities != nil {
 		mcpServers = []agentengine.MCPServer{capabilities.Binding()}
 	}
-	s.retainCodexHost()
+	if capabilityErr == nil {
+		capabilityErr = s.retainEngineScope(ctx, binding, agentengine.NormalizeEngineID(th.EngineID))
+	}
 	var engine agentengine.Session
 	if capabilityErr != nil {
 		engine = agentengine.FailedSession(capabilityErr)
@@ -5908,4 +5907,40 @@ func cloneStringIntMap(in map[string]int) map[string]int {
 		out[key] = value
 	}
 	return out
+}
+
+// Capabilities come from the admitted graph, never an engine identity whitelist.
+func (s *Server) engineHasCapability(th *threadState, id agentengine.EngineID, capability string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	descriptor, err := s.engineDescriptorForState(ctx, th.state, id)
+	return err == nil && slices.Contains(descriptor.Capabilities, capability)
+}
+
+func (s *Server) engineDescriptorForState(ctx context.Context, binding *runtime.State, id agentengine.EngineID) (agentengine.Descriptor, error) {
+	registry := s.rt.Engines()
+	if registry == nil {
+		return agentengine.Descriptor{}, agentengine.ErrUnknownEngine
+	}
+	if registry.IsResolved() {
+		var descriptor struct {
+			ID           agentengine.EngineID `json:"id"`
+			Version      string               `json:"version"`
+			Capabilities []string             `json:"capabilities"`
+			Enabled      bool                 `json:"enabled"`
+		}
+		if err := binding.CallEngine(ctx, id, "descriptor", struct{}{}, &descriptor); err != nil {
+			return agentengine.Descriptor{}, err
+		}
+		if descriptor.ID != id || !descriptor.Enabled {
+			return agentengine.Descriptor{}, agentengine.ErrUnknownEngine
+		}
+		return agentengine.Descriptor{ID: id, Version: descriptor.Version, Capabilities: descriptor.Capabilities}, nil
+	}
+	// Explicit embedded registries are supported without silently substituting
+	// them when a production graph selection is missing or unavailable.
+	if factory, ok := registry.Lookup(id); ok {
+		return factory.Descriptor(ctx)
+	}
+	return agentengine.Descriptor{}, agentengine.ErrUnknownEngine
 }

@@ -1,5 +1,5 @@
 import { createScopedTestApplication } from "./test-support/ScopedApplication";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";

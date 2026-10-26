@@ -65,7 +65,28 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	client := &generationClient{id: "owned"}
 	generation := testPluginGeneration("owned", client)
 	s := testGenerationSession(t, generation)
-	attachTestExecutionServices(t, s.PluginHost)
+	model := &defaultBindingModel{}
+	resources := NewCapacityResources(0)
+	policy, err := capacityProviderFactory(resources, false).Build(NativeProviderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, err := capacityProviderFactory(resources, true).Build(NativeProviderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &sessionModelAdapterFixture{nativeModelProvider: nativeModelProvider{state: pluginhost.StatePrepared}, model: model}
+	var modelConsumer pluginhost.Client
+	for _, consumer := range runtimeServiceConsumers("") {
+		if consumer.ID() == modelExecutionConsumer {
+			modelConsumer = consumer
+			break
+		}
+	}
+	if modelConsumer == nil {
+		t.Fatal("model execution consumer unavailable")
+	}
+	attachTestExecutionServices(t, s.PluginHost, adapter, policy, physical, modelConsumer)
 	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
@@ -75,18 +96,18 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = first.Close(context.Background()) })
-	model := &defaultBindingModel{}
-	firstRuntime.StreamRunner.Client = model
 	if _, err := first.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, session.ErrSessionNotFound) || model.calls != 0 {
 		t.Fatalf("missing metadata admitted inference: calls=%d err=%v", model.calls, err)
 	}
 	if _, err := firstRuntime.Sessions.CreateWithMetadata("first", s.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	// Native observers configure the exact runner owned by the engine. Changing
-	// workspace defaults after capture must not redirect this admitted session.
+	// The declared adapter belongs to the captured generation. Changing legacy
+	// workspace defaults must not redirect an admitted engine session.
 	s.StreamRunner.Client = &defaultBindingModel{fail: true}
-	result, err := first.RunTurn(context.Background(), agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
+	turnCtx, stopTurn := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopTurn()
+	result, err := first.RunTurn(turnCtx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
 	if err != nil || result.Result.Content != "Hello" || model.calls != 1 {
 		t.Fatalf("owned runtime was not used: result=%+v calls=%d err=%v", result.Result, model.calls, err)
 	}
@@ -236,7 +257,7 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
 		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	modules := append(testStateModules(), kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, "wuu.default-loop", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default")
+	modules := append(testStateModules(), kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, "wuu.default-loop", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", modelExecutionConsumer, capacityPolicyModule, capacityResourceModule, engineExecutionConsumer, nativeEnginesModule)
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	root, home := t.TempDir(), t.TempDir()
 	configPath := filepath.Join(root, "settings.json")

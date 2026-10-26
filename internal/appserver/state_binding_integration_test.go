@@ -288,7 +288,7 @@ func TestTitleOverrideUsesSelectedConfigurationAndCredentials(t *testing.T) {
 	if err := authstorage.NewBound(ctx, selected).Set("selected", authstorage.Credentials{APIKey: "selected-key"}); err != nil {
 		t.Fatal(err)
 	}
-	modules := []string{"wuu.session-state", persistence.JSONLModule, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.title.default"}
+	modules := []string{"wuu.session-state", persistence.JSONLModule, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.title.default", "wuu.agent.policy.default", "wuu.model.native", "wuu.model-execution", "wuu.model.capacity.default", "wuu.model.capacity.resources"}
 	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "selected", Providers: map[string]config.ProviderConfig{"selected": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", Model: "base"}}}
 	binding, err := runtime.OpenState(ctx, runtime.StateOptions{
 		RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: cfg,

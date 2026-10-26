@@ -120,6 +120,7 @@ func (s *Session) RetainState() (*State, error) {
 // StateOptions uses the same provider discovery, trust and composition as the
 // interactive runtime without requiring a model or inference credentials.
 type StateOptions struct {
+	CapacityResources            *CapacityResources
 	RootDir, HomeDir, ConfigPath string
 	Config                       config.Config
 	ConfigLoadMode               ConfigLoadMode
@@ -131,6 +132,17 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 		return nil, err
 	}
 	var err error
+	opts.NativeProviders = withCapacityProviders(opts.NativeProviders, opts.CapacityResources)
+	capacityRootRelease, err := retainCapacityRoot(opts.NativeProviders)
+	if err != nil {
+		return nil, err
+	}
+	capacityTransferred := false
+	defer func() {
+		if !capacityTransferred {
+			capacityRootRelease()
+		}
+	}()
 	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
 	if err != nil {
 		return nil, err
@@ -188,6 +200,11 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
+	// State-only model routes still need the selected host for physical receipts
+	// and streamed events. This does not enable session-owned inference services.
+	kernel.mu.Lock()
+	kernel.modelHost = host
+	kernel.mu.Unlock()
 	generation := &PluginGeneration{id: newPluginGenerationID(home), host: host, state: kernel.state, ownedRoots: roots, settings: opts.Config, plugins: plugins}
 	if services := kernel.selectedServices; services != nil {
 		generation.credentials, generation.configClient = services.credentials, services.config
@@ -212,8 +229,10 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	generation.active = availablePluginPackages(plugins, host)
 	generation.revokedMu.Unlock()
 	graphOwned = false
+	capacityTransferred = true
 	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error {
 		if generation.Release() {
+			capacityRootRelease()
 			return generation.closeErr
 		}
 		return nil
@@ -255,6 +274,9 @@ func (s *Session) NewThreadRuntimeForState(binding *State, sessionID, rootDir st
 }
 
 func (s *Session) NewThreadCapabilityRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	if thread, bound, err := s.productThreadRuntime(binding, sessionID, rootDir, selected, true); bound {
+		return thread, err
+	}
 	shadow, err := s.cloneForThreadModel(binding)
 	if err != nil {
 		return nil, err

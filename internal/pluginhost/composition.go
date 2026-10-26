@@ -83,17 +83,18 @@ type CompositionRun struct {
 }
 
 type CompositionView struct {
-	ParentGeneration string               `json:"parent_generation"`
-	Model            CompositionModel     `json:"model"`
-	ID               string               `json:"id"`
-	Root             string               `json:"root"`
-	State            string               `json:"state"`
-	Running          int                  `json:"running"`
-	Agents           []string             `json:"agents"`
-	StateSource      string               `json:"state_source"`
-	Selection        composition.Resolved `json:"selection"`
-	Modules          []Status             `json:"modules"`
-	Plugins          []CompositionPackage `json:"plugins"`
+	Services         ServiceRegistrySnapshot `json:"services"`
+	ParentGeneration string                  `json:"parent_generation"`
+	Model            CompositionModel        `json:"model"`
+	ID               string                  `json:"id"`
+	Root             string                  `json:"root"`
+	State            string                  `json:"state"`
+	Running          int                     `json:"running"`
+	Agents           []string                `json:"agents"`
+	StateSource      string                  `json:"state_source"`
+	Selection        composition.Resolved    `json:"selection"`
+	Modules          []Status                `json:"modules"`
+	Plugins          []CompositionPackage    `json:"plugins"`
 }
 
 type CompositionPackage struct {

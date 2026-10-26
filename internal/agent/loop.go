@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -396,6 +398,8 @@ func RunToolLoop(
 	}
 
 	consecutiveContinuations := 0
+	policyRetryAttempt := 0
+	policyAttemptLimit := 0
 	checkpointContinuations := 0
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
@@ -837,6 +841,61 @@ func RunToolLoop(
 		result, err := step.Execute(ctx, req)
 		lastAgentOperationID = req.Operation.ID
 		if err != nil {
+			if result.Usage != nil {
+				totalIn += result.Usage.InputTokens
+				totalOut += result.Usage.OutputTokens
+				totalCacheCreation += result.Usage.CacheCreationTokens
+				totalCacheRead += result.Usage.CacheReadTokens
+				if cfg.OnUsage != nil {
+					cfg.OnUsage(result.Usage.InputTokens, result.Usage.OutputTokens)
+				}
+				if cfg.OnTokenUsage != nil {
+					cfg.OnTokenUsage(*result.Usage)
+				}
+			}
+			allowRecovery := true
+			checkpointRecovery := resumableStreamCheckpoint(result, err)
+			allowCheckpointResume := cfg.EvaluatePolicy == nil
+			if cfg.EvaluatePolicy != nil {
+				input := pluginprotocol.AgentPolicyInput{Phase: "retry", StepIndex: stepIdx, Attempt: policyRetryAttempt, Failure: loopdriver.FailureToWire(err), PartialOutput: !stepResultHasNoPartialOutput(result), ToolWorkStarted: result.ToolRuntime != nil && result.ToolRuntime.HasAcceptedCalls()}
+				if checkpointRecovery != nil {
+					input.Phase = "checkpoint_resume"
+					input.Attempt = checkpointContinuations
+					input.MaxAttempts = checkpointRecovery.MaxAttempts
+					input.CompletedMessages = len(result.CompletedMessages)
+				}
+				decision, policyErr := cfg.EvaluatePolicy(ctx, input)
+				if policyErr == nil {
+					policyErr = loopdriver.ValidatePolicyDecision(input, decision)
+				}
+				if policyErr == nil && decision.Action == "retry" {
+					if policyAttemptLimit == 0 {
+						policyAttemptLimit = decision.MaxAttempts
+					}
+					if policyRetryAttempt+1 >= policyAttemptLimit {
+						policyErr = errors.New("agent policy retry budget exhausted")
+					}
+				}
+				if policyErr != nil {
+					err = errors.Join(err, policyErr)
+					allowRecovery = false
+				} else {
+					allowRecovery = decision.Action == "recover"
+					allowCheckpointResume = decision.Action == "resume"
+					if decision.Action == "retry" {
+						timer := time.NewTimer(time.Duration(decision.DelayMS) * time.Millisecond)
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), ctx.Err()
+						case <-timer.C:
+						}
+						policyRetryAttempt++
+						postToolContextSegments = consumedPostToolSegments
+						continue
+					}
+				}
+			}
 			// Context window exceeded — try a one-shot compaction of
 			// older history and re-issue. Provider-agnostic; the
 			// CompactFn carries whatever client/model knowledge it
@@ -847,7 +906,7 @@ func RunToolLoop(
 			// duplicate what the user already saw). Preserve it through the normal
 			// error path below; reactive compaction is safe only before output.
 			// A ledger-allocated runtime with no tool starts is not output.
-			if freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			if allowRecovery && freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true
 				cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
 					usage.LastSuccessfulRequestTokensForContract(requestUsageContract), estimateOutboundRequestTokens(req))
@@ -855,7 +914,7 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
-			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+			if allowRecovery && freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
 				if _, ok := forceTrimOverflowHistory(messages); ok {
 					// Use the normal window transaction so archival, request
 					// validation, checkpoint commit, and rollback still apply.
@@ -868,7 +927,7 @@ func RunToolLoop(
 				// Fresh-context already consumed the one overflow retry.
 				// If trim cannot shrink the request, surface the overflow
 				// instead of sending the same overflowing payload again.
-			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			} else if allowRecovery && effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()
@@ -987,7 +1046,7 @@ func RunToolLoop(
 					Phase:   result.Phase,
 				})
 			}
-			if recovery := resumableStreamCheckpoint(result, err); recovery != nil && ctx.Err() == nil && checkpointContinuations < recovery.MaxAttempts-1 {
+			if recovery := checkpointRecovery; allowCheckpointResume && recovery != nil && ctx.Err() == nil && checkpointContinuations < recovery.MaxAttempts-1 {
 				// Complete items have entered history above; incomplete fragments
 				// remain display-only. Resume with a fresh operation and the saved
 				// prefix, never the payload that produced the interrupted stream.
@@ -1010,6 +1069,8 @@ func RunToolLoop(
 			}, err
 		}
 
+		policyRetryAttempt = 0
+		policyAttemptLimit = 0
 		checkpointContinuations = 0
 		resumeSampling = false
 		if freshContextEnabled {
@@ -1058,9 +1119,24 @@ func RunToolLoop(
 			}
 		}
 
+		continueRound := finishReason == providers.FinishReasonContinue && !result.Truncated
+		if len(result.ToolCalls) == 0 && cfg.EvaluatePolicy != nil {
+			input := pluginprotocol.AgentPolicyInput{Phase: "continue", StepIndex: stepIdx, Attempt: consecutiveContinuations, FinishReason: string(finishReason), Truncated: result.Truncated}
+			decision, policyErr := cfg.EvaluatePolicy(ctx, input)
+			if policyErr == nil {
+				policyErr = loopdriver.ValidatePolicyDecision(input, decision)
+			}
+			if policyErr != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), policyErr
+			}
+			continueRound = decision.Action == "continue"
+			if !continueRound && finishReason == providers.FinishReasonContinue {
+				finishReason = providers.FinishReasonStop
+			}
+		}
 		// Only an explicit, normalized continuation signal admits another
 		// tool-free round. Empty text and commentary are not such signals.
-		if len(result.ToolCalls) == 0 && finishReason == providers.FinishReasonContinue && !result.Truncated {
+		if len(result.ToolCalls) == 0 && continueRound {
 			if consecutiveContinuations >= maxConsecutiveContinuations {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead),
 					fmt.Errorf("provider continuation limit exceeded (%d consecutive tool-free continuations)", maxConsecutiveContinuations)
@@ -1441,7 +1517,7 @@ func resumableStreamCheckpoint(result StepResult, err error) *providers.StreamRe
 }
 
 func stepResultHasNoPartialOutput(result StepResult) bool {
-	return strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
+	return len(result.CompletedMessages) == 0 && strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
 		strings.TrimSpace(result.ReasoningContent) == "" &&
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
@@ -1702,7 +1778,7 @@ func HistoryFromContext(ctx context.Context) []providers.ChatMessage {
 // getting maximum throughput for common patterns like multiple
 // concurrent reads.
 
-const maxToolConcurrency = 10
+const maxToolConcurrency = loopdriver.DefaultToolConcurrency
 
 // toolBatch groups consecutive tool calls that share a concurrency
 // mode. concurrent=true means every call in the batch can run in

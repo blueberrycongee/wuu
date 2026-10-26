@@ -158,21 +158,26 @@ func LoadPersistedRun(path string) (PersistedRun, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return PersistedRun{}, err
 	}
-	var rec historyRecord
-	if err == nil {
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return PersistedRun{}, err
-		}
-	}
+
 	pending, pendingErr := os.ReadFile(path + ".driver-state")
 	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
 		return PersistedRun{}, pendingErr
 	}
-	if err != nil && pendingErr != nil {
-		return PersistedRun{}, err
+	return decodePersistedRecords(data, pending)
+}
+
+func decodePersistedRecords(data, pending []byte) (PersistedRun, error) {
+	if len(data) == 0 && len(pending) == 0 {
+		return PersistedRun{}, os.ErrNotExist
+	}
+	var rec historyRecord
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return PersistedRun{}, err
+		}
 	}
 	run := persistedRunFromRecord(rec)
-	if pendingErr == nil {
+	if len(pending) > 0 {
 		var active historyRecord
 		if err := json.Unmarshal(pending, &active); err != nil {
 			return PersistedRun{}, err
@@ -266,11 +271,14 @@ func MarkPersistedRunInterrupted(path, reason string, now time.Time) (bool, erro
 // durable source used to resume a worker after restart. Replace it atomically
 // because result delivery can read it while a terminal transition writes it.
 func persistHistory(sa *SubAgent) error {
-	if sa.historyPath == "" {
+	if sa.historyPath == "" && sa.historyDocuments == nil {
 		return nil
 	}
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
+	if sa.historyDocuments != nil {
+		return writeDocumentWorkerRecord(sa.historyDocuments, sa.historyScope, sa.ID, sa.historyPath, "terminal", historyRecordLocked(sa))
+	}
 	return writeWorkerRecord(sa.historyPath, historyRecordLocked(sa))
 }
 
@@ -312,8 +320,11 @@ func historyRecordLocked(sa *SubAgent) historyRecord {
 // prior delivery snapshot. The terminal write commits the same execution ID;
 // readers then ignore its pending state, even if the process stops immediately.
 func persistDriverStateLocked(sa *SubAgent) error {
-	if sa.historyPath == "" {
+	if sa.historyPath == "" && sa.historyDocuments == nil {
 		return nil
+	}
+	if sa.historyDocuments != nil {
+		return writeDocumentWorkerRecord(sa.historyDocuments, sa.historyScope, sa.ID, sa.historyPath, "pending", historyRecordLocked(sa))
 	}
 	return writeWorkerRecord(sa.historyPath+".driver-state", historyRecordLocked(sa))
 }

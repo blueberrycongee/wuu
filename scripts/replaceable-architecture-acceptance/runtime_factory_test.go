@@ -17,7 +17,7 @@ import (
 func TestAcceptanceOpenStateNativeFactorySelection(t *testing.T) {
 	ctx := context.Background()
 	const providerID = "acceptance.native-state"
-	modules := []string{"wuu.session-state", providerID}
+	modules := []string{"wuu.session-state", "wuu.session.default", providerID}
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", home)
 	state, err := wuuruntime.OpenState(ctx, wuuruntime.StateOptions{

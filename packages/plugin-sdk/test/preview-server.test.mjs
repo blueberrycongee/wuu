@@ -71,8 +71,9 @@ export function activate(api: PluginGenerationApi) {
 
 // Unchanged external-store reads must retain identity even when owners alternate.
 test('synthetic application snapshots remain stable across subscriptions and owners', async () => {
-  const { transform } = await import('esbuild');
-  const { code } = await transform(await readFile(new URL('../preview/application.ts', import.meta.url), 'utf8'), { loader: 'ts', format: 'esm' });
+  const { build } = await import('esbuild');
+  const result = await build({ entryPoints: [new URL('../preview/application.ts', import.meta.url).pathname], bundle: true, write: false, platform: 'node', format: 'esm' });
+  const code = result.outputFiles[0].text;
   const { createPreviewApplication } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
   const app = createPreviewApplication();
   for (const service of [app.environment, app.onboarding, app.catalog]) {

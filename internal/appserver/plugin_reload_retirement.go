@@ -9,6 +9,7 @@ func (s *Server) retireIdlePluginRuntimes() {
 	if s == nil || s.rt == nil || s.closed.Load() {
 		return
 	}
+	s.retireEngineScopes()
 	s.mu.Lock()
 	threads := make([]*threadState, 0, len(s.threads))
 	for _, th := range s.threads {

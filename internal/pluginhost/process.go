@@ -81,36 +81,37 @@ type remoteCallError struct {
 func (e *remoteCallError) Error() string { return e.message }
 
 type ProcessClient struct {
-	config             ProcessConfig
-	cmd                *exec.Cmd
-	stdin              io.WriteCloser
-	scanner            *bufio.Scanner
-	seq                atomic.Uint64
-	writeGate          chan struct{}
-	pendingMu          sync.Mutex
-	pending            map[string]chan rpcResponse
-	readerDone         chan struct{}
-	readerErrMu        sync.Mutex
-	readerErr          error
-	processCtx         context.Context
-	processCancel      context.CancelFunc
-	mu                 sync.RWMutex
-	status             Status
-	tools              []ToolRegistration
-	protocol           int
-	capabilities       []CapabilityDescriptor
-	modelAdapters      []ModelAdapterDescriptor
-	providedServices   []ServiceDescriptor
-	requiredServices   []ServiceRequirement
-	negotiated         map[HostServiceMethod]struct{}
-	activationServices map[HostServiceMethod]struct{}
-	lifecycleVersion   int
-	stderr             lockedBuffer
-	stopMu             sync.Mutex
-	stopped            bool
-	stopErr            error
-	callerScopeMu      sync.Mutex
-	callerScopes       map[string]struct{}
+	config               ProcessConfig
+	cmd                  *exec.Cmd
+	stdin                io.WriteCloser
+	scanner              *bufio.Scanner
+	seq                  atomic.Uint64
+	writeGate            chan struct{}
+	pendingMu            sync.Mutex
+	pending              map[string]chan rpcResponse
+	readerDone           chan struct{}
+	readerErrMu          sync.Mutex
+	readerErr            error
+	processCtx           context.Context
+	processCancel        context.CancelFunc
+	mu                   sync.RWMutex
+	status               Status
+	tools                []ToolRegistration
+	protocol             int
+	capabilities         []CapabilityDescriptor
+	modelAdapters        []ModelAdapterDescriptor
+	providedServices     []ServiceDescriptor
+	requiredServices     []ServiceRequirement
+	negotiated           map[HostServiceMethod]struct{}
+	activationServices   map[HostServiceMethod]struct{}
+	lifecycleVersion     int
+	stderr               lockedBuffer
+	sensitiveDiagnostics atomic.Bool
+	stopMu               sync.Mutex
+	stopped              bool
+	stopErr              error
+	callerScopeMu        sync.Mutex
+	callerScopes         map[string]struct{}
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
@@ -296,6 +297,9 @@ func (c *ProcessClient) NotifyServiceChanged(ctx context.Context, params Service
 }
 
 func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityInvokeParams) (CapabilityInvokeResult, error) {
+	if sensitiveModelValidation(params.Capability, params.Input) {
+		c.suppressSensitiveDiagnostics()
+	}
 	callCtx := ctx
 	if params.Capability != CapabilityModelAdapter && params.Capability != CapabilityModelMiddleware {
 		var cancel context.CancelFunc
@@ -306,9 +310,12 @@ func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityI
 	// Their caller controls the deadline; the handshake timeout must not kill
 	// a healthy provider operation or retire its plugin while it is streaming.
 	var result CapabilityInvokeResult
-	if err := c.call(callCtx, "capability.invoke", params, &result); err != nil {
+	if err := c.callWithPhysicalDrain(callCtx, "capability.invoke", params, &result, params.Capability == CapabilityModelAdapter); err != nil {
 		if ctx.Err() == nil {
 			c.failFatalCall(err)
+		}
+		if params.Capability == CapabilityModelAdapter {
+			return result, err
 		}
 		return CapabilityInvokeResult{}, err
 	}
@@ -485,6 +492,11 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 }
 
 func (c *ProcessClient) call(ctx context.Context, method string, params, result any) error {
+	return c.callWithPhysicalDrain(ctx, method, params, result, false)
+}
+
+func (c *ProcessClient) callWithPhysicalDrain(ctx context.Context, method string, params, result any, physicalDrain bool) (callErr error) {
+	defer func() { callErr = c.diagnosticError(callErr) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -502,6 +514,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	if err != nil {
 		return err
 	}
+	defer clear(payload)
 	var completeReceipt func(error)
 	receiptScope := providers.ModelReceiptScopeFromContext(ctx)
 	if receiptScope != nil {
@@ -520,7 +533,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 		if callerOwnsPending {
 			c.removePending(id)
 			if completeReceipt != nil {
-				completeReceipt(receiptErr)
+				completeReceipt(c.diagnosticError(receiptErr))
 			}
 		}
 	}()
@@ -556,6 +569,30 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 
 	response, err := c.waitResponse(ctx, responseCh)
 	if err != nil {
+		if physicalDrain && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			// A model capability owns physical submissions until its exact RPC replies
+			// or its process has been terminated and joined. The outer logical stream
+			// relay may already have returned cancellation; it must not release this
+			// callback's receipt/capacity handles while remote settlement is still live.
+			observation := context.Background()
+			if receiptScope != nil {
+				observation = receiptScope.ObservationContext()
+			}
+			drainCtx, cancelDrain := context.WithTimeout(observation, 3*time.Second)
+			response, drainErr := c.waitResponse(drainCtx, responseCh)
+			cancelDrain()
+			if drainErr != nil {
+				receiptErr = errors.Join(drainErr, c.retireProcess(drainErr))
+				<-c.readerDone
+			} else if response.Error == nil && result != nil {
+				if len(response.Result) == 0 {
+					receiptErr = errors.New("response is missing result")
+				} else if decodeErr := json.Unmarshal(response.Result, result); decodeErr != nil {
+					receiptErr = fmt.Errorf("decode late model result: %w", decodeErr)
+				}
+			}
+			return errors.Join(err, receiptErr)
+		}
 		if completeReceipt != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			callerOwnsPending = false
 			// Local cancellation does not acknowledge the remote callback.
@@ -570,7 +607,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 					completionErr = errors.New("response is missing result")
 				}
 				c.removePending(id)
-				completeReceipt(completionErr)
+				completeReceipt(c.diagnosticError(completionErr))
 			}()
 		} else {
 			receiptErr = err
@@ -706,7 +743,7 @@ func (c *ProcessClient) setReadFailure(err error) {
 	}
 	c.readerErrMu.Lock()
 	if c.readerErr == nil {
-		c.readerErr = err
+		c.readerErr = c.diagnosticError(err)
 	}
 	c.readerErrMu.Unlock()
 }
@@ -744,6 +781,7 @@ func (c *ProcessClient) writeLine(ctx context.Context, payload []byte) error {
 		close(interrupted)
 	})
 	payload = append(payload, '\n')
+	defer clear(payload)
 	n, err := c.stdin.Write(payload)
 	if !stopInterrupt() {
 		<-interrupted
@@ -936,7 +974,7 @@ func (c *ProcessClient) setFailure(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status.State = StateFailed
-	c.status.Error = err.Error()
+	c.status.Error = c.diagnosticError(err).Error()
 	c.tools = nil
 	c.capabilities = nil
 	c.modelAdapters = nil
@@ -1045,15 +1083,19 @@ var baselineEnvKeys = func() []string {
 }()
 
 type lockedBuffer struct {
-	mu        sync.Mutex
-	b         bytes.Buffer
-	truncated bool
+	mu         sync.Mutex
+	b          bytes.Buffer
+	truncated  bool
+	suppressed bool
 }
 
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(p)
+	if b.suppressed {
+		return n, nil
+	}
 	if n >= maxPluginStderrBytes {
 		b.truncated = b.truncated || b.b.Len() > 0 || n > maxPluginStderrBytes
 		b.b.Reset()

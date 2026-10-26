@@ -103,7 +103,7 @@ func TestServiceDependenciesBlockTransitiveActivation(t *testing.T) {
 			}
 			other := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "other", state: StatePrepared}}
 			if scenario == "wrong-major" {
-				other.provided = []ServiceDescriptor{{Name: "missing.storage", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "read"}}}}
+				other.provided = []ServiceDescriptor{{Name: "missing.storage", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "read", InputSchema: "fixture.read.input.v1", OutputSchema: "fixture.read.output.v1"}}}}
 			}
 			host := New(consumer, provider, other)
 			registry, conflicts := BuildServiceRegistry(consumer, provider, other)
@@ -150,7 +150,7 @@ func TestMixedPackageAndServiceCycleRejectsActivation(t *testing.T) {
 func TestShutdownCleanupCrossesProviderTransports(t *testing.T) {
 	storage := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "storage", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}}
 	bridge := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "bridge", state: StateActive,
-		provided: []ServiceDescriptor{{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "flush"}}}},
+		provided: []ServiceDescriptor{{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "flush", InputSchema: "fixture.flush.input.v1", OutputSchema: "fixture.flush.output.v1"}}}},
 		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}},
 	}}
 	consumer := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "consumer", state: StateActive,
@@ -286,5 +286,43 @@ func TestShutdownDeadlineRetainsDependencyUntilConsumerActuallyCloses(t *testing
 	}
 	if err := host.Close(context.Background()); !errors.Is(err, failure) || consumerCloses.Load() != 1 || providerCloses.Load() != 1 {
 		t.Fatalf("repeat Close did not observe same cleanup: %v", err)
+	}
+}
+
+// Discovery must describe the same graph that controls lifecycle, including
+// unavailable requirements, and must not let callers mutate its authority.
+func TestServiceGraphDiscoveryRetainsBindingsAndContracts(t *testing.T) {
+	provider := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "storage", state: StatePrepared, provided: []ServiceDescriptor{searchService("1.0.0")}}}
+	provider.provided[0].Methods[0].Preparation = true
+	consumer := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "consumer", state: StatePrepared, required: []ServiceRequirement{
+		{Name: "search.provider", MajorVersion: 1, Required: true},
+		{Name: "optional.provider", MajorVersion: 2},
+	}}}
+	host := New(consumer, provider)
+	host.SetPackageRequirements(map[string][]string{"consumer": {"package"}})
+	registry, conflicts := BuildServiceRegistry(consumer, provider)
+	host.AttachServiceRegistry(registry, conflicts)
+	snapshot := registry.Snapshot(9)
+	if !reflect.DeepEqual(snapshot.Dependencies, host.Dependencies()) {
+		t.Fatalf("discovery graph differs from lifecycle graph: %+v", snapshot.Dependencies)
+	}
+	if len(snapshot.Requirements["consumer"]) != 2 {
+		t.Fatalf("missing unavailable requirement: %+v", snapshot.Requirements)
+	}
+	descriptor := snapshot.Services[0].Descriptor
+	if descriptor.Name != "search.provider" || !descriptor.Methods[0].Preparation || descriptor.Methods[0].InputSchema == "" {
+		t.Fatalf("missing callable contract: %+v", descriptor)
+	}
+	snapshot.Services[0].Descriptor.Methods[0].Name = "mutated"
+	snapshot.Requirements["consumer"][0].Name = "mutated"
+	snapshot.Dependencies["consumer"][0].Provider = "mutated"
+	again := registry.Snapshot(9)
+	if again.Services[0].Descriptor.Methods[0].Name == "mutated" || again.Requirements["consumer"][0].Name == "mutated" || !reflect.DeepEqual(again.Dependencies, host.Dependencies()) {
+		t.Fatal("snapshot mutated authoritative service graph")
+	}
+	registry.RevokePlugin(context.Background(), "storage")
+	retired := registry.Snapshot(9)
+	if len(retired.Services) != 0 || !reflect.DeepEqual(retired.Dependencies, host.Dependencies()) || len(retired.Requirements["consumer"]) != 2 {
+		t.Fatalf("revocation lost retained dependency diagnostics: %+v", retired)
 	}
 }

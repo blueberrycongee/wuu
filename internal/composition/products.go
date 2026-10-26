@@ -15,9 +15,9 @@ func DefaultConfig(profile string, discovered ...string) *Config {
 	return cfg
 }
 
-// productCatalog creates owned values so resolving or editing one product cannot
-// mutate another. User definitions replace a whole named profile or bundle.
-func productCatalog() (map[string]Profile, map[string]Bundle) {
+// productCatalogVersion returns owned values and preserves the defaults used
+// by each supported configuration version. User definitions replace named entries.
+func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) {
 	base := map[string]bool{}
 	for _, id := range []string{
 		"kernel", "wuu.default-loop", "wuu.session-execution", "wuu.tool-execution",
@@ -28,11 +28,22 @@ func productCatalog() (map[string]Profile, map[string]Bundle) {
 	} {
 		base[id] = true
 	}
+	desktop := map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true, "wuu.default-navigation": true, "wuu.default-conversation": true, "wuu.default-preview": true, "wuu.default-composer": true}
+	if version >= 3 {
+		base["wuu.agent.policy.default"] = true
+		base["wuu.model.native"] = true
+		base["wuu.model-execution"] = true
+		base["wuu.model.capacity.default"] = true
+		base["wuu.model.capacity.resources"] = true
+		base["wuu.engines.native"] = true
+		base["wuu.engine-execution"] = true
+		desktop["wuu.default-application"] = true
+	}
 	return map[string]Profile{
 		"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},
 		"headless": {Bundles: []string{"wuu.base"}},
 	}, map[string]Bundle{
 		"wuu.base":    {Patches: []Patch{{Modules: base}}},
-		"wuu.desktop": {Patches: []Patch{{Modules: map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true, "wuu.default-navigation": true, "wuu.default-conversation": true, "wuu.default-preview": true, "wuu.default-composer": true}}}},
+		"wuu.desktop": {Patches: []Patch{{Modules: desktop}}},
 	}
 }

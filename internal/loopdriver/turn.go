@@ -13,6 +13,7 @@ import (
 // Operations are serialized within a turn and reject calls after completion or
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
+	EvaluatePolicy(context.Context, pluginprotocol.AgentPolicyInput) (pluginprotocol.AgentPolicyDecision, error)
 	ReadTurn(context.Context) (providers.ChatRequest, error)
 	ReadSettings(context.Context) (pluginprotocol.DriverTurnSettings, error)
 	ReadContextState(context.Context) (pluginprotocol.DriverContextState, error)

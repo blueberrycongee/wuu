@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -18,7 +19,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -216,17 +216,48 @@ func (s *Server) refreshObservedConfigChange() error {
 	return s.refreshConfigIfChanged()
 }
 
+// lockModelConfiguration shares catalog publication's lock order. A watcher
+// may inspect fingerprints without blocking turn admission; it fences only
+// after discovering a change that requires a new generation.
+func (s *Server) lockModelConfiguration() (admit func() error, release func()) {
+	s.pluginGenerationRefreshMu.Lock()
+	s.configRefreshMu.Lock()
+	admitted := false
+	var once sync.Once
+	return func() error {
+			if admitted {
+				return nil
+			}
+			if !s.pluginGenerationMutation.CompareAndSwap(false, true) {
+				return errors.New("cannot update model configuration while another plugin change is running")
+			}
+			admitted = true
+			return nil
+		}, func() {
+			once.Do(func() {
+				if admitted {
+					s.pluginGenerationMutation.Store(false)
+				}
+				s.configRefreshMu.Unlock()
+				s.pluginGenerationRefreshMu.Unlock()
+				if admitted {
+					s.retireIdlePluginRuntimes()
+				}
+			})
+		}
+}
+
 func (s *Server) refreshConfigIfChanged() error {
 	if s == nil || s.rt == nil || s.closed.Load() {
 		return nil
 	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
 	services, release, err := s.modelServices()
 	if err != nil {
 		return err
 	}
 	defer release()
-	s.configRefreshMu.Lock()
-	defer s.configRefreshMu.Unlock()
 	// Compute under the same lock used to apply an interactive config update.
 	// Computing first could leave `next` stale while waiting for the lock, then
 	// hot-apply the interactive update a second time after it completed.
@@ -262,7 +293,10 @@ func (s *Server) refreshConfigIfChanged() error {
 		s.configFingerprint = next
 		return nil
 	}
-	if err := s.applyExternalConfigChangeWithServices(services, cfg); err != nil {
+	if err := admit(); err != nil {
+		return err
+	}
+	if err := s.applyExternalConfigChangeLocked(cfg); err != nil {
 		// Keep the previous fingerprint so the watcher retries after the user
 		// fixes the file instead of permanently swallowing the broken edit.
 		return err
@@ -275,15 +309,7 @@ func (s *Server) refreshConfigIfChanged() error {
 	return s.writeNotification(NotificationConfigChanged, s.currentConfigChangedNotification())
 }
 
-func (s *Server) applyExternalConfigChange(cfg config.Config) error {
-	services, release, err := s.modelServices()
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.applyExternalConfigChangeWithServices(services, cfg)
-}
-func (s *Server) applyExternalConfigChangeWithServices(services *runtime.StateServices, cfg config.Config) error {
+func (s *Server) applyExternalConfigChangeLocked(cfg config.Config) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
@@ -319,15 +345,7 @@ func (s *Server) applyExternalConfigChangeWithServices(services *runtime.StateSe
 		return err
 	}
 
-	var client providers.StreamClient
-	if resolvedName != previousProvider || connectionChanged || providerClientChanged {
-		client, err = s.buildStreamClientWithServices(services, ruleProviderCfg, resolvedName)
-		if err != nil {
-			return err
-		}
-	}
-
-	return s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousProvider, client, true)
+	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, true)
 }
 
 // Catalog refresh admission keys come from the selected provider too. Local
@@ -377,4 +395,18 @@ func (s *Server) currentConfigChangedNotification() ConfigChangedNotification {
 		ProjectModels: s.rt.ProjectModels,
 		Providers:     s.providerSummaries(),
 	}
+}
+
+// recordPublishedConfig observes only the configuration captured by the graph
+// just published, never a later source read. Callers hold configRefreshMu.
+// A concurrent external edit therefore still differs and wakes the watcher.
+func (s *Server) recordPublishedConfig(cfg config.Config) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	s.configFingerprint = hex.EncodeToString(sum[:])
+	s.configRejectedSources = ""
+	return nil
 }

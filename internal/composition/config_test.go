@@ -224,3 +224,119 @@ func TestDesktopContentRenderersCanBeReplacedIndependently(t *testing.T) {
 		})
 	}
 }
+
+// Compatibility projection must preserve former behavior without rewriting the
+// user's source or defeating a deliberate replacement/removal.
+func TestLegacyCompositionAddsExtractedProviders(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		cfg := &Config{Version: version, Modules: &[]string{"wuu.session-execution", "wuu.default-shell"}}
+		original, _ := json.Marshal(cfg)
+		resolved, err := cfg.Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"wuu.agent.policy.default", "wuu.default-application", "wuu.model.native"} {
+			if !resolved.Includes(id) || !strings.HasPrefix(resolved.SourceForModule(id), "migration:") {
+				t.Fatalf("missing migration for %s: %+v", id, resolved)
+			}
+		}
+		after, _ := json.Marshal(cfg)
+		if string(original) != string(after) {
+			t.Fatal("resolution rewrote recoverable configuration")
+		}
+		again, err := cfg.Resolve()
+		if err != nil || len(again.Layers) != len(resolved.Layers) {
+			t.Fatal("migration accumulates", err)
+		}
+	}
+}
+
+func TestExtractedProviderMigrationHonorsExplicitChoices(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		cfg                 Config
+		policy, application bool
+	}{
+		{"current intentional omission", Config{Version: Version, Modules: &[]string{"wuu.session-execution", "wuu.default-shell"}}, false, false},
+		{"empty legacy", Config{Version: 2, Modules: &[]string{}}, false, false},
+		{"explicit legacy removal", Config{Version: 2, Modules: &[]string{"wuu.session-execution", "wuu.default-shell"}, Patches: []Patch{{Modules: map[string]bool{"wuu.agent.policy.default": false, "wuu.default-application": false}}}}, false, false},
+		{"external replacement", Config{Version: 2, Modules: &[]string{"wuu.session-execution", "wuu.default-shell", "replacement"}, Services: []Binding{{Service: "agent.policy", Major: 1, Provider: "replacement"}, {Service: "ui.application", Major: 1, Provider: "replacement"}}}, false, false},
+		{"headless legacy", Config{Version: 2, Profile: "headless"}, true, false},
+		{"desktop legacy", Config{Version: 2, Profile: "desktop"}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved, err := tc.cfg.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.Includes("wuu.agent.policy.default") != tc.policy || resolved.Includes("wuu.default-application") != tc.application {
+				t.Fatalf("changed explicit choices: %+v", resolved)
+			}
+		})
+	}
+}
+
+func TestLegacyModelAdapterMigrationPreservesExternalSelection(t *testing.T) {
+	cfg := Config{Version: 2, Modules: &[]string{"wuu.session-execution", "external.model"}, Services: []Binding{{Service: "model.adapter", Major: 1, Provider: "external.model"}}}
+	resolved, err := cfg.Resolve()
+	if err != nil || resolved.Includes("wuu.model.native") {
+		t.Fatalf("external model replaced: %+v %v", resolved, err)
+	}
+	cfg.Services = nil
+	cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.model.native": false}}}
+	resolved, err = cfg.Resolve()
+	if err != nil || resolved.Includes("wuu.model.native") {
+		t.Fatalf("removed native model restored: %+v %v", resolved, err)
+	}
+	cfg.Version = Version
+	cfg.Patches = nil
+	resolved, err = cfg.Resolve()
+	if err != nil || resolved.Includes("wuu.model.native") {
+		t.Fatalf("current schema repaired missing model: %+v %v", resolved, err)
+	}
+}
+
+func TestLegacyModelOnlyCompositionKeepsExplicitConsumer(t *testing.T) {
+	cfg := Config{Version: 2, Modules: &[]string{"kernel", "external.model"}, Services: []Binding{{Service: "model.adapter", Major: 1, Provider: "external.model"}}}
+	got, err := cfg.Resolve()
+	if err != nil || !got.Includes("wuu.model-execution") || got.Includes("wuu.model.native") {
+		t.Fatalf("model-only external selection: %+v %v", got, err)
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.model-execution": false}}}
+	got, err = cfg.Resolve()
+	if err != nil || got.Includes("wuu.model-execution") {
+		t.Fatalf("explicit model consumer removal lost: %+v %v", got, err)
+	}
+}
+
+func TestLegacyEngineProvidersPreserveExplicitExclusions(t *testing.T) {
+	cfg := Config{Version: 2, Modules: &[]string{"wuu.session-execution", "external.engine"}, Services: []Binding{{Service: "engine.wuu", Major: 1, Provider: "external.engine"}}}
+	got, err := cfg.Resolve()
+	if err != nil || !got.Includes("wuu.engine-execution") || !got.Includes("wuu.engines.native") {
+		t.Fatalf("legacy engine services lost: %+v %v", got, err)
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.engines.native": false, "wuu.engine-execution": false}}}
+	got, err = cfg.Resolve()
+	if err != nil || got.Includes("wuu.engines.native") || got.Includes("wuu.engine-execution") {
+		t.Fatalf("explicit engine exclusions lost: %+v %v", got, err)
+	}
+	cfg.Version = Version
+	cfg.Patches = nil
+	got, err = cfg.Resolve()
+	if err != nil || got.Includes("wuu.engines.native") || got.Includes("wuu.engine-execution") {
+		t.Fatalf("current config received hidden defaults: %+v %v", got, err)
+	}
+}
+
+func TestLegacyCapacityBindingsPreserveReplacement(t *testing.T) {
+	cfg := Config{Version: 2, Modules: &[]string{"wuu.session-execution", "capacity"}, Services: []Binding{{Service: "model.capacity", Major: 1, Provider: "capacity"}}}
+	got, err := cfg.Resolve()
+	if err != nil || got.Includes("wuu.model.capacity.default") || !got.Includes("wuu.model.capacity.resources") {
+		t.Fatalf("capacity replacement: %+v %v", got, err)
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.model.capacity.resources": false}}}
+	got, err = cfg.Resolve()
+	if err != nil || got.Includes("wuu.model.capacity.resources") {
+		t.Fatalf("excluded shared resource restored: %+v %v", got, err)
+	}
+}

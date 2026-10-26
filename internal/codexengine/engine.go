@@ -46,6 +46,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"default-permission-unconfined",
 			"active-turn-steering",
 			"approval-requests",
 			"user-input-requests",

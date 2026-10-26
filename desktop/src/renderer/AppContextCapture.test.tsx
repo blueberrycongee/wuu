@@ -6,7 +6,7 @@ import type { AppContextState, InitializeResult, WuuDesktopApi } from "../shared
 import { AppContextCaptureHost } from "./AppContextCapture";
 import { createDraftSessionTab, initialState } from "./AppState";
 import { createScopedTestApplication } from "./test-support/ScopedApplication";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 const generationCleanups: Array<() => void> = [];

@@ -95,3 +95,19 @@ describe("desktop activation IPC lifetime", () => {
     expect(backend.calls.mock.calls.at(-1)?.[0]).toBe("plugin/desktop-activation");
   });
 });
+
+it("pins runtime calls to the initialized graph owner across A→B→A and rejects redirect", async () => {
+  const a = server("graph-a"), b = server("graph-b"), owner = new PluginDesktopActivations(22);
+  await owner.initialize("/a", a.request, {});
+  await owner.initialize("/b", b.request, {});
+  await owner.runtimeRequest("graph-a")("plugin/client/request", { graph_generation: "graph-a" });
+  expect(a.calls.mock.calls.at(-1)?.[0]).toBe("plugin/client/request");
+  expect(b.calls).toHaveBeenCalledTimes(1);
+  expect(() => owner.runtimeRequest("graph-a", "/b")).toThrow(/workspace/i);
+  expect(() => owner.runtimeRequest("unknown")).toThrow(/graph/i);
+  await owner.initialize("/a", a.request, {});
+  await owner.runtimeRequest("graph-b", "/b")("plugin/client/request", {});
+  expect(b.calls).toHaveBeenCalledTimes(2);
+  await owner.disconnect();
+  expect(() => owner.runtimeRequest("graph-a")).toThrow(/disconnected/i);
+});

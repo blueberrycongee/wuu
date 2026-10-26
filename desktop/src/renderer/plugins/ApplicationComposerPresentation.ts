@@ -5,7 +5,7 @@ import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThre
 import { providerModelContextWindow } from "../RuntimeHelpers";
 import { runtimeViewForConversation } from "../SessionRuntimeState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
-import type { RegisteredComposerStatusSource, PluginHost, RegisteredComposerInlineCompletionProvider } from "./PluginHost";
+import type { RegisteredComposerStatusSourceV1 as RegisteredComposerStatusSource, UIContributionRegistryV1 as PluginHost, RegisteredComposerInlineCompletionProviderV1 as RegisteredComposerInlineCompletionProvider } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 function immutable<T>(value: T): T {
   const result = structuredClone(value);

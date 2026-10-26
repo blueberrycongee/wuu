@@ -12,9 +12,7 @@ import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import type { InitializeResult } from "../../shared/protocol";
 import { createElement } from "react";
 import type { ApplicationSettingsControlsV1, SettingsControlsDiagnosticV1 } from "../../../../packages/plugin-sdk/src/ui-settings-controls";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
-import { PluginViewContent, type WorkbenchController } from "./Workbench";
+import type { UIContributionRegistryV1 as PluginHost, ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { SettingsPresentation } from "./SettingsPresentation";
 import { hostSupports } from "../HostCapabilities";
 import { ENABLE_REMOTE_CONTROL } from "../FeatureFlags";
@@ -26,7 +24,8 @@ export function createApplicationSettingsControls(options: {
 } = {}): ApplicationSettingsControlsV1 {
   let skinSource: ReturnType<typeof getShellSkins> | undefined;
   let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
-  const host = () => options.host ?? desktopPluginHost;
+  const host = () => { if (!options.host) throw new Error("Application contribution registry is unavailable"); return options.host; };
+  const controller = () => { if (!options.controller) throw new Error("Application workbench provider is unavailable"); return options.controller; };
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
     capabilities: Object.freeze({
@@ -101,8 +100,7 @@ export function createApplicationSettingsControls(options: {
       host().setConflictPreferences(preferences);
     },
     subscribeRemote: listener => window.wuu.onRemoteControlEvent(listener),
-    renderPage: input => createElement(PluginViewContent, {
-      controller: options.controller ?? desktopWorkbenchController,
+    renderPage: input => controller().renderView({
       pluginId: input.pluginId,
       viewTypeId: input.view,
       context: Object.freeze({
@@ -113,7 +111,7 @@ export function createApplicationSettingsControls(options: {
     }),
     // The legacy presentation adapter receives its own writable copy of the public view.
     renderPresentation: input => createElement(SettingsPresentation, {
-      ...input,
+      ...input, controller: controller(),
       initialized: input.initialized ? structuredClone(input.initialized) as InitializeResult : undefined
     }),
     listChatGPTAccounts: async (...args) => {

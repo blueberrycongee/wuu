@@ -106,10 +106,11 @@ import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./C
 import { useI18n } from "./i18n";
 import {
   desktopPluginHost,
-  desktopWorkbenchController,
 } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
-import { visibleWorkbenchView, type WorkbenchController } from "./plugins/Workbench";
+import { visibleWorkbenchView } from "./plugins/Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { useOptionalApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
 import type { SkillsCatalogSection } from "./SkillsCatalog";
 import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { createUIComposition } from "./plugins/ApplicationShell";
@@ -491,7 +492,7 @@ export function AppSidebar({
   attentionStickyIDs: attentionStickyIDsProp,
   onAttentionStickyIDsChange,
   pluginHost = desktopPluginHost,
-  workbenchController = desktopWorkbenchController,
+  workbenchController: suppliedWorkbenchController,
   sidebarVisible = true,
   sidebarCollapsed = false,
   onShowConversations,
@@ -600,6 +601,8 @@ export function AppSidebar({
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
 } & RibbonBrowserActions): JSX.Element {
+  const selectedWorkbench = useOptionalApplicationWorkbench();
+  const workbenchController = suppliedWorkbenchController ?? selectedWorkbench;
   const { locale, t } = useI18n();
   const localSlots = useMemo(() => createUIComposition(pluginHost), [pluginHost]);
   const slots = navigation?.slots ?? localSlots;
@@ -674,22 +677,22 @@ export function AppSidebar({
     () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
   );
   const workbenchSnapshot = useSyncExternalStore(
-    navigation ? () => () => {} : workbenchController.subscribe,
-    () => navigation ? null : workbenchController.getSnapshot(),
-    () => navigation ? null : workbenchController.getSnapshot(),
+    navigation ? () => () => {} : workbenchController?.subscribe ?? (() => () => {}),
+    () => navigation ? null : workbenchController?.getSnapshot() ?? null,
+    () => navigation ? null : workbenchController?.getSnapshot() ?? null,
   );
   const navigationInvoke = navigation?.invoke;
   const loadPluginIcon = useMemo(() => navigationInvoke
     ? (pluginId: string, fingerprint: string, path: string) => navigationInvoke("navigation.load-icon", { pluginId, fingerprint, path })
     : undefined, [navigationInvoke]);
   const publicActive = navigation?.view.activePluginView;
-  const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId, viewTypeId: publicActive.viewTypeId, context: publicActive.context }, definition: { title: publicActive.title } }) : visibleWorkbenchView(workbenchSnapshot!, "primary");
+  const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId, viewTypeId: publicActive.viewTypeId, context: publicActive.context }, definition: { title: publicActive.title } }) : workbenchSnapshot ? visibleWorkbenchView(workbenchSnapshot, "primary") : undefined;
   const activePluginMainView = activePluginMain?.view;
   const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
   const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
   const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
   const pluginNavigationEntries = useMemo(
-    () => navigation ? navigation.view.destinations : primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot!),
+    () => navigation ? navigation.view.destinations : workbenchSnapshot ? primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot) : [],
     [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
   );
   const extensionCatalog = useMemo(() => {
@@ -710,7 +713,7 @@ export function AppSidebar({
   }, [locale, extensionInventory, navigation]);
   const activateNative = useCallback((action: () => void): void => {
     if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(showErrorToast);
-    else { workbenchController.deactivateRegion("primary"); action(); }
+    else { workbenchController?.deactivateRegion("primary"); action(); }
   }, [workbenchController, navigation]);
   const onSelectThread = useCallback((id: string) => {
     activateNative(() => selectNativeThread(id));
@@ -722,14 +725,14 @@ export function AppSidebar({
     onLeaveSettings?.();
     if (navigation) { void navigation.invoke("navigation.open-plugin", { pluginId, viewTypeId, instanceId }).catch(showErrorToast); return; }
     if (instanceId) {
-      workbenchController.activateView(instanceId);
+      workbenchController?.activateView(instanceId);
       return;
     }
-    void workbenchController.openPluginView(pluginId, viewTypeId, {
+    void workbenchController?.openPluginView(pluginId, viewTypeId, {
       region: "primary",
       persistence: "durable",
       reveal: true,
-    }).catch(() => workbenchController.deactivateRegion("primary"));
+    }).catch(() => workbenchController?.deactivateRegion("primary"));
   }, [workbenchController, onLeaveSettings, navigation]);
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px

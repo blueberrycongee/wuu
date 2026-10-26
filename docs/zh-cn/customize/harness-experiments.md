@@ -3,7 +3,7 @@
 `wuu eval` 使用产品引擎和独立的内置评分器，对比单文件策略。控制器持有评测规范和证据目录，候选 runtime 持有可清理的独立状态。本地记录与[公开结果发布契约](../../../evals/README.md)分开。
 
 ```bash
-wuu eval --live-codex-oauth --model MODEL --task test_failure_fix \
+wuu eval --provider authorized-api --model MODEL --task test_failure_fix \
   --max-steps 6 --timeout 2m --freeze plan.json
 wuu eval --plan plan.json --artifacts baseline
 wuu plugin validate --json ./candidate.ts
@@ -73,3 +73,81 @@ export default {
 依赖轨迹内容的样本见 [`examples/plugins/repeated-observation.ts`](../../../examples/plugins/repeated-observation.ts)，可用 `wuu plugin dev ./examples/plugins/repeated-observation.ts` 加载。连续两次相同工具请求得到相同观察结果时，它在第三次模型请求前停止，并提供配套请求提示。只适用于不需要轮询的任务；终止说明明确表示任务可能未完成，这个样本没有已证实的 benchmark 收益。
 
 停止必须返回非空 `reason` 和 `content`。内容成为带宿主标记插件来源的可见 assistant 记录，不计为模型轮次。停止不证明正确，不删除已接纳输入，也不撤销工具效果。错误遵循能力声明的策略，取消始终传播。默认循环采用这个决定；替换循环从 `admitInput()` 获取决定，自行定义算法响应。达到默认模型步数上限后不会再调用策略。
+
+## 发现接口、扩展实验并保留判定
+
+`wuu plugin describe --workdir /project --types-dir ./sdk-snapshot` 导出当前二进制
+内嵌的公开 SDK，报告选中服务的完整描述、实际依赖边、未满足需求、插件源码目录与
+指纹、模块故障和工具定义。它按项目配置打开**新的 CLI 状态 generation**，不是连接
+已有桌面会话。`graph_generation` 标识实际保留的图，与目录 epoch 分开。导出目录必须不存在。
+
+只使用已授权的 API 连接和预先声明的资源预算；这些命令不授权复用个人订阅。
+计划固定任务数、单任务步数／超时和并发度。运行器不计算金额，费用未知不代表免费。
+
+冻结时的 `--experiment-policy policy.json` 可指定并发度及内置判定规则，例如：
+
+```json
+{"concurrency":2,"acceptance":{"require_all_pass":true,"improvement":"tokens","max_duration_ratio":1.25}}
+```
+
+并发度为 1–256。结果始终按冻结顺序保存，每个任务使用独立运行状态，并在任务配置前
+复制配置。`improvement` 支持 `turns-or-tokens`、`turns`、`tokens`、`quality`、
+`non-regression`；这些便利策略不限制外部实验实现。
+
+冻结时用 `--experiment-controller controller.json` 替换任务源、评分、调度和判定。
+公开 SDK 的 `ExperimentController` 与 `dispatchExperimentController` 实现协议 1：
+stdin 输入一个 `{version:1,method,params}` JSON 请求，stdout 输出一个 JSON 响应；
+诊断写 stderr。方法包括 `tasks`、`schedule`、`setup`、`score`、`accept`。
+判定为 `accept`、`reject` 或 `revise`。调度可重排任务、指定并发度，但必须恰好保留每个
+任务一次；调度结果被冻结，候选不会重新选择任务。
+
+控制器身份格式为 `{ "command": ["/absolute/node", "/absolute/controller.mjs"],
+"files": {"/absolute/node":"sha256:…", "/absolute/controller.mjs":"sha256:…"} }`。
+固定全部传递执行／脚本／数据输入的摘要。把
+[`experiment-controller.ts`](../../../examples/plugins/experiment-controller.ts)
+基于公开 SDK 构建为独立 bundle，再计算最终文件（包括 Node 可执行文件）的摘要。
+无需内部 import 或安装插件。每次调用前后检查输入摘要，尝试证据中保存输入副本。
+每次调用限时一分钟，stdout 上限 8 MiB、stderr 上限 256 KiB；超限明确失败，并清理 POSIX 进程组。示例文本评分器有明确局限，不是已验证的语义提升。
+
+控制器、评分数据和证据放在候选工作区之外。受信任扩展体系不是恶意代码沙箱：同一
+用户的代码仍可能访问操作系统允许的文件。摘要检查检测输入变化，不证明恶意候选
+无法干预评分。控制器输入变更必须新开计划并重测基线。外部控制器计划不绑定内置
+评分源码，因此可比较宿主代码变化而不同时改变独立评分器。
+
+```bash
+wuu eval --provider authorized-api --model MODEL --max-steps 6 --timeout 2m \
+  --experiment-controller controller.json --experiment-policy policy.json --freeze plan.json
+wuu eval --plan plan.json --artifacts baseline
+wuu eval --plan plan.json --candidate candidate.ts --artifacts candidate
+wuu eval --compare baseline/report.json,candidate/report.json --decision-output decision.json
+```
+
+比较会核验保留的计划摘要、有序任务分母和非负用量。外部控制器还会重新读取完整执行、
+逐任务结果和保留的工作区，在比较控制器进程中调用固定评分器。候选的成功字段不是独立
+判定：缺失证据会拒绝比较，独立评分失败不能由候选报告覆盖。这些观察并非真实模型调用的
+密码学证明；后者需要可信 provider 回执。外部控制器尝试会保留工作区供此验证。`--decision-output` 不覆盖已有
+判定。接受后通过 `wuu plugin dev ./candidate.ts` 选择已记录源码用于后续工作；拒绝时
+保留上一版。下一轮创建新源码文件和证据目录。评测规范改变时必须重测基线，不能
+复用有利结果。
+
+## 重新构建宿主候选
+
+从保留的源码归档构建独立可执行文件后，运行
+`wuu eval --plan plan.json --candidate-host ./candidate-wuu --artifacts host-attempt`。
+该入口要求计划包含独立固定的控制器。原控制器在 `host-attempt.host/` 保存新任务边界
+checkpoint、二进制／计划摘要、stdout/stderr 和退出状态；候选崩溃后证据仍在。
+报告必须标识真正启动的二进制及完整任务集。超时和退出都会清理所属进程组，原宿主
+保持不变。此边界启动新评测任务，**不迁移任意执行中的调用栈，也不撤销外部副作用**。
+工具结果不确定时保留状态，不盲目重试。已有 `run-pair.py` 还会快照源码归档，并在
+控制器中断时保留逐任务恢复账本。
+
+比较宿主代码时，基线和候选都应通过 `--candidate-host` 运行。比较器读取原控制器保存并核对身份的 `process.json` 耗时，不信任候选自报耗时；不接受一侧受监督、另一侧自行计时的混合比较。`run-pair.py --candidate-host` 会对两侧使用相同监督方式。该指标是整个尝试的墙钟时间，逐任务观察不是独立计时证明。
+
+为示例控制器冻结计划后，可不调用模型地验证公开协议：
+
+```bash
+python3 examples/harness/check-controller.py --wuu ./bin/wuu --plan plan.json --output ./controller-check
+```
+
+此确定性检查写入合成执行观察，验证伪造成功报告不能覆盖独立评分，再修改第二轮
+候选并保存新判定。保留的 `result.json` 明确标注框架验证，不是真实模型实验或自我提升结果。

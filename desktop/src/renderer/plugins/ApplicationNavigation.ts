@@ -11,7 +11,7 @@ import { hostSupports } from "../HostCapabilities";
 import { ENABLE_ACCOUNT } from "../FeatureFlags";
 import { pluginToggle } from "../extensionPackageState";
 import { loadPluginIconURL } from "../PublicIcon";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
+import type { UIContributionRegistryV1, ApplicationWorkbenchV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { primaryViewNavigation } from "./PrimaryViewNavigation";
 import { visibleWorkbenchView } from "./Workbench";
 import type { ThreadMutationActions } from "../ThreadMutationActions";
@@ -48,6 +48,8 @@ export class ApplicationNavigation {
   private folderQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly host: {
     getWebWorkspace: () => ApplicationWebWorkspaceV1;
+    getContributions: () => UIContributionRegistryV1;
+    getWorkbench: () => ApplicationWorkbenchV1;
     getState: () => AppState;
     subscribeState: (listener: () => void) => () => void;
     updateState: (update: SetStateAction<AppState>) => void;
@@ -82,7 +84,7 @@ export class ApplicationNavigation {
   }
   getSnapshot(): ApplicationNavigationViewV1 {
     const state = this.host.getState();
-    const workbench = desktopWorkbenchController.getSnapshot();
+    const workbench = this.host.getWorkbench().getSnapshot();
     const active = visibleWorkbenchView(workbench, "primary");
     const browser = this.browser.getSnapshot();
     const threads = this.threads().filter(row => !row.ephemeral);
@@ -96,9 +98,9 @@ export class ApplicationNavigation {
       plugins: (state.initialized?.extension_inventory ?? []).filter(row => row.kind === "plugin" || row.kind === "skill").map(row => ({
         id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
       })),
-      destinations: primaryViewNavigation(desktopPluginHost.getNavigationEntries(), workbench),
+      destinations: primaryViewNavigation(this.host.getContributions().getNavigationEntries(), workbench),
       regionVisibilityRequest: this.regionVisibilityRequest,
-      activePluginView: active && { closable: !desktopPluginHost.getNavigationEntries().some(entry => entry.pluginId === active.view.pluginId && entry.view === active.view.viewTypeId)
+      activePluginView: active && { closable: !this.host.getContributions().getNavigationEntries().some(entry => entry.pluginId === active.view.pluginId && entry.view === active.view.viewTypeId)
         || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
@@ -124,7 +126,7 @@ export class ApplicationNavigation {
     let updateEvent = false;
     let runningEvent = false;
     const changed = () => { if (active) this.host.changed(); };
-    const off = [desktopPluginHost.subscribe(changed), desktopWorkbenchController.subscribe(changed), this.browser.subscribe(() => {
+    const off = [this.host.getContributions().subscribe(changed), this.host.getWorkbench().subscribe(changed), this.browser.subscribe(() => {
       // Native keyboard commands can select or close a tab without invoking a
       // navigation action. Follow that selection while the browser is foreground.
       if (this.activeWebsiteId) this.activeWebsiteId = this.browser.getSnapshot()?.activeTabId;
@@ -139,7 +141,7 @@ export class ApplicationNavigation {
       const state = this.host.getState();
       const thread = activeThreadForState(state);
       const threadId = thread?.id;
-      desktopPluginHost.setActiveConversationThread(threadId);
+      // Card authors target their explicit conversation; layout does not mutate registry-global focus.
       const cwd = state.activeContext?.cwd;
       const running = Boolean(thread && isThreadRunning(thread));
       const hasRunningTurn = Boolean(thread?.turns.some(turn => turn.status === "in_progress"));
@@ -193,7 +195,6 @@ export class ApplicationNavigation {
       document.removeEventListener("visibilitychange", onVisibility);
       window.clearInterval(heartbeat);
       if (repairTimer !== undefined) window.clearTimeout(repairTimer);
-      desktopPluginHost.setActiveConversationThread(undefined);
     });
     const applyRunning = (items: { thread_id: string }[]) => {
       if (!active) return;
@@ -225,7 +226,7 @@ export class ApplicationNavigation {
     // Publish the browser destination before notifying plugin-view subscribers.
     this.activeWebsiteId = tabId;
     this.accountOpen = false;
-    desktopWorkbenchController.deactivateRegion("primary");
+    this.host.getWorkbench().deactivateRegion("primary");
   }
   async invoke<A extends keyof Actions>(action: A, input: Actions[A]["input"], signal?: AbortSignal): Promise<Actions[A]["result"]> {
     signal?.throwIfAborted();
@@ -312,7 +313,7 @@ export class ApplicationNavigation {
         const { viewId } = input as Actions["navigation.close-plugin"]["input"];
         const active = this.getSnapshot().activePluginView;
         if (!active || active.id !== viewId || !active.closable) throw new Error("Plugin view is no longer closable");
-        await desktopWorkbenchController.closeView(viewId); break;
+        await this.host.getWorkbench().closeView(viewId); break;
       }
       case "navigation.reveal-region": {
         const { region } = input as Actions["navigation.reveal-region"]["input"];
@@ -323,10 +324,10 @@ export class ApplicationNavigation {
       case "navigation.open-plugin": {
         const { pluginId, viewTypeId, instanceId } = input as Actions["navigation.open-plugin"]["input"];
         this.activeWebsiteId = undefined;
-        if (instanceId) desktopWorkbenchController.activateView(instanceId);
-        else await desktopWorkbenchController.openPluginView(pluginId, viewTypeId, { region: "primary", persistence: "durable", reveal: true }); break;
+        if (instanceId) this.host.getWorkbench().activateView(instanceId);
+        else await this.host.getWorkbench().openPluginView(pluginId, viewTypeId, { region: "primary", persistence: "durable", reveal: true }); break;
       }
-      case "navigation.show-native": desktopWorkbenchController.deactivateRegion("primary"); this.activeWebsiteId = undefined; this.accountOpen = false; break;
+      case "navigation.show-native": this.host.getWorkbench().deactivateRegion("primary"); this.activeWebsiteId = undefined; this.accountOpen = false; break;
       case "navigation.show-search": this.searchOpen = (input as Actions["navigation.show-search"]["input"]).open; break;
       case "navigation.show-account": {
         const { open } = input as Actions["navigation.show-account"]["input"];

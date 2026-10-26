@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/subagent"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/worktree"
 )
 
@@ -71,7 +74,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	active, err := s.threadHasDurableActiveAgents(id, stateDirs...)
+	active, err := s.threadHasDurableActiveAgentsWithState(binding, id, stateDirs...)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect durable agents for thread %q: %w", id, err))
 	}
@@ -121,6 +124,30 @@ func (s *Server) handleThreadDelete(req Request) error {
 		// independent cleanup, then report every incomplete deletion together.
 		cleanupErr = fmt.Errorf("side history cleanup: %w", cleanupErr)
 	}
+
+	// Empty authoritative images are deletion tombstones: an explicit retry or
+	// a stale legacy artifact directory must never reimport deleted child data.
+	childStateErr := persistence.Update(context.Background(), binding.Documents, func(tx *persistence.Tx) error {
+		for _, namespace := range []string{agentthread.DocumentNamespace, harness.DocumentNamespace, tools.BrowserTabDocumentNamespace} {
+			if err := tx.Put(namespace, id, persistence.DocumentImage{Version: 1, Values: map[string]json.RawMessage{}}); err != nil {
+				return err
+			}
+		}
+		records, err := tx.Read(persistence.Query{Namespace: subagent.HistoryDocumentNamespace, Prefix: id + "/"})
+		if err != nil {
+			return err
+		}
+		for _, record := range records {
+			if err := tx.Put(record.Namespace, record.Key, persistence.DocumentImage{Version: 1, Values: map[string]json.RawMessage{}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if childStateErr != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("child state cleanup: %w", childStateErr))
+	}
+
 	// Code-mode state outlives cached thread runtimes, but never a successful
 	// permanent delete. This also covers owners already evicted from s.threads.
 	if s.rt.CodeMode != nil {
@@ -218,74 +245,11 @@ func (s *Server) deleteThreadSession(binding *runtime.State, threadID string, on
 // resume it from another workspace while retaining the global session identity.
 // The caller holds the global mutation lease while inspecting and deleting them.
 func (s *Server) threadArtifactStateDirs(threadID string) ([]string, error) {
-	if threadID == "." || threadID == ".." || filepath.Base(threadID) != threadID {
-		return nil, errors.New("invalid thread id for artifact lookup")
-	}
 	own, err := s.workspaceStateDir()
 	if err != nil {
 		return nil, err
 	}
-	stateDirs := []string{own}
-	home := strings.TrimSpace(s.rt.WuuHome)
-	if home == "" {
-		home, err = statepath.Home("")
-		if err != nil {
-			return nil, err
-		}
-	}
-	// Custom stores may reuse IDs from the global store. Their delete request
-	// must never inspect or reclaim another store's workspace artifacts.
-	if filepath.Clean(s.rt.SessionDir) != filepath.Clean(statepath.SessionsDir(home)) {
-		return stateDirs, nil
-	}
-	workspaceRoot := filepath.Join(home, "workspaces")
-	rootInfo, err := os.Lstat(workspaceRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return stateDirs, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !rootInfo.IsDir() {
-		return nil, fmt.Errorf("workspace artifact root is not a directory: %s", workspaceRoot)
-	}
-	entries, err := os.ReadDir(workspaceRoot)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("workspace artifact path is a symbolic link: %s", filepath.Join(workspaceRoot, entry.Name()))
-		}
-		if !entry.IsDir() {
-			continue
-		}
-		stateDir := filepath.Join(workspaceRoot, entry.Name())
-		matched := false
-		for _, name := range []string{"sessions", "worktrees"} {
-			root := filepath.Join(stateDir, name)
-			for _, path := range []string{root, filepath.Join(root, threadID)} {
-				info, err := os.Lstat(path)
-				if errors.Is(err, os.ErrNotExist) {
-					break
-				}
-				if err != nil {
-					return nil, err
-				}
-				// Lstat refuses links at both boundaries before reading contents.
-				if !info.IsDir() {
-					return nil, fmt.Errorf("thread artifact path is not a directory: %s", path)
-				}
-				if path != root {
-					matched = true
-				}
-			}
-		}
-		if matched && filepath.Clean(stateDir) != filepath.Clean(own) {
-			stateDirs = append(stateDirs, stateDir)
-		}
-	}
-	return stateDirs, nil
+	return statepath.SessionArtifactStateDirs(s.rt.WuuHome, s.rt.SessionDir, own, threadID)
 }
 
 // threadHasDurableActiveAgents checks the cross-process task state while the
@@ -293,6 +257,15 @@ func (s *Server) threadArtifactStateDirs(threadID string) ([]string, error) {
 // direct and nested workers; the harness task and queue indexes cover queued
 // work even if one of the redundant lifecycle writes was interrupted.
 func (s *Server) threadHasDurableActiveAgents(threadID string, stateDirs ...string) (bool, error) {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return false, err
+	}
+	defer binding.Close()
+	return s.threadHasDurableActiveAgentsWithState(binding, threadID, stateDirs...)
+}
+
+func (s *Server) threadHasDurableActiveAgentsWithState(binding *runtime.State, threadID string, stateDirs ...string) (bool, error) {
 	if len(stateDirs) == 0 {
 		var err error
 		stateDirs, err = s.threadArtifactStateDirs(threadID)
@@ -301,7 +274,7 @@ func (s *Server) threadHasDurableActiveAgents(threadID string, stateDirs ...stri
 		}
 	}
 	for _, stateDir := range stateDirs {
-		active, err := threadHasDurableActiveAgentsInStateDir(threadID, stateDir)
+		active, err := threadHasDurableActiveAgentsInStateDir(binding.Documents, threadID, stateDir, stateDirs...)
 		if err != nil || active {
 			return active, err
 		}
@@ -309,11 +282,16 @@ func (s *Server) threadHasDurableActiveAgents(threadID string, stateDirs ...stri
 	return false, nil
 }
 
-func threadHasDurableActiveAgentsInStateDir(threadID, stateDir string) (bool, error) {
+func threadHasDurableActiveAgentsInStateDir(documents persistence.Documents, threadID, stateDir string, legacyStateDirs ...string) (bool, error) {
 	artifactDir := statepath.SessionArtifactDir(stateDir, threadID)
 	workerIDs := make(map[string]struct{})
 
-	threads, err := agentthread.NewStore(filepath.Join(artifactDir, "threads")).ListThreads()
+	threadDirs, harnessDirs := []string{}, []string{}
+	for _, root := range legacyStateDirs {
+		threadDirs = append(threadDirs, filepath.Join(statepath.SessionArtifactDir(root, threadID), "threads"))
+		harnessDirs = append(harnessDirs, filepath.Join(statepath.SessionArtifactDir(root, threadID), "harness"))
+	}
+	threads, err := agentthread.NewDocumentStore(documents, threadID, threadDirs...).ListThreads()
 	if err != nil {
 		return false, err
 	}
@@ -332,7 +310,7 @@ func threadHasDurableActiveAgentsInStateDir(threadID, stateDir string) (bool, er
 	if terminalPending {
 		return true, nil
 	}
-	harnessStore := harness.NewStore(harnessDir)
+	harnessStore := harness.NewDocumentStore(documents, threadID, harnessDirs...)
 	tasks, err := harnessStore.ListTasks()
 	if err != nil {
 		return false, err

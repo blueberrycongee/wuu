@@ -1,38 +1,38 @@
 import * as React from "react";
-import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationServiceV1, ApplicationGenerationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
 import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS } from "../../shared/workbench";
-import { type PluginHost, type RegisteredPresenter } from "./PluginHost";
+import type { UIContributionRegistryV1 as PluginHost, RegisteredPresenterV1 as RegisteredPresenter } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginConversationCards } from "./PluginConversationCards";
 import { PluginCommandActions } from "./PluginCommandActions";
 import { createPluginTranslator } from "./pluginI18n";
 import { useI18n } from "../i18n";
 import { dispatchFilePreviewAction } from "./FilePreviewPresentation";
+import { showActionErrorToast } from "../Toast";
 import { PluginIcon } from "../PublicIcon";
 
-export interface LegacyViewIdentity {
+export interface ContributionViewIdentity {
   readonly pluginId: string;
   readonly generation: string;
   readonly viewTypeId?: string;
   readonly tabId?: string;
   readonly context?: Readonly<Record<string, unknown>>;
 }
-export interface LegacyWorkbenchRenderInput {
+export interface WorkbenchRenderInput {
   readonly application: ApplicationServiceV1;
   readonly context: Readonly<Record<string, unknown>>;
 }
-export interface LegacyUIContributionsProps {
+export interface ContributionViewProps {
   readonly host: PluginHost;
   /** The declared semantic slot ID, independent of the declaring plugin's ID. */
   readonly semanticSlot: string;
   readonly application: ApplicationServiceV1;
   readonly context: Readonly<Record<string, unknown>>;
   readonly fallback?: React.ReactNode;
-  readonly createViewHost: (identity: LegacyViewIdentity) => ViewHostAPI;
-  readonly renderLegacyWorkbench?: (input: LegacyWorkbenchRenderInput) => React.ReactNode;
+  readonly createViewHost: (identity: ContributionViewIdentity) => ViewHostAPI;
 }
 
-type Identity = Pick<LegacyViewIdentity, "pluginId" | "generation">;
+type Identity = Pick<ContributionViewIdentity, "pluginId" | "generation">;
 const activationKeys = new WeakMap<object, number>();
 let nextKey = 1;
 function activationKey(host: PluginHost, identity: Identity): number {
@@ -54,31 +54,45 @@ function retain(host: PluginHost, identities: readonly Identity[], child: React.
   return identities.reduceRight((content, identity) => <Lifetime key={activationKey(host, identity)} host={host} identity={identity}>{content}</Lifetime>, child);
 }
 
-/** Called only for a declared non-service slot by the host's composition boundary. */
-export function LegacyUIContributions(props: LegacyUIContributionsProps): React.ReactNode {
-  const { semanticSlot } = props;
-  if (semanticSlot === "workbench.layers") {
-    if (!props.renderLegacyWorkbench) throw new Error("Legacy workbench host is unavailable");
-    return props.renderLegacyWorkbench({ application: props.application, context: props.context });
-  }
-  if (semanticSlot === "workspace.tools") return <WorkspaceTools {...props} />;
-  if (semanticSlot === "workspace.view") return <WorkspaceView {...props} />;
-  if (semanticSlot === "conversation.cards") return <Cards {...props} />;
-  if (semanticSlot === "conversation.message.actions") return <MessageActions {...props} />;
-  if (["header.workspace", "header.conversation", "content.preview"].includes(semanticSlot)) {
-    return <Presenters {...props} />;
-  }
-  return props.fallback;
+/** Product behavior is explicitly registered by the owning surface. The composition
+ * kernel knows no slot names and cannot silently restore disabled implementations. */
+function registerView(api: ApplicationGenerationAPI, slot: string, View: React.ComponentType<ContributionViewProps>): void {
+  api.registerUIContribution({ id: `default.${slot}`, target: `${api.manifestId}/${slot}`, mode: "wrap", order: -100,
+    render: ({ application, context, children }: UISlotRenderProps) => <View host={api.contributions} semanticSlot={slot}
+      application={application} context={context} fallback={children}
+      createViewHost={identity => application.workbench.createViewHostAPI({
+        id: identity.tabId ?? `renderer:${identity.pluginId}`, pluginId: identity.pluginId,
+        generation: identity.generation, viewTypeId: identity.viewTypeId ?? "renderer", region: "primary",
+        persistence: "session", context: identity.context ?? {},
+      })} />,
+  });
+}
+export function registerConversationContributions(api: ApplicationGenerationAPI): void {
+  registerView(api, "conversation.cards", Cards);
+  registerView(api, "conversation.message.actions", MessageActions);
+}
+export function registerPreviewContributions(api: ApplicationGenerationAPI): void {
+  registerView(api, "workspace.tools", WorkspaceTools);
+  registerView(api, "workspace.view", WorkspaceView);
+  registerView(api, "content.preview", Presenters);
+  registerView(api, "header.workspace", Presenters);
+}
+export function registerShellContributions(api: ApplicationGenerationAPI): void {
+  registerView(api, "header.workspace", Presenters);
+  registerView(api, "header.conversation", Presenters);
+  api.registerUIContribution({ id: "default.workbench", target: `${api.manifestId}/workbench.layers`,
+    render: ({ application, context }) => application.workbench.renderLayers({ settingsOnly: context.settingsOnly === true }),
+  });
 }
 
-function Cards(props: LegacyUIContributionsProps): React.ReactNode {
+function Cards(props: ContributionViewProps): React.ReactNode {
   const cards = React.useSyncExternalStore(listener => props.host.subscribeConversationCards(listener), () => props.host.getConversationCards(), () => props.host.getConversationCards());
   const threadId = props.context.threadId;
   if (typeof threadId !== "string") return props.fallback;
   return <>{props.fallback}{retain(props.host, cards.filter(card => card.threadId === threadId), <PluginConversationCards host={props.host} threadId={threadId} />)}</>;
 }
 
-function MessageActions(props: LegacyUIContributionsProps): React.ReactNode {
+function MessageActions(props: ContributionViewProps): React.ReactNode {
   const commands = useRegistry(props.host, () => props.host.getCommands());
   const item = props.context.snapshot as ConversationItemSnapshotV1 | undefined;
   if (!item || typeof props.context.turnId !== "string") return props.fallback;
@@ -89,26 +103,26 @@ function MessageActions(props: LegacyUIContributionsProps): React.ReactNode {
   return retain(props.host, commands, <PluginCommandActions host={props.host} context={context} />);
 }
 
-function WorkspaceTools(props: LegacyUIContributionsProps): React.ReactNode {
+function WorkspaceTools(props: ContributionViewProps): React.ReactNode {
   const entries = useRegistry(props.host, () => props.host.getWorkspaceTools());
   return <>{props.fallback}{entries.map(entry => <WorkspaceTool key={`${activationKey(props.host, entry)}:${entry.id}`} {...props} entry={entry} />)}</>;
 }
-function WorkspaceTool({ entry, ...props }: LegacyUIContributionsProps & { entry: ReturnType<PluginHost["getWorkspaceTools"]>[number] }): React.ReactNode {
-  const [error, setError] = React.useState<string>();
+function WorkspaceTool({ entry, ...props }: ContributionViewProps & { entry: ReturnType<PluginHost["getWorkspaceTools"]>[number] }): React.ReactNode {
+  const { t } = useI18n();
   const activation = React.useMemo(() => props.host.getGenerationActivation(entry.pluginId, entry.generation), [props.host, entry]);
   return <Lifetime host={props.host} identity={entry}><button type="button" className="workspace-tool-menu-item" onClick={() => {
     if (props.host.getGenerationActivation(entry.pluginId, entry.generation) !== activation) return;
     void props.application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId, generation: entry.generation,
-      viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(error => setError(String(error)));
+      viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(error => showActionErrorToast(error, t("plugins.surfaceUnavailable")));
   }} title={entry.description ? `${entry.title}\n${entry.description}` : entry.title}>
     <span className="workspace-tool-menu-icon" aria-hidden="true">
       <PluginIcon loadIcon={props.application.catalog.loadIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon" />
     </span>
     <span className="workspace-tool-menu-copy"><strong>{entry.title}</strong>{entry.description && <span>{entry.description}</span>}</span>
-  </button>{error && <span role="alert">{error}</span>}</Lifetime>;
+  </button></Lifetime>;
 }
 
-class LegacyBoundary extends React.Component<{ host: PluginHost; identity: Identity; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {
+class ContributionBoundary extends React.Component<{ host: PluginHost; identity: Identity; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {
   state = { failed: false };
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
   static getDerivedStateFromError() { return { failed: true }; }
@@ -117,14 +131,14 @@ class LegacyBoundary extends React.Component<{ host: PluginHost; identity: Ident
   componentWillUnmount() { this.observer?.dispose(); }
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
-function WorkspaceView(props: LegacyUIContributionsProps): React.ReactNode {
+function WorkspaceView(props: ContributionViewProps): React.ReactNode {
   const definitions = useRegistry(props.host, () => props.host.getViewTypes());
   const { pluginId, generation, viewTypeId, tabId } = props.context;
   const definition = definitions.find(view => view.pluginId === pluginId && view.generation === generation && view.id === viewTypeId);
   if (!definition || typeof tabId !== "string") return props.fallback ?? <div role="status">Plugin view is unavailable</div>;
   return <ViewContent key={`${activationKey(props.host, definition)}:${tabId}`} {...props} definition={definition} tabId={tabId} />;
 }
-function ViewContent({ definition, tabId, ...props }: LegacyUIContributionsProps & { definition: ReturnType<PluginHost["getViewTypes"]>[number]; tabId: string }): React.ReactNode {
+function ViewContent({ definition, tabId, ...props }: ContributionViewProps & { definition: ReturnType<PluginHost["getViewTypes"]>[number]; tabId: string }): React.ReactNode {
   const { locale } = useI18n();
   const commands = useRegistry(props.host, () => props.host.getCommands());
   const identity = React.useMemo(() => ({ pluginId: definition.pluginId, generation: definition.generation, viewTypeId: definition.id, tabId, context: props.context }), [definition, tabId, props.context]);
@@ -133,15 +147,15 @@ function ViewContent({ definition, tabId, ...props }: LegacyUIContributionsProps
   const commandContext = React.useMemo(() => Object.freeze({ contractVersion: 1 as const, target: "view.title" as const,
     viewId: tabId, viewTypeId: definition.id, viewPluginId: definition.pluginId, region: "auxiliary" as const }), [tabId, definition]);
   const View = definition.render;
-  return <Lifetime host={props.host} identity={definition}><LegacyBoundary host={props.host} identity={definition} fallback={props.fallback}>
+  return <Lifetime host={props.host} identity={definition}><ContributionBoundary host={props.host} identity={definition} fallback={props.fallback}>
     <div className="plugin-view-content" data-wuu-plugin={definition.pluginId} data-wuu-view={definition.id}>
       {retain(props.host, commands, <PluginCommandActions host={props.host} context={commandContext} />)}
       <View host={api} context={props.context} locale={locale} translate={translate} />
     </div>
-  </LegacyBoundary></Lifetime>;
+  </ContributionBoundary></Lifetime>;
 }
 
-function capturedHost(props: LegacyUIContributionsProps, identity: LegacyViewIdentity): ViewHostAPI {
+function capturedHost(props: ContributionViewProps, identity: ContributionViewIdentity): ViewHostAPI {
   const activation = props.host.getGenerationActivation(identity.pluginId, identity.generation);
   const assertActive = () => {
     if (!activation || props.host.getGenerationActivation(identity.pluginId, identity.generation) !== activation) throw new Error("Plugin host context is no longer active");
@@ -172,7 +186,7 @@ function capturedHost(props: LegacyUIContributionsProps, identity: LegacyViewIde
   });
 }
 
-function Presenters(props: LegacyUIContributionsProps): React.ReactNode {
+function Presenters(props: ContributionViewProps): React.ReactNode {
   const target = props.semanticSlot;
   const value: unknown = props.context.snapshot;
   let key: string | undefined;
@@ -187,7 +201,7 @@ function Presenters(props: LegacyUIContributionsProps): React.ReactNode {
   };
   return value === undefined ? props.fallback : draw(0, value);
 }
-function PresenterContent({ record, target, value, presentationKey, downstream, next, ...props }: LegacyUIContributionsProps & {
+function PresenterContent({ record, target, value, presentationKey, downstream, next, ...props }: ContributionViewProps & {
   record: RegisteredPresenter; target: string; value: unknown; presentationKey?: string; downstream: React.ReactNode; next: PresenterProps["next"];
 }): React.ReactNode {
   const actions = presenterActions(props, target, value);
@@ -200,12 +214,12 @@ function PresenterContent({ record, target, value, presentationKey, downstream, 
     if (props.host.getGenerationActivation(record.pluginId, record.generation) !== activation) throw new Error("Plugin host context is no longer active");
     return result;
   } });
-  return <Lifetime host={props.host} identity={record}><LegacyBoundary host={props.host} identity={record} fallback={downstream} onFailure={error => props.host.recordPresenterFailure(record, error)}>
+  return <Lifetime host={props.host} identity={record}><ContributionBoundary host={props.host} identity={record} fallback={downstream} onFailure={error => props.host.recordPresenterFailure(record, error)}>
     <RenderPresenter record={record} props={{ contractVersion: 1, target, key: presentationKey, snapshot: value, host, fallback: downstream, original: props.fallback, next }} />
-  </LegacyBoundary></Lifetime>;
+  </ContributionBoundary></Lifetime>;
 }
 function RenderPresenter({ record, props }: { record: RegisteredPresenter; props: PresenterProps }): React.ReactNode { return record.render(props); }
-function presenterActions(props: LegacyUIContributionsProps, target: string, value: unknown): Record<string, (input?: unknown) => unknown> {
+function presenterActions(props: ContributionViewProps, target: string, value: unknown): Record<string, (input?: unknown) => unknown> {
   if (target === "header.workspace") {
     const header = value as HeaderSnapshotV1;
     const viewId = props.context.viewId;

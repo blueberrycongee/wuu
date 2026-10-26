@@ -40,7 +40,7 @@ func acceptanceExternalStateOptions(t *testing.T, root, home, id, version, data 
 	require.NoError(t, err)
 	settings := &extensions.Settings{}
 	require.NoError(t, settings.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: item.EffectivePermissions, ApprovedAt: time.Now().UTC()}))
-	modules := []string{"wuu.session-state", id}
+	modules := []string{"wuu.session-state", "wuu.session.default", id}
 	return wuuruntime.StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Extensions: settings, Composition: &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: persistence.ServiceName, Major: 1, Provider: id}}}}}
 }
 

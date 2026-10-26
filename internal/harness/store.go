@@ -11,13 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
 
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	legacyDirs    []string
+	documents     persistence.Documents
+	documentKey   string
+	image         *persistence.DocumentImage
+	operationTime time.Time
+	dir           string
+	mu            sync.Mutex
 }
 
 func NewStore(dir string) *Store {
@@ -32,7 +38,17 @@ func (s *Store) Dir() string {
 }
 
 func (s *Store) UpsertTask(task Task) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.UpsertTask(task)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -48,10 +64,10 @@ func (s *Store) UpsertTask(task Task) error {
 		return err
 	}
 	if task.CreatedAt.IsZero() {
-		task.CreatedAt = time.Now().UTC()
+		task.CreatedAt = s.now()
 	}
 	if task.UpdatedAt.IsZero() {
-		task.UpdatedAt = time.Now().UTC()
+		task.UpdatedAt = s.now()
 	}
 	replaced := false
 	for i := range tasks {
@@ -73,11 +89,21 @@ func (s *Store) UpsertTask(task Task) error {
 		}
 		return tasks[i].Path < tasks[j].Path
 	})
-	return writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks)
+	return s.writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks)
 }
 
 func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus, completedAt time.Time, inputTokens, outputTokens int, errText string) (Task, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 Task
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.UpdateTaskStatus(taskID, status, completedAt, inputTokens, outputTokens, errText)
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return Task{}, nil
 	}
 	release, err := s.lockStore()
@@ -96,7 +122,7 @@ func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus, completedAt t
 		if tasks[i].ID != taskID {
 			continue
 		}
-		now := time.Now().UTC()
+		now := s.now()
 		tasks[i].Status = status
 		tasks[i].UpdatedAt = now
 		tasks[i].InputTokens = inputTokens
@@ -105,7 +131,7 @@ func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus, completedAt t
 		if !completedAt.IsZero() {
 			tasks[i].CompletedAt = completedAt
 		}
-		if err := writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
+		if err := s.writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
 			return Task{}, err
 		}
 		return tasks[i], nil
@@ -114,7 +140,17 @@ func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus, completedAt t
 }
 
 func (s *Store) UpsertRun(run AgentRun) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.UpsertRun(run)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -130,7 +166,7 @@ func (s *Store) UpsertRun(run AgentRun) error {
 		return err
 	}
 	if run.StartedAt.IsZero() {
-		run.StartedAt = time.Now().UTC()
+		run.StartedAt = s.now()
 	}
 	replaced := false
 	for i := range runs {
@@ -149,11 +185,21 @@ func (s *Store) UpsertRun(run AgentRun) error {
 		}
 		return runs[i].TaskID < runs[j].TaskID
 	})
-	return writeJSONFile(filepath.Join(s.dir, "runs.json"), runs)
+	return s.writeJSONFile(filepath.Join(s.dir, "runs.json"), runs)
 }
 
 func (s *Store) UpdateRunStatus(runID string, status TaskStatus, completedAt time.Time, inputTokens, outputTokens int, errText string) (AgentRun, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 AgentRun
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.UpdateRunStatus(runID, status, completedAt, inputTokens, outputTokens, errText)
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return AgentRun{}, nil
 	}
 	release, err := s.lockStore()
@@ -179,7 +225,7 @@ func (s *Store) UpdateRunStatus(runID string, status TaskStatus, completedAt tim
 		if !completedAt.IsZero() {
 			runs[i].CompletedAt = completedAt
 		}
-		if err := writeJSONFile(filepath.Join(s.dir, "runs.json"), runs); err != nil {
+		if err := s.writeJSONFile(filepath.Join(s.dir, "runs.json"), runs); err != nil {
 			return AgentRun{}, err
 		}
 		return runs[i], nil
@@ -188,7 +234,17 @@ func (s *Store) UpdateRunStatus(runID string, status TaskStatus, completedAt tim
 }
 
 func (s *Store) AddArtifact(artifact Artifact) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.AddArtifact(artifact)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -204,7 +260,7 @@ func (s *Store) AddArtifact(artifact Artifact) error {
 		return err
 	}
 	if artifact.CreatedAt.IsZero() {
-		artifact.CreatedAt = time.Now().UTC()
+		artifact.CreatedAt = s.now()
 	}
 	if artifact.ID == "" {
 		artifact.ID = artifactID(artifact)
@@ -226,7 +282,7 @@ func (s *Store) AddArtifact(artifact Artifact) error {
 		}
 		return artifacts[i].TaskID < artifacts[j].TaskID
 	})
-	if err := writeJSONFile(filepath.Join(s.dir, "artifacts.json"), artifacts); err != nil {
+	if err := s.writeJSONFile(filepath.Join(s.dir, "artifacts.json"), artifacts); err != nil {
 		return err
 	}
 	tasks, err := s.loadTasks()
@@ -243,8 +299,8 @@ func (s *Store) AddArtifact(artifact Artifact) error {
 		if artifact.Kind == ArtifactReport {
 			tasks[i].ReportPath = artifact.Path
 		}
-		tasks[i].UpdatedAt = time.Now().UTC()
-		if err := writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
+		tasks[i].UpdatedAt = s.now()
+		if err := s.writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
 			return err
 		}
 		break
@@ -254,12 +310,26 @@ func (s *Store) AddArtifact(artifact Artifact) error {
 		TaskID:    artifact.TaskID,
 		RunID:     artifact.RunID,
 		Artifact:  artifact.Path,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: s.now(),
 	})
 }
 
 func (s *Store) SubmitReport(report Report) (Report, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 Report
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.SubmitReport(report)
+			return err
+		})
+		if err == nil && result0.ReportPath != "" {
+			err = s.materializeReport(result0.TaskID)
+		}
+
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return report, nil
 	}
 	release, err := s.lockStore()
@@ -270,14 +340,14 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	if err := s.ensureDirLocked(); err != nil {
 		return Report{}, err
 	}
-	now := time.Now().UTC()
+	now := s.now()
 	if report.SubmittedAt.IsZero() {
 		report.SubmittedAt = now
 	}
 	if report.ID == "" {
 		report.ID = report.TaskID + "-report"
 	}
-	if report.ReportPath == "" {
+	if report.ReportPath == "" && s.dir != "" {
 		report.ReportPath = filepath.Join(s.dir, "reports", report.TaskID+".md")
 	}
 	reports, err := s.loadReports()
@@ -311,11 +381,13 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	// The markdown render happens only after the kind rules above decided
 	// this submission actually lands, so a rejected stand-in can never
 	// clobber a structured report's file at the shared default path.
-	if err := os.MkdirAll(filepath.Dir(report.ReportPath), securefs.DirMode); err != nil {
-		return Report{}, fmt.Errorf("create report dir: %w", err)
-	}
-	if err := os.WriteFile(report.ReportPath, []byte(renderReportMarkdown(report)), securefs.FileMode); err != nil {
-		return Report{}, fmt.Errorf("write report: %w", err)
+	if s.image == nil {
+		if err := os.MkdirAll(filepath.Dir(report.ReportPath), securefs.DirMode); err != nil {
+			return Report{}, fmt.Errorf("create report dir: %w", err)
+		}
+		if err := os.WriteFile(report.ReportPath, []byte(renderReportMarkdown(report)), securefs.FileMode); err != nil {
+			return Report{}, fmt.Errorf("write report: %w", err)
+		}
 	}
 	replaced := false
 	for i := range reports {
@@ -334,7 +406,7 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 		}
 		return reports[i].TaskID < reports[j].TaskID
 	})
-	if err := writeJSONFile(filepath.Join(s.dir, "reports.json"), reports); err != nil {
+	if err := s.writeJSONFile(filepath.Join(s.dir, "reports.json"), reports); err != nil {
 		return Report{}, err
 	}
 	artifact := Artifact{
@@ -377,7 +449,7 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	if !replacedArtifact {
 		artifacts = append(artifacts, artifact)
 	}
-	if err := writeJSONFile(filepath.Join(s.dir, "artifacts.json"), artifacts); err != nil {
+	if err := s.writeJSONFile(filepath.Join(s.dir, "artifacts.json"), artifacts); err != nil {
 		return Report{}, err
 	}
 	tasks, err := s.loadTasks()
@@ -393,7 +465,7 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 			tasks[i].ArtifactPaths = append(tasks[i].ArtifactPaths, report.ReportPath)
 		}
 		tasks[i].UpdatedAt = now
-		if err := writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
+		if err := s.writeJSONFile(filepath.Join(s.dir, "tasks.json"), tasks); err != nil {
 			return Report{}, err
 		}
 		break
@@ -414,7 +486,17 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 }
 
 func (s *Store) AppendEvent(event Event) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.AppendEvent(event)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -429,7 +511,17 @@ func (s *Store) AppendEvent(event Event) error {
 }
 
 func (s *Store) UpsertQueueItem(item QueueItem) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.UpsertQueueItem(item)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -447,7 +539,7 @@ func (s *Store) UpsertQueueItem(item QueueItem) error {
 	if item.ID == "" {
 		item.ID = item.TaskID
 	}
-	now := time.Now().UTC()
+	now := s.now()
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = now
 	}
@@ -469,16 +561,36 @@ func (s *Store) UpsertQueueItem(item QueueItem) error {
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].CreatedAt.Before(items[j].CreatedAt)
 	})
-	return writeJSONFile(filepath.Join(s.dir, "queue.json"), items)
+	return s.writeJSONFile(filepath.Join(s.dir, "queue.json"), items)
 }
 
 func (s *Store) DeleteQueueItem(id string) error {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.DeleteQueueItem(id)
+			return err
+		})
+		return err
+	}
+
 	_, err := s.ClaimQueueItem(id)
 	return err
 }
 
 func (s *Store) ClaimQueueItem(id string) (bool, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 bool
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ClaimQueueItem(id)
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return false, nil
 	}
 	release, err := s.lockStore()
@@ -505,7 +617,7 @@ func (s *Store) ClaimQueueItem(id string) (bool, error) {
 	if !found {
 		return false, nil
 	}
-	if err := writeJSONFile(filepath.Join(s.dir, "queue.json"), out); err != nil {
+	if err := s.writeJSONFile(filepath.Join(s.dir, "queue.json"), out); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -525,7 +637,16 @@ func (s *Store) MarkQueueItemFailing(id, errText string) (bool, error) {
 }
 
 func (s *Store) markQueueItemState(id string, state QueueItemState, errText string) (bool, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var marked bool
+		err := s.access(func(view *Store) error {
+			var err error
+			marked, err = view.markQueueItemState(id, state, errText)
+			return err
+		})
+		return marked, err
+	}
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return true, nil
 	}
 	release, err := s.lockStore()
@@ -549,8 +670,8 @@ func (s *Store) markQueueItemState(id string, state QueueItemState, errText stri
 		}
 		items[i].State = state
 		items[i].Error = strings.TrimSpace(errText)
-		items[i].UpdatedAt = time.Now().UTC()
-		if err := writeJSONFile(filepath.Join(s.dir, "queue.json"), items); err != nil {
+		items[i].UpdatedAt = s.now()
+		if err := s.writeJSONFile(filepath.Join(s.dir, "queue.json"), items); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -560,7 +681,18 @@ func (s *Store) markQueueItemState(id string, state QueueItemState, errText stri
 
 // GetQueueItem reads a durable queue item without consuming it.
 func (s *Store) GetQueueItem(id string) (QueueItem, bool, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 QueueItem
+		var result1 bool
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, result1, err = view.GetQueueItem(id)
+			return err
+		})
+		return result0, result1, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return QueueItem{}, false, nil
 	}
 	items, err := s.loadQueue()
@@ -583,35 +715,85 @@ func (s *Store) QueueItemExists(id string) (bool, error) {
 }
 
 func (s *Store) ListQueueItems() ([]QueueItem, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []QueueItem
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListQueueItems()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadQueue()
 }
 
 func (s *Store) ListTasks() ([]Task, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Task
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListTasks()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadTasks()
 }
 
 func (s *Store) ListRuns() ([]AgentRun, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []AgentRun
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListRuns()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadRuns()
 }
 
 func (s *Store) ListArtifacts() ([]Artifact, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Artifact
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListArtifacts()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadArtifacts()
 }
 
 func (s *Store) ListReports() ([]Report, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Report
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListReports()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadReports()
@@ -631,7 +813,22 @@ func (s *Store) ReportForTask(taskID string) (Report, bool, error) {
 }
 
 func (s *Store) ReadEvents() ([]Event, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Event
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ReadEvents()
+			return err
+		})
+		return result0, err
+	}
+
+	if s.image != nil {
+		var out []Event
+		err := s.image.Get("events", &out)
+		return out, err
+	}
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
@@ -670,6 +867,9 @@ func (s *Store) ReadEvents() ([]Event, error) {
 // waiting on the cross-process lock holds s.mu for the whole wait and would
 // stall every read behind a wedged transaction in another process.
 func (s *Store) lockStore() (func(), error) {
+	if s.image != nil {
+		return func() {}, nil
+	}
 	s.mu.Lock()
 	durable, err := storelock.Acquire(s.dir)
 	if err != nil {
@@ -683,6 +883,9 @@ func (s *Store) lockStore() (func(), error) {
 }
 
 func (s *Store) ensureDirLocked() error {
+	if s.image != nil {
+		return nil
+	}
 	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create harness store: %w", err)
 	}
@@ -694,7 +897,7 @@ func (s *Store) ensureDirLocked() error {
 // them under lockStore for read-modify-write atomicity.
 func (s *Store) loadTasks() ([]Task, error) {
 	var out []Task
-	if err := readJSONFile(filepath.Join(s.dir, "tasks.json"), &out); err != nil {
+	if err := s.readJSONFile(filepath.Join(s.dir, "tasks.json"), &out); err != nil {
 		return nil, err
 	}
 	for i := range out {
@@ -705,7 +908,7 @@ func (s *Store) loadTasks() ([]Task, error) {
 
 func (s *Store) loadRuns() ([]AgentRun, error) {
 	var out []AgentRun
-	if err := readJSONFile(filepath.Join(s.dir, "runs.json"), &out); err != nil {
+	if err := s.readJSONFile(filepath.Join(s.dir, "runs.json"), &out); err != nil {
 		return nil, err
 	}
 	for i := range out {
@@ -716,7 +919,7 @@ func (s *Store) loadRuns() ([]AgentRun, error) {
 
 func (s *Store) loadArtifacts() ([]Artifact, error) {
 	var out []Artifact
-	if err := readJSONFile(filepath.Join(s.dir, "artifacts.json"), &out); err != nil {
+	if err := s.readJSONFile(filepath.Join(s.dir, "artifacts.json"), &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -724,7 +927,7 @@ func (s *Store) loadArtifacts() ([]Artifact, error) {
 
 func (s *Store) loadReports() ([]Report, error) {
 	var out []Report
-	if err := readJSONFile(filepath.Join(s.dir, "reports.json"), &out); err != nil {
+	if err := s.readJSONFile(filepath.Join(s.dir, "reports.json"), &out); err != nil {
 		return nil, err
 	}
 	for i := range out {
@@ -735,15 +938,25 @@ func (s *Store) loadReports() ([]Report, error) {
 
 func (s *Store) loadQueue() ([]QueueItem, error) {
 	var out []QueueItem
-	if err := readJSONFile(filepath.Join(s.dir, "queue.json"), &out); err != nil {
+	if err := s.readJSONFile(filepath.Join(s.dir, "queue.json"), &out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 func (s *Store) appendEventLocked(event Event) error {
+	if s.image != nil {
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = s.now()
+		}
+		var events []Event
+		if err := s.image.Get("events", &events); err != nil {
+			return err
+		}
+		return s.image.Put("events", append(events, event))
+	}
 	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
+		event.CreatedAt = s.now()
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, securefs.FileMode)

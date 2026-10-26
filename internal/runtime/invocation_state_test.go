@@ -20,9 +20,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -35,31 +38,131 @@ type modelTerminalDocuments struct {
 	closeCtx context.Context
 }
 
-type modelReceiptStreamClient struct{ stream <-chan providers.StreamEvent }
-
-func (c modelReceiptStreamClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
-	return providers.ChatResponse{}, errors.New("stream-only fixture")
-}
-
-func (c modelReceiptStreamClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	return c.stream, nil
-}
-
-type turnReceiptStreamClient struct {
-	stream   chan providers.StreamEvent
+// receiptStreamFixture uses the declared model and receipt contracts. Its
+// controlled transport may outlive cancellation, like a physical provider tail.
+type receiptStreamFixture struct {
+	nativeModelProvider
+	host     *pluginhost.Host
+	stream   <-chan providers.StreamEvent
 	admitted chan providers.ChatRequest
+	canceled chan struct{}
 }
 
-func (c turnReceiptStreamClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
-	return providers.ChatResponse{}, errors.New("stream-only turn fixture")
+func (*receiptStreamFixture) ID() string { return "test.receipt-stream" }
+func (f *receiptStreamFixture) Status() pluginhost.Status {
+	status := f.nativeModelProvider.Status()
+	status.ID = f.ID()
+	return status
 }
-
-func (c turnReceiptStreamClient) StreamChat(_ context.Context, request providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	if _, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "stream"}); err != nil {
-		return nil, err
+func (*receiptStreamFixture) Prepare(context.Context) error { return nil }
+func (*receiptStreamFixture) Close(context.Context) error   { return nil }
+func (*receiptStreamFixture) ModelAdapters() []pluginhost.ModelAdapterDescriptor {
+	return []pluginhost.ModelAdapterDescriptor{{ID: "test.receipt-stream", Version: 1, Mode: "receipt", Operations: []string{"prepare", "media"}}}
+}
+func (f *receiptStreamFixture) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	return json.Marshal(f.ModelAdapters()[0])
+}
+func (f *receiptStreamFixture) InvokeCapability(ctx context.Context, p pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+	var input pluginprotocol.ModelAdapterInput
+	if err := json.Unmarshal(p.Input, &input); err != nil {
+		return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("receipt fixture: %w", err)
 	}
-	c.admitted <- request
-	return c.stream, nil
+	output := pluginprotocol.ModelAdapterOutput{}
+	switch input.Operation {
+	case "prepare":
+		output.Request = &input.Request
+	case "media":
+		output.Media = &input.Request.MediaInput
+	default:
+		request, err := modelwire.ApplyRequest(providers.ChatRequest{}, input.Request)
+		if err != nil {
+			return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("receipt fixture: %w", err)
+		}
+		if input.Receipt == nil {
+			return pluginhost.CapabilityInvokeResult{}, errors.New("missing receipt")
+		}
+		if f.canceled != nil {
+			stop := context.AfterFunc(ctx, func() { close(f.canceled) })
+			defer stop()
+		}
+		receipt := input.Receipt
+		request.Operation = providers.InferenceOperation{ID: receipt.OperationID, WorkloadProfile: providers.InferenceWorkloadProfile(receipt.Profile)}
+		request.Attempt = providers.NewRemoteInferenceAttempt(request.Operation, receipt.AttemptID, receipt.AttemptOrdinal, func(method string, in, out any) error {
+			raw, err := json.Marshal(modelReceiptTransportInput(method, in))
+			if err != nil {
+				return err
+			}
+			callCtx := context.Background()
+			if method == "create" {
+				callCtx = ctx
+			}
+			params, err := json.Marshal(modelReceiptParams{Receipt: receipt.ID, Input: raw})
+			if err != nil {
+				return err
+			}
+			result, callErr := f.registry.Call(callCtx, f.ID(), pluginhost.ServiceCallParams{Service: pluginhost.KernelModelReceiptService, Method: method, Params: params})
+			if callErr != nil {
+				return fmt.Errorf("receipt RPC %s: %w", method, callErr)
+			}
+			switch method {
+			case "create":
+				var wire pluginprotocol.ModelSubmission
+				if err := json.Unmarshal(result, &wire); err != nil {
+					return err
+				}
+				*out.(*providers.InferenceSubmission) = modelSubmissionFromWire(wire)
+			case "snapshot":
+				var wires []pluginprotocol.ModelSubmission
+				if err := json.Unmarshal(result, &wires); err != nil {
+					return err
+				}
+				for _, wire := range wires {
+					*out.(*[]providers.InferenceSubmission) = append(*out.(*[]providers.InferenceSubmission), modelSubmissionFromWire(wire))
+				}
+			}
+			return nil
+		})
+		submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "stream"})
+		if err != nil {
+			return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("receipt fixture: %w", err)
+		}
+		if f.admitted != nil {
+			f.admitted <- request
+		}
+		terminal := ""
+		var failure error
+		for event := range f.stream {
+			if terminal == "done" {
+				continue
+			}
+			submission.ObserveUsage(event.Usage)
+			if event.Type == providers.EventDone {
+				terminal = "done"
+			} else if event.Type == providers.EventError {
+				terminal = "error"
+				failure = event.Error
+			}
+			if terminal != "error" || event.Type == providers.EventError {
+				_ = f.host.EmitModelEvent(ctx, f.ID(), p.ExecutionID, logicalModelStreamEvent(event))
+			}
+		}
+		if failure == nil {
+			failure = ctx.Err()
+		}
+		if failure != nil {
+			submission.CompleteFailure(providers.NormalizeFailure(failure))
+		} else {
+			submission.CompleteSuccess(nil)
+		}
+		if err := request.Attempt.JournalError(); err != nil {
+			return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("receipt fixture: %w", err)
+		}
+		if failure != nil {
+			return pluginhost.CapabilityInvokeResult{}, failure
+		}
+	}
+	raw, err := json.Marshal(output)
+	return pluginhost.CapabilityInvokeResult{Output: raw}, err
 }
 
 type turnReceiptJournal struct {
@@ -83,18 +186,34 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 			root := t.TempDir()
 			home, workspace := testWorkspaceState(t, root)
 			owner := &Session{RootDir: root, WuuHome: home, HomeDir: home, StateDir: workspace}
+			stream := make(chan providers.StreamEvent, 1)
+			physical := &receiptStreamFixture{stream: stream, admitted: make(chan providers.ChatRequest, 1), canceled: make(chan struct{})}
 			build := func(name string) (*PluginGeneration, *modelTerminalDocuments) {
 				t.Helper()
 				provider := &modelTerminalDocuments{Service: persistence.NewService("test.turn-documents", filepath.Join(root, "turn-documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}
 				close(provider.release)
 				modules := testStateModules()
 				modules[1] = provider.ID()
+				model := physical
+				if name != "turn-original" {
+					model = &receiptStreamFixture{}
+				}
+				modules = append(modules, kernelHostModule, modelExecutionConsumer, capacityPolicyModule, capacityResourceModule, model.ID())
 				host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
 					&composition.Config{Version: composition.Version, Modules: &modules}, "",
-					NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }})
+					withCapacityProviders([]NativeProviderFactory{
+						{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
+						{ID: model.ID(), Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+							model.registry = input.Registry
+							model.state = pluginhost.StatePrepared
+							return model, nil
+						}},
+					}, NewCapacityResources(0))...)
 				if err != nil {
 					t.Fatal(err)
 				}
+				model.host = host
+				kernel.bindModelSession(owner, host)
 				generation := &PluginGeneration{id: name, host: host, state: kernel.state, hooks: hooks.NewDispatcher(nil)}
 				kernel.bindStateGeneration(generation, owner)
 				return generation, provider
@@ -105,13 +224,12 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 			if err := original.host.Activate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			physical := turnReceiptStreamClient{stream: make(chan providers.StreamEvent, 1), admitted: make(chan providers.ChatRequest, 1)}
 			unblock := sync.OnceFunc(func() {
-				physical.stream <- providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 71, OutputTokens: 13}}
-				close(physical.stream)
+				stream <- providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 71, OutputTokens: 13}}
+				close(stream)
 			})
 			defer unblock()
-			owner.StreamRunner = &agent.StreamRunner{Client: physical, ProviderName: "fixture", Model: "fixture", LoopDriver: agent.DefaultDriver{}, DisableAutoCompact: true}
+			owner.StreamRunner = &agent.StreamRunner{Client: &modelRouteClient{host: original.host, provider: "fixture", model: "fixture"}, ProviderName: "fixture", Model: "fixture", LoopDriver: agent.DefaultDriver{}, DisableAutoCompact: true}
 			owner.applyPluginGeneration(original)
 			t.Cleanup(func() { _, _ = owner.Cleanup() })
 			captured, err := owner.RetainState()
@@ -136,7 +254,7 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("turn did not enter the native stream")
 			}
-			admitted := request.Execution.Snapshot().Submissions
+			admitted := request.Attempt.SubmissionSnapshot()
 			if len(admitted) != 1 {
 				t.Fatalf("admitted physical submissions = %d", len(admitted))
 			}
@@ -151,9 +269,16 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			select {
-			case <-journal.logicalDone:
+			case <-physical.canceled:
 			case <-time.After(10 * time.Second):
-				t.Fatal("logical turn accounting did not finish after cancellation")
+				t.Fatal("cancellation did not reach selected physical callback")
+			}
+			// Logical cancellation must not claim persisted completion while
+			// the selected provider still owns unobserved physical receipts.
+			select {
+			case <-journal.logicalDone:
+				t.Fatal("logical accounting passed unsettled physical receipts")
+			default:
 			}
 			if !timeout {
 				unblock()
@@ -171,14 +296,32 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("ordinary turn cleanup did not honor its bounded wait")
 			}
+			if !timeout {
+				select {
+				case <-journal.logicalDone:
+				case <-time.After(10 * time.Second):
+					t.Fatal("settled physical receipts did not finish logical accounting")
+				}
+			}
 			if timeout {
 				select {
 				case <-documents.closed:
 					t.Error("turn timeout released authority before the physical producer ended")
 				default:
 				}
-				if _, err := captured.Documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1"}); err != nil {
-					t.Errorf("pending producer lost its original documents: %v", err)
+				pending, err := captured.Documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1"})
+				if err != nil {
+					t.Fatalf("pending producer lost its original documents: %v", err)
+				}
+				if len(pending.Documents) != 1 {
+					t.Fatalf("pending physical receipts = %d", len(pending.Documents))
+				}
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(pending.Documents[0].Value, &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.Outcome != providers.InferenceSubmissionInFlight || receipt.ReportedUsage != nil || !receipt.CompletedAt.IsZero() {
+					t.Fatalf("caller timeout invented physical completion: %+v", receipt)
 				}
 				unblock()
 			}
@@ -204,16 +347,13 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 				if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID {
 					t.Errorf("receipt lost its admitted identity: %+v", receipt)
 				}
-				// Logical cancellation may checkpoint before the native observer's
-				// terminal event. An aborted final checkpoint preserves that unknown.
-				if !(timeout && receipt.Outcome == providers.InferenceSubmissionInFlight) && (receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled) {
+				// A caller deadline is not physical completion. Exact late
+				// provider receipts remain durable after its callback settles.
+				if receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled {
 					t.Errorf("receipt lost cancellation or invented physical completion: %+v", receipt)
 				}
-				if !timeout && (receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 71 || receipt.ReportedUsage.OutputTokens != 13) {
+				if receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 71 || receipt.ReportedUsage.OutputTokens != 13 {
 					t.Errorf("final required checkpoint lost late physical usage: %+v", receipt)
-				}
-				if timeout && receipt.ReportedUsage != nil {
-					t.Errorf("aborted cleanup invented a successful final checkpoint: %+v", receipt)
 				}
 			}
 			if receiptCount != 1 {
@@ -540,7 +680,24 @@ func TestDirectAdapterReceiptScopeRetainsCanceledCallback(t *testing.T) {
 		capability:              pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityModelAdapter, Kind: "transform", Version: 1, ErrorPolicy: pluginhost.ErrorPolicyPropagate},
 		adapters:                []pluginhost.ModelAdapterDescriptor{{ID: "test.receipt", Version: 1, Mode: "direct"}},
 	}
-	host := pluginhost.New(caller)
+	resources := NewCapacityResources(0)
+	policy, err := capacityProviderFactory(resources, false).Build(NativeProviderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, err := capacityProviderFactory(resources, true).Build(NativeProviderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := &runtimeServiceConsumer{id: modelExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
+		{Name: capacityPolicyService, MajorVersion: 1, Required: true}, {Name: capacityResourceService, MajorVersion: 1, Required: true},
+	}}
+	host := pluginhost.New(caller, consumer, policy, physical)
+	registry, conflicts := pluginhost.BuildServiceRegistry(caller, consumer, policy, physical)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host.AttachServiceRegistry(registry, conflicts)
 	defer host.Close(context.Background())
 	if err := host.Activate(ctx); err != nil {
 		t.Fatal(err)
@@ -607,29 +764,57 @@ func TestDirectAdapterReceiptScopeRetainsCanceledCallback(t *testing.T) {
 	}
 }
 
-// Logical cancellation/error can finish before the native adapter's observer.
-// Its tail must remain joined, retain late usage, and ignore events after done.
+// Logical cancellation may finish before the selected adapter callback. Its
+// physical tail remains joined; terminal output waits for callback settlement,
+// late physical usage survives cancellation, and data after done is ignored.
 func TestNativeModelReceiptScopeJoinsObserverTail(t *testing.T) {
 	for _, terminal := range []string{"cancel", "error", "done"} {
 		t.Run(terminal, func(t *testing.T) {
 			modelCtx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			ctx, scope := providers.NewModelReceiptScope(modelCtx)
-			request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Provider: "fixture", Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+			request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Provider: "fixture", Model: "fixture", Messages: []providers.ChatMessage{{Role: "user", Content: "hold"}}}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "stream"}); err != nil {
 				t.Fatal(err)
 			}
 			physical := make(chan providers.StreamEvent)
 			var closeOnce sync.Once
 			closePhysical := func() { closeOnce.Do(func() { close(physical) }) }
 			defer closePhysical()
-			client := &modelAdapterClient{inner: modelReceiptStreamClient{stream: physical}}
+			fixture := &receiptStreamFixture{stream: physical, admitted: make(chan providers.ChatRequest, 1)}
+			root := t.TempDir()
+			home, workspace := testWorkspaceState(t, root)
+			modules := append(testStateModules(), kernelHostModule, modelExecutionConsumer, capacityPolicyModule, capacityResourceModule, fixture.ID())
+			host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+				&composition.Config{Version: composition.Version, Modules: &modules}, "",
+				withCapacityProviders([]NativeProviderFactory{{ID: fixture.ID(), Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+					fixture.registry = input.Registry
+					fixture.state = pluginhost.StatePrepared
+					return fixture, nil
+				}}}, NewCapacityResources(0))...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.host = host
+			kernel.bindModelSession(&Session{RootDir: root, HomeDir: home}, host)
+			defer host.Close(context.Background())
+			if err := host.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			client := &modelAdapterClient{host: host}
 			logical, err := client.StreamChat(ctx, request)
 			if err != nil {
 				t.Fatal(err)
+			}
+			select {
+			case <-fixture.admitted:
+			case <-time.After(10 * time.Second):
+				select {
+				case event := <-logical:
+					t.Fatalf("adapter did not admit physical submission: %+v", event)
+				default:
+					t.Fatal("adapter did not admit physical submission")
+				}
 			}
 			if terminal == "cancel" {
 				cancel()
@@ -650,10 +835,20 @@ func TestNativeModelReceiptScopeJoinsObserverTail(t *testing.T) {
 				}
 				close(logicalDone)
 			}()
-			select {
-			case <-logicalDone:
-			case <-time.After(10 * time.Second):
-				t.Fatal("logical result waited for the still-open physical tail")
+			if terminal == "cancel" {
+				select {
+				case <-logicalDone:
+				case <-time.After(10 * time.Second):
+					t.Fatal("cancellation waited for the physical tail")
+				}
+			} else {
+				// Public adapters hold their terminal until the callback returns,
+				// so a failure after emitted done cannot become false success.
+				select {
+				case <-logicalDone:
+					t.Fatal("terminal escaped before the provider callback settled")
+				default:
+				}
 			}
 			scope.Seal()
 			select {
@@ -677,6 +872,11 @@ func TestNativeModelReceiptScopeJoinsObserverTail(t *testing.T) {
 			defer stopWait()
 			if err := scope.Wait(waitCtx); err != nil {
 				t.Fatal(err)
+			}
+			select {
+			case <-logicalDone:
+			case <-waitCtx.Done():
+				t.Fatal("settled callback did not release logical result")
 			}
 			receipts := request.Execution.Snapshot().Submissions
 			if len(receipts) != 1 {
@@ -754,7 +954,7 @@ func TestModelInvocationRetainsCanceledTerminalAccounting(t *testing.T) {
 				{Name: pluginhost.KernelModelRequestService, MajorVersion: 1, Required: true},
 				{Name: pluginhost.KernelModelInvokeService, MajorVersion: 1, Required: true},
 			}}
-			modules = append(modules, kernelHostModule, caller.ID())
+			modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, loopdriver.NativePolicyModule, caller.ID())
 			cfg := config.Default()
 			cfg.DefaultProvider = "fixture"
 			cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: server.URL + "/v1", APIKey: "fixture", Model: "gpt-test"}}
@@ -769,7 +969,9 @@ func TestModelInvocationRetainsCanceledTerminalAccounting(t *testing.T) {
 			factory := NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}
 			callerFactory := NativeProviderFactory{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }}
 			host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
-				&composition.Config{Version: composition.Version, Modules: &modules}, "", factory, callerFactory)
+				&composition.Config{Version: composition.Version, Modules: &modules}, "", withCapacityProviders([]NativeProviderFactory{factory, callerFactory, {ID: config.Module, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+					return config.NewMemoryService(config.Module, cfg), nil
+				}}}, NewCapacityResources(0))...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -850,12 +1052,28 @@ func TestModelInvocationRetainsCanceledTerminalAccounting(t *testing.T) {
 				t.Fatalf("retire caller: %+v, %v", outcome, retired)
 			}
 			var terminalCtx context.Context
+			var logicalErr error
+			logicalReturned := false
+			deadline := time.NewTimer(10 * time.Second)
+			defer deadline.Stop()
+			for terminalCtx == nil {
+				select {
+				case terminalCtx = <-provider.entered:
+				case logicalErr = <-completed:
+					logicalReturned = true
+					if logicalErr == nil {
+						t.Fatal("canceled model request succeeded")
+					}
+					// Cancellation may return before counted physical cleanup;
+					// the selected authority must still reach its terminal write.
+				case <-deadline.C:
+					t.Fatal("terminal attempt did not reach selected provider")
+				}
+			}
 			select {
-			case terminalCtx = <-provider.entered:
-			case err := <-completed:
-				t.Fatalf("cancellation skipped terminal attempt persistence: %v", err)
-			case <-time.After(10 * time.Second):
-				t.Fatal("terminal attempt did not reach selected provider")
+			case <-provider.closed:
+				t.Fatal("logical cancellation released authority before terminal write")
+			default:
 			}
 			ownerReleased := make(chan struct{})
 			go func() { generation.Release(); close(ownerReleased) }()
@@ -866,13 +1084,15 @@ func TestModelInvocationRetainsCanceledTerminalAccounting(t *testing.T) {
 				t.Fatal("generation release stalled")
 			}
 			unblock()
-			select {
-			case err := <-completed:
-				if err == nil {
-					t.Error("canceled model request succeeded")
+			if !logicalReturned {
+				select {
+				case logicalErr = <-completed:
+				case <-time.After(10 * time.Second):
+					t.Fatal("model callback did not finish")
 				}
-			case <-time.After(10 * time.Second):
-				t.Fatal("model callback did not finish")
+			}
+			if logicalErr == nil {
+				t.Error("canceled model request succeeded")
 			}
 			<-ownerReleased
 			select {

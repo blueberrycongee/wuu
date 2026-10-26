@@ -154,10 +154,18 @@ async function sharedExecutionCancellation(): Promise<void> {
       try { await host.call("host.storage.get", { scope: "workspace", key: "cancelled" }); }
       catch (error) { assert(error === execution.signal.reason, "cancelled execution started a new host call"); }
       assert(peer.frames.length === before, "cancelled execution emitted another host call");
+      await host.call("host.service.call", { service: "host.model.receipt", method: "settle", execution_id: "must-not-be-forwarded", params: { receipt: "owned-receipt" } }, { cleanup: true });
       return { cancelled: execution.signal.aborted };
     },
   } as RuntimePlugin);
-  peer.onCall = () => new Promise(() => {});
+  peer.onCall = async (frame) => {
+    if (frame.params.service === "host.model.receipt") {
+      assert(!frame.params.execution_id, "settlement reused cancelled execution authority");
+      assert(frame.params.cleanup === true, "settlement did not request backend cleanup validation");
+      return {};
+    }
+    return new Promise(() => {});
+  };
   await peer.start();
   const first = peer.request("service.invoke", { service: "wait.service", method: "call", caller: "test", execution_id: "shared", params: { index: 0 } });
   await started[0]!.promise;

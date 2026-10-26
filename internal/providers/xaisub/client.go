@@ -200,3 +200,9 @@ func cloneHeaders(in map[string]string) map[string]string {
 	}
 	return out
 }
+
+// Close releases provider-owned pools after admitted callbacks have drained.
+func (c *Client) Close() error {
+	providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	return nil
+}

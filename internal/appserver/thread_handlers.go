@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -103,22 +103,25 @@ func (s *Server) handleThreadStart(req Request) error {
 	if strings.TrimSpace(params.Engine) == "" {
 		engineID = agentengine.NormalizeEngineID(string(s.rt.DefaultEngine()))
 	}
-	if !s.rt.EngineAvailable(engineID) {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("%w: %q is unavailable; enable it or explicitly select another engine", agentengine.ErrUnknownEngine, engineID))
+	descriptorContext, cancelDescriptor := context.WithTimeout(context.Background(), 5*time.Second)
+	descriptor, descriptorErr := s.engineDescriptorForState(descriptorContext, binding, engineID)
+	cancelDescriptor()
+	if descriptorErr != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("%w: %q is unavailable: %v", agentengine.ErrUnknownEngine, engineID, descriptorErr))
 	}
+	hostLoop := slices.Contains(descriptor.Capabilities, "host-managed-continuation")
+
 	selection := s.currentSessionRuntimeSelection()
 	selection.Speed = strings.TrimSpace(params.Speed)
 	selection.ModelOptions = params.ModelOptions
-	if len(params.ModelOptions) > 0 {
-		entry, ok := enginecatalog.Lookup(string(engineID))
-		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
-			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
-		}
+	if len(params.ModelOptions) > 0 && !slices.Contains(descriptor.Capabilities, "model-options") {
+		return s.writeResponse(req.ID, nil, errors.New("selected engine does not expose additional model options"))
 	}
+
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if engineID != agentengine.EngineWuu {
+	if !hostLoop {
 		// Protocol engines do not share Wuu's provider catalog or effort
 		// surface. Empty model/effort means the agent's native default, not
 		// the current Wuu conversation's selection.
@@ -132,7 +135,7 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	if effort := strings.TrimSpace(params.Effort); effort != "" {
 		selection.Effort = effort
-		if engineID == agentengine.EngineWuu {
+		if hostLoop {
 			// The desktop mirrors one level choice into both columns before
 			// the first send, and the runtime update path stores the level
 			// in the variant column (see handleThreadModelSelection). Keep
@@ -151,8 +154,8 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	if mode := strings.TrimSpace(params.PermissionMode); mode != "" {
 		selection.PermissionMode = config.NormalizePermissionMode(mode)
-	} else if engineID != agentengine.EngineWuu {
-		// External agents initially run without interactive approval friction.
+	} else if slices.Contains(descriptor.Capabilities, "default-permission-unconfined") {
+		// Native CLI adapters initially run without interactive approval friction.
 		// The persisted generic mode is later mapped to each engine's native
 		// full-access setting and remains visible in the composer.
 		selection.PermissionMode = config.PermissionModeUnconfined
@@ -161,7 +164,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		selection.ApproveForMe = *params.ApproveForMe
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
-	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	selection.ApproveForMe = selection.ApproveForMe && hostLoop && approvefor.EnabledForMode(selection.PermissionMode)
 	if params.Project != nil {
 		th, err := s.startProjectThread(binding, selection, engineID, params)
 		if err != nil {
@@ -689,7 +692,15 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if found && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+	canonicalHistory := false
+	if found {
+		descriptor, descriptorErr := s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(metadata.EngineID))
+		if descriptorErr != nil {
+			return s.writeResponse(req.ID, nil, descriptorErr)
+		}
+		canonicalHistory = slices.Contains(descriptor.Capabilities, "canonical-history")
+	}
+	if found && !canonicalHistory {
 		lease, err := s.tryAcquireThreadMutationLease(binding, sourceID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("wait for the native turn to finish before forking: %w", err))
@@ -745,7 +756,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 	}
 	if err != nil {
-		if errors.Is(err, errForkTargetNotFound) && agentengine.NormalizeEngineID(source.thread.EngineID) != agentengine.EngineWuu {
+		if errors.Is(err, errForkTargetNotFound) && !canonicalHistory {
 			err = fmt.Errorf("%s cannot verify this item as a native history cutoff; choose a completed turn's final reply", source.thread.EngineID)
 		}
 		return s.writeResponse(req.ID, nil, err)
@@ -785,7 +796,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 	}
 
-	nativeRef, err := s.forkNativeHistory(ctx, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
+	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -931,20 +942,15 @@ func (s *Server) handleThreadEditMessageForState(binding *runtime.State, ctx con
 	engineID, oldNativeRef, cwd := th.EngineID, th.EngineRef, th.CWD
 	fromSeq := th.History[len(nextHistory)].Seq
 	removedHistory := cloneHistory(th.History[len(nextHistory):])
-	nativeEdit := agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu
-	if nativeEdit {
-		// The durable mutation lease fences turns/edits while the external RPC
-		// waits. Keep cached reads and Stop from blocking the stdio dispatcher.
-		th.nativeHistoryMutation = true
-		th.mu.Unlock()
-	}
-	nativeRef, err := s.forkNativeHistory(ctx, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
-	if nativeEdit {
-		th.mu.Lock()
-		th.nativeHistoryMutation = false
-		if err == nil {
-			err = ctx.Err()
-		}
+	// Every provider operation can block, including a replacement for the
+	// canonical-history engine. Fence mutation without holding the dispatch lock.
+	th.nativeHistoryMutation = true
+	th.mu.Unlock()
+	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
+	th.mu.Lock()
+	th.nativeHistoryMutation = false
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		releaseThreadMutationLease(th.ID, mutationLease)
@@ -1156,7 +1162,10 @@ func (s *Server) handleThreadList(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return s.writeResponse(req.ID, nil, storeErr)
+		}
 		if store == nil {
 			continue
 		}
@@ -1171,6 +1180,8 @@ func (s *Server) handleThreadList(req Request) error {
 		}
 	}
 
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
@@ -1182,7 +1193,7 @@ func (s *Server) handleThreadList(req Request) error {
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 
 	s.mu.Lock()
@@ -1255,7 +1266,10 @@ func (s *Server) handleThreadListAll(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return s.writeResponse(req.ID, nil, storeErr)
+		}
 		if store == nil {
 			continue
 		}
@@ -1269,6 +1283,8 @@ func (s *Server) handleThreadListAll(req Request) error {
 			}
 		}
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
@@ -1277,7 +1293,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 	s.mu.Lock()
 	for _, th := range s.threads {
@@ -1335,6 +1351,8 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	registered := s.registeredWorkspaces()
 	for i := range sessions {
@@ -1348,7 +1366,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if sess.ArchivedAt == nil {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 
 	s.mu.Lock()
@@ -1637,7 +1655,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
 	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
-	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && (selection.Model != "" || th.EngineID != string(agentengine.EngineWuu)) {
+	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
 	th.EngineRef = strings.TrimSpace(metadata.EngineRef)
@@ -1707,56 +1725,74 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	th.ApproveForMe = selection.ApproveForMe
 }
 
-func threadEntryFromSession(sess session.Session, provider, model string) threadListEntry {
-	updatedAt := sess.UpdatedAt
-	if updatedAt.IsZero() {
-		updatedAt = sess.CreatedAt
-	}
-	selection := runtimeSelectionFromSession(sess)
-	if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
-		provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
-	}
-	permissionMode := ""
-	if selection.PermissionMode != "" {
-		permissionMode = config.NormalizePermissionMode(selection.PermissionMode)
-	}
-	return threadListEntry{
-		thread: Thread{
-			ID:                    sess.ID,
-			Source:                sess.Source,
-			ReadOnly:              projectExecutionDisabled(sess.Source),
-			ProjectID:             projectIDForSession(sess),
-			ProjectRole:           projectRoleForSession(sess),
-			Preview:               firstNonEmpty(sess.Title, sess.Summary),
-			Title:                 sess.Title,
-			TitleRevision:         sess.TitleRevision,
-			ModelProvider:         firstNonEmpty(selection.Provider, provider),
-			Model:                 firstNonEmpty(selection.Model, model),
-			ModelVariant:          selection.Variant,
-			ModelEffort:           selection.Effort,
-			Speed:                 selection.Speed,
-			ModelOptions:          selection.ModelOptions,
-			PermissionMode:        permissionMode,
-			ApproveForMe:          sess.ApproveForMe,
-			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
-			CWD:                   sess.CWD,
-			WorkspaceID:           sess.WorkspaceID,
-			Status:                ThreadStatusIdle,
-			Pinned:                sess.PinnedAt != nil,
-			FolderID:              sess.FolderID,
-			Archived:              sess.ArchivedAt != nil,
-			ArchiveReason:         sess.ArchiveReason,
-			ForkedFromID:          sess.ForkedFromID,
-			ForkedFromTurnID:      sess.ForkedFromTurnID,
-			ForkedFromItemID:      sess.ForkedFromItemID,
-			Worktree:              threadWorktreeInfo(sess.WorktreePath, sess.WorktreeBaseHEAD, sess.WorktreeBaseRepo),
-			CreatedAt:             sess.CreatedAt,
-			UpdatedAt:             updatedAt,
-			LatestCompletedTurnID: sess.LatestCompletedTurnID,
-			Turns:                 []Turn{},
-		},
-		pinnedAt: sess.PinnedAt,
-	}
+// One captured listing shares a deadline and memo, including failed discovery.
+// Legacy rows must not multiply a slow provider's descriptor latency.
+func (s *Server) threadEntryBuilder(binding *runtime.State) (func(session.Session) threadListEntry, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hostManaged := make(map[agentengine.EngineID]bool)
+	return func(sess session.Session) threadListEntry {
+		provider, model := s.rt.ProviderName, s.rt.Model
+		updatedAt := sess.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = sess.CreatedAt
+		}
+		selection := runtimeSelectionFromSession(sess)
+		if selection.Provider != "" {
+			provider, model = selection.Provider, selection.Model
+		} else {
+			id := agentengine.NormalizeEngineID(sess.EngineID)
+			managed, known := hostManaged[id]
+			if !known {
+				descriptor, err := s.engineDescriptorForState(ctx, binding, id)
+				managed = err == nil && slices.Contains(descriptor.Capabilities, "host-managed-continuation")
+				hostManaged[id] = managed
+			}
+			if !managed {
+				provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
+			}
+		}
+		permissionMode := ""
+		if selection.PermissionMode != "" {
+			permissionMode = config.NormalizePermissionMode(selection.PermissionMode)
+		}
+		return threadListEntry{
+			thread: Thread{
+				ID:                    sess.ID,
+				Source:                sess.Source,
+				ReadOnly:              projectExecutionDisabled(sess.Source),
+				ProjectID:             projectIDForSession(sess),
+				ProjectRole:           projectRoleForSession(sess),
+				Preview:               firstNonEmpty(sess.Title, sess.Summary),
+				Title:                 sess.Title,
+				TitleRevision:         sess.TitleRevision,
+				ModelProvider:         firstNonEmpty(selection.Provider, provider),
+				Model:                 firstNonEmpty(selection.Model, model),
+				ModelVariant:          selection.Variant,
+				ModelEffort:           selection.Effort,
+				Speed:                 selection.Speed,
+				ModelOptions:          selection.ModelOptions,
+				PermissionMode:        permissionMode,
+				ApproveForMe:          sess.ApproveForMe,
+				EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
+				CWD:                   sess.CWD,
+				WorkspaceID:           sess.WorkspaceID,
+				Status:                ThreadStatusIdle,
+				Pinned:                sess.PinnedAt != nil,
+				FolderID:              sess.FolderID,
+				Archived:              sess.ArchivedAt != nil,
+				ArchiveReason:         sess.ArchiveReason,
+				ForkedFromID:          sess.ForkedFromID,
+				ForkedFromTurnID:      sess.ForkedFromTurnID,
+				ForkedFromItemID:      sess.ForkedFromItemID,
+				Worktree:              threadWorktreeInfo(sess.WorktreePath, sess.WorktreeBaseHEAD, sess.WorktreeBaseRepo),
+				CreatedAt:             sess.CreatedAt,
+				UpdatedAt:             updatedAt,
+				LatestCompletedTurnID: sess.LatestCompletedTurnID,
+				Turns:                 []Turn{},
+			},
+			pinnedAt: sess.PinnedAt,
+		}
+	}, cancel
 }
 
 func (s *Server) threadWithChildAgents(binding *runtime.State, thread Thread) (Thread, error) {
@@ -1845,7 +1881,10 @@ func worktreeBaseRepo(info *WorktreeInfo) string {
 }
 
 func (s *Server) childAgentsForThread(binding *runtime.State, threadID string) ([]Agent, error) {
-	store := s.agentThreadStore(threadID)
+	store, storeErr := s.agentThreadStore(binding, threadID)
+	if storeErr != nil {
+		return nil, storeErr
+	}
 	if store == nil {
 		return nil, nil
 	}
@@ -1853,7 +1892,7 @@ func (s *Server) childAgentsForThread(binding *runtime.State, threadID string) (
 	if err != nil {
 		return nil, err
 	}
-	threads, err = s.reconcilePersistedTerminalAgentThreads(threadID, store, threads)
+	threads, err = s.reconcilePersistedTerminalAgentThreads(binding, threadID, store, threads)
 	if err != nil {
 		return nil, err
 	}
@@ -1924,6 +1963,7 @@ func (s *Server) childAgentsForThread(binding *runtime.State, threadID string) (
 // and thread/resume must also report terminal truth without requiring the user
 // to start another turn first.
 func (s *Server) reconcilePersistedTerminalAgentThreads(
+	binding *runtime.State,
 	rootThreadID string,
 	store *agentthread.Store,
 	threads []agentthread.Metadata,
@@ -1931,27 +1971,32 @@ func (s *Server) reconcilePersistedTerminalAgentThreads(
 	if s == nil || store == nil || strings.TrimSpace(rootThreadID) == "" {
 		return threads, nil
 	}
-	stateDir, err := s.workspaceStateDir()
+	stateDirs, err := s.threadArtifactStateDirs(rootThreadID)
 	if err != nil {
 		return nil, err
 	}
-	artifactDir := statepath.SessionArtifactDir(stateDir, rootThreadID)
-	historyDir := filepath.Join(artifactDir, "workers")
-	harnessDir := filepath.Join(artifactDir, "harness")
 	for index := range threads {
 		meta := threads[index]
 		if meta.Source.Kind != agentthread.SourceThreadSpawn ||
 			!isRunningAgentStatus(string(meta.Status)) {
 			continue
 		}
-		active, err := agentcontrol.WorkerExecutionActive(harnessDir, meta.ID)
-		if err != nil {
-			return nil, fmt.Errorf("inspect worker %q execution lease: %w", meta.ID, err)
+		active := false
+		paths := make([]string, 0, len(stateDirs))
+		for _, stateDir := range stateDirs {
+			artifactDir := statepath.SessionArtifactDir(stateDir, rootThreadID)
+			running, err := agentcontrol.WorkerExecutionActive(filepath.Join(artifactDir, "harness"), meta.ID)
+			if err != nil {
+				return nil, fmt.Errorf("inspect worker %q execution lease: %w", meta.ID, err)
+			}
+			active = active || running
+			paths = append(paths, filepath.Join(artifactDir, "workers", meta.ID+".json"))
 		}
 		if active {
 			continue
 		}
-		run, err := subagent.LoadPersistedRun(filepath.Join(historyDir, meta.ID+".json"))
+		run, err := subagent.LoadPersistedRunFromDocuments(binding.Documents, rootThreadID, meta.ID, paths...)
+
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -2018,7 +2063,11 @@ func (s *Server) agentSessionThread(binding *runtime.State, agentID string) (Thr
 			return Thread{}, true, err
 		}
 		if path != "" {
-			loaded, err := loadAgentHistory(path)
+			paths, pathErr := s.agentHistoryPaths(rootID, meta.ID)
+			if pathErr != nil {
+				return Thread{}, true, pathErr
+			}
+			loaded, err := loadAgentHistory(binding.Documents, rootID, meta.ID, paths...)
 			if err != nil {
 				if !errors.Is(err, os.ErrNotExist) {
 					return Thread{}, true, err
@@ -2077,7 +2126,10 @@ func (s *Server) agentThreadMetadata(binding *runtime.State, agentID string) (st
 		return "", agentthread.Metadata{}, false, err
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return "", agentthread.Metadata{}, false, storeErr
+		}
 		if store == nil {
 			continue
 		}
@@ -2179,15 +2231,19 @@ func (s *Server) agentHistoryPath(rootID, agentID string) (string, error) {
 	return filepath.Join(statepath.SessionArtifactDir(stateDir, rootID), "workers", agentID+".json"), nil
 }
 
-func (s *Server) agentThreadStore(threadID string) *agentthread.Store {
+func (s *Server) agentThreadStore(binding *runtime.State, threadID string) (*agentthread.Store, error) {
 	if s == nil || s.rt == nil || strings.TrimSpace(threadID) == "" {
-		return nil
+		return nil, nil
 	}
-	stateDir, err := s.workspaceStateDir()
+	stateDirs, err := s.threadArtifactStateDirs(threadID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return agentthread.NewStore(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+	dirs := make([]string, 0, len(stateDirs))
+	for _, stateDir := range stateDirs {
+		dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+	}
+	return agentthread.NewDocumentStore(binding.Documents, threadID, dirs...), nil
 }
 
 func (s *Server) workspaceStateDir() (string, error) {
@@ -2320,12 +2376,14 @@ func (s *Server) mostRecentVisibleThreadID(binding *runtime.State) (string, erro
 	if err != nil {
 		return "", err
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make([]threadListEntry, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.ArchivedAt != nil {
 			continue
 		}
-		entries = append(entries, threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model))
+		entries = append(entries, entryForSession(sess))
 	}
 	sortThreadListEntries(entries)
 	if len(entries) == 0 {
@@ -2349,7 +2407,9 @@ func (s *Server) threadAfterMetadataUpdate(binding *runtime.State, metadata sess
 		thread.SessionControl = control
 		return s.threadWithChildAgents(binding, thread)
 	}
-	thread := threadEntryFromSession(metadata, s.rt.ProviderName, s.rt.Model).thread
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
+	thread := entryForSession(metadata).thread
 	thread.SessionControl = control
 	return s.threadWithChildAgents(binding, thread)
 }
@@ -2385,4 +2445,16 @@ func (s *Server) hasRunningThread() bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) agentHistoryPaths(rootID, workerID string) ([]string, error) {
+	stateDirs, err := s.threadArtifactStateDirs(rootID)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(stateDirs))
+	for _, dir := range stateDirs {
+		paths = append(paths, filepath.Join(statepath.SessionArtifactDir(dir, rootID), "workers", workerID+".json"))
+	}
+	return paths, nil
 }

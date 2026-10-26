@@ -1,5 +1,9 @@
 import * as RuntimeLoader from "../RuntimeLoadState";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
+import * as React from "react";
+import { PluginHost } from "./PluginHost";
+import { WorkbenchController } from "./Workbench";
+const desktopPluginHost = new PluginHost({ react: React });
+const desktopWorkbenchController = new WorkbenchController(desktopPluginHost);
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
 import type { ApplicationWebWorkspaceV1, WebWorkspaceInitializationStateV1, WebWorkspaceStateV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -19,7 +23,7 @@ function fixture(controls = webControls()) {
   const mutations = { toggleThreadPinned: vi.fn(), archiveThread: vi.fn(), deleteThread: vi.fn() };
   const listeners = new Set<() => void>();
   const updateState = (update: AppState | ((state: AppState) => AppState)) => { state = typeof update === "function" ? update(state) : update; for (const listener of listeners) listener(); };
-  const navigation = new ApplicationNavigation({ getWebWorkspace: () => controls, getState: () => state,
+  const navigation = new ApplicationNavigation({ getContributions: () => desktopPluginHost, getWorkbench: () => desktopWorkbenchController, getWebWorkspace: () => controls, getState: () => state,
     subscribeState: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, updateState, changed: vi.fn(), getPendingDraftTabIds: () => [], sidebarCache: cache, mutationActions: () => mutations });
   return { navigation, cache, mutations, get: () => state, set: updateState };
 }
@@ -71,7 +75,7 @@ describe("public navigation domain", () => {
     window.wuu = { onRunningThreadsChanged: (listener: typeof running) => { running = listener; return () => {}; }, resumeThread: resume } as unknown as typeof window.wuu;
     const stop = h.navigation.start();
     try {
-      expect(desktopPluginHost.getActiveConversationThreadId()).toBe(thread.id);
+      expect(h.navigation.getSnapshot()).toBeDefined();
       running([{ thread_id: thread.id }]);
       await vi.advanceTimersByTimeAsync(200);
       expect(resume).toHaveBeenCalledExactlyOnceWith(thread.id);

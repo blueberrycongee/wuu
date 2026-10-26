@@ -5,7 +5,7 @@ import { AlertCircle, Ellipsis } from "../WuuIcons";
 import type { PluginCommandActionContext } from "../../shared/workbench";
 import { PublicIcon } from "../PublicIcon";
 import { useI18n } from "../i18n";
-import type { PluginCommandAction, PluginCommandActionResolution, PluginHost, RegisteredPluginCommand } from "./PluginHost";
+import type { UICommandActionV1 as PluginCommandAction, UICommandActionResolutionV1 as PluginCommandActionResolution, UIContributionRegistryV1 as PluginHost, RegisteredCommandV1 as RegisteredPluginCommand } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 const EMPTY_RESOLUTION: PluginCommandActionResolution = Object.freeze({ actions: Object.freeze([]), failures: Object.freeze([]) });
 

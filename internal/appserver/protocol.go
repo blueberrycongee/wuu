@@ -2,13 +2,13 @@ package appserver
 
 import (
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -862,33 +862,34 @@ type ExtensionInventoryRecord struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// LongDescription and Developer come from the plugin manifest's interface.
-	LongDescription      string                           `json:"long_description,omitempty"`
-	Developer            string                           `json:"developer,omitempty"`
-	Icon                 *ExtensionIconDescriptor         `json:"icon,omitempty"`
-	Kind                 extensions.Kind                  `json:"kind"`
-	Provenance           extensions.Provenance            `json:"provenance"`
-	State                ExtensionState                   `json:"state"`
-	Executable           bool                             `json:"executable,omitempty"`
-	Fingerprint          string                           `json:"fingerprint,omitempty"`
-	PackageSource        string                           `json:"package_source,omitempty"`
-	GrantScope           extensions.GrantScope            `json:"grant_scope,omitempty"`
-	RequestedPermissions []string                         `json:"requested_permissions,omitempty"`
-	UnsupportedFields    []string                         `json:"unsupported_fields,omitempty"`
-	ParentID             string                           `json:"parent_id,omitempty"`
-	ApprovalState        ExtensionApprovalState           `json:"approval_state,omitempty"`
-	RuntimeState         ExtensionRuntimeState            `json:"runtime_state,omitempty"`
-	LastError            string                           `json:"last_error,omitempty"`
-	Requires             []string                         `json:"requires,omitempty"`
-	Dependencies         []extensions.PackageDependency   `json:"dependencies,omitempty"`
-	ResolvedDependencies []string                         `json:"resolved_dependencies,omitempty"`
-	Breaks               []string                         `json:"breaks,omitempty"`
-	Conflicts            []string                         `json:"conflicts,omitempty"`
-	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
-	Enabled              *bool                            `json:"enabled,omitempty"`
-	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
-	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
-	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
-	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
+	LongDescription              string                           `json:"long_description,omitempty"`
+	Developer                    string                           `json:"developer,omitempty"`
+	Icon                         *ExtensionIconDescriptor         `json:"icon,omitempty"`
+	Kind                         extensions.Kind                  `json:"kind"`
+	Provenance                   extensions.Provenance            `json:"provenance"`
+	State                        ExtensionState                   `json:"state"`
+	Executable                   bool                             `json:"executable,omitempty"`
+	Fingerprint                  string                           `json:"fingerprint,omitempty"`
+	PackageSource                string                           `json:"package_source,omitempty"`
+	GrantScope                   extensions.GrantScope            `json:"grant_scope,omitempty"`
+	RequestedPermissions         []string                         `json:"requested_permissions,omitempty"`
+	UnsupportedFields            []string                         `json:"unsupported_fields,omitempty"`
+	ParentID                     string                           `json:"parent_id,omitempty"`
+	ApprovalState                ExtensionApprovalState           `json:"approval_state,omitempty"`
+	RuntimeState                 ExtensionRuntimeState            `json:"runtime_state,omitempty"`
+	LastError                    string                           `json:"last_error,omitempty"`
+	Requires                     []string                         `json:"requires,omitempty"`
+	Dependencies                 []extensions.PackageDependency   `json:"dependencies,omitempty"`
+	ResolvedRequiredDependencies []string                         `json:"resolved_required_dependencies,omitempty"`
+	ResolvedDependencies         []string                         `json:"resolved_dependencies,omitempty"`
+	Breaks                       []string                         `json:"breaks,omitempty"`
+	Conflicts                    []string                         `json:"conflicts,omitempty"`
+	ActivationIssues             []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
+	Enabled                      *bool                            `json:"enabled,omitempty"`
+	EnabledOverride              *bool                            `json:"enabled_override,omitempty"`
+	Desktop                      *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
+	Contributions                *ExtensionContributions          `json:"contributions,omitempty"`
+	PendingUpdate                *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
 }
 
 type ExtensionPackageAction string
@@ -1597,24 +1598,9 @@ type EngineLatestRequest struct {
 	UsageReported       bool   `json:"usage_reported,omitempty"`
 }
 
-type EnginePermissionModeInfo struct {
-	Mode  string `json:"mode"`
-	ID    string `json:"id,omitempty"`
-	Label string `json:"label,omitempty"`
-}
+type EnginePermissionModeInfo = pluginprotocol.EnginePermissionModeInfo
 
-type EngineModelInfo struct {
-	Options []enginecatalog.ModelOption `json:"options,omitempty"`
-	// ResolvedModel is the CLI-reported target of ID; ID remains the selection value.
-	ResolvedModel    string   `json:"resolved_model,omitempty"`
-	FastMode         bool     `json:"fast_mode,omitempty"`
-	DefaultSpeed     string   `json:"default_speed,omitempty"`
-	ID               string   `json:"id"`
-	DisplayName      string   `json:"display_name,omitempty"`
-	DefaultEffort    string   `json:"default_effort,omitempty"`
-	SupportedEfforts []string `json:"supported_efforts,omitempty"`
-	IsDefault        bool     `json:"is_default,omitempty"`
-}
+type EngineModelInfo = pluginprotocol.EngineModelInfo
 
 // EngineListResult is the engine/list response: current engine inventory
 // plus the persisted settings the settings UI edits.

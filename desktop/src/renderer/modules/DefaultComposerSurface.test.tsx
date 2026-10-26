@@ -1,3 +1,5 @@
+import * as Notices from "../Toast";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,7 +16,7 @@ import { WuuUIRoot } from "../ui/layers/UILayerHost";
 
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
 function setup() {
   const base = createPreviewApplication();
   const source = "draft-one";
@@ -77,6 +79,7 @@ describe("selected public composer continuity", () => {
     expect(fixture.calls).toContainEqual(expect.objectContaining({ action: "composer.submit", input: expect.objectContaining({ ownerTabId: "secondary", text: "other query" }) }));
   });
   it("selects, replaces, and disables the side composer through the preview service slot", async () => {
+    const notice = vi.spyOn(Notices, "showErrorToast");
     const fixture = setup();
     await fixture.update(view => ({ ...view,
       tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "parent" })) },
@@ -111,7 +114,8 @@ describe("selected public composer continuity", () => {
     expect(container.querySelector("[data-side-replacement]")?.textContent).toBe("parent");
     await act(async () => host.unload("alternative"));
     expect(container.querySelector("textarea")).toBeNull();
-    expect(container.querySelector("[role=alert]")?.textContent).toContain("Selected UI surface is unavailable");
+    expect(container.querySelector("[role=alert]")).toBeNull();
+    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternative:one");
     await act(async () => root.render(null));
     host.unload("side-extension"); host.unload("composer"); host.unload("wuu.default-preview");
   });
@@ -157,4 +161,45 @@ describe("selected public composer continuity", () => {
     await fixture.update(view => ({ ...view, conversationActions: { ...view.conversationActions, editing: undefined } }));
     expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("send");
   });
+});
+
+
+it("does not toast a retired composer refresh after switching to the replacement owner", async () => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const fixture = setup();
+  let reject!: (error: unknown) => void;
+  const invoke = fixture.application.invoke;
+  vi.spyOn(fixture.application, "invoke").mockImplementation((action, input) => action === "composer.refresh-engine-models" && "ownerTabId" in input && input.ownerTabId === "draft-one"
+    ? new Promise((_resolve, rejectRequest) => { reject = rejectRequest; })
+    : invoke(action, input));
+  await fixture.render();
+  await fixture.update(view => ({ ...view,
+    tabs: { ...view.tabs, activeTabId: "replacement", items: [{ ...view.tabs.items[0], id: "replacement" }] },
+    drafts: { ...view.drafts, activeTabId: "replacement", primary: { ...view.drafts.primary, ownerTabId: "replacement", text: "Replacement draft", revision: 1 } },
+    composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId: "replacement" }] },
+  }));
+  await act(async () => reject(new PluginLifecycleCancellationError(new DOMException("signal is aborted without reason", "AbortError"))));
+  expect(container.querySelector("textarea")?.value).toBe("Replacement draft");
+  expect(notice).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("locks navigation without changing the session's readonly semantics (split=%s)", async split => {
+  const fixture = setup();
+  if (split) await fixture.update(view => ({ ...view, drafts: { ...view.drafts, split: true } }));
+  await fixture.render();
+  const editor = container.querySelector("textarea")!;
+  const placeholder = editor.placeholder;
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: { kind: "tab", targetId: "next", contentReady: false } } }));
+  expect(editor.disabled).toBe(true);
+  expect(editor.placeholder).toBe(placeholder);
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: { kind: "tab", targetId: "next", contentReady: true } } }));
+  expect(editor.disabled).toBe(true);
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: undefined } }));
+  expect(editor.disabled).toBe(false);
+  expect(editor.placeholder).toBe(placeholder);
+  const readonly = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), readOnly: true };
+  vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(readonly);
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: undefined } }));
+  expect(editor.disabled).toBe(true);
+  expect(editor.placeholder).not.toBe(placeholder);
 });

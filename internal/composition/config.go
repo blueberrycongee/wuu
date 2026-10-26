@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = 2
+const Version = 3
 
 // Config selects implementations independently of discovery order. Profiles
 // compose ordered bundles from an empty module set. Inline choices and patches
@@ -89,18 +89,18 @@ func (c *Config) Resolve() (Resolved, error) {
 	if c == nil {
 		return resolved, nil
 	}
-	if c.Version != 1 && c.Version != Version {
-		return Resolved{}, fmt.Errorf("composition version %d is unsupported; expected 1 or %d", c.Version, Version)
+	if c.Version < 1 || c.Version > Version {
+		return Resolved{}, fmt.Errorf("composition version %d is unsupported; expected 1 through %d", c.Version, Version)
 	}
-	if c.Version == Version {
+	if c.Version >= 2 {
 		owned := *c
-		owned.Profiles, owned.Bundles = productCatalog()
+		owned.Profiles, owned.Bundles = productCatalogVersion(c.Version)
 		maps.Copy(owned.Profiles, c.Profiles)
 		maps.Copy(owned.Bundles, c.Bundles)
 		c = &owned
 	}
 	if c.Version == 1 && (c.Bundles != nil || c.Patches != nil) {
-		return Resolved{}, fmt.Errorf("composition bundles and patches require version %d", Version)
+		return Resolved{}, fmt.Errorf("composition bundles and patches require version 2 or later")
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.Bundles)) {
 		if name == "" || name != strings.TrimSpace(name) {
@@ -116,7 +116,7 @@ func (c *Config) Resolve() (Resolved, error) {
 	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
 		profile := c.Profiles[name]
 		if c.Version == 1 && (profile.Bundles != nil || profile.Patches != nil) {
-			return Resolved{}, fmt.Errorf("composition profile %q bundles and patches require version %d", name, Version)
+			return Resolved{}, fmt.Errorf("composition profile %q bundles and patches require version 2 or later", name)
 		}
 		if name == "" || name != strings.TrimSpace(name) {
 			return Resolved{}, fmt.Errorf("invalid composition profile name %q", name)
@@ -157,9 +157,11 @@ func (c *Config) Resolve() (Resolved, error) {
 	}
 
 	bindings := make(map[string]Binding)
+	excluded := make(map[string]bool)
 	applyChoices := func(modules []string, services []Binding, source string) {
 		if modules != nil {
 			resolved.ModuleSources = make(map[string]string, len(modules))
+			clear(excluded)
 			for _, id := range modules {
 				resolved.ModuleSources[id] = source
 			}
@@ -180,8 +182,10 @@ func (c *Config) Resolve() (Resolved, error) {
 			for id, enabled := range patch.Modules {
 				if enabled {
 					resolved.ModuleSources[id] = source
+					delete(excluded, id)
 				} else {
 					delete(resolved.ModuleSources, id)
+					excluded[id] = true
 				}
 			}
 			if len(patch.Modules) > 0 {
@@ -224,6 +228,9 @@ func (c *Config) Resolve() (Resolved, error) {
 	}
 	applyChoices(modules, c.Services, "composition")
 	applyPatches(c.Patches, "composition")
+	if c.Version < Version && resolved.ModuleSources != nil {
+		projectLegacyProviders(c.Version, &resolved, bindings, excluded)
+	}
 	if resolved.ModuleSources != nil {
 		modules := make([]string, 0, len(resolved.ModuleSources))
 		for id := range resolved.ModuleSources {

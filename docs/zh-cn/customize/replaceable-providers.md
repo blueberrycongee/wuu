@@ -12,6 +12,7 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
 | `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
+| `agent.policy@1` | `wuu.agent.policy.default` | `agentPolicy`, `agentPolicyServiceDescriptor`, `composeAgentPolicies` |
 | `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`、`wuu.state.jsonl` | `documentStore`、`documentStoreDescriptor`、`StateQuery` |
 | `state.credentials@1` | `wuu.credentials.os`、`wuu.credentials.file` | `credentialStore`、`CREDENTIAL_STORE_DESCRIPTOR` |
@@ -256,3 +257,127 @@ SDK 通过 `ManagedSessionTextMessage` 支持文本提交。其 `Role`、`Conten
 | 替换有状态提供者 | 显式迁移保留所需数据和回执；准备失败保留当前活跃组合。 |
 
 对实际交付的每个产品入口执行检查。直接调用 SDK 客户端可以验证请求编码和错误传播，却不能证明桌面或无界面消费者实际经过了该客户端。将这些结果与真实推理、原生界面验收分开记录。
+
+## 可组合的循环策略
+
+`agent.policy@1` 为工具调度、继续和恢复选择一个 provider，默认模块为
+`wuu.agent.policy.default`。默认循环、子 Agent、流式传输、非流式模型调用和
+独立的 `host.model.invoke` 调用都使用捕获的 generation 绑定。移除选中的
+provider 会停止这些调用；错误或空决策不会切换到另一实现。请求变换与上下文
+贡献继续使用现有有序契约，`agent.compaction` 独立拥有上下文替换策略。
+
+运行时插件声明 `agentPolicyServiceDescriptor()` 并实现 `evaluate`。
+`composeAgentPolicies(strategies)` 按提供的顺序传入隔离的输入快照：返回
+`undefined` 委托下一策略，返回决策则短路。链耗尽、抛错、非法动作或取消都会
+终止操作。组合 provider 可以声明其他公开服务为依赖，而不导入其实现；宿主
+不存在另一套策略选择注册表。
+
+| 阶段 | 观察与决策 |
+| --- | --- |
+| `schedule` | 在回合产生副作用前执行一次。`serial` 禁止流式提前启动工具，包含嵌套调用在内一次只运行一个叶子工具；`parallel_safe` 要求 `max_parallel`（1–64），在回合批次及嵌套叶子调用间共享容量，并保留工具的并发安全声明。 |
+| `continue` | 无工具的回复后执行。`stop` 结束回合；`continue` 在步骤及连续轮次预算内请求下一轮模型调用。 |
+| `retry` | 失败的循环步骤可选择 `fail`、使用有界上下文溢出恢复的 `recover`，或对证明尚未提交的请求显式 `retry`。重试必须提供 `max_attempts`，首次值固定总尝试上限，后续决策不能续领预算。 |
+| `transport_retry` | 接收已结束物理尝试的失败、提交次数、尝试预算及退避配置。`fail` 终止；`recover` 给出 `recovery_action`（`replay_same_payload`、`wait_then_replay`、`refresh_credential` 或 `switch_transport`）及可选 `delay_ms`。仍须满足适配器能力及持久化工作流预算。 |
+
+策略不能重放已显示的部分输出、已接纳工具副作用、提交结果不明的操作，或重置
+耗尽的推理预算。传输恢复保留物理提交回执，包括结果不明但可能计费的提交；选中策略可以在
+预算内重新尝试模型调用，但不能重放已接纳或结果不明的工具副作用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
+会保留；刷新凭证、切换传输和重试仍需既有的预写回执及适配器支持。
+
+完整循环替换通过 `driverTurn(host, execution).evaluatePolicy()` 使用策略，
+仍自行控制模型调用、工具、检查点和完成操作。`settings().has_policy` 表示
+runner 是否绑定策略客户端。直接构造未组合 Go runner 的嵌入式测试不能证明
+产品路径中的 provider 选择。
+
+`examples/plugins/composable-policy.ts` 是单文件示例。将其复制到仓库外，运行
+`wuu plugin dev ./composable-policy.ts`，并在目标组合中选择它的
+`agent.policy@1` 绑定。`node scripts/loop-policy-e2e.mjs` 会安装打包后的公开
+SDK，验证两个并行策略实现、子 Agent 继承及移除，证据保存在
+`.tmp/e2e/loop-policy/`。其中受控模型验证路由和控制流，不代表模型质量提升或
+真实自我改进实验。
+
+### 子 Agent 执行状态
+
+原生子 Agent 领域通过所选 `state.documents@1` 提供方保存线程元数据、结果投递认领、
+任务与运行索引、队列取消标记、报告以及工作 Agent 的终态和待提交快照。父执行捕获该
+绑定；后续执行、恢复和应用读取不会在提供方失败后重新打开原生文件存储。即使另一
+原生提供方仍处于活动状态，禁用所选提供方也会让这些操作不可用。
+
+每次领域修改比较提供方 revision，并原子提交相关索引和事件。只有明确的 revision
+冲突才会重试。不确定响应会在错误中保留原始事务；它不授权重复工具副作用或重新构造
+写入。待提交的 driver 状态与最后一次终态结果分开保存，因此恢复检查点不会发布未提交
+的结果投递。
+
+首次使用该格式前，停止仍可能写入旧子 Agent 文件的旧版 Wuu 进程。迁移读取发现的所有
+历史工作区根目录，且仅当所选提供方确认领域不存在时才导入；提供方错误不会触发导入，
+后续读取也不会使用过期旧文件。原始文件保留至通常的会话删除，以便恢复。会话删除留下
+空的权威状态，重试清理不会重新导入旧子 Agent 数据。更换文档提供方仍须执行上文所述
+的完整停写迁移，包括这些命名空间和事务回执。
+
+报告 Markdown 是状态提交后生成的派生产物。生成失败会明确报告状态已提交、产物尚未
+完成，而不是声称回滚。生成过程在文件锁内重读当前报告，避免较早写入方延迟执行后
+覆盖较新的已提交报告。
+
+内嵌浏览器的标签注册表同样使用选中的文档提供者。标签 URL、保留状态与重启恢复记录
+会从全部已知历史产物目录一次性迁移；删除会话会写入权威空镜像，防止旧文件复活。
+原生与外部引擎会话的工具包均走这条路径。状态提供者不可用时，浏览器宿主动作会被阻止；
+宿主动作执行后的持久化失败会明确报告动作可能已完成，不会静默重放或假报成功。
+
+## 引擎会话
+
+`engine.<id>@1` 是执行与管理边界。随产品提供的 `wuu.engines.native` 模块提供原生
+Wuu 循环及外部 CLI 适配器；`wuu.engine-execution` 消费所选服务。生产引擎注册表只是
+组合图的清单投影，不是第二套选择机制。替换插件可以提供 `engine.wuu`，无需继承原生
+实现或身份特权。所选提供方缺失或禁用时，不会生成替代实现。
+
+绑定一起传递模型、推理强度、速度、模型选项、指令、权限模式、MCP 端点和恢复引用。
+回调网关绑定具体提供方及捕获的代际，仅持有不透明令牌不能获得权限。公开的
+`host.engine.session` 操作承载流事件、审批、用户输入及持久化原生引用；`run_loop`
+委托给所选的完整循环驱动，而非固定内置算法。宿主管理的继续执行、规范历史及转向
+行为由能力声明决定，不按引擎名称分支。
+
+关闭绑定会话会先取消并排空活动执行，再释放提供方代际。关闭调用者取消只停止等待，
+不会中断清理；再次关闭等待同一次清理完成。原生 warm scope 保留跨回合复用的 CLI
+进程，并随所属服务器关闭而释放。已确认的终态回执使用独立、有界的 `settle_turn` /
+`settle_reference` 清理操作；这些操作不能登记新的待执行回合、启动工具或恢复生成。
+不确定的中断不会被静默重试。
+
+同一所选引擎服务还提供 `describe`、`models`、`auth`、`quota` 和 `history_fork`；
+不支持的操作明确失败。模型发现按上下文保留过期或部分结果，刷新需显式请求。配额查询
+需主动选择；远程调用不能启动 `local-cli` 认证。历史分叉要求原生边界证据，不会通过
+重放历史副作用来伪造不支持的分叉。禁用的原生引擎仍可在设置中查看元数据，但不能启动认证、配额/
+模型发现或历史操作。运行 `node scripts/engine-provider-e2e.mjs` 验证独立安装的公开
+SDK 替换，并用假 CLI 生命周期测试验证进程和持久化取消行为；两者都不需要付费模型
+或用户的 Codex 任务会话。
+
+### 模型传输容量
+
+`model.capacity@1` 选择准入与冷却策略，默认模块为 `wuu.model.capacity.default`。
+`wuu.model.capacity.resources` 提供的 `host.model.capacity@1` 是单独保留的物理资源上限。
+嵌入方通过显式共享 `runtime.CapacityResources`，让多个会话使用同一资源所有者；派生组合
+和代际重载通过原生工厂继承它，隔离策略不会凭空增加物理槽位。独立所有者表示有意隔离资源。
+此保证限于进程内，不声称跨进程统一账户配额。
+
+原生、SDK 回执与 direct 适配器在物理提交回执边界统一经过两个契约；delegate 适配器不为子
+调用重复占位。所有适配器共享宿主已知的配置提供者路由上限。原生传输还使用凭证与端点派生的
+不透明账户域，使原生提供者别名共享容量；任意外部账户别名必须显式声明共同的
+`capacity_scope`，不得直接放入凭证。多个不同范围按稳定顺序获取，排队取消会释放全部已获租约。
+
+隐式资源所有者在整个 Session/OpenState 生命周期保留根租约，包括容量模块被禁用的期间。
+已准备候选与保留代际另持租约，替换和修复不会提前销毁所有者。显式所有者由调用方负责：先关闭
+所属会话与状态，再调用 `CapacityResources.Close(ctx)`。关闭会停止准入、唤醒排队请求并停止
+策略计时器；等待超时不会提前释放仍在执行的物理工作，保留引用继续负责排空。
+
+物理容量与回调权限的生命周期不同。禁用或逻辑取消不会释放未结算的物理槽位；权威终态结算会
+立即释放槽位，因此同一回调可以继续提交下一次物理请求。选中的服务图与回执权限仍保留到原始
+物理 RPC 完成或进程终止得到确认。未确认的终止不会被报告为成功。退役等待超时会报告清理仍在
+进行，而非假报已终止；保留作用域继续授权清理结算。
+
+运行 `node scripts/capacity-provider-e2e.mjs`，验证独立安装的公开 SDK 策略以及外部回执取消、
+延迟结算、进程尾部终止与共享单槽位所有者的组合行为，无需付费模型调用。
+
+检查点续跑使用独立的 `agent.policy` 阶段 `checkpoint_resume`，只接受
+`resume` 或 `fail`，不接受 `retry`。`completed_messages` 统计已经持久化且
+协议完整的条目，包括仅有推理内容的进展。续跑从保存的历史发起新采样，
+不会重放中断前的请求。所选策略必须明确授权；宿主仍拒绝缺少检查点、
+存在工具副作用或回执／工作流预算耗尽的续跑。不认识该阶段的策略会明确失败。

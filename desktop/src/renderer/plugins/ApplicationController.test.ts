@@ -2,7 +2,7 @@ import { scopeApplicationOnboarding } from "../../../../packages/plugin-sdk/src/
 import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
-import { ApplicationController } from "./ApplicationController";
+import { ApplicationController } from "./ApplicationController.test-support";
 import { streamTextKey, streamTextStore } from "../StreamText";
 import { initialState, createThreadSessionTab, type AppState } from "../AppState";
 import type { CodexPetCommand, Thread, WuuDesktopApi } from "../../shared/protocol";
@@ -864,12 +864,14 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().drafts.primary.fileIds).toEqual(["file"]);
   });
 
-  it("reselects source transport and retains latest draft while a workspace switch is pending", async () => {
+  it.each(["resolved", "rejected"] as const)("reselects source transport and retains latest draft after a superseded switch %s", async outcome => {
+    window.wuu = {} as WuuDesktopApi;
     const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
     const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
     let finishTarget!: (value: never) => void;
+    let rejectTarget!: (error: Error) => void;
     const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
-      if (context.cwd === "/b") return new Promise(resolve => { finishTarget = resolve; });
+      if (context.cwd === "/b") return new Promise((resolve, reject) => { finishTarget = resolve; rejectTarget = reject; });
       return { projects: [], active_context: source } as never;
     });
     const configure = vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockResolvedValue({});
@@ -882,11 +884,62 @@ describe("shared application state", () => {
       await controller.invoke("composer.set-draft", { text: "latest source" });
       await controller.invoke("tab.select", { tabId: "draft:a" });
       expect(select).toHaveBeenLastCalledWith(source);
-      finishTarget({ projects: [], active_context: target } as never);
+      if (outcome === "resolved") finishTarget({ projects: [], active_context: target } as never);
+      else rejectTarget(new Error("retired transport failed"));
       await leaving;
       expect(controller.getSnapshot().tabs.activeTabId).toBe("draft:a");
       expect(controller.getSnapshot().composer.draftText).toBe("latest source");
     } finally { select.mockRestore(); configure.mockRestore(); }
+  });
+
+  it("does not report a retired draft selection failure after source recovery finishes", async () => {
+    window.wuu = {} as WuuDesktopApi;
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+    let finishRecovery!: (value: never) => void;
+    let recoveryStarted!: () => void;
+    const recovering = new Promise<void>(resolve => { recoveryStarted = resolve; });
+    const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext")
+      .mockRejectedValueOnce(new Error("retired selection failed"))
+      .mockImplementationOnce(() => new Promise(resolve => { finishRecovery = resolve; recoveryStarted(); }))
+      .mockResolvedValue({ projects: [], active_context: source } as never);
+    const configure = vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockResolvedValue({});
+    try {
+      const controller = new ApplicationController({ ...initialState, activeContext: source, activeSessionTabID: "draft:a", sessionTabs: [
+        { id: "draft:a", kind: "draft", context: source, title: "A", createdAt: 1, prompt: "retained", images: [], files: [] },
+        { id: "draft:b", kind: "draft", context: target, title: "B", createdAt: 2, prompt: "destination", images: [], files: [] },
+      ] });
+      const leaving = controller.invoke("tab.select", { tabId: "draft:b" });
+      await recovering;
+      await controller.invoke("tab.select", { tabId: "draft:a" });
+      finishRecovery({ projects: [], active_context: source } as never);
+      await leaving;
+      expect(controller.getSnapshot().tabs.activeTabId).toBe("draft:a");
+      expect(controller.getSnapshot().composer.draftText).toBe("retained");
+      expect(controller.getSnapshot().tabs.pending).toBeUndefined();
+    } finally { select.mockRestore(); configure.mockRestore(); }
+  });
+
+  it("reports a current draft navigation failure and retains the source draft", async () => {
+    window.wuu = {} as WuuDesktopApi;
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+    const failure = new Error("current transport failed");
+    const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
+      if (context.cwd === target.cwd) throw failure;
+      return { projects: [], active_context: source } as never;
+    });
+    try {
+      const controller = new ApplicationController({ ...initialState, activeContext: source, activeSessionTabID: "draft:a", sessionTabs: [
+        { id: "draft:a", kind: "draft", context: source, title: "A", createdAt: 1, prompt: "retained", images: [], files: [] },
+        { id: "draft:b", kind: "draft", context: target, title: "B", createdAt: 2, prompt: "destination", images: [], files: [] },
+      ] });
+      await expect(controller.invoke("tab.select", { tabId: "draft:b" })).rejects.toBe(failure);
+      expect(select).toHaveBeenLastCalledWith(source);
+      expect(controller.getSnapshot().tabs.activeTabId).toBe("draft:a");
+      expect(controller.getSnapshot().composer.draftText).toBe("retained");
+      expect(controller.getSnapshot().tabs.pending).toBeUndefined();
+    } finally { select.mockRestore(); }
   });
 
   it("creates a separate draft during admission without stealing focus on completion", async () => {

@@ -28,7 +28,10 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
+import type { PluginHost } from "./plugins/PluginHost";
+const desktopPluginHost = new Proxy({} as PluginHost, { get: (_target, key) => { const host = getDesktopApplication().contributions as PluginHost; const value = Reflect.get(host, key); return typeof value === "function" ? value.bind(host) : value; } });
+const desktopWorkbenchController = new Proxy({} as import("../../../packages/plugin-sdk/src/ui-contributions").ApplicationWorkbenchV1, { get: (_target, key) => { const workbench = getDesktopApplication().workbench; const value = Reflect.get(workbench, key); return typeof value === "function" ? value.bind(workbench) : value; } });
 
 const pluginId = "test:primary-cover";
 let container: HTMLDivElement;

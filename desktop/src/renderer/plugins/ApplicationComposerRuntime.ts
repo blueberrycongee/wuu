@@ -1,3 +1,4 @@
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import type { ApplicationSettingsViewV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationComposerRuntimeActionMapV1 as Actions, ApplicationComposerRuntimeChoiceV1, ApplicationComposerRuntimeOwnerV1, ApplicationComposerRuntimeSelectionV1, ApplicationComposerRuntimeViewV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
@@ -198,7 +199,7 @@ export class ApplicationComposerRuntime {
     if (this.disposed) throw new Error("Composer runtime is disposed");
     signal?.throwIfAborted(); const state = this.sync();
     const owner = this.owners.get(ownerTabId); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId);
-    if (!owner || !tab || state.activeSessionTabID !== ownerTabId || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new DOMException("Composer runtime owner is no longer active", "AbortError");
+    if (!owner || !tab || state.activeSessionTabID !== ownerTabId || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new PluginLifecycleCancellationError(new DOMException("Composer runtime owner is no longer active", "AbortError"));
     return { owner, tab, thread: this.thread(state, tab), generation: state.runtimeConnectionGeneration, signal };
   }
   private current(source: Source): boolean {

@@ -10,6 +10,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Select application business state, complete agent engines, model transports, retry/scheduling policies, and shared model capacity through public provider contracts. Expose immutable graph identities, resolved dependencies, and exact authoring types; composition version 3 retains explicit legacy migration provenance.
+
+- Keep child-agent coordination, pending and terminal worker history, browser tab state, and quota snapshots in selected document providers. Import existing state once, preserve uncertain commit outcomes, and retain providers until admitted work and cleanup finish.
+
+- Extend isolated experiments with independent task/scoring/acceptance controllers, bounded scheduling, retained evidence, and supervised rebuilt-host attempts. Host comparisons use controller-owned elapsed time; these workflows support experimentation without claiming autonomous improvement.
+
+
 - Add native Copy Image and Save As context menu actions for desktop images, including enlarged previews and popped-out conversations.
 
 - Keep new-page, browser, terminal, and file tools available in a compact right-side rail, with content space reserved while the workspace panel is closed or open. Let users collapse the rail to widen the conversation and composer, restore it from the header, and retain that choice across reloads.

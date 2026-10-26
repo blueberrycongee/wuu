@@ -608,6 +608,7 @@ export type ExtensionInventoryRecord = {
   requires?: string[];
   dependencies?: Array<{ id: string; version?: string; optional?: boolean }>;
   resolved_dependencies?: string[];
+  resolved_required_dependencies?: string[];
   breaks?: string[];
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];
@@ -3080,6 +3081,8 @@ export type WuuDesktopApi = {
    * remounting the renderer or discarding local drafts. The host remains
    * restoring until all subscribers finish; failure is retryable. */
   onRuntimeRestore?: (handler: () => Promise<void>) => () => void;
+  /** Observe foreground initialize requests, including workspace switches; newest request wins. */
+  onRuntimeInitialization?: (handler: (event: { phase: "started"; requestId: number } | { phase: "completed"; requestId: number; initialized: InitializeResult }) => void) => () => void;
   // Pre-paint first-run gate. Optional so browser fixtures and older preload
   // mocks continue to enter the normal shell unless they explicitly exercise
   // onboarding.

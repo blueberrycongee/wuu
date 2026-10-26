@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import * as composerMessages from "../ComposerMessages";
+import { readComposerDraftRecovery } from "../ComposerDraftRecovery";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationSubmission } from "./ApplicationSubmission";
 import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState } from "../AppState";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
 import type { Thread, ThreadStartParams, WuuDesktopApi } from "../../shared/protocol";
+
+afterEach(() => vi.restoreAllMocks());
 
 function deferred<T>() { let resolve!: (value:T) => void; let reject!: (error:Error) => void;
   const promise = new Promise<T>((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; }
@@ -43,22 +47,73 @@ describe("application submission ownership",()=>{
       expect(params).not.toHaveProperty("approve_for_me");
     }else expect(params).toMatchObject({permission_mode:"read_only",approve_for_me:true});
   });
-  it.each([false, true])("settles an admitted result after disposal without publishing to the ended owner (failure=%s)",async(failed)=>{
+  it.each([false, true])("checkpoints retained inputs before disposal and fences late settlement (failure=%s)",async(failed)=>{
     const starting=deferred<{turn:Thread["turns"][number]}>();
     window.wuu={startTurn:vi.fn(()=>starting.promise)} as unknown as WuuDesktopApi;
     const f=fixture(thread());
     const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
     f.submission.submit({ownerTabId:"thread:created"});
     await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledTimes(1));
-    f.submission.dispose();f.changed.mockClear();
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"newer draft"}))});
+    f.submission.dispose();
+    const checkpoint=f.getState();
+    expect(checkpoint.sessionTabs.flatMap(tab=>tab.kind === "skills" ? [] : [tab.prompt])).toEqual(expect.arrayContaining(["hello","newer draft"]));
+    expect(checkpoint.thread?.turns).toEqual([]);
+    const persistence=vi.spyOn(Storage.prototype,"setItem");
+    f.changed.mockClear();
     if(failed) starting.reject(new Error("admission rejected"));
     else starting.resolve({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}});
     await vi.waitFor(()=>expect(release).toHaveBeenCalledTimes(1));
+    expect(f.getState()).toBe(checkpoint);
+    expect(persistence).not.toHaveBeenCalled();persistence.mockRestore();
     expect(f.changed).not.toHaveBeenCalled();
     expect(f.submission.getSnapshot().operations).toEqual([]);
-    if(failed) expect(f.getDraft("thread:created").prompt).toBe("hello");
-    else expect(f.getState().thread?.turns.map(turn=>turn.id)).toContain("accepted");
     expect(f.submission.submit({ownerTabId:"thread:created",text:"late"}).accepted).toBe(false);
+  });
+  it.each([false,true])("fences a queue acknowledgement after retirement without resubmitting (failure=%s)",async(failed)=>{
+    const queued=deferred<{queued:{id:string}}>();
+    window.wuu={queueTurn:vi.fn(()=>queued.promise),startTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
+    const submitted=f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledOnce());
+    const messageID=vi.mocked(window.wuu.queueTurn).mock.calls[0][3];
+    expect(messageID).toBe(submitted.operationID);
+    f.submission.dispose();
+    const checkpoint=f.getState();const pending=JSON.stringify(f.pending.pendingComposerMessagesByThread);
+    if(failed) queued.reject(new Error("late queue rejection"));else queued.resolve({queued:{id:messageID!}});
+    await vi.waitFor(()=>expect(release).toHaveBeenCalledOnce());
+    expect(f.getState()).toBe(checkpoint);
+    expect(JSON.stringify(f.pending.pendingComposerMessagesByThread)).toBe(pending);
+    expect(window.wuu.queueTurn).toHaveBeenCalledOnce();expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(f.submission.submit({ownerTabId:"thread:created",mode:"queue"}).accepted).toBe(false);
+  });
+  it("leaves an acknowledged queued message with the canonical queue instead of persisting a duplicate draft",async()=>{
+    window.wuu={queueTurn:vi.fn().mockImplementation(async(_thread,_text,_images,id)=>({queued:{id}}))} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>{ const queued=f.pending.pendingComposerMessagesForThread("created").queued;expect(queued).toHaveLength(1);expect(queued[0].operationState).toBeUndefined(); });
+    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    f.submission.dispose();
+    expect(f.getDraft("thread:created").prompt).toBe("");
+    expect(f.pending.pendingComposerMessagesForThread("created").queued).toHaveLength(1);
+    expect(readComposerDraftRecovery().tabs).toEqual([]);
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations).toEqual([]));
+    expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
+  });
+  it("releases retired queue preparation without waiting for an attachment encoder",async()=>{
+    const encoding=deferred<[]>();vi.spyOn(composerMessages,"awaitComposerImages").mockImplementationOnce(()=>encoding.promise);
+    window.wuu={queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
+    f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>expect(composerMessages.awaitComposerImages).toHaveBeenCalledOnce());
+    f.submission.dispose();const checkpoint=f.getState();
+    await vi.waitFor(()=>expect(release).toHaveBeenCalledOnce());
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();expect(f.getState()).toBe(checkpoint);
+    encoding.resolve([]);await Promise.resolve();
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
   });
   it("publishes one optimistic creation at click time and deletes a late empty thread after cancellation",async()=>{
     const creating=deferred<{thread:Thread}>();const remove=vi.fn().mockResolvedValue({});

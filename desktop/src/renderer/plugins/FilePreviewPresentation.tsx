@@ -8,10 +8,10 @@ import {
   type FileSelectionDescriptorV1,
 } from "../../shared/workbench";
 import type { WorkspaceFileSelection } from "../LinkTargets";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
+import { useApplicationWorkbench } from "./ApplicationWorkbenchContext";
+import type { UIContributionRegistryV1 as PluginHost } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 interface FilePreviewCallbacks {
   open?: (path: string) => unknown | Promise<unknown>;
@@ -109,8 +109,8 @@ function PublicFilePreviewPresentation(props: FilePreviewPresentationProps): JSX
 }
 
 function LegacyFilePreviewPresentation({
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
+  host: suppliedHost,
+  controller: suppliedController,
   fallback,
   open,
   reveal,
@@ -119,6 +119,8 @@ function LegacyFilePreviewPresentation({
   reload,
   ...state
 }: FilePreviewPresentationProps): JSX.Element {
+  const controller = useApplicationWorkbench(suppliedController);
+  const host = suppliedHost ?? controller.registry;
   const snapshot = useMemo(() => toFilePreviewSnapshot(state), [
     state.error, state.file, state.loading, state.selection, state.text,
     state.workspaceRelativePath, state.workspaceRoot,

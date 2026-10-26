@@ -147,3 +147,56 @@ JSONL 响应保留 code 与 message，嵌套服务调用同样如此。具有非
 的错误也遵守该传输契约；其他字段和堆栈不会被序列化。普通异常没有领域错误码。
 消费者应判断 code，不应匹配 message 文案。外部效果的结果不确定，不代表可以
 重放该效果。
+
+## 替换应用业务行为
+
+`ui.application@1` 独立于 `ui.shell` 和各界面 surface 服务，选择应用状态、动作与
+后台工作的所有者。内置 `wuu.default-application` 与外部模块一样，通过
+`registerApplicationProvider` 注册。Renderer 启动层只读取初始化信息、插件清单和
+连接恢复信息，不再启动固定的默认业务控制器。在 `desktop.services` 中声明
+`APPLICATION_PROVIDER_SERVICE`，并注册本地 ID 为 `ui.application` 的 provider。
+默认桌面界面依赖此服务；Go 服务图通过 `application_surfaces["ui.application"]`
+发布选择结果，发现顺序不决定实际实现。
+
+`ApplicationProviderDefinition.prepare()` 返回 `ApplicationProviderInstanceV1`。
+准备阶段可以验证并分配可清理的资源，但不能启动写入者或后台订阅。生命周期如下：
+
+- `activate(checkpoint?)` 启动选中的实现。修改持久状态前先验证 checkpoint 的
+  `schema`；不兼容必须明确失败，不能据此丢弃用户状态。
+- `createScope(signal)` 为消费者提供 `ApplicationServiceV1`。取消信号应停止其
+  回调、进行中的操作，以及该作用域拥有的原生与 UI 资源。
+- `deactivate()` 停止写入者和后台工作，然后返回一致的 `{ schema, value }`
+  checkpoint。宿主等待它完成后才启动下一个写入者。
+- `dispose()` 清理准备阶段和激活阶段的全部资源；可以异步执行，并参与 generation
+  的排空与清理。
+
+默认实现保存未发送草稿、应用状态、设置和 workbench 视图。已有磁盘格式保持不变，
+不会重写会话数据库或用户偏好。Checkpoint 是显式、版本化的契约，不是通用迁移：
+不同 schema 的 provider 必须实现迁移，或者使用相互独立的临时 profile 启动。
+清理失败表示写入者状态不确定；成功释放或重启进程之前，不会启动另一个实现。
+已经发生的外部副作用不会被宣称为已回滚。
+
+这里有两个不同的失败边界。局部 renderer generation 切换前，模块加载、注册或准备
+失败会保留原有的 renderer 注册和业务写入者。如果 **Go 已经提交新服务图**，随后
+的 renderer 失败属于提交之后的激活失败。保留旧 JavaScript 不等于回滚 Go：旧业务
+写入者及其作用域会停止，诊断显示已提交的服务图和实际生效的 provider（可能没有）。
+通过原来的 `wuu plugin dev` 目录或包更新入口修复，再刷新扩展清单；恢复之前的有效
+组合也使用公开配置与重载流程。下一次成功激活会收到保留的 checkpoint，不需要修改
+私有注册表，也不会暗中切回内置实现。
+
+公开的[独立应用示例](https://github.com/blueberrycongee/wuu/blob/main/examples/plugins/independent-providers/application.tsx)
+仅依赖打包 SDK，自行实现工作区/会话导航、有界真实历史投影、订阅和重载 checkpoint。
+它明确是只读会话浏览器，不是包含默认输入框和设置页的完整产品；不支持的动作与状态
+字段会明确报错。其 checkpoint 与默认应用不兼容。公开包作者检查与生产 Electron/Go
+链验证是不同的验收，独立 preview 不会模拟业务 provider 的持久化和进程副作用。
+
+消费者模块应在 `desktop.required_services` 声明
+`{ "name": "ui.application", "major_version": 1, "required": true }`，由同一份权威
+依赖图安排排空并随业务 provider 重启。`api.application` 首次使用时绑定一个 provider
+生命周期；捕获的接口和动作回调不会暗中转向后继实现。同一模块同时提供并消费自己的
+业务服务时，两者共享自身 generation 生命周期，不需要声明自依赖。
+
+插件需要用户处理的反馈请使用 `api.showNotice({ message, tone: "error", key: "refresh" })`，
+不要在输入框、导航行或消息内容中插入异常文字。它复用现有集中通知位置，并按语义 key
+去重。返回的 disposable 可关闭通知；代际退出会关闭其通知并拒绝后续调用。通知应简短，
+技术细节留在诊断中。独立预览明确不模拟产品集中通知投递。

@@ -33,7 +33,7 @@ func TestGenerationModelBindingsFollowSelectedConfiguration(t *testing.T) {
 	oldServer, nextServer := server("old"), server("new")
 	defer oldServer.Close()
 	defer nextServer.Close()
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default"}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", modelExecutionConsumer, capacityPolicyModule, capacityResourceModule}
 	settings := func(url string) config.Config {
 		return config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: url, APIKey: "fixture", Model: "fixture"}}}
 	}
@@ -48,12 +48,21 @@ func TestGenerationModelBindingsFollowSelectedConfiguration(t *testing.T) {
 	}
 	defer oldState.Close()
 	oldClient := rt.StreamRunner.Client
-	candidate, err := rt.PreflightExtensions(settings(nextServer.URL))
-	if err != nil {
+	// Failed preparation must not publish the proposed selection or client.
+	invalid := settings(nextServer.URL)
+	invalidModules := []string{"wuu.model.native"}
+	invalid.Composition = &composition.Config{Version: composition.Version, Modules: &invalidModules}
+	if err := rt.RefreshModelConfiguration(invalid, "test", "rejected"); err == nil {
+		t.Fatal("candidate missing required configuration unexpectedly prepared")
+	}
+	if rt.Model != "fixture" || rt.StreamRunner.Client != oldClient {
+		t.Fatal("failed preparation changed the live model selection")
+	}
+	if err := rt.RefreshModelConfiguration(settings(nextServer.URL), "test", "successor"); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
-		t.Fatal(err)
+	if rt.Model != "successor" || rt.StreamRunner.Model != "successor" {
+		t.Fatalf("selected model was not published with generation: %q / %q", rt.Model, rt.StreamRunner.Model)
 	}
 	request := providers.ChatRequest{Model: "fixture", Messages: []providers.ChatMessage{{Role: "user", Content: "which generation"}}}
 	previous, err := oldClient.Chat(ctx, request)
@@ -73,7 +82,7 @@ func TestGenerationModelBindingsKeepSelectedCredentials(t *testing.T) {
 		fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q}}]}`, r.Header.Get("Authorization"))
 	}))
 	defer endpoint.Close()
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default"}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", modelExecutionConsumer, capacityPolicyModule, capacityResourceModule}
 	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: endpoint.URL, Model: "fixture"}}}
 	builds := 0
 	factory := NativeProviderFactory{ID: credentialstore.FileModule, Build: func(NativeProviderContext) (pluginhost.Client, error) {

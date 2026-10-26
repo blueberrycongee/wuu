@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
+import { resolve } from "node:path";
+import type { AppServerResponse, ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
 
-type ProcessRequest = <T>(method: string, params?: unknown) => Promise<T>;
+type ProcessRequest = <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T>;
 
 /** One renderer document. Graph routes retain the process that published them. */
 export class PluginDesktopActivations {
   private readonly rendererID: string;
   private readonly workdirs = new Map<string, ProcessRequest>();
   private readonly graphs = new Map<string, ProcessRequest>();
+  private readonly graphWorkdirs = new Map<string, string>();
   private readonly processes = new Set<ProcessRequest>();
   private pending: Promise<void> = Promise.resolve();
   private disconnected = false;
@@ -20,22 +22,34 @@ export class PluginDesktopActivations {
     this.workdirs.set(workdir, request);
     const result = await request<InitializeResult>("initialize", params);
     if (this.disconnected) throw new Error("Renderer document is disconnected");
-    this.bindInventory(request, result.extension_inventory ?? []);
+    this.bindInventory(workdir, request, result.extension_inventory ?? []);
     return result;
   }
 
   observeInventory(workdir: string, inventory: readonly ExtensionInventoryRecord[]): void {
     const request = this.workdirs.get(workdir);
     if (this.disconnected || !request) return;
-    this.bindInventory(request, inventory);
+    this.bindInventory(workdir, request, inventory);
   }
 
-  private bindInventory(request: ProcessRequest, inventory: readonly ExtensionInventoryRecord[]): void {
+  private bindInventory(workdir: string, request: ProcessRequest, inventory: readonly ExtensionInventoryRecord[]): void {
     for (const plugin of inventory) {
       if (plugin.desktop && plugin.graph_generation && !this.graphs.has(plugin.graph_generation)) {
         this.graphs.set(plugin.graph_generation, request);
+        this.graphWorkdirs.set(plugin.graph_generation, resolve(workdir));
       }
     }
+  }
+
+  /** A graph belongs to its publishing process, never the window's later workspace. */
+  runtimeRequest(graph: string, workspaceRoot?: string): ProcessRequest {
+    if (this.disconnected) throw new Error("Renderer document is disconnected");
+    const request = this.graphs.get(graph);
+    if (!request) throw new Error("Plugin runtime graph has no owning process");
+    if (workspaceRoot !== undefined && resolve(workspaceRoot) !== this.graphWorkdirs.get(graph)) {
+      throw new Error("Plugin runtime graph belongs to a different workspace");
+    }
+    return request;
   }
 
   async report(params: PluginDesktopActivationParams): Promise<void> {
@@ -67,6 +81,7 @@ export class PluginDesktopActivations {
         renderer_id: this.rendererID, disconnected: true,
       })));
       this.graphs.clear();
+      this.graphWorkdirs.clear();
       this.workdirs.clear();
       this.processes.clear();
       const failure = results.find(result => result.status === "rejected");

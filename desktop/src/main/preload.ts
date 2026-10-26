@@ -151,6 +151,9 @@ try {
   // only costs a one-frame flash at the default size.
 }
 
+type RuntimeInitializationEvent = Parameters<NonNullable<WuuDesktopApi["onRuntimeInitialization"]>>[0] extends (event: infer Event) => void ? Event : never;
+const runtimeInitializationListeners = new Set<(event: RuntimeInitializationEvent) => void>();
+let runtimeInitializationRequest = 0;
 const api: WuuDesktopApi = {
   getDesktopUpdateState: () => ipcRenderer.invoke("wuu:desktop-update-state"),
   downloadDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-download"),
@@ -243,7 +246,14 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:managed-process-resize", threadId, processId, cols, rows),
   stopManagedProcess: (threadId: string, processId: string) =>
     ipcRenderer.invoke("wuu:managed-process-stop", threadId, processId),
-  initialize: () => ipcRenderer.invoke("wuu:initialize"),
+  onRuntimeInitialization: listener => { runtimeInitializationListeners.add(listener); return () => runtimeInitializationListeners.delete(listener); },
+  initialize: async () => {
+    const requestId = ++runtimeInitializationRequest;
+    for (const listener of runtimeInitializationListeners) listener({ phase: "started", requestId });
+    const initialized = await ipcRenderer.invoke("wuu:initialize");
+    if (requestId === runtimeInitializationRequest) for (const listener of runtimeInitializationListeners) listener({ phase: "completed", requestId, initialized });
+    return initialized;
+  },
   listUserQuestions: (threadId?: string) =>
     ipcRenderer.invoke("wuu:user-question-list", threadId),
   answerUserQuestion: (requestId, answer) =>

@@ -40,7 +40,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         <div
           data-can-select-workspace={props.canSelectWorkspace}
           data-queued={props.queuedMessages.map((message) => message.text).join("|")}
-          data-send-disabled={props.sendDisabled}
+          data-send-disabled={Boolean(props.sendDisabled || props.draftPending)}
           data-running={props.running}
           data-draft-pending={props.draftPending}
           data-main-conversation-composer={
@@ -71,7 +71,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
                 props.onStartNewThread();
               } else if (prompt.trim() === "/side") {
                 props.onOpenSideThread?.();
-              } else {
+              } else if (!props.sendDisabled && !props.draftPending) {
                 props.onSend(prompt);
               }
             }}
@@ -104,7 +104,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
-import * as applicationState from "./plugins/ApplicationController";
+import * as applicationState from "./plugins/ApplicationController.test-support";
 import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
 import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
@@ -694,7 +694,6 @@ describe("main composer focus continuity", () => {
       expect(tail()).toBeGreaterThan(0);
       expect(viewport.scrollTop).toBeCloseTo(1650);
     }
-    const placedTop = 1650;
     const acceptedTurn: Turn = {
       id: "accepted", status: "in_progress", items_view: "full",
       items: [{ id: "accepted-user", type: "user_message", text: "replacement query", source_id: vi.mocked(window.wuu.startTurn).mock.calls[0][8] }],
@@ -707,6 +706,9 @@ describe("main composer focus continuity", () => {
     await act(async () => {
       await vi.waitFor(() => expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull());
     });
+    expect(tail()).toBeGreaterThan(0);
+    const placedTop = viewport.scrollTop;
+    expect(placedTop).toBeCloseTo(1650);
     natural += 100;
     act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
     expect(viewport.scrollTop).toBe(placedTop);
@@ -1134,6 +1136,8 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
     expect(mainComposer("dock").value).toBe("first");
     await enterCommand(mainComposer("dock"), "second");
+    expect(mainComposer("dock").value).toBe("second");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("true");
     expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => { releaseThreadStart!(); });
@@ -1222,21 +1226,18 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("recovers a failed creation while preserving an edited or cleared draft (cleared=%s)", async (removed) => {
+  it.each([false, true])("preserves newer edits and recovers the original when creation fails (cleared=%s)", async (cleared) => {
     await renderApp(false, { deferThreadStart: true, rejectThreadStart: true });
     await enterCommand(mainComposer("dock"), "first retained");
     await enterCommand(mainComposer("dock"), "second retained");
-    if (removed) {
-      await enterCommand(mainComposer("dock"), "");
-      expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
-    }
+    if (cleared) await enterCommand(mainComposer("dock"), "");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
-    expect(mainComposer("dock").value).toBe(removed ? "first retained" : "second retained");
+    expect(mainComposer("dock").value).toBe(cleared ? "first retained" : "second retained");
     const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
-    if (removed) {
-      expect(recovery).toBeNull();
-    } else {
+    if (cleared) expect(recovery).toBeNull();
+    else {
       expect(recovery).not.toBeNull();
       await act(async () => { recovery!.click(); });
       expect(mainComposer("dock").value).toBe("first retained");

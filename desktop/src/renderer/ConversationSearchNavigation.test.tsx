@@ -5,7 +5,7 @@ import type { Thread, ThreadItem } from "../shared/protocol";
 import { initialState } from "./AppState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import { ApplicationSearch } from "./plugins/ApplicationSearch";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 
 const { jump, cancelJump, unscopedJump, showErrorToast } = vi.hoisted(() => {
   const cancelJump = vi.fn();

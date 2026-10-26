@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +18,11 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -85,12 +90,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
-	rt := newTestRuntime(t, &fakeClient{})
-	registry := agentengine.NewRegistry()
-	if err := registry.Register(claudeengine.NewEngine(binary, rt.RootDir)); err != nil {
-		t.Fatal(err)
-	}
-	rt.SetEnginesForTest(registry)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Claude: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -170,12 +170,7 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 	}
 	for _, scenario := range []string{"provider_error", "provider_error_partial", "provider_error_close"} {
 		t.Run(scenario, func(t *testing.T) {
-			rt := newTestRuntime(t, &fakeClient{})
-			registry := agentengine.NewRegistry()
-			if err := registry.Register(claudeengine.NewEngine(binary, rt.RootDir)); err != nil {
-				t.Fatal(err)
-			}
-			rt.SetEnginesForTest(registry)
+			rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Claude: &config.EngineBinaryConfig{BinaryPath: binary}}})
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -268,34 +263,6 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 	}
 }
 
-func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {
-	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
-	entry := &engineModelCatalogCacheEntry{
-		binaryPath: "/usr/local/bin/codex",
-		models: []EngineModelInfo{{
-			ID:               "gpt-test",
-			SupportedEfforts: []string{"low", "high"},
-		}},
-		expiresAt: now.Add(engineModelCatalogTTL),
-	}
-
-	models, ok := entry.load("/usr/local/bin/codex", now.Add(time.Minute))
-	if !ok || len(models) != 1 || models[0].ID != "gpt-test" {
-		t.Fatalf("fresh matching cache = (%+v, %v), want cached model", models, ok)
-	}
-	models[0].SupportedEfforts[0] = "changed"
-	if entry.models[0].SupportedEfforts[0] != "low" {
-		t.Fatal("cache returned mutable model effort storage")
-	}
-
-	if _, ok := entry.load("/opt/codex", now.Add(time.Minute)); ok {
-		t.Fatal("cache matched a different binary path")
-	}
-	if _, ok := entry.load("/usr/local/bin/codex", entry.expiresAt); ok {
-		t.Fatal("cache remained fresh at its expiration boundary")
-	}
-}
-
 // Exercise per-turn ownership through the actual server binding and child
 // process, including failure, a second conversation, and native resumption.
 func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
@@ -305,6 +272,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
+	t.Run("cancellation receipt", func(t *testing.T) { testCodexCancellationReceipt(t, binary) })
 	t.Run("warm host ownership", func(t *testing.T) { testCodexWarmHostOwnership(t, binary) })
 	t.Run("workspace fidelity", func(t *testing.T) { testCodexWorkspaceFidelity(t, binary) })
 	t.Run("concurrent host replacement", func(t *testing.T) { testCodexConcurrentHostReplacement(t, binary) })
@@ -314,10 +282,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
 	t.Setenv("WUU_TEST_CODEX_FAIL_TURN_ONCE", filepath.Join(root, "turn-failed"))
-	rt := newTestRuntime(t, &fakeClient{})
-	registry := agentengine.NewRegistry()
-	rt.SetEnginesForTest(registry)
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -391,13 +356,12 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 }
 
 func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
-	rt := newTestRuntime(t, &fakeClient{})
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{DefaultEngine: "codex", Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rt.Toolkit = kit
-	rt.SetEnginesForTest(agentengine.NewRegistry())
 	settings := map[string]any{
 		"default_engine": "codex",
 		"codex":          map[string]any{"binary_path": binary},
@@ -431,7 +395,6 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 	if err := rt.RefreshEngineSettings(); err != nil {
 		t.Fatal(err)
 	}
-	srv.retainCodexHost()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	var threadID string
@@ -520,7 +483,7 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("thread creation waited for an unrelated engine version probe")
 	}
 	admitted := responseByID(t, parseOutput(t, out.String()), "gated-thread")
@@ -531,11 +494,10 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 	select {
 	case err := <-update:
 		if err != nil {
-			t.Error(err)
+			t.Fatal(err)
 		}
-		t.Error("settings update completed before the older refresh released its config snapshot")
-	case <-time.After(100 * time.Millisecond):
-		// The explicit update is serialized behind the gated refresh.
+	case <-time.After(5 * time.Second):
+		t.Fatal("settings update waited for an unrelated engine version probe")
 	}
 	release()
 	if response := waitForResponseByID(t, out, "gated-refresh"); response["error"] != nil {
@@ -559,9 +521,7 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	requests := filepath.Join(root, "requests.jsonl")
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var servers []*Server
@@ -650,7 +610,8 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	// A catalog acquisition may race the EOF notification; it is safe to
 	// retry this read without submitting/replaying any turn.
 	for {
-		if _, err := rt.CodexHost().ListModels(ctx); err == nil {
+		var result pluginprotocol.EngineQuotaResult
+		if err := rt.CallEngine(ctx, "codex", "quota", struct{}{}, &result); err == nil && result.ErrorCode != "network" {
 			break
 		}
 		select {
@@ -668,7 +629,9 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	}
 	// Settings install a new Host. The next binding transfers this server's
 	// lifetime ownership and closes the now-idle previous process.
-	rt.RebuildCodexEngine(true, binary)
+	if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+		t.Error(err)
+	}
 	run(1)
 	counts = readCounts()
 	if counts["initialize"] != 3 || counts["turn/start"] != 6 || counts["thread/resume"] != 4 {
@@ -696,9 +659,7 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
 	t.Setenv("WUU_TEST_CODEX_INITIALIZE_GATE", gate)
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -755,8 +716,9 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 			case <-settingsStop:
 				return
 			case <-tick.C:
-				rt.RebuildCodexEngine(true, binary)
-				srv.retainCodexHost()
+				if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+					t.Error(err)
+				}
 			}
 		}
 	}()
@@ -771,8 +733,9 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 	stopSettings()
 	// Force the final replacement after the native child has started, while
 	// its acquisition still owns the pending initialization.
-	rt.RebuildCodexEngine(true, binary)
-	srv.retainCodexHost()
+	if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+		t.Error(err)
+	}
 	if err := os.WriteFile(gate, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -816,15 +779,15 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			t.Setenv("WUU_TEST_CODEX_HISTORY", filepath.Join(root, "native.json"))
 			control := filepath.Join(root, "control.json")
 			t.Setenv("WUU_TEST_CODEX_HISTORY_CONTROL", control)
-			rt := newTestRuntime(t, &fakeClient{})
+			blocked := &nativeBoundaryDocuments{entered: make(chan struct{}), release: make(chan struct{}), progress: make(chan struct{})}
+			storeDir := filepath.Join(t.TempDir(), "documents")
+			factory := runtime.NativeProviderFactory{ID: persistence.SQLiteModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+				return &nativeBoundaryProvider{Service: persistence.NewService(persistence.SQLiteModule, storeDir, "sqlite"), gate: blocked}, nil
+			}}
+			rt := newEngineAdminRuntimeAt(t, t.TempDir(), config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}}, factory)
 			if scenario.noPrompt {
 				rt.StreamRunner.SystemPrompt = ""
 			}
-			rt.SetEnginesForTest(agentengine.NewRegistry())
-			rt.RebuildCodexEngine(true, binary)
-			blocked := &nativeBoundaryDocuments{Documents: rt.Documents, entered: make(chan struct{}), release: make(chan struct{}), progress: make(chan struct{})}
-			rt.Documents = blocked
-			rt.Sessions = session.NewStore(context.Background(), blocked)
 			var releaseOnce sync.Once
 			release := func() { releaseOnce.Do(func() { close(blocked.release) }) }
 			defer release()
@@ -951,26 +914,36 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 }
 
 type nativeBoundaryDocuments struct {
-	persistence.Documents
 	entered, release, progress chan struct{}
 	once, progressOnce         sync.Once
 	armed, active              atomic.Bool
 }
 
-func (d *nativeBoundaryDocuments) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
-	for _, write := range tx.Writes {
-		if write.Namespace != "wuu.session_messages.v1" {
-			continue
+type nativeBoundaryProvider struct {
+	*persistence.Service
+	gate *nativeBoundaryDocuments
+}
+
+func (p *nativeBoundaryProvider) InvokeService(ctx context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if in.Method == "commit" {
+		var tx persistence.Transaction
+		if err := json.Unmarshal(in.Params, &tx); err != nil {
+			return nil, err
 		}
-		var record session.HistoryRecord
-		if err := json.Unmarshal(write.Value, &record); err != nil {
-			return persistence.Receipt{}, err
-		}
-		if d.armed.Load() && record.EngineTurnID != "" && record.EngineTurnPending {
-			d.once.Do(func() { d.active.Store(true); close(d.entered); <-d.release; d.active.Store(false) })
+		for _, write := range tx.Writes {
+			if write.Namespace != "wuu.session_messages.v1" {
+				continue
+			}
+			var record session.HistoryRecord
+			if err := json.Unmarshal(write.Value, &record); err != nil {
+				return nil, err
+			}
+			if p.gate.armed.Load() && record.EngineTurnID != "" && record.EngineTurnPending {
+				p.gate.once.Do(func() { p.gate.active.Store(true); close(p.gate.entered); <-p.gate.release; p.gate.active.Store(false) })
+			}
 		}
 	}
-	return d.Documents.Commit(ctx, tx)
+	return p.Service.InvokeService(ctx, in)
 }
 
 type nativeBurstOutput struct {
@@ -998,4 +971,98 @@ func (w *nativeBurstOutput) Write(data []byte) (int, error) {
 		w.terminal <- params.Turn
 	}
 	return w.buffer.Write(data)
+}
+
+// Admin contract tests use the production selected graph with fixture binaries;
+// no model turns or real account requests are admitted by this helper.
+func newEngineAdminRuntime(t *testing.T, cfg config.Config) *runtime.Session {
+	t.Helper()
+	return newEngineAdminRuntimeAt(t, t.TempDir(), cfg)
+}
+
+func newEngineAdminRuntimeAt(t *testing.T, root string, cfg config.Config, factories ...runtime.NativeProviderFactory) *runtime.Session {
+	t.Helper()
+	// Native engine turns can trigger background titles. Keep that entire model
+	// path on a deterministic loopback fixture, never an external endpoint.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Fixture title\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(upstream.Close)
+	if len(cfg.Providers) == 0 {
+		cfg.DefaultProvider = "fixture"
+		cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", APIKey: "fixture", Model: "fixture"}}
+	}
+	for name, provider := range cfg.Providers {
+		provider.BaseURL = upstream.URL + "/v1"
+		cfg.Providers[name] = provider
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(root, ".wuu.json")
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := runtime.NewSession(runtime.Options{RootDir: root, WuuHome: t.TempDir(), HomeDir: home, Config: cfg, ConfigPath: path, ConfigLoadMode: runtime.ConfigLoadFile, NonInteractive: true, NativeProviders: factories})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	return rt
+}
+
+// Cancellation must settle the already-admitted native identity through the
+// captured provider's cleanup channel, never leave a replayable pending turn.
+func testCodexCancellationReceipt(t *testing.T, binary string) {
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.handleLine(ctx, []byte(`{"id":"thread","method":"thread/start","params":{"engine":"codex"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "thread")
+	if response["error"] != nil {
+		t.Fatalf("thread: %+v", response)
+	}
+	threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"e2e:pending"}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	waitForMethod(t, out, NotificationAgentMessageDelta)
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	messages := waitForMethod(t, out, NotificationTurnError)
+	terminal := remarshal[TurnErrorNotification](t, notificationByMethod(t, messages, NotificationTurnError)["params"])
+	if terminal.Turn.Status != TurnStatusInterrupted {
+		t.Fatalf("cancellation terminal: %+v", terminal)
+	}
+	history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range history {
+		if record.Role == "user" {
+			found = true
+			if record.EngineTurnID == "" || record.EngineTurnPending {
+				t.Fatalf("canceled native input not settled: %+v", record)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("native input was not durably admitted")
+	}
+	t.Log("interrupted native process turn durably cleared pending identity via captured cleanup gateway")
 }

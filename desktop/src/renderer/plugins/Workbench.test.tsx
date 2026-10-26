@@ -1,3 +1,4 @@
+import { ApplicationWorkbenchProvider } from "./ApplicationWorkbenchContext";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -26,6 +27,19 @@ describe("WorkbenchController", () => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("style");
     document.documentElement.removeAttribute("data-theme");
+  });
+
+  it("does not republish identical availability during application reconciliation", () => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const listener = vi.fn(() => controller.setAvailablePluginIds(new Set(["owner"])));
+    const off = controller.subscribe(listener);
+    try {
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally { off(); controller.dispose(); }
   });
 
   it.each(["view", "renderer", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
@@ -540,6 +554,22 @@ describe("DesktopWorkbench product path", () => {
     expect(document.body.textContent).not.toContain("Plugin ready");
   });
 
+  it("drains mounted view effects before generation cleanup on unload", async () => {
+    const host = new PluginHost({ react: React });
+    const events: string[] = [];
+    function View() { React.useEffect(() => () => { events.push("view"); }, []); return <span>Owned view</span>; }
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register(api) {
+      api.registerCleanup(() => events.push("generation"));
+      api.registerViewType({ id: "page", title: "Page", render: View });
+      api.registerViewPlacement({ id: "page", view: "page", region: "primary" });
+    } });
+    await act(async () => root.render(<DesktopWorkbench host={host} />));
+    expect(container.textContent).toContain("Owned view");
+    await act(async () => { host.unload("owner"); });
+    expect(events).toEqual(["view", "generation"]);
+    expect(container.textContent).not.toContain("Owned view");
+  });
+
   it("passes the active locale and registered plugin translations to Views", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({
@@ -759,12 +789,14 @@ describe("DesktopWorkbench product path", () => {
       },
     });
 
-    await act(async () => root.render(<RichContent text="hello" />));
+    const controller = new WorkbenchController(desktopPluginHost);
+    await act(async () => root.render(<ApplicationWorkbenchProvider value={controller}><RichContent text="hello" /></ApplicationWorkbenchProvider>));
     expect(container.textContent).toContain("Plugin markdown: hello");
 
     await act(async () => desktopPluginHost.unload("user:renderer"));
     expect(container.textContent).not.toContain("Plugin markdown");
     expect(container.textContent).toContain("hello");
+    controller.dispose();
   });
 });
 

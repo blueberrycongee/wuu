@@ -113,7 +113,9 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 
 所选包须已启用、受信任，并声明指定服务主版本。绑定不会安装或启用包。重复绑定、指定提供者不可用或服务有歧义时，准备失败，之前运行的 generation 保持不变。所选提供者崩溃或移除后，调用失败，不会回退到其他已注册实现。没有显式绑定时，服务必须恰好有一个提供者。注册表检查会同时返回版本、提供者 ID 和 `binding_source`，后者标识选择来源层；无歧义的自动发现服务使用 `unique-provider`。
 
-组合版本 1 和 2 与产品 CalVer、服务版本相互独立。版本 1 保留内联 profile 和模块／服务选择；bundle 与补丁要求版本 2，旧宿主会拒绝配置，不会忽略覆盖。降级前须将分层配置替换为解析后的完整 `modules` 和 `services`，并使用版本 1；仅修改版本号是不安全的。未添加此配置的已有用户继续使用唯一提供者发现；以前依赖先注册者胜出的配置须补充显式选择。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，仍在执行的工作保留原注册表。恢复之前的选择会创建新的 generation，不会撤销已完成效果，也不会自动迁移提供者数据。
+组合版本 1–3 与产品 CalVer、服务版本相互独立。版本 1 支持内联 profile 和模块／服务选择；bundle 与补丁要求版本 2 或以上。新配置使用版本 3。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，已接纳的执行保留原注册表。恢复选择会创建新的 generation，不会撤销外部效果，也不会自动迁移提供者数据。
+
+读取版本 1/2 时，通过只读兼容映射保留从宿主迁出的行为：选择 `wuu.session-execution` 时补入 `wuu.agent.policy.default`；选择该会话消费者或 `kernel` 时补入 `wuu.model-execution` 和原生模型提供者 `wuu.model.native`；选择内置桌面 surface 时补入 `wuu.default-application`。旧产品会话还会选择 `wuu.engines.native` 与 `wuu.engine-execution`；只有 kernel 的状态作用域不会因此加载引擎。显式替换绑定和显式排除保持不变，空产品仍为空。检查结果以 `migration:v1-to-v3` 或 `migration:v2-to-v3` 标注这些补入项。原配置不会被改写，仍可配合旧程序恢复。版本 3 不会补足缺失依赖，必须明确包含所需提供者或选择替代实现。将旧配置改为版本 3 前，应显式包含映射后的提供者。降级不能仅改版本号，应恢复此前兼容的配置和提供者版本。
 
 开发者和运行中的 agent 可以通过公开的 [`host.composition` 服务](plugin-compositions.md)试跑独立运行时，显式为逻辑 agent 选择组合并撤销选择，无需发布全局 generation。
 
@@ -143,7 +145,7 @@ Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一�
 ```json
 {
   "composition": {
-    "version": 2,
+    "version": 3,
     "profile": "writing",
     "bundles": {
       "analysis": {

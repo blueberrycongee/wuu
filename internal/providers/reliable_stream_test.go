@@ -614,6 +614,44 @@ func TestReliableStreamClientReplayGuardBlocksUnsafeRetry(t *testing.T) {
 	}
 }
 
+// A selected planner owns the transport retry decision, not merely the final
+// error notification. Its failure cannot re-enable the native retry planner.
+func TestReliableStreamSelectedRecoveryPlanner(t *testing.T) {
+	for _, mode := range []string{"stop", "retry", "error"} {
+		t.Run(mode, func(t *testing.T) {
+			inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{{err: &HTTPError{StatusCode: 429, Body: "rate limited"}}, {events: []StreamEvent{{Type: EventDone}}}}}
+			calls := 0
+			planner := func(ctx context.Context, in StreamRecoveryInput) (RecoveryPlan, time.Duration, error) {
+				calls++
+				if in.Attempt != 1 || in.Submissions != 0 {
+					t.Fatalf("wrong evidence: %+v", in)
+				}
+				if mode == "error" {
+					return RecoveryPlan{}, 0, errors.New("policy unavailable")
+				}
+				action := RecoveryStop
+				if mode == "retry" {
+					action = RecoveryReplaySame
+				}
+				return RecoveryPlan{Action: action}, 0, nil
+			}
+			client := newReliableTestClient(inner, nil, WithStreamRecoveryPlanner(planner))
+			ch, err := client.StreamChat(context.Background(), reliableTestRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := collectReliableEvents(t, ch)
+			expected := 1
+			if mode == "retry" {
+				expected = 2
+			}
+			if inner.callCount != expected || calls != 1 {
+				t.Fatalf("mode=%s calls=%d planner=%d events=%+v", mode, inner.callCount, calls, events)
+			}
+		})
+	}
+}
+
 // A pre-connect fault, mid-output interruption and exhaustion must consume the
 // existing shared budget; a user continuation is a separate product workflow.
 func TestRecoveryFaultMatrixKeepsWorkflowBudgets(t *testing.T) {

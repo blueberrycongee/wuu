@@ -143,12 +143,14 @@ func (s *Server) threadSearchSources(binding *runtime.State) ([]threadSearchSour
 	if err != nil {
 		return nil, err
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	sourcesByID := make(map[string]threadSearchSource, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
-		entry := threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entry := entryForSession(sess)
 		sourcesByID[sess.ID] = threadSearchSource{entry: entry}
 	}
 

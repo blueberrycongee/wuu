@@ -418,15 +418,15 @@ func TestServiceRegistryCloseNotifiesConsumers(t *testing.T) {
 
 func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *testing.T) {
 	service := func(name string) ServiceDescriptor {
-		return ServiceDescriptor{Name: name, Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}}}
+		return ServiceDescriptor{Name: name, Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run", InputSchema: "fixture.run.input.v1", OutputSchema: "fixture.run.output.v1"}}}
 	}
-	inner := &fakeServiceProcess{id: "inner", state: StateActive, provided: []ServiceDescriptor{service("inner")}}
+	inner := &fakeServiceProcess{id: "inner", state: StateActive, provided: []ServiceDescriptor{service("fixture.inner")}}
 	outer := &fakeServiceProcess{
 		id: "outer", state: StateActive,
-		provided: []ServiceDescriptor{service("outer")},
-		required: []ServiceRequirement{{Name: "inner", MajorVersion: 1}},
+		provided: []ServiceDescriptor{service("fixture.outer")},
+		required: []ServiceRequirement{{Name: "fixture.inner", MajorVersion: 1}},
 	}
-	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "outer", MajorVersion: 1, Required: true}}}
+	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "fixture.outer", MajorVersion: 1, Required: true}}}
 	registry, conflicts := BuildServiceRegistry(outer, inner, consumer)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts = %+v", conflicts)
@@ -437,7 +437,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 	outer.invoke = func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
 		close(started)
 		<-continueNested
-		result, serviceErr := registry.Call(ctx, "outer", ServiceCallParams{Service: "inner", Method: "run", ExecutionID: params.ExecutionID})
+		result, serviceErr := registry.Call(ctx, "outer", ServiceCallParams{Service: "fixture.inner", Method: "run", ExecutionID: params.ExecutionID})
 		if serviceErr != nil {
 			return nil, serviceErr
 		}
@@ -445,7 +445,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 	}
 	callDone := make(chan *HostServiceError, 1)
 	go func() {
-		_, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "outer", Method: "run", ExecutionID: "exec-drain"})
+		_, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "fixture.outer", Method: "run", ExecutionID: "exec-drain"})
 		callDone <- serviceErr
 	}()
 	<-started
@@ -467,7 +467,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if _, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "outer", Method: "run", ExecutionID: "exec-new"}); serviceErr == nil || serviceErr.Code != "service_unavailable" {
+	if _, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "fixture.outer", Method: "run", ExecutionID: "exec-new"}); serviceErr == nil || serviceErr.Code != "service_unavailable" {
 		t.Fatalf("new execution during drain = %v", serviceErr)
 	}
 	select {
@@ -491,7 +491,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 
 func TestServiceRegistryCloseCancelsExecutionAtDeadline(t *testing.T) {
 	provider := &fakeServiceProcess{id: "slow", state: StateActive, provided: []ServiceDescriptor{{
-		Name: "slow", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}},
+		Name: "fixture.slow", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run", InputSchema: "fixture.run.input.v1", OutputSchema: "fixture.run.output.v1"}},
 	}}}
 	started := make(chan struct{})
 	cancelled := make(chan struct{})
@@ -501,10 +501,10 @@ func TestServiceRegistryCloseCancelsExecutionAtDeadline(t *testing.T) {
 		close(cancelled)
 		return nil, ctx.Err()
 	}
-	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "slow", MajorVersion: 1, Required: true}}}
+	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "fixture.slow", MajorVersion: 1, Required: true}}}
 	registry, _ := BuildServiceRegistry(provider, consumer)
 	registry.Activate()
-	go registry.Call(context.Background(), "caller", ServiceCallParams{Service: "slow", Method: "run", ExecutionID: "exec-timeout"})
+	go registry.Call(context.Background(), "caller", ServiceCallParams{Service: "fixture.slow", Method: "run", ExecutionID: "exec-timeout"})
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -520,12 +520,12 @@ func TestServiceCompletionWaitsForNestedExecutionChain(t *testing.T) {
 	for _, transport := range []string{"native", "wire-context", "background"} {
 		t.Run(transport, func(t *testing.T) {
 			service := func(name string) ServiceDescriptor {
-				return ServiceDescriptor{Name: name, Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}}}
+				return ServiceDescriptor{Name: name, Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run", InputSchema: "fixture.run.input.v1", OutputSchema: "fixture.run.output.v1"}}}
 			}
-			inner := &fakeServiceProcess{id: "inner", state: StateActive, provided: []ServiceDescriptor{service("inner")}}
-			outer := &fakeServiceProcess{id: "outer", state: StateActive, provided: []ServiceDescriptor{service("outer")},
-				required: []ServiceRequirement{{Name: "inner", MajorVersion: 1, Required: true}}}
-			caller := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "outer", MajorVersion: 1, Required: true}}}
+			inner := &fakeServiceProcess{id: "inner", state: StateActive, provided: []ServiceDescriptor{service("fixture.inner")}}
+			outer := &fakeServiceProcess{id: "outer", state: StateActive, provided: []ServiceDescriptor{service("fixture.outer")},
+				required: []ServiceRequirement{{Name: "fixture.inner", MajorVersion: 1, Required: true}}}
+			caller := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "fixture.outer", MajorVersion: 1, Required: true}}}
 			registry, conflicts := BuildServiceRegistry(inner, outer, caller)
 			if len(conflicts) != 0 {
 				t.Fatal(conflicts)
@@ -564,7 +564,7 @@ func TestServiceCompletionWaitsForNestedExecutionChain(t *testing.T) {
 					// A process sends only its authenticated execution identity.
 					ctx = context.Background()
 				}
-				if _, err := registry.Call(ctx, outer.id, ServiceCallParams{Service: "inner", Method: "run", ExecutionID: params.ExecutionID}); err != nil {
+				if _, err := registry.Call(ctx, outer.id, ServiceCallParams{Service: "fixture.inner", Method: "run", ExecutionID: params.ExecutionID}); err != nil {
 					t.Fatalf("nested call finalized its parent: %v", err)
 				}
 				order = append(order, "outer-return")
@@ -572,13 +572,13 @@ func TestServiceCompletionWaitsForNestedExecutionChain(t *testing.T) {
 			}
 			var err *HostServiceError
 			if transport == "background" {
-				key, provider, targetErr := registry.backgroundTarget(outer.id, "outer", "run")
+				key, provider, targetErr := registry.backgroundTarget(outer.id, "fixture.outer", "run")
 				if targetErr != nil {
 					t.Fatal(targetErr)
 				}
 				_, err = registry.invokeBackground(context.Background(), outer.id, key, provider, "run", json.RawMessage(`{}`), "")
 			} else {
-				_, err = host.CallService(context.Background(), caller.id, "outer", "run", json.RawMessage(`{}`))
+				_, err = host.CallService(context.Background(), caller.id, "fixture.outer", "run", json.RawMessage(`{}`))
 			}
 			if err == nil || !strings.Contains(err.Message, "operation failed") || !strings.Contains(err.Message, "inner cleanup failed") || !strings.Contains(err.Message, "outer cleanup failed") {
 				t.Fatalf("lost call or cleanup error: %v", err)
@@ -683,7 +683,7 @@ func TestServiceRegistryNativeAutonomousWorkStopsWithGeneration(t *testing.T) {
 
 func TestHostCallServiceUsesDeclaredConsumer(t *testing.T) {
 	provider := &fakeServiceProcess{id: "driver", state: StateActive, provided: []ServiceDescriptor{{
-		Name: "driver.demo", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}},
+		Name: "driver.demo", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run", InputSchema: "fixture.run.input.v1", OutputSchema: "fixture.run.output.v1"}},
 	}}}
 	consumer := &fakeServiceProcess{id: "native-caller", state: StateActive, required: []ServiceRequirement{{Name: "driver.demo", MajorVersion: 1, Required: true}}}
 	undeclared := &fakeServiceProcess{id: "kernel", state: StateActive}
@@ -729,7 +729,7 @@ func TestHostCallServiceUsesDeclaredConsumer(t *testing.T) {
 // an ordinary downstream service callback. It ends with this exact invocation.
 func TestHostCallToolServiceDelegatesOnlySelectedInvocation(t *testing.T) {
 	provider := &fakeServiceProcess{id: "tools", state: StateActive, provided: []ServiceDescriptor{{
-		Name: "agent.tools", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "execute"}},
+		Name: "agent.tools", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "execute", InputSchema: "fixture.execute.input.v1", OutputSchema: "fixture.execute.output.v1"}},
 	}}, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
 	search := &fakeServiceProcess{id: "search", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
 	consumer := &fakeServiceProcess{id: "dispatcher", state: StateActive, required: []ServiceRequirement{{Name: "agent.tools", MajorVersion: 1, Required: true}}}
@@ -801,5 +801,82 @@ func TestHostCallToolServiceDelegatesOnlySelectedInvocation(t *testing.T) {
 	}
 	if len(provider.invokeCalls) != count {
 		t.Fatal("cancelled or stopped consumer reached provider")
+	}
+}
+
+// External transports can call their router while later clients are still
+// initializing. Preparation admission must remain race-free during registration.
+func TestServiceRegistryConcurrentPreparationDiscovery(t *testing.T) {
+	registry := NewServiceRegistry()
+	var calls sync.WaitGroup
+	start := make(chan struct{})
+	calls.Add(1)
+	go func() {
+		defer calls.Done()
+		<-start
+		for range 100 {
+			registry.Snapshot(1)
+			_, _ = registry.Call(context.Background(), "consumer", ServiceCallParams{Service: "search.provider", Method: "query"})
+		}
+	}()
+	close(start)
+	registry.RegisterClients(&fakeServiceProcess{id: "consumer", state: StatePrepared, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1}}})
+	registry.RegisterClients(&fakeServiceProcess{id: "provider", state: StatePrepared, provided: []ServiceDescriptor{searchService("1.0.0")}})
+	calls.Wait()
+	if _, err := registry.Call(context.Background(), "consumer", ServiceCallParams{Service: "search.provider", Method: "query"}); err == nil {
+		t.Fatal("registration admitted effectful work before activation")
+	}
+}
+
+func TestRequestedCleanupCannotAdmitNewWork(t *testing.T) {
+	provider := &fakeServiceProcess{id: "service", state: StateActive, provided: []ServiceDescriptor{{Name: "fixture.resource", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "create", InputSchema: "fixture.create.input.v1", OutputSchema: "fixture.create.output.v1"}, {Name: "settle", InputSchema: "fixture.settle.input.v1", OutputSchema: "fixture.settle.output.v1", Cleanup: true}}}}}
+	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "fixture.resource", MajorVersion: 1, Required: true}}}
+	registry, conflicts := BuildServiceRegistry(provider, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	registry.Activate()
+	var request ServiceCallParams
+	if err := json.Unmarshal([]byte(`{"service":"fixture.resource","method":"create","cleanup":true}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Call(context.Background(), "caller", request); err == nil {
+		t.Fatal("cleanup requested a new effect")
+	}
+	if len(provider.invokeCalls) != 0 {
+		t.Fatal("new work reached provider")
+	}
+	if err := json.Unmarshal([]byte(`{"service":"fixture.resource","method":"settle","cleanup":true}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Call(context.Background(), "caller", request); err != nil {
+		t.Fatal(err)
+	}
+	request.ExecutionID = "cancelled-execution"
+	if _, err := registry.Call(context.Background(), "caller", request); err == nil {
+		t.Fatal("cleanup borrowed an execution identity")
+	}
+	if len(provider.invokeCalls) != 1 {
+		t.Fatal("invalid cleanup reached provider")
+	}
+}
+
+func TestNativeServiceRegistrationUsesPublicDescriptorValidation(t *testing.T) {
+	for _, name := range []string{"history_fork", "bad/method"} {
+		descriptor := searchService("1.0.0")
+		descriptor.Methods[0].Name = name
+		native := &fakeServiceProcess{id: "native", state: StateActive, provided: []ServiceDescriptor{descriptor}}
+		registry := NewServiceRegistry()
+		conflicts := registry.RegisterClients(native)
+		publicErr := ValidateServiceNegotiation(CapabilityInitializeResult{ProtocolVersion: 3, ProvidedServices: []ServiceDescriptor{descriptor}})
+		if name == "history_fork" && publicErr != nil {
+			t.Fatal(publicErr)
+		}
+		if (len(conflicts) != 0) != (publicErr != nil) {
+			t.Fatalf("native/public acceptance differs: conflicts=%+v public=%v", conflicts, publicErr)
+		}
+		if registry.HasProvider(descriptor.Name, 1) != (publicErr == nil) {
+			t.Fatal("invalid descriptor retained provider authority")
+		}
 	}
 }

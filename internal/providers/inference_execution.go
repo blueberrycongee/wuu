@@ -13,11 +13,13 @@ import (
 // InferenceSubmissionMeta describes one physical request submission without
 // carrying credentials, prompt text, response bodies, or provider receipts.
 type InferenceSubmissionMeta struct {
-	Provider  string
-	Protocol  string
-	Transport string
-	Mode      string
-	Reason    string
+	// CapacityScope is an opaque account domain, never a raw credential.
+	CapacityScope string
+	Provider      string
+	Protocol      string
+	Transport     string
+	Mode          string
+	Reason        string
 	// RequestBytes is the serialized request body size. It seeds a
 	// conservative input-token estimate so a submission whose endpoint never
 	// reports usage can settle as estimated instead of occupying the
@@ -70,6 +72,7 @@ type InferenceSubmission struct {
 	OutputBytes     int
 
 	execution *InferenceExecution
+	remote    *remoteAccounting
 	// Stream observations are fallback evidence. A terminal receipt supplied
 	// explicitly by the protocol client takes precedence over buffered deltas.
 	usageFromStream bool
@@ -86,6 +89,10 @@ func (s InferenceSubmission) mutable() bool {
 // ObserveOutput records a conservative partial-output estimate. Provider
 // usage, when it arrives, always supersedes this estimate.
 func (s InferenceSubmission) ObserveOutput(content string) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Output: content})
+		return
+	}
 	if !s.mutable() || content == "" {
 		return
 	}
@@ -105,6 +112,10 @@ func (s InferenceSubmission) ObserveOutput(content string) {
 // complete conservative estimate, including input. Partial output evidence
 // alone remains unknown-but-billable because input often dominates cost.
 func (s InferenceSubmission) ObserveEstimatedUsage(usage *TokenUsage) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Usage: usage, Estimated: true})
+		return
+	}
 	if !s.mutable() || usage == nil {
 		return
 	}
@@ -126,6 +137,10 @@ func (s InferenceSubmission) ObserveUsage(usage *TokenUsage) {
 }
 
 func (s InferenceSubmission) observeUsage(usage *TokenUsage, fromStream bool) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Usage: usage, FromStream: fromStream})
+		return
+	}
 	if !s.mutable() || usage == nil {
 		return
 	}
@@ -157,6 +172,10 @@ func (s InferenceSubmission) Abandon() {
 }
 
 func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failure NormalizedFailure, usage *TokenUsage, fromStream bool) {
+	if s.remote != nil {
+		_ = s.remote.invoke("settle", RemoteSubmissionUpdate{ID: s.ID, Outcome: outcome, Usage: usage, Failure: DurableInferenceFailure(failure), RetryAfter: failure.RetryAfter, FromStream: fromStream}, nil)
+		return
+	}
 	if !s.mutable() {
 		return
 	}
@@ -261,19 +280,23 @@ func addTokenUsage(total *TokenUsage, usage TokenUsage) {
 type InferenceExecution struct {
 	mu sync.Mutex
 
-	operation       InferenceOperation
-	workflow        *InferenceWorkflow
-	nextAttempt     int
-	nextSubmission  int
-	submissions     []InferenceSubmission
-	journal         InferenceJournal
-	checkpoints     map[string]InferenceSubmissionJournalRecord
-	requestHash     string
-	journalErr      error
-	journalDegraded error
-	firstEvents     map[string]bool
-	terminal        bool
-	ownsWorkflow    bool
+	operation         InferenceOperation
+	workflow          *InferenceWorkflow
+	nextAttempt       int
+	nextSubmission    int
+	submissions       []InferenceSubmission
+	journal           InferenceJournal
+	checkpoints       map[string]InferenceSubmissionJournalRecord
+	requestHash       string
+	journalErr        error
+	journalDegraded   error
+	firstEvents       map[string]bool
+	terminal          bool
+	terminalRequested bool
+	physicalReceipts  int
+	pendingAttempts   []pendingAttemptTerminal
+	pendingTerminal   *pendingOperationTerminal
+	ownsWorkflow      bool
 }
 
 // InferenceAttempt identifies one ExecuteOnce call. The execution pointer is
@@ -284,6 +307,7 @@ type InferenceAttempt struct {
 	Ordinal int
 
 	execution *InferenceExecution
+	remote    *remoteAccounting
 }
 
 func NewInferenceExecution(operation InferenceOperation) *InferenceExecution {
@@ -407,6 +431,16 @@ func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequ
 }
 
 func EnsureInferenceAttemptContext(ctx context.Context, req ChatRequest, fallbackKind InferenceOperationKind, fallbackProfile InferenceWorkloadProfile) (ChatRequest, error) {
+	if req.Attempt.remote != nil {
+		if err := inferenceContextError(ctx); err != nil {
+			return req, err
+		}
+		if !req.Attempt.Valid() {
+			return req, errors.New("invalid remote inference attempt")
+		}
+		req.Operation = req.Attempt.Operation()
+		return req, req.Attempt.JournalError()
+	}
 	if err := inferenceContextError(ctx); err != nil {
 		return req, err
 	}
@@ -476,7 +510,7 @@ func (e *InferenceExecution) BeginAttemptChecked() (InferenceAttempt, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.terminal {
+	if e.terminal || e.terminalRequested {
 		return InferenceAttempt{}, errors.New("inference operation is already terminal")
 	}
 	if e.journalErr != nil {
@@ -514,13 +548,16 @@ func (e *InferenceExecution) BeginAttemptChecked() (InferenceAttempt, error) {
 }
 
 func (a InferenceAttempt) Valid() bool {
-	return a.execution != nil && strings.TrimSpace(a.ID) != "" && a.Ordinal > 0
+	return (a.execution != nil || a.remote != nil) && strings.TrimSpace(a.ID) != "" && a.Ordinal > 0
 }
 
 // Operation returns the immutable logical-operation metadata associated with
 // this attempt. Invalid attempts return the zero value so scheduling callers
 // can safely fall back to the interactive profile.
 func (a InferenceAttempt) Operation() InferenceOperation {
+	if a.remote != nil {
+		return a.remote.operation
+	}
 	if !a.Valid() {
 		return InferenceOperation{}
 	}
@@ -528,6 +565,13 @@ func (a InferenceAttempt) Operation() InferenceOperation {
 }
 
 func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (InferenceSubmission, error) {
+	if a.remote != nil {
+		var result InferenceSubmission
+		err := a.remote.invoke("create", meta, &result)
+		result.execution = nil
+		result.remote = a.remote
+		return result, err
+	}
 	if !a.Valid() {
 		return InferenceSubmission{}, errors.New("record submission without a valid inference attempt")
 	}
@@ -536,6 +580,9 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 	defer e.mu.Unlock()
 	if e.journalErr != nil {
 		return InferenceSubmission{}, e.journalErr
+	}
+	if e.terminal || e.terminalRequested {
+		return InferenceSubmission{}, errors.New("inference operation is already closing")
 	}
 	for _, existing := range e.submissions {
 		if existing.AttemptID == a.ID {
@@ -584,6 +631,9 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 // recent physical submission in this attempt. Protocol adapters may also
 // update an exact submission handle; both paths are idempotent at terminal.
 func (a InferenceAttempt) ObserveStreamEvent(event StreamEvent) error {
+	if a.remote != nil {
+		return errors.New("remote transport must report physical receipts, not logical events")
+	}
 	if !a.Valid() {
 		return nil
 	}
@@ -680,6 +730,9 @@ func isProviderResponseEvidence(eventType StreamEventType) bool {
 }
 
 func (a InferenceAttempt) JournalError() error {
+	if a.remote != nil {
+		return a.remote.journalError()
+	}
 	if !a.Valid() {
 		return nil
 	}
@@ -698,12 +751,31 @@ func (e *InferenceExecution) JournalError() error {
 }
 
 func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
+	if a.remote != nil {
+		return errors.New("logical attempt completion belongs to the host")
+	}
 	if !a.Valid() {
 		return errors.New("complete without a valid inference attempt")
 	}
 	e := a.execution
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.physicalReceipts > 0 {
+		for _, pending := range e.pendingAttempts {
+			if pending.attempt.ID == a.ID {
+				return nil
+			}
+		}
+		e.pendingAttempts = append(e.pendingAttempts, pendingAttemptTerminal{a, outcome, failure})
+		return nil
+	}
+	return e.completeAttemptLocked(a, outcome, failure)
+}
+
+func (e *InferenceExecution) completeAttemptLocked(a InferenceAttempt, outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
 	if e.journalErr != nil {
 		return e.journalErr
 	}
@@ -727,6 +799,9 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 }
 
 func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan RecoveryPlan, retryAt time.Time) (InferenceAttempt, error) {
+	if a.remote != nil {
+		return InferenceAttempt{}, errors.New("recovery admission belongs to the host")
+	}
 	if !a.Valid() {
 		return InferenceAttempt{}, errors.New("prepare recovery without a valid inference attempt")
 	}
@@ -736,7 +811,7 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 	if e.journalErr != nil {
 		return InferenceAttempt{}, e.journalErr
 	}
-	if e.terminal {
+	if e.terminal || e.terminalRequested {
 		return InferenceAttempt{}, errors.New("inference operation is already terminal")
 	}
 	nextOrdinal := e.nextAttempt + 1
@@ -790,6 +865,20 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.physicalReceipts > 0 {
+		e.terminalRequested = true
+		if e.pendingTerminal == nil {
+			e.pendingTerminal = &pendingOperationTerminal{outcome, failure}
+		}
+		return nil
+	}
+	return e.completeLocked(outcome, failure)
+}
+
+func (e *InferenceExecution) completeLocked(outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
 	if e.terminal {
 		return e.journalErr
 	}
@@ -929,6 +1018,11 @@ func (a InferenceAttempt) latestSubmission() (InferenceSubmission, bool) {
 }
 
 func (a InferenceAttempt) SubmissionSnapshot() []InferenceSubmission {
+	if a.remote != nil {
+		var result []InferenceSubmission
+		_ = a.remote.invoke("snapshot", nil, &result)
+		return result
+	}
 	if !a.Valid() {
 		return nil
 	}

@@ -29,12 +29,13 @@ module.exports = (api) => {
     provenance: { kind: "plugin", source: index ? "user" : "builtin", scope: "user", plugin_id: id.split(":")[1] },
     requires: index === 2 ? ["research-shell"] : [],
   }));
-  const inventory = () => plugins.map(plugin => ({ ...plugin, graph_generation: `fixture-graph-${epoch}`, fingerprint: `${plugin.fingerprint}${failure}`, enabled: !(disabled && plugin.id === selected) }));
+  let inherited = [];
+  const inventory = () => [...inherited, ...plugins.map(plugin => ({ ...plugin, graph_generation: `fixture-graph-${epoch}`, fingerprint: `${plugin.fingerprint}${failure}`, enabled: !(disabled && plugin.id === selected) }))];
   const binding = () => selected ? { plugin_id: selected, generation: inventory().find(plugin => plugin.id === selected).fingerprint, provider_id: "ui.shell" } : null;
   const initialize = api.initialize;
   return {
     ...api,
-    initialize: async () => ({ ...await initialize(), application_shell: binding(), extension_inventory: inventory() }),
+    initialize: async () => { const base = await initialize(); inherited = base.extension_inventory.filter(plugin => !plugin.desktop?.services?.some(service => service.name === "ui.shell")); return { ...base, application_shell: binding(), extension_inventory: inventory() }; },
     listAllThreads: () => api.listThreads(),
     onRuntimeRestore: listener => { restoreListeners.add(listener); return () => restoreListeners.delete(listener); },
     testRestore: () => Promise.all([...restoreListeners].map(listener => listener())),

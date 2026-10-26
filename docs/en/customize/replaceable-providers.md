@@ -12,6 +12,7 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
 | `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
+| `agent.policy@1` | `wuu.agent.policy.default` | `agentPolicy`, `agentPolicyServiceDescriptor`, `composeAgentPolicies` |
 | `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`, `wuu.state.jsonl` | `documentStore`, `documentStoreDescriptor`, `StateQuery` |
 | `state.credentials@1` | `wuu.credentials.os`, `wuu.credentials.file` | `credentialStore`, `CREDENTIAL_STORE_DESCRIPTOR` |
@@ -256,3 +257,175 @@ Use synthetic data and record the selected provider, entry point, observed resul
 | Replace a stateful provider | The explicit transfer preserves the required data and receipts; a failed preparation leaves the active composition intact. |
 
 Run the checks through every product entry point you ship. A direct SDK client test can verify request encoding and error propagation, but cannot show that a desktop or headless consumer actually routes through that client. Keep those results separate from real inference and native UI acceptance.
+
+## Composable loop policy
+
+`agent.policy@1` selects one provider for scheduling, continuation and recovery.
+The supplied module is `wuu.agent.policy.default`. The default loop, child
+runners, streaming transport, unary model calls and independent
+`host.model.invoke` calls use the captured generation's selection. Removing it
+stops those calls; neither errors nor an empty decision select another provider.
+Request transformations and context contributions keep their existing ordered
+contracts; `agent.compaction` independently owns context replacement.
+
+Export a runtime plugin providing `agentPolicyServiceDescriptor()` and implement
+its `evaluate` method. `composeAgentPolicies(strategies)` calls strategies in the
+supplied order with isolated input snapshots. Returning `undefined` delegates;
+a decision short-circuits. Exhausting the chain, throwing, returning an invalid
+action or cancellation fails the operation. A composition provider can declare
+other public services as dependencies instead of importing their implementation.
+There is no second host-side policy registry.
+
+| Phase | Observation and decision |
+| --- | --- |
+| `schedule` | Evaluated once before turn effects. `serial` disables streaming tool starts and permits one leaf execution at a time, including nested calls. `parallel_safe` requires `max_parallel` (1–64), shared across turn batches and nested leaves, and retains tool concurrency safety declarations. |
+| `continue` | Evaluated after a tool-free response. `stop` ends the turn; `continue` requests another model round within the turn's step and continuation budgets. |
+| `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
+| `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
+
+A policy cannot replay visible partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
+potentially billable outcomes; the selected policy may permit a bounded model
+reattempt, but cannot replay accepted or uncertain tool effects.
+Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
+receipts survive failed attempts. Credential refresh, transport changes and
+retries still require their existing write-ahead receipts and adapter support.
+
+Complete loop replacements use `driverTurn(host, execution).evaluatePolicy()`
+without surrendering their control flow: model calls, tools, checkpoints and
+completion remain separate public operations. `settings().has_policy` reports
+whether the runner has a selected policy client. Direct embedded Go tests that
+construct an uncomposed runner do not prove product provider selection.
+
+`examples/plugins/composable-policy.ts` is a single-file author example. Copy it
+outside the repository and run `wuu plugin dev ./composable-policy.ts`, then
+select its `agent.policy@1` binding in the desired composition. Run
+`node scripts/loop-policy-e2e.mjs` for a repeatable packed-SDK process check with
+two concurrent policy implementations, inherited child bindings and removal.
+Evidence is written beneath `.tmp/e2e/loop-policy/`; its controlled model verifies
+routing and control flow, not model quality or self-improvement.
+
+### Child execution state
+
+The native child-agent domain uses the selected `state.documents@1` provider for
+thread metadata, delivery claims, task/run indexes, queue cancellation tombstones,
+reports, and terminal/pending worker snapshots. The parent execution captures
+this binding; worker follow-ups, recovery and application reads do not reopen a
+native file store after provider failure. Disabling the selected provider makes
+these operations unavailable even when another native provider is still active.
+
+Each domain mutation compares the provider revision and commits its related
+indexes and events atomically. Only a definitive revision conflict is retried.
+An uncertain response retains the exact transaction in the error; it is not
+permission to repeat a tool effect or reconstruct a write. Worker pending driver
+state remains distinct from its last terminal result, so checkpoint recovery
+cannot publish an uncommitted result delivery.
+
+Before the first use of this format, stop older Wuu processes that could still
+write legacy child files. Migration reads all discovered historical workspace
+roots and imports a domain only when the selected provider confirms it is absent.
+It never imports on a provider error; subsequent reads ignore stale legacy files.
+Original files remain until ordinary session deletion for recovery. Session
+deletion leaves empty authoritative images so retrying cleanup cannot resurrect
+legacy child state. Switching document providers still requires the complete
+stopped-writer transfer described above, including these namespaces and receipts.
+
+Report Markdown files are derived artifacts written after the state commit.
+A materialization failure is reported as committed state with incomplete artifact
+work, not a rollback. Materialization rereads the current report under its file
+lock so a delayed older writer cannot overwrite a newer committed report.
+
+The embedded-browser tab registry also uses the selected document provider. Tab
+URLs, retention status, and restart-recovery records migrate once from every
+known historical artifact root; deleting a thread writes an empty authoritative
+image so an old file cannot resurrect it. Both native and external-engine
+conversation toolkits use this path. An unavailable state provider fences browser
+host actions, while a persistence failure after a host action is reported as
+potentially completed rather than silently replayed or reported successful.
+
+## Engine sessions
+
+`engine.<id>@1` is the execution and administration boundary. The shipped
+`wuu.engines.native` module provides the native Wuu loop and external CLI adapters;
+`wuu.engine-execution` consumes the selected services. The production engine
+registry is an inventory projection, not another provider selector. A replacement
+may provide `engine.wuu` without inheriting any native implementation or identity
+privileges. Missing or disabled selections never create a substitute engine.
+
+Binding transports model, effort, speed, model options, instructions, permission
+mode, MCP endpoints and resume reference together. The callback gateway is bound
+to that provider and captured generation. Its opaque token alone grants no access.
+The public `host.engine.session` operations deliver events, approval/input
+requests and durable native references; `run_loop` delegates to the selected
+complete loop driver rather than a built-in algorithm. Capabilities, not names,
+select host-managed continuation, canonical history and steering behavior.
+
+Closing a bound session cancels and drains its active run before releasing its
+provider generation. A caller's canceled close context stops waiting, not cleanup;
+a subsequent close observes the same terminal cleanup. Native warm scopes retain
+CLI processes across turns and release them with the owning server. Confirmed
+terminal receipts use separate bounded `settle_turn`/`settle_reference` cleanup
+calls: they cannot admit a pending turn, launch tools or resume generation. An
+uncertain interruption is not silently retried.
+
+The same selected engine service exposes `describe`, `models`, `auth`, `quota`
+and `history_fork`; unsupported operations fail explicitly. Model discovery
+preserves context-keyed stale/partial results and refresh is explicit. Quota is
+opt-in; remote calls cannot start `local-cli` authentication. History forks require
+native boundary evidence and never reconstruct an unsupported fork by replaying
+transcript effects. Disabled native
+engines remain discoverable in settings, but only metadata inspection is allowed.
+They cannot launch authentication, quota/model discovery or history operations.
+Use `node scripts/engine-provider-e2e.mjs` for the independently installed public
+SDK replacement check, and the fake-CLI lifecycle tests for process and durable
+cancellation behavior. Neither requires a paid model or a user Codex session.
+
+### Model transport capacity
+
+`model.capacity@1` selects the admission/cooldown strategy; the default module is
+`wuu.model.capacity.default`. `host.model.capacity@1`, provided by
+`wuu.model.capacity.resources`, is the separately retained physical resource
+bound. Embedders explicitly share a `runtime.CapacityResources` owner across
+sessions. Derived compositions and generation reloads inherit that owner through
+their native factories; an isolated strategy does not create additional physical
+slots. Independent owners intentionally isolate resources. This is process-local
+coordination, not a claim of cross-process account enforcement.
+
+The physical submission receipt boundary applies both contracts before a native,
+SDK receipt, or direct adapter can send. A delegating adapter does not consume a
+second slot for its child's send. All adapters share the host-known configured
+provider-route bound. Native transports additionally use an opaque credential /
+origin account domain, so native provider aliases share capacity. Arbitrary
+external account aliases require an explicitly declared common opaque
+`capacity_scope`; credentials must never be used as scope identifiers. Multiple
+distinct scopes are acquired in deterministic order, and canceled partial
+admission releases every acquired lease.
+
+Implicit resource owners retain a root lease for the entire Session/OpenState
+lifetime, including periods when capacity modules are disabled. Prepared candidates
+and retained generations hold separate leases, so replacement and repair cannot
+prematurely dispose their owner. Explicit owners remain caller-owned: close their
+sessions/states, then call `CapacityResources.Close(ctx)`. Closing seals admission,
+cancels queued requests, and stops policy timers; a wait timeout leaves admitted
+physical work owned until its retained references drain.
+
+Physical capacity and callback authority have separate lifetimes. Disable or
+logical cancellation does not free an unsettled physical slot. Authoritative
+terminal settlement frees that slot immediately, allowing another physical send
+within the same callback. The selected service graph and receipt authority remain
+retained until the original physical RPC completes or its process termination is
+confirmed. Unacknowledged termination is not reported as success. A retirement
+wait deadline reports pending cleanup rather than claiming termination; cleanup
+settlement remains authorized through the retained scope.
+
+`node scripts/capacity-provider-e2e.mjs` verifies an independently installed public
+SDK strategy plus external receipt cancellation, late settlement, and process-tail
+termination against a shared one-slot owner, without paid model calls.
+
+Checkpoint continuation is a distinct `agent.policy` phase: `checkpoint_resume`
+accepts `resume` or `fail`, not `retry`. Its `completed_messages` counts durable
+protocol-complete items, including reasoning-only progress. A resume samples a
+new request from that saved history; it never replays the interrupted payload.
+The selected policy must authorize it, and the host still rejects missing
+checkpoints, tool effects, and exhausted receipt/workflow budgets. A policy that
+does not recognize the phase fails closed.

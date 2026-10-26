@@ -166,7 +166,8 @@ export function Composer({
   runtimeControlsDisabled = running,
   status,
   disabledReason,
-  readOnly,
+  readOnly: sessionReadOnly,
+  interactionDisabled = false,
   initialized,
   projects,
   gitStatus,
@@ -288,6 +289,8 @@ export function Composer({
   status: string;
   disabledReason?: string;
   readOnly: boolean;
+  /** Temporary ownership transfer lock; does not change session semantics. */
+  interactionDisabled?: boolean;
   initialized?: ComposerConfiguration;
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
@@ -395,6 +398,7 @@ export function Composer({
   onResetSideThread?: () => void;
   pluginHost?: PluginHost;
 }): JSX.Element {
+  const readOnly = sessionReadOnly || interactionDisabled;
   const { locale, t } = useI18n();
   const workbenchConnected = useWorkbenchConnected();
   const disconnected = !workbenchConnected;
@@ -592,7 +596,7 @@ export function Composer({
   const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
 
-  const composerPlaceholder = placeholder ?? (readOnly
+  const composerPlaceholder = placeholder ?? (sessionReadOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
       ? t("composer.followupChanges")

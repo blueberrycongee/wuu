@@ -24,9 +24,8 @@ func TestResolveSubagentModelAliasBuildsCompleteRuntime(t *testing.T) {
       "model": "main-model"
     },
     "ui": {
-      "type": "openai-compatible",
+      "type": "external-fixture",
       "base_url": "https://ui.example.test/v1",
-      "api_key": "test-key",
       "model": "ui-default",
       "models": {
         "frontend-model": {
@@ -53,7 +52,16 @@ func TestResolveSubagentModelAliasBuildsCompleteRuntime(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 
-	result := srv.resolveSubagentModelAlias("frontend")
+	binding := testRuntimeState(t, rt)
+	services, err := binding.Services()
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := binding.Models()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := srv.resolveSubagentModelAliasWithServices(services, models, "frontend")
 	if result.Err != nil {
 		t.Fatalf("resolve alias: %v", result.Err)
 	}

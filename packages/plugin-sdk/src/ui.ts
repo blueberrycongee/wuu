@@ -1,3 +1,5 @@
+import type { UIContributionRegistryV1, ApplicationWorkbenchV1 } from "./ui-contributions.js";
+export type * from "./ui-contributions.js";
 import type { ApplicationComposerPresentationV1 } from "./ui-composer-presentation.js";
 import type { ApplicationEnvironmentV1, EnvironmentCallOptionsV1 } from "./ui-environment.js";
 import type { ApplicationArtifactsV1, ArtifactCallOptionsV1 } from "./ui-artifacts.js";
@@ -35,6 +37,31 @@ export const APPLICATION_SHELL_SERVICE = {
   name: "ui.shell", version: "1.0.0",
   methods: [{ name: "describe", input_schema: "ui.shell.describe.input.v1", output_schema: "ui.shell.describe.output.v1" }],
 } satisfies import("./index.js").ServiceDescriptor;
+
+/** Business state and actions are selected independently from their presentation. */
+export const APPLICATION_PROVIDER_SERVICE = {
+  name: "ui.application", version: "1.0.0",
+  methods: [{ name: "describe", input_schema: "ui.application.describe.input.v1", output_schema: "ui.application.describe.output.v1" }],
+} satisfies import("./index.js").ServiceDescriptor;
+
+export interface ApplicationCheckpointV1 {
+  readonly schema: string;
+  readonly value: unknown;
+}
+export interface ApplicationProviderInstanceV1 {
+  /** Start after the previous writer has stopped. Reject incompatible checkpoints explicitly. */
+  activate(checkpoint?: ApplicationCheckpointV1): void | Promise<void>;
+  /** Stop writers and background work, then return a consistent recovery checkpoint. */
+  deactivate(): ApplicationCheckpointV1 | undefined | Promise<ApplicationCheckpointV1 | undefined>;
+  /** Every scope must stop callbacks and operations when its signal aborts. */
+  createScope(signal: AbortSignal): ApplicationServiceV1;
+  dispose(): void | Promise<void>;
+}
+export interface ApplicationProviderDefinition {
+  readonly id: string;
+  /** Preparation must not start writers or subscriptions; failure leaves the active provider intact. */
+  prepare(): ApplicationProviderInstanceV1 | Promise<ApplicationProviderInstanceV1>;
+}
 
 /** Immutable public application state. Snapshots retain identity until a change. */
 export interface ApplicationActivityV1 extends BrowserActivityV1 {
@@ -171,6 +198,7 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
 }
 
 export interface ApplicationServiceV1 {
+  readonly workbench: ApplicationWorkbenchV1;
   readonly contractVersion: 1;
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
@@ -260,9 +288,13 @@ export interface ApplicationShellDefinition {
   readonly render: ComponentType<ApplicationShellRenderProps>;
 }
 export interface ApplicationGenerationAPI {
+  readonly contributions: UIContributionRegistryV1;
+  /** Central, generation-owned notice; key deduplicates repeated background failures. */
+  showNotice(input: { readonly message: string; readonly tone?: "info" | "error"; readonly key?: string }): Disposable;
   /** Canonical owner prefix for declared UI slots, independent of installation identity. */
   readonly manifestId: string;
   readonly application: ApplicationServiceV1;
+  registerApplicationProvider(definition: ApplicationProviderDefinition): Disposable;
   registerApplicationShell(definition: ApplicationShellDefinition): Disposable;
   registerUISlot(definition: UISlotDefinition): Disposable;
   registerUIContribution(definition: UIContributionDefinition): Disposable;

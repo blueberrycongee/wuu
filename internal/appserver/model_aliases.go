@@ -9,7 +9,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -35,7 +34,11 @@ func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResol
 	if err != nil {
 		return agentcontrol.AliasResolutionResult{Err: err}
 	}
-	return s.resolveSubagentModelAliasWithServices(services, models, alias)
+	result := s.resolveSubagentModelAliasWithServices(services, models, alias)
+	// This convenience path only resolves project-work metadata. Inference
+	// callers use the admitted services variant and own its generation lifetime.
+	result.Runtime.Client = nil
+	return result
 }
 
 func (s *Server) resolveSubagentModelAliasWithServices(services *runtime.StateServices, models runtime.StateModels, alias string) agentcontrol.AliasResolutionResult {
@@ -65,7 +68,7 @@ func (s *Server) resolveSubagentModelAliasWithServices(services *runtime.StateSe
 	} else if alias == "@verification" {
 		selection = models.Roles.Verification
 	}
-	client, err := providerfactory.BuildStreamClient(selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: services.Credentials, ChatGPT: services.ChatGPT})
+	client, err := services.ModelClient(selection.RuleProviderConfig, selection.Provider)
 	if err != nil {
 		return agentcontrol.AliasResolutionResult{
 			Err: fmt.Errorf("build provider %q client: %w", selection.Provider, err),
@@ -110,7 +113,7 @@ func (s *Server) resolveSubagentProviderClientWithServices(services *runtime.Sta
 		return nil, fmt.Errorf("provider %q is not configured", providerName)
 	}
 	providerCfg = s.withCachedCodexModels(providerName, providerCfg)
-	client, err := providerfactory.BuildStreamClient(providerCfg, providerName, providerfactory.Bindings{Credentials: services.Credentials, ChatGPT: services.ChatGPT})
+	client, err := services.ModelClient(providerCfg, providerName)
 	if err != nil {
 		return nil, fmt.Errorf("build provider %q client: %w", providerName, err)
 	}

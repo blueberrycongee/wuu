@@ -257,6 +257,12 @@ func (t *BrowserTool) ExecuteResult(ctx context.Context, argsJSON string) (toolr
 	if t.env == nil || t.env.BrowserBridge == nil {
 		return toolresult.Result{}, errBrowserUnavailable
 	}
+	// Fail before host side effects when the selected business-state provider is unavailable.
+	if t.env.BrowserTabs != nil {
+		if _, err := t.env.BrowserTabs.List(); err != nil {
+			return toolresult.Result{}, fmt.Errorf("browser state unavailable: %w", err)
+		}
+	}
 	action := decodeActionField(argsJSON)
 	bctx, _ := browserActionContextFrom(ctx)
 	switch action {
@@ -270,7 +276,9 @@ func (t *BrowserTool) ExecuteResult(ctx context.Context, argsJSON string) (toolr
 		if err := t.env.BrowserBridge.CloseTab(ctx, tabID); err != nil {
 			return toolresult.Result{}, browserBridgeError("detach", tabID, err)
 		}
-		t.forgetTab(tabID)
+		if err := t.forgetTab(tabID); err != nil {
+			return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+		}
 		return browserResult("detach", map[string]any{"tab_id": tabID, "released": true}), nil
 	case "navigate":
 		return t.doNavigate(ctx, argsJSON, bctx)
@@ -389,7 +397,9 @@ func (t *BrowserTool) doNavigate(ctx context.Context, argsJSON string, bctx brow
 		if err := t.env.BrowserBridge.OpenTab(ctx, tabID, dest); err != nil {
 			return toolresult.Result{}, browserBridgeError("navigate", tabID, err)
 		}
-		t.rememberTab(tabID, dest, "", false)
+		if err := t.rememberTab(tabID, dest, "", false); err != nil {
+			return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+		}
 		return browserResult("navigate", map[string]any{"tab_id": tabID, "url": dest}), nil
 	}
 	// Existing tab: navigate in place. A lost view rebuilds at the destination.
@@ -405,7 +415,9 @@ func (t *BrowserTool) doNavigate(ctx context.Context, argsJSON string, bctx brow
 	if strings.TrimSpace(nav.URL) == "" {
 		nav.URL = dest
 	}
-	t.rememberTab(tabID, nav.URL, nav.Title, false)
+	if err := t.rememberTab(tabID, nav.URL, nav.Title, false); err != nil {
+		return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+	}
 	return browserResult("navigate", map[string]any{"tab_id": tabID, "url": redactURLForModel(nav.URL), "title": nav.Title}), nil
 }
 
@@ -423,7 +435,11 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 	if observeArgs.ContentOffset > 0 {
 		params["content_offset"] = observeArgs.ContentOffset
 	}
-	raw, err := t.cdpWithRebuild(ctx, tabID, "observe", params, t.tabURL(tabID), true)
+	savedURL, stateErr := t.tabURL(tabID)
+	if stateErr != nil {
+		return toolresult.Result{}, stateErr
+	}
+	raw, err := t.cdpWithRebuild(ctx, tabID, "observe", params, savedURL, true)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
@@ -461,7 +477,9 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 			bctx.setPreview(fileURI(destPath))
 		}
 	}
-	t.rememberTab(tabID, realURL, obs.Title, false)
+	if err := t.rememberTab(tabID, realURL, obs.Title, false); err != nil {
+		return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+	}
 	return toolresult.Result{
 		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderObserveText(tabID, obs)}},
 		StructuredContent: structured,
@@ -475,7 +493,11 @@ func (t *BrowserTool) doInput(ctx context.Context, action, argsJSON string, bctx
 	}
 	// Input actions can have side effects, so a lost tab is rebuilt but the input
 	// is not replayed (that would risk a double submit); the model must observe.
-	if _, err := t.cdpWithRebuild(ctx, tabID, action, browserForwardParams(argsJSON), t.tabURL(tabID), false); err != nil {
+	savedURL, stateErr := t.tabURL(tabID)
+	if stateErr != nil {
+		return toolresult.Result{}, stateErr
+	}
+	if _, err := t.cdpWithRebuild(ctx, tabID, action, browserForwardParams(argsJSON), savedURL, false); err != nil {
 		return toolresult.Result{}, err
 	}
 	return browserResult(action, map[string]any{"tab_id": tabID, "ok": true}), nil
@@ -500,16 +522,24 @@ func (t *BrowserTool) doScreenshot(ctx context.Context, argsJSON string, bctx br
 	}
 	res, err := t.env.BrowserBridge.Screenshot(ctx, tabID, destPath, format)
 	if err != nil && isTabNotFound(err) && !strings.HasPrefix(tabID, browserWorkspacePrefix) {
-		if url := t.tabURL(tabID); url != "" {
+		url, stateErr := t.tabURL(tabID)
+		if stateErr != nil {
+			return toolresult.Result{}, stateErr
+		}
+		if url != "" {
 			if oerr := t.env.BrowserBridge.OpenTab(ctx, tabID, url); oerr == nil {
-				t.rememberTab(tabID, url, "", false)
+				if err := t.rememberTab(tabID, url, "", false); err != nil {
+					return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+				}
 				res, err = t.env.BrowserBridge.Screenshot(ctx, tabID, destPath, format)
 			}
 		}
 		if err != nil {
 			// Genuinely lost view that could not be rebuilt: drop the durable
 			// record so a later action does not chase a dead tab.
-			t.forgetTab(tabID)
+			if err := t.forgetTab(tabID); err != nil {
+				return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+			}
 			return toolresult.Result{}, browserBridgeError("screenshot", tabID, err)
 		}
 	} else if err != nil {
@@ -570,9 +600,15 @@ func (t *BrowserTool) doSetVisibility(ctx context.Context, argsJSON string, bctx
 	_ = decodeArgs(argsJSON, &args)
 	err := t.env.BrowserBridge.SetVisibility(ctx, tabID, args.Visible)
 	if err != nil && isTabNotFound(err) && !strings.HasPrefix(tabID, browserWorkspacePrefix) {
-		if url := t.tabURL(tabID); url != "" {
+		url, stateErr := t.tabURL(tabID)
+		if stateErr != nil {
+			return toolresult.Result{}, stateErr
+		}
+		if url != "" {
 			if oerr := t.env.BrowserBridge.OpenTab(ctx, tabID, url); oerr == nil {
-				t.rememberTab(tabID, url, "", false)
+				if err := t.rememberTab(tabID, url, "", false); err != nil {
+					return toolresult.Result{}, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+				}
 				err = t.env.BrowserBridge.SetVisibility(ctx, tabID, args.Visible)
 			}
 		}
@@ -618,7 +654,11 @@ func (t *BrowserTool) doWaitFor(ctx context.Context, argsJSON string, bctx brows
 		if u := strings.TrimSpace(args.Until); u != "" {
 			params["until"] = u
 		}
-		raw, err := t.cdpWithRebuild(ctx, tabID, "wait", params, t.tabURL(tabID), true)
+		savedURL, stateErr := t.tabURL(tabID)
+		if stateErr != nil {
+			return toolresult.Result{}, stateErr
+		}
+		raw, err := t.cdpWithRebuild(ctx, tabID, "wait", params, savedURL, true)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -901,14 +941,16 @@ func (t *BrowserTool) syncLiveTabs(ctx context.Context) ([]BrowserLiveTab, []Bro
 	}
 	stored, listErr := t.env.BrowserTabs.List()
 	if listErr != nil {
-		return cleaned, nil, workspace, nil
+		return nil, nil, nil, listErr
 	}
 	seen := make(map[string]bool, len(stored))
 	for _, rec := range stored {
 		seen[rec.TabID] = true
 		tab, liveOK := liveByID[rec.TabID]
 		if !liveOK && strings.HasPrefix(rec.TabID, browserWorkspacePrefix) {
-			_ = t.env.BrowserTabs.Delete(rec.TabID)
+			if err := t.env.BrowserTabs.Delete(rec.TabID); err != nil {
+				return nil, nil, nil, err
+			}
 			continue
 		}
 		changed := false
@@ -935,18 +977,22 @@ func (t *BrowserTool) syncLiveTabs(ctx context.Context) ([]BrowserLiveTab, []Bro
 		}
 		if changed {
 			rec.UpdatedAt = time.Time{}
-			_ = t.env.BrowserTabs.Put(rec)
+			if err := t.env.BrowserTabs.Put(rec); err != nil {
+				return nil, nil, nil, err
+			}
 		}
 	}
 	for _, tab := range cleaned {
 		if seen[tab.ID] {
 			continue
 		}
-		_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: tab.Status})
+		if err := t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: tab.Status}); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	records, listErr := t.env.BrowserTabs.List()
 	if listErr != nil {
-		return cleaned, nil, workspace, nil
+		return nil, nil, nil, listErr
 	}
 	return cleaned, records, workspace, nil
 }
@@ -1059,23 +1105,35 @@ func (t *BrowserTool) cdpWithRebuild(ctx context.Context, tabID, method string, 
 	}
 	rebuildURL := strings.TrimSpace(fallbackURL)
 	if rebuildURL == "" {
-		rebuildURL = t.tabURL(tabID)
+		var stateErr error
+		rebuildURL, stateErr = t.tabURL(tabID)
+		if stateErr != nil {
+			return nil, stateErr
+		}
 	}
 	if rebuildURL == "" {
-		t.forgetTab(tabID)
+		if err := t.forgetTab(tabID); err != nil {
+			return nil, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+		}
 		return nil, browserTabLostError(tabID, false)
 	}
 	if openErr := t.env.BrowserBridge.OpenTab(ctx, tabID, rebuildURL); openErr != nil {
-		t.forgetTab(tabID)
+		if err := t.forgetTab(tabID); err != nil {
+			return nil, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+		}
 		return nil, browserTabLostError(tabID, false)
 	}
-	t.rememberTab(tabID, rebuildURL, "", false)
+	if err := t.rememberTab(tabID, rebuildURL, "", false); err != nil {
+		return nil, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+	}
 	if !replay {
 		return nil, browserTabLostError(tabID, true)
 	}
 	raw, err = t.cdpCall(ctx, tabID, method, params)
 	if err != nil {
-		t.forgetTab(tabID)
+		if err := t.forgetTab(tabID); err != nil {
+			return nil, fmt.Errorf("browser host action may have completed; persist tab state: %w", err)
+		}
 		return nil, browserBridgeError(method, tabID, err)
 	}
 	return raw, nil
@@ -1134,30 +1192,28 @@ func (t *BrowserTool) previewPath(bctx browserActionContext) string {
 	return full
 }
 
-func (t *BrowserTool) getTab(tabID string) (BrowserTabRecord, bool) {
+func (t *BrowserTool) tabURL(tabID string) (string, error) {
 	if t.env == nil || t.env.BrowserTabs == nil {
-		return BrowserTabRecord{}, false
+		return "", nil
 	}
 	rec, ok, err := t.env.BrowserTabs.Get(tabID)
 	if err != nil {
-		return BrowserTabRecord{}, false
+		return "", err
 	}
-	return rec, ok
-}
-
-func (t *BrowserTool) tabURL(tabID string) string {
-	rec, ok := t.getTab(tabID)
 	if !ok {
-		return ""
+		return "", nil
 	}
-	return strings.TrimSpace(rec.URL)
+	return strings.TrimSpace(rec.URL), nil
 }
 
-func (t *BrowserTool) rememberTab(tabID, pageURL, title string, dead bool) {
+func (t *BrowserTool) rememberTab(tabID, pageURL, title string, dead bool) error {
 	if t.env == nil || t.env.BrowserTabs == nil {
-		return
+		return nil
 	}
-	rec, _ := t.getTab(tabID)
+	rec, _, err := t.env.BrowserTabs.Get(tabID)
+	if err != nil {
+		return err
+	}
 	rec.TabID = tabID
 	if u := strings.TrimSpace(pageURL); u != "" {
 		rec.URL = u
@@ -1166,15 +1222,14 @@ func (t *BrowserTool) rememberTab(tabID, pageURL, title string, dead bool) {
 		rec.Title = ti
 	}
 	rec.Dead = dead
-	rec.UpdatedAt = time.Time{} // store restamps
-	_ = t.env.BrowserTabs.Put(rec)
+	rec.UpdatedAt = time.Time{}
+	return t.env.BrowserTabs.Put(rec)
 }
-
-func (t *BrowserTool) forgetTab(tabID string) {
+func (t *BrowserTool) forgetTab(tabID string) error {
 	if t.env == nil || t.env.BrowserTabs == nil {
-		return
+		return nil
 	}
-	_ = t.env.BrowserTabs.Delete(tabID)
+	return t.env.BrowserTabs.Delete(tabID)
 }
 
 // ── free helpers ────────────────────────────────────────────────────

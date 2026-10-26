@@ -65,6 +65,9 @@ func (k *kernelHostServices) bindStateGeneration(generation *PluginGeneration, o
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.stateGeneration, k.stateOwner = generation, owner
+	if registry := generation.host.ServiceRegistry(); registry != nil {
+		registry.SetGraphGeneration(generation.id)
+	}
 	generation.beginModelReceipts = k.beginModelReceipts
 }
 

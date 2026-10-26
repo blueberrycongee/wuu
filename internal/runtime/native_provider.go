@@ -10,6 +10,7 @@ import (
 // the ordinary graph. Build runs for every prepared generation; its result must
 // declare dependencies and defer effects until Activate, like a process peer.
 type NativeProviderFactory struct {
+	capacityOwner  *CapacityResources
 	ID             string
 	DefaultEnabled bool
 	Build          func(NativeProviderContext) (pluginhost.Client, error)

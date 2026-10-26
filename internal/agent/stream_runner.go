@@ -54,6 +54,7 @@ const maxConsecutiveProactiveCompactFailures = 3
 // context and persistence resources. The driver owns control flow; resources
 // retain accepted effects and drain work before the execution is released.
 type StreamRunner struct {
+	SelectedPolicy *loopdriver.PolicyClient
 	ResumeSampling bool
 	Client         providers.StreamClient
 	ProviderName   string
@@ -281,6 +282,9 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 // A nil callback uses OnEvent. The result includes accepted messages and any
 // committed context replacement, including partial output on failure.
 func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (loopResult LoopResult, runErr error) {
+	if r.SelectedPolicy != nil {
+		ctx = providers.WithRecoveryPlanner(ctx, r.SelectedPolicy.StreamRecoveryPlanner())
+	}
 	if onEvent == nil {
 		onEvent = r.OnEvent
 	}
@@ -1131,8 +1135,10 @@ func requestContextSummary(info RequestContextInfo) *providers.RequestContextSum
 // stream and consumes it to completion. Recoverable failures create distinct
 // execution attempts under the request operation's workload profile.
 type streamStep struct {
-	client  providers.StreamClient
-	onEvent StreamCallback
+	toolGate *ToolExecutionGate
+	policy   *loopdriver.PolicyClient
+	client   providers.StreamClient
+	onEvent  StreamCallback
 	// Streaming tool execution: when set, read-only tools start
 	// executing as soon as their arguments are fully received,
 	// overlapping with continued model output.
@@ -1188,6 +1194,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			runContext = ContextWithHistory(s.toolRunContext, req.Messages)
 		}
 		runtime := NewTurnToolRuntime(ToolRuntimeConfig{
+			Gate:     s.toolGate,
 			Executor: s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
 			RunContext: runContext,
 		})
@@ -1626,6 +1633,7 @@ func (s *streamStep) runReliableStream(
 		client := providers.NewReliableStreamClient(
 			s.client,
 			onRetry,
+			providers.WithStreamRecoveryPlanner(s.policy.StreamRecoveryPlanner()),
 			providers.WithStreamReplayGuard(replayGuard),
 			providers.WithStreamEventObserver(eventObserver),
 		)

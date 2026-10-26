@@ -69,7 +69,7 @@ export interface SettingsControlsConflictV1 {
   }[];
 }
 export interface SettingsControlsDiagnosticV1 {
-  readonly kind: "activation" | "cleanup" | "render";
+  readonly kind: "activation" | "cleanup" | "render" | "runtime";
   readonly message: string;
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */

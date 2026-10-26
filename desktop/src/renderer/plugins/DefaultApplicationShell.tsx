@@ -1,3 +1,5 @@
+import { registerShellContributions } from "./DefaultUIContributions";
+import { ApplicationWorkbenchProvider } from "./ApplicationWorkbenchContext";
 import { ArtifactsProvider } from "../ArtifactsContext";
 import { WebWorkspaceControlsProvider } from "../WebWorkspaceControlsContext";
 import { MacWindowControls } from "../MacWindowControls";
@@ -27,8 +29,9 @@ export function activate(api: ApplicationGenerationAPI): void {
   api.registerUISlot({ id: "application.conversation", cardinality: "one", service: "ui.conversation" });
   api.registerUISlot({ id: "application.preview", cardinality: "one", service: "ui.preview" });
   api.registerUISlot({ id: "application.settings", cardinality: "one", service: "ui.settings" });
+  registerShellContributions(api);
   function DefaultShell({ application, slots }: ApplicationShellRenderProps): JSX.Element {
-    return <DesktopControlsProvider controls={application.desktop}>
+    return <ApplicationWorkbenchProvider value={application.workbench}><DesktopControlsProvider controls={application.desktop}>
       <WebWorkspaceControlsProvider controls={application.webWorkspace}>
       <BrowserControlsProvider service={application.browser}>
       <TerminalControlsProvider controls={application.terminals} appearance={application.settingsControls}>
@@ -46,7 +49,7 @@ export function activate(api: ApplicationGenerationAPI): void {
       </TerminalControlsProvider>
       </BrowserControlsProvider>
       </WebWorkspaceControlsProvider>
-    </DesktopControlsProvider>;
+    </DesktopControlsProvider></ApplicationWorkbenchProvider>;
   }
   api.registerApplicationShell({ id: "ui.shell", render: DefaultShell });
 }

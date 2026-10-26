@@ -340,9 +340,16 @@ try {
     if (threadID === thread.id) await turn(tag);
     const replayState = await client("replay", "state");
     const shadowState = await client("shadow", "state");
-    assertOrigin(replayState.snapshots.at(-1).origin, threadID);
-    assertOrigin(replayState.transformOrigins.at(-1).origin, threadID);
-    assertOrigin(shadowState.middlewareOrigins.at(-1).origin, threadID);
+    const foreground = replayState.snapshots.at(-1);
+    assert(foreground.request.messages.some(message => message.content === tag), "snapshot did not belong to the requested foreground turn");
+    assertOrigin(foreground.origin, threadID);
+    // Title/auxiliary preparation can finish after the foreground request.
+    // Correlate every seam to its operation, not whichever global event was last.
+    for (const records of [replayState.transformOrigins, shadowState.middlewareOrigins]) {
+      const matched = records.filter(record => record.origin.operation_id === foreground.origin.operation_id);
+      assert(matched.length > 0, "foreground operation was not observed by every seam");
+      for (const record of matched) assertOrigin(record.origin, threadID);
+    }
   }
   result.origin_threads = [thread.id, secondThread.id];
   result.checks.push("foreground transform, middleware and observer origins distinguish threads and preserve descendant attribution");

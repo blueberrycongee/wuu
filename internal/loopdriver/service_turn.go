@@ -175,3 +175,9 @@ func (g serviceGateway) CompleteTurn(ctx context.Context, completed TurnResult) 
 	}
 	return TurnReceipt{ID: result.ReceiptID}, nil
 }
+
+func (g serviceGateway) EvaluatePolicy(ctx context.Context, input pluginprotocol.AgentPolicyInput) (pluginprotocol.AgentPolicyDecision, error) {
+	var result pluginprotocol.AgentPolicyDecision
+	err := g.callTurn(ctx, "evaluate_policy", pluginprotocol.DriverTurnPolicyParams{DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, Input: input}, &result)
+	return result, err
+}

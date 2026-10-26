@@ -1833,3 +1833,9 @@ type messageDeltaPayload struct {
 		CacheReadTokens     *int `json:"cache_read_input_tokens,omitempty"`
 	} `json:"usage"`
 }
+
+// Close releases provider-owned pools after admitted callbacks have drained.
+func (c *Client) Close() error {
+	providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	return nil
+}

@@ -35,7 +35,7 @@ export function PluginSettingsEditor({
     (listener) => controls.subscribe(listener),
     () => fingerprint ? controls.getDiagnostics(plugin.id, fingerprint) : EMPTY_DIAGNOSTICS,
     () => EMPTY_DIAGNOSTICS,
-  ).filter((diagnostic) => diagnostic.kind === "render");
+  ).filter((diagnostic) => diagnostic.kind === "render" || diagnostic.kind === "runtime");
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<readonly PluginContributionDiagnostic[]>([]);
   const [runtimeDiagnosticError, setRuntimeDiagnosticError] = useState("");
 
@@ -81,7 +81,7 @@ export function PluginSettingsEditor({
       ))}
       {runtimeDiagnosticError ? <PluginNotice tone="danger" title={runtimeDiagnosticError} /> : null}
       {rendererDiagnostics.map((diagnostic, index) => (
-        <PluginNotice key={`${diagnostic.message}:${index}`} title={t("skills.pluginContributionIsolated")} detail={diagnostic.message} />
+        <PluginNotice key={`${diagnostic.message}:${index}`} title={diagnostic.kind === "runtime" ? t("skills.pluginRuntimeRequestFailed") : t("skills.pluginContributionIsolated")} detail={diagnostic.message} />
       ))}
       {settings.map((setting) => setting.type === "secret" ? (
         <PluginSecretControl

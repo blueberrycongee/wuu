@@ -23,7 +23,7 @@ func TestAcceptanceSharedNativeAuthorityProcess(t *testing.T) {
 	if provider := os.Getenv("WUU_ACCEPTANCE_AUTHORITY_CHILD"); provider != "" {
 		ctx := context.Background()
 		home, root := os.Getenv("WUU_HOME"), os.Getenv("WUU_ACCEPTANCE_AUTHORITY_ROOT")
-		modules := []string{"wuu.session-state", provider}
+		modules := []string{"wuu.session-state", "wuu.session.default", provider}
 		opts := wuuruntime.StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: persistence.ServiceName, Major: 1, Provider: provider}}}}}
 		input, output := os.NewFile(3, "parent-input"), os.NewFile(4, "parent-output")
 		defer input.Close()
@@ -61,7 +61,7 @@ func TestAcceptanceSharedNativeAuthorityProcess(t *testing.T) {
 			defer cancel()
 			home, root := t.TempDir(), t.TempDir()
 			t.Setenv("WUU_HOME", home)
-			modules := []string{"wuu.session-state", provider}
+			modules := []string{"wuu.session-state", "wuu.session.default", provider}
 			opts := wuuruntime.StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: persistence.ServiceName, Major: 1, Provider: provider}}}}}
 			first, err := wuuruntime.OpenState(ctx, opts)
 			require.NoError(t, err)

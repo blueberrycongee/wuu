@@ -14,11 +14,24 @@ type DriverTurnScope struct {
 // DriverMessageV1 adds durable execution addresses to the portable model message.
 // These addresses are correlation metadata, never call authority.
 type DriverMessageV1 struct {
+	// Host-owned references preserve UI retry/fork metadata, never model API input or file authority.
+	WorkingCopies     *DriverWorkingCopiesV1       `json:"working_copies,omitempty"`
+	DisplayContent    string                       `json:"display_content,omitempty"`
+	PresentationKind  string                       `json:"presentation_kind,omitempty"`
+	RelatedSessionID  string                       `json:"related_session_id,omitempty"`
+	EngineTurnID      string                       `json:"engine_turn_id,omitempty"`
+	EngineTurnPending bool                         `json:"engine_turn_pending,omitempty"`
+	ContentParts      []DriverMessageContentPartV1 `json:"content_parts,omitempty"`
 	ModelMessageV1
 	ToolInvocationID string `json:"tool_invocation_id,omitempty"`
 	ClientID         string `json:"client_id,omitempty"`
 	Seq              int    `json:"seq,omitempty"`
 	Steered          bool   `json:"steered,omitempty"`
+}
+
+type DriverWorkingCopiesV1 struct {
+	Images []string `json:"images,omitempty"`
+	Files  []string `json:"files,omitempty"`
 }
 
 type DriverTurnReadResult struct {
@@ -146,4 +159,59 @@ type DriverTurnCompleteParams struct {
 
 type DriverTurnCompleteResult struct {
 	ReceiptID string `json:"receipt_id"`
+}
+
+// DriverMessageContentPartV1 preserves canonical presentation and host references.
+// Model request projection never includes these host-only fields.
+type DriverMessageContentPartV1 struct {
+	LocalPath string                       `json:"local_path,omitempty"`
+	Type      string                       `json:"type"`
+	Text      string                       `json:"text,omitempty"`
+	Title     string                       `json:"title,omitempty"`
+	Source    *DriverFileSelectionSourceV1 `json:"source,omitempty"`
+	Intent    string                       `json:"intent,omitempty"`
+	Comment   string                       `json:"comment,omitempty"`
+	ID        string                       `json:"id,omitempty"`
+	Selection *DriverResponseSelectionV1   `json:"selection,omitempty"`
+}
+
+// DriverFileSelectionSourceV1 preserves authored history metadata independently of model projection.
+type DriverFileSelectionSourceV1 struct {
+	Workspace   string                         `json:"workspace"`
+	Path        string                         `json:"path"`
+	StartLine   int                            `json:"start_line"`
+	StartColumn int                            `json:"start_column"`
+	EndLine     int                            `json:"end_line"`
+	EndColumn   int                            `json:"end_column"`
+	Quote       string                         `json:"quote"`
+	Revision    string                         `json:"revision"`
+	PDF         *DriverPDFSelectionReferenceV1 `json:"pdf,omitempty"`
+}
+
+// DriverPDFSelectionReferenceV1 preserves authored history metadata independently of model projection.
+type DriverPDFSelectionReferenceV1 struct {
+	StartPage        int    `json:"start_page"`
+	EndPage          int    `json:"end_page"`
+	ArtifactURI      string `json:"artifact_uri,omitempty"`
+	ArtifactSHA256   string `json:"artifact_sha256,omitempty"`
+	ArtifactThreadID string `json:"artifact_thread_id,omitempty"`
+}
+
+// DriverResponseSelectionV1 preserves authored history metadata independently of model projection.
+type DriverResponseSelectionV1 struct {
+	ID      string                          `json:"id"`
+	Text    string                          `json:"text"`
+	Comment string                          `json:"comment,omitempty"`
+	Source  DriverResponseSelectionSourceV1 `json:"source"`
+}
+
+// DriverResponseSelectionSourceV1 preserves authored history metadata independently of model projection.
+type DriverResponseSelectionSourceV1 struct {
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id"`
+	ItemID      string `json:"item_id"`
+	StartOffset int    `json:"start_offset"`
+	EndOffset   int    `json:"end_offset"`
+	// RangeText is the exact DOM textContent slice when readable selection text differs.
+	RangeText string `json:"range_text,omitempty"`
 }
