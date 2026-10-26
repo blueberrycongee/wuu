@@ -128,7 +128,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Show the latest concrete tool call in the active conversation activity row and keep historical rows summarized by activity. Keep the full tool and reasoning trail in the expandable details, without a dot-separated reasoning label.
 
-- Keep the conversation composer centered with equal side gutters and a stable width as the right-side tool rail expands or collapses.
+- Keep the conversation composer centered on the message flow as the right-side tool rail expands or collapses.
 
 - Use narrower workspace and branch menus, tighter shared menu spacing, and less padding in the home usage card. Simplify the branch picker to a search field and branch list, showing branch creation only after a new name is entered.
 
@@ -190,7 +190,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
 
-- Widen the conversation composer and reduce its side gutters while keeping messages and input aligned.
+- Give the conversation composer at least the message flow's width, with up to 12px of extra space on each side in roomy panes. Keep its center aligned with the messages and respect narrow windows and display safe areas.
 
 - Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Align its footer rows with the main composer and status controls across wrapped rows, larger UI fonts, and tool-rail visibility changes.
 

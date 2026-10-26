@@ -473,24 +473,16 @@
   margin: 0 auto;
 }
 
-/* IM message frames overhang the reading column. Extend the draft by the same
- * inset on both sides so the sent query and the input keep identical edges. */
-:root[data-message-style="im"] .dock-composer-wrap:not(.document-composer-wrap) .composer-stack {
-  --composer-im-stack-outset: var(--session-im-inline-outset);
+/* Give the draft at least the full message width, with a small overhang when
+ * space permits. Document composers retain their document-specific measure. */
+:where(.dock-composer-wrap:not(.document-composer-wrap)) .composer-stack {
   width: min(
-    calc(var(--session-composer-width) + 2 * var(--composer-im-stack-outset)),
+    calc(var(--session-composer-width) + 2 * var(--session-composer-inline-outset)),
     calc(
       100% - var(--session-outer-padding-inline) - var(--session-outer-padding-inline) +
-        2 * var(--composer-im-stack-outset)
+        2 * var(--session-composer-inline-outset)
     )
   );
-}
-
-/* The empty state already sits in the padded session-flow column, so extend
- * its full-width draft rather than subtracting those gutters twice. */
-:root[data-message-style="im"] .hero-composer-wrap .composer-stack {
-  --composer-im-stack-outset: var(--session-im-inline-outset);
-  width: calc(100% + 2 * var(--composer-im-stack-outset));
 }
 
 .composer-top-accessory {
@@ -707,10 +699,11 @@ html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
   outline: none;
 }
 
-/* The welcome grid already applies the shared cap and gutters. Fill its
-   content column without subtracting the gutters a second time. */
+/* The welcome grid already applies the reading cap and gutters. Extend the
+   draft equally on both sides without subtracting those gutters twice. */
 .hero-composer-wrap .composer-stack {
-  width: 100%;
+  width: calc(100% + 2 * var(--session-composer-inline-outset));
+  margin-inline: calc(-1 * var(--session-composer-inline-outset));
 }
 
 .composer {

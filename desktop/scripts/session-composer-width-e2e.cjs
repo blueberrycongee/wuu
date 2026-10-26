@@ -26,7 +26,9 @@ async function run() {
       backgroundThrottling: false
     }
   });
-  await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
+  await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
+  await waitFor(win, () => !!document.querySelector(".thread-row-main"));
+  await evaluate(win, () => [...document.querySelectorAll(".thread-row-main")].find(row => row.textContent.includes("Resize fixture")).click());
   await waitFor(win, () => !!document.querySelector(".turn"));
 
   // Hold navigation closed while crossing its breakpoint to distinguish a
@@ -167,14 +169,15 @@ async function run() {
 }
 
 function checkGeometry(value) {
-  assert.ok(value.composerWidth > 0 && value.composerWidth <= 801, JSON.stringify(value));
+  assert.ok(value.composerWidth > 0, JSON.stringify(value));
   assert.ok(value.leftGap >= 11 && value.rightGap >= 11,
     `Composer must stay inside its available pane: ${JSON.stringify(value)}`);
   assert.ok(Math.abs(value.leftGap - value.rightGap) <= 1,
     `Composer must stay centered: ${JSON.stringify(value)}`);
-  assert.ok(Math.abs(value.flowLeft - value.composerLeft) <= 1 &&
-    Math.abs(value.flowRight - value.composerRight) <= 1,
-    `Composer must align with the content column: ${JSON.stringify(value)}`);
+  assert.ok(value.composerLeft <= value.flowLeft + 1 && value.composerRight >= value.flowRight - 1,
+    `Composer must enclose the content column: ${JSON.stringify(value)}`);
+  assert.ok(Math.abs((value.flowLeft + value.flowRight) - (value.composerLeft + value.composerRight)) <= 2,
+    `Composer must share the content centerline: ${JSON.stringify(value)}`);
 }
 
 async function settledGeometry(win, width, paneSelector = ".conversation-pane") {
@@ -194,14 +197,16 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const flowStyle = getComputedStyle(flow);
       const scrollRect = scroll.getBoundingClientRect();
       const scrollStyle = getComputedStyle(scroll);
+      const content = scroll.querySelector(":scope > .scroll-region-content");
+      const contentStyle = content ? getComputedStyle(content) : null;
       const scrollbarWidth = scroll.offsetWidth - scroll.clientWidth;
       // .scroll-region reserves its stable gutter on both edges, so the
       // content box sits half a gutter inside each edge of the padding box.
       // That box is what the message flow centers in, and the input has to
       // share its centerline — measure the composer against it, not against
       // the pane box, so a pane whose two margins differ fails here.
-      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft);
-      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
+      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft) + parseFloat(contentStyle?.paddingLeft || "0");
+      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight) - parseFloat(contentStyle?.paddingRight || "0");
       return {
         windowWidth: innerWidth,
         composerWidth: rect.width,

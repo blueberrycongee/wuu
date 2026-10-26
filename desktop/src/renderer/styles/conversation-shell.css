@@ -85,8 +85,8 @@
   /* Conversation-only tokens. Shared session-level tokens
      (outer width, horizontal padding, composer width/radius) live in
      session.css at :root — change them there and nothing else.
-     Use the composer's width directly so message cards and answer prose stay
-     flush with the input box without a second value to keep in sync. */
+     Message cards and prose share the base measure. The draft's additional
+     horizontal room is derived from it in session.css. */
   container-type: inline-size;
   --conversation-message-max-width: var(--session-composer-width);
   --conversation-message-max-inline: 90%;
@@ -209,10 +209,10 @@
     ),
     var(--environment-panel-reserved-width)
   );
-  /* Bottom controls stay centered in the pane when the floating tool rail
-     expands or collapses. The reading content reserves its own rail inset. */
+  /* Bottom controls and the reading content share the available width beside
+     the tool rail, so their centerline stays aligned as the rail changes. */
   --conversation-visible-inset-left: 0px;
-  --conversation-visible-inset-right: 0px;
+  --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;
   grid-row: 1;
@@ -295,7 +295,7 @@
 }
 
 .conversation-pane.environment-panel-reserved {
-  --conversation-visible-inset-right: var(--environment-panel-content-inset);
+  --conversation-visible-inset-right: calc(var(--environment-panel-content-inset) + var(--workspace-tool-rail-inset, 0px));
 }
 
 /* Both headers share the same row height and continuous baseline. */
