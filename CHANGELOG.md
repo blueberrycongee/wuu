@@ -200,6 +200,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep workspace handoffs responsive while retired native terminal requests finish. Revoke the old workbench immediately, retain terminal cleanup for renderer shutdown, and preserve the web-resource ownership barrier.
+- Keep live child-agent completion status and result text from the same snapshot when awaiting results, preventing a concurrent completion from delivering an empty first result.
+
 - Hand queued input from the composer to the pending drawer as soon as its matching server admission receipt arrives, without waiting for a delayed RPC reply or restoring a duplicate draft after a late timeout.
 - Keep queued-message acceptance responsive after reopening a conversation by moving detached old-runtime cleanup off the serial request loop, while preserving ordered cache eviction, durable queue acknowledgement and shutdown ownership.
 

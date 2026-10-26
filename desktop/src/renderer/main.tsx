@@ -1,3 +1,4 @@
+import { flushTerminalCleanup } from "./RendererTerminalCleanup";
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
@@ -104,6 +105,9 @@ root.render(
 window.wuu?.onPrepareToQuit?.(async () => {
   root.unmount();
   const results = await Promise.allSettled([desktopPluginRuntime.shutdown()]);
+  // Plugin shutdown fences the final writer before joining PTYs detached by
+  // earlier workspace handoffs. Keep the native bridge alive until they settle.
+  results.push(...await Promise.allSettled([flushTerminalCleanup()]));
   await desktopCompositionRoot.fiber.dispose();
   const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
   if (failures.length) throw new AggregateError(failures, "Renderer cleanup failed");

@@ -1,3 +1,4 @@
+import { retainTerminalCleanup } from "../RendererTerminalCleanup";
 import { showErrorToast } from "../Toast";
 import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import type { ApplicationWorkbenchV1, UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
@@ -335,6 +336,7 @@ export class ApplicationController implements HostApplicationService {
   private subscriptions: (() => void)[] = [];
   private consumers = 0;
   private cleanup: Promise<void> = Promise.resolve();
+  private handoffCleanup: Promise<void> = Promise.resolve();
   private lifetime?: AbortController;
   private navigationRequest = 0;
   private navigationIntent?: { id: string; threadId: string; context: NonNullable<AppState["activeContext"]> };
@@ -672,7 +674,15 @@ export class ApplicationController implements HostApplicationService {
       this.projectsOwner = undefined;
       const terminalCleanup = this.terminalOwner?.dispose();
       this.terminalOwner = undefined;
-      this.cleanup = Promise.allSettled([this.cleanup, webCleanup, terminalCleanup]).then(results => {
+      // Web destinations may reuse native IDs across application generations.
+      // Keep that ownership barrier in the handoff; only captured PTYs can join
+      // after the new writer starts. Native shutdown still drains every cleanup.
+      this.handoffCleanup = Promise.allSettled([this.handoffCleanup, webCleanup]).then(results => {
+        const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+        if (failures.length) throw new AggregateError(failures, "Application web cleanup failed");
+      });
+      if (terminalCleanup) retainTerminalCleanup(terminalCleanup);
+      this.cleanup = Promise.allSettled([this.cleanup, this.handoffCleanup, terminalCleanup]).then(results => {
         const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
         if (failures.length) throw new AggregateError(failures, "Application resource cleanup failed");
       });
@@ -689,6 +699,9 @@ export class ApplicationController implements HostApplicationService {
 
   /** Await resource releases started by the last consumer's synchronous cleanup. */
   flushCleanup(): Promise<void> { return this.cleanup; }
+
+  /** Resources whose IDs can be reused must settle before a successor starts. */
+  flushHandoffCleanup(): Promise<void> { return this.handoffCleanup; }
 
   initialize(signal = this.lifetime?.signal, options: { resumeThread?: boolean } = {}): Promise<LoadedRuntimeState> {
     signal?.throwIfAborted();

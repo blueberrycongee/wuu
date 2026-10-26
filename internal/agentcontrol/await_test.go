@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -233,6 +234,104 @@ func TestNoTargetAwaitDoesNotRejoinDeliveredCompletedWithoutReport(t *testing.T)
 	}
 	if len(explicit.Results) != 1 || explicit.Results[0].Status != string(harness.TaskStatusCompleted) || !explicit.Results[0].ReportMissing {
 		t.Fatalf("explicit-target await should still report the completed task, got %+v", explicit)
+	}
+}
+
+type awaitHarnessReadGate struct {
+	persistence.Documents
+	mu         sync.Mutex
+	beforeRead func()
+}
+
+func (d *awaitHarnessReadGate) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if q.Namespace == harness.DocumentNamespace {
+		d.mu.Lock()
+		beforeRead := d.beforeRead
+		d.beforeRead = nil
+		d.mu.Unlock()
+		if beforeRead != nil {
+			beforeRead()
+		}
+	}
+	return d.Documents.Read(ctx, q)
+}
+
+func TestAwaitCompletionDuringHarnessReadKeepsResultSnapshotConsistent(t *testing.T) {
+	dir := t.TempDir()
+	docs, err := persistence.Open(context.Background(), filepath.Join(dir, "documents"), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = docs.Close() })
+	gate := &awaitHarnessReadGate{Documents: docs}
+	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
+	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		Client:            client, DefaultModel: "fake-model", ParentRepo: dir,
+		WorktreeRoot: filepath.Join(dir, "worktrees"), SessionID: "await_snapshot",
+		ThreadDir: filepath.Join(dir, "threads"), HarnessDir: filepath.Join(dir, "harness"),
+		Documents:     gate,
+		WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAndCloseAgentControlForTest(t, control) })
+	releaseWorker := sync.OnceFunc(func() { close(client.release) })
+	t.Cleanup(releaseWorker)
+	spawned, err := control.Spawn(context.Background(), SpawnRequest{Type: DefaultSubagentType, TaskName: "snapshot_race", Prompt: "finish with a raw result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForChannelForConcurrencyTest(t, client.started, "worker provider request")
+	// Join the initial running projection so only await can take the next
+	// harness read while the provider is held open.
+	waitForHarnessEvent(t, control.HarnessStore(), harness.EventTaskStatusChanged, spawned.AgentID)
+	unlockTransition := control.lockWorkerTransition(spawned.AgentID)
+	unlockTransition()
+	readEntered, releaseRead := make(chan struct{}), make(chan struct{})
+	unblockRead := sync.OnceFunc(func() { close(releaseRead) })
+	t.Cleanup(unblockRead)
+	gate.mu.Lock()
+	gate.beforeRead = func() { close(readEntered); <-releaseRead }
+	gate.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	type awaitOutcome struct {
+		result AwaitAgentsResult
+		err    error
+	}
+	finished := make(chan awaitOutcome, 1)
+	go func() {
+		result, err := control.AwaitFrom(agentthread.RootPath, ctx, []string{spawned.AgentID})
+		finished <- awaitOutcome{result, err}
+	}()
+	waitForChannelForConcurrencyTest(t, readEntered, "await harness read")
+	releaseWorker()
+	if _, err := control.Wait(ctx, spawned.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	unblockRead()
+	var first AwaitAgentsResult
+	select {
+	case outcome := <-finished:
+		if outcome.err != nil {
+			t.Fatal(outcome.err)
+		}
+		first = outcome.result
+	case <-ctx.Done():
+		t.Fatal("await did not observe the completed worker")
+	}
+	if len(first.Results) != 1 || first.Results[0].Status != string(subagent.StatusCompleted) || first.Results[0].Result != "done" || first.Results[0].ResultID == "" || !first.Results[0].ReportMissing || first.Results[0].ResultConsumed {
+		t.Fatalf("first await mixed running result data with completed harness state: %+v", first)
+	}
+	second, err := control.AwaitFrom(agentthread.RootPath, ctx, nil)
+	if err != nil || len(second.Results) != 0 {
+		t.Fatalf("targetless await replayed the delivered completion: %+v, %v", second, err)
+	}
+	explicit, err := control.AwaitFrom(agentthread.RootPath, ctx, []string{spawned.AgentID})
+	if err != nil || len(explicit.Results) != 1 || explicit.Results[0].Result != "done" || !explicit.Results[0].ResultConsumed {
+		t.Fatalf("explicit re-await lost the consumed result: %+v, %v", explicit, err)
 	}
 }
 

@@ -14,6 +14,21 @@ export function activate(api: PluginGenerationApi): void {
     let workbench: ReturnType<typeof createDefaultWorkbench> | undefined;
     let stop: (() => void) | undefined;
     let checkpoint: ApplicationCheckpointV1 | undefined;
+    let handoffCleanup: Promise<void> = Promise.resolve();
+    const retire = (): Promise<void> => {
+      if (!controller) return handoffCleanup;
+      const previous = controller;
+      stop?.(); stop = undefined;
+      handoffCleanup = previous.flushHandoffCleanup();
+      try {
+        checkpoint = { schema: checkpointSchema, value: { ...previous.exportCheckpoint(), workbench: workbench!.getSnapshot() } satisfies Checkpoint };
+      } finally {
+        // Rendered children may hold the concrete workbench, not a scoped proxy.
+        // Revoke those callbacks and the controller before any asynchronous join.
+        workbench?.dispose(); workbench = undefined; controller = undefined;
+      }
+      return handoffCleanup;
+    };
     const requireController = () => { if (!controller) throw new Error("Application provider is inactive"); return controller; };
     return {
       activate: async (saved?: ApplicationCheckpointV1) => {
@@ -35,11 +50,7 @@ export function activate(api: PluginGenerationApi): void {
         stop = controller.start();
       },
       deactivate: async () => {
-        if (!controller) return checkpoint;
-        stop?.(); stop = undefined;
-        await controller.flushCleanup();
-        checkpoint = { schema: checkpointSchema, value: { ...controller.exportCheckpoint(), workbench: workbench!.getSnapshot() } satisfies Checkpoint };
-        workbench?.dispose(); workbench = undefined; controller = undefined;
+        await retire();
         return checkpoint;
       },
       createScope: signal => {
@@ -66,7 +77,9 @@ export function activate(api: PluginGenerationApi): void {
           return typeof value === "function" ? (...args: unknown[]) => { check(); return value.apply(source, args); } : value;
         } });
       },
-      dispose: async () => { stop?.(); stop = undefined; await controller?.flushCleanup(); workbench?.dispose(); controller = undefined; workbench = undefined; },
+      // Full PTY joins belong to the renderer document, not this serialized
+      // provider-removal queue. Repeating retirement still observes web failure.
+      dispose: async () => { await retire(); },
     };
   } });
 }

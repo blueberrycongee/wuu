@@ -359,7 +359,8 @@ func (c *AgentControl) awaitResultForTarget(target awaitTarget) AwaitAgentResult
 		Status:    string(meta.Status),
 	}
 
-	if snap := c.snapshotByID(meta.ID); snap != nil {
+	snap := c.snapshotByID(meta.ID)
+	if snap != nil {
 		out = awaitResultFromSnapshot(*snap)
 		if delivery, err := c.ensureAgentResultDelivery(*snap); err == nil && delivery.ResultID != "" {
 			out.ResultID = delivery.ResultID
@@ -374,6 +375,12 @@ func (c *AgentControl) awaitResultForTarget(target awaitTarget) AwaitAgentResult
 	}
 	if task, ok := c.harnessTask(meta.ID); ok {
 		applyHarnessTaskToAwaitResult(&out, task)
+		if snap != nil {
+			// The harness can publish completion after the live snapshot was
+			// captured. Keep lifecycle and result from the same generation;
+			// otherwise await can return completed with the earlier empty result.
+			out.Status = string(snap.Status)
+		}
 	}
 	reportPath, artifacts := c.harnessReportForTask(meta.ID)
 	out.ReportPath = c.sessionArtifactRef(reportPath)

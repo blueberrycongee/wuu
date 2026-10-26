@@ -574,6 +574,12 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 截图只保留像素，不保留退役业务服务。选择新契约的 UI 注册和 DOM 跨业务换代
 保留，但动作获得新的权限作用域；旧模块与有意的代码或 surface 替换仍使用有界截图和恢复。
 
+工作区业务交接会先同步停止旧 controller、撤销真实 workbench 回调，再激活后继。
+已捕获原生 PTY ID 的回收可在交接后完成：renderer 文档保留这些任务，报告失败，并在
+原生退出时等候完成；`flushCleanup()` 仍是完整的显式 drain。Web 资源的 destination
+ID 可能跨 controller 复用，因此其清理仍会阻塞交接。这不是通用的异步销毁策略，
+也不会取消受管理的代理进程。
+
 ### 新进程启动诊断
 
 可选的 `startup-e2e.cjs` 驱动在创建 Electron 子进程前启动单调时钟。

@@ -792,6 +792,14 @@ Presentation capture retains pixels only, never retired provider services. Opted
 UI registrations and DOM survive business rebinds with newly scoped actions; legacy
 modules and intentional code/surface replacement still use bounded capture/recovery.
 
+Workspace business handoffs synchronously stop the previous controller and revoke
+its concrete workbench callbacks before activating a successor. Captured native
+PTY IDs may finish cleanup afterward: the renderer document retains those joins,
+reports failures, and drains them at native shutdown. `flushCleanup()` remains a
+full explicit drain. Web-resource cleanup still blocks handoff because destination
+IDs can be reused across controllers; this is not a general asynchronous-disposal
+policy and does not cancel managed agent processes.
+
 ### Fresh-process startup diagnostics
 
 The optional `startup-e2e.cjs` driver starts its monotonic clock before spawning
