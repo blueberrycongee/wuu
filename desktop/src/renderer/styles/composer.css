@@ -1552,15 +1552,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   transition: background-color var(--motion-base) var(--ease-out);
 }
 
-.composer-plus-button::before {
-  inset: 4px;
-  border-radius: var(--radius-pill);
-}
-
+.composer-plus-button::before,
 .composer-send-button::before,
 .composer-stop-button::before {
-  /* Reduce visual weight without shrinking the button's hit target. */
-  inset: 2px;
+  /* Match the compact discs while preserving the full hit targets. */
+  inset: 4px;
+  border-radius: var(--radius-pill);
 }
 
 /* The keyboard ring follows the surface drawn on ::before, not the taller hit
