@@ -117,11 +117,19 @@ const provider = createServer(async (request, response) => {
       + 'data: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}}\n\n');
     return;
   }
-  if (tag === "grok") {
+  if (request.headers["x-grok-model-override"]) {
     assert.equal(value.stream, true, "Grok Build proxy needs a streaming request for auxiliary inference");
     response.writeHead(200, { "Content-Type": "text/event-stream" });
-    response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "fixture:grok" }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } })}\n\ndata: [DONE]\n\n`);
+    if (tag.startsWith("hold-")) {
+      response.flushHeaders();
+      return;
+    }
+    response.end(["fixture:", "grok"].map(content => `data: ${JSON.stringify({
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+    })}\n\n`).join("")
+      + `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`
+      + `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } })}\n\n`
+      + "data: [DONE]\n\n");
     return;
   }
   response.writeHead(200, { "Content-Type": "application/json" });
@@ -207,7 +215,7 @@ runJSONLRuntime({
     functions: [{ name: "configured_function", parameters: { type: "object" } }], function_call: "auto",
     parallel_tool_calls: true, parallelToolCalls: true,
     web_search_options: {}, search_parameters: { mode: "auto" }, plugins: [{ id: "web" }],
-    stream: true, stream_options: { include_usage: true }, background: true, n: 2, best_of: 2,
+    stream: true, stream_options: { include_usage: false, fixture_override: true }, background: true, n: 2, best_of: 2,
     modalities: ["text", "audio"], audio: { voice: "alloy", format: "wav" }, store: true,
     maxOutputTokens: 128000, max_output_tokens: 128000, max_tokens: 128000, max_completion_tokens: 128000,
   };
@@ -445,11 +453,13 @@ runJSONLRuntime({
     assert.equal(captured.wire, wire);
     const body = captured.body;
     assert.equal(body.model, reply.model, "reported model differs from actual wire model");
-    const ownedFields = new Set(["model", "messages", "input", "instructions", "system", "stream", "store", "max_tokens", "max_output_tokens"]);
+    const ownedFields = new Set(["model", "messages", "input", "instructions", "system", "stream", "stream_options", "store", "max_tokens", "max_output_tokens"]);
     for (const key of Object.keys(shapeOverrides)) {
       if (!ownedFields.has(key)) assert.equal(body[key], undefined, `${name}: configured ${key} crossed the request boundary`);
     }
     assert.equal(Boolean(body.stream), name === "grok", `${name}: unexpected transport mode`);
+    assert.deepEqual(body.stream_options, name === "grok" ? { include_usage: true } : undefined,
+      `${name}: transport-owned usage reporting was overridden`);
     assert(!body.store, `${name}: configured server-side storage was enabled`);
     assert.equal(body.temperature, 0.42, `${name}: sampling option was lost`);
     assert.equal(body.top_p, 0.83, `${name}: sampling alias was lost`);
@@ -514,11 +524,11 @@ runJSONLRuntime({
     result.checks.push(`rejected ${name}`);
   }
   assert.equal(providerCalls.length, validCount, "invalid requests reached the provider");
-  const timedOut = await call("timeout", { ...input("hold-timeout"), timeout_ms: 200 });
+  const timedOut = await call("timeout", { ...input("hold-timeout"), model_alias: "grok", timeout_ms: 200 });
   assert.equal(timedOut.error.code, "deadline_exceeded", JSON.stringify(timedOut));
   await waitFor("closed", closed, tag => tag === "hold-timeout", "provider timeout disconnect");
-  result.checks.push("deadline cancels provider transport");
-  const cancelled = rpcRaw("plugin/client/request", params("cancel", input("hold-cancel")));
+  result.checks.push("deadline cancels aggregated streaming provider transport");
+  const cancelled = rpcRaw("plugin/client/request", params("cancel", { ...input("hold-cancel"), model_alias: "grok" }));
   await waitFor("provider", providerCalls, call => call.tag === "hold-cancel", "cancel request started");
   for (const overrides of [{ id: item.id + "-other" }, { fingerprint: "other" }, { request_id: "other" }]) {
     const invalid = await rpc("plugin/client/cancel", { id: item.id, fingerprint: item.fingerprint,
@@ -533,7 +543,7 @@ runJSONLRuntime({
   assert.equal(cancellation.cancelled, true);
   assert((await cancelled).error);
   await waitFor("closed", closed, tag => tag === "hold-cancel", "provider cancel disconnect");
-  result.checks.push("cancel identity and duplicate request isolation", "client cancel terminates provider transport");
+  result.checks.push("cancel identity and duplicate request isolation", "client cancel terminates aggregated streaming provider transport");
   assert.deepEqual(await rpc("thread/list"), before);
   result.checks.push("no persisted hidden conversation");
   const disabled = rpcRaw("plugin/client/request", params("disable", input("hold-disable")));
@@ -552,6 +562,8 @@ runJSONLRuntime({
   assert(accounting.operations.every(operation => operation.OwnerID === "plugin:model-fixture" && operation.Kind === "auxiliary" && operation.Status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.Status !== "active"));
   assert.equal(accounting.submissions.length, 9);
+  assert.equal(accounting.submissions.filter(submission => submission.Mode === "stream").length, 4,
+    "Grok and Codex logical unary requests must retain their physical streaming receipts");
   const reported = accounting.submissions.filter(submission => submission.ReportedUsage);
   assert.equal(reported.length, 6);
   assert.equal(reported.reduce((total, usage) => total + usage.ReportedUsage.InputTokens + usage.ReportedUsage.OutputTokens, 0), 60);

@@ -508,7 +508,13 @@ export class ApplicationSubmission {
       rememberCollapsedPromptParts(operation.thread?.id ?? owner, draft.prompt, draft.contentParts);
       this.options.setDraft(owner, cloneComposerDraft(draft)); return;
     }
-    if (operation.thread) this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => upsertTurn(current, { ...createOptimisticTurn(message, Date.now()), status: "failed", error: { message: operation.view.error || t("composer.sendFailed") } })));
+    if (operation.thread) this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => upsertTurn(current, {
+      ...createOptimisticTurn(message, Date.now()),
+      // Recovering behind a newer draft must not turn an explicit Stop into a
+      // send failure. The separate recovery draft still retains the old input.
+      ...(operation.stopped ? { status: "interrupted" as const }
+        : { status: "failed" as const, error: { message: operation.view.error || t("composer.sendFailed") } }),
+    })));
     const recovery = createDraftSessionTab(`draft:recovery:${message.id}`, operation.context, draft);
     rememberCollapsedPromptParts(recovery.id, draft.prompt, draft.contentParts);
     this.options.updateState(state => ({ ...state, sessionTabs: [recovery, ...state.sessionTabs] }));

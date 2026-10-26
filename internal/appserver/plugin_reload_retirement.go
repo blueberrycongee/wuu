@@ -25,7 +25,7 @@ func (s *Server) retireIdlePluginRuntimes() {
 		th.mu.Lock()
 		rt := th.execRuntime
 		if th.state != nil && th.state.Generation != nil &&
-			!th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
+			!th.turnCompletion.failed() && !th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
 			!th.nativeHistoryMutation && s.activeExecutionRunID(th.ID) == "" &&
 			(!s.rt.IsCurrentPluginGeneration(th.state.Generation) || (rt != nil && rt.CompositionID != "")) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
 			retired = append(retired, detachThreadRuntimeLocked(th))

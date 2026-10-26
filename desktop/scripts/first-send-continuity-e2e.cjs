@@ -23,8 +23,9 @@ Object.assign(process.env, { WUU_HOME: home, WUU_DESKTOP_CORE: process.env.WUU_D
 delete process.env.ELECTRON_RENDERER_URL;
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const creation = deferred(), admission = deferred(), acknowledgement = deferred();
-const report = { status: 'running', order, source: process.env.WUU_E2E_SOURCE_COMMIT, checks: [], ipc: [], events: [], requests: [], screenshots: [], limitations: ['Linux Electron rendering and native keyboard input; not physical macOS acceptance.', 'Chinese text uses native insertText; OS IME candidate selection is not simulated.', 'The real transport is gated deterministically; no paid model or user profile.'] };
-let win, creating = false, admitting = false, admitted, heldEvents = [], holdEvents = false, sendEvent, providerResponse;
+const report = { status: 'running', order, source: process.env.WUU_E2E_SOURCE_COMMIT, checks: [], ipc: [], events: [], milestones: [], requests: [], screenshots: [], limitations: ['Linux Electron rendering and native keyboard input; not physical macOS acceptance.', 'Chinese text uses native insertText; OS IME candidate selection is not simulated.', 'The real transport is gated deterministically; no paid model or user profile.'] };
+let win, creating = false, admitting = false, admitted, heldEvents = [], holdEvents = false, sendEvent, providerResponse, acknowledgementReturned = false, sequence = 0;
+const milestone = name => { const entry = { name, sequence: ++sequence }; report.milestones.push(entry); return entry.sequence; };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label, timeout = 30000) { const end = Date.now() + timeout; while (Date.now() < end) { const result = await check(); if (result) return result; await delay(20); } throw new Error(`Timed out: ${label}`); }
@@ -41,6 +42,8 @@ ipcMain.handle = (channel, handler) => register(channel, async (event, ...args) 
     holdEvents = true;
     admitted = await handler(event, ...args);
     await acknowledgement.promise;
+    acknowledgementReturned = true;
+    milestone('acknowledgement-returned');
     return admitted;
   }
   return handler(event, ...args);
@@ -48,18 +51,33 @@ ipcMain.handle = (channel, handler) => register(channel, async (event, ...args) 
 app.on('browser-window-created', (_event, created) => {
   if (win) return;
   win = created;
-  sendEvent = win.webContents.send.bind(win.webContents);
-  win.webContents.send = (channel, ...args) => {
-    const notification = channel === 'wuu:server-event' && args[0]?.kind === 'notification';
-    if (notification) {
-      const method = args[0].message?.method;
-      if (holdEvents && /^(turn\/|item\/|thread\/updated)/.test(method || '')) { heldEvents.push([channel, ...args]); report.events.push({ method, phase: 'held' }); return; }
+  win.webContents.on('console-message', event => { if (event.level === 'error') console.error(`[renderer] ${event.message}`); });
+});
+function gateMainFrameEvents() {
+  // Production broadcasts through the current main frame, not webContents.send.
+  // Install after navigation is ready so this is the frame receiving real events.
+  const frame = win.webContents.mainFrame;
+  sendEvent = frame.send.bind(frame);
+  frame.send = (channel, ...args) => {
+    assert.equal(win.webContents.mainFrame, frame, 'the gated production frame remains current');
+    const method = channel === 'wuu:server-event' && args[0]?.kind === 'notification' ? args[0].message?.method : undefined;
+    if (holdEvents && /^(turn\/|item\/|thread\/updated)/.test(method || '')) {
+      heldEvents.push([channel, ...args]);
+      report.events.push({ method, phase: 'held', sequence: ++sequence });
+      return;
     }
     sendEvent(channel, ...args);
   };
-  win.webContents.on('console-message', event => { if (event.level === 'error') console.error(`[renderer] ${event.message}`); });
-});
-function releaseEvents() { holdEvents = false; for (const [channel, ...args] of heldEvents) { report.events.push({ method: args[0].message.method, phase: 'released' }); sendEvent(channel, ...args); } heldEvents = []; }
+  report.eventTransport = 'webContents.mainFrame.send';
+}
+function releaseEvents() {
+  holdEvents = false;
+  for (const [channel, ...args] of heldEvents) {
+    report.events.push({ method: args[0].message.method, phase: 'released', sequence: ++sequence });
+    sendEvent(channel, ...args);
+  }
+  heldEvents = [];
+}
 const server = http.createServer((req, res) => {
   let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
     if (req.method === 'GET') return res.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
@@ -73,9 +91,37 @@ const server = http.createServer((req, res) => {
 function finishProvider() { for (const [delta, finish_reason] of [[{ content: 'The first message was received once.' }, null], [{}, 'stop']]) providerResponse.write(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta, finish_reason }] })}\n\n`); providerResponse.end('data: [DONE]\n\n'); }
 function enter() { for (const type of ['keyDown', 'char', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Return' }); }
 const composer = '[data-main-conversation-composer] textarea:not(.composer-response-selection-comment)';
-async function type(text) {
-  const point = await until(() => evaluate(selector => { const input = [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().height && !el.closest('[inert]')); if (!input) return; const r = input.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; }, composer), 'composer hit target');
+async function nativeTarget(selector) {
+  // Focus and startup layout can move the composer after its first render.
+  // Observe a stable, editable hit target before sending the single native click.
   win.focus(); win.webContents.focus();
+  await until(() => win.isFocused() && win.webContents.isFocused(), 'native window focus');
+  await evaluate(() => document.fonts.ready.then(() => undefined));
+  const point = await until(() => evaluate(async selector => {
+    let previous, target;
+    for (let frame = 0; frame < 4; frame++) {
+      await new Promise(requestAnimationFrame);
+      const element = [...document.querySelectorAll(selector)].find(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !el.disabled && !el.readOnly && !el.closest('[inert], [aria-hidden="true"]');
+      });
+      if (!element) return;
+      if (frame === 0) element.scrollIntoView({ block: 'nearest' });
+      const r = element.getBoundingClientRect();
+      const current = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      const hit = document.elementFromPoint(current.x, current.y);
+      const bounds = [r.x, r.y, r.width, r.height].join();
+      if (!hit || !element.contains(hit) || (previous && (previous !== bounds || target !== element))) return;
+      previous = bounds; target = element;
+      if (frame === 3) return current;
+    }
+  }, selector), `stable native hit target: ${selector}`);
+  (report.nativeTargets ||= []).push({ selector, ...point });
+  const zoom = win.webContents.getZoomFactor();
+  return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+}
+async function type(text) {
+  const point = await nativeTarget(composer);
   for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...point });
   await until(() => evaluate(selector => [...document.querySelectorAll(selector)].some(el => document.activeElement === el), composer), 'native composer focus');
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
@@ -96,6 +142,7 @@ async function run() {
   report.rendererSHA256 = Object.fromEntries(fs.readdirSync(path.join(desktop, 'out/renderer/assets')).filter(file => /\.(js|css)$/.test(file)).map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(desktop, 'out/renderer/assets', file))).digest('hex')]));
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   await until(() => win && evaluate(selector => Boolean(document.querySelector(selector)), composer), 'production composer');
+  gateMainFrameEvents();
   win.setBounds({ x: 0, y: 0, width: Number(process.env.WUU_FIRST_SEND_WIDTH || 1280), height: 900 }); win.show(); win.focus(); win.webContents.setBackgroundThrottling(false);
   const prompt = '第一条消息 — retain this first message';
   await type(prompt);
@@ -106,7 +153,11 @@ async function run() {
   await evaluate(({ prompt, selector }) => {
     const nodes = new WeakMap(), animations = new WeakMap(); let nextNode = 0, nextAnimation = 0;
     const identity = (map, value, next) => { if (!map.has(value)) map.set(value, next()); return map.get(value); };
-    window.firstSend = { phase: 'before-enter', frames: [], record: true };
+    window.firstSend = { phase: 'before-enter', frames: [], receivedEvents: [], record: true };
+    window.wuu.onServerEvent(event => {
+      const method = event.kind === 'notification' ? event.message?.method : undefined;
+      if (/^(turn\/|item\/|thread\/updated)/.test(method || '')) window.firstSend.receivedEvents.push({ method, phase: window.firstSend.phase, time: performance.now() });
+    });
     const sample = () => {
       if (!window.firstSend.record) return;
       const bubbles = [...document.querySelectorAll('[data-user-message-id]')].filter(row => row.textContent.includes(prompt) && !row.closest('[aria-hidden="true"]')).map(row => {
@@ -131,8 +182,35 @@ async function run() {
   admission.resolve();
   if (order !== 'rejected') {
     await until(() => admitted, 'real core admitted the turn');
-    if (order === 'event-first') { releaseEvents(); await phase('events-before-ack'); acknowledgement.resolve(); }
-    else { acknowledgement.resolve(); await phase('ack-before-events'); releaseEvents(); }
+    await until(() => heldEvents.some(([, event]) => /^(turn\/|item\/)/.test(event.message.method)), 'real turn events intercepted at the production main frame');
+    const heldCount = heldEvents.length;
+    assert.ok(heldCount > 0, 'race ordering must gate actual production events');
+    const observedTurn = () => evaluate(id => [...document.querySelectorAll('[data-turn-id]')].some(el => el.dataset.turnId === id && !el.closest('[aria-hidden="true"]')), admitted.turn.id);
+    const observedEvent = () => evaluate(() => window.firstSend.receivedEvents.some(event => /^(turn\/|item\/)/.test(event.method)));
+    if (order === 'event-first') {
+      releaseEvents();
+      await until(observedEvent, 'renderer receives the gated event before acknowledgement');
+      await until(observedTurn, 'renderer applies the event before acknowledgement');
+      assert.equal(acknowledgementReturned, false, 'acknowledgement is still held after the event is rendered');
+      milestone('event-rendered-before-acknowledgement');
+      await phase('events-before-ack'); acknowledgement.resolve();
+      await until(() => acknowledgementReturned, 'acknowledgement returned after rendered event');
+    } else {
+      acknowledgement.resolve();
+      await until(() => acknowledgementReturned, 'real acknowledgement returned with events held');
+      await until(observedTurn, 'renderer applies acknowledgement while events remain held');
+      assert.equal(await observedEvent(), false, 'no turn event reaches the renderer before acknowledgement is applied');
+      assert.equal(report.events.filter(event => event.phase === 'released').length, 0, 'real events remain held through acknowledgement rendering');
+      milestone('acknowledgement-rendered-before-events');
+      await phase('ack-before-events'); releaseEvents();
+      await until(observedEvent, 'renderer receives events after rendered acknowledgement');
+      milestone('event-received-after-acknowledgement');
+    }
+    const ackSequence = report.milestones.find(entry => entry.name === 'acknowledgement-returned').sequence;
+    const firstReleaseSequence = report.events.find(event => event.phase === 'released').sequence;
+    assert.ok(order === 'event-first' ? firstReleaseSequence < ackSequence : ackSequence < firstReleaseSequence, 'native IPC delivery order matches the requested race');
+    report.orderProof = { heldCount, ackSequence, firstReleaseSequence, order };
+    report.checks.push('Actual production main-frame events are gated and the requested event/ACK order is observed by the renderer');
     await until(() => providerResponse, 'loopback inference started');
     await phase('admitted'); finishProvider();
     await until(() => evaluate(() => document.body.innerText.includes('The first message was received once.')), 'loopback answer');
@@ -145,6 +223,7 @@ async function run() {
     await phase('rejected-recoverable');
     assert.equal(report.requests.filter(row => row.stream).length, 0, 'rejected admission never reaches a model');
   }
+  report.receivedEvents = await evaluate(() => window.firstSend.receivedEvents);
   const samples = await evaluate(() => { window.firstSend.record = false; return window.firstSend.frames; });
   fs.writeFileSync(path.join(output, 'frames.json'), JSON.stringify(samples, null, 2));
   assert.equal(report.ipc.filter(row => row.channel === 'wuu:turn-queue').length, 0, 'Enter was never converted into a duplicate queued send');

@@ -192,7 +192,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Give the conversation composer at least the message flow's width, with up to 12px of extra space on each side in roomy panes. Keep its center aligned with the messages and respect narrow windows and display safe areas.
 
-- Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Align its footer rows with the main composer and status controls across wrapped rows, larger UI fonts, and tool-rail visibility changes.
+- Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Keep the bottom-left Settings and navigation controls anchored to the window with consistent spacing when the right tool rail expands or collapses and composer controls move or wrap.
 
 - Match error and retry messages to the conversation bubble frame, with distinct status colors and full-width IM alignment; keep recovery actions readable at large text sizes and narrow widths.
 

@@ -1016,6 +1016,7 @@ func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, erro
 		Temperature     float64          `json:"temperature,omitempty"`
 		MaxTokens       int              `json:"max_tokens,omitempty"`
 		Stream          bool             `json:"stream,omitempty"`
+		StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
 		PromptCacheKey  string           `json:"prompt_cache_key,omitempty"`
 		ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 		Reasoning       *reasoningConfig `json:"reasoning,omitempty"`
@@ -1029,6 +1030,7 @@ func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, erro
 		Temperature:     payload.Temperature,
 		MaxTokens:       payload.MaxTokens,
 		Stream:          payload.Stream,
+		StreamOptions:   payload.StreamOptions,
 		PromptCacheKey:  payload.PromptCacheKey,
 		ReasoningEffort: payload.ReasoningEffort,
 		Reasoning:       payload.Reasoning,

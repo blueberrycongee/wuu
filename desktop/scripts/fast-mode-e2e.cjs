@@ -342,8 +342,27 @@ async function run() {
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Codex speed fixture')).querySelector('.thread-row-main').click());
   await waitFor(main, () => {
     const input = document.querySelector('.composer textarea');
-    return input && !input.disabled && !input.readOnly && document.querySelector('.codex-runtime-trigger:not(:disabled)')?.textContent.includes('GPT-6 Astra');
+    // The tool rail uses an icon-only trigger; the full selection remains in
+    // its accessible name even when there is no visible model text.
+    return input && !input.disabled && !input.readOnly
+      && document.querySelector('.codex-runtime-trigger:not(:disabled)')?.getAttribute('aria-label')?.includes('GPT-6 Astra');
   });
+  const nativeRuntime = await evaluate(main, async id => {
+    const { thread } = await window.wuu.resumeThread(id);
+    const trigger = document.querySelector('.codex-runtime-trigger');
+    const rect = trigger.getBoundingClientRect();
+    const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+    return { engine: thread.engine_id, model: thread.model, accessibleName: trigger.getAttribute('aria-label'),
+      disabled: trigger.disabled, reachable: rect.width > 0 && rect.height > 0 && trigger.contains(document.elementFromPoint(x, y)), x, y };
+  }, native);
+  assert.equal(nativeRuntime.engine, 'codex');
+  assert.equal(nativeRuntime.model, 'gpt-6-astra');
+  assert.equal(nativeRuntime.disabled, false);
+  assert.equal(nativeRuntime.reachable, true, 'The native Codex runtime trigger remains a visible pointer target.');
+  const nativePoint = { x: Math.round(nativeRuntime.x * main.webContents.getZoomFactor()), y: Math.round(nativeRuntime.y * main.webContents.getZoomFactor()) };
+  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...nativePoint });
+  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...nativePoint });
+  await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-expanded') === 'true');
   await openPanel();
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
@@ -436,7 +455,7 @@ async function run() {
     })), selection, 'Reopening the current engine preserves its model and effort.');
     await capturePanel(main, `current-engine-${engine.toLowerCase()}`, engine === 'Codex');
   }
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, requests, persisted, layoutEvidence }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, nativeRuntime, requests, persisted, layoutEvidence }, null, 2));
   console.log('PASS: fast / standard speed reached the provider and native Codex; inherited native speed displayed; model and effort preserved. Artifacts:', output);
   clearTimeout(timeout); server.close(); app.quit();
 }

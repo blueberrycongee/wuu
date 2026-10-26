@@ -12,10 +12,11 @@ import (
 type modelRequestOriginKey struct{}
 
 type modelPipelineClient struct {
-	host    *pluginhost.Host
-	adapter *modelAdapterClient
-	inner   providers.StreamClient
-	origin  pluginhost.ModelInvocationOriginV1
+	host               *pluginhost.Host
+	adapter            *modelAdapterClient
+	inner              providers.StreamClient
+	origin             pluginhost.ModelInvocationOriginV1
+	enforceOutputLimit bool
 }
 
 func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(providers.StreamClient) providers.StreamClient {
@@ -23,11 +24,11 @@ func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(provi
 		return nil
 	}
 	return func(client providers.StreamClient) providers.StreamClient {
-		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent", SessionID: threadID, ThreadID: threadID})
+		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent", SessionID: threadID, ThreadID: threadID}, false)
 	}
 }
 
-func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamClient, origin pluginhost.ModelInvocationOriginV1) providers.StreamClient {
+func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamClient, origin pluginhost.ModelInvocationOriginV1, enforceOutputLimit bool) providers.StreamClient {
 	if host == nil {
 		return native
 	}
@@ -36,7 +37,7 @@ func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamCli
 	if origin.Kind != "plugin" {
 		inner = pluginModelMiddlewareClient(host, inner, origin)
 	}
-	return &modelPipelineClient{host: host, adapter: adapter, inner: inner, origin: origin}
+	return &modelPipelineClient{host: host, adapter: adapter, inner: inner, origin: origin, enforceOutputLimit: enforceOutputLimit}
 }
 
 // The adapter boundary records physical evidence before middleware and
@@ -55,7 +56,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 			return req, err
 		}
 	}
-	if c.origin.Kind == "plugin" && requestedLimit > 0 && (req.MaxTokens <= 0 || req.MaxTokens > requestedLimit) {
+	if c.enforceOutputLimit && requestedLimit > 0 && (req.MaxTokens <= 0 || req.MaxTokens > requestedLimit) {
 		return req, serviceError("unsupported_limit", "configured provider cannot preserve the requested output limit")
 	}
 	if c.origin.Kind == "plugin" || req.Attempt.Valid() {

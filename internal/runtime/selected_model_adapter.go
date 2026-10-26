@@ -22,7 +22,7 @@ type modelRouteClient struct {
 }
 
 func (c *modelRouteClient) pipeline() providers.StreamClient {
-	return pluginModelPipelineClient(c.host, c, pluginhost.ModelInvocationOriginV1{Kind: "auxiliary"})
+	return pluginModelPipelineClient(c.host, c, pluginhost.ModelInvocationOriginV1{Kind: "auxiliary"}, false)
 }
 func (c *modelRouteClient) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
 	return c.pipeline().Chat(ctx, req)

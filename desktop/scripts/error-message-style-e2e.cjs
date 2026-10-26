@@ -53,9 +53,37 @@ function reply(res) {
 }
 const composer = '[data-main-conversation-composer] textarea:not(.composer-response-selection-comment)';
 function key(keyCode, modifiers = []) { win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); }
-async function click(selector) {
-  const point = await until(() => evaluate(selector => { const element = [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().height && !el.closest('[inert]')); if (!element) return; element.scrollIntoView({ block: 'nearest' }); const r = element.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; }, selector), selector);
+async function nativeTarget(selector) {
+  // Focus and startup layout can move the composer after its first render.
+  // Observe a stable, editable hit target before sending the single native click.
   win.focus(); win.webContents.focus();
+  await until(() => win.isFocused() && win.webContents.isFocused(), 'native window focus');
+  await evaluate(() => document.fonts.ready.then(() => undefined));
+  const point = await until(() => evaluate(async selector => {
+    let previous, target;
+    for (let frame = 0; frame < 4; frame++) {
+      await new Promise(requestAnimationFrame);
+      const element = [...document.querySelectorAll(selector)].find(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !el.disabled && !el.readOnly && !el.closest('[inert], [aria-hidden="true"]');
+      });
+      if (!element) return;
+      if (frame === 0) element.scrollIntoView({ block: 'nearest' });
+      const r = element.getBoundingClientRect();
+      const current = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      const hit = document.elementFromPoint(current.x, current.y);
+      const bounds = [r.x, r.y, r.width, r.height].join();
+      if (!hit || !element.contains(hit) || (previous && (previous !== bounds || target !== element))) return;
+      previous = bounds; target = element;
+      if (frame === 3) return current;
+    }
+  }, selector), `stable native hit target: ${selector}`);
+  (report.nativeTargets ||= []).push({ selector, ...point });
+  const zoom = win.webContents.getZoomFactor();
+  return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+}
+async function click(selector) {
+  const point = await nativeTarget(selector);
   for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...point });
 }
 async function type(text) { await click(composer); await until(() => evaluate(selector => document.activeElement.matches(selector), composer), 'composer focus'); await win.webContents.insertText(text); await until(() => evaluate(({ selector, text }) => document.querySelector(selector)?.value === text, { selector: composer, text }), 'inserted prompt'); for (const type of ['keyDown', 'char', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Return' }); }

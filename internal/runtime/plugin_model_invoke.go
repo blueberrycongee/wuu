@@ -280,7 +280,7 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok && providers.InferenceWorkflowFromContext(ctx) != nil {
 		request.Operation.ParentOperationID = parent.OperationID
 	}
-	wrapped := pluginModelPipelineClient(host, client, independentModelOrigin(scope, request))
+	wrapped := pluginModelPipelineClient(host, client, independentModelOrigin(scope, request), true)
 	return wrapped, request, nil
 }
 
