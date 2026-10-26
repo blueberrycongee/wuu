@@ -1,6 +1,7 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "common.actionInterrupted": "Action was interrupted. Please try again.",
   "settings.engineRuntime": "Runtime configuration",
   "settings.engineUpdateGuide": "Update guide",
   "settings.engineUpdateGuideHint": "This engine is installed outside Wuu. Follow its installation source to update the executable in use.",
@@ -2158,6 +2159,7 @@ export const enUS = {
   "skills.pluginSettingsNamed": "{name} settings",
   "skills.pluginContributionIsolated": "Plugin contribution isolated",
   "skills.pluginContributionDetail": "{contribution}: {message}",
+  "skills.pluginRuntimeRequestFailed": "Plugin request failed",
   "skills.pluginDiagnosticsFailed": "Could not read plugin diagnostics",
   "skills.pluginConflictTitle": "Plugin contribution conflict",
   "skills.pluginConflictTarget": "{kind}: {target}",

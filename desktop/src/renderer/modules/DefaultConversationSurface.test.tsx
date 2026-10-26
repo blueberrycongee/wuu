@@ -1,4 +1,6 @@
 import * as React from "react";
+import * as Notices from "../Toast";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,7 +13,7 @@ import { activate, DefaultConversationSurface } from "./DefaultConversationSurfa
 
 vi.mock("../EmptyHomeOverview", () => ({ EmptyHomeOverview: () => <div data-overview /> }));
 let root: Root | undefined, container: HTMLDivElement | undefined;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); root = undefined; });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); root = undefined; vi.restoreAllMocks(); });
 function thread(id: string): Thread { return { id, title: id, preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: `${id}-turn`, status: "completed", items_view: "full", items: [{ id: `${id}-user`, type: "user_message", text: `Question ${id}` }, { id: `${id}-answer`, type: "agent_message", text: `Answer ${id}`, status: "completed", terminal: true }] }] }; }
 function fixture() {
   const preview = createConversationTestApplication(), one = thread("one"), two = thread("two");
@@ -76,6 +78,7 @@ it("renders the canonical pending creation turn only for its tab owner", () => {
 });
 
 it("uses the selected composer for both split owners and removes it when disabled", async () => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
   const base = createConversationTestApplication(), one = thread("one"), two = thread("two");
   const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), phase: "ready",
     conversationWorkspace: { primaryThreadId: one.id, secondaryThreadId: two.id, activePane: "primary", turnStreamStatus: {}, threads: [one, two] },
@@ -104,7 +107,9 @@ it("uses the selected composer for both split owners and removes it when disable
     expect(container.querySelectorAll('[data-selected-composer="replacement"]')).toHaveLength(2);
     expect(container.querySelector('[data-selected-composer="first"]')).toBeNull();
     await act(async () => host.unload("replacement"));
-    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(2);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:replacement:test");
+    expect(container.textContent).not.toContain(String(notice.mock.calls.at(-1)![0]));
     expect(container.querySelector('[data-selected-composer]')).toBeNull();
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.textContent).toContain("Answer one");
@@ -113,4 +118,38 @@ it("uses the selected composer for both split owners and removes it when disable
     act(() => root?.unmount()); root = undefined;
     for (const id of ["first", "replacement", "shell", "wuu.default-conversation"]) host.unload(id);
   }
+});
+
+
+it("keeps a successful workspace switch quiet when the retired request rejects with an abort", async () => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const h = fixture();
+  const workspaces = [{ id: "first", name: "First", root: "/first", available: true }, { id: "second", name: "Second", root: "/second", available: true }];
+  h.update({ ...h.get(), conversation: { loading: false, turns: [] }, conversationWorkspace: { activePane: "primary", turnStreamStatus: {}, threads: [] }, workspaces: { workspaces, activeWorkspaceId: "first", activeRoot: "/first" } });
+  let reject!: (error: unknown) => void;
+  h.invoke.mockImplementationOnce(() => new Promise((_resolve, rejectRequest) => { reject = rejectRequest; }));
+  await act(async () => container!.querySelector<HTMLButtonElement>(".empty-home-workspace-link")!.click());
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === "Second")!.click());
+  expect(h.invoke).toHaveBeenCalledWith("workspace.retarget-draft", { workspaceId: "second" });
+  h.update({ ...h.get(), workspaces: { workspaces, activeWorkspaceId: "second", activeRoot: "/second" } });
+  await act(async () => reject(new PluginLifecycleCancellationError(new DOMException("signal is aborted without reason", "AbortError"))));
+  expect(container!.querySelector(".empty-home-workspace-link")?.textContent).toBe("Second");
+  expect(notice).not.toHaveBeenCalled();
+});
+
+it.each([
+  new DOMException("signal is aborted without reason", "AbortError"),
+  new Error("Workspace is unavailable. Reconnect and retry."),
+])("keeps current action failures visible rather than treating every abort as retirement", async error => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+  const h = fixture();
+  h.invoke.mockRejectedValueOnce(error);
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="one"] .message-edit-button')!.click());
+  expect(notice).toHaveBeenCalledTimes(1);
+  if (error.name === "AbortError") {
+    expect(notice.mock.calls[0][0]).not.toBe(error);
+    expect(diagnostic).toHaveBeenCalledWith(expect.any(String), error);
+  }
+  else expect(notice.mock.calls[0][0]).toBe(error);
 });

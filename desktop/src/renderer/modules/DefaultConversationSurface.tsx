@@ -21,7 +21,7 @@ import { isThreadRunning } from "../AppState";
 import type { ContextCompositionEntry } from "../ContextCompositionCard";
 import type { InstructionFilesEntry } from "../InstructionFilesCard";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
-import { showErrorToast } from "../Toast";
+import { showApplicationActionError } from "../ApplicationActionError";
 import { greetingFor, useCurrentHour } from "../greetings";
 import { useI18n } from "../i18n";
 import { CONVERSATION_SPLIT_MAX_PERCENT, CONVERSATION_SPLIT_MIN_PERCENT } from "../AppLayoutState";
@@ -51,7 +51,7 @@ export function DefaultConversationSurface({ application, slots, ...layout }: De
 function ConversationSurface({ application, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1 }): JSX.Element {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const { t } = useI18n(), hour = useCurrentHour();
-  const run = useCallback((result: Promise<unknown>) => { void result.catch(showErrorToast); }, []);
+  const run = useCallback((result: Promise<unknown>) => { void result.catch(showApplicationActionError); }, []);
   // Leaf renderers only read histories; edits go through named application actions.
   // Keep the frozen public values instead of serializing every loaded attachment.
   const threads = view.conversationWorkspace.threads as readonly Thread[];
@@ -98,8 +98,8 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
       if (attachments.length) await application.invoke("composer.import-attachments", { attachments });
       await application.invoke("history.update-edit", { ...target, draft: { text, imageIds: attachments.filter(item => item.kind === "image").map(item => item.id), fileIds: attachments.filter(item => item.kind === "file").map(item => item.id), contentParts } });
       await application.invoke("history.submit-edit", target);
-    } catch (error) { showErrorToast(error); }
-    finally { if (attachments.length) await application.invoke("composer.release-attachments", { attachmentIds: attachments.map(item => item.id), ifUnreferenced: true }).catch(showErrorToast); }
+    } catch (error) { showApplicationActionError(error); }
+    finally { if (attachments.length) await application.invoke("composer.release-attachments", { attachmentIds: attachments.map(item => item.id), ifUnreferenced: true }).catch(showApplicationActionError); }
   }, [application, editTarget]);
   const openFile = useCallback((thread: Thread, path: string) => {
     const workspace = application.getSnapshot().workspaces.workspaces.find(row => row.root === thread.cwd);
@@ -189,8 +189,8 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
     ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
     streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
     editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
-    onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showErrorToast); }}
-    onClose={() => { void application.invoke("conversation.close-pane", { pane }).catch(showErrorToast); }} onBodyRef={onBodyRef} onScroll={onScroll ?? noop}
+    onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showApplicationActionError); }}
+    onClose={() => { void application.invoke("conversation.close-pane", { pane }).catch(showApplicationActionError); }} onBodyRef={onBodyRef} onScroll={onScroll ?? noop}
     onForkMessage={(turnId, itemId) => fork(thread, turnId, itemId)} onOpenFile={path => openFile(thread, path)} onOpenURL={openURL} onOpenAgent={id => openAgent({ id })}
     onEditMessage={canEdit(thread) ? (turnId, item) => edit(thread, turnId, item) : undefined}
     onCancelEditMessage={cancelEdit} onSubmitEditMessage={(turnId, item, text, images, files, parts) => submitEdit(thread, turnId, item, text, images, files, parts)}

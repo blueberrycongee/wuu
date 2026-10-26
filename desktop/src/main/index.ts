@@ -2227,12 +2227,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
-    const context = runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root);
-    if (params.workspace_root && resolve(params.workspace_root) !== resolve(context.cwd)) {
+    // Only explicit workspace requests need resolution. Implicit requests follow
+    // the graph's captured process, not the project's mutable current selection.
+    const context = params.workspace_id || params.workspace_root
+      ? runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root) : undefined;
+    if (params.workspace_root && context && resolve(params.workspace_root) !== resolve(context.cwd)) {
       throw new Error("Plugin runtime workspace changed");
     }
+    const request = desktopActivationOwner(event).runtimeRequest(params.graph_generation, context?.cwd);
     const owner = `window:${event.sender.id}`;
-    return pluginRuntimeRequests.request(owner, context, params, undefined, () => {
+    return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
       event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
     });
   });

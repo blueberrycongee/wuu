@@ -1,4 +1,5 @@
 export const zhCN = {
+  "common.actionInterrupted": "操作已中断，请重试。",
   "settings.engineRuntime": "运行配置",
   "settings.engineUpdateGuide": "更新说明",
   "settings.engineUpdateGuideHint": "此引擎由 Wuu 之外的安装方式管理。请按原安装来源更新正在使用的可执行文件。",
@@ -2155,6 +2156,7 @@ export const zhCN = {
   "skills.pluginSettingsNamed": "{name} 设置",
   "skills.pluginContributionIsolated": "插件贡献已被隔离",
   "skills.pluginContributionDetail": "{contribution}：{message}",
+  "skills.pluginRuntimeRequestFailed": "插件请求失败",
   "skills.pluginDiagnosticsFailed": "无法读取插件诊断",
   "skills.pluginConflictTitle": "插件贡献冲突",
   "skills.pluginConflictTarget": "{kind}：{target}",

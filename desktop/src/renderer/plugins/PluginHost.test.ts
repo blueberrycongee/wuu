@@ -988,3 +988,44 @@ it("owns central notices by generation and rejects notices from retired handles"
     expect(() => api.showNotice({ message: "stale" })).toThrow();
   } finally { await host.unloadAndWait("notices"); show.mockRestore(); dismiss.mockRestore(); }
 });
+
+it.each(["resolve", "reject"])("classifies a late %s from a retired runtime scope without publishing a transport fault", async outcome => {
+  let resolve!: (value: unknown) => void, reject!: (error: unknown) => void;
+  const host = new PluginHost({ react: React, invokeRuntime: () => new Promise((yes, no) => { resolve = yes; reject = no; }) });
+  let api!: PluginGenerationApi;
+  await host.activateGeneration({ pluginId: "scope", generation: "a", register(value) { api = value; } });
+  const result = api.invokeRuntime("read").catch(error => error);
+  host.unload("scope");
+  if (outcome === "resolve") resolve({ stale: true });
+  else reject(new Error("plugin graph generation is no longer active"));
+  expect(await result).toMatchObject({ name: "AbortError", code: "WUU_PLUGIN_SCOPE_RETIRED" });
+  expect(host.getGenerationDiagnostics("scope", "a")).toEqual([]);
+});
+
+it("preserves real runtime errors for the currently active generation", async () => {
+  const failure = new Error("current workspace backend failed");
+  const host = new PluginHost({ react: React, invokeRuntime: async () => { throw failure; } });
+  let api!: PluginGenerationApi;
+  await host.activateGeneration({ pluginId: "scope", generation: "b", register(value) { api = value; } });
+  await expect(api.invokeRuntime("read", { secret: "not-for-diagnostics" })).rejects.toBe(failure);
+  expect(host.getGenerationDiagnostics("scope", "b")).toEqual([
+    expect.objectContaining({ kind: "runtime", message: "Plugin runtime request failed: runtime/read", cause: failure }),
+  ]);
+  expect(host.getGenerationDiagnostics("scope", "b")[0].message).not.toContain("not-for-diagnostics");
+  const publicDiagnostics = api.contributions.getGenerationDiagnostics("scope", "b");
+  expect(publicDiagnostics).toEqual([{ kind: "runtime", message: "Plugin runtime request failed: runtime/read" }]);
+  expect(api.contributions.getGenerationDiagnostics("scope", "b")).toBe(publicDiagnostics);
+  host.unload("scope");
+});
+
+it("fences a rejected application action after its consumer scope retires", async () => {
+  let reject!: (error: unknown) => void;
+  const application = { invoke: () => new Promise((_, no) => { reject = no; }) };
+  const host = new PluginHost({ react: React, application: application as never });
+  let api!: PluginGenerationApi;
+  await host.activateGeneration({ pluginId: "consumer", generation: "a", register(value) { api = value; } });
+  const result = api.application.invoke("navigation.cancel", {}).catch(error => error);
+  host.unload("consumer");
+  reject(new DOMException("signal is aborted without reason", "AbortError"));
+  expect(await result).toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
+});

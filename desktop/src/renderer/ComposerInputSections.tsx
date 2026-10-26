@@ -138,7 +138,8 @@ export function SplitPaneComposer({
   onChangeSelection,
   onRemoveSelection,
   running,
-  readOnly,
+  readOnly: sessionReadOnly,
+  interactionDisabled = false,
   sendDisabled: requestedSendDisabled = false,
   stopState,
   submitting = false,
@@ -168,6 +169,8 @@ export function SplitPaneComposer({
   onRemoveSelection?: (id: string) => void;
   running: boolean;
   readOnly: boolean;
+  /** Temporary ownership transfer lock; does not change session semantics. */
+  interactionDisabled?: boolean;
   /** Instant view switches keep `running` on for the spinner but must not
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
@@ -190,6 +193,7 @@ export function SplitPaneComposer({
   onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
 }): JSX.Element {
+  const readOnly = sessionReadOnly || interactionDisabled;
   const { t } = useI18n();
   const connected = useWorkbenchConnected();
   const sendDisabled = requestedSendDisabled || draftPending || Boolean(stopState) || !connected;
@@ -497,7 +501,7 @@ export function SplitPaneComposer({
                   ref={textareaRef}
                   data-wuu-component="composer-input"
                   value={visiblePromptValue}
-                  placeholder={inline.text ? "" : readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
+                  placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
                   disabled={readOnly}
                   aria-readonly={readOnly}
                   aria-describedby={inline.text ? inline.descriptionId : undefined}

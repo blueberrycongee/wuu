@@ -1,3 +1,4 @@
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { showToast, dismissToast } from "../Toast";
 import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
@@ -323,7 +324,7 @@ export interface PluginContributionConflict {
   readonly winnerPluginId: string;
 }
 
-export type PluginDiagnosticKind = "activation" | "cleanup" | "render";
+export type PluginDiagnosticKind = "activation" | "cleanup" | "render" | "runtime";
 
 export interface PluginGenerationDiagnostic {
   readonly pluginId: string;
@@ -810,14 +811,14 @@ export class PluginHost {
     let providerLifetime: AbortController | undefined;
     const lifetime = new AbortController();
     const retire = () => {
-      lifetime.abort(state.lifetime.signal.reason ?? providerLifetime?.signal.reason);
+      lifetime.abort(new PluginLifecycleCancellationError(state.lifetime.signal.reason ?? providerLifetime?.signal.reason));
       state.lifetime.signal.removeEventListener("abort", retire);
       providerLifetime?.signal.removeEventListener("abort", retire);
     };
     state.lifetime.signal.addEventListener("abort", retire, { once: true });
     const assertApplicationActive = () => {
-      this.assertActive(state);
       lifetime.signal.throwIfAborted();
+      this.assertActive(state);
       providerLifetime?.signal.throwIfAborted();
     };
     const service = (): HostApplicationService | ApplicationServiceV1 => {
@@ -867,10 +868,15 @@ export class PluginHost {
           application.setPreviewVisibility((input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open, lifetime.signal);
           return undefined as ApplicationActionMapV1[Action]["result"];
         }
-        const result = await application.invoke(action, input, { signal });
-        assertApplicationActive();
-        signal.throwIfAborted();
-        return result;
+        try {
+          const result = await application.invoke(action, input, { signal });
+          assertApplicationActive();
+          signal.throwIfAborted();
+          return result;
+        } catch (error) {
+          if (lifetime.signal.aborted) throw lifetime.signal.reason;
+          throw error;
+        }
       },
     });
   }
@@ -1083,6 +1089,7 @@ export class PluginHost {
   }
 
   private createContributionRegistry(state: GenerationState): UIContributionRegistryV1 {
+    const diagnosticViews = new WeakMap<readonly PluginGenerationDiagnostic[], readonly { kind: PluginDiagnosticKind; message: string }[]>();
     const names: readonly (keyof UIContributionRegistryV1)[] = [
       "subscribe", "getGenerationActivation", "retainGeneration", "observeGenerationRender", "hasActivePlugin",
       "getCommands", "resolveCommandActions", "executeCommandAction", "recordCommandFailure",
@@ -1096,6 +1103,12 @@ export class PluginHost {
       if (name !== "getGenerationActivation" && name !== "getGenerationDiagnostics") state.lifetime.signal.throwIfAborted();
       const method = this[name] as (...args: unknown[]) => unknown;
       const result = method.apply(this, args);
+      if (name === "getGenerationDiagnostics") {
+        const source = result as readonly PluginGenerationDiagnostic[];
+        let view = diagnosticViews.get(source);
+        if (!view) { view = Object.freeze(source.map(({ kind, message }) => Object.freeze({ kind, message }))); diagnosticViews.set(source, view); }
+        return view;
+      }
       if ((name.startsWith("subscribe") || name === "retainGeneration") && typeof result === "function") {
         let active = true;
         const stop = () => { if (!active) return; active = false; state.lifetime.signal.removeEventListener("abort", stop); result(); };
@@ -1134,6 +1147,15 @@ export class PluginHost {
         this.assertActive(state);
         controller.signal.throwIfAborted();
         return result;
+      } catch (error) {
+        // A retired invocation is not a failure in its successor's workspace.
+        // Fence rejected results too: transport can reject before cleanup callbacks run.
+        if (state.disposed || state.lifetime.signal.aborted) throw new PluginLifecycleCancellationError(error);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const operation = `${service ?? "runtime"}/${method}`.replace(/[^a-zA-Z0-9_.:/-]/g, "_").slice(0, 160);
+        this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "runtime",
+          message: `Plugin runtime request failed: ${operation}`, cause: error });
+        throw error;
       } finally {
         state.runtimeRequests.delete(controller);
         options?.signal?.removeEventListener("abort", abort);
@@ -1746,7 +1768,7 @@ export class PluginHost {
     state.disposed = true;
     state.acceptingRegistrations = false;
     state.lifetime.abort(reason);
-    for (const request of state.runtimeRequests) request.abort();
+    for (const request of state.runtimeRequests) request.abort(new PluginLifecycleCancellationError(reason));
     this.finishGenerationCleanup(state);
   }
 

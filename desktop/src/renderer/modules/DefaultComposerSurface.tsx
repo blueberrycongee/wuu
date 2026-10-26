@@ -15,7 +15,7 @@ import type { ComposerConfiguration, ComposerVariant } from "../ComposerTypes";
 import type { ComposerFile, ComposerImage, QueuedComposerMessage } from "../ComposerMessages";
 import { UserQuestionCard } from "../UserQuestionCard";
 import { createApplicationComposerAttachments } from "./ApplicationComposerAttachments";
-import { showErrorToast } from "../Toast";
+import { showApplicationActionError } from "../ApplicationActionError";
 import { useI18n } from "../i18n";
 import { threadContinuationTarget } from "../TurnContinuation";
 
@@ -53,7 +53,7 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
   if (view.sideConversation.parentThreadId !== parentThreadId) return null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
     <ApplicationSideThreadComposer snapshot={view.sideConversation} invoke={application.invoke} variant={variant}
-      onOpenFile={path => { void application.fileSelection.openFile({ target: { ownerTabId }, path }).catch(showErrorToast); }} />
+      onOpenFile={path => { void application.fileSelection.openFile({ target: { ownerTabId }, path }).catch(showApplicationActionError); }} />
   </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
@@ -81,7 +81,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const [filter, setFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
-  const run = useCallback((result: Promise<unknown>) => { void result.catch(showErrorToast); }, []);
+  const run = useCallback((result: Promise<unknown>) => { void result.catch(showApplicationActionError); }, []);
   useEffect(() => { run(controls.refreshEngines()); }, [controls, run]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
   const runtime = view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
@@ -141,7 +141,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}
       stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy || switching)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
-      readOnly={presentation.readOnly || switching} initialized={configuration}
+      readOnly={presentation.readOnly} interactionDisabled={switching} initialized={configuration}
       engines={structuredClone(runtime.engines) as EngineInfo[]} activeEngine={selection.engine === "wuu" ? "" : selection.engine}
       engineLocked={runtime.engineLocked} engineModel={selection.model} engineEffort={selection.effort} engineSpeed={selection.speed} engineModelOptions={{ ...selection.modelOptions }}
       onSelectSpeed={async speed => (await controls.chooseRuntime({ kind: "speed", speed })).accepted}
@@ -176,7 +176,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onOpenContextComposition={presentation.threadId ? () => run(application.invoke("conversation.open-context", { threadId: presentation.threadId! })) : undefined}
       onCompactContext={presentation.threadId ? () => run(application.invoke("conversation.compact", { threadId: presentation.threadId! })) : undefined}
       onOpenInstructions={presentation.threadId ? () => run(application.invoke("conversation.open-instructions", { threadId: presentation.threadId! })) : undefined}
-      onPasteAttachmentFiles={values => run(controls.attach(values).then(results => { for (const result of results) if (result.status === "rejected") showErrorToast(result.reason); }))}
+      onPasteAttachmentFiles={values => run(controls.attach(values).then(results => { for (const result of results) if (result.status === "rejected") showApplicationActionError(result.reason); }))}
       onRemoveFile={id => run(controls.removeAttachment(id))} onRemoveImage={id => run(controls.removeAttachment(id))}
       onRemoveQueuedMessage={messageId => run(application.invoke("composer.remove-pending", { ownerTabId, messageId, kind: "queue" }))}
       onRemoveGuideMessage={messageId => run(application.invoke("composer.remove-pending", { ownerTabId, messageId, kind: "guide" }))}

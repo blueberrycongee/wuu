@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
 import type { EngineListResult, InitializeResult, Thread } from "../../shared/protocol";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { ApplicationComposerRuntime } from "./ApplicationComposerRuntime";
 
 vi.mock("../Toast", () => ({ showErrorToast: vi.fn() }));
@@ -87,7 +88,7 @@ it("deduplicates discovery and lets a forced refresh supersede an older result",
 
 it("refuses stale owners, bound-engine changes and read-only runtime changes", async () => {
   installEngineAPI(); const h = fixture();
-  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-b", selection: { kind: "speed", speed: "fast" } })).rejects.toThrow(/owner/i);
+  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-b", selection: { kind: "speed", speed: "fast" } })).rejects.toBeInstanceOf(PluginLifecycleCancellationError);
   openedThread(h);
   await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "thread:thread-one", selection: { kind: "engine", engine: "native" } })).resolves.toEqual({ accepted: false });
   openedThread(h, { read_only: true });
@@ -261,4 +262,15 @@ it("ignores discovery failures after navigating away", async () => {
   rejectRequest(new Error("Old workspace unavailable"));
   await expect(request).resolves.toBeUndefined();
   expect(h.view().engineModelsError).toBe("");
+});
+
+
+it("distinguishes retired composer ownership from an unproven caller abort", async () => {
+  installEngineAPI(); const h = fixture();
+  h.set({ ...h.get(), activeSessionTabID: "draft-b" });
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" })).rejects.toBeInstanceOf(PluginLifecycleCancellationError);
+  const caller = new AbortController();
+  const cause = new DOMException("signal is aborted without reason", "AbortError");
+  caller.abort(cause);
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-b" }, caller.signal)).rejects.toBe(cause);
 });

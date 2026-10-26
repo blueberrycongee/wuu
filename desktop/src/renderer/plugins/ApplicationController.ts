@@ -938,6 +938,9 @@ export class ApplicationController implements HostApplicationService {
           allowThreadAutoActivation: false, running: false, status: "ready" };
       });
     } catch (error) {
+      // A retired selection cannot report failures into its replacement view.
+      // Match the stale-success path without hiding the current owner's failure.
+      if (request !== this.navigationRequest) return;
       // Restore transport selection as well as the visible source after a failed
       // cross-workspace load. A newer navigation owns transport recovery instead.
       if (switchedContext && sourceContext && request === this.navigationRequest) {
@@ -947,6 +950,7 @@ export class ApplicationController implements HostApplicationService {
             initialized: undefined, activeContext: undefined, activeProjectId: undefined, status: String(restoreError) }));
         }
       }
+      if (request !== this.navigationRequest) return;
       throw error;
     } finally {
       this.finishNavigation(request);
