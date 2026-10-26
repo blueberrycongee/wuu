@@ -11,14 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -60,12 +59,13 @@ func TestCompositionNativeWorkerKeepsAdmittedModelRoles(t *testing.T) {
 		"second": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "synthetic", Model: "model-two"},
 	}
 	consumer := &compositionWorkerConsumer{}
-	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{consumer.ID(): true}}}}
+	engine := &compositionAdmissionEngine{}
+	cfg.Composition = &composition.Config{Services: []composition.Binding{{Service: "engine.codex", Major: 1, Provider: engine.ID()}}, Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{consumer.ID(): true, engine.ID(): true}}}}
 	catalog := []pluginpkg.Plugin{}
 	rt, err := runtime.NewSession(runtime.Options{RootDir: t.TempDir(), WuuHome: t.TempDir(), HomeDir: t.TempDir(), Config: cfg, DiscoveredPlugins: &catalog, NonInteractive: true,
 		NativeProviders: []runtime.NativeProviderFactory{{ID: consumer.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
 			return &compositionWorkerConsumer{}, nil
-		}}}})
+		}}, {ID: engine.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return engine, nil }}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,12 +132,6 @@ func TestCompositionNativeWorkerKeepsAdmittedModelRoles(t *testing.T) {
 	if _, err := rt.Sessions.SetEngine(sessionID, "codex"); err != nil {
 		t.Fatal(err)
 	}
-	engine := &compositionAdmissionEngine{stubProtocolEngine: stubProtocolEngine{id: agentengine.EngineID("codex")}}
-	engines := agentengine.NewRegistry()
-	if err := engines.Register(engine); err != nil {
-		t.Fatal(err)
-	}
-	rt.SetEnginesForTest(engines)
 	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"resume-external","method":"thread/resume","params":{"session_id":%q}}`, sessionID))); err != nil {
 		t.Fatal(err)
 	}
@@ -172,33 +166,39 @@ func TestCompositionNativeWorkerKeepsAdmittedModelRoles(t *testing.T) {
 
 }
 
+// This selected service has no process launcher or model transport.
 type compositionAdmissionEngine struct {
-	stubProtocolEngine
+	compositionWorkerConsumer
 	calls atomic.Int32
 }
 
-func (e *compositionAdmissionEngine) Open(ctx context.Context, input agentengine.OpenRequest) (agentengine.Session, error) {
-	e.calls.Add(1)
-	return compositionAdmissionSession{}, nil
+func (*compositionAdmissionEngine) ID() string { return "fixture.composition-engine" }
+func (e *compositionAdmissionEngine) Status() pluginhost.Status {
+	return pluginhost.Status{ID: e.ID(), State: pluginhost.StateActive}
 }
-func (e *compositionAdmissionEngine) Resume(ctx context.Context, input agentengine.ResumeRequest) (agentengine.Session, error) {
-	e.calls.Add(1)
-	return compositionAdmissionSession{}, nil
-}
-
-type compositionAdmissionSession struct{}
-
-func (compositionAdmissionSession) RunTurn(ctx context.Context, _ agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
-	if sink != nil {
-		sink(providers.StreamEvent{Type: providers.EventContentDelta, Content: "external composition verified"})
-		sink(providers.StreamEvent{Type: providers.EventDone})
+func (*compositionAdmissionEngine) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (*compositionAdmissionEngine) ProvidedServices() []pluginhost.ServiceDescriptor {
+	methods := []pluginhost.ServiceMethodDescriptor{}
+	for _, name := range []string{"descriptor", "retain", "release", "bind", "run", "close", "history_fork"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: "engine." + strings.ReplaceAll(name, "_", "-") + ".input.v1", OutputSchema: "engine." + strings.ReplaceAll(name, "_", "-") + ".output.v1", Cleanup: name == "close" || name == "release"})
 	}
-	return agentengine.TurnResult{Result: agent.LoopResult{Content: "external composition verified", NewMessages: []providers.ChatMessage{{Role: "assistant", Content: "external composition verified"}}}}, ctx.Err()
+	return []pluginhost.ServiceDescriptor{{Name: "engine.codex", Version: "1.0.0", Methods: methods}}
 }
-func (compositionAdmissionSession) Interrupt(context.Context, string) error { return nil }
-func (compositionAdmissionSession) Close(context.Context) error             { return nil }
-
-func (e *compositionAdmissionEngine) SessionForThread(context.Context, agentengine.ThreadBinding) (agentengine.Session, error) {
-	e.calls.Add(1)
-	return compositionAdmissionSession{}, nil
+func (e *compositionAdmissionEngine) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	switch p.Method {
+	case "descriptor":
+		return json.Marshal(map[string]any{"id": agentengine.EngineID("codex"), "version": "fixture", "enabled": true})
+	case "retain", "bind":
+		return json.Marshal(pluginprotocol.EngineSessionParams{SessionID: "fixture-external-session"})
+	case "run":
+		e.calls.Add(1)
+		return json.Marshal(pluginprotocol.EngineRunResult{Result: pluginprotocol.EngineResultV1{Version: 1, Content: "external composition verified", NewMessages: []pluginprotocol.DriverMessageV1{{Role: "assistant", Content: "external composition verified"}}}})
+	case "release", "close", "history_fork":
+		return json.RawMessage(`{}`), nil
+	default:
+		return nil, fmt.Errorf("unsupported fixture engine operation %q", p.Method)
+	}
 }

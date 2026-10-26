@@ -38,10 +38,13 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			kit.ConfigureSurfaceForProviderModel("custom", model, true)
 			// Shell sandbox support is tested separately; run this fixture on every OS.
 			kit.SetBoundary(tools.UnconfinedBoundary())
-			rt.Toolkit = kit
+			rt.Toolkit = nil
+			rt.StreamRunner.Tools = kit
 			require.NoError(t, os.WriteFile(filepath.Join(rt.RootDir, "value.txt"), []byte("before\nrepeat\nrepeat\n"), 0600))
 			var changed []string
 			kit.SetOnFileChanged(func(_ context.Context, path string) { changed = append(changed, filepath.Base(path)) })
+			// Publish the actual observed toolkit as this fixture's selected tool executor.
+			attachTestModelGeneration(t, rt)
 
 			sess, err := rt.Sessions.CreateWithMetadata("historical-patch", rt.RootDir)
 			require.NoError(t, err)

@@ -572,7 +572,7 @@ describe("createThreadActivationActions", () => {
     expect(harness.getAppState()).toBe(activated);
     expect(activated.thread?.id).toBe(target.id);
     expect(activated.status).toBe("ready");
-    expect(showErrorToast).toHaveBeenCalledWith("catalog unavailable");
+    expect(showErrorToast).not.toHaveBeenCalled();
   });
 
   it("keeps a cached resume pending when its selected tab is clicked after loading appears", async () => {

@@ -254,7 +254,7 @@ export function createThreadActivationActions(
       // Catalogs are not needed to display or send to the resumed conversation.
       // Start them after activation so large archives cannot delay its first paint.
       if (loadedState.activeContext) {
-        void refreshThreadCatalog(loadedState.activeContext);
+        void refreshThreadCatalog(loadedState.activeContext, requestID);
       }
     } catch (error) {
       if (!deps.isCurrentViewSwitchRequest(requestID)) return;
@@ -300,7 +300,7 @@ export function createThreadActivationActions(
     }
   }
 
-  async function refreshThreadCatalog(context: RuntimeContext): Promise<void> {
+  async function refreshThreadCatalog(context: RuntimeContext, requestID: number): Promise<void> {
     const before = new Map(deps.getAppState().threads.map((thread) => [thread.id, thread]));
     try {
       const threads = await loadRuntimeThreadList(context.cwd);
@@ -325,8 +325,10 @@ export function createThreadActivationActions(
         };
       });
     } catch (error) {
-      if (deps.getAppState().activeContext === context) {
-        setStatus(error instanceof Error ? error.message : translateCurrent("thread.loadFailed"));
+      if (deps.isCurrentViewSwitchRequest(requestID) && deps.getAppState().activeContext === context) {
+        // Keep the accepted conversation and prior catalog. This background
+        // refresh is not a failed foreground navigation or a user action.
+        console.warn("Background thread catalog refresh failed", error);
       }
     }
   }

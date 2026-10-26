@@ -281,3 +281,63 @@ it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"
   }
   expect(app.getSnapshot().tabs.items.some(tab => tab.draftText === "keep source draft")).toBe(true);
 });
+
+it.each([false, true])("restores an exact pending destination before an unrelated archive catalog settles (failure=%s)", async failure => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const thread = { id: "destination", cwd: target.cwd, project_id: "b", title: "Destination", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [] };
+  let selected = source;
+  let blockArchives = false;
+  const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => {});
+  let releaseArchives!: () => void;
+  const archives = new Promise<void>(resolve => { releaseArchives = resolve; });
+  const resume = vi.fn().mockResolvedValue({ thread, held_user_messages: [{ id: "held", thread_id: thread.id, origin: "queue", prompt: "retained queue" }] });
+  window.wuu = {
+    listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async id => { selected = id === "b" ? target : source; return { projects, active_context: selected }; }),
+    initialize: vi.fn(async () => ({ provider: "fixture", model: "fixture", providers: [], extension_inventory: [], workspace_root: selected.cwd })),
+    listThreads: vi.fn(async () => ({ threads: [thread] })),
+    listArchivedThreads: vi.fn(async () => {
+      if (!blockArchives) return { threads: [] };
+      await archives;
+      if (failure) throw new Error("archive catalog offline");
+      return { threads: [{ ...thread, id: "archived-history", archived: true }] };
+    }),
+    resumeThread: resume, onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+  } as unknown as WuuDesktopApi;
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "source draft" });
+  await app.invoke("thread.activate", { threadId: thread.id, workspaceId: "b" });
+  expect(resume).toHaveBeenCalledOnce();
+  blockArchives = true;
+  const priorCatalogCalls = vi.mocked(window.wuu.listArchivedThreads).mock.calls.length;
+  await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+  const replacing = host.activateGeneration({ pluginId: "business", generation: "two", register });
+  try {
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledTimes(2));
+    await replacing;
+    await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+    expect(app.getSnapshot().conversation.threadId).toBe(thread.id);
+    expect(app.getSnapshot().composerPending).toMatchObject([{ threadId: thread.id, queued: [{ id: "held", text: "retained queue" }] }]);
+    expect(app.getSnapshot().tabs.items.some(tab => tab.draftText === "source draft")).toBe(true);
+    expect(window.wuu.listArchivedThreads).toHaveBeenCalledTimes(priorCatalogCalls + 1);
+    releaseArchives();
+    if (failure) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(app.getSnapshot().phase).toBe("ready");
+      expect(app.getSnapshot().conversation.threadId).toBe(thread.id);
+      expect(diagnostic).toHaveBeenCalledWith("Background thread catalog refresh failed", expect.objectContaining({ message: "archive catalog offline" }));
+    } else {
+      await vi.waitFor(() => expect(app.getSnapshot().conversationWorkspace.threads.some(row => row.id === "archived-history")).toBe(true));
+    }
+  } finally {
+    releaseArchives();
+    await replacing;
+  }
+});

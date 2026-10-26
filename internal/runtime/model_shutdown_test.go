@@ -54,6 +54,7 @@ func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginho
 		return result, errors.Join(err, ctx.Err())
 	}
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "shutdown model caller %s failed: %v\n", method, err)
 		return nil, err
 	}
 	if method == "start" {
@@ -364,7 +365,9 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			case err := <-exited:
 				t.Fatalf("child exited before model submission: %v\n%s", err, output.String())
 			case <-time.After(15 * time.Second):
-				t.Fatal("child did not submit a model request")
+				_ = child.Process.Kill()
+				err := <-exited
+				t.Fatalf("child did not submit a model request: %v\n%s", err, output.String())
 			}
 			if scenario.rejectModel {
 				unblock()
@@ -401,7 +404,10 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					t.Logf("submission persistence child result: %v\n%s", err, output.String())
 				}
 				if scenario.terminalTimeout || scenario.failClose {
-					want := "drain model invocations: context deadline exceeded"
+					// The owner's completion deadline can expire before the root drain
+					// deadline. Both must expose the typed cleanup failure, regardless
+					// of which wait wins scheduling.
+					want := "root cleanup deadline exceeded"
 					if scenario.failClose {
 						want = "injected model authority release failure"
 					}
@@ -659,6 +665,9 @@ func modelShutdownProcess(t *testing.T, root string) {
 		}
 	}
 	if cleanupErr != nil {
+		if errors.Is(cleanupErr, context.DeadlineExceeded) {
+			fmt.Fprintln(os.Stderr, "root cleanup deadline exceeded")
+		}
 		t.Fatalf("root cleanup: %v", cleanupErr)
 	}
 	if preIntentAuthority != nil {

@@ -680,9 +680,16 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         const workspace = listed.active_context ? listed : await window.wuu.selectNoProject(false);
         signal?.throwIfAborted();
-        const active = this.state.sessionTabs.find(tab => tab.id === activeTabId
-          && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
-        loaded = await loadRuntime(workspace, { resumeLatestThread: options.resumeThread !== false && active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
+        if (options.resumeThread === false) {
+          // A restored destination owns its exact history read and refreshes
+          // catalogs afterward. An unrelated archive must not delay that view.
+          loaded = { ...await loadRuntimeConfiguration(workspace), thread: undefined,
+            secondaryThread: undefined, activePane: "primary", allowThreadAutoActivation: false, running: false };
+        } else {
+          const active = this.state.sessionTabs.find(tab => tab.id === activeTabId
+            && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
+          loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
+        }
       }
       signal?.throwIfAborted();
       this.loaded = loaded;
@@ -856,7 +863,8 @@ export class ApplicationController implements HostApplicationService {
 
   private navigationActions(signal?: AbortSignal) {
     let restoredDraft: ComposerDraftState | undefined;
-    const isCurrent = (request: number) => !signal?.aborted && request === this.navigationRequest;
+    const lifetime = this.lifetime?.signal;
+    const isCurrent = (request: number) => !signal?.aborted && !lifetime?.aborted && request === this.navigationRequest;
     const common = {
       getAppState: () => this.state,
       getPendingViewSwitch: () => this.pendingNavigation && ({
@@ -868,6 +876,7 @@ export class ApplicationController implements HostApplicationService {
         : this.composerDraftForPane("primary")),
       setAppState: (update: SetStateAction<AppState>) => {
         signal?.throwIfAborted();
+        lifetime?.throwIfAborted();
         this.updateState(state => {
           let next = typeof update === "function" ? update(state) : update;
           if (restoredDraft) {
