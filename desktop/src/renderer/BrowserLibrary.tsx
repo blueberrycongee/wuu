@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import { persistentWebWorkspaceURL } from "../shared/webWorkspaceLibrary";
@@ -173,18 +174,18 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
   const matching = needle ? entries.filter((entry) => `${entry.title}\n${entry.url}`.toLowerCase().includes(needle)) : entries;
   const bookmarkLabel = t(bookmarked ? "browserLibrary.removeBookmark" : "browserLibrary.addBookmark");
   return <>
-    <button type="button" className={presentation === "menu" ? "web-workspace-menu-item browser-library-bookmark" : "icon-button workspace-browser-nav browser-library-bookmark"} data-browser-bookmark-current
-      aria-label={bookmarkLabel} title={safeURL ? bookmarkLabel : t("browserLibrary.privacy")} aria-pressed={bookmarked}
+    <Tooltip asChild content={safeURL ? bookmarkLabel : t("browserLibrary.privacy")} disabled={presentation === "menu" && Boolean(safeURL)}><button type="button" className={presentation === "menu" ? "web-workspace-menu-item browser-library-bookmark" : "icon-button workspace-browser-nav browser-library-bookmark"} data-browser-bookmark-current
+      aria-label={bookmarkLabel} aria-pressed={bookmarked}
       disabled={!library || !safeURL || pending} onClick={() => void changeBookmark(currentURL, currentTitle, !bookmarked)}>
       <Bookmark className="icon" aria-hidden="true" />
       {presentation === "menu" ? <span>{bookmarkLabel}</span> : null}
-    </button>
-    <button ref={trigger} type="button" className={presentation === "menu" ? "web-workspace-menu-item" : "icon-button workspace-browser-nav"} data-browser-library-trigger
-      aria-label={t("browserLibrary.title")} title={t("browserLibrary.title")} aria-haspopup="dialog" aria-expanded={open}
+    </button></Tooltip>
+    <Tooltip asChild content={t("browserLibrary.title")} disabled={presentation === "menu"}><button ref={trigger} type="button" className={presentation === "menu" ? "web-workspace-menu-item" : "icon-button workspace-browser-nav"} data-browser-library-trigger
+      aria-label={t("browserLibrary.title")} aria-haspopup="dialog" aria-expanded={open}
       aria-controls={open ? panelId : undefined} disabled={!library} onClick={() => { if (open) close(); else { setOpen(true); setConfirmClear(false); } }}>
       <BookOpen className="icon" aria-hidden="true" />
       {presentation === "menu" ? <span>{t("browserLibrary.title")}</span> : null}
-    </button>
+    </button></Tooltip>
     {open ? <NativeBrowserPopover controls={api} onDismiss={() => close(false)}><UILayerPortal layer="popover">
       <div ref={panel} id={panelId} role="dialog" aria-labelledby={headingId} className="browser-library-panel"
         data-browser-library data-wuu-layer="popover" data-wuu-component="popover" data-web-workspace-owner={destinationId} style={position}
@@ -222,21 +223,21 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
                 <div><button type="button" className="settings-button settings-button-ghost" disabled={pending} onClick={() => setEditing(undefined)}>{t("browserLibrary.cancel")}</button>
                   <button type="submit" className="settings-button" data-library-save-bookmark disabled={pending}>{t("browserLibrary.save")}</button></div>
               </form> : <>
-              <button type="button" className="browser-library-open" title={entry.url} data-library-url={entry.url}
+              <button type="button" className="browser-library-open" data-library-url={entry.url}
                 onClick={() => { close(false); onOpen(entry.url); }}>
                 <span className="browser-library-entry-title">{entry.title || entry.url}</span>
                 <span className="browser-library-entry-url">{entry.url}</span>
                 {"visitedAt" in entry ? <time dateTime={new Date(entry.visitedAt).toISOString()}>{formatDate(entry.visitedAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time> : null}
               </button>
-              {section === "bookmarks" ? <button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
-                aria-label={`${t("browserLibrary.renameBookmark")}: ${entry.title || entry.url}`} title={t("browserLibrary.renameBookmark")}
-                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button> : null}
-              {section === "bookmarks" ? <button type="button" className="icon-button browser-library-remove" disabled={pending}
-                aria-label={`${t("browserLibrary.removeBookmark")}: ${entry.title || entry.url}`} title={t("browserLibrary.removeBookmark")}
-                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button>
-                : <button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
-                  aria-label={`${t("browserLibrary.removeHistory")}: ${entry.title || entry.url}`} title={t("browserLibrary.removeHistory")}
-                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button>}
+              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.renameBookmark")}><button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
+                aria-label={`${t("browserLibrary.renameBookmark")}: ${entry.title || entry.url}`}
+                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button></Tooltip> : null}
+              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.removeBookmark")}><button type="button" className="icon-button browser-library-remove" disabled={pending}
+                aria-label={`${t("browserLibrary.removeBookmark")}: ${entry.title || entry.url}`}
+                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button></Tooltip>
+                : <Tooltip asChild content={t("browserLibrary.removeHistory")}><button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
+                  aria-label={`${t("browserLibrary.removeHistory")}: ${entry.title || entry.url}`}
+                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button></Tooltip>}
               </>}
             </li>)}</ul>
               : <p className="browser-library-empty">{t(needle ? "browserLibrary.noResults" : section === "history" ? "browserLibrary.emptyHistory" : "browserLibrary.emptyBookmarks")}</p>}

@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type { EngineAuthResult } from "../shared/protocol";
@@ -114,9 +115,9 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
           </button>
           {busy === "auth" ? <button className="settings-button" type="button" data-testid="engine-auth-cancel" onClick={() => void cancel()}>{t("common.cancel")}</button> : null}
           {methods?.map((method) => (
-            <button className="settings-button" type="button" key={method.id} title={method.description} disabled={disabled || Boolean(busy)} data-testid="engine-auth-method" onClick={() => void run(method.id)}>
+            <Tooltip asChild content={method.description} key={method.id}><button aria-description={method.description} className="settings-button" type="button" disabled={disabled || Boolean(busy)} data-testid="engine-auth-method" onClick={() => void run(method.id)}>
               {method.name}
-            </button>
+            </button></Tooltip>
           ))}
         </div>
         <small className="settings-muted-line settings-engine-detail" role="status">

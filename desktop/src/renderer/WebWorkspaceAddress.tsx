@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import type { WebWorkspaceLibraryStateV1 as WebWorkspaceLibraryState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -147,12 +148,12 @@ export function WebWorkspaceAddress({
     {showSuggestions ? <NativeBrowserPopover controls={api} focus={false} onDismiss={blurAddress}><FloatingMenuPortal anchorRef={formRef} owner="web-workspace-address" placement="below" align="left" width={composerMenuWidth(480)} matchAnchorWidth offset={4}>
       <ul ref={suggestionsRef} id={suggestionsID} className="web-workspace-address-suggestions" role="listbox" aria-label={t("webWorkspace.addressSearch")}
         data-web-workspace-address-suggestions="" data-wuu-layer="popover" data-web-workspace-owner={destinationId}>
-        {suggestions.map((entry, index) => <li key={entry.url} id={`${suggestionsID}-${index}`} role="option" aria-selected={index === selectedSuggestion}
+        {suggestions.map((entry, index) => <Tooltip asChild content={entry.url} key={entry.url}><li id={`${suggestionsID}-${index}`} role="option" aria-selected={index === selectedSuggestion}
           className="web-workspace-address-suggestion" data-address-suggestion-url={entry.url} data-address-suggestion-source={entry.bookmarked ? "bookmark" : "history"}
-          title={entry.url} onPointerDown={event => { if (event.button === 0) event.preventDefault(); }} onClick={() => submit(entry.url)}>
+          onPointerDown={event => { if (event.button === 0) event.preventDefault(); }} onClick={() => submit(entry.url)}>
           {entry.bookmarked ? <Bookmark className="icon" aria-hidden="true" /> : <Clock3 className="icon" aria-hidden="true" />}
           <span className="web-workspace-address-suggestion-text"><span>{entry.title || entry.url}</span><span className="web-workspace-address-suggestion-url">{entry.url}</span></span>
-        </li>)}
+        </li></Tooltip>)}
       </ul>
     </FloatingMenuPortal></NativeBrowserPopover> : null}
   </>;

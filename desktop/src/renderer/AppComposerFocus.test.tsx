@@ -530,7 +530,7 @@ describe("main composer focus continuity", () => {
       // An old checkout may finish after the replacement; its menu cleanup
       // must not dismiss a picker opened in the replacement shell.
       await click('.composer-git-controls button[aria-haspopup="menu"]');
-      await click('.composer-branch-menu button[title="feature"]');
+      await click('.composer-branch-menu button[aria-label="feature"]');
       expect(window.wuu.checkoutGitBranch).toHaveBeenCalledWith("feature", workspaceCwd);
       const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
       await click(".codex-runtime-trigger");

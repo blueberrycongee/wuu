@@ -1,3 +1,4 @@
+import { TruncatedText } from "./TruncatedText";
 import { Search, X } from "./WuuIcons";
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
 import type { DesktopProject } from "../shared/protocol";
@@ -137,10 +138,10 @@ export function ConversationSearchOverlay({
                 onMouseEnter={() => onSelectIndex(index)}
                 onClick={() => onSelectResult(result)}
               >
-                <span className="conversation-search-result-title" title={title}>
+                <TruncatedText className="conversation-search-result-title" text={title}>
                   <SearchMatchText text={title} query={state.query} />
-                </span>
-                <span className="conversation-search-result-context" title={context}>{context}</span>
+                </TruncatedText>
+                <TruncatedText as="span" className="conversation-search-result-context" text={context} />
                 <span className="conversation-search-result-status">
                   {thread.archived ? <span className="conversation-search-result-archived">{t("search.archived")}</span> : null}
                   {active ? <span className="conversation-search-result-current">{t("search.currentConversation")}</span> : null}

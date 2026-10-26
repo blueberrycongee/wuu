@@ -35,7 +35,7 @@ function Fixture(): JSX.Element {
             <section className="project-section" data-testid="project">
               <SidebarSection expanded={workspaceExpanded} iconKind="project"
                 CollapsedIcon={Folder} ExpandedIcon={FolderOpen} label="Workspace with nested conversations"
-                ariaLabel="Toggle workspace" title="Toggle workspace" onToggle={() => setWorkspaceExpanded(value => !value)}>
+                ariaLabel="Toggle workspace" onToggle={() => setWorkspaceExpanded(value => !value)}>
                 <div className="thread-list">
                   {Array.from({ length: rows }, (_, i) => <button key={i} className="thread-row sidebar-session-row"
                     data-testid="row" style={{ textAlign: "left", flexShrink: 0 }}>
@@ -107,7 +107,7 @@ function ProjectHistoryFixture(): JSX.Element {
           </section>
           <section className="project-section" data-testid="following">
             <SidebarSection expanded={false} iconKind="project" CollapsedIcon={Folder} ExpandedIcon={FolderOpen}
-              label="Another workspace" ariaLabel="Another workspace" title="Another workspace" onToggle={() => {}} />
+              label="Another workspace" ariaLabel="Another workspace" onToggle={() => {}} />
           </section>
         </div>
       </div>

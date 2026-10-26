@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { showErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
 import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
@@ -372,15 +373,14 @@ export function TurnFailureNotice({
           ) : recover || openSettings ? (
             <div className="turn-failure-recovery">
               {recover ? (
-                <button
+                <Tooltip asChild content={continues ? t("turnFailure.continueHint") : undefined}><button aria-description={continues ? t("turnFailure.continueHint") : undefined}
                   type="button"
                   className="turn-failure-pill turn-failure-action"
-                  title={continues ? t("turnFailure.continueHint") : undefined}
                   disabled={recoverPending}
                   onClick={() => void runRecover()}
                 >
                   {continues ? t("turnFailure.continue") : t(recoverPending ? "appState.retryNow" : "appState.retryAction")}
-                </button>
+                </button></Tooltip>
               ) : null}
               {openSettings ? (
                 <button type="button" className="turn-failure-pill turn-failure-action is-primary" onClick={openSettings}>

@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motionDurationMs } from "./motion";
 import type { IconComponent } from "./WuuIcons";
@@ -73,11 +74,10 @@ export function TopNotice({
           {action.label}
         </button>
       ) : null}
-      <button
+      <Tooltip asChild content={dismissAriaLabel}><button
         type="button"
         className="archive-tip-dismiss"
         aria-label={dismissAriaLabel}
-        title={dismissAriaLabel}
         onClick={() => {
           setLeaving(true);
           // The `.leaving` exit runs on --motion-base; unmounting sooner would cut it
@@ -86,7 +86,7 @@ export function TopNotice({
         }}
       >
         <X className="icon-sm" />
-      </button>
+      </button></Tooltip>
     </div>
   );
 }

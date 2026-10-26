@@ -1,3 +1,5 @@
+import { TruncatedText } from "./TruncatedText";
+import { Tooltip } from "./Tooltip";
 import { ArrowRight, Check, ChevronRight, FolderOpen, Info, LoaderCircle, RefreshCw } from "./WuuIcons";
 import { type Dispatch, type SetStateAction, type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -708,10 +710,10 @@ export function FirstRunOnboarding({
                       </span>
                       <span className="onboarding-workspace-details">
                         <span className="onboarding-workspace-name">{item.name}</span>
-                        <span className="onboarding-workspace-path" id={`${titleID}-workspace-${index}`} title={item.path}>{item.path}</span>
+                        <TruncatedText as="span" className="onboarding-workspace-path" id={`${titleID}-workspace-${index}`} text={item.path} />
                       </span>
                       <span className="onboarding-workspace-sources">
-                        {item.sources.map((source) => <span key={source} role="img" aria-label={engineLabel(source)} title={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span>)}
+                        {item.sources.map((source) => <Tooltip asChild content={engineLabel(source)} key={source}><span role="img" aria-label={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span></Tooltip>)}
                       </span>
                     </label>
                   ))}
@@ -725,9 +727,9 @@ export function FirstRunOnboarding({
                   <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !onboarding.getSnapshot().capabilities.chooseWorkspace)} onClick={() => void chooseWorkspace()}>
                     {t("onboarding.chooseWorkspace")}
                   </button>
-                  <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setField("scanAttempt", (attempt) => attempt + 1)}>
+                  <Tooltip asChild content={t("onboarding.scanAgain")}><button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setField("scanAttempt", (attempt) => attempt + 1)}>
                     <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
-                  </button>
+                  </button></Tooltip>
                 </div>
               </div>
             </SettingsGroup>

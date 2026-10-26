@@ -106,13 +106,12 @@ export function ComposerContinueButton({ continuation, disabled }: {
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   return (
-    <button
+    <Tooltip asChild content={t("composer.continue")}><button
       className="composer-action-button composer-send-button"
       type="button"
       data-wuu-component="composer-send"
       data-wuu-state={pending ? "continuing" : "continue"}
       aria-label={t("composer.continue")}
-      title={t("composer.continue")}
       aria-busy={pending || undefined}
       disabled={disabled || pending}
       onClick={() => {
@@ -126,7 +125,7 @@ export function ComposerContinueButton({ continuation, disabled }: {
       }}
     >
       {pending ? <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" /> : <Play aria-hidden="true" />}
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -511,16 +510,15 @@ export function SplitPaneComposer({
                         onPickFiles={() => attachmentInputRef.current?.click()}
                       />
                     ) : (
-                      <button
+                      <Tooltip asChild content={t("composer.addAttachment")}><button
                         className="composer-tool-button composer-attach-button"
                         type="button"
                         aria-label={t("composer.addAttachment")}
-                        title={t("composer.addAttachment")}
                         disabled={readOnly}
                         onClick={() => attachmentInputRef.current?.click()}
                       >
                         <Paperclip aria-hidden="true" />
-                      </button>
+                      </button></Tooltip>
                     )}
                   </div>
                   <textarea
@@ -556,7 +554,7 @@ export function SplitPaneComposer({
                   </span> : null}
                   <div className="composer-bar-right">
                     {showStop ? (
-                      <button
+                      <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
@@ -564,10 +562,9 @@ export function SplitPaneComposer({
                         data-wuu-state={stopState ?? (submitting ? "submitting" : "stop")}
                         aria-busy={stopState === "pending" || submitting || undefined}
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
-                        title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
                         <ComposerStopIcon state={stopState} submitting={submitting} />
-                      </button>
+                      </button></Tooltip>
                     ) : showContinue ? (
                       <ComposerContinueButton
                         key={`${continuation.threadID}:${continuation.turnID}`}
@@ -575,7 +572,7 @@ export function SplitPaneComposer({
                         disabled={sendDisabled}
                       />
                     ) : (
-                      <button
+                      <Tooltip asChild content={sendLabel}><button
                         className="composer-action-button composer-send-button"
                         data-wuu-component="composer-send"
                         data-wuu-state={draftPending ? "submitting" : "send"}
@@ -588,11 +585,10 @@ export function SplitPaneComposer({
                         type="button"
                         onClick={submitComposer}
                         aria-label={sendLabel}
-                        title={sendLabel}
                         disabled={readOnly || sendDisabled || !hasDraft}
                       >
                         {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
-                      </button>
+                      </button></Tooltip>
                     )}
                   </div>
                 </div>
@@ -812,19 +808,24 @@ function ComposerQueueItem({
             getText={() => message.text || queuedMessageFullPreview(message)}
           />
         ) : (
-          <button
+          <Tooltip asChild content={t("common.edit")}><button
             type="button"
             className="composer-queue-action composer-input-header-action edit"
             aria-label={editLabel}
-            title={t("common.edit")}
             onClick={onEdit}
             disabled={Boolean(message.operationState)}
           >
             <PencilLine className="icon-sm" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         )}
         {onGuide ? (
-          <button
+          <Tooltip asChild content={
+              message.held
+                ? t("composer.continueHeldTitle")
+                : kind === "guide"
+                  ? t("composer.convertToQueueTitle")
+                  : t("composer.convertToGuideTitle")
+            }><button
             type="button"
             className="composer-queue-action composer-input-header-action"
             aria-label={
@@ -834,13 +835,6 @@ function ComposerQueueItem({
                   ? t("composer.convertToQueue", { position })
                   : t("composer.convertToGuide", { position })
             }
-            title={
-              message.held
-                ? t("composer.continueHeldTitle")
-                : kind === "guide"
-                  ? t("composer.convertToQueueTitle")
-                  : t("composer.convertToGuideTitle")
-            }
             onClick={onGuide}
             disabled={dispatchDisabled || message.deliveryUnconfirmed}
           >
@@ -849,18 +843,17 @@ function ComposerQueueItem({
             ) : (
               <CornerDownRight className="icon-sm" aria-hidden="true" />
             )}
-          </button>
+          </button></Tooltip>
         ) : null}
-        <button
+        <Tooltip asChild content={t("common.remove")}><button
           type="button"
           className="composer-queue-action composer-input-header-action danger"
           aria-label={t("composer.removeQueuedMessage", { position })}
-          title={t("common.remove")}
           onClick={onRemove}
           disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
-        </button>
+        </button></Tooltip>
       </div>
     </li>
   );

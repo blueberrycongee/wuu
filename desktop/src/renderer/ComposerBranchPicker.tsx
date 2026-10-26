@@ -7,6 +7,7 @@ import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 
 export function ComposerBranchPicker({
   gitStatus, disabled, open, onToggle, onSelect, onCreate, onOpenWorktree, worktreeStart, inToolRail = false,
@@ -33,7 +34,6 @@ export function ComposerBranchPicker({
         <button ref={triggerRef} type="button" className={inToolRail ? "icon-button" : "hero-project-pill"} aria-haspopup="menu"
           aria-expanded={open && !disabled}
           aria-label={t(worktreeStart ? "composer.worktreeStartBranchLabel" : "composer.switchBranch", { branch })}
-          title={inToolRail ? undefined : branch}
           disabled={disabled} onClick={onToggle}
           onKeyDown={(event) => {
             if (open ? event.key === "Escape" : menuOpeningKey(event)) onToggle();
@@ -153,32 +153,32 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
             ? t("composer.branchDirtyFiles", { count: gitStatus.dirty_count })
             : "";
           return (
-            <button key={branch} type="button" role={worktreePath ? "menuitem" : "menuitemradio"} aria-checked={worktreePath ? undefined : selected}
-              disabled={!selectable(branch)} title={worktreePath ? `${branch}\n${worktreePath}` : branch}
+            <Tooltip asChild content={worktreePath} key={branch}><button aria-label={worktreePath ? `${branch}\n${worktreePath}` : branch} type="button" role={worktreePath ? "menuitem" : "menuitemradio"} aria-checked={worktreePath ? undefined : selected}
+              disabled={!selectable(branch)}
               onClick={() => void run(() => select(branch))}>
               <GitBranch />
               <span>
-                <span className="project-picker-item-title">
+                <TruncatedText className="project-picker-item-title" text={branch}>
                   {separator > 0 ? <span className="composer-branch-prefix">{branch.slice(0, separator)}</span> : null}
                   {branch.slice(separator)}
-                </span>
+                </TruncatedText>
                 {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
               </span>
               <span className="composer-branch-trailing">
                 {dirty ? (
-                  <span className="composer-branch-dirty" role="img" aria-label={dirty} title={dirty}>
+                  <Tooltip asChild content={dirty}><span className="composer-branch-dirty" role="img" aria-label={dirty}>
                     <FileDiff aria-hidden="true" />{gitStatus.dirty_count}
-                  </span>
+                  </span></Tooltip>
                 ) : null}
                 {selected ? <Check /> : null}
               </span>
-            </button>
+            </button></Tooltip>
           );
         })}
       </div> : null}
       {offerCreate ? <>
         {branches.length > 0 ? <div className="project-picker-divider" /> : null}
-        <button type="button" role="menuitem" disabled={pending} title={name} onClick={() => void run(() => onCreate!(name))}>
+        <button type="button" role="menuitem" disabled={pending} onClick={() => void run(() => onCreate!(name))}>
           <Plus />
           <span>{t("composer.createNamedBranch", { branch: name })}</span>
         </button>

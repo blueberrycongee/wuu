@@ -1,3 +1,4 @@
+import { Tooltip } from "../Tooltip";
 import type { UISlotLayoutProps } from "../../../../packages/plugin-sdk/src/ui";
 import { Ellipsis } from "../WuuIcons";
 import {
@@ -91,17 +92,16 @@ export function ComposerPluginToolbar({ items }: UISlotLayoutProps): ReactNode {
       {inline.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}
       {overflow.length > 0 ? (
         <div className="composer-plugin-tools-anchor" ref={triggerRef}>
-          <button
+          <Tooltip asChild content={t("composer.pluginToolsMore")}><button
             className="composer-tool-button composer-plugin-tools-trigger"
             type="button"
             aria-haspopup="dialog"
             aria-expanded={open}
             aria-label={t("composer.pluginToolsMore")}
-            title={t("composer.pluginToolsMore")}
             onClick={() => setOpen((current) => !current)}
           >
             <Ellipsis aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           {open ? (
             <FloatingMenuPortal
               anchorRef={triggerRef}

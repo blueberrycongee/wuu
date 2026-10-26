@@ -1,3 +1,4 @@
+import { Tooltip } from "../Tooltip";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationWorkbenchV1, WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import * as React from "react";
@@ -582,10 +583,8 @@ function StatusPresentation({ host, controller }: StatusPresentationProps): Reac
   const fallback = statusItems.length === 0 ? null : (
     <div className="plugin-workbench-status" role="status">
       {statusItems.map((item) => (
-        <button
-          key={`${item.pluginId}:${item.id}`}
+        <Tooltip asChild content={item.tooltip} key={`${item.pluginId}:${item.id}`}><button aria-description={item.tooltip}
           type="button"
-          title={item.tooltip}
           onClick={() => {
             if (!item.command) return;
             const command = host.getCommands().find((candidate) =>
@@ -595,7 +594,7 @@ function StatusPresentation({ host, controller }: StatusPresentationProps): Reac
         >
           {item.icon ? <span aria-hidden="true">{item.icon}</span> : null}
           {item.label}
-        </button>
+        </button></Tooltip>
       ))}
     </div>
   );
@@ -707,15 +706,14 @@ function WorkbenchView({ controller, definition, view, siblingViews, active, has
             context={commandContext}
             buttonClassName="settings-button settings-button-ghost settings-icon-button"
           />
-          <button
+          <Tooltip asChild content={t("common.close")}><button
             type="button"
             className="settings-button settings-button-ghost settings-icon-button"
             aria-label={t("common.close")}
-            title={t("common.close")}
             onClick={() => void controller.closeView(view.id)}
           >
             <X className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </div>
       </header> : null}
       <PluginErrorBoundary

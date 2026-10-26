@@ -116,6 +116,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reduce redundant desktop hover labels, reveal clipped names only when needed, and unify useful hints at the saved UI text size with readable wrapping. Keep hints next to their controls, prevent nested duplicates, and preserve control layout and click targets.
+
 - Remove the app-wide Back and Forward buttons and page-history stack, reclaiming their header space. Website navigation keeps its own Back and Forward controls.
 
 - Keep the compact capsule composer with attachment and send buttons inside, and move permission, model, and plugin controls to a separate toolbar below. Give drafts more horizontal space and keep longer text growing upward in main, document, and split conversations.

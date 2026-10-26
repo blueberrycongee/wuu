@@ -282,7 +282,7 @@ describe("sidebar collapse-state independence", () => {
       await act(async () => { await controller.invoke("composer.choose-worktree", { ownerTabId, enabled: true }); });
       const oldBranch = container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')!;
       await click('.composer-branch-control button[aria-haspopup="menu"]');
-      await click('.composer-branch-menu button[title="feature"]');
+      await click('.composer-branch-menu button[aria-label="feature"]');
       expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.worktreeStartBranchLabel", { branch: "feature" }));
       await act(async () => { release(); await pending; });
       await flushAsync();
@@ -290,7 +290,7 @@ describe("sidebar collapse-state independence", () => {
       expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === ownerTabId)?.worktree.enabled).toBe(true);
       expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.worktreeStartBranchLabel", { branch: "feature" }));
       await click('.composer-project-control button[aria-haspopup="menu"]');
-      await click('.composer-project-menu button[title="second"]');
+      await click('.composer-project-menu button[aria-label="second"]');
       expect(controller.getState().activeContext?.cwd).toBe(projects[1].path);
       expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === controller.getSnapshot().drafts.primary.ownerTabId)?.worktree.enabled).toBe(false);
       expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.switchBranch", { branch: "main" }));

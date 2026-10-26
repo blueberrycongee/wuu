@@ -87,6 +87,7 @@ import {
 } from "./RuntimeHelpers";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
 import { isTouchWebShell } from "./ComposerFocus";
 
@@ -295,20 +296,16 @@ function RuntimePanelSummary({
       </span>
     </Tooltip>
   ) : (
-    <Tooltip content={t("runtime.engineNamed", { engine: engineName })}>
-      <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
-        <EngineIcon engine={engineId} />
-        <span>{engineName}</span>
-      </button>
-    </Tooltip>
+    <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
+      <EngineIcon engine={engineId} />
+      <span>{engineName}</span>
+    </button>
   );
   const providerItem = provider ? (onOpenProviders ? (
-    <Tooltip content={t("runtime.providerNamed", { provider })}>
-      <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
-        <span>{provider}</span>
-        <ChevronDown aria-hidden="true" />
-      </button>
-    </Tooltip>
+    <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
+      <span>{provider}</span>
+      <ChevronDown aria-hidden="true" />
+    </button>
   ) : (
     <span className="runtime-panel-context-item"><span>{provider}</span></span>
   )) : null;
@@ -351,11 +348,11 @@ function RuntimePanelSummary({
       ) : null}
       <div className="runtime-panel-selection">
         <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-          <span className="runtime-panel-model-name">{model}</span>
+          <TruncatedText className="runtime-panel-model-name" text={model} />
           <ChevronRight aria-hidden="true" />
         </button>
         {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort-value" title={variantLabel(previewEffort)}>{variantLabel(previewEffort)}</div>
+          <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
         ) : null}
       </div>
       {effortOptions.length > 1 ? (
@@ -944,7 +941,6 @@ function EngineRuntimeMenu({
                         role="menuitemradio"
                         type="button"
                         key={model.id}
-                        title={model.display_name || model.id}
                         disabled={disabled || saving}
                         aria-checked={selected}
                         onClick={() => { void selectModel(model.id); }}
@@ -1572,14 +1568,13 @@ export function ComposerPlusButton({
 
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
-      <button
+      <Tooltip asChild content={t("composer.plusMenu")}><button
         ref={buttonRef}
         className="composer-tool-button composer-plus-button"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("composer.plusMenu")}
-        title={t("composer.plusMenu")}
         disabled={disabled}
         onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
         onClick={() => {
@@ -1594,7 +1589,7 @@ export function ComposerPlusButton({
         }}
       >
         <Plus aria-hidden="true" />
-      </button>
+      </button></Tooltip>
       {open ? (
         <FloatingMenuPortal
           anchorRef={isTouchWebShell() ? triggerRef : menuAnchorRef}
@@ -1884,9 +1879,9 @@ export function WorkspacePickerMenu({
         {filteredWorkspaces.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
-            <button key={project.id} type="button" role="menuitemradio" aria-checked={selected} title={project.name} onClick={() => onSelectWorkspace(project.id)}>
+            <button key={project.id} type="button" role="menuitemradio" aria-label={project.name} aria-checked={selected} onClick={() => onSelectWorkspace(project.id)}>
               <Folder />
-              <span>{project.name}</span>
+              <TruncatedText text={project.name} />
               {selected ? <Check /> : null}
             </button>
           );

@@ -100,11 +100,9 @@ export function useSidebarSectionDragHandle(): SidebarSectionDragHandle | null {
  *     this fix).
  *   - Optional `newItemButton` slot, rendered as a sibling `<button>`
  *     for the project-only "+ new conversation" hover affordance.
- *   - Optional `ariaLabel` / `title` overrides so the section can
- *     describe its toggle verb ("展开 / 收起 对话") and surface unread
- *     state in the label.
- *   - Optional `hoverCard`: workspace headers describe themselves in a
- *     sidebar hover card, which replaces the native `title` hint.
+ *   - `ariaLabel` describes the toggle verb and unread state without
+ *     repeating them in a hover hint.
+ *   - Optional `hoverCard` supplies workspace details.
  *
  * The close animation is self-contained: SidebarCollapseBody keeps the
  * rows mounted until the height transition finishes after `expanded` flips
@@ -117,7 +115,6 @@ export function SidebarSection({
   ExpandedIcon,
   label,
   ariaLabel,
-  title,
   active,
   pending,
   running,
@@ -136,7 +133,6 @@ export function SidebarSection({
   ExpandedIcon: React.ComponentType<{ className?: string }>;
   label: ReactNode;
   ariaLabel: string;
-  title: string;
   active?: boolean;
   pending?: boolean;
   running?: boolean;
@@ -193,7 +189,6 @@ export function SidebarSection({
           aria-label={ariaLabel}
           aria-busy={pending || running || loading || undefined}
           aria-current={active ? "page" : undefined}
-          title={hoverCard ? undefined : title}
           onClick={onToggle}
           {...dragHandleProps}
         >

@@ -1,3 +1,4 @@
+import { TruncatedText } from "../TruncatedText";
 import * as React from "react";
 import type { ApplicationServiceV1, ApplicationGenerationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
@@ -114,11 +115,11 @@ function WorkspaceTool({ entry, ...props }: ContributionViewProps & { entry: Ret
     if (props.host.getGenerationActivation(entry.pluginId, entry.generation) !== activation) return;
     void props.application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId, generation: entry.generation,
       viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(error => showActionErrorToast(error, t("plugins.surfaceUnavailable")));
-  }} title={entry.description ? `${entry.title}\n${entry.description}` : entry.title}>
+  }}>
     <span className="workspace-tool-menu-icon" aria-hidden="true">
       <PluginIcon loadIcon={props.application.catalog.loadIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon" />
     </span>
-    <span className="workspace-tool-menu-copy"><strong>{entry.title}</strong>{entry.description && <span>{entry.description}</span>}</span>
+    <span className="workspace-tool-menu-copy"><TruncatedText as="strong" text={entry.title} />{entry.description && <TruncatedText text={entry.description} />}</span>
   </button></Lifetime>;
 }
 

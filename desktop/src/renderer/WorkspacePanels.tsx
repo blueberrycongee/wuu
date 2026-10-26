@@ -914,17 +914,16 @@ function WorkspacePanelContent({
         >
           <Plus />
         </button>
-        <button
-          className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
-          type="button"
-          aria-label={
+        <Tooltip asChild content={
             globalized && !canExitGlobalized
               ? t("workspace.tooNarrowToDock")
               : globalized
                 ? t("workspace.exitFullPanel")
                 : t("workspace.expandFullPanel")
-          }
-          title={
+          }><button
+          className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
+          type="button"
+          aria-label={
             globalized && !canExitGlobalized
               ? t("workspace.tooNarrowToDock")
               : globalized
@@ -936,7 +935,7 @@ function WorkspacePanelContent({
           onClick={onToggleGlobalize}
         >
           {globalized ? <Minimize2 className="icon" /> : <Maximize2 className="icon" />}
-        </button>
+        </button></Tooltip>
             </>
           )}
         />
@@ -1038,11 +1037,10 @@ function WorkspacePanelContent({
                 />
               </section>
               {activeTab?.kind === "file" && !fileTreeDocked ? (
-                <button
+                <Tooltip asChild content={t("workspace.showFileTree")}><button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"
                   aria-label={t("workspace.showFileTree")}
-                  title={t("workspace.showFileTree")}
                   onClick={() => (stackedFileView ? onOpenTool("files") : setFileTreeVisibility(true))}
                 >
                   {fileTreeSide === "left" ? (
@@ -1050,7 +1048,7 @@ function WorkspacePanelContent({
                   ) : (
                     <PanelRightOpen className="icon" />
                   )}
-                </button>
+                </button></Tooltip>
               ) : null}
             </div>
             {createPortal(

@@ -3706,7 +3706,7 @@ describe("Composer menu keyboard", () => {
     expect(document.activeElement).toBe(menu.querySelector("input"));
     // The checked-out branch cannot be chosen again, so the arrows pass it.
     press("ArrowDown");
-    expect(document.activeElement?.getAttribute("title")).toBe("feature/menus");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("feature/menus");
 
     press("Escape");
     expect(document.body.querySelector(".composer-branch-menu")).toBeNull();

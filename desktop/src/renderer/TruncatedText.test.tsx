@@ -61,7 +61,7 @@ function renderTruncated(text = "完整的长文本内容"): HTMLElement {
 }
 
 function hover(element: Element, ms = 500): void {
-  const wrapper = element.closest(".tooltip-trigger");
+  const wrapper = element.closest("[data-wuu-tooltip-trigger]");
   if (!wrapper) {
     throw new Error("tooltip trigger wrapper not found");
   }
@@ -120,7 +120,7 @@ describe("TruncatedText", () => {
     expect(tooltipLayer()).not.toBeNull();
     act(() => {
       element
-        .closest(".tooltip-trigger")!
+        .closest("[data-wuu-tooltip-trigger]")!
         .dispatchEvent(new Event("pointerout", { bubbles: true }));
     });
     expect(tooltipLayer()).toBeNull();

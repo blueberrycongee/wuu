@@ -308,11 +308,10 @@ function ConversationTitleText({
           onKeyDown={handleKeyDown}
         />
       ) : editable ? (
-        <button
+        <Tooltip asChild content={t("threadSidebar.rename")}><button
           type="button"
           className="conversation-title-rename"
           aria-label={t("thread.rename.editNamed", { title })}
-          title={t("threadSidebar.rename")}
           onClick={(event) => {
             // Keyboard activation has detail 0; pointer clicks wait for a double click.
             if (event.detail !== 0) return;
@@ -325,7 +324,7 @@ function ConversationTitleText({
           }}
         >
           {title}
-        </button>
+        </button></Tooltip>
       ) : title}
     </h1>
   );
@@ -370,9 +369,9 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
   const snapshot = Object.freeze({ contractVersion: 1 as const, scope, title, canNavigateBack: navigateBack ? true : undefined, busy: busy || undefined });
   const context = Object.freeze({ snapshot, scope, threadId, ownerTabId: tab?.id, viewId: activePrimaryView?.id, hasSessionTabs: false, tabCount: 0, busy });
   const fallback = <div className="conversation-title-heading">
-    {navigateBack ? <button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} title={t("common.back")} onClick={navigateBack}>
+    {navigateBack ? <Tooltip asChild content={t("common.back")}><button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} onClick={navigateBack}>
       <ArrowLeft aria-hidden="true" />
-    </button> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
+    </button></Tooltip> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
       onClick={event => {
         const document = event.currentTarget.ownerDocument;
         let focusRequested = true;
@@ -391,8 +390,8 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
   return <>
     <slots.Slot name={`${slotOwner}/${scope}.header`} context={context} />
     <slots.Slot name={`${slotOwner}/header.${scope}`} context={context} fallback={fallback} />
-    {activePrimaryView?.closable ? <button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })} title={t("workspace.closeTab", { label: title })}
-      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button> : null}
+    {activePrimaryView?.closable ? <Tooltip asChild content={t("workspace.closeTab", { label: title })}><button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })}
+      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button></Tooltip> : null}
   </>;
 }
 
@@ -428,14 +427,14 @@ export function ConversationTitleActions({
   // expose ownership state here.
   const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
   const management = projectSession ? <>
-    <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
+    <Tooltip asChild content={t("projects.openCoordinator")}><button aria-description={t("projects.openCoordinator")} type="button" className="session-control-project"
       onClick={() => projectActions.openThread(control.manager_id)}>
       <Project aria-hidden="true" />
       <span>{control.manager_name}</span>
-    </button>
-  </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
+    </button></Tooltip>
+  </> : control ? <Tooltip asChild content={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}><span className="session-control-label">
     {control.manager_name} · {controlLabel}
-  </span> : null;
+  </span></Tooltip> : null;
   const environmentLabel = environmentPanelVisible
     ? t("shell.hideEnvironmentInfo")
     : t("shell.showEnvironmentInfo");

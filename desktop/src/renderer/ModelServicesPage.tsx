@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { ConnectionTitle } from "./ConnectionTitle";
 import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
@@ -414,7 +415,7 @@ export function ModelServicesPage({
       <SettingsPageHeader title={t("settings.providers")} actions={!adding && !detailProvider && !selectedEngine ?
         <button type="button" className="settings-button settings-button-ghost"
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
-          aria-label={t("provider.addConnection")} title={t("provider.addConnection")}
+          aria-label={t("provider.addConnection")}
           onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
       {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
         onOpenService={setOpenService} /> : null}
@@ -652,7 +653,6 @@ function ServicesOverview({
                       data-provider={provider.name}
                       data-default={isDefault ? "" : undefined}
                       aria-label={label}
-                      title={label}
                       aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
                       onClick={() => onOpenService(provider.name)}
                     >
@@ -1250,7 +1250,6 @@ function ModelChoices({
           type="button"
           className="settings-button settings-button-ghost"
           aria-label={t("provider.addModel")}
-          title={t("provider.addModel")}
           data-testid="settings-provider-add-model-open"
           disabled={disabled || adding}
           onClick={() => setAdding(true)}
@@ -1292,13 +1291,12 @@ function ModelChoices({
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveUp", { name })} disabled={disabled || models[0]?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveDown", { name })} disabled={disabled || models.at(-1)?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, 1))}><ArrowDown className="icon" /></button>
               </span>
-              {!managedCatalog ? <button
+              {!managedCatalog ? <Tooltip asChild content={t("provider.moreActions", { name })}><button
                 type="button"
                 className="icon-button model-choice-action"
                 data-testid="settings-provider-model-actions"
                 data-model={model.id}
                 aria-label={t("provider.moreActions", { name })}
-                title={t("provider.moreActions", { name })}
                 aria-haspopup="menu"
                 aria-expanded={modelMenu?.model.id === model.id}
                 disabled={disabled}
@@ -1308,7 +1306,7 @@ function ModelChoices({
                 }}
               >
                 <Trash2 className="icon" aria-hidden="true" />
-              </button> : null}
+              </button></Tooltip> : null}
             </div>
           );
         })}
@@ -1363,16 +1361,15 @@ function ModelChoices({
                 <span className="model-choice-main is-static">
                   <span className="model-choice-name">{model}</span>
                 </span>
-                <button
+                <Tooltip asChild content={t("provider.restoreModel", { model })}><button
                   type="button"
                   className="icon-button model-choice-action"
                   aria-label={t("provider.restoreModel", { model })}
-                  title={t("provider.restoreModel", { model })}
                   disabled={disabled}
                   onClick={() => void onAdd(model)}
                 >
                   <RotateCcw className="icon" aria-hidden="true" />
-                </button>
+                </button></Tooltip>
               </div>
             ))}
           </div>
@@ -1479,10 +1476,10 @@ function CatalogServiceGroups({
     if (!connected.length) return null;
     const ready = connected.some((provider) => !serviceIdentity(provider, t).attention);
     const label = ready ? t("provider.connectedSection") : serviceIdentity(connected[0], t).attention;
-    return <span className="model-catalog-state" data-ready={ready ? "" : undefined} role="img" aria-label={label} title={label}>
+    return <Tooltip asChild content={label}><span className="model-catalog-state" data-ready={ready ? "" : undefined} role="img" aria-label={label}>
       <span className="model-catalog-state-dot" />
       {connected.length > 1 ? <span>{connected.length}</span> : null}
-    </span>;
+    </span></Tooltip>;
   }
 
   const directTile = !isTouchWebShell() && (!normalized || `chatgpt openai codex ${t("provider.authUseLocal")}`.toLocaleLowerCase().includes(normalized)) ? <button type="button" className="model-service-tile" data-connection="chatgpt" disabled={disabled} onClick={() => onConnect({ kind: "chatgpt" })}><ProviderMark id="openai" label="ChatGPT" /><span className="model-browse-copy"><span className="model-service-tile-name">ChatGPT</span><small>{t("provider.methodChatGPT")}</small></span></button> : null;

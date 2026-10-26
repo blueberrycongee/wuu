@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useBrowserControls } from "./BrowserControlsContext";
 import { PdfSelectionMenu } from "./PdfSelectionMenu";
 import type { PdfPreviewSource } from "./PdfSelection";
@@ -290,15 +291,14 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
           >
             <Minus size={15} />
           </PdfToolbarButton>
-          <button
+          <Tooltip asChild content={t("imagePreview.resetZoom")}><button aria-label={t("imagePreview.resetZoom")}
             type="button"
             className="workspace-pdf-zoom-value"
             disabled={!ready}
-            title={t("imagePreview.resetZoom")}
             onClick={() => updateScale("fit")}
           >
             {zoom}%
-          </button>
+          </button></Tooltip>
           <PdfToolbarButton
             label={t("imagePreview.zoomIn")}
             disabled={!ready}
@@ -319,10 +319,10 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
               <span>{error}</span>
             </> : <span>{t("workspace.files.opening")}</span>}
             {error || attempt > 0 ? (
-              <button type="button" className="workspace-pdf-retry" aria-label={t("appState.retryAction")}
-                title={t("appState.retryAction")} disabled={!error} onClick={retry}>
+              <Tooltip asChild content={t("appState.retryAction")}><button type="button" className="workspace-pdf-retry" aria-label={t("appState.retryAction")}
+                disabled={!error} onClick={retry}>
                 <RefreshCw size={15} />
-              </button>
+              </button></Tooltip>
             ) : null}
           </div>
         ) : null}

@@ -687,7 +687,7 @@ describe("DesktopWorkbench product path", () => {
     expect(nativeRoot?.textContent).toBe("Wuu idlecheckWuu ready");
     const readyButton = [...(nativeRoot?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
       .find((button) => button.textContent === "checkWuu ready");
-    expect(readyButton?.title).toBe("Ready");
+    expect(readyButton?.getAttribute("aria-description")).toBe("Ready");
     act(() => readyButton?.click());
     expect(execute).toHaveBeenCalledOnce();
 

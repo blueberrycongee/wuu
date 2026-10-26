@@ -1554,7 +1554,7 @@ export function Composer({
                     continuation={continuation}
                     disabled={effectiveSendDisabled}
                   />
-                ) : <Tooltip content={sendDisabledReason}>
+                ) : <Tooltip asChild content={sendDisabledReason || (stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel)}>
                   <button
                     className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                     data-wuu-component="composer-send"
@@ -1571,7 +1571,6 @@ export function Composer({
                     onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
                     aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
                     aria-description={sendDisabledReason}
-                    title={sendDisabledReason ? undefined : stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                     disabled={
                       stopState === "pending" || (!showComposerStopAction &&
                       (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))

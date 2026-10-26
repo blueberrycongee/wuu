@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { X } from "./WuuIcons";
 import type {
   InputFile,
@@ -118,15 +119,14 @@ export function ConversationSplitPane({
       onPointerDown={onActivate}
     >
       {pane === "secondary" && (
-        <button
+        <Tooltip asChild content={t("split.closeRight")}><button
           className="icon-button conversation-split-close"
           type="button"
           aria-label={t("split.closeRight")}
-          title={t("split.closeRight")}
           onClick={onClose}
         >
           <X className="icon" />
-        </button>
+        </button></Tooltip>
       )}
       <div
         ref={onBodyRef}

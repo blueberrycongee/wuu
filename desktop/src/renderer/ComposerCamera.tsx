@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import {
   Camera,
   Images,
@@ -418,28 +419,26 @@ export function ComposerCameraPanel({
         ) : null}
       </div>
       <div className="composer-camera-controls">
-        <button
+        <Tooltip asChild content={t("composer.camera.close")}><button
           ref={closeButtonRef}
           type="button"
           className="composer-camera-close"
           aria-label={t("composer.camera.close")}
-          title={t("composer.camera.close")}
           onClick={handleClose}
           disabled={exiting}
         >
           <ChevronLeft aria-hidden="true" />
-        </button>
-        <button
+        </button></Tooltip>
+        <Tooltip asChild content={t("composer.camera.capture")}><button
           type="button"
           className="composer-camera-shutter"
           aria-label={t("composer.camera.capture")}
-          title={t("composer.camera.capture")}
           disabled={status !== "active" || capturing || exiting}
           aria-busy={capturing}
           onClick={capture}
         >
           <span aria-hidden="true" />
-        </button>
+        </button></Tooltip>
         <button type="button" className="composer-camera-library" aria-label={t("composer.choosePhotos")}
           disabled={exiting || capturing} onClick={() => photoInputRef.current?.click()}>
           <Images aria-hidden="true" />
@@ -506,18 +505,17 @@ export function ComposerAttachMenuButton({
 
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
-      <button
+      <Tooltip asChild content={t("composer.addAttachment")}><button
         className="composer-tool-button composer-attach-button"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("composer.addAttachment")}
-        title={t("composer.addAttachment")}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
         <Paperclip aria-hidden="true" />
-      </button>
+      </button></Tooltip>
       {open ? (
         <FloatingMenuPortal
           anchorRef={menuAnchorRef}

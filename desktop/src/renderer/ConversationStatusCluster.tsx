@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ApplicationComposerStatusItemV1, ApplicationComposerStatusSnapshotV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
@@ -221,15 +222,14 @@ function ComposerStatusCapsule({
   const className = `conversation-status-capsule${overflow ? " is-overflow-item" : ""}`;
   if (item.action?.kind === "open-session") {
     return (
-      <button
+      <Tooltip asChild content={item.tooltip}><button aria-description={item.tooltip}
         type="button"
         className={className}
-        title={item.tooltip}
         onClick={() => onOpenSession(item.action!.sessionId)}
       >
         {content}
-      </button>
+      </button></Tooltip>
     );
   }
-  return <div className={className} title={item.tooltip}>{content}</div>;
+  return <Tooltip asChild content={item.tooltip}><div className={className}>{content}</div></Tooltip>;
 }

@@ -5,8 +5,9 @@
  * the two kinds of layer cannot drift apart:
  *
  * - Opening waits HOVER_REVEAL_OPEN_DELAY_MS. A layer hovered within
- *   SKIP_DELAY_MS of any other layer closing opens immediately, so sweeping
- *   across a row of controls or a list doesn't pay the delay per anchor.
+ *   SKIP_DELAY_MS of a peer layer closing opens immediately. Only siblings
+ *   of the same interaction kind share this grace period, so a toolbar hint
+ *   cannot cause an unrelated preview card to open during pointer travel.
  * - Anchor presses, outside presses, Escape, external scroll, and blur dismiss.
  *   After a dismiss on press or Escape the layer stays suppressed until the
  *   pointer leaves the anchor, so a clicked control doesn't immediately
@@ -37,8 +38,9 @@ export const HOVER_REVEAL_OPEN_DELAY_MS = 400;
 const SKIP_DELAY_MS = 300;
 const INTERACTIVE_CLOSE_DELAY_MS = 200;
 
-// Timestamp of the most recent close, shared across all instances.
 let lastRevealClosedAt = -Infinity;
+let lastRevealParent: HTMLElement | null = null;
+let lastRevealInteractive = false;
 let focusedHoverLayer: RefObject<HTMLDivElement | null> | null = null;
 
 export type HoverRevealAnchorHandlers = {
@@ -91,6 +93,7 @@ export function useHoverReveal<K>({
   revealed: HoverRevealTarget<K> | null;
   anchorHandlers: (key: K) => HoverRevealAnchorHandlers;
   layerProps: HoverRevealLayerProps;
+  dismiss: () => void;
 } {
   const scope = useContext(HoverRevealScopeContext);
   const disabled = locallyDisabled || Boolean(scope?.disabled);
@@ -133,6 +136,8 @@ export function useHoverReveal<K>({
     }
     if (!next) {
       lastRevealClosedAt = Date.now();
+      lastRevealParent = revealedRef.current?.anchor.parentElement ?? null;
+      lastRevealInteractive = interactive;
     }
     revealedRef.current = next;
     setRevealed(next);
@@ -172,7 +177,8 @@ export function useHoverReveal<K>({
     }
     clearOpenTimer();
     const delay =
-      current || Date.now() - lastRevealClosedAt < SKIP_DELAY_MS
+      current || (lastRevealParent === anchor.parentElement && lastRevealInteractive === interactive
+        && Date.now() - lastRevealClosedAt < SKIP_DELAY_MS)
         ? 0
         : HOVER_REVEAL_OPEN_DELAY_MS;
     pendingKeyRef.current = { key, anchor };
@@ -327,6 +333,7 @@ export function useHoverReveal<K>({
   return {
     revealed: open ? revealed : null,
     anchorHandlers,
+    dismiss: close,
     layerProps: {
       ref: layerRef,
       onPointerEnter: clearCloseTimer,

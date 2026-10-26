@@ -469,7 +469,7 @@ describe("session tab switch latency", () => {
     await flushAsync();
     if (entry === "composer") {
       await clickTarget(container.querySelector<HTMLButtonElement>('.composer-project-control button[aria-haspopup="menu"]'));
-      await clickTarget(document.querySelector<HTMLButtonElement>('.composer-project-menu button[title="beta"]'));
+      await clickTarget(document.querySelector<HTMLButtonElement>('.composer-project-menu button[aria-label="beta"]'));
     } else {
       const group = Array.from(container.querySelectorAll(".project-row-name")).find(label => label.textContent === "beta")!.closest(".project-group")!;
       await clickTarget(group.querySelector<HTMLButtonElement>(".project-row-new-thread"));

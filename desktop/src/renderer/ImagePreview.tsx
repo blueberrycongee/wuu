@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useArtifacts } from "./ArtifactsContext";
 import {
   createContext,
@@ -314,51 +315,51 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
       aria-label={t("imagePreview.label")} tabIndex={-1} onClick={backgroundClick}>
       <div className="image-preview-toolbar">
         {count > 1 && <div className="image-preview-toolbar-actions image-preview-navigation">
-          <button type="button" className="image-preview-toolbar-button" disabled={index === 0}
-            onClick={() => onNavigate(-1)} aria-label={t("imagePreview.previous")} title={t("imagePreview.previous")}>
+          <Tooltip asChild content={t("imagePreview.previous")}><button type="button" className="image-preview-toolbar-button" disabled={index === 0}
+            onClick={() => onNavigate(-1)} aria-label={t("imagePreview.previous")}>
             <ChevronLeft className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           <span className="image-preview-position" aria-live="polite" aria-atomic="true">
             {formatNumber(index + 1)} / {formatNumber(count)}
           </span>
-          <button type="button" className="image-preview-toolbar-button" disabled={index === count - 1}
-            onClick={() => onNavigate(1)} aria-label={t("imagePreview.next")} title={t("imagePreview.next")}>
+          <Tooltip asChild content={t("imagePreview.next")}><button type="button" className="image-preview-toolbar-button" disabled={index === count - 1}
+            onClick={() => onNavigate(1)} aria-label={t("imagePreview.next")}>
             <ChevronRight className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </div>}
         <div className="image-preview-toolbar-actions">
-          {artifacts.capabilities.save && <button type="button" className="image-preview-toolbar-button"
+          {artifacts.capabilities.save && <Tooltip asChild content={t("imagePreview.saveAs")}><button type="button" className="image-preview-toolbar-button"
             onClick={() => void saveImage()} disabled={!ready || saving}
-            aria-label={t("imagePreview.saveAs")} title={t("imagePreview.saveAs")}>
+            aria-label={t("imagePreview.saveAs")}>
             <Download className="icon" aria-hidden="true" />
-          </button>}
-          <button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1 / 1.25)}
-            disabled={!ready || scale <= minScale} aria-label={t("imagePreview.zoomOut")} title={t("imagePreview.zoomOut")}>
+          </button></Tooltip>}
+          <Tooltip asChild content={t("imagePreview.zoomOut")}><button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1 / 1.25)}
+            disabled={!ready || scale <= minScale} aria-label={t("imagePreview.zoomOut")}>
             <Minus className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           <span className="image-preview-zoom-readout">
             {formatNumber(scale, { style: "percent", maximumFractionDigits: 0 })}
           </span>
-          <button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1.25)}
-            disabled={!ready || scale >= 8} aria-label={t("imagePreview.zoomIn")} title={t("imagePreview.zoomIn")}>
+          <Tooltip asChild content={t("imagePreview.zoomIn")}><button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1.25)}
+            disabled={!ready || scale >= 8} aria-label={t("imagePreview.zoomIn")}>
             <Plus className="icon" aria-hidden="true" />
-          </button>
-          <button type="button" className="image-preview-toolbar-button" onClick={() => setView(fittedView)}
-            disabled={!ready} aria-label={t("imagePreview.fit")} title={t("imagePreview.fit")}>
+          </button></Tooltip>
+          <Tooltip asChild content={t("imagePreview.fit")}><button type="button" className="image-preview-toolbar-button" onClick={() => setView(fittedView)}
+            disabled={!ready} aria-label={t("imagePreview.fit")}>
             <Maximize2 className="icon" aria-hidden="true" />
-          </button>
-          <button type="button" className="image-preview-toolbar-button" onClick={() => setView({ scale: 1, x: 0, y: 0 })}
-            disabled={!ready} aria-label={t("imagePreview.actualSize")} title={t("imagePreview.actualSize")}>
+          </button></Tooltip>
+          <Tooltip asChild content={t("imagePreview.actualSize")}><button type="button" className="image-preview-toolbar-button" onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+            disabled={!ready} aria-label={t("imagePreview.actualSize")}>
             <span className="image-preview-actual-size" aria-hidden="true">1:1</span>
-          </button>
-          <button type="button" className="image-preview-toolbar-button" onClick={rotate}
-            disabled={!ready} aria-label={t("imagePreview.rotate")} title={t("imagePreview.rotate")}>
+          </button></Tooltip>
+          <Tooltip asChild content={t("imagePreview.rotate")}><button type="button" className="image-preview-toolbar-button" onClick={rotate}
+            disabled={!ready} aria-label={t("imagePreview.rotate")}>
             <RotateCw className="icon" aria-hidden="true" />
-          </button>
-          <button type="button" className="image-preview-toolbar-button" onClick={onClose}
-            aria-label={t("imagePreview.close")} title={t("imagePreview.closeShortcut")}>
+          </button></Tooltip>
+          <Tooltip asChild content={t("imagePreview.closeShortcut")}><button type="button" className="image-preview-toolbar-button" onClick={onClose}
+            aria-label={t("imagePreview.close")}>
             <X className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </div>
       </div>
       {saveError && <p className="image-preview-save-error" role="alert">{saveError}</p>}

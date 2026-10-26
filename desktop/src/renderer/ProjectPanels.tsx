@@ -1,3 +1,5 @@
+import { TruncatedText } from "./TruncatedText";
+import { Tooltip } from "./Tooltip";
 import type { ApplicationProjectWorkV1 as ProjectWork } from "../../../packages/plugin-sdk/src/ui-projects";
 import { useProjectWork } from "./ProjectWork";
 import { isThreadExecuting } from "./AppState";
@@ -19,12 +21,12 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
   return (
     <section className="project-panel" aria-label={baseThreadTitle(project)}>
       <header className="project-panel-header">
-        <h2 title={baseThreadTitle(project)}>{baseThreadTitle(project)}</h2>
-        <button type="button" className="icon-button project-icon-button"
-          title={t("projects.openCoordinator")} aria-label={t("projects.openCoordinator")}
+        <TruncatedText as="h2" text={baseThreadTitle(project)} />
+        <Tooltip asChild content={t("projects.openCoordinator")}><button type="button" className="icon-button project-icon-button"
+          aria-label={t("projects.openCoordinator")}
           onClick={() => actions.openThread(project.id)}>
           <MessagesSquare aria-hidden="true" />
-        </button>
+        </button></Tooltip>
       </header>
       {work.error ? <p role="alert" className="project-work-error">{work.error}</p> : null}
       {work.snapshot?.works.map(item => <ProjectWorkRow key={item.id} work={item} busy={work.busy === item.id} control={work.control} />)}
@@ -58,7 +60,7 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
   return (
     <li className="project-panel-row">
       <button type="button" className="project-panel-row-main" onClick={() => actions.openThread(session.id)}>
-        <span className="project-panel-row-title" title={baseThreadTitle(session)}>{baseThreadTitle(session)}</span>
+        <TruncatedText as="span" className="project-panel-row-title" text={baseThreadTitle(session)} />
       </button>
       <div className="project-panel-row-tools">
         {running ? (
@@ -67,10 +69,10 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
           </span>
         ) : null}
         <div className="project-panel-row-actions">
-          <button type="button" className="icon-button project-icon-button project-panel-row-action"
-            title={t("projects.release")} aria-label={t("projects.release")} onClick={() => actions.release(session)}>
+          <Tooltip asChild content={t("projects.release")}><button type="button" className="icon-button project-icon-button project-panel-row-action"
+            aria-label={t("projects.release")} onClick={() => actions.release(session)}>
             <LogOut aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </div>
       </div>
     </li>

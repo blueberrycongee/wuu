@@ -1,3 +1,4 @@
+import { Tooltip } from "../Tooltip";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "../ComposerFloatingMenu";
 import { isTouchWebShell } from "../ComposerFocus";
@@ -88,13 +89,13 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
   return <Fragment>
     {actions.slice(0, 2).map((action) => button(action, buttonClassName))}
     {overflow.length > 0 ? <Fragment>
-      <button ref={trigger} type="button" className={buttonClassName} aria-label={t("settings.more")} title={t("settings.more")} aria-haspopup="dialog" aria-expanded={open}
+      <Tooltip asChild content={t("settings.more")}><button ref={trigger} type="button" className={buttonClassName} aria-label={t("settings.more")} aria-haspopup="dialog" aria-expanded={open}
         onClick={() => { setFocusFromEnd(false); setOpen((current) => !current); }}
         onKeyDown={(event) => {
           if (open) { handleFloatingMenuKeyDown(event, () => setOpen(false), trigger.current); return; }
           const direction = menuOpeningKey(event);
           if (direction) { setFocusFromEnd(direction === "end"); setOpen(true); }
-        }}><Ellipsis className="icon" aria-hidden="true" /></button>
+        }}><Ellipsis className="icon" aria-hidden="true" /></button></Tooltip>
       {open ? <FloatingMenuPortal anchorRef={trigger} owner="plugin-command-actions" placement="below" align="right" width={240} flip>
         <div ref={menu} className="composer-context-menu composer-plugin-tools-menu" role="dialog" tabIndex={-1} aria-label={t("settings.more")}
           onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), trigger.current)}>
@@ -117,8 +118,8 @@ function CommandButton({ action: { command, enabled }, buttonClassName, busy, fa
 }): ReactNode {
   const { t } = useI18n();
   const label = failed ? `${command.title}: ${t("error.commandFailed")}` : command.title;
-  return <button type="button" className={buttonClassName} aria-label={label} title={label}
+  return <Tooltip asChild content={label}><button type="button" className={buttonClassName} aria-label={label}
     disabled={!enabled || busy} aria-busy={busy || undefined} onClick={onInvoke}>
     {failed ? <AlertCircle className="icon" aria-hidden="true" /> : <PublicIcon name={command.icon} className="icon" />}
-  </button>;
+  </button></Tooltip>;
 }

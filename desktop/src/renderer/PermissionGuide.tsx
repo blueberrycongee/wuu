@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { SystemPermissionGuideAPI, SystemPermissionGuideConfig } from "../shared/systemPermissionGuide";
@@ -75,15 +76,15 @@ function PermissionGuide(): JSX.Element | null {
           <span>{t("permissions.dragHint", { app: config.appName, permission: t(`permissions.${config.permission}`) })}</span>
         </p>
         <div className="permission-guide-controls">
-          <button className="settings-button settings-button-ghost settings-icon-button permission-guide-back" type="button"
-            aria-label={t("permissions.closeGuide")} title={t("permissions.closeGuide")} tabIndex={showingRow ? -1 : 0}
-            onClick={() => window.wuuPermissionGuide.close()}><ChevronLeft className="icon" aria-hidden="true" /></button>
-          <button className="permission-guide-app" type="button" draggable title={t("permissions.dragFallback")} tabIndex={showingRow ? -1 : 0}
+          <Tooltip asChild content={t("permissions.closeGuide")}><button className="settings-button settings-button-ghost settings-icon-button permission-guide-back" type="button"
+            aria-label={t("permissions.closeGuide")} tabIndex={showingRow ? -1 : 0}
+            onClick={() => window.wuuPermissionGuide.close()}><ChevronLeft className="icon" aria-hidden="true" /></button></Tooltip>
+          <Tooltip asChild content={t("permissions.dragFallback")}><button aria-description={t("permissions.dragFallback")} className="permission-guide-app" type="button" draggable tabIndex={showingRow ? -1 : 0}
             onDragStart={event => { event.preventDefault(); setError(false); window.wuuPermissionGuide.drag(); }}
             onClick={() => window.wuuPermissionGuide.reveal()} aria-describedby="permission-guide-help permission-guide-fallback">
             <img src={config.appIcon} alt="" draggable={false} />
             <span>{config.appName}</span>
-          </button>
+          </button></Tooltip>
           {error ? <p className="system-permission-feedback permission-guide-feedback" role="alert">
             <AlertCircle className="icon" aria-hidden="true" /><span>{t("permissions.guideError")}</span>
           </p> : null}

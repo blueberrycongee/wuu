@@ -1,3 +1,5 @@
+import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import {
   AlertCircle,
   AlertTriangle,
@@ -476,18 +478,17 @@ function SkillsCatalogView({
           placeholder={t("skills.searchPlaceholder")}
           onValueChange={setFilter}
         />
-        <button
+        <Tooltip asChild content={t("skills.refresh")}><button
           className="settings-button settings-button-ghost settings-icon-button catalog-refresh"
           type="button"
           aria-label={t("skills.refresh")}
-          title={t("skills.refresh")}
           disabled={state.loading || Boolean(packageMutation)}
           data-mutation-blocked={(Boolean(packageMutation) && !state.loading) || undefined}
           aria-busy={state.loading}
           onClick={() => void refreshSkills()}
         >
           <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
-        </button>
+        </button></Tooltip>
         <button
           className="settings-button"
           type="button"
@@ -937,9 +938,9 @@ function PluginDetailPage({
         <SettingsSection title={t("skills.pluginPermissions")}>
           <SettingsGroup>
             {permissionRows.map((permission) => (
-              <div className="catalog-row plugin-permission-row" key={permission.code} title={permission.code}>
+              <Tooltip asChild content={permission.code} key={permission.code}><div className="catalog-row plugin-permission-row">
                 <span className="catalog-row-title">{permission.label}</span>
-              </div>
+              </div></Tooltip>
             ))}
           </SettingsGroup>
         </SettingsSection>
@@ -1043,7 +1044,7 @@ function PluginRow({
             {attention.label}
           </span>
         ) : record.description ? (
-          <span className="catalog-row-description" title={record.description}>{record.description}</span>
+          <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
         <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
       </button>
@@ -1087,7 +1088,7 @@ function CatalogRow({
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
       <span className="catalog-row-title">{title}</span>
-      {description ? <span className="catalog-row-description" title={description}>{description}</span> : null}
+      {description ? <TruncatedText as="span" className="catalog-row-description" text={description} /> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
     </button>
@@ -1121,10 +1122,10 @@ function SkillsList({
             title={skill.name}
             description={catalogSkillDescription(skill)}
             trailing={pluginID ? (
-              <span className="catalog-row-meta" title={t("skills.pluginSkillTitle")}>
+              <Tooltip asChild content={t("skills.pluginSkillTitle")}><span className="catalog-row-meta">
                 <PluginBlocksIcon className="icon-sm" aria-hidden="true" />
                 {pluginName(pluginID)}
-              </span>
+              </span></Tooltip>
             ) : undefined}
             onOpen={() => onPreview(skill)}
           />

@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { hostSupports } from "./HostCapabilities";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Project } from "./WuuIcons";
@@ -152,7 +153,6 @@ export function WorkspaceList({
   onArchiveThread: (thread: ThreadSummary) => void;
   onDeleteThread: (thread: ThreadSummary) => void;
   onRenameThread?: (thread: ThreadSummary, title: string) => void;
-  
 }): JSX.Element {
   return (
     <div className="projects">
@@ -176,7 +176,6 @@ export function WorkspaceList({
           onArchiveThread={onArchiveThread}
           onDeleteThread={onDeleteThread}
           onRenameThread={onRenameThread}
-          
         />
       ))}
     </div>
@@ -218,7 +217,6 @@ export function WorkspaceGroup({
   onArchiveThread,
   onDeleteThread,
   onRenameThread,
-  
   onRemoveWorkspace,
   onRelocateWorkspace,
   onCreateProject,
@@ -247,7 +245,6 @@ export function WorkspaceGroup({
   onArchiveThread: (thread: ThreadSummary) => void;
   onDeleteThread: (thread: ThreadSummary) => void;
   onRenameThread?: (thread: ThreadSummary, title: string) => void;
-  
   // Remove a real workspace from the sidebar. Absent for the 对话 scratch
   // pseudo project (and never wired for 群聊 / Agents, which are separate
   // sections), so those can never be removed.
@@ -361,15 +358,6 @@ export function WorkspaceGroup({
                 },
               )
         }
-        title={
-          workspaceSelectionMode
-            ? t("threadSidebar.openWorkspace", { name: project.name })
-            : t(
-                expanded
-                  ? "threadSidebar.collapseConversations"
-                  : "threadSidebar.expandConversations",
-              )
-        }
         active={activeWorkspace}
         pending={pendingWorkspace}
         running={workspaceHasRunning}
@@ -391,20 +379,19 @@ export function WorkspaceGroup({
                 }
         }
         newItemButton={
-          <button
-            className="sidebar-row-icon-button project-row-new-thread"
-            type="button"
-            aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}
-            title={
+          <Tooltip asChild content={
               isMissing
                 ? t("threadSidebar.missingWorkspace")
                 : t("sidebar.newConversation")
-            }
+            }><button
+            className="sidebar-row-icon-button project-row-new-thread"
+            type="button"
+            aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}
             disabled={isMissing || (isScratchPseudo && !hostSupports("createBlankProject"))}
             onClick={() => onStartNewThread(project.id)}
           >
             <MessageSquarePlus className="icon" />
-          </button>
+          </button></Tooltip>
         }
         hoverCard={() => (
           <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
@@ -663,7 +650,6 @@ function ThreadList({
               type="button"
               onClick={onCollapse}
               aria-label={t("threadSidebar.collapseExpanded")}
-              title={t("common.collapse")}
             >
               {t("common.collapse")}
             </button>
@@ -1031,24 +1017,22 @@ function ThreadRows({
                 className="thread-row-actions"
                 aria-label={t("threadSidebar.actions")}
               >
-                <button
+                <Tooltip asChild content={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}><button
                   className={`sidebar-row-icon-button thread-row-action ${thread.pinned ? "active" : ""}`}
                   type="button"
                   aria-label={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
-                  title={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
                   onClick={() => togglePinned(thread)}
                 >
                   <Pin className="icon-sm" />
-                </button>
-                <button
+                </button></Tooltip>
+                <Tooltip asChild content={t("sidebar.archiveAction")}><button
                   className="sidebar-row-icon-button thread-row-action archive"
                   type="button"
                   aria-label={t("sidebar.archiveAction")}
-                  title={t("sidebar.archiveAction")}
                   onClick={() => onArchive(thread)}
                 >
                   <Archive className="icon-sm" />
-                </button>
+                </button></Tooltip>
               </div>
           </div>
         );

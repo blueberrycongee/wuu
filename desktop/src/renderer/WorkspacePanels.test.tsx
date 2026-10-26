@@ -409,7 +409,6 @@ describe("WorkspaceRightPanel", () => {
 
     const expand = container?.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]');
     expect(expand).not.toBeNull();
-    expect(expand?.title).toBe("展开为全面板");
     act(() => expand?.click());
     expect(onToggleGlobalize).toHaveBeenCalledTimes(1);
 

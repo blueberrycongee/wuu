@@ -48,10 +48,10 @@ function pressEnter() {
   act(() => document.querySelector('[role="menu"] input')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 }
 function branchNames() {
-  return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].map((button) => button.title);
+  return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].map((button) => button.getAttribute("aria-label"));
 }
 function branchButton(name: string) {
-  return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((button) => button.title === name)!;
+  return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((button) => button.getAttribute("aria-label") === name)!;
 }
 function createButton() {
   return document.querySelector<HTMLButtonElement>('[role="menu"] button[role="menuitem"]');

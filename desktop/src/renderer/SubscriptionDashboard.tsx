@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
@@ -183,7 +184,7 @@ export function SubscriptionDashboard({
   }
 
   if (detailOnly) return <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing} title={t("connection.subscriptionQuota")}
-    actions={<button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} title={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw className="icon" /></button>}>
+    actions={<Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw className="icon" /></button></Tooltip>}>
     <div className="settings-group connection-detail-quota" aria-busy={refreshing}>
       {error ? <p className="settings-error" role="alert">{t(error)}</p> : null}
       {quotaLoading ? <p role="status">{t("settings.subscriptionRefreshing")}</p> : null}
@@ -203,9 +204,9 @@ export function SubscriptionDashboard({
         title={t(scope ? "provider.accountUsage" : "settings.subscriptions")}
         actions={<>
           {onAddService ? <button type="button" className="settings-button" onClick={onAddService}>{t("provider.connectTitle", { name: "ChatGPT" })}</button> : null}
-          <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")} title={t("settings.subscriptionRefresh")}>
+          <Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")}>
             <RefreshCw className={refreshing ? "icon settings-spin" : "icon"} aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </>}
       >
       <div className="settings-subscriptions" aria-busy={refreshing}>
@@ -284,8 +285,7 @@ export function SubscriptionDashboard({
                       }}
                     >{pending === source.key ? <RefreshCw className="icon settings-spin" aria-hidden="true" /> : <MoreHorizontal className="icon" aria-hidden="true" />}</button> : null}
                   </div>;
-                  const attribution = [sourceLabel && t("settings.subscriptionAccountSource", { source: sourceLabel }), observedLabel, observationTitle].filter(Boolean).join(" · ");
-                  return <section key={source.key} className="settings-subscription-source" title={attribution} data-testid={`subscription-${source.kind}-${source.id}`}>
+                  return <section key={source.key} className="settings-subscription-source" data-testid={`subscription-${source.kind}-${source.id}`}>
                     {index === 0 && !scope ? <div className="settings-subscription-main">
                       {identity ? <ServiceMark identity={identity} />
                         : <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={first.id} /></span>}
@@ -293,7 +293,7 @@ export function SubscriptionDashboard({
                       {accounts.length === 1 ? controls : null}
                     </div> : null}
                     {scope && (scope.kind === "engine" || isCodexSubscription(source.provider?.type)) ? controls : null}
-                    {accountName || (observed && source.quota?.plan) || accounts.length > 1 ? <div className="settings-subscription-account" title={attribution}>
+                    {accountName || (observed && source.quota?.plan) || accounts.length > 1 ? <div className="settings-subscription-account">
                       <span className="settings-subscription-account-name">{accountName || sourceLabel}</span>
 
                       {observed && source.quota?.plan ? <span className="settings-subscription-plan">{source.quota.plan}</span> : null}
@@ -306,7 +306,7 @@ export function SubscriptionDashboard({
                       : <Quota source={source} now={now} hideSignIn={scope?.kind === "provider"} />}
                     {scope?.kind === "engine" && !source.quota && !quotaLoading ? <p className="settings-subscription-status">{t("settings.subscriptionQuotaUnknown")}</p> : null}
                     {(observedLabel && showObservationAge) || showAuthentication ? <div className="settings-subscription-actions">
-                      {observedLabel && showObservationAge ? <time className="settings-subscription-age" dateTime={observedAt} title={observationTitle}>{observedLabel}</time> : null}
+                      {observedLabel && showObservationAge ? <Tooltip asChild content={observationTitle}><time className="settings-subscription-age" dateTime={observedAt}>{observedLabel}</time></Tooltip> : null}
                       {showAuthentication ? <EngineAuthentication engineID={source.id} protocol={source.engine?.protocol} compact disabled={refreshing}
                         onAuthenticated={() => setRefreshVersion((value) => value + 1)}
                         onReuseLocal={() => setRefreshVersion((value) => value + 1)} /> : null}
@@ -387,16 +387,16 @@ function Quota({ source, now, hideSignIn = false }: { source: SubscriptionSource
             : [t("settings.subscriptionDays", { count: Math.floor(resetMinutes / 1440) }), Math.floor(resetMinutes % 1440 / 60) ? t("settings.subscriptionHours", { count: Math.floor(resetMinutes % 1440 / 60) }) : ""].filter(Boolean).join(" ");
         const knownLabels = [source.id, source.label, source.selectedModel, source.models.find((model) => model.id === source.selectedModel)?.label].map((value) => value?.toLowerCase());
         const scope = [window.model, window.scope].filter((value) => value && value.toLowerCase() !== "all models" && !knownLabels.includes(value.toLowerCase())).join(" · ");
-        return <div key={window.id} className="settings-subscription-window" title={[window.model, window.scope, resetTitle].filter(Boolean).join(" · ")} data-exhausted={!expired && remaining === 0}>
+        return <div key={window.id} className="settings-subscription-window" data-exhausted={!expired && remaining === 0}>
           <div className="settings-subscription-window-heading">
             <div className="settings-subscription-usage"><span>{label}</span><span className="settings-subscription-remaining">{readout}</span></div>
             {window.display ? <p className="settings-subscription-window-display">{window.display}</p> : null}
             {scope ? <p className="settings-subscription-window-scope">{scope}</p> : null}
           </div>
           {!expired && !unlimited && remaining !== undefined ? <meter min={0} max={100} value={remaining} aria-label={label} aria-valuetext={readout} /> : <span aria-hidden="true" />}
-          <span className="settings-subscription-reset">{window.resets_at && resetTitle ? <time className={resetMillis <= now ? "sr-only" : undefined} dateTime={window.resets_at} title={resetTitle} aria-label={resetTitle}>{resetMillis <= now
+          <span className="settings-subscription-reset">{window.resets_at && resetTitle ? <Tooltip asChild content={resetTitle}><time className={resetMillis <= now ? "sr-only" : undefined} dateTime={window.resets_at} aria-label={resetTitle}>{resetMillis <= now
             ? t("settings.subscriptionResetTime", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })
-            : t("settings.subscriptionResetsIn", { time: resetDuration })}</time> : null}</span>
+            : t("settings.subscriptionResetsIn", { time: resetDuration })}</time></Tooltip> : null}</span>
         </div>;
       })}
     </div> : null}

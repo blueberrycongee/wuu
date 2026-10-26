@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { ArrowUp, ArrowDown, ChevronRight, ExternalLink, RefreshCw } from "./WuuIcons";
 import { useCallback, useId, useMemo, useState } from "react";
@@ -136,12 +137,12 @@ export function EngineSettingsSection({
       : quotaFor(engine)?.status === "sign_in" ? t("settings.subscriptionSignIn")
       : engine.error || engine.models_error ? t("settings.subscriptionCatalogFailed") : t("settings.engineReady");
   const close = () => { setError(""); onCloseEngine(); };
-  const refreshButton = <button
+  const refreshButton = <Tooltip asChild content={t("settings.engineRefresh")}><button
     className="settings-button settings-button-ghost settings-icon-button"
     type="button" disabled={busy || refreshing} aria-busy={refreshing}
-    aria-label={t("settings.engineRefresh")} title={t("settings.engineRefresh")}
+    aria-label={t("settings.engineRefresh")}
     data-testid="settings-engine-refresh" onClick={() => void refresh()}
-  ><RefreshCw className={`icon${refreshing ? " settings-spin" : ""}`} aria-hidden="true" /></button>;
+  ><RefreshCw className={`icon${refreshing ? " settings-spin" : ""}`} aria-hidden="true" /></button></Tooltip>;
 
   const selectedSettings = selected ? binarySettings[selected.id] : undefined;
   const accountKey = selected ? `${selected.id}:${selectedSettings?.binary_path ?? ""}` : "";
@@ -173,11 +174,11 @@ export function EngineSettingsSection({
     subtitle={<span className="connection-status-row">{quotaFor(selected)?.plan?.trim() ? <span>{t("connection.subscriptionPlan", { provider: selected.id === "codex" ? "ChatGPT" : selected.id === "claude" ? "Claude" : engineLabel(selected.id, selected), plan: quotaFor(selected)!.plan! })}</span> : null}
       <span className="connection-status-pill" data-attention={headerStatus !== t("settings.engineReady")}>{headerStatus}</span></span>}
     actions={<>
-      {selected.binary_ok && (selected.update_url || selected.install_url) ? <button className="settings-button" type="button" data-testid="engine-update-guide"
-        title={t("settings.engineUpdateGuideHint")} disabled={busy}
+      {selected.binary_ok && (selected.update_url || selected.install_url) ? <Tooltip asChild content={t("settings.engineUpdateGuideHint")}><button aria-description={t("settings.engineUpdateGuideHint")} className="settings-button" type="button" data-testid="engine-update-guide"
+        disabled={busy}
         onClick={() => void controls.openExternal((selected.update_url || selected.install_url)!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
         {t("settings.engineUpdateGuide")}
-      </button> : null}
+      </button></Tooltip> : null}
       <EngineAuthentication key={`auth-${accountKey}`} entry engineID={selected.id} protocol={selected.protocol}
         disabled={busy || !enabled(selected) || !selected.binary_ok} onReuseLocal={refreshAccount} onAuthenticated={refreshAccount} />
     </>}
@@ -275,7 +276,6 @@ export function EngineSettingsSection({
                 className="connection-summary-row"
                 data-testid={`settings-engine-${engine.id}-status`}
                 aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${state}`}
-                title={display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}
                 aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-status ${usageID}-${engine.id}-quota`}
                 onClick={() => { setError(""); onSelectEngine(engine.id); }}>
                 <span className="connection-summary-icon" aria-hidden="true"><EngineIcon engine={engine.id} /></span>

@@ -1209,11 +1209,10 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   return (
     <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
       {state.status === "rendered" ? (
-        <button
+        <Tooltip asChild content={t("rich.enlargeDiagram")}><button
           type="button"
           className="rich-mermaid-diagram"
           aria-label={t("rich.enlargeDiagram")}
-          title={t("rich.enlargeDiagram")}
           onClick={(event) => {
             const svg = event.currentTarget.querySelector("svg")!;
             const snapshot = svg.cloneNode(true) as SVGSVGElement;
@@ -1233,7 +1232,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
             });
           }}
           dangerouslySetInnerHTML={{ __html: state.svg }}
-        />
+        /></Tooltip>
       ) : state.status === "error" ? (
         <div className="rich-mermaid-error">
           <span>{state.message}</span>

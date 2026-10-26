@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import type { ReactNode } from "react";
 import type { SubscriptionQuota } from "../shared/protocol";
 import { useI18n } from "./i18n";
@@ -28,7 +29,7 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
   if (!windows.length && !balances.length) return empty;
 
   return <span id={id} className={`connection-usage-summary${compact ? " connection-usage-inline" : ""}`} aria-busy={loading}>
-    {statusKey ? <span className={`connection-usage-state${compact ? " sr-only" : ""}`} title={t(statusKey)}>{t(compact ? "settings.subscriptionQuotaStale" : statusKey)}</span> : null}
+    {statusKey ? <span className={`connection-usage-state${compact ? " sr-only" : ""}`}>{t(compact ? "settings.subscriptionQuotaStale" : statusKey)}</span> : null}
     {windows.map(window => {
       // The protocol reports consumed percent; invalid values must not invent remaining capacity.
       const remaining = typeof window.used_percent === "number" && Number.isFinite(window.used_percent) && window.used_percent >= 0
@@ -53,8 +54,7 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
       const meter = !lastKnown && !window.unlimited && remaining !== undefined ? <meter min={0} max={100} value={remaining}
         data-warning={remaining <= 20} data-exhausted={remaining === 0}
         aria-label={[period, details].filter(Boolean).join(" · ") || t("settings.subscriptionAllowance")} aria-valuetext={readout} /> : null;
-      if (compact) return <span className="connection-usage-compact-window" key={window.id} data-stale={lastKnown || undefined}
-        title={[statusKey ? t(statusKey) : undefined, period, readout, details, window.display, resetTitle].filter(Boolean).join(" · ")}>
+      if (compact) return <Tooltip asChild content={[statusKey ? t(statusKey) : undefined, period, readout, details, window.display, resetTitle].filter(Boolean).join(" · ")} key={window.id}><span className="connection-usage-compact-window" data-stale={lastKnown || undefined}>
         <span className="connection-usage-compact-label">{lastKnown
           ? [period, t("settings.subscriptionQuotaStale")].filter(Boolean).join(" · ")
           : t("settings.subscriptionPeriodRemaining", { period: period ?? label ?? "" }).trim()}</span>
@@ -63,7 +63,7 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
           data-exhausted={!lastKnown && remaining === 0} aria-label={readout}>
           {remaining !== undefined && !window.unlimited ? `${formatNumber(remaining, { maximumFractionDigits: 1 })}%` : readout ?? window.display}
         </span>
-      </span>;
+      </span></Tooltip>;
       return <span className="connection-usage-window" key={window.id}>
         {readout || period ? <span className="connection-usage-heading">
           {readout ? <span className="connection-usage-value" aria-label={readout}>
@@ -77,9 +77,9 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
         {details ? <span className="connection-usage-scope">{details}</span> : null}
         {window.display ? <span className="connection-usage-display">{window.display}</span> : null}
         {pastReset && !expired && !readout ? <span className="connection-usage-state">{t("settings.subscriptionQuotaStale")}</span> : null}
-        {resetTitle ? <time className="connection-usage-reset" dateTime={window.resets_at} title={resetTitle} aria-label={resetTitle}>
+        {resetTitle ? <Tooltip asChild content={resetTitle}><time className="connection-usage-reset" dateTime={window.resets_at} aria-label={resetTitle}>
           {t("settings.subscriptionResets", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })}
-        </time> : null}
+        </time></Tooltip> : null}
       </span>;
     })}
     {balances.length ? <span className="connection-usage-balance">{compact ? <span>{t("settings.subscriptionKindBalance")}</span> : <>{t("settings.subscriptionKindBalance")}{" · "}</>}

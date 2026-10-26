@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { ConversationTriggers } from "./ConversationTriggers";
 import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -239,17 +240,16 @@ function BuiltInThreadItemView({
         >
           <div className="user-message-motion" data-message-arrival>
           {sessionMessage ? (
-            <button
+            <Tooltip asChild content={sourceLabel}><button
               type="button"
               className="session-message-source"
               onClick={openRelatedSession}
               disabled={!relatedSessionAvailable}
-              title={sourceLabel}
               aria-label={`${t("message.openRelatedSession")}: ${sourceName}`}
             >
               <MessagesSquare aria-hidden="true" />
               <span>{sourceName}</span>
-            </button>
+            </button></Tooltip>
           ) : null}
           {editing ? (
             <UserMessageInlineEditor
@@ -292,15 +292,14 @@ function BuiltInThreadItemView({
                 />
               ) : null}
               {relatedSessionAvailable && !sessionMessage ? (
-                <button
+                <Tooltip asChild content={t("message.openRelatedSession")}><button
                   type="button"
                   className="message-action-button"
                   aria-label={t("message.openRelatedSession")}
-                  title={t("message.openRelatedSession")}
                   onClick={openRelatedSession}
                 >
                   <Info size={15} />
-                </button>
+                </button></Tooltip>
               ) : null}
               {editActionVisible && onEditMessage ? (
                 <MessageEditButton
@@ -824,16 +823,15 @@ function UserMessageInlineEditor({
         rows={Math.max(1, Math.min(8, text.split("\n").length))}
       />
       <div className="user-message-edit-toolbar">
-        <button
+        <Tooltip asChild content={t("message.addImageOrPdf")}><button
           type="button"
           className="composer-tool-button user-message-edit-attach-button"
           aria-label={t("composer.addAttachment")}
-          title={t("message.addImageOrPdf")}
           disabled={submitting}
           onClick={() => fileInputRef.current?.click()}
         >
           <Plus aria-hidden="true" />
-        </button>
+        </button></Tooltip>
         <div className="user-message-edit-spacer" />
         <div className="user-message-edit-actions">
           <button
@@ -844,17 +842,16 @@ function UserMessageInlineEditor({
           >
             {t("common.cancel")}
           </button>
-          <button
+          <Tooltip asChild content={t("composer.send")}><button
             className="composer-action-button composer-send-button"
             type="button"
             aria-label={t("composer.send")}
-            title={t("composer.send")}
             disabled={!canSubmit || submitting}
             aria-busy={submitting}
             onClick={submit}
           >
             {submitting ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
-          </button>
+          </button></Tooltip>
         </div>
       </div>
     </div>

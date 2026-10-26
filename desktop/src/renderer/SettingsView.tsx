@@ -1361,16 +1361,15 @@ function SettingsGeneralPage({
             <span className="settings-row-control-value">
               {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
             </span>
-            <button
+            <Tooltip asChild content={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}><button
               className="settings-button settings-button-ghost settings-icon-button"
               type="button"
               aria-label={t("settings.copyVersion")}
-              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
               onClick={() => void onCopyVersion()}
               disabled={!desktopBuild || copyState === "copying"}
             >
               {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
-            </button>
+            </button></Tooltip>
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
@@ -1477,16 +1476,15 @@ function CodexPetSection({
               }))}
             />
           ) : null}
-          <button
+          <Tooltip asChild content={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}><button
             className="settings-button settings-button-ghost settings-icon-button"
             type="button"
-            title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
             aria-label={t("settings.refreshPets")}
             disabled={codexPetsLoading || codexPetBusy}
             onClick={() => void refreshCodexPets()}
           >
             <RefreshCw className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           <button
             className="settings-switch"
             type="button"
@@ -1640,20 +1638,18 @@ function SettingsMCPPage({
                             setMCPAuthCodes((codes) => ({ ...codes, [name]: value }));
                           }}
                         />
-                        <button
+                        <Tooltip asChild content={t("mcp.finishLogin")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.finishLogin")}
                           aria-label={t("mcp.finishLoginNamed", { name })}
                           disabled={busy || oauthCode.trim() === ""}
                           onClick={() => void completeMCPAuth(name)}
                         >
                           <Check className="icon" aria-hidden="true" />
-                        </button>
-                        <button
+                        </button></Tooltip>
+                        <Tooltip asChild content={t("mcp.cancelLogin")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.cancelLogin")}
                           aria-label={t("mcp.cancelLoginNamed", { name })}
                           disabled={busy}
                           onClick={() => {
@@ -1662,53 +1658,49 @@ function SettingsMCPPage({
                           }}
                         >
                           <X className="icon" aria-hidden="true" />
-                        </button>
+                        </button></Tooltip>
                       </>
                     ) : (
                       <div className="settings-row-actions">
                         {server.auth_status === "not_logged_in" ? (
-                          <button
+                          <Tooltip asChild content={t("mcp.oauthLogin")}><button
                             className="settings-button settings-button-ghost settings-icon-button"
                             type="button"
-                            title={t("mcp.oauthLogin")}
                             aria-label={t("mcp.loginNamed", { name })}
                             disabled={busy || disabledByConfig}
                             onClick={() => void beginMCPAuth(name)}
                           >
                             <KeyRound className="icon" aria-hidden="true" />
-                          </button>
+                          </button></Tooltip>
                         ) : server.auth_status === "oauth" ? (
-                          <button
+                          <Tooltip asChild content={t("mcp.removeLogin")}><button
                             className="settings-button settings-button-ghost settings-icon-button"
                             type="button"
-                            title={t("mcp.removeLogin")}
                             aria-label={t("mcp.removeLoginNamed", { name })}
                             disabled={busy}
                             onClick={() => void onMCPAuthRemove(name)}
                           >
                             <LogOut className="icon" aria-hidden="true" />
-                          </button>
+                          </button></Tooltip>
                         ) : null}
-                        <button
+                        <Tooltip asChild content={t("mcp.refresh")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.refresh")}
                           aria-label={t("mcp.refreshNamed", { name })}
                           disabled={busy || disabledByConfig}
                           onClick={() => void onMCPAction(name, "refresh")}
                         >
                           <RefreshCw className="icon" aria-hidden="true" />
-                        </button>
-                        <button
+                        </button></Tooltip>
+                        <Tooltip asChild content={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}
                           aria-label={`${connected ? t("mcp.disconnect") : t("mcp.connect")} ${name}`}
                           disabled={busy || disabledByConfig}
                           onClick={() => void onMCPAction(name, connected ? "disconnect" : "connect")}
                         >
                           {connected ? <PlugZap className="icon" aria-hidden="true" /> : <Plug className="icon" aria-hidden="true" />}
-                        </button>
+                        </button></Tooltip>
                       </div>
                     )
                   ) : null}
@@ -1889,16 +1881,15 @@ function SettingsArchivePage({
                             {formatArchiveTime(thread.updated_at, formatDate)}
                           </time>
                         </div>
-                        <button
+                        <Tooltip asChild content={t("settings.restore")}><button
                           type="button"
                           className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
-                          title={t("settings.restore")}
                           disabled={deletion?.pending}
                           onClick={() => onUnarchiveThread(thread)}
                         >
                           <RotateCcw className="icon" aria-hidden="true" />
-                        </button>
+                        </button></Tooltip>
                       </div>
                     );
                   })}
@@ -2574,11 +2565,11 @@ function MCPStateMark({ state }: { state: string }): JSX.Element | null {
   if (!busy && tone !== "danger" && tone !== "warning") return null;
   const label = mcpStateLabel(state, t);
   return (
-    <span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label} title={label}>
+    <Tooltip asChild content={label}><span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label}>
       {busy ? <Loader2 className="icon-sm settings-spin" aria-hidden="true" />
         : tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" />
         : <AlertTriangle className="icon-sm" aria-hidden="true" />}
-    </span>
+    </span></Tooltip>
   );
 }
 

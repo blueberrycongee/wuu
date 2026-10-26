@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -278,16 +279,15 @@ export function BrowserSettingsSection(): JSX.Element | null {
                   ].filter(Boolean).join(" · ")}
                 >
                   <div className="browser-settings-actions">
-                    {extension.hasOptions && controls.capabilities.browserOptions ? <button
+                    {extension.hasOptions && controls.capabilities.browserOptions ? <Tooltip asChild content={t("settings.browserExtensionsOptions", { name: extension.name })}><button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
-                      title={t("settings.browserExtensionsOptions", { name: extension.name })}
                       aria-label={t("settings.browserExtensionsOptions", { name: extension.name })}
                       disabled={Boolean(busy) || !extension.loaded}
                       onClick={() => void openOptions(extension)}
                     >
                       <Settings size={16} aria-hidden="true" />
-                    </button> : null}
+                    </button></Tooltip> : null}
                     <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
@@ -298,16 +298,15 @@ export function BrowserSettingsSection(): JSX.Element | null {
                     >
                       <ChevronDown size={16} aria-hidden="true" />
                     </button>
-                    {controls.capabilities.browserReload ? <button
+                    {controls.capabilities.browserReload ? <Tooltip asChild content={extension.enabled ? t("settings.browserExtensionsReload", { name: extension.name }) : t("settings.browserExtensionsEnableToReload")}><button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
-                      title={extension.enabled ? t("settings.browserExtensionsReload", { name: extension.name }) : t("settings.browserExtensionsEnableToReload")}
                       aria-label={t("settings.browserExtensionsReload", { name: extension.name })}
                       disabled={Boolean(busy) || !extension.enabled}
                       onClick={() => void reloadExtension(extension)}
                     >
                       <RefreshCw size={16} className={busy === `reload:${extension.id}` ? "settings-spin" : undefined} aria-hidden="true" />
-                    </button> : null}
+                    </button></Tooltip> : null}
                     <button
                       className="settings-switch"
                       type="button"

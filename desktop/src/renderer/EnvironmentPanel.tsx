@@ -22,6 +22,7 @@ import type {
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { WorktreeNotice } from "./WorktreeNotice";
 
@@ -305,8 +306,7 @@ function EnvironmentBranchMenu({
           const selected = branch === gitStatus.branch;
           const worktreePath = selected ? undefined : gitStatus.branch_worktrees?.find((worktree) => worktree.branch === branch)?.path;
           return (
-            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined}
-              title={worktreePath ? `${branch}\n${worktreePath}` : branch}
+            <Tooltip asChild content={worktreePath} key={branch}><button aria-label={worktreePath ? `${branch}\n${worktreePath}` : branch} role="menuitem" type="button" aria-current={selected || undefined}
               disabled={selected || submitting || (worktreePath ? !onOpenWorktree : !canCheckout)}
               onClick={async () => {
                 setSubmitting(true);
@@ -321,11 +321,11 @@ function EnvironmentBranchMenu({
               }}>
               <GitBranch className="icon" />
               <span className="environment-branch-name">
-                <span>{branch}</span>
+                <TruncatedText text={branch} />
                 {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
               </span>
               {selected ? <Check className="icon" /> : null}
-            </button>
+            </button></Tooltip>
           );
         })}
       </div>
@@ -451,15 +451,14 @@ function EnvironmentFilePreview({
               {file.truncated ? t("environment.truncated512") : ""}
             </span>
           </div>
-          <button
+          <Tooltip asChild content={t("common.back")}><button
             type="button"
             className="icon-button"
             onClick={onClose}
             aria-label={t("environment.backToInfo")}
-            title={t("common.back")}
           >
             <ChevronRight aria-hidden="true" className="icon" />
-          </button>
+          </button></Tooltip>
         </header>
         <div className="workspace-file-code-scroll">
           <pre className="workspace-file-code">
@@ -482,15 +481,14 @@ function EnvironmentFilePreview({
       <div className="environment-panel-header">
         <h2>{t("environment.file")}</h2>
         <div className="environment-panel-actions">
-          <button
+          <Tooltip asChild content={t("common.back")}><button
             className="icon-button"
             type="button"
             aria-label={t("environment.backToInfo")}
-            title={t("common.back")}
             onClick={onClose}
           >
             <X aria-hidden="true" className="icon" />
-          </button>
+          </button></Tooltip>
         </div>
       </div>
       {body}

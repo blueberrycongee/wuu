@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import {
   ArrowDown,
   ArrowLeft,
@@ -337,57 +338,53 @@ export function WorkspaceReviewPanel({
         >
           <div className="workspace-diff-detail-header" data-wuu-component="workspace-review-content-header">
             {layout === "stack" ? (
-              <button
+              <Tooltip asChild content={t("workspaceReview.backToList")}><button
                 className="icon-button workspace-review-back"
                 data-wuu-action="back"
                 type="button"
                 aria-label={t("workspaceReview.backToList")}
-                title={t("workspaceReview.backToList")}
                 onClick={closeDetail}
               >
                 <ArrowLeft className="icon" />
-              </button>
+              </button></Tooltip>
             ) : null}
             <div className="workspace-review-file-row">
               <WorkspaceReviewFileTitle file={shownFile} />
             </div>
             <div className="workspace-review-actions">
               {editablePath ? (
-                <button
+                <Tooltip asChild content={t("workspaceReview.openInEditor")}><button
                   className="icon-button"
                   type="button"
                   data-wuu-action="open"
                   aria-label={t("workspaceReview.openInEditor")}
-                  title={t("workspaceReview.openInEditor")}
                   onClick={() => onOpenFile?.(editablePath)}
                 >
                   <SquarePen className="icon" />
-                </button>
+                </button></Tooltip>
               ) : null}
               {single ? null : (
                 <>
-                  <button
+                  <Tooltip asChild content={t("workspaceReview.previousFile")}><button
                     className="icon-button"
                     type="button"
                     data-wuu-action="previous"
                     aria-label={t("workspaceReview.previousFile")}
-                    title={t("workspaceReview.previousFile")}
                     disabled={!previousFile}
                     onClick={() => previousFile && openFile(previousFile.path)}
                   >
                     <ArrowUp className="icon" />
-                  </button>
-                  <button
+                  </button></Tooltip>
+                  <Tooltip asChild content={t("workspaceReview.nextFile")}><button
                     className="icon-button"
                     type="button"
                     data-wuu-action="next"
                     aria-label={t("workspaceReview.nextFile")}
-                    title={t("workspaceReview.nextFile")}
                     disabled={!nextFile}
                     onClick={() => nextFile && openFile(nextFile.path)}
                   >
                     <ArrowDown className="icon" />
-                  </button>
+                  </button></Tooltip>
                 </>
               )}
             </div>
@@ -639,9 +636,9 @@ function GitChangeRow({
         ) : (
           <GitChangeCounts additions={file.additions} deletions={file.deletions} />
         )}
-        <span className={`workspace-review-status ${file.status}`} title={gitChangeStatusText(file.status)}>
+        <Tooltip asChild content={gitChangeStatusText(file.status)}><span className={`workspace-review-status ${file.status}`}>
           {gitChangeStatusLabel(file.status)}
-        </span>
+        </span></Tooltip>
       </span>
     </button>
   );

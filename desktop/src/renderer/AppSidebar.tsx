@@ -1,3 +1,4 @@
+import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
@@ -1508,7 +1509,6 @@ export function AppSidebar({
           ExpandedIcon={FolderOpen}
           label={folder.name}
           ariaLabel={t(collapsed ? "sidebar.expandSection" : "sidebar.collapseSection", { section: folder.name })}
-          title={t(collapsed ? "sidebar.expandSection" : "sidebar.collapseSection", { section: folder.name })}
           running={folderHasRunning}
           unread={folderHasUnread}
           onToggle={() => setCollapsedFolderIDs((current) => {
@@ -1700,9 +1700,7 @@ export function AppSidebar({
                         pluginId={record.id}
                         fingerprint={record.fingerprint ?? ""}
                       />
-                      <span className="sidebar-section-label" title={record.name}>
-                        {record.name}
-                      </span>
+                      <TruncatedText as="span" className="sidebar-section-label" text={record.name} />
                     </button>
                   ))
                 ) : (
@@ -1749,18 +1747,17 @@ export function AppSidebar({
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         >
-          <button
+          <Tooltip asChild content={t("sidebar.searchConversations")}><button
             className="icon-button conversation-search-trigger"
             type="button"
             aria-label={t("sidebar.searchConversations")}
-            title={t("sidebar.searchConversations")}
             aria-haspopup="dialog"
             aria-expanded={searchOpen}
             onClick={() => activateNative(onToggleConversationSearch)}
             disabled={!hasRuntimeContext}
           >
             <Search className="icon-lg" />
-          </button>
+          </button></Tooltip>
         </SidebarBrand>
         {unreadViewOpen ? (
           <section
@@ -1878,16 +1875,15 @@ export function AppSidebar({
                   )}
                   onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
                   action={onCreateProject ? (
-                    <button
+                    <Tooltip asChild content={t("projects.newProject")}><button
                       className="sidebar-functional-action"
                       type="button"
                       aria-label={t("projects.newProject")}
-                      title={t("projects.newProject")}
                       disabled={!hasRuntimeContext}
                       onClick={() => activateNative(() => onCreateProject())}
                     >
                       <Plus aria-hidden="true" />
-                    </button>
+                    </button></Tooltip>
                   ) : undefined}
                 >
                   <div className="sidebar-functional-group-body">
@@ -2044,15 +2040,14 @@ export function AppSidebar({
                   collapseDisabled={folderDragCanRemove}
                   dragDisabled={folderDragCanRemove}
                   action={!folderDragCanRemove ? (
-                    <button
+                    <Tooltip asChild content={t("sidebar.newFolder")}><button
                       className="sidebar-functional-action"
                       type="button"
                       aria-label={t("sidebar.newFolder")}
-                      title={t("sidebar.newFolder")}
                       onClick={() => createFolder()}
                     >
                       <Plus aria-hidden="true" />
-                    </button>
+                    </button></Tooltip>
                   ) : undefined}
                 >
                   <div
@@ -2108,18 +2103,17 @@ export function AppSidebar({
                         }
                       }}
                     >
-                      <button
+                      <Tooltip asChild content={t("sidebar.addOrganization")}><button
                         ref={addWorkspaceTriggerRef}
                         className="sidebar-functional-action"
                         type="button"
                         aria-label={t("sidebar.addOrganization")}
-                        title={t("sidebar.addOrganization")}
                         aria-haspopup="menu"
                         aria-expanded={workspaceMenuOpen}
                         onClick={onToggleWorkspaceMenu}
                       >
                         <Plus aria-hidden="true" />
-                      </button>
+                      </button></Tooltip>
                       {workspaceMenuOpen ? (
                         <FloatingMenuPortal
                           anchorRef={addWorkspaceTriggerRef}
@@ -2184,10 +2178,6 @@ export function AppSidebar({
                         recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
                         { section: t("sidebar.recentActivity") },
                       )}
-                      title={t(
-                        recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
-                        { section: t("sidebar.recentActivity") },
-                      )}
                       onClick={toggleRecentsCollapsed}
                     >
                       <span
@@ -2208,11 +2198,10 @@ export function AppSidebar({
                       />
                     </button>
                     <div className="sidebar-functional-heading-action">
-                      <button
+                      <Tooltip asChild content={t("sidebar.newConversation")}><button
                         className="sidebar-row-icon-button sidebar-recents-new-thread"
                         type="button"
                         aria-label={t("sidebar.newConversation")}
-                        title={t("sidebar.newConversation")}
                         disabled={!hasRuntimeContext}
                         onClick={() => {
                           setRecentsCollapsed(false);
@@ -2221,7 +2210,7 @@ export function AppSidebar({
                         }}
                       >
                         <SquarePen className="icon" aria-hidden="true" />
-                      </button>
+                      </button></Tooltip>
                     </div>
                   </div>
                   <SidebarCollapseBody
@@ -2502,7 +2491,6 @@ function SortableFunctionalGroup({
           type="button"
           aria-expanded={!collapsed}
           aria-label={collapseLabel}
-          title={collapseLabel}
           disabled={collapseDisabled}
           onClick={() => {
             if (!isDragging) onToggleCollapsed();

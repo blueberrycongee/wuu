@@ -1,3 +1,5 @@
+import { TruncatedText } from "./TruncatedText";
+import { Tooltip } from "./Tooltip";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AttachmentImage } from "./AttachmentImage";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
@@ -396,10 +398,10 @@ function ComposerPreparationCard({ preparation, onRemove, removeLabel }: {
     <ComposerDocumentCard
       className={`composer-file-card ${failed ? "composer-attachment-failed" : "composer-attachment-preparing"}`}
       icon={<FileText className="icon" />}
-      title={<strong className="composer-document-card-title" title={preparation.filename}>{preparation.filename}</strong>}
-      meta={<span role={failed ? "alert" : "status"} title={preparation.error}>
+      title={<TruncatedText as="strong" className="composer-document-card-title" text={preparation.filename} />}
+      meta={<Tooltip asChild content={preparation.error}><span role={failed ? "alert" : "status"}>
         {t(failed ? "composer.attachment.retryRead" : "composer.attachment.preparing")}
-      </span>}
+      </span></Tooltip>}
       openLabel={failed ? t("composer.attachment.retryFile", { name: preparation.filename, reason: preparation.error ?? "" }) : undefined}
       onOpen={failed ? () => { void preparation.retry?.(); } : undefined}
       removeLabel={removeLabel}
@@ -464,7 +466,6 @@ function ComposerVideoCard({
       <button
         className="composer-video-card-main"
         type="button"
-        title={filename}
         aria-label={t("composer.attachment.playVideo", { name: filename })}
         aria-pressed={playing}
         disabled={!src}
@@ -521,8 +522,8 @@ function ComposerFileCard({
       className="composer-file-card"
       icon={<FileText className="icon" />}
       title={
-        <strong className="composer-document-card-title composer-file-card-name" title={filename}>
-          <span className="composer-file-card-stem">{stem}</span>
+        <strong className="composer-document-card-title composer-file-card-name">
+          <TruncatedText className="composer-file-card-stem" text={stem} />
           {extension ? <span className="composer-file-card-extension">{extension}</span> : null}
         </strong>
       }

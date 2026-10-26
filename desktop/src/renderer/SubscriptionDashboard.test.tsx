@@ -243,8 +243,7 @@ describe("SubscriptionDashboard", () => {
       const resetTime = container.querySelector<HTMLTimeElement>("time[datetime]")!;
       expect(resetTime).not.toBeNull();
       expect(resetTime.dateTime).toBe(reset);
-      expect(resetTime.getAttribute("aria-label")).toBe(resetTime.title);
-      expect(resetTime.title).toContain("2026");
+      expect(resetTime.getAttribute("aria-label")).toContain("2026");
       const original = resetTime.textContent;
       await act(async () => vi.advanceTimersByTime(60_000));
       expect(resetTime.textContent).not.toBe(original);
