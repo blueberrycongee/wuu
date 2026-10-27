@@ -60,7 +60,9 @@ assert.equal(zip.status, 0, String(zip.stderr));
 const files = [
   { name: 'wuu-session-cards.zip', mime: 'application/zip', bytes: zip.stdout },
   { name: 'session-card-polish.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText) },
-  { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(4) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
+  // Remains long in a narrow pane without exceeding the provider's 160-byte
+  // filename limit, which would intentionally replace it with a safe hash.
+  { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(2) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
   { name: 'README', mime: 'application/octet-stream', bytes: Buffer.from('Extensionless artifact with unknown displayed size.\n'), noSize: true },
   { name: 'notes.txt', mime: 'text/plain', bytes: Buffer.from('Review notes without supplied size metadata.\n'), noSize: true },
   { name: 'delivery-summary.md', mime: 'text/markdown', bytes: Buffer.from('# Delivered files\nAll files remain individually accessible.\n') },
@@ -69,17 +71,9 @@ const files = [
   { name: 'empty.txt', mime: 'text/plain', bytes: Buffer.alloc(0) },
   { name: 'last-delivery-note.txt', mime: 'text/plain', bytes: Buffer.from('The eighth file is reachable after two expansions.\n') },
 ];
-const artifacts = files.map((file, index) => {
-  const threadID = index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple';
-  const id = String(index + 1).padStart(32, '0'), sha256 = createHash('sha256').update(file.bytes).digest('hex');
-  const root = path.join(home, 'workspaces', 'fixture', 'sessions', threadID, 'artifacts', id);
-  fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(path.join(root, file.name), file.bytes);
-  fs.writeFileSync(path.join(root, '.artifact.json'), JSON.stringify({ version: 1, id, thread_id: threadID, plugin_id: 'fixture', name: file.name, sha256, size: file.bytes.length }));
-  return { type: 'file', name: file.name, mime_type: file.mime,
-    uri: `wuu-artifact://fixture/${threadID}/${id}/${encodeURIComponent(file.name)}?sha256=${sha256}`,
-    artifact: { placement: 'turn_end', ref: id, sha256, ...(file.noSize ? {} : { size_bytes: file.bytes.length }) } };
-});
+// Filled from the selected provider before history is seeded. A guessed native
+// workspace directory/URI bypasses that provider's ownership and MIME contract.
+const artifacts = files.map(() => ({}));
 // Each output is the latest turn in its own conversation, matching the
 // product's latest-turn summary presentation rather than forcing old summaries.
 const artifactSessions = [
@@ -514,7 +508,29 @@ const watchdog = setTimeout(() => { log('Global acceptance deadline exceeded'); 
 
 async function run() {
   log(boundary);
-  const sessionFixture = createSessionFixture(home, cwd);
+  const sessionFixture = createSessionFixture(home, cwd, project.id);
+  const sourceDirectory = path.join(fixture, 'artifact-sources');
+  fs.mkdirSync(sourceDirectory);
+  const imported = sessionFixture({ op: 'import-artifacts', artifacts: files.map((file, index) => {
+    const source = path.join(sourceDirectory, file.name);
+    fs.writeFileSync(source, file.bytes);
+    return { thread_id: index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple',
+      path: source, mime_type: file.mime };
+  }) });
+  assert.equal(imported.status, 0, imported.stderr);
+  const snapshots = JSON.parse(imported.stdout).artifacts;
+  assert.equal(snapshots.length, files.length);
+  snapshots.forEach((snapshot, index) => {
+    const file = files[index];
+    assert.equal(snapshot.name, file.name);
+    assert.equal(snapshot.mime_type, file.mime);
+    assert.equal(snapshot.size, file.bytes.length);
+    assert.equal(snapshot.sha256, createHash('sha256').update(file.bytes).digest('hex'));
+    Object.assign(artifacts[index], { type: 'file', name: snapshot.name, mime_type: snapshot.mime_type, uri: snapshot.uri,
+      artifact: { placement: 'turn_end', ref: snapshot.id, sha256: snapshot.sha256,
+        ...(file.noSize ? {} : { size_bytes: snapshot.size }) } });
+  });
+  pass('managed artifacts imported through the selected provider with exact metadata', snapshots);
   const stamp = '2026-01-01T00:00:00Z';
   const seededSessions = sessions.map(s => {
     const history = [];
@@ -548,6 +564,21 @@ async function run() {
     .map(item => ({ text: item.text, origin: item.origin, target: item.related_session_id || '' })),
   messages.map(item => ({ text: item.text, origin: item.origin, target: item.related })));
   pass('incoming request/reply and missing-target metadata restored through Go');
+
+  // Verify provider ownership and bytes before the visual matrix or native
+  // popup can obscure a core/transport error with a menu visibility timeout.
+  for (const index of [0, 1]) {
+    const bytes = await evaluate(async input => {
+      const lease = await window.wuu.acquireArtifactSource(input);
+      try {
+        const response = await fetch(lease.url);
+        if (!response.ok) throw new Error(`Artifact fetch failed: ${response.status}`);
+        return [...new Uint8Array(await response.arrayBuffer())];
+      } finally { await window.wuu.releaseArtifactSource(lease.leaseId); }
+    }, { uri: artifacts[index].uri, sha256: artifacts[index].artifact.sha256, threadId: artifactSessions[index].id });
+    assert.deepEqual(Buffer.from(bytes), files[index].bytes);
+  }
+  pass('registered-workspace artifacts resolve and stream unchanged through the production desktop protocol');
 
   // Save the default product presentation before the interaction checks so a
   // later failure still leaves useful, exact-build artifact-card evidence.

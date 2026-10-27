@@ -312,8 +312,34 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     const empty = `${motion}-empty-composer-workspace`; await begin(empty);
     await click('.composer-project-menu button[role="menuitemradio"][aria-label="Switch project 1"]');
     await draftReady(1); await end(empty, false, carriedDraft);
+    const { ipcMain, webContents } = require('electron');
+    const existingContents = new Set(webContents.getAllWebContents().map(contents => contents.id));
     await click('.sidebar-ribbon-add');
     await waitFor(win, () => !!document.querySelector('.web-workspace-stage:not([hidden])'));
+    const pages = webContents.getAllWebContents().filter(contents => !existingContents.has(contents.id)
+      && contents.getURL() === 'about:blank');
+    assert.equal(pages.length, 1, 'Opening a browser tab must create its native blank page');
+    const page = pages[0];
+    const preferences = page.getLastWebPreferences();
+    assert.equal(preferences.contextIsolation, true);
+    assert.equal(preferences.nodeIntegration, false);
+    assert.equal(preferences.sandbox, true);
+    await waitFor({ webContents: page }, () => document.readyState === 'complete');
+    // Exercise the shipped page preload, not a fixture-defined __dirname or
+    // merely an existing path: native editing must reach its isolated IPC hook.
+    let markEdited;
+    const edited = new Promise(resolve => { markEdited = resolve; });
+    const observeEdit = event => { if (event.sender === page) markEdited(); };
+    ipcMain.on('wuu:web-workspace-page-edited', observeEdit);
+    let editTimeout;
+    try {
+      await page.executeJavaScript(`document.body.innerHTML = '<input id="preload-probe">'; document.querySelector('input').focus(); undefined`);
+      await page.insertText('Browser preload probe');
+      await Promise.race([edited, new Promise((_, reject) => {
+        editTimeout = setTimeout(() => reject(new Error('The ESM browser page did not load its shipped edit-protection preload')), 5000);
+      })]);
+      await page.executeJavaScript('document.body.replaceChildren(); undefined');
+    } finally { clearTimeout(editTimeout); ipcMain.removeListener('wuu:web-workspace-page-edited', observeEdit); }
     const browser = `${motion}-browser-via-conversations-workspace`; await begin(browser);
     // The browser intentionally hides contextual workspace navigation. Follow
     // its real ribbon entry rather than clicking an invisible sidebar control.

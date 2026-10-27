@@ -1,7 +1,7 @@
 import { BrowserWindow, Menu, clipboard, dialog, shell, webContents, type DisplayMediaRequestHandlerHandlerRequest, type Streams, type DownloadItem, type WebContents, type WebContentsView } from "electron";
 import { chooseBrowserDisplaySource } from "./browserDisplayCapture";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { NavigationEntry } from "electron";
 import { WEB_WORKSPACE_ZOOM_MIN, WEB_WORKSPACE_ZOOM_MAX, WEB_WORKSPACE_TAB_LIMIT, WEB_WORKSPACE_RIBBON_ID } from "../shared/webWorkspace";
 import type { WebWorkspaceMenuAction, WebWorkspaceMenuRequest, WebWorkspaceBounds, WebWorkspaceCommand, WebWorkspaceDestination, WebWorkspaceLegacyDestination, WebWorkspaceInitializationState, WebWorkspaceFindOptions, WebWorkspaceFindResult, WebWorkspaceState, WebWorkspaceTabState } from "../shared/webWorkspace";
@@ -73,6 +73,7 @@ const ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1
 const MAX_BACKDROP_PIXELS = 16 * 1024 * 1024;
 const MAX_BACKDROP_BYTES = 12 * 1024 * 1024;
 const IDLE_TAB_TIMEOUT = 30 * 60 * 1000;
+const browserPagePreloadPath = fileURLToPath(new URL("../preload/browserPage.cjs", import.meta.url));
 
 function websiteURL(value: string): string {
   const url = new URL(value);
@@ -881,7 +882,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (tab.page && !tab.page.contents.isDestroyed()) return tab.page;
     const history = tab.discarded;
     tab.discarded = undefined;
-    const page = this.attachPage(group, tab, createBrowserView({ webPreferences: { preload: join(__dirname, "../preload/browserPage.cjs") } }));
+    const page = this.attachPage(group, tab, createBrowserView({ webPreferences: { preload: browserPagePreloadPath } }));
     if (history) void page.contents.navigationHistory.restore({ entries: history.entries, index: history.index }).then(async () => {
       if (this.pages.get(page.id) !== page || page.contents.isDestroyed() || page.navigationGeneration !== 1) return;
       // Chromium serializes pageState periodically; its saved scroll can lag
@@ -1344,7 +1345,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
           ...(restricted ? { show: false } : {}),
           frame: true, alwaysOnTop: false, fullscreen: false,
           webPreferences: {
-            partition: BROWSER_PARTITION, preload: join(__dirname, "../preload/browserPage.cjs"), contextIsolation: true,
+            partition: BROWSER_PARTITION, preload: browserPagePreloadPath, contextIsolation: true,
             nodeIntegration: false, nodeIntegrationInSubFrames: false,
             nodeIntegrationInWorker: false, sandbox: true, webviewTag: false,
             webSecurity: true, allowRunningInsecureContent: false,

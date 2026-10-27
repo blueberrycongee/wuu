@@ -122,9 +122,12 @@ func (s *Session) RetainState() (*State, error) {
 type StateOptions struct {
 	CapacityResources            *CapacityResources
 	RootDir, HomeDir, ConfigPath string
-	Config                       config.Config
-	ConfigLoadMode               ConfigLoadMode
-	NativeProviders              []NativeProviderFactory
+	// WorkspaceID uses the same stable project identity as Options.WorkspaceID.
+	// Omit it for location-anchored roots that remain keyed by RootDir.
+	WorkspaceID     string
+	Config          config.Config
+	ConfigLoadMode  ConfigLoadMode
+	NativeProviders []NativeProviderFactory
 }
 
 func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
@@ -190,12 +193,13 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err := catalog.Release(); err != nil {
 		return nil, err
 	}
-	workspace, err := resolveWorkspaceStateDir(home, "", root)
+	workspaceID := strings.TrimSpace(opts.WorkspaceID)
+	workspace, err := resolveWorkspaceStateDir(home, workspaceID, root)
 	if err != nil {
 		return nil, err
 	}
 	selection := productComposition(opts.Config.Composition, false, plugins, opts.NativeProviders)
-	host, kernel, err := buildPluginHost(plugins, root, "", home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, "", opts.NativeProviders...)
+	host, kernel, err := buildPluginHost(plugins, root, workspaceID, home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, "", opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}

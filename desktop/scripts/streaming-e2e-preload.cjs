@@ -217,7 +217,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   resumeThread: async (id) => ({ thread: threads.get(id) ?? null,
     ...(heldMessages.has(id) ? { held_user_messages: heldMessages.get(id) } : {}),
   }),
-  listEngines: async () => ({ engines: [] }),
+  listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
   forkThread: async () => ({ thread: null }),
   editThreadMessage: async (threadId) => {
     await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });

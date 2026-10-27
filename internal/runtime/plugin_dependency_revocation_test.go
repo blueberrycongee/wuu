@@ -34,25 +34,31 @@ func TestDependencyRevocationReachesPinnedSkillCatalogs(t *testing.T) {
 	}
 	defer s.Cleanup()
 	provider := testRuntimePlugin("provider")
+	provider.Source, provider.Root = "bundled", t.TempDir()
 	bridge := testRuntimePlugin("skill-bridge")
 	bridge.Runtime, bridge.Source, bridge.Root = nil, "project", t.TempDir()
-	bridge.SchemaVersion = 1
 	bridge.Requires = []string{"provider"}
 	bridge.Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "must-not-run"}}}
 	writeSessionTestFile(t, filepath.Join(bridge.Root, "skills", "revocable.md"), "---\nname: revocable\ndescription: Revocable plugin guidance.\n---\nPlugin-owned body.\n")
-	manifest, err := json.Marshal(bridge.Manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestPath := filepath.Join(bridge.Root, "plugin.json")
-	writeSessionTestFile(t, manifestPath, string(manifest))
-	bridge, err = pluginpkg.LoadManifestWithOptions(manifestPath, pluginpkg.LoadOptions{Source: bridge.Source, Official: bridge.Official})
-	if err != nil {
-		t.Fatal(err)
-	}
 	consumer := testRuntimePlugin("consumer")
+	consumer.Source, consumer.Root = "bundled", t.TempDir()
 	consumer.Requires = []string{"skill-bridge"}
 	packages := []pluginpkg.Plugin{provider, bridge, consumer}
+	// Load every package so replacement preparation reuses real, distinct
+	// admitted identities and reaches the provider's failing handshake.
+	for i, item := range packages {
+		item.SchemaVersion = 1
+		manifest, err := json.Marshal(item.Manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifestPath := filepath.Join(item.Root, "plugin.json")
+		writeSessionTestFile(t, manifestPath, string(manifest))
+		packages[i], err = pluginpkg.LoadManifestWithOptions(manifestPath, pluginpkg.LoadOptions{Source: item.Source, Official: item.Official})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	clients := map[string]*preparedGenerationClient{}
 	failNextInitialize := filepath.Join(t.TempDir(), "fail-initialize")
 	var providerClient *pluginhost.ProcessClient

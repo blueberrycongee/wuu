@@ -38,12 +38,12 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 		base["wuu.model.capacity.resources"] = true
 		base["wuu.engines.native"] = true
 		base["wuu.engine-execution"] = true
-		// The API consumer can use an installed provider; no sharing business
-		// implementation is activated by the default product.
-		base["wuu.session-sharing-access"] = true
 		desktop["wuu.default-application"] = true
 	}
 	if version >= 4 {
+		// The API consumer can use an installed provider; no sharing business
+		// implementation is activated by the default product.
+		base["wuu.session-sharing-access"] = true
 	}
 	profiles := map[string]Profile{
 		"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},

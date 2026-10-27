@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -24,16 +25,24 @@ type fixtureSession struct {
 	History []session.HistoryRecord `json:"history"`
 }
 
+type fixtureArtifact struct {
+	ThreadID string `json:"thread_id"`
+	Path     string `json:"path"`
+	MIMEType string `json:"mime_type,omitempty"`
+}
+
 type request struct {
-	Home     string                  `json:"home"`
-	Workdir  string                  `json:"workdir"`
-	Op       string                  `json:"op"`
-	Sessions []fixtureSession        `json:"sessions,omitempty"`
-	IDs      []string                `json:"ids,omitempty"`
-	Domains  []string                `json:"domains,omitempty"`
-	ID       string                  `json:"id,omitempty"`
-	History  []session.HistoryRecord `json:"history,omitempty"`
-	Repeat   *int                    `json:"repeat,omitempty"`
+	Home        string                  `json:"home"`
+	Workdir     string                  `json:"workdir"`
+	WorkspaceID string                  `json:"workspace_id,omitempty"`
+	Op          string                  `json:"op"`
+	Sessions    []fixtureSession        `json:"sessions,omitempty"`
+	IDs         []string                `json:"ids,omitempty"`
+	Domains     []string                `json:"domains,omitempty"`
+	ID          string                  `json:"id,omitempty"`
+	History     []session.HistoryRecord `json:"history,omitempty"`
+	Repeat      *int                    `json:"repeat,omitempty"`
+	Artifacts   []fixtureArtifact       `json:"artifacts,omitempty"`
 }
 
 func main() {
@@ -54,7 +63,7 @@ func run(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("expected one JSON request")
 	}
-	if req.Op != "seed" && req.Op != "read" && req.Op != "inspect" && req.Op != "append" {
+	if req.Op != "seed" && req.Op != "read" && req.Op != "inspect" && req.Op != "append" && req.Op != "import-artifacts" {
 		return fmt.Errorf("unsupported operation %q", req.Op)
 	}
 	if req.Op == "append" {
@@ -104,7 +113,7 @@ func run(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, err := execute(ctx, req, runtime.StateOptions{RootDir: workdir, HomeDir: home, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg})
+	result, err := execute(ctx, req, runtime.StateOptions{RootDir: workdir, WorkspaceID: req.WorkspaceID, HomeDir: home, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg})
 	if err != nil {
 		return err
 	}
@@ -123,6 +132,28 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 		}
 		err = errors.Join(err, closeErr)
 	}()
+	if req.Op == "import-artifacts" {
+		services, err := state.Services()
+		if err != nil {
+			return nil, err
+		}
+		scope, err := state.Host.OpenServiceScope(ctx, runtime.StateServicesConsumer, runtime.ArtifactServiceName)
+		if err != nil {
+			return nil, err
+		}
+		defer scope.Close()
+		artifacts := make([]pluginhost.ArtifactImportResult, 0, len(req.Artifacts))
+		for _, input := range req.Artifacts {
+			artifact, err := services.Artifacts.Import(scope.Context, runtime.ArtifactScope{ThreadID: input.ThreadID, CWD: opts.RootDir, PluginID: "fixture"}, pluginhost.ArtifactImportParams{Path: input.Path, MIMEType: input.MIMEType}, false)
+			if err != nil {
+				return nil, fmt.Errorf("import artifact %q: %w; prior imports may be committed, discard this fixture before retrying", input.Path, err)
+			}
+			artifacts = append(artifacts, artifact)
+		}
+		return struct {
+			Artifacts []pluginhost.ArtifactImportResult `json:"artifacts"`
+		}{artifacts}, nil
+	}
 	if req.Op == "inspect" {
 		return inspectDocuments(ctx, state.Documents, req.Domains)
 	}

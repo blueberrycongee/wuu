@@ -22,7 +22,7 @@ import {
   type ActivitySession, type RuntimeContext, type ServerEvent, type Thread,
 } from "../src/shared/protocol";
 
-const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = process.env.WUU_BROWSER_OWNERSHIP_OUTPUT ?? join(desktop, "out", "browser-task-ownership");
 const fixture = process.env.WUU_BROWSER_OWNERSHIP_FIXTURE;
 assert(fixture, "Run the fixture through browser-task-ownership-e2e.cjs");

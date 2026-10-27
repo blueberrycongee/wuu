@@ -145,7 +145,7 @@ func fixtureHome(t *testing.T, provider string) (string, string, config.Config) 
 	if err := os.WriteFile(filepath.Join(home, ".wuu-session-fixture"), []byte("wuu-session-fixture-v1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	modules := []string{"wuu.session-state", provider}
+	modules := []string{"wuu.session-state", session.DefaultModule, provider}
 	cfg := config.Config{
 		DefaultProvider: "fixture",
 		Providers: map[string]config.ProviderConfig{

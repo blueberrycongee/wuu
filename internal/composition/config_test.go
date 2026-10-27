@@ -486,3 +486,15 @@ func TestConsumerScopedBindingsResolveAndRemove(t *testing.T) {
 		t.Fatal("invalid consumer accepted")
 	}
 }
+
+func TestSharingConsumerIsCurrentProductOnly(t *testing.T) {
+	for _, version := range []int{2, 3, 4} {
+		got, err := (&Config{Version: version, Profile: "headless"}).Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Includes("wuu.session-sharing-access") != (version >= 4) {
+			t.Fatalf("version %d changed sharing consumer selection", version)
+		}
+	}
+}

@@ -153,8 +153,10 @@ app.whenReady().then(async () => {
     const input = document.querySelector(".composer textarea");
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "Preview delivered files");
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   });
+  // The textarea can mount before engine discovery admits the first send.
+  await waitFor(win, () => document.querySelector('.composer [data-wuu-component="composer-send"]')?.disabled === false);
+  await evaluate(win, () => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
   await waitFor(win, () => document.querySelector(".conversation-width")?.textContent.includes("Preview delivered files"));
   if (!inspectionOnly) {
   const completed = await complete(win, 0);

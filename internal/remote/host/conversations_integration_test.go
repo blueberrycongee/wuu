@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/conversations"
@@ -70,7 +72,9 @@ func TestConversationPublisherPersistsHistoryWithoutAnOnlineHost(t *testing.T) {
 		}
 	})
 	rt.Documents, rt.Sessions = documents, session.NewStore(context.Background(), documents)
-	h := &Host{store: store, rt: rt}
+	// This persistence-only embedding has no composition graph; select its
+	// authorization policy explicitly rather than relying on a host fallback.
+	h := &Host{store: store, rt: rt, appServerOptions: []appserver.ServerOption{appserver.WithAccessPolicy(access.OwnerOnly{})}}
 	thread, err := rt.Sessions.CreateWithMetadata("server-history", root)
 	if err != nil {
 		t.Fatal(err)

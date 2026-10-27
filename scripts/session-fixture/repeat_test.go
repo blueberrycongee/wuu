@@ -16,9 +16,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// Failure cases: reopening the authority per batch, materializing all repeats,
-// changed pattern bytes/order/metadata, and replaying a commit with unknown outcome.
-func TestFixtureRepeatsPatternWithOneCapturedState(t *testing.T) {
+// Failure cases: starting inference while seeding history, materializing all
+// repeats, changed pattern bytes/order/metadata, and replaying an unknown commit.
+func TestFixtureRepeatsPatternWithoutStartingInference(t *testing.T) {
 	for _, provider := range []string{persistence.SQLiteModule, persistence.JSONLModule} {
 		t.Run(provider, func(t *testing.T) {
 			home, workdir, cfg := fixtureHome(t, provider)
@@ -57,10 +57,10 @@ func TestFixtureRepeatsPatternWithOneCapturedState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Each actual OpenState creates one durable runtime lease, which remains
-			// after Close. Count that behavior instead of instrumenting source text.
-			if len(after.Documents)-len(before.Documents) != 1 {
-				t.Fatalf("repeat reopened state: runtime leases %d -> %d", len(before.Documents), len(after.Documents))
+			// Runtime leases are created lazily on inference, not on OpenState.
+			// Seeding historical turns must not start a new inference owner.
+			if !reflect.DeepEqual(after.Documents, before.Documents) {
+				t.Fatalf("repeat started inference: runtime leases %d -> %d", len(before.Documents), len(after.Documents))
 			}
 			history, err := reader.Sessions.LoadHistoryRecords(metadata.ID, true)
 			if err != nil {
@@ -125,7 +125,7 @@ func TestRepeatedAppendBoundsBatchesAndDoesNotReplayUnknownCommit(t *testing.T) 
 	unknown := errors.New("response lost after commit")
 	observed := &repeatDocuments{Documents: documents, t: t, unknown: unknown}
 	store := session.NewStore(ctx, observed)
-	if _, _, err := appendRepeatedHistory(store, "unknown-batch", repeatedFixturePattern(), 32); !errors.Is(err, unknown) {
+	if _, _, err := appendRepeatedHistory(store, "unknown-batch", repeatedFixturePattern(), 32); !errors.Is(err, session.ErrOutcomeUnknown) {
 		t.Fatalf("unknown outcome hidden: %v", err)
 	}
 	if observed.historyCommits != 2 || observed.records != 256 {

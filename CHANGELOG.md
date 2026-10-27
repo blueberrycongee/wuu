@@ -213,6 +213,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Resolve website tab, popup, and system-permission guide resources from the desktop's ESM main bundle so browser navigation and permission guidance do not fail on missing CommonJS globals.
 - Declare MCP configuration, definition reads, and login cancellation in the resource-access contract so owner actions reach their handlers while selected policies and non-owner restrictions remain enforced.
 - Keep MCP catalog, login, and configuration failures concise and local to the failed operation, with shared opt-in diagnostics and explicit login retry without losing completed authorization.
 - Keep MCP connection and login failures beside their server with concise recovery guidance, and show technical diagnostics only on request instead of repeating raw transport errors.

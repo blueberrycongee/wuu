@@ -52,6 +52,9 @@ async function run() {
   });
 
   await loadFile(win, rendererHtml);
+  // Hidden Chromium windows can return stale compositor pixels even when
+  // animation callbacks run. Paint the same surface measured by this guard.
+  win.showInactive();
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
   await waitFor(win, () => Boolean(document.querySelector(".composer textarea")), 5000);
   const colors = [];
@@ -182,13 +185,7 @@ async function run() {
     `The disclosure chevron is pushed outside the summary row. Chevron right=${geometry.chevron.right} row right=${geometry.row.right}`,
   );
 
-  // The mock submission skips the placement cleanup that normally reveals
-  // the new turn in the desktop shell. Drop its transient marker so the
-  // evidence screenshot shows the row this check measures.
-  await evaluate(win, () => {
-    document.querySelector(".scroll-region-content")?.removeAttribute("data-submit-placing");
-  });
-  await delay(200);
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const image = await win.webContents.capturePage();
   fs.writeFileSync(path.join(evidenceDir, "compaction-summary.png"), image.toPNG());
   await checkQuietText(win, "running", colors);
@@ -273,7 +270,9 @@ function compactionSummaryGeometry() {
       !(ring instanceof HTMLElement) || !(chevron instanceof SVGElement)) {
     return null;
   }
-  if (!text.textContent?.includes("pnpm typecheck")) {
+  if (!text.textContent?.includes("pnpm typecheck") ||
+      !text.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ||
+      document.querySelector("[data-wuu-compositor-frame], [data-wuu-presentation-frame]")) {
     return null;
   }
   const rect = (element) => {

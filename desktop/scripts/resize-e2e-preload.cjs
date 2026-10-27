@@ -290,7 +290,8 @@ const desktopAPI = {
     generalSettings = { ...generalSettings, ...settings };
     return { general_settings: generalSettings };
   },
-  listEngines: async () => ({ engines: [] }),
+  // This fixture runs the synthetic Wuu backend, not an empty composition.
+  listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
   getBuildInfo: async () => ({
     core: undefined,
     desktop: { version: "resize-e2e", date: "1970-01-01T00:00:00Z" }
