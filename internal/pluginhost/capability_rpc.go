@@ -560,6 +560,7 @@ type SessionContextBlock struct {
 }
 
 // AgentTurnCompletedInput is a product-neutral settled-turn observation.
+// Succeeded includes required durable settlement, not task-level acceptance.
 type AgentTurnCompletedInput struct {
 	ThreadID     string    `json:"thread_id"`
 	TurnID       string    `json:"turn_id"`
