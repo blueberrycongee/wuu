@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController.test-support";
 import { streamTextKey, streamTextStore } from "../StreamText";
-import { initialState, createThreadSessionTab, type AppState } from "../AppState";
+import { initialState, createThreadSessionTab, reduceServerEvent, type AppState } from "../AppState";
 import type { CodexPetCommand, Thread, WuuDesktopApi } from "../../shared/protocol";
 
 const submissionInitialized = { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as AppState["initialized"];
@@ -472,6 +472,141 @@ describe("shared application state", () => {
       controller.updateState(state => ({ ...state, thread: updated, threads: [updated] }));
       expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("resumed");
     } finally { streamTextStore.clearTurn("cached-turn"); }
+  });
+
+  it("releases Stop after cancelling a retained draft before turn admission", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const idle: Thread = { id: "preparing-stop", cwd: context.cwd, preview: "", model: "fixture", model_provider: "fixture", status: "idle", created_at: "", updated_at: "", turns: [] };
+    let finishImage!: (image: { id: string; media_type: string; data: string }) => void;
+    const image = { id: "preparing-image", media_type: "image/png", data: "", encodePromise: new Promise<{ id: string; media_type: string; data: string }>(resolve => { finishImage = resolve; }) };
+    window.wuu = { startTurn: vi.fn().mockResolvedValue({ turn: { id: "retried", status: "completed", items_view: "full", items: [] } }), interruptTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: idle, threads: [idle], activeSessionTabID: "thread:preparing-stop",
+      sessionTabs: [{ ...createThreadSessionTab(idle, context), kind: "thread", threadID: idle.id, images: [image], files: [], prompt: "keep this draft" }] });
+    const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:preparing-stop" });
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    await controller.invoke("conversation.interrupt", { threadId: idle.id });
+    await settleSubmission(controller, submitted);
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("keep this draft");
+    expect(controller.getState().thread?.turns).toEqual([]);
+    expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    finishImage({ id: image.id, media_type: image.media_type, data: "Zml4dHVyZQ==" });
+    const retry = await controller.invoke("composer.submit", { ownerTabId: "thread:preparing-stop" });
+    expect(retry).toMatchObject({ accepted: true });
+    await settleSubmission(controller, retry);
+    expect(window.wuu.startTurn).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("waits for the real terminal of a stopped retained draft (start reply lost=%s)", async replyLost => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const idle: Thread = { id: "late-stop", cwd: context.cwd, preview: "", model: "fixture", model_provider: "fixture", status: "idle", created_at: "", updated_at: "", turns: [] };
+    let admit!: (result: { turn: Thread["turns"][number] }) => void;
+    let reject!: (error: Error) => void;
+    window.wuu = { startTurn: vi.fn(() => new Promise((resolve, fail) => { admit = resolve; reject = fail; })), interruptTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: idle, threads: [idle], activeSessionTabID: "thread:late-stop",
+      sessionTabs: [{ ...createThreadSessionTab(idle, context), kind: "thread", threadID: idle.id, images: [], files: [], prompt: "admitted input" }] });
+    const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:late-stop" });
+    await vi.waitFor(() => expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    await controller.invoke("conversation.interrupt", { threadId: idle.id });
+    const sourceID = vi.mocked(window.wuu.startTurn).mock.calls[0][8];
+    const turn: Thread["turns"][number] = { id: "late-admitted", status: "in_progress", items_view: "full", items: [{ id: "input", type: "user_message", text: "admitted input", source_id: sourceID }] };
+    if (replyLost) reject(new Error("rpc timeout: turn/start"));
+    else admit({ turn });
+    await settleSubmission(controller, submitted);
+    expect(window.wuu.interruptTurn).toHaveBeenCalledOnce();
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([{ threadId: idle.id, phase: "pending" }]);
+    await controller.invoke("composer.set-draft", { text: "next input" });
+    expect(await controller.invoke("composer.submit", { ownerTabId: "thread:late-stop" })).toMatchObject({ accepted: false });
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/completed", params: { thread_id: idle.id,
+      turn: { ...turn, status: "interrupted" } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("next input");
+  });
+
+  it("retains a stop across navigation, acknowledgement and an incomplete background snapshot", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const running: Thread = { id: "stopping", cwd: context.cwd, preview: "", model: "fixture", model_provider: "fixture", status: "in_progress", created_at: "", updated_at: "",
+      turns: [{ id: "admitted", status: "in_progress", items_view: "full", items: [
+        { id: "read", type: "tool_call", name: "list_files", status: "in_progress", arguments: '{"path":"/fixture"}' },
+      ] }] };
+    let acknowledge!: (value: { ok: boolean }) => void;
+    const interrupt = vi.fn(() => new Promise<{ ok: boolean }>(resolve => { acknowledge = resolve; }));
+    window.wuu = { interruptTurn: interrupt, resumeThread: vi.fn().mockResolvedValue({ thread: running }), startTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: running, threads: [running], activeSessionTabID: "thread:stopping", sessionTabs: [
+      { ...createThreadSessionTab(running, context), kind: "thread", threadID: running.id, images: [], files: [], prompt: "keep my next input" },
+      { id: "draft:other", kind: "draft", context, title: "Other", createdAt: 1, prompt: "other input", images: [], files: [] },
+    ] });
+    const stopping = controller.invoke("conversation.interrupt", { threadId: running.id });
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([{ threadId: running.id, phase: "pending" }]);
+    await controller.invoke("tab.select", { tabId: "draft:other" });
+    // A lightweight/stale catalog row is not a terminal receipt for the admitted read.
+    controller.updateState(state => ({ ...state, threads: [{ ...running, status: "idle", turns: [] }] }));
+    acknowledge({ ok: true }); await stopping;
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([{ threadId: running.id, phase: "pending" }]);
+    await controller.invoke("tab.select", { tabId: "thread:stopping" });
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([{ threadId: running.id, phase: "pending" }]);
+    expect(controller.getSnapshot().conversationWorkspace.threads.find(thread => thread.id === running.id)?.turns[0].items[0]).toMatchObject({ id: "read", status: "in_progress" });
+    expect(await controller.invoke("composer.submit", { ownerTabId: "thread:stopping" })).toEqual({ accepted: false });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("keep my next input");
+    expect(interrupt).toHaveBeenCalledOnce();
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/completed", params: { thread_id: running.id,
+      turn: { ...running.turns[0], status: "interrupted", items: [{ ...running.turns[0].items[0], status: "failed", result: "cancelled" }] } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("keep my next input");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("restores an accepted stop from the server without replaying cancellation or clearing drafts", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const stopping: Thread = { id: "restored", cwd: context.cwd, preview: "", model: "fixture", model_provider: "fixture", status: "in_progress", interrupting: true, created_at: "", updated_at: "",
+      turns: [{ id: "admitted", status: "in_progress", items_view: "full", items: [{ id: "read", type: "tool_call", name: "list_files", status: "in_progress" }] }] };
+    window.wuu = { interruptTurn: vi.fn(), startTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: stopping, threads: [stopping], activeSessionTabID: "thread:restored",
+      sessionTabs: [{ ...createThreadSessionTab(stopping, context), kind: "thread", threadID: stopping.id, images: [], files: [], prompt: "retained draft" }] });
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([{ threadId: stopping.id, phase: "pending" }]);
+    expect(await controller.invoke("composer.submit", { ownerTabId: "thread:restored" })).toEqual({ accepted: false });
+    await controller.invoke("conversation.interrupt", { threadId: stopping.id });
+    expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/error", params: { thread_id: stopping.id,
+      turn: { ...stopping.turns[0], status: "interrupted", items: [{ ...stopping.turns[0].items[0], status: "failed", result: "cancelled" }] } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([]);
+    expect(controller.getState().thread?.interrupting).toBe(false);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("retained draft");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps a summary-restored stop through incomplete snapshots and unrelated terminal events (target identity=%s)", async hasTargetIdentity => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const summary: Thread = { id: "summary-stop", cwd: context.cwd, preview: "", model: "fixture", model_provider: "fixture", status: "in_progress", interrupting: true, interrupting_turn_id: hasTargetIdentity ? "actual-read" : undefined,
+      created_at: "", updated_at: "", turns: [] };
+    const target: Thread["turns"][number] = { id: "actual-read", status: "in_progress", items_view: "full", items: [{ id: "read", type: "tool_call", name: "list_files", status: "in_progress" }] };
+    window.wuu = { interruptTurn: vi.fn(), startTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: summary, threads: [summary], activeSessionTabID: "thread:summary-stop",
+      sessionTabs: [{ id: "thread:summary-stop", kind: "thread", threadID: summary.id, context, title: "", images: [], files: [], prompt: "keep this draft" }] });
+    const pending = [{ threadId: summary.id, phase: "pending" }];
+    expect(controller.getSnapshot().submission.stopRequests).toEqual(pending);
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/completed", params: { thread_id: summary.id,
+      turn: { id: "older-unrelated", status: "completed", items_view: "full", items: [] } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual(pending);
+    expect(controller.getState().thread?.interrupting).toBe(true);
+    const stale = { ...summary, status: "idle" as const, interrupting: undefined, interrupting_turn_id: undefined };
+    controller.updateState(state => ({ ...state, thread: stale, threads: [stale] }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual(pending);
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/completed", params: { thread_id: summary.id,
+      turn: { id: "older-unrelated", status: "completed", items_view: "full", items: [] } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual(pending);
+    expect(await controller.invoke("composer.submit", { ownerTabId: "thread:summary-stop" })).toEqual({ accepted: false });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("keep this draft");
+    // A full live snapshot identifies the stopped turn; a later receipt for that
+    // identity, not the stale catalog row or unrelated turn, can settle it.
+    if (!hasTargetIdentity) controller.updateState(state => ({ ...state, thread: { ...summary, turns: [target] }, threads: [{ ...summary, turns: [target] }] }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual(pending);
+    controller.updateState(state => reduceServerEvent(state, { kind: "notification", workdir: context.cwd, message: { method: "turn/error", params: { thread_id: summary.id,
+      turn: { ...target, status: "interrupted", items: [{ ...target.items[0], status: "failed", result: "cancelled" }] } } } }));
+    expect(controller.getSnapshot().submission.stopRequests).toEqual([]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("keep this draft");
+    expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
   it.each(["tab.select", "thread.activate"] as const)("%s resumes in parallel with configuration and skips a settled reselect", async action => {

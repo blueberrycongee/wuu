@@ -21,6 +21,28 @@ func TestThreadSnapshotExposesInterruptedOrchestration(t *testing.T) {
 	}
 }
 
+// A cancellation acknowledgement is not terminal settlement. Reconnect and
+// summary readers must retain Stop until the execution lease is released.
+func TestThreadSnapshotRetainsInterruptUntilExecutionRelease(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	th := newThreadState("thread", nil, "provider", "model", "/tmp", false, now)
+	th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+	th.interrupting = true
+	for _, summaryOnly := range []bool{false, true} {
+		if snapshot := th.listSnapshotLocked(summaryOnly); !snapshot.Interrupting || snapshot.InterruptingTurnID != "turn" || snapshot.Status != ThreadStatusInProgress {
+			t.Fatalf("accepted cancellation lost from snapshot (summary=%v): %+v", summaryOnly, snapshot)
+		}
+	}
+	th.finishTurnLocked("turn", TurnStatusInterrupted, errors.New("cancelled"), now.Add(time.Second), "", "", false)
+	if snapshot := th.snapshotLocked(); !snapshot.Interrupting || snapshot.InterruptingTurnID != "turn" || snapshot.Status != ThreadStatusInProgress {
+		t.Fatalf("cleanup has not released execution: %+v", snapshot)
+	}
+	th.releaseTurnExecutionLocked("turn")
+	if snapshot := th.snapshotLocked(); snapshot.Interrupting || snapshot.InterruptingTurnID != "" || snapshot.Status != ThreadStatusIdle {
+		t.Fatalf("settled cancellation remains pending: %+v", snapshot)
+	}
+}
+
 func TestThreadStateStreamSnapshotsSurviveReplaceAndCompletion(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	for _, kind := range []string{"content", "reasoning", "arguments"} {

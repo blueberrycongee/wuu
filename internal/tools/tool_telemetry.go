@@ -107,8 +107,14 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 	return t.env.toolTelemetry.snapshot()
 }
 
-func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
+func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (output toolresult.Result, resultErr error) {
+	ctx, timing, timingOwner := beginListFilesTiming(ctx, call.Name, call.ID)
+	if timingOwner {
+		defer func() { timing.finishResult(ctx, resultErr, output.IsError) }()
+	}
+	phase := timing.start("tool_metadata", -1)
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
+	phase.end(nil)
 	startedAt := time.Now()
 	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
 	revisionBefore := ""
@@ -118,12 +124,18 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		return toolresult.Result{}, err
 	}
 
-	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
+	phase = timing.start("arguments_validate", -1)
+	argumentErr := validateToolArgumentsJSON(call.Arguments)
+	phase.end(argumentErr)
+	if err := argumentErr; err != nil {
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 		return toolresult.Result{}, err
 	}
 	if validator, ok := tool.(InputValidatingTool); ok {
-		if err := validator.ValidateInput(call.Arguments); err != nil {
+		phase = timing.start("input_validate", -1)
+		validationErr := validator.ValidateInput(call.Arguments)
+		phase.end(validationErr)
+		if err := validationErr; err != nil {
 			t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 			return toolresult.Result{}, err
 		}
@@ -155,6 +167,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	var result toolresult.Result
 	var err error
 	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		phase = timing.start("environment_execute", -1)
 		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{
 			ShellEarlyHandoffDisabled: t.env.ShellEarlyHandoffDisabled,
 			GitAttributionEnabled:     !t.env.GitAttributionDisabled,
@@ -162,6 +175,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 			PermissionMode:            t.env.PermissionMode,
 			Actor:                     t.env.AgentID,
 		})
+		phase.endResult(err, result.IsError)
 	} else {
 		result, err = executeToolResult(ctx, tool, call)
 	}
@@ -169,7 +183,10 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	if err != nil {
 		result.IsError = true
 	}
-	if validationErr := result.Validate(); validationErr != nil {
+	phase = timing.start("result_validate", -1)
+	validationErr := result.Validate()
+	phase.end(validationErr)
+	if validationErr != nil {
 		if err == nil {
 			err = fmt.Errorf("tool %q returned invalid rich result: %w", call.Name, validationErr)
 		} else {
@@ -178,17 +195,25 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		result.IsError = true
 	}
 	if info.Kind == ToolKindMCP {
+		phase = timing.start("result_redact", -1)
 		result = redactRichToolText(result)
+		phase.end(nil)
 	}
+	phase = timing.start("result_projection", -1)
 	rawProjection := result.TextProjection()
 	returned := result.Clone()
+	phase.end(nil)
 	returnedProjection := rawProjection
 	resultRef := ""
 	resultBudgeted := false
 	var projectionDiag *ProjectionDiagnostics
 	if err == nil {
+		phase = timing.start("result_finalize", -1)
 		returned, resultRef, resultBudgeted, projectionDiag = t.finalizeToolResult(call, result)
+		phase.end(nil)
+		phase = timing.start("returned_projection", -1)
 		returnedProjection = returned.TextProjection()
+		phase.end(nil)
 	}
 
 	revisionAfter := revisionBefore
@@ -253,6 +278,9 @@ func (t *Toolkit) recordToolExecution(
 	err error,
 	projection *ProjectionDiagnostics,
 ) {
+	timing := listFilesTimingFromContext(ctx, call.Name)
+	phase := timing.start("telemetry", -1)
+	defer phase.end(nil)
 	artifactRefs := extractToolArtifactRefs(result, resultRef)
 	loadedDeferredTools, newlyLoadedDeferredTools, alreadyLoadedDeferredTools, toolSurfaceChanged := extractToolSearchLoadMetadata(call.Name, result)
 	var stepIndexPtr *int

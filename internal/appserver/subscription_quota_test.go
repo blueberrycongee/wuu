@@ -66,6 +66,7 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		fmt.Fprint(w, `{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":37,"limit_window_seconds":18000,"reset_at":1800000000},"secondary_window":{"used_percent":125,"limit_window_seconds":604800}}}`)
 	}))
 	defer upstream.Close()
+	var srv *Server
 	writeConfig := func(first string) {
 		t.Helper()
 		cfg := map[string]any{"default_provider": "fake-provider", "providers": map[string]any{
@@ -77,16 +78,10 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if rt.PluginHost != nil {
-			var selected configpkg.Config
-			if err := json.Unmarshal(data, &selected); err != nil {
-				t.Fatal(err)
-			}
-			candidate, err := rt.PreflightExtensions(selected)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		if srv != nil {
+			// Use the same publication boundary as the live config watcher.
+			// A direct runtime preflight/activation would race its reload.
+			if err := srv.refreshConfigIfChanged(); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -94,8 +89,11 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	writeConfig(firstToken)
 	rt = openRuntime()
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv = New(rt, out)
 	t.Cleanup(srv.Close)
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatal(err)
+	}
 	list := func(id string, include bool) EngineListResult {
 		t.Helper()
 		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t}`, include))}); err != nil {
@@ -159,6 +157,9 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	out = &lockedBuffer{}
 	srv = New(rt, out)
 	t.Cleanup(srv.Close)
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatal(err)
+	}
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
 		t.Fatalf("restart lost observation: %+v", restarted)
 	}

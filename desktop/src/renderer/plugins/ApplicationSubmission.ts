@@ -64,7 +64,7 @@ export class ApplicationSubmission {
   unadmittedComposerMessage = (id: string): QueuedComposerMessage | undefined => this.unadmitted.get(id);
   private readonly lanes = new Map<string, { tail: Promise<void>; stopVersion: number }>();
   private readonly creations = new Map<string, Operation>();
-  private readonly stopRequests = new Map<string, { target?: string; phase: "pending" | "retry"; delivery?: symbol }>();
+  private readonly stopRequests = new Map<string, { target?: string; phase: "pending" | "retry"; delivery?: symbol; accepted?: boolean; betweenTurns?: boolean }>();
   private readonly failedDrafts = new Set<string>();
   private snapshot: ApplicationSubmissionSnapshotV1 = Object.freeze({ operations: Object.freeze([]), pendingCreations: Object.freeze([]), failedDraftTabIds: Object.freeze([]), stopRequests: Object.freeze([]) });
   private disposed = false;
@@ -79,6 +79,8 @@ export class ApplicationSubmission {
       updateState: update => { if (!this.disposed) options.updateState(update); },
       setDraft: (id, draft) => { if (!this.disposed) options.setDraft(id, draft); },
     };
+    this.restoreAcceptedStops();
+    this.publish(false);
   }
   getSnapshot = (): ApplicationSubmissionSnapshotV1 => this.snapshot;
   getPendingDraftTabIds = (): readonly string[] => [...this.creations.keys()];
@@ -87,7 +89,7 @@ export class ApplicationSubmission {
     return this.admissions.has(tab?.kind === "thread" ? tab.threadID : ownerTabId);
   };
 
-  private publish(): void {
+  private publish(notify = true): void {
     this.snapshot = Object.freeze({ operations: Object.freeze([...this.results.values(), ...[...this.operations.values()].map(operation => operation.view)].map(view => Object.freeze({ ...view }))),
       pendingCreations: Object.freeze([...this.creations.values()].map(operation => {
         const turn = structuredClone(operation.optimistic);
@@ -104,7 +106,7 @@ export class ApplicationSubmission {
       stopRequests: Object.freeze([...this.stopRequests].map(([threadId, request]) => Object.freeze({ threadId, phase: request.phase }))) });
     // Admitted results still settle and release resources after disposal, but
     // notifying the ended owner would recreate its disposed projection services.
-    if (!this.disposed) this.options.changed();
+    if (notify && !this.disposed) this.options.changed();
   }
   private phase(operation: Operation, phase: ApplicationSubmissionOperationV1["phase"], error?: string): void {
     operation.view = { ...operation.view, phase, threadId: operation.thread?.id, error }; this.publish();
@@ -391,6 +393,8 @@ export class ApplicationSubmission {
       if (this.disposed) return true;
       this.unadmitted.delete(message.id);
       this.releaseDraft(operation);
+      const stop = this.stopRequests.get(thread.id);
+      if (stop && (!stop.target || stop.target === optimistic.id)) stop.target = result.turn.id;
       this.options.updateState(state => updateThreadByID(state, thread!.id, current => replaceOptimisticTurn(current, optimistic.id, result.turn, upsertTurn)));
       if (operation.stopped && isThreadRunning(threadForTab(this.options.getState(), thread.id))) await this.interruptAccepted(thread.id);
       return true;
@@ -420,6 +424,12 @@ export class ApplicationSubmission {
       operation.resolve(operation.thread);
       if (this.admissions.get(key) === operation) this.admissions.delete(key);
       if (operation.thread && this.admissions.get(operation.thread.id) === operation) this.admissions.delete(operation.thread.id);
+      if (operation.thread && operation.stopped && !operation.sent) {
+        const stop = this.stopRequests.get(operation.thread.id);
+        // An unsent retained draft has no optimistic/remote turn to settle.
+        // Its own preparation ending is proof; a sent or restored stop is not.
+        if (stop?.target === optimistic.id && !stop.accepted) this.stopRequests.delete(operation.thread.id);
+      }
       this.creations.delete(source.id);
       if (!optimisticThreadID) {
         forgetLocalTurnTiming(optimistic.id);
@@ -442,30 +452,55 @@ export class ApplicationSubmission {
     if (admission) { admission.stopped = true; if (!admission.sent) admission.cancelPreparation(); }
     const lane = this.lanes.get(thread.id); if (lane) lane.stopVersion++;
     if (this.stopRequests.get(thread.id)?.phase === "pending") return;
-    this.stopRequests.set(thread.id, { target: thread.turns.at(-1)?.id, phase: "pending" }); this.publish();
+    this.stopRequests.set(thread.id, { target: activeTurnIDForThread(thread) ?? admission?.optimistic.id, phase: "pending", betweenTurns: !admission && !isThreadRunning(thread) }); this.publish();
     if (admission && !thread.turns.some(turn => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
     await this.interruptAccepted(thread.id);
   }
   private async interruptAccepted(threadID: string): Promise<void> {
     const request = this.stopRequests.get(threadID) ?? { phase: "pending" as const };
-    if (request.delivery) return;
+    if (request.delivery || request.accepted) return;
     const delivery = Symbol(); this.stopRequests.set(threadID, { ...request, delivery });
     try {
       const result = await window.wuu.interruptTurn(threadID);
       if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
+      const current = this.stopRequests.get(threadID);
+      if (current?.delivery !== delivery) return;
+      this.stopRequests.set(threadID, { ...current, accepted: true, delivery: undefined });
+      this.reconcile();
     } catch (error) {
-      if (this.stopRequests.get(threadID)?.delivery !== delivery) return;
-      this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.publish(); this.report(error);
+      const current = this.stopRequests.get(threadID);
+      if (current?.delivery !== delivery || current.accepted) return;
+      this.stopRequests.set(threadID, { ...current, phase: "retry", delivery: undefined }); this.publish(); this.report(error);
     }
+  }
+  private restoreAcceptedStops(): boolean {
+    const state = this.options.getState();
+    let changed = false;
+    const ids = new Set([...state.threads, state.thread, state.secondaryThread].flatMap(thread => thread ? [thread.id] : []));
+    for (const id of ids) {
+      const thread = threadForTab(state, id)!;
+      if (!thread.interrupting || !isThreadRunning(thread)) continue;
+      const current = this.stopRequests.get(id);
+      const target = thread.interrupting_turn_id ?? current?.target ?? activeTurnIDForThread(thread);
+      if (current?.accepted && current.phase === "pending" && current.target === target && !current.betweenTurns) continue;
+      this.stopRequests.set(id, { ...current, target, phase: "pending", accepted: true, betweenTurns: false });
+      changed = true;
+    }
+    return changed;
   }
   reconcile(): void {
     if (this.disposed) return;
     const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size; const beforeResults = this.results.size;
     const state = this.options.getState();
+    const restoredStops = this.restoreAcceptedStops();
     for (const [threadID, request] of this.stopRequests) {
       const thread = threadForTab(state, threadID);
       const targetEnded = thread?.turns.some(turn => turn.status !== "in_progress" && (turn.id === request.target || turn.items.some(item => item.type === "user_message" && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === request.target)));
-      if (thread && !isThreadRunning(thread) && !this.admissions.has(threadID) && (request.phase !== "retry" || targetEnded)) this.stopRequests.delete(threadID);
+      // Catalog/navigation snapshots can omit the active turn. Only its terminal
+      // receipt (or an explicitly between-turn stop acknowledgement) settles the
+      // intent. An unknown target in a restored summary is not between-turn work.
+      if (thread && !thread.interrupting && !isThreadRunning(thread) && !this.admissions.has(threadID)
+        && (targetEnded || request.betweenTurns && request.accepted)) this.stopRequests.delete(threadID);
       else if (request.phase === "pending" && thread?.turns.some(turn => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) void this.interruptAccepted(threadID);
     }
     for (const [id, view] of this.results) if (!this.resultOwnerExists(view)) this.results.delete(id);
@@ -488,7 +523,7 @@ export class ApplicationSubmission {
     }
     this.saveRecovery();
     for (const id of this.failedDrafts) if (id === state.activeSessionTabID || !state.sessionTabs.some(tab => tab.id === id)) this.failedDrafts.delete(id);
-    if (beforeStops !== this.stopRequests.size || beforeFailures !== this.failedDrafts.size || beforeResults !== this.results.size) this.publish();
+    if (restoredStops || beforeStops !== this.stopRequests.size || beforeFailures !== this.failedDrafts.size || beforeResults !== this.results.size) this.publish();
   }
   private resultOwnerExists(view: ApplicationSubmissionOperationV1): boolean {
     const state = this.options.getState();

@@ -1839,10 +1839,8 @@ type toolBatch struct {
 }
 
 // partitionToolCalls groups consecutive tool calls into batches based
-// on concurrency safety. If the ToolExecutor implements
-// ToolMetadataProvider, we use per-tool metadata; otherwise all tools
-// are treated as serial (backwards compatible).
-func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []toolBatch {
+// on the metadata captured during admission, without resolving providers again.
+func partitionToolCalls(calls []providers.ToolCall, concurrencySafe func(providers.ToolCall) bool) []toolBatch {
 	if len(calls) == 0 {
 		return nil
 	}
@@ -1851,19 +1849,12 @@ func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []too
 		return []toolBatch{{calls: calls, concurrent: false}}
 	}
 
-	mp, hasMetadata := executor.(ToolMetadataProvider)
-	if !hasMetadata {
-		// No metadata provider — run everything serially.
-		return []toolBatch{{calls: calls, concurrent: false}}
-	}
-
 	var batches []toolBatch
 	var currentCalls []providers.ToolCall
 	currentConcurrent := false
 
 	for i, call := range calls {
-		meta, ok := mp.ToolMetadata(call)
-		canConcur := ok && meta.ConcurrencySafe
+		canConcur := concurrencySafe(call)
 
 		if i == 0 {
 			currentConcurrent = canConcur

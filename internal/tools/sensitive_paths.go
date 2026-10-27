@@ -79,10 +79,16 @@ var wuuCredentialFileNames = map[string]struct{}{
 // isWuuCredentialPath recognizes both the app's named credential files and
 // symlink aliases to them, including when Wuu home itself is a symlink.
 func isWuuCredentialPath(absPath string) bool {
+	return isWuuCredentialPathWithTiming(absPath, nil, -1)
+}
+
+func isWuuCredentialPathWithTiming(absPath string, timing *listFilesTiming, index int) bool {
 	if strings.TrimSpace(absPath) == "" {
 		return false
 	}
+	phase := timing.start("credential_home", index)
 	home, err := statepath.Home("")
+	phase.end(err)
 	if err != nil {
 		return false
 	}
@@ -95,13 +101,19 @@ func isWuuCredentialPath(absPath string) bool {
 	if matches(absPath) {
 		return true
 	}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+	phase = timing.start("credential_root_symlinks", index)
+	resolved, err := filepath.EvalSymlinks(home)
+	phase.end(err)
+	if err == nil {
 		home = resolved
 	}
 	if matches(absPath) {
 		return true
 	}
-	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+	phase = timing.start("credential_target_symlinks", index)
+	resolved, err = filepath.EvalSymlinks(absPath)
+	phase.end(err)
+	if err == nil {
 		return matches(resolved)
 	}
 	return false
@@ -139,7 +151,11 @@ func rejectSensitiveReadPath(env *Env, toolName, absPath string) error {
 }
 
 func rejectSensitiveToolPath(env *Env, toolName, action, absPath string) error {
-	if isWuuCredentialPath(absPath) {
+	return rejectSensitiveToolPathWithTiming(env, toolName, action, absPath, nil)
+}
+
+func rejectSensitiveToolPathWithTiming(env *Env, toolName, action, absPath string, timing *listFilesTiming) error {
+	if isWuuCredentialPathWithTiming(absPath, timing, -1) {
 		return wuuCredentialRefusal(toolName, action, absPath)
 	}
 	// Sensitive-path writes stay blocked in every mode, including

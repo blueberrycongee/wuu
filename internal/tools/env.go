@@ -415,6 +415,10 @@ func (e *Env) RedactToolOutput(text string) string {
 // ResolvePath resolves a user-supplied relative or absolute path. Path
 // confinement is always enforced unless the runtime is explicitly unconfined.
 func (e *Env) ResolvePath(input string) (string, error) {
+	return e.resolvePathWithTiming(input, nil)
+}
+
+func (e *Env) resolvePathWithTiming(input string, timing *listFilesTiming) (string, error) {
 	candidate := strings.TrimSpace(input)
 	if candidate == "" {
 		candidate = "."
@@ -435,8 +439,11 @@ func (e *Env) ResolvePath(input string) (string, error) {
 		return resolved, nil
 	}
 	if len(e.FileScopeRoots) > 0 {
-		for _, root := range e.FileScopeRoots {
-			if pathWithinRoot(root, resolved) {
+		for index, root := range e.FileScopeRoots {
+			phase := timing.start("scope_root", index)
+			within := pathWithinRoot(root, resolved)
+			phase.end(nil)
+			if within {
 				return resolved, nil
 			}
 		}
@@ -444,11 +451,17 @@ func (e *Env) ResolvePath(input string) (string, error) {
 	}
 
 	evalRoot := e.RootDir
-	if ev, err := filepath.EvalSymlinks(e.RootDir); err == nil {
+	phase := timing.start("resolve_root_symlinks", -1)
+	ev, err := filepath.EvalSymlinks(e.RootDir)
+	phase.end(err)
+	if err == nil {
 		evalRoot = ev
 	}
 	evalResolved := resolved
-	if ev, err := filepath.EvalSymlinks(resolved); err == nil {
+	phase = timing.start("resolve_target_symlinks", -1)
+	ev, err = filepath.EvalSymlinks(resolved)
+	phase.end(err)
+	if err == nil {
 		evalResolved = ev
 	}
 

@@ -40,7 +40,7 @@ func (b *batchResources) Resolve(ctx context.Context, index int) (toolbatch.Reso
 		return toolbatch.Resolution{}, err
 	}
 	call := run.call
-	result := toolbatch.Resolution{Call: providers.CloneToolCall(call), ConcurrencySafe: run.concurrencySafe, Orchestrator: toolIsOrchestrator(b.runtime.executor, call)}
+	result := toolbatch.Resolution{Call: providers.CloneToolCall(call), ConcurrencySafe: run.concurrencySafe, Orchestrator: run.orchestrator}
 	if err := validateRuntimeToolArguments(call); err != nil {
 		result.Error = err.Error()
 	}

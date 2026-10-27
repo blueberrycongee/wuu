@@ -1100,7 +1100,11 @@ func (t *ListFilesTool) Definition() providers.ToolDefinition {
 	}
 }
 
-func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (output string, resultErr error) {
+	ctx, timing, timingOwner := beginListFilesTiming(ctx, "list_files", "")
+	if timingOwner {
+		defer func() { timing.finish(ctx, resultErr) }()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -1116,43 +1120,56 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 		args.Path = "."
 	}
 
-	resolved, err := t.env.ResolvePath(args.Path)
+	phase := timing.start("resolve_path", -1)
+	resolved, err := t.env.resolvePathWithTiming(args.Path, timing)
+	phase.end(err)
 	if err != nil {
 		return "", err
 	}
-	if err := rejectSensitiveToolPath(t.env, "list_files", "list", resolved); err != nil {
+	phase = timing.start("sensitive_path", -1)
+	err = rejectSensitiveToolPathWithTiming(t.env, "list_files", "list", resolved, timing)
+	phase.end(err)
+	if err != nil {
 		return "", err
 	}
 	// Worktree-bound execution: rebase onto the checkout only after the
 	// sandbox and sensitive-path checks above accepted the workspace path.
+	phase = timing.start("exec_path", -1)
 	resolved, err = t.env.ExecPath(ctx, resolved)
+	phase.end(err)
 	if err != nil {
 		return "", err
 	}
+	phase = timing.start("stat", -1)
 	info, err := os.Stat(resolved)
+	phase.end(err)
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("path is not a directory: %s. Use read_file to inspect files", args.Path)
 	}
+	phase = timing.start("read_dir", -1)
 	entries, err := os.ReadDir(resolved)
+	phase.end(err)
 	if err != nil {
 		return "", fmt.Errorf("list directory: %w", err)
 	}
 
 	visibleEntries := make([]map[string]any, 0, len(entries))
 	omittedProtected := 0
-	for _, entry := range entries {
+	for index, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		entryPath := filepath.Join(resolved, entry.Name())
+		phase = timing.start("entry_display_path", index)
 		displayPath := t.env.NormalizeDisplayPathExec(ctx, entryPath)
+		phase.end(nil)
 		// The app's own credential files stay hidden in every mode,
 		// including unconfined; other sensitive entries are hidden unless
 		// the boundary is lifted.
-		if isWuuCredentialPath(entryPath) {
+		if isWuuCredentialPathWithTiming(entryPath, timing, index) {
 			omittedProtected++
 			continue
 		}
@@ -1166,7 +1183,9 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 			"is_dir": entry.IsDir(),
 		}
 		if !entry.IsDir() {
+			phase = timing.start("entry_info", index)
 			info, statErr := entry.Info()
+			phase.end(statErr)
 			if statErr == nil {
 				item["size"] = info.Size()
 			}
@@ -1185,9 +1204,12 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 	}
 	resultEntries, hasMore := pageWindow(visibleEntries, args.Offset, defaultMaxEntries)
 
+	phase = timing.start("result_display_path", -1)
+	displayPath := t.env.NormalizeDisplayPathExec(ctx, resolved)
+	phase.end(nil)
 	result := map[string]any{
 		"action":              "list",
-		"path":                t.env.NormalizeDisplayPathExec(ctx, resolved),
+		"path":                displayPath,
 		"workspace_revision":  revision,
 		"total":               len(entries),
 		"visible_total":       len(visibleEntries),

@@ -57,6 +57,13 @@ session in the workspace. `thread/fork` takes `thread_id` and creates a separate
 conversation. `thread/start` with `ephemeral: true` creates an in-memory session
 that cannot be resumed after the server exits.
 
+A successful `turn/interrupt` response acknowledges cancellation, not completed
+cleanup. Thread snapshots expose `interrupting: true` while the accepted stop
+still owns execution; `interrupting_turn_id` identifies its target even in
+summary-only snapshots. Preserve that state across navigation and reconnects;
+wait for the target turn's terminal notification or settled snapshot before
+showing it as stopped. Reopening a conversation must not resend cancellation.
+
 Thread snapshots carry an optional `title_revision`, a monotonically increasing
 version saved with each title change. Treat an omitted revision as zero. When
 merging lists, resumes, or `thread/updated` notifications, preserve the title from

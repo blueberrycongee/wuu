@@ -1376,7 +1376,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 				fbToolCalls[i].ProviderItemProvider = req.Provider
 			}
 		}
-		enrichToolCallsDisplay(s.tools, fbToolCalls)
+		enrichToolCallsDisplay(ctx, s.tools, fbToolCalls)
 		// Emit the fallback content through the streaming callback so
 		// live clients can render it.
 		if s.onEvent != nil && strings.TrimSpace(resp.Content) != "" {
@@ -1721,7 +1721,7 @@ func (s *streamStep) runReliableStream(
 						event.ToolCall.ProviderItemModel = req.Model
 					}
 					idx := len(pendingTools)
-					toolCall := enrichToolCallDisplay(s.tools, providers.ToolCall{
+					toolCall := enrichToolCallDisplay(ctx, s.tools, providers.ToolCall{
 						ID:                   event.ToolCall.ID,
 						ProviderItemID:       event.ToolCall.ProviderItemID,
 						ProviderItemProvider: event.ToolCall.ProviderItemProvider,
@@ -1745,7 +1745,7 @@ func (s *streamStep) runReliableStream(
 						event.ToolCall.ProviderItemProvider = req.Provider
 						event.ToolCall.ProviderItemModel = req.Model
 					}
-					toolCall := enrichToolCallDisplay(s.tools, *event.ToolCall)
+					toolCall := enrichToolCallDisplay(ctx, s.tools, *event.ToolCall)
 					for _, tc := range pendingTools {
 						if tc.ID == toolCall.ID {
 							if strings.TrimSpace(toolCall.ProviderItemID) != "" {
@@ -1842,22 +1842,18 @@ func (s *streamStep) runReliableStream(
 	}
 }
 
-func enrichToolCallsDisplay(executor ToolExecutor, calls []providers.ToolCall) {
+func enrichToolCallsDisplay(ctx context.Context, executor ToolExecutor, calls []providers.ToolCall) {
 	for i := range calls {
-		calls[i] = enrichToolCallDisplay(executor, calls[i])
+		calls[i] = enrichToolCallDisplay(ctx, executor, calls[i])
 	}
 }
 
-func enrichToolCallDisplay(executor ToolExecutor, call providers.ToolCall) providers.ToolCall {
+func enrichToolCallDisplay(ctx context.Context, executor ToolExecutor, call providers.ToolCall) providers.ToolCall {
 	if call.Display != nil {
 		return call
 	}
-	displayProvider, ok := executor.(ToolDisplayProvider)
-	if !ok {
-		return call
-	}
-	display, ok := displayProvider.ToolDisplay(call)
-	if !ok || (strings.TrimSpace(display.Text) == "" && strings.TrimSpace(display.Label) == "") {
+	display, ok, err := ResolveToolDisplay(ctx, executor, call)
+	if err != nil || !ok || (strings.TrimSpace(display.Text) == "" && strings.TrimSpace(display.Label) == "") {
 		return call
 	}
 	call.Display = display.Clone()

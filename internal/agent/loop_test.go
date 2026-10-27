@@ -348,7 +348,10 @@ func TestPartitionToolCallsUsesCallArguments(t *testing.T) {
 		{ID: "safe_2", Name: "run_shell", Arguments: `{"kind":"safe"}`},
 	}
 
-	batches := partitionToolCalls(argumentAwareMetadataTools{}, calls)
+	batches := partitionToolCalls(calls, func(call providers.ToolCall) bool {
+		metadata, found := (argumentAwareMetadataTools{}).ToolMetadata(call)
+		return found && metadata.ConcurrencySafe
+	})
 	if len(batches) != 3 {
 		t.Fatalf("expected 3 batches, got %+v", batches)
 	}

@@ -63,6 +63,10 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	if th.running {
 		status = ThreadStatusInProgress
 	}
+	var interruptingTurnID string
+	if th.interrupting && th.running {
+		interruptingTurnID = th.currentTurn
+	}
 	var runningProvider, runningModel string
 	if th.runningModelRevision != 0 || th.running && th.stepModelSelection {
 		runningProvider, runningModel = th.runningProviderName, th.runningModel
@@ -94,6 +98,8 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		WorkspaceID:          th.WorkspaceID,
 		WorkspaceKind:        th.WorkspaceKind,
 		Status:               status,
+		Interrupting:         th.interrupting && th.running,
+		InterruptingTurnID:   interruptingTurnID,
 		TreeInterrupted:      th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.

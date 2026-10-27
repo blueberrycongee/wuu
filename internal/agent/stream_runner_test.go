@@ -840,7 +840,7 @@ func TestStreamRunner_EnrichesToolCallDisplay(t *testing.T) {
 func TestStreamRunner_EnrichesLabelOnlyToolDisplay(t *testing.T) {
 	want := &providers.ToolCallDisplay{Label: "Working notes", LabelTranslations: map[string]string{"zh-CN": "工作笔记"}}
 	tools := &displayLoopTools{display: want}
-	got := enrichToolCallDisplay(tools, providers.ToolCall{Name: "read_file"})
+	got := enrichToolCallDisplay(context.Background(), tools, providers.ToolCall{Name: "read_file"})
 	if !reflect.DeepEqual(got.Display, want) {
 		t.Fatalf("expected label-only display metadata, got %+v", got.Display)
 	}

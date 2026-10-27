@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -9,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
 
 type runtimeTestTools struct {
@@ -419,12 +422,18 @@ func TestTurnToolRuntime_DoesNotStreamStartAcrossWriteBarrier(t *testing.T) {
 func TestTurnToolRuntime_StreamingErrorDoesNotExecuteAgain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	documents := agentTestDocuments(t, t.TempDir())
+	ledger, err := toolledger.New(documents, "canceled-stream")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tools := &cancelAwareRuntimeTools{
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
 	}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools, Ledger: ledger, OperationID: "canceled-stream-turn"})
+	defer runtime.Close()
 	runtime.ObserveStreamEvent(ctx, providers.StreamEvent{
 		Type:     providers.EventToolUseStart,
 		ToolCall: &providers.ToolCall{ID: "orphan", Name: "read_file"},
@@ -458,6 +467,30 @@ func TestTurnToolRuntime_StreamingErrorDoesNotExecuteAgain(t *testing.T) {
 	default:
 		t.Fatal("expected streaming execution to observe cancellation")
 	}
+	runtime.Close()
+	pending, err := ledger.PendingProjection(ctx)
+	if err != nil || len(pending) != 1 || pending[0].State != toolledger.InvocationFailed {
+		t.Fatalf("settled cancellation receipt: %+v %v", pending, err)
+	}
+	assertSettledBatch := func(phase string) {
+		t.Helper()
+		view, err := documents.Read(ctx, persistence.Query{Namespace: toolstate.Batches, Keys: []string{pending[0].BatchID}})
+		if err != nil || len(view.Documents) != 1 {
+			t.Fatalf("%s: read settled batch: %+v %v", phase, view, err)
+		}
+		var batch toolstate.Batch
+		if err := json.Unmarshal(view.Documents[0].Value, &batch); err != nil {
+			t.Fatal(err)
+		}
+		if batch.Status != string(toolledger.BatchSettled) {
+			t.Errorf("%s: joined cancellation batch = %s, want settled", phase, batch.Status)
+		}
+	}
+	assertSettledBatch("before recovery")
+	if err := ledger.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSettledBatch("after recovery")
 }
 
 func TestTurnToolRuntime_CancelsStreamingRunsMissingFromFinalCalls(t *testing.T) {
