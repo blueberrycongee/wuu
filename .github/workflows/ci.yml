@@ -1342,6 +1342,7 @@ jobs:
           WUU_SWITCH_ROUNDS: "1"
           WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
         run: |
+          node --test desktop/scripts/session-switch-native-page.test.cjs
           for rig in wide:1 wide:2 narrow:1; do
             export WUU_SWITCH_VARIANT="${rig%:*}"
             scale="${rig#*:}"

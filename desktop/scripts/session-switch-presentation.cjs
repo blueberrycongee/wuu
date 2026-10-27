@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { waitForNativeBlankPage } = require('./session-switch-native-page.cjs');
 module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
   const viewport = await evaluate(win, () => ({ width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
   const narrow = process.env.WUU_SWITCH_VARIANT === 'narrow';
@@ -316,10 +317,10 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     const existingContents = new Set(webContents.getAllWebContents().map(contents => contents.id));
     await click('.sidebar-ribbon-add');
     await waitFor(win, () => !!document.querySelector('.web-workspace-stage:not([hidden])'));
-    const pages = webContents.getAllWebContents().filter(contents => !existingContents.has(contents.id)
-      && contents.getURL() === 'about:blank');
-    assert.equal(pages.length, 1, 'Opening a browser tab must create its native blank page');
-    const page = pages[0];
+    const nativePageWaitStarted = performance.now();
+    const page = await waitForNativeBlankPage(win, existingContents);
+    console.log('PRESENTATION_NATIVE_PAGE_READY', JSON.stringify({ motion, ownerId: win.id, contentsId: page.id,
+      url: page.getURL(), loading: page.isLoadingMainFrame(), waitedMs: performance.now() - nativePageWaitStarted }));
     const preferences = page.getLastWebPreferences();
     assert.equal(preferences.contextIsolation, true);
     assert.equal(preferences.nodeIntegration, false);
