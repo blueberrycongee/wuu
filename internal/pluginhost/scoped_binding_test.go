@@ -94,6 +94,8 @@ func TestConsumerScopedBindingValidation(t *testing.T) {
 				base.provided[0].Methods[0].InputSchema = "incompatible.query.input.v1"
 			case "cycle":
 				base.required = required
+			case "stopped":
+				base.state = StateStopped
 			}
 			registry, err := NewServiceRegistryWithBindings(bindings)
 			if err != nil {
@@ -226,3 +228,64 @@ func TestConsumerScopedCancellationRetainsDelegates(t *testing.T) {
 		t.Fatal("adapter cleanup did not precede delegate disposal")
 	}
 }
+
+// Lifecycle selection follows only declarations of the decorated service.
+// Unrelated dependencies, revoked targets and invalid cycles cannot activate
+// a provider's autonomous policy, even when that provider remains registered.
+func TestConsumerScopedProviderChain(t *testing.T) {
+	for _, scenario := range []string{"direct", "chain", "unrelated", "undeclared-root", "undeclared-delegate", "renderer-only", "missing", "revoked", "retiring", "stopped", "cycle"} {
+		t.Run(scenario, func(t *testing.T) {
+			required := []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}
+			reader := &fakeServiceProcess{id: "reader", state: StateActive, required: required}
+			wrapper := &fakeServiceProcess{id: "wrapper", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}, required: required}
+			base := &fakeServiceProcess{id: "base", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+			bindings := []composition.Binding{{Service: "search.provider", Major: 1, Provider: wrapper.id}, {Consumer: wrapper.id, Service: "search.provider", Major: 1, Provider: base.id}}
+			switch scenario {
+			case "direct":
+				bindings = bindings[:1]
+				bindings[0].Provider = base.id
+			case "unrelated":
+				wrapper.required = []ServiceRequirement{{Name: "unrelated.service", MajorVersion: 1, Required: true}}
+				unrelated := searchService("1.0.0")
+				unrelated.Name = "unrelated.service"
+				base.provided = append(base.provided, unrelated)
+				bindings = bindings[:1]
+			case "undeclared-root":
+				reader.required = nil
+			case "undeclared-delegate":
+				wrapper.required = nil
+			case "missing":
+				bindings[1].Provider = "disabled.base"
+			case "cycle":
+				base.required = required
+			case "stopped":
+				base.state = StateStopped
+			}
+			registry, err := NewServiceRegistryWithBindings(bindings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wrapperClient Client = wrapper
+			if scenario == "renderer-only" {
+				wrapperClient = &rendererOnlyChainClient{wrapper}
+			}
+			registry.RegisterClients(reader, wrapperClient, base)
+			if scenario == "revoked" {
+				registry.RevokePlugin(context.Background(), base.id)
+			}
+			if scenario == "retiring" {
+				registry.stopProviderAdmission(base.id)
+			}
+			want := scenario == "direct" || scenario == "chain"
+			if got := registry.ProviderInChainFor(reader.id, "search.provider", 1, base.id); got != want {
+				t.Fatalf("provider in chain = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// A package may expose a runtime service while only its renderer consumes a
+// service. That UI dependency is not a backend delegation edge.
+type rendererOnlyChainClient struct{ *fakeServiceProcess }
+
+func (*rendererOnlyChainClient) RuntimeRequiredServices() []ServiceRequirement { return nil }

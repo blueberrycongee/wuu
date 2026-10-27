@@ -213,12 +213,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
+- Keep experimental project scheduling active through explicitly selected coordination decorators, while preserving stopped-generation completion and rejecting unreachable native fallback.
 - Expose the running Wuu CLI to agent authoring commands without replacing the user's `PATH`, preventing older installed CLIs from selecting a mismatched SDK. Remote Wuu workers identify their own CLI; embedded library hosts omit unavailable authoring hints.
 
 - Wait for current and replaced remote app-server connections to finish cleanup before the host shuts down, preventing background writes after runtime resources are released.
 
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
+
+- Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
 
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 

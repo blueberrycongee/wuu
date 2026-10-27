@@ -83,6 +83,16 @@ caller, transfer a caller's tool authority, or make provider-owned resource
 handles interchangeable. Such methods still need their contract's explicit
 ownership/delegation mechanism.
 
+In a `project_agent` development build, the [project decorator](../../../examples/plugins/project-decorator.ts)
+changes only instructions and enables `concurrentServices` because managed-session
+creation can reenter coordination before returning. Select it for `project.coordination@1` and bind its
+same-service dependency to `wuu.project-coordination` (or another delegate).
+The native coordinator retains its own scheduler when it is in that selected
+coordination chain, including through multiple decorators. Unrelated service
+dependencies do not start coordination scheduling. Removing or disabling a
+selected decorator does not activate the native coordinator as a fallback;
+accepted turns retain their original graph while autonomous dispatch stops.
+
 `state.documents@1` has one logical dataset and authority boundary per
 composition. Its scoped routes may connect the selected provider's adapter chain;
 an ordinary consumer cannot select a base around that authority. Use an isolated
@@ -91,7 +101,8 @@ provider replacement and verified state-migration requirements are unchanged.
 
 Run `node scripts/provider-delegation-e2e.mjs` after installing repository
 dependencies. It compiles the adapter against a packed public SDK and exercises
-native/external chains, durable settings, rejection and cleanup paths, recording
+native/external chains, durable settings, delegated project scheduling, retained
+turn completion, rejection and cleanup paths, recording
 `report.json` and `verification.log` under `.tmp/e2e/provider-delegation/`.
 
 

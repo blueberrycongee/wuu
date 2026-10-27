@@ -66,8 +66,12 @@ func stopProjectFixture(s *Server) {
 
 func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.Writer) *Server {
 	t.Helper()
+	return newProjectProviderTestServerGraph(t, source, out, pluginhost.NewServiceRegistry())
+}
+
+func newProjectProviderTestServerGraph(t *testing.T, source *runtime.Session, out io.Writer, registry *pluginhost.ServiceRegistry, extra ...pluginhost.Client) *Server {
+	t.Helper()
 	rt := &runtime.Session{ProviderName: source.ProviderName, Model: source.Model, RootDir: source.RootDir, WorkspaceID: source.WorkspaceID, StateDir: source.StateDir, ConfigPath: source.ConfigPath, HomeDir: source.HomeDir, WuuHome: source.WuuHome, ConfigLoadMode: source.ConfigLoadMode, SessionDir: source.SessionDir, StreamRunner: source.StreamRunner, Toolkit: source.Toolkit, HookDispatcher: source.HookDispatcher, ProjectModels: source.ProjectModels}
-	registry := pluginhost.NewServiceRegistry()
 	state := persistence.NewService(persistence.SQLiteModule, filepath.Join(rt.SessionDir, "documents"), "sqlite")
 	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 		result, err := registry.Call(ctx, session.DefaultModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
@@ -100,6 +104,7 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, background, native, state, sessions, consumer, mechanism, configuration, credentials, stateConsumer,
 		model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()},
 		promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, toolservice.NewService(), &embeddedToolsConsumer{}}
+	clients = append(clients, extra...)
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
 		t.Fatalf("project fixture graph: %v", conflicts)
@@ -137,7 +142,7 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	select {
 	case <-native.lifetime.schedulerReady:
 	case <-time.After(5 * time.Second):
-		t.Fatal("scheduler did not start")
+		t.Fatalf("scheduler did not start (provider status: %+v, dependencies: %+v)", native.Status(), host.Dependencies())
 	}
 	return server
 }
