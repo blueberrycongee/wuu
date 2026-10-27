@@ -140,8 +140,11 @@ func runPluginCreate(args []string) error {
 	}
 
 	pkgPath := filepath.Join(staging, "package.json")
-	if err := os.WriteFile(pkgPath, []byte(pluginScaffoldPackageJSON(name)), 0o644); err != nil {
+	if err := os.WriteFile(pkgPath, []byte(pluginScaffoldPackageJSON(name, typeName)), 0o644); err != nil {
 		return pluginCLIError(fmt.Errorf("write package.json: %w", err))
+	}
+	if err := exportPluginTypes(filepath.Join(staging, "sdk")); err != nil {
+		return pluginCLIError(fmt.Errorf("write matching SDK: %w", err))
 	}
 
 	tsconfigPath := filepath.Join(staging, "tsconfig.json")
@@ -881,7 +884,14 @@ export function activate(api: PluginGenerationApi): void {
 	}
 }
 
-func pluginScaffoldPackageJSON(name string) string {
+func pluginScaffoldPackageJSON(name, pluginType string) string {
+	build := "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js"
+	switch pluginType {
+	case "desktop":
+		build = "tsc --noEmit && esbuild src/index.ts --bundle --platform=browser --format=esm --outfile=dist/index.js"
+	case "full":
+		build = "tsc --noEmit && esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=dist/runtime.js && esbuild src/renderer.ts --bundle --platform=browser --format=esm --outfile=dist/renderer.js"
+	}
 	data, _ := json.MarshalIndent(map[string]any{
 		"name":        name,
 		"version":     "0.1.0",
@@ -889,13 +899,15 @@ func pluginScaffoldPackageJSON(name string) string {
 		"type":        "module",
 		"description": fmt.Sprintf("A Wuu plugin: %s", name),
 		"scripts": map[string]string{
-			"build":     "tsc",
+			"build":     build,
 			"typecheck": "tsc --noEmit",
 		},
 		"devDependencies": map[string]string{
 			"typescript":      "^5.9.0",
+			"esbuild":         "^0.25.12",
 			"@types/node":     "^22.0.0",
-			"@wuu/plugin-sdk": "^0.1.0",
+			"@types/react":    "^19.2.15",
+			"@wuu/plugin-sdk": "file:./sdk",
 		},
 	}, "", "  ")
 	return string(data) + "\n"
