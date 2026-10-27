@@ -113,9 +113,11 @@ function check() {
 check();`) + " " + shellQuote(lifecyclePath)
 	var mu sync.Mutex
 	calls := map[string]int{}
+	published := map[string]string{}
 	var problems []string
 	var providerTranscript bytes.Buffer
 	toolPattern := regexp.MustCompile(`plugin_local_[a-z0-9_]+_read_[a-f0-9]{16}`)
+	publicationPattern := regexp.MustCompile(`published generation ([a-f0-9]{64}) at epoch`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var request struct {
@@ -292,7 +294,9 @@ check();`) + " " + shellQuote(lifecyclePath)
 			}
 			switch stage {
 			case "install", "update":
-				if !strings.Contains(result, "published generation") {
+				if match := publicationPattern.FindStringSubmatch(result); len(match) == 2 {
+					published[stage] = match[1]
+				} else {
 					fail("%s publication failed inside active turn: %s", stage, result)
 				}
 			}
@@ -414,6 +418,23 @@ check();`) + " " + shellQuote(lifecyclePath)
 			t.Logf("Evidence: %s", dir)
 		}
 	}()
+	// Keep committed inventory notifications even when they arrive before
+	// the publication turn completes. CLI publication is not host activation.
+	observedInventory := map[string]map[string]any{}
+	observeInventory := func(message map[string]any) {
+		if message["method"] != "plugin/inventory/changed" {
+			return
+		}
+		payload, _ := message["params"].(map[string]any)
+		records, _ := payload["extension_inventory"].([]any)
+		for _, value := range records {
+			record, _ := value.(map[string]any)
+			if record["id"] == "plugin:dev:"+singleFilePluginID(source) {
+				fingerprint, _ := record["fingerprint"].(string)
+				observedInventory[fingerprint] = record
+			}
+		}
+	}
 	wait := func(match func(map[string]any) bool) map[string]any {
 		for {
 			select {
@@ -421,11 +442,12 @@ check();`) + " " + shellQuote(lifecyclePath)
 				if !ok {
 					t.Fatal("app-server closed before expected protocol event")
 				}
+				observeInventory(message)
 				if match(message) {
 					return message
 				}
 			case <-ctx.Done():
-				t.Fatalf("waiting for protocol event: %v", ctx.Err())
+				t.Fatalf("waiting for protocol event: %v; observed plugin inventory: %v", ctx.Err(), observedInventory)
 			}
 		}
 	}
@@ -450,6 +472,35 @@ check();`) + " " + shellQuote(lifecyclePath)
 				t.Fatalf("generation never became ready for %s: %v", id, ctx.Err())
 			}
 		}
+	}
+	awaitPublication := func(stage string) {
+		mu.Lock()
+		fingerprint := published[stage]
+		mu.Unlock()
+		if fingerprint == "" {
+			t.Fatalf("%s did not return a published fingerprint", stage)
+		}
+		// CLI publication does not mean this app-server finished preparation.
+		// Wait on this server's committed inventory event, not a model retry or
+		// an unrelated CLI process that would activate a different runtime.
+		ready := func(map[string]any) bool {
+			record := observedInventory[fingerprint]
+			if record == nil {
+				return false
+			}
+			if diagnostic, _ := record["last_error"].(string); diagnostic != "" || record["runtime_state"] != "active" || record["enabled"] != true {
+				t.Fatalf("%s generation %s failed activation: %v", stage, fingerprint, record)
+			}
+			generation, _ := record["graph_generation"].(string)
+			if generation == "" {
+				t.Fatalf("%s generation %s lacks a committed graph: %v", stage, fingerprint, record)
+			}
+			return true
+		}
+		if !ready(nil) {
+			wait(ready)
+		}
+		t.Logf("PASS published stage=%s fingerprint=%s inventory=%v", stage, fingerprint, observedInventory[fingerprint])
 	}
 	request("initialize", "initialize", map[string]any{"protocol_version": "wuu-app-server/v0.1", "client": map[string]string{"name": "self-extension-acceptance"}})
 	created := request("thread", "thread/start", map[string]any{})
@@ -485,6 +536,9 @@ check();`) + " " + shellQuote(lifecyclePath)
 	}
 	for _, stage := range []string{"install", "read-v1", "update", "read-v2", "invalid", "after-invalid"} {
 		runTurn(stage)
+		if stage == "install" || stage == "update" {
+			awaitPublication(stage)
+		}
 	}
 	if useManager {
 		runTurn("disable-manager")

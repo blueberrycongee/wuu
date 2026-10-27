@@ -213,6 +213,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
+
 - Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.
 - Resolve website tab, popup, and system-permission guide resources from the desktop's ESM main bundle so browser navigation and permission guidance do not fail on missing CommonJS globals.
 - Declare MCP configuration, definition reads, and login cancellation in the resource-access contract so owner actions reach their handlers while selected policies and non-owner restrictions remain enforced.
