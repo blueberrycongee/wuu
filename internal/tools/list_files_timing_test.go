@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/executionenv"
@@ -68,6 +69,89 @@ func timingTestEvents(t *testing.T, r *listFilesTimingRecorder, output *bytes.Bu
 		events = append(events, event)
 	}
 	return events
+}
+
+type timingReadDirGatedWriter struct {
+	io.Writer
+	startEntered chan struct{}
+	startRelease chan struct{}
+	endEntered   chan struct{}
+	endRelease   chan struct{}
+}
+
+func (w timingReadDirGatedWriter) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte(`"phase":"read_dir"`)) {
+		if bytes.Contains(data, []byte(`"event":"start"`)) {
+			close(w.startEntered)
+			<-w.startRelease
+		} else if bytes.Contains(data, []byte(`"event":"end"`)) {
+			close(w.endEntered)
+			<-w.endRelease
+		}
+	}
+	return w.Writer.Write(data)
+}
+
+// The diagnostic's own sink can block. Its traced span must not be mistaken
+// for time spent inside os.ReadDir, including when that operation takes 0 us.
+func TestListFilesTimingReadDirOperationExcludesSinkWrites(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(kit.RootDir(), "visible.txt"), "data")
+	synctest.Test(t, func(t *testing.T) {
+		ctx, recorder, output := timingTestContext(t, 512)
+		writer := timingReadDirGatedWriter{
+			Writer: output, startEntered: make(chan struct{}), startRelease: make(chan struct{}),
+			endEntered: make(chan struct{}), endRelease: make(chan struct{}),
+		}
+		recorder.writer = writer
+		done := make(chan error, 1)
+		go func() {
+			result, err := kit.Execute(ctx, providers.ToolCall{Name: "list_files", Arguments: `{}`})
+			if err == nil && !strings.Contains(result, "visible.txt") {
+				err = errors.New("listing lost the visible file")
+			}
+			done <- err
+		}()
+		<-writer.startEntered
+		time.Sleep(time.Second) // Advances only the synctest clock.
+		close(writer.startRelease)
+		<-writer.endEntered
+		time.Sleep(2 * time.Second)
+		select {
+		case <-done:
+			t.Fatal("listing returned before its diagnostic finished")
+		default:
+		}
+		close(writer.endRelease)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
+			var event struct {
+				Event               string `json:"event"`
+				Phase               string `json:"phase"`
+				DurationUS          int64  `json:"duration_us"`
+				OperationDurationUS *int64 `json:"operation_duration_us"`
+			}
+			if err := json.Unmarshal(line, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.Event != "end" || event.Phase != "read_dir" {
+				continue
+			}
+			if event.DurationUS != time.Second.Microseconds() {
+				t.Fatalf("traced span lost the held start write: %+v", event)
+			}
+			if event.OperationDurationUS == nil || *event.OperationDurationUS != 0 {
+				t.Fatalf("native operation timing includes recorder writes or is absent: %+v", event)
+			}
+			return
+		}
+		t.Fatal("read_dir end event missing")
+	})
 }
 
 func TestListFilesTimingRedactedPhasesAndErrors(t *testing.T) {

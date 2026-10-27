@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -1150,8 +1151,16 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (output st
 		return "", fmt.Errorf("path is not a directory: %s. Use read_file to inspect files", args.Path)
 	}
 	phase = timing.start("read_dir", -1)
+	var operationStarted time.Time
+	if phase.trace != nil {
+		operationStarted = time.Now()
+	}
 	entries, err := os.ReadDir(resolved)
-	phase.end(err)
+	var operationDuration time.Duration
+	if phase.trace != nil {
+		operationDuration = time.Since(operationStarted)
+	}
+	phase.endOperation(err, operationDuration)
 	if err != nil {
 		return "", fmt.Errorf("list directory: %w", err)
 	}

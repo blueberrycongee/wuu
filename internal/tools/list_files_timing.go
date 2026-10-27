@@ -71,6 +71,9 @@ type listFilesTimingEvent struct {
 	Canceled     bool      `json:"canceled,omitempty"`
 	ContextState string    `json:"context_state,omitempty"`
 	Dropped      uint64    `json:"dropped,omitempty"`
+
+	// Unlike the traced span, this excludes recorder writes and lock waits.
+	OperationDurationUS *int64 `json:"operation_duration_us,omitempty"`
 }
 
 var defaultListFilesTiming struct {
@@ -123,7 +126,7 @@ func beginListFilesTiming(ctx context.Context, toolName, callID string) (context
 		trace.callHash = hex.EncodeToString(sum[:8])
 	}
 	r.reserved += 2
-	trace.writeLocked("start", "call", -1, time.Time{}, nil, false)
+	trace.writeLocked("start", "call", -1, time.Time{}, nil, false, nil)
 	r.mu.Unlock()
 	// This observes cancellation only. Filesystem work stays on its original
 	// goroutine and must return before the tool returns. finish drains this
@@ -159,7 +162,7 @@ func (t *listFilesTiming) start(phase string, index int) listFilesTimingSpan {
 	}
 	r.reserved++
 	started := time.Now()
-	t.writeLocked("start", phase, index, time.Time{}, nil, false)
+	t.writeLocked("start", phase, index, time.Time{}, nil, false, nil)
 	return listFilesTimingSpan{trace: t, phase: phase, index: index, started: started}
 }
 
@@ -168,6 +171,18 @@ func (s listFilesTimingSpan) end(err error) {
 }
 
 func (s listFilesTimingSpan) endResult(err error, isError bool) {
+	s.endResultWithOperation(err, isError, nil)
+}
+
+func (s listFilesTimingSpan) endOperation(err error, duration time.Duration) {
+	if s.trace == nil {
+		return
+	}
+	operationUS := duration.Microseconds()
+	s.endResultWithOperation(err, false, &operationUS)
+}
+
+func (s listFilesTimingSpan) endResultWithOperation(err error, isError bool, operationUS *int64) {
 	if s.trace == nil {
 		return
 	}
@@ -175,7 +190,7 @@ func (s listFilesTimingSpan) endResult(err error, isError bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reserved--
-	s.trace.writeLocked("end", s.phase, s.index, s.started, err, isError)
+	s.trace.writeLocked("end", s.phase, s.index, s.started, err, isError, operationUS)
 }
 
 func (t *listFilesTiming) cancelLocked() {
@@ -184,7 +199,7 @@ func (t *listFilesTiming) cancelLocked() {
 	}
 	t.canceled = true
 	t.recorder.reserved--
-	t.writeLocked("cancel", "call", -1, time.Time{}, t.ctx.Err(), false)
+	t.writeLocked("cancel", "call", -1, time.Time{}, t.ctx.Err(), false, nil)
 }
 
 func (t *listFilesTiming) finish(ctx context.Context, err error) {
@@ -208,14 +223,14 @@ func (t *listFilesTiming) finishResult(ctx context.Context, err error, isError b
 		r.reserved--
 	}
 	r.reserved--
-	t.writeLocked("end", "call", -1, t.started, err, isError)
+	t.writeLocked("end", "call", -1, t.started, err, isError, nil)
 	t.finished = true
 }
 
 // The sink is bounded by event count with fixed-size metadata fields. A write
 // failure disables further output, never changes a tool result, and is never
 // sent to stderr (the desktop may interpret stderr as a user-facing error).
-func (t *listFilesTiming) writeLocked(event, phase string, index int, started time.Time, err error, isError bool) {
+func (t *listFilesTiming) writeLocked(event, phase string, index int, started time.Time, err error, isError bool, operationUS *int64) {
 	r := t.recorder
 	if r.failed {
 		return
@@ -225,6 +240,7 @@ func (t *listFilesTiming) writeLocked(event, phase string, index int, started ti
 	record := listFilesTimingEvent{
 		PID: r.pid, Trace: t.id, CallHash: t.callHash, At: at.UTC(), ElapsedUS: at.Sub(t.started).Microseconds(),
 		Event: event, Phase: phase, Index: index, Canceled: contextErr != nil,
+		OperationDurationUS: operationUS,
 	}
 	if !started.IsZero() {
 		record.DurationUS = at.Sub(started).Microseconds()
