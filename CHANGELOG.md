@@ -213,6 +213,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Wait for current and replaced remote app-server connections to finish cleanup before the host shuts down, preventing background writes after runtime resources are released.
+
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
