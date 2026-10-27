@@ -40,7 +40,7 @@ func (*managerTestJournal) PrepareRecoveryAttempt(context.Context, providers.Inf
 func (*managerTestJournal) CompleteOperation(providers.InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (j *managerTestJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
+func (j *managerTestJournal) CompleteWorkflow(ctx context.Context, record providers.InferenceWorkflowTerminalRecord) error {
 	j.mu.Lock()
 	j.workflowCompletions = append(j.workflowCompletions, record)
 	j.mu.Unlock()

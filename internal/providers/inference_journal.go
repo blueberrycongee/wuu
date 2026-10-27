@@ -31,7 +31,7 @@ type InferenceJournal interface {
 	CompleteAttempt(InferenceAttemptTerminalRecord) error
 	PrepareRecoveryAttempt(context.Context, InferenceRecoveryAttemptJournalRecord) error
 	CompleteOperation(InferenceOperationTerminalRecord) error
-	CompleteWorkflow(InferenceWorkflowTerminalRecord) error
+	CompleteWorkflow(context.Context, InferenceWorkflowTerminalRecord) error
 }
 
 // InferenceProgressJournal is an optional capability for journals that can

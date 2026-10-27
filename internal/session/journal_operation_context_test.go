@@ -60,12 +60,22 @@ func TestJournalOperationContextBinding(t *testing.T) {
 							return journal.PrepareRecoveryAttempt(context.Background(), providers.InferenceRecoveryAttemptJournalRecord{})
 						},
 						func() error { return journal.CompleteOperation(providers.InferenceOperationTerminalRecord{}) },
-						func() error { return journal.CompleteWorkflow(providers.InferenceWorkflowTerminalRecord{}) },
+						func() error {
+							return journal.CompleteWorkflow(context.Background(), providers.InferenceWorkflowTerminalRecord{})
+						},
 					}
 					cancelled, stop := context.WithCancel(context.Background())
 					stop()
 					if err := journal.UpsertSubmission(cancelled, providers.InferenceSubmissionJournalRecord{}); !errors.Is(err, context.Canceled) {
 						t.Errorf("explicit cancellation lost: %v", err)
+					}
+					if err := journal.CompleteWorkflow(cancelled, providers.InferenceWorkflowTerminalRecord{}); !errors.Is(err, context.Canceled) {
+						t.Errorf("workflow explicit cancellation lost: %v", err)
+					}
+					deadline, stopDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+					defer stopDeadline()
+					if err := journal.CompleteWorkflow(deadline, providers.InferenceWorkflowTerminalRecord{}); !errors.Is(err, context.DeadlineExceeded) {
+						t.Errorf("workflow cleanup deadline lost: %v", err)
 					}
 					for _, call := range calls {
 						if err := call(); err != nil {
@@ -114,12 +124,18 @@ func TestJournalSettlementUsesLiveReceiptAdmission(t *testing.T) {
 			if err := journal.UpsertSubmission(completion, providers.InferenceSubmissionJournalRecord{}); err != nil {
 				t.Fatalf("settlement inherited the ended logical ticket: %v", err)
 			}
+			if err := journal.CompleteWorkflow(completion, providers.InferenceWorkflowTerminalRecord{}); err != nil {
+				t.Fatalf("workflow inherited the ended logical ticket: %v", err)
+			}
 			settlement.Seal()
+			if err := journal.CompleteWorkflow(completion, providers.InferenceWorkflowTerminalRecord{}); !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
+				t.Fatalf("sealed settlement admitted a workflow: %v", err)
+			}
 			if err := journal.UpsertSubmission(completion, providers.InferenceSubmissionJournalRecord{}); !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
 				t.Fatalf("sealed settlement admitted a write: %v", err)
 			}
-			if writes != 1 {
-				t.Fatalf("writes = %d, want one settlement", writes)
+			if writes != 2 {
+				t.Fatalf("writes = %d, want submission and workflow settlement", writes)
 			}
 		})
 	}
