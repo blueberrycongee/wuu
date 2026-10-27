@@ -12,7 +12,9 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -41,6 +43,9 @@ type Host struct {
 // Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// PersonalConnectors supplies trusted test/embedding dependencies, never RPC credentials.
+	PersonalConnectors                    personalconnectors.Options
+	OpenPersonalConnectorAuthorizationURL func(context.Context, string) error
 	// PersonalCalendar is trusted local-host composition; zero stays unavailable.
 	// The SDK replaces StateDir with its resolved Personal state root.
 	PersonalCalendar                     personalcalendar.DesktopOptions
@@ -216,9 +221,34 @@ func New(opts Options) (*Runtime, error) {
 	result := &Runtime{core: core}
 	if binding.IsUser() {
 		personalOptions := personalhost.Options{}
+		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode {
+			connectorOptions := opts.PersonalConnectors
+			connectorHome, pathErr := statepath.Home(homeDir)
+			if pathErr != nil {
+				_, _ = core.Cleanup()
+				return nil, pathErr
+			}
+			connectorOptions.StateDir = filepath.Join(binding.State(connectorHome), "connectors")
+			if connectorOptions.Store == nil {
+				connectorOptions.Store, err = credentialstore.NewDesktopStore()
+			}
+			if err != nil {
+				personalOptions.ConnectorsUnavailableCode = "secure_store_unavailable"
+				err = nil
+			} else {
+				personalOptions.Connectors = personalconnectors.New(connectorOptions)
+				personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
+			}
+		} else {
+			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
+		}
+
 		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode && opts.PersonalCalendar.ClientID != "" {
 			stateHome, pathErr := statepath.Home(homeDir)
 			if pathErr != nil {
+				if personalOptions.Connectors != nil {
+					_ = personalOptions.Connectors.Close()
+				}
 				_, _ = core.Cleanup()
 				return nil, pathErr
 			}
@@ -240,6 +270,9 @@ func New(opts Options) (*Runtime, error) {
 		if err != nil {
 			if personalOptions.Calendar != nil {
 				_ = personalOptions.Calendar.Close()
+			}
+			if personalOptions.Connectors != nil {
+				_ = personalOptions.Connectors.Close()
 			}
 			_, _ = core.Cleanup()
 			return nil, err

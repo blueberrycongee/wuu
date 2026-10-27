@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
@@ -46,7 +47,7 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		return nil, err
 	}
 	verifiedSession := ""
-	if strings.HasPrefix(call.Operation, "calendar.read.") || call.Operation == "review.execution.status" {
+	if strings.HasPrefix(call.Operation, "calendar.read.") || call.Operation == "review.execution.status" || call.Operation == "connectors.call" || call.Operation == "connectors.poll" || strings.HasPrefix(call.Operation, "connectors.read.") {
 		metadata, found, err := session.Find(s.sessionDir, call.SessionID)
 		if err != nil {
 			return nil, err
@@ -54,7 +55,7 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		if !found || !s.binding.Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) || metadata.Visibility != "plugin" || !strings.HasPrefix(metadata.Owner, "plugin:") {
 			return nil, errors.New("Personal read requires a host-resolved plugin session")
 		}
-		if call.Operation == "review.execution.status" && metadata.Owner != "plugin:"+s.pluginID {
+		if (call.Operation == "review.execution.status" || strings.HasPrefix(call.Operation, "connectors.")) && metadata.Owner != "plugin:"+s.pluginID {
 			return nil, errors.New("review status requires the owning plugin session")
 		}
 		verifiedSession = metadata.ID
@@ -73,6 +74,10 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		var failure *personalcalendar.Failure
 		if errors.As(err, &failure) {
 			return json.Marshal(map[string]any{"ok": false, "error": failure})
+		}
+		var connectorFailure *personalconnectors.Failure
+		if errors.As(err, &connectorFailure) {
+			return json.Marshal(map[string]any{"ok": false, "error": connectorFailure})
 		}
 		return nil, err
 	}

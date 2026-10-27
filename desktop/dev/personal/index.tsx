@@ -39,6 +39,11 @@ if (["blocked","stale","denied","revoked","uncertain","succeeded"].includes(revi
   if (reviewScenario === "succeeded") reviewSnapshot.requests[0].receipt_json='{"receipt_id":"synthetic-file-receipt","path":"notes/weekly-reading.md","verified":true}';
 }
 
+// Synthetic connector owner boundary; does not touch accounts or provider APIs.
+const connectorScenario = new URLSearchParams(location.search).get("connectors") || "empty";
+const connectorActions: Array<Record<string,unknown>> = connectorScenario === "empty" ? [] : [{state:connectorScenario === "uncertain" ? "uncertain" : "awaiting_confirmation",action_id:"connector-synthetic",digest:"b".repeat(64),connection_id:"synthetic-gmail",account_id:"demo@example.invalid",operation:"gmail.send",summary:"发送一封合成示例邮件",arguments_json:JSON.stringify({to:["reader@example.invalid"],subject:"合成报告",body:"这是一份供界面验收的合成内容，不会发送真实邮件。"})}];
+const connectorCalls:Array<{method:string;input:unknown}>=[];
+Object.assign(window,{__connectorFixture:{actions:connectorActions,calls:connectorCalls}});
 const sendRecoveryFixture = { accepted: 0, refreshFailures: 0, failNextRefresh: false, requests: [] as unknown[] };
 Object.assign(window, { __sendRecoveryFixture: sendRecoveryFixture });
 const agents = [
@@ -285,6 +290,13 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "memory.correct":{const memory=memories.find(m=>m.id===data.id)!;memory.content=data.content;memory.revision++;return {record:memory};}
     case "memory.forget":{const memory=memories.find(m=>m.id===data.id)!;memory.status="forgotten";return {record:memory};}
     case "agents.pause":case "agents.resume":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;agent.status=method.endsWith("pause")?"paused":"active";agent.revision++;return {agent};}
+    case "connectors.list":return {ok:true,value:{state:"available",connections:connectorScenario === "empty" ? [] : [{connection_id:"synthetic-gmail",provider:"gmail",account_id:"demo@example.invalid",domain:"personal",state:"connected",revision:"one",scopes:["gmail.readonly","gmail.send"],resources:["me"]}]}};
+    case "connectors.actions":return {ok:true,value:{actions:structuredClone(connectorActions)}};
+    case "connectors.decide": {
+      connectorCalls.push({method,input});const action=connectorActions.find(a=>a.action_id===data.action_id);if(!action||action.digest!==data.digest||action.state!=="awaiting_confirmation")throw Error("Stale synthetic decision");
+      action.state=data.approve?"completed":"rejected";if(connectorScenario==="lost-ack")throw Error("Synthetic lost response");return {ok:true,value:structuredClone(action)};
+    }
+    case "connectors.disconnect":connectorCalls.push({method,input});return {ok:true,value:{ok:true}};
     case "connections.status":return {ok:true,value:calendarFixture?{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",state:"connected",selected_calendars:["fixture-calendar"],authorization_diagnostics:[{attempt_id:"previous-synthetic-attempt",error_code:"credential_cleanup_failed"}]}:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",state:"unavailable",selected_calendars:[],error_code:"oauth_client_not_configured"}};
     case "connections.calendars":return {ok:true,value:[{id:"fixture-calendar",summary:"合成日历",timeZone:"Asia/Shanghai"}]};
     case "connections.agenda": {

@@ -30,6 +30,9 @@ type Calendar interface {
 	Close() error
 }
 type Options struct {
+	Connectors                    Connectors
+	ConnectorsUnavailableCode     string
+	OpenConnectorAuthorizationURL func(context.Context, string) error
 	// Review is the host-owned durable action coordinator, never a plugin callback.
 	Review func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Leave nil until an approved OAuth client and secure store are configured.
@@ -60,6 +63,9 @@ func (h *Host) Close() error {
 	if h.options.Calendar != nil {
 		h.closeErr = h.options.Calendar.Close()
 	}
+	if h.options.Connectors != nil {
+		h.closeErr = errors.Join(h.closeErr, h.options.Connectors.Close())
+	}
 	return h.closeErr
 }
 
@@ -67,6 +73,9 @@ func (h *Host) Close() error {
 // Control operations derive their actor from the separate owner admission.
 func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, verifiedSession string) (json.RawMessage, error) {
 
+	if strings.HasPrefix(operation, "connectors.") {
+		return h.callConnectors(ctx, operation, raw, verifiedSession)
+	}
 	if strings.HasPrefix(operation, "review.") {
 		h.mu.Lock()
 		closed, handler := h.closed, h.options.Review

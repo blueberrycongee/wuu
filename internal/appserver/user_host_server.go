@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -112,6 +113,9 @@ func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHos
 			return nil, err
 		}
 		h.server.personalActions = h.actions
+		if broker, ok := personalOptions.Connectors.(*personalconnectors.Broker); ok {
+			broker.SetAuthorization(h.actions.connectorAuthority)
+		}
 		personalOptions.Review = h.actions.Call
 		if rt.Toolkit != nil {
 			rt.Toolkit.SetFileActionGate(h.actions.gate)

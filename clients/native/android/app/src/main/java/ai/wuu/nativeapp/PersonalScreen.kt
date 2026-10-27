@@ -225,6 +225,14 @@ class PersonalModel(initialClient: PersonalClient? = null) {
         catch (e: Exception) { if (generation == stamp) error = e.message }
         finally { if (generation == stamp) busy = false }
     }
+    fun stageSharedMaterial(prompt: String, files: List<InputAttachment>) {
+        check(canSend && !hasPending && agent?.optString("kind") == "main") { "请先连接 Personal 主聊天，再从原应用重新分享。" }
+        check(text.isBlank() && attachments.isEmpty()) { "主聊天有未发送内容，请先处理后重新分享。" }
+        InputAttachment.validate(files, prompt)
+        text = prompt; attachments = files; composerID++
+        notice = "已接收分享，请检查内容后按发送。尚未发送给助理。"
+    }
+
     suspend fun send() {
         val adapter = client ?: return
         if (!canSend) return

@@ -235,10 +235,12 @@ public actor PersonalClient {
         return try await request("operations.confirm", input: ["operation_id": preview["operation_id"], "expected_revision": preview["revision"], "preview_digest": preview["preview_digest"]], calendar: true)
     }
 
-    public func prepareMessage(_ prompt: String, attachments: [InputAttachment] = []) throws -> PersonalMessageDraft {
+    public func prepareMessage(_ prompt: String, attachments: [InputAttachment] = [], requestID: String? = nil) throws -> PersonalMessageDraft {
         guard let agentID = selectedAgentID else { throw PersonalClientError.noAgentSelected }
         try PersonalStoredDraft.validate(prompt, attachments)
-        return PersonalMessageDraft(agentID: agentID, requestID: UUID().uuidString, prompt: prompt, attachments: attachments, owner: owner)
+        let identifier = requestID ?? UUID().uuidString
+        guard identifier.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw PersonalClientError.invalidResponse }
+        return PersonalMessageDraft(agentID: agentID, requestID: identifier, prompt: prompt, attachments: attachments, owner: owner)
     }
 
     public func restoreDraft(_ stored: PersonalStoredDraft) throws -> PersonalMessageDraft {

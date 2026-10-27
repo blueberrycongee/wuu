@@ -55,6 +55,20 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent); setIntent(intent); consumeNotification(intent)
     }
     private fun consumeNotification(intent: Intent) {
+        if (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            // Consume once; delivery still requires the owner pressing Send.
+            val shared = Intent(intent)
+            intent.action = null; intent.removeExtra(Intent.EXTRA_TEXT); intent.removeExtra(Intent.EXTRA_STREAM)
+            model.perform {
+                check(model.personal.canSend && !model.personal.hasPending) { "请先连接 Personal 主聊天，再从原应用重新分享。" }
+                val stamp = model.personal.contextID
+                val (prompt, files) = readSharedMaterial(this@MainActivity, shared)
+                check(model.personal.contextID == stamp) { "连接已变更，请重新分享。" }
+                model.personal.stageSharedMaterial(prompt, files)
+                model.selectArea(true)
+            }
+            return
+        }
         val url = intent.data
         if (url?.host == "personal") {
             intent.data = null

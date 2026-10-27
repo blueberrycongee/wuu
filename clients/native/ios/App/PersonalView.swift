@@ -23,6 +23,7 @@ import WuuCore
     private(set) var composerID = UUID()
     private var cache: PersonalHistoryCache?
     private var cacheIdentity: [String]?
+    private var sharedCaptureID: String?
     private var draftStore: PersonalDraftStore?
     private var restoredDraft: PersonalStoredDraft?
     private var draftRecoveryBlocked = false
@@ -40,6 +41,7 @@ import WuuCore
 
     func configureCache(directory: URL, draftDirectory: URL, identity: [String]) async {
         guard cacheIdentity != identity else { return }
+        try? PersonalShareInbox.system().disable(); sharedCaptureID = nil
         let old = cache, oldDrafts = draftStore; cacheIdentity = identity
         let next = PersonalHistoryCache(directory: directory, identity: identity); cache = next
         let drafts = PersonalDraftStore(directory: draftDirectory, identity: identity); draftStore = drafts
@@ -96,6 +98,7 @@ import WuuCore
         await client?.invalidate()
     }
     func reset(removeCache: Bool = false) async {
+        try? PersonalShareInbox.system().disable(); sharedCaptureID = nil
         let oldCache = cache, oldDrafts = draftStore; cache = nil; cacheIdentity = nil; draftStore = nil; restoredDraft = nil; draftRecoveryBlocked = false
         composerID = UUID(); attachments = []; preview = nil; loadingAttachment = false
         let old = client; client = nil; generation = UUID()
@@ -109,12 +112,13 @@ import WuuCore
         guard !hasPending || (pending?.agentID ?? restoredDraft?.agentID) == location.agentID else { error = "请先重试或放下尚未确认的消息，再切换助理。"; return }
         desiredAgent = location.agentID; desiredTask = location.taskID; messageSequence = location.messageSequence
         agent = .null; records = []; tasks = []; detail = .null; taskRecords = []
-        if !hasPending { text = ""; attachments = []; composerID = UUID() }
+        if !hasPending { text = ""; attachments = []; sharedCaptureID = nil; composerID = UUID() }
         generation = UUID(); controlBusy = false; busy = false; active = true; loadingAttachment = false; preview = nil
         if available { await reload() }
     }
     func choose(_ id: String) async {
         guard !hasPending else { error = "请先重试或放下尚未确认的消息，再切换助理。"; return }
+        sharedCaptureID = nil
         desiredAgent = id; desiredTask = nil; messageSequence = nil
         agent = .null; records = []; tasks = []; detail = .null; taskRecords = []; text = ""; attachments = []; preview = nil; composerID = UUID()
         generation = UUID(); controlBusy = false; busy = false; loadingAttachment = false; preview = nil
@@ -189,6 +193,25 @@ import WuuCore
             hasEarlier = history["has_earlier"].bool; firstSequence = Int(history["first_seq"].number ?? 1)
         } catch { if generation == stamp { self.error = error.localizedDescription } }
     }
+    func enableSystemShare() {
+        do {
+            guard canSend, agent["kind"].string == "main", let cacheIdentity else { throw NativeError.invalid("请先连接 Personal 主聊天") }
+            try PersonalShareInbox.system().enable(binding: PersonalShareInbox.binding(cacheIdentity))
+            notice = "系统分享接收已启用 10 分钟。分享后返回这里点击接收；不会自动发送。"
+        } catch { self.error = error.localizedDescription }
+    }
+    func receiveSystemShare() {
+        do {
+            guard canSend, !hasPending, agent["kind"].string == "main", let cacheIdentity else { throw NativeError.invalid("请先连接 Personal 主聊天并处理未确认消息") }
+            guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachments.isEmpty else { throw NativeError.invalid("请先处理主聊天的未发送内容") }
+            guard let item = try PersonalShareInbox.system().first(binding: PersonalShareInbox.binding(cacheIdentity)) else { notice = "此账号和宿主没有待接收的分享。"; return }
+            let prompt = try item.prompt(), files = try item.attachments()
+            try InputAttachment.validate(files, text: prompt)
+            text = prompt; attachments = files; sharedCaptureID = item.id; composerID = UUID()
+            notice = "分享已放入主聊天草稿，请检查后发送。收件记录保留到宿主确认接收。"
+        } catch { self.error = error.localizedDescription }
+    }
+
     func send() async {
         guard canSend, let client else { return }
         busy = true; let stamp = generation; error = nil
@@ -197,7 +220,7 @@ import WuuCore
             let draft: PersonalMessageDraft
             if let pending { draft = pending }
             else {
-                draft = try await client.prepareMessage(text, attachments: attachments)
+                draft = try await client.prepareMessage(text, attachments: attachments, requestID: sharedCaptureID.map { "share-ios-" + $0 })
                 guard generation == stamp else { return }
                 pending = draft
             }
@@ -208,8 +231,12 @@ import WuuCore
             guard generation == stamp else { return }
             // An actual response acknowledges only submission, never task completion.
             guard result["state"].string != nil || result["turn_id"].string != nil || result["queue_id"].string != nil else { throw PersonalClientError.invalidResponse }
+            if draft.requestID.hasPrefix("share-ios-"), let cacheIdentity {
+                try PersonalShareInbox.system().remove(id: String(draft.requestID.dropFirst(10)), binding: PersonalShareInbox.binding(cacheIdentity))
+            }
             try await draftStore.clear()
             guard generation == stamp else { return }
+            sharedCaptureID = nil
             submitted = true; pending = nil; restoredDraft = nil; text = ""; attachments = []; composerID = UUID(); notice = "消息状态：\(result["state"].string ?? "已提交")，结果以助理历史为准。"; messageSequence = nil
         } catch {
             if generation == stamp { self.error = error.localizedDescription; notice = pending == nil ? "消息尚未发送。" : "发送结果尚未确认。可重试同一条消息；不会自动重发。" }
@@ -222,7 +249,7 @@ import WuuCore
         do {
             try await draftStore?.clear()
             guard generation == stamp else { return }
-            pending = nil; restoredDraft = nil; draftRecoveryBlocked = false; attachments = []; composerID = UUID(); notice = "已放下本机重试。原请求仍可能已被接收，请先检查历史。"; text = ""
+            pending = nil; restoredDraft = nil; draftRecoveryBlocked = false; sharedCaptureID = nil; attachments = []; composerID = UUID(); notice = "已放下本机重试。原请求仍可能已被接收，请先检查历史。"; text = ""
         } catch { if generation == stamp { self.error = error.localizedDescription } }
     }
     func stopReply() async {
@@ -391,6 +418,10 @@ struct PersonalView: View {
                     }
                 }
                 Section {
+                    Button("启用系统分享接收（10 分钟）", systemImage: "square.and.arrow.down") { personal.enableSystemShare() }
+                        .disabled(!personal.canSend)
+                    Button("接收分享至主聊天", systemImage: "tray.and.arrow.down") { personal.receiveSystemShare(); activityPresented = false }
+                        .disabled(!personal.canSend || personal.hasPending)
                     Button("停止当前回复", systemImage: "stop.circle") { Task { await personal.stopReply() } }
                         .disabled(!personal.canSend)
                 }

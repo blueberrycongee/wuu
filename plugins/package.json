@@ -9,11 +9,12 @@
   "scripts": {
     "build": "node ../scripts/build-bundled-plugins.mjs",
     "build:check": "node ../scripts/build-bundled-plugins.mjs --check",
-    "test": "node --test automation/test/schedule.test.mjs automation/test/user-routines.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs dream/src/personal-dream.test.mjs personal-calendar/test/*.test.mjs",
+    "test": "node --test automation/test/schedule.test.mjs automation/test/user-routines.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs personal/src/connectors.test.mjs dream/src/personal-dream.test.mjs personal-calendar/test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/react": "19.2.15",
     "esbuild": "0.25.12",
     "typescript": "^5.9.3"
   }

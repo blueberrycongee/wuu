@@ -130,3 +130,69 @@ The bundled Calendar adapter starts unconnected. The read and write interfaces a
 See the [app-server protocol](app-server-protocol.md), [plugin authoring](../customize/plugin-authoring.md), and [native client setup](../../../clients/native/README.md) for the underlying integration surfaces.
 
 Calendar proposals are reachable from the main conversation without replacing its Session. The review overlay retains the full immutable preview and exact revision/digest confirmation. Personal exposes only a read-only operations-list adapter; confirmation and cancellation remain trusted Calendar client operations. With no authorized provider, the UI reports the disconnected/read-only state and cannot confirm a write.
+
+### Scoped Personal connectors
+
+The Personal local host now exposes Gmail, Notion, Drive, GitHub, Google Calendar,
+and isolated Slack/Feishu adapters through `host.personal`. They are not Coding
+or MCP tools. Connection metadata, allowed resources, read/write scopes and
+account identity are separate; an installed adapter is not a connected account.
+The older Calendar agenda/cache integration remains available. Calendar writes
+use the connector action path rather than upgrading a read-only grant silently.
+
+Credentials remain in the OS secure store with no plaintext fallback. A trusted
+administrator can run `wuu connector-client client-import --user-space-id SPACE`
+and supply an already registered OAuth client's JSON on stdin. The configuration
+contains `provider`, `client_id`, optional `client_secret`, and a registered
+`redirect_uri` where required. Never paste this JSON into a chat. Importing client
+configuration does not authorize an account. Start, inspect and cancel account
+consent in Personal settings; the host opens the provider URL without returning
+it to model tools. Provider app registration, required scope verification and
+real account acceptance remain separate setup steps. HTTPS-only callback
+providers require a trusted configured callback transport; a desktop HTTP
+loopback is not an interchangeable redirect. `connector-client import` is an
+explicit host-only fallback for an already granted token, with provider identity
+verification; it is not automatic OAuth setup.
+
+Gmail supports thread search/read, attachments, draft creation and sending.
+Notion search/read/query and report append are limited to selected resources.
+Drive `drive.file` access means selected/shared files, not unrestricted Drive
+search; Docs export is text and PDF is a managed attachment, not claimed PDF text
+extraction. GitHub tracking is read-only PRs, issues, check runs and releases in
+selected repositories; app/OAuth permissions must not be confused with these
+local operation limits. Calendar create/reschedule/cancel requires explicit
+notification behavior; editing existing events requires their current ETag.
+Slack and Feishu search/mentions filter a bounded page from selected channels,
+not an organization-wide index. Continue provider cursors for later pages.
+
+External writes freeze their exact arguments, account, resource, connection
+revision and host-derived execution authority. The original tool waits for an
+owner decision; only a live owner control can approve the stored digest. New
+human requirements, cancelled tasks, revoked connections and disabled Personal
+invalidate stale authority. Saved receipts survive restarts. Unknown outcomes
+are not replayed, including by changing the request ID. Read-only inspection is
+separate from retrying a mutation; an acknowledgement is not proof of email
+recipient delivery. Reconciliation or a new deliberate action may still require
+an owner. Ordinary connector reads do not need approval. Work data is isolated
+from default Personal memory; owners may explicitly allow reads of selected work
+resources, otherwise individual cross-domain requests require confirmation.
+
+Large output is paged with a content hash. Binary attachments use the existing
+execution-bound artifact importer instead of putting base64 into model context.
+Provider text is untrusted content and never supplies user authorization.
+
+Explicit share/import feeds the existing main-chat submission and receipt path.
+The browser extension requests only a user-activated current tab, never browser
+history. Imported URLs are not automatically fetched. Android shares enter a
+Personal draft; iOS shares use a separately enabled, short-lived App Group inbox
+and still require the main chat's send action. Native compilation, signing,
+entitlements and real-device verification are independent acceptance stages.
+
+`personal_connector_poll` compares one explicitly chosen, bounded read query.
+The first result establishes a silent baseline; subsequent changes receive a
+persisted sequence/change identity, and an unchanged result stays silent after
+restart. Reconnecting starts a new baseline. Checkpoints belong to the verified execution session: a newly created routine
+execution starts its own baseline rather than sharing another session’s history.
+It does not itself start a background loop, install webhooks or
+consume a full-mailbox/provider history feed. A limited first page cannot prove
+that every upstream change was observed.

@@ -21,6 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -92,6 +93,8 @@ func run(args []string) error {
 		return runInit(args[1:])
 	case "login":
 		return runLogin(args[1:])
+	case "connector-client":
+		return runConnectorClient(args[1:])
 	case "calendar-client":
 		return runCalendarClient(args[1:])
 	case "models":
@@ -2163,6 +2166,15 @@ func runAppServer(args []string) error {
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
 		PersonalCalendar: personalcalendar.DesktopOptions{ClientID: *calendarClientID},
+		OpenPersonalConnectorAuthorizationURL: func(ctx context.Context, raw string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := personalconnectors.ValidateAuthorizationURL(raw); err != nil {
+				return err
+			}
+			return openBrowser(raw)
+		},
 		OpenPersonalCalendarAuthorizationURL: func(ctx context.Context, raw string) error {
 			if err := ctx.Err(); err != nil {
 				return err

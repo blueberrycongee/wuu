@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
+- Add explicit browser current-page capture and native share intake into the existing Personal main conversation. Native compilation, signing and device acceptance remain separate from source-level integration.
+
 - Add native Personal message menus for copying, text selection, and plain-text quotation, with bounded previews and reduced-motion support. Formal reply bindings and reactions remain unavailable in these menus.
 
 - Add Personal interactive answer forms with durable submission receipts and read-only Google Calendar connection settings. Calendar remains unavailable until configured; Personal action review remains unavailable pending its production policy and authorization adapters.
