@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add GPT-6.1 Terra and its Fast option with official pricing, context and output limits, image input, all six reasoning efforts, and Responses tool calling. Codex subscription catalogs reuse the metadata and Fast alias when Terra is available to the account.
+
 - Add opt-in, metadata-only RPC phase timing for conversation resume, queued input, turn admission and interruption, with request correlation and no hashing, clock samples or diagnostic allocations when disabled.
 
 - Select complete tool-batch execution through `agent.tool.batch@1`, independently of loop and tool providers. Preserve default streaming overlap through explicit admission, ordered durable outcomes, cancellation and in-flight bindings; reject malformed canonical calls and incompatible provider capabilities without fallback.

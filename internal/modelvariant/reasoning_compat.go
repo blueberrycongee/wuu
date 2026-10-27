@@ -149,7 +149,7 @@ func compatVersionedGPT6ReasoningEfforts(apiID string) ([]string, bool) {
 	if compatGPT6Version(apiID) == 0 {
 		return nil, false
 	}
-	if strings.Contains(apiID, "gpt-6-sol") || strings.Contains(apiID, "gpt-6-luna") {
+	if strings.Contains(apiID, "gpt-6-sol") || strings.Contains(apiID, "gpt-6-luna") || strings.Contains(apiID, "gpt-6.1-terra") {
 		return []string{"none", "low", "medium", "high", "xhigh", "max"}, true
 	}
 	return []string{"low", "medium", "high", "xhigh", "max"}, true

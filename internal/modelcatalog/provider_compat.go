@@ -40,7 +40,7 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 		if strings.TrimSpace(provider.WireAPI) == "" {
 			for _, id := range append([]string{provider.Model}, modelIDs...) {
 				switch APIModel(provider, id) {
-				case "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol":
+				case "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra":
 					provider.WireAPI = "responses"
 				}
 			}
@@ -183,7 +183,7 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 		switch normalizeID(provider.ID) {
 		case "openai":
 			applyOpenAIGPT6AstraCatalog(provider)
-			applyOpenAIGPT6SolLunaCatalog(provider)
+			applyOpenAIGPT6SolLunaTerraCatalog(provider)
 		case "anthropic":
 			applyAnthropicLatestCatalog(provider)
 		case "google", "google-vertex":
@@ -551,8 +551,9 @@ func applyOpenAIGPT6AstraCatalog(provider *Provider) {
 // https://developers.openai.com/api/docs/models/gpt-6-sol
 // https://developers.openai.com/api/docs/models/gpt-6-luna
 // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+// https://developers.openai.com/api/docs/models/gpt-6.1-terra
 // https://developers.openai.com/api/docs/pricing
-func applyOpenAIGPT6SolLunaCatalog(provider *Provider) {
+func applyOpenAIGPT6SolLunaTerraCatalog(provider *Provider) {
 	for _, spec := range []struct {
 		id, name, family         string
 		input, output, cacheRead float64
@@ -561,6 +562,7 @@ func applyOpenAIGPT6SolLunaCatalog(provider *Provider) {
 		{"gpt-6-sol", "GPT-6 Sol", "gpt-sol", 2, 10, 0.2, true},
 		{"gpt-6-luna", "GPT-6 Luna", "gpt-luna", 0.1, 0.5, 0.01, true},
 		{"gpt-6.1-sol", "GPT-6.1 Sol", "gpt-sol", 2, 10, 0.1, false},
+		{"gpt-6.1-terra", "GPT-6.1 Terra", "gpt-terra", 1, 5, 0.05, true},
 	} {
 		efforts := []string{"low", "medium", "high", "xhigh", "max"}
 		if spec.supportsNone {
