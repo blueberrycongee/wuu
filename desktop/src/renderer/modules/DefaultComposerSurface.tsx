@@ -19,6 +19,9 @@ import { showApplicationActionError } from "../ApplicationActionError";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { useI18n } from "../i18n";
 import { threadContinuationTarget } from "../TurnContinuation";
+import { TopNotice } from "../TopNotice";
+import { UILayerPortal } from "../ui/layers/UILayerHost";
+import { CircleAlert } from "../WuuIcons";
 
 export interface DefaultComposerLayout {
   side?: { readonly parentThreadId: string };
@@ -124,6 +127,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const queued = (rows: readonly ApplicationPendingComposerMessageV1[] = []): QueuedComposerMessage[] => rows.filter(row => !retained.some(operation => operation.messageID === row.id)).map(row => ({ ...row, images: images(row.imageIds), files: files(row.fileIds) }));
   const visibleResources = [...draft.imageIds, ...draft.fileIds, ...(pending?.queued ?? []).flatMap(row => [...row.imageIds, ...row.fileIds]), ...(pending?.guides ?? []).flatMap(row => [...row.imageIds, ...row.fileIds])];
   attachments.retainVisible(visibleResources);
+  const failedSend = view.submission.operations.find(row => row.mode === "send" && row.phase === "failed" && row.error
+    && (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)));
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
   const stop = view.submission.stopRequests.find(row => row.threadId === presentation.threadId);
   const editingSubmitting = Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting);
@@ -216,7 +221,34 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onQueue={creation || presentation.running ? (text, parts) => submit("queue", text, parts) : undefined} onInterrupt={() => run(controls.stop())}
       queryHistorySessionID={presentation.threadId ?? ownerTabId} skillThreadID={presentation.threadId} threadId={presentation.threadId}
       queryHistory={[...presentation.queryHistory]} requestedHandoffIntent={presentation.requestedHandoffIntent} />
+    <SubmissionFailureNotice ownerTabId={ownerTabId} operationID={failedSend?.operationID} sourceOwnerTabId={failedSend?.ownerTabId}
+      visible={visible && !switching && view.tabs.activePane === pane && view.submission.failedDraftTabIds.length === 0}
+      onRetry={() => run(submit("queue"))} />
   </div></FileSelectionProvider></ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
+}
+
+function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, visible, onRetry }: {
+  ownerTabId: string; operationID?: string; sourceOwnerTabId?: string; visible: boolean; onRetry(): void;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  const observed = useRef({ ownerTabId, operationID });
+  const [announcedID, setAnnouncedID] = useState<string>();
+  useEffect(() => {
+    const navigated = observed.current.ownerTabId !== ownerTabId && observed.current.ownerTabId !== sourceOwnerTabId;
+    const newFailure = operationID && operationID !== observed.current.operationID;
+    observed.current = { ownerTabId, operationID };
+    // This is feedback for the visible action, not a banner replayed from
+    // retained history when a conversation or hidden pane is revisited.
+    // Binding the same draft to its newly created thread is not navigation.
+    if (!visible || navigated || !operationID) setAnnouncedID(undefined);
+    else if (newFailure) setAnnouncedID(operationID);
+  }, [ownerTabId, operationID, sourceOwnerTabId, visible]);
+  if (!visible || observed.current.ownerTabId !== ownerTabId || !operationID || announcedID !== operationID) return null;
+  return <UILayerPortal layer="notice"><TopNotice key={operationID}
+    message={t("composer.sendFailedDraftRetained")} icon={CircleAlert} isError
+    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }}
+    dismissAriaLabel={t("common.closeNotice")} onDismiss={() => setAnnouncedID(undefined)} />
+  </UILayerPortal>;
 }
 
 export function activatePresentation(api: ApplicationPresentationAPI): void {

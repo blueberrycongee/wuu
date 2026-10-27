@@ -93,7 +93,8 @@ function threads(url, kind, count) {
           { id: `${id}-user-${index}`, type: "user_message", status: "completed", text: `Question ${index + 1}` },
           ...(pictures && kind === "artifact" ? images.map((uri, image) => ({
             id: `artifact-${image}`, type: "tool_call", name: "present_artifact", status: "completed",
-            result_detail: { content: [{ type: "image", name: image === 0 ? "fixture.gif" : "fixture.png", mime_type: image === 0 ? "image/gif" : "image/png", uri, artifact: { placement: "inline", ref: `image-${image}` } }] },
+            // These tool images use gated HTTP sources, not managed snapshot identities.
+            result_detail: { content: [{ type: "image", name: image === 0 ? "fixture.gif" : "fixture.png", mime_type: image === 0 ? "image/gif" : "image/png", uri, artifact: { placement: "inline" } }] },
           })) : []),
           { id: `${id}-answer-${index}`, type: "agent_message", status: "completed", text:
             `Answer ${index + 1}.\n\n` +

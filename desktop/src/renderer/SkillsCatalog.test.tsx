@@ -729,6 +729,40 @@ describe("SkillsCatalog", () => {
     expect(document.body.textContent).toContain("Plugin process exited before initialize");
   });
 
+  it("keeps a failed plugin diagnosable without a global toast and clears its retry state after remediation", async () => {
+    installSkillList([]);
+    const broken: ExtensionInventoryRecord = {
+      id: "plugin:user:broken", name: "broken", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "broken" },
+      state: "granted", approval_state: "granted", runtime_state: "failed", enabled: true,
+      last_error: "runtime observer capability requires protocol version 2",
+    };
+    let finish!: (skills: SkillSummary[]) => void;
+    const refresh = vi.fn(() => new Promise<SkillSummary[]>(resolve => { finish = resolve; }));
+    const update = vi.fn(async () => {});
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[broken]} onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />);
+    });
+    await act(async () => skillButton("broken")!.click());
+    const failure = container.querySelector('[role="alert"]')!;
+    expect(failure.textContent).toContain(broken.last_error);
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false);
+    const retry = failure.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => retry.click());
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(retry.disabled).toBe(true);
+    await act(async () => finish([]));
+    expect(retry.disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBe(failure);
+    await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...broken, state: "active", runtime_state: "active", last_error: undefined }]}
+      onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
   it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {
     installSkillList([]);
     let finish!: () => void;

@@ -71,6 +71,106 @@ function setup() {
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("announces a failed send once, retains input, and clears its notice when retry starts", async () => {
+    const toast = vi.spyOn(Notices, "showErrorToast");
+    const fixture = setup();
+    const operation = { operationID: "send-one", messageID: "send-one", ownerTabId: "draft-one", mode: "send" as const, phase: "sending" as const, draftPending: true };
+    await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Retained draft" } }, submission: { ...view.submission, operations: [operation] } }));
+    await fixture.render();
+    const editor = container.querySelector("textarea")!;
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("submitting");
+    const error = "Error invoking remote method 'wuu:turn-start': Error: plugin generation refresh is waiting to retry";
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, operations: [{ ...operation, phase: "failed", draftPending: false, error }] } }));
+    const notice = container.querySelector('[data-wuu-component="notice"]');
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).not.toMatch(/wuu:|plugin generation|Error invoking/);
+    expect(editor.value).toBe("Retained draft");
+    expect(editor.disabled).toBe(false);
+    expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("send");
+    await fixture.update(view => ({ ...view }));
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBe(notice);
+    await act(async () => notice!.querySelector<HTMLButtonElement>(".archive-tip-action")!.click());
+    expect(fixture.calls.filter(call => (call as { action: string }).action === "composer.submit")).toHaveLength(1);
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, operations: [{ ...operation, operationID: "retry", messageID: "retry" }] } }));
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it.each(["preparing", "sending", "completed", "cancelled"] as const)("does not turn %s or unrelated operations into a global error", async phase => {
+    const fixture = setup();
+    const operation = { operationID: "operation", messageID: "operation", ownerTabId: "draft-one", mode: "send" as const, phase };
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, operations: [operation, { ...operation, operationID: "other", messageID: "other", ownerTabId: "other", phase: "failed", error: "Other conversation" }] } }));
+    await fixture.render();
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+  });
+
+  it("announces rejection when thread binding and first-send failure settle together", async () => {
+    const fixture = setup();
+    await fixture.render();
+    const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), threadId: "created" };
+    vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(presentation);
+    await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activeTabId: "thread:created", items: [{ ...view.tabs.items[0], id: "thread:created", kind: "thread", threadId: "created" }] },
+      drafts: { ...view.drafts, activeTabId: "thread:created", primary: { ...view.drafts.primary, ownerTabId: "thread:created", text: "First message" } },
+      composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId: "thread:created", threadId: "created" }] },
+      submission: { ...view.submission, operations: [{ operationID: "failed", messageID: "failed", ownerTabId: "draft-one", threadId: "created", mode: "send", phase: "failed", error: "Unavailable" }] },
+    }));
+    expect(container.querySelector("textarea")?.value).toBe("First message");
+    expect(container.querySelector('[data-wuu-component="notice"]')).not.toBeNull();
+  });
+
+  it("retires a send failure notice on navigation without replaying it on return", async () => {
+    const fixture = setup();
+    await fixture.render();
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, operations: [{ operationID: "failed", messageID: "failed", ownerTabId: "draft-one", mode: "send", phase: "failed", error: "Unavailable" }] } }));
+    expect(container.querySelector('[data-wuu-component="notice"]')).not.toBeNull();
+    const select = (ownerTabId: string) => fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activeTabId: ownerTabId, items: [{ ...view.tabs.items[0], id: ownerTabId }] },
+      drafts: { ...view.drafts, activeTabId: ownerTabId, primary: { ...view.drafts.primary, ownerTabId } },
+      composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId }] },
+    }));
+    await select("other");
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    await select("draft-one");
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    await act(async () => root.render(null));
+    await fixture.render();
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+  });
+
+  it("expires send feedback without recreating it on state updates, but announces a new failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = setup();
+      await fixture.render();
+      const fail = (id: string) => fixture.update(view => ({ ...view, submission: { ...view.submission,
+        operations: [{ operationID: id, messageID: id, ownerTabId: "draft-one", mode: "send", phase: "failed", error: "Unavailable" }],
+      } }));
+      await fail("first");
+      expect(container.querySelector('[data-wuu-component="notice"]')).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(6000));
+      expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+      await fixture.update(view => ({ ...view }));
+      expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+      await fail("second");
+      expect(container.querySelector('[data-wuu-component="notice"]')).not.toBeNull();
+      await fixture.update(view => ({ ...view, submission: { ...view.submission,
+        operations: view.submission.operations.map(row => ({ ...row, phase: "completed", error: undefined })),
+      } }));
+      expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not duplicate the separate recovered-draft notice", async () => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view, submission: { ...view.submission,
+      failedDraftTabIds: ["recovered"], operations: [{ operationID: "failed", messageID: "failed", ownerTabId: "draft-one", mode: "send", phase: "failed", error: "Unavailable" }],
+    } }));
+    await fixture.render();
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+  });
+
   it("closes the workspace picker before a provider-rebinding navigation settles", async () => {
     const fixture = setup();
     const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), threadId: undefined };

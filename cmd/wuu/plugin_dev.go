@@ -850,7 +850,7 @@ func pluginScaffoldSources(pluginType string) map[string]string {
 
 const plugin: RuntimePlugin = {
   initialize(_params) {
-    return { hooks: [], tools: [] };
+    return { protocol_version: 3, hooks: [], tools: [] };
   },
 };
 

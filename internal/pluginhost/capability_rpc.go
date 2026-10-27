@@ -112,8 +112,8 @@ var HostOnlyCapabilities = map[string]struct{}{
 }
 
 // CapabilityNegotiationError marks an initialize response that cannot be
-// activated safely. Runtime generation builders treat this as a hard rejection
-// even when ordinary plugin startup failures are allowed in inventory.
+// activated safely. The process is rejected; generation builders can quarantine
+// an optional runtime while preserving required selection failures.
 type CapabilityNegotiationError struct{ Err error }
 
 func (e *CapabilityNegotiationError) Error() string { return e.Err.Error() }

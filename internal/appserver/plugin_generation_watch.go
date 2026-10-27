@@ -298,7 +298,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 
 	var candidate *runtime.PluginGeneration
 	if s.refreshExtensionsForTest == nil {
-		candidate, err = s.rt.PreflightDiscoveredExtensions(cfg, discovered)
+		candidate, err = s.rt.PreflightObservedExtensions(cfg, discovered)
 	}
 	releaseErr := catalog.Release()
 	if err != nil {

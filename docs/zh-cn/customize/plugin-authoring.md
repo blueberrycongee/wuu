@@ -215,6 +215,13 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v2 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
 
+添加能力（包括观察能力）时，应从 `initialize` 返回 `protocol_version: 3`。
+这是**返回结果**中的字段：宿主的 `params.protocol_version: 1` 标识传输协议，
+不能照搬为能力协议版本；`params.capability_protocol_version` 表示宿主支持的
+能力协议。没有服务声明时，省略返回结果的版本意味着仅支持工具的旧版 v1，
+不是最新版。SDK 会在返回声明前，以 `invalid_capability_protocol` 拒绝 v1 的
+能力或模型适配器声明。显式 v2 能力仍受支持；声明服务时，SDK 仍选择 v3。
+
 | 回调 | 职责 |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | 返回工具、能力、提供的服务和需要的服务 |

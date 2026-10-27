@@ -2537,6 +2537,7 @@ export const zhCN = {
   "runtime.startFailed": "启动运行时失败",
   "composer.compactFailed": "压缩上下文失败",
   "composer.sendFailed": "发送失败",
+  "composer.sendFailedDraftRetained": "发送失败，草稿已保留。",
   "composer.recoveredInterruptedDraft": "已恢复中断发送时的文字草稿。再次发送前请先检查对话记录，附件不会恢复。",
   "composer.failedDraftSaved": "发送失败，可以打开保留的草稿或丢弃它。",
   "composer.openFailedDraft": "打开草稿",

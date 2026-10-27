@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -142,6 +143,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		DefaultProvider: "fake-provider",
 		Providers:       map[string]config.ProviderConfig{"fake-provider": {Type: "openai-compatible", BaseURL: "https://example.test/v1", Model: "fake-model"}},
 		Extensions:      &extensions.Settings{},
+		Composition:     composition.DefaultConfig("headless", manifest.ID),
 	}
 	if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
 		t.Fatal(err)

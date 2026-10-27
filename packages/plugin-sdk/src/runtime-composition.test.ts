@@ -1,6 +1,6 @@
-import { runJSONLRuntime, type RuntimePlugin } from "./index.js";
+import { runJSONLRuntime, type RuntimeInitializeResult, type RuntimePlugin } from "./index.js";
 
-type Frame = { id: string; method?: string; params?: any; result?: any; error?: { message: string } };
+type Frame = { id: string; method?: string; params?: any; result?: any; error?: { code?: string; message: string } };
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -87,6 +87,41 @@ class Peer {
 }
 
 const definition = () => ({ protocol_version: 3 as const });
+async function capabilityProtocolDeclarations(): Promise<void> {
+  const capability = { id: "agent.turn.completed", kind: "observe", version: 1 } as const;
+  const declarations: RuntimeInitializeResult[] = [
+    { capabilities: [capability] },
+    { model_adapters: [{ id: "example.model", version: 1 }] },
+  ];
+  const initialize = async (result: RuntimeInitializeResult): Promise<Frame> => {
+    const peer = new Peer({ initialize: () => result });
+    try {
+      return await peer.request("initialize", {
+        protocol_version: 1, capability_protocol_version: 3,
+        plugin_id: "observer", plugin_root: ".", project_root: ".", wuu_home: ".",
+        supported_host_services: ["host.service.call"],
+      });
+    } finally { await peer.close(); }
+  };
+  for (const declaration of declarations) {
+    for (const protocol_version of [undefined, 1] as const) {
+      const response = await initialize({ ...declaration, protocol_version });
+      assert(response.error?.code === "invalid_capability_protocol",
+        `incompatible capability declaration escaped SDK initialization: ${JSON.stringify(response)}`);
+      assert(response.result === undefined, "rejected declarations were returned for admission");
+    }
+  }
+  for (const protocol_version of [2, 3] as const) {
+    const response = await initialize({ protocol_version, capabilities: [capability] });
+    assert(!response.error && response.result?.protocol_version === protocol_version,
+      "explicit capability protocol was rejected or rewritten");
+  }
+  const legacy = await initialize({ tools: [{ id: "echo", description: "Echo", input_schema: { type: "object" } }], capabilities: [] });
+  assert(!legacy.error && legacy.result?.protocol_version === undefined, "tool-only compatibility was upgraded");
+  const service = await initialize({ capabilities: [capability], required_services: [{ name: "host.storage.get", major_version: 1 }] });
+  assert(!service.error && service.result?.protocol_version === 3, "SDK service negotiation changed");
+}
+
 async function reentrantServices(): Promise<void> {
   const events: string[] = [];
   const aPlugin: RuntimePlugin = {
@@ -390,6 +425,7 @@ async function callerScopeLifetime(): Promise<void> {
 // by protocol frames and handler gates, with no elapsed-time assertions.
 const watchdog = setTimeout(() => { throw new Error("JSONL composition deadlocked"); }, 10000);
 try {
+  await capabilityProtocolDeclarations();
   await callerScopeLifetime();
   await reentrantServices();
   await sharedExecutionCancellation();

@@ -489,6 +489,10 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
     switch (request.method) {
       case "initialize": {
         const result2 = await plugin.initialize(request.params, host, lifecycle);
+        const protocolVersion = result2.required_services?.length || result2.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result2.protocol_version;
+        if ((protocolVersion ?? 1) === 1 && (result2.capabilities?.length || result2.model_adapters?.length)) {
+          throw Object.assign(new Error("initialize() must return protocol_version: 2 or 3 when declaring capabilities or model_adapters; omission selects legacy v1"), { code: "invalid_capability_protocol" });
+        }
         const offered = request.params.supported_host_features;
         const required = result2.required_host_features;
         for (const features of [offered, required]) {
@@ -508,7 +512,7 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: {
           ...result2,
           ...requirements.size ? { required_host_features: [...requirements] } : {},
-          protocol_version: result2.required_services?.length || result2.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result2.protocol_version,
+          protocol_version: protocolVersion,
           lifecycle_version: 2
         } };
       }

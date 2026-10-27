@@ -230,7 +230,7 @@ func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
 			session := testGenerationSession(t, old)
 			defer session.Cleanup()
 			candidateClient := &fakeServicePluginClient{id: "live", required: []pluginhost.ServiceRequirement{{Name: "missing.service", MajorVersion: 1, Required: true}}}
-			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("live")}, nil, nil,
+			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("live")}, map[string]bool{"live": true}, nil,
 				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
 					if failure == "startup" {
 						return nil, errors.New("replacement startup failed")
@@ -261,7 +261,7 @@ func TestRefreshCandidateRejectsSelectedModulePreparationFailure(t *testing.T) {
 	old := testPluginGeneration("removed", oldClient)
 	session := testGenerationSession(t, old)
 	defer session.Cleanup()
-	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, nil, nil,
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, map[string]bool{"new": true}, nil,
 		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
 			return nil, errors.New("selected runtime unavailable")
 		})
@@ -281,6 +281,71 @@ func TestRefreshCandidateRejectsSelectedModulePreparationFailure(t *testing.T) {
 	}
 	if !oldClient.closed {
 		t.Fatal("removed runtime was not retired")
+	}
+}
+
+// A rejected optional implementation cannot block unrelated new admissions or
+// revoke the healthy implementation still owned by already accepted work.
+func TestOptionalReplacementQuarantinesCandidateAndRetainsAdmittedGraph(t *testing.T) {
+	oldClient := &generationClient{id: "optional"}
+	old := testPluginGeneration("optional", oldClient)
+	session := testGenerationSession(t, old)
+	defer session.Cleanup()
+	pinned := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(pinned)
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("optional")}, nil, nil,
+		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			return nil, errors.New("optional replacement initialization failed")
+		})
+	if err != nil {
+		t.Fatalf("optional replacement blocked the complete graph: %v", err)
+	}
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	status := requireRuntimeStatus(t, candidate.host, "optional")
+	if status.State != pluginhost.StateFailed || !strings.Contains(status.Error, "optional replacement initialization failed") {
+		t.Fatalf("failed replacement lacks its diagnostic: %+v", status)
+	}
+	if oldClient.closed || old.host.Statuses()[0].State != pluginhost.StateActive {
+		t.Fatal("quarantined replacement revoked healthy accepted work")
+	}
+	if session.PluginGenerationNeedsRecovery() {
+		t.Fatal("quarantined startup failure retained a global recovery fence")
+	}
+	removed, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ActivatePluginGeneration(removed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !oldClient.closed {
+		t.Fatal("explicit removal failed to revoke the retained implementation")
+	}
+}
+
+func TestOptionalReplacementDependencyFailureRetainsAcceptedImplementation(t *testing.T) {
+	client := &generationClient{id: "optional"}
+	old := testPluginGeneration("optional", client)
+	s := testGenerationSession(t, old)
+	defer s.Cleanup()
+	pinned := s.RetainPluginGeneration()
+	defer s.ReleasePluginGeneration(pinned)
+	replacement := testRuntimePlugin("optional")
+	replacement.Requires = []string{"new-missing-provider"}
+	candidate, err := s.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{replacement}, nil, nil, startPluginClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if client.closed {
+		t.Fatal("new implementation's missing dependency revoked healthy accepted implementation")
+	}
+	if len(s.ActivePlugins) != 0 {
+		t.Fatal("unavailable new implementation remained active")
 	}
 }
 

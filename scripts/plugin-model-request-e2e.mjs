@@ -20,6 +20,8 @@ const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state"), pkg = join(scratch, "plugin");
 const initializeAttempts = join(scratch, "initialize-attempts.jsonl");
 const initializeFailure = join(scratch, "initialize-failure");
+const executionLifecycle = join(output, "execution-lifecycle.jsonl");
+await writeFile(executionLifecycle, "");
 await mkdir(home);
 await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
 const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
@@ -187,13 +189,22 @@ runJSONLRuntime({
     };
   },
   async invokeCapability(params, host, execution) {
-    if (params.input.method === "noop") return { output: { result: {} } };
     if (params.input.method === "hold") {
-      await reportExecutionUpdate(host, { execution_id: execution.executionId,
-        message: params.input.input.tag, detail: { generation: params.input.input.tag } });
-      execution.signal.throwIfAborted();
-      await new Promise(resolve => execution.signal.addEventListener("abort", resolve, { once: true }));
-      return { output: { result: { stopped: true } } };
+      const tag = params.input.input.tag;
+      const record = phase => appendFileSync(${JSON.stringify(executionLifecycle)},
+        JSON.stringify({ tag, phase, pid: process.pid, execution_id: execution.executionId }) + "\\n");
+      record("started");
+      const aborted = new Promise(resolve => {
+        const cancel = () => { record("cancelled"); resolve(); };
+        if (execution.signal.aborted) cancel();
+        else execution.signal.addEventListener("abort", cancel, { once: true });
+      });
+      try {
+        await reportExecutionUpdate(host, { execution_id: execution.executionId,
+          message: tag, detail: { generation: tag, pid: process.pid } });
+        await aborted;
+        return { output: { result: { stopped: true } } };
+      } finally { record("settled"); }
     }
     try {
       return { output: { result: await requestModel(host, params.input.input) } };
@@ -272,10 +283,10 @@ runJSONLRuntime({
   assert(registry.services.some(service => service.service === "host.model.request" && service.version === "1.0.0" && service.provider === "kernel"));
   result.checks.push("versioned service registration");
   // Real plugin processes keep foreground client calls alive across reloads.
-  // Align host-local execution IDs despite normal composition startup work;
-  // cancellation stays scoped
-  // to the original client identity, never to a diagnostic display key.
-  // Normal composition also runs unrelated generation-owned callbacks.
+  // Reuse the client request ID across generations and observe exact process
+  // ownership. Host execution IDs are opaque: even diagnostic RPCs dispatch
+  // authorization callbacks, so allocation arithmetic cannot force collisions.
+  // The deterministic runtime diagnostics test covers colliding host-local IDs.
   const snapshots = async () => (await rpc("plugin/executions/list")).executions.filter(execution => execution.plugin_id === "model-fixture");
   const waitForExecution = async tag => {
     const deadline = Date.now() + 10_000;
@@ -288,26 +299,28 @@ runJSONLRuntime({
     throw new Error(`Missing live execution: ${tag}`);
   };
   const hold = tag => {
-    const identity = { id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation, request_id: tag };
-    return { identity, response: rpcRaw("plugin/client/request", { ...identity, method: "hold", input: { tag } }) };
+    const identity = { id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation, request_id: "diagnostics-shared" };
+    const pending = { identity, finished: false };
+    pending.response = rpcRaw("plugin/client/request", { ...identity, method: "hold", input: { tag } }).then(response => {
+      pending.finished = true;
+      return response;
+    });
+    return pending;
   };
-  const holdWithID = async (tag, expectedID) => {
-    for (let attempt = 0; attempt < 128; attempt++) {
-      const probeTag = `${tag}-${attempt}`, probe = hold(probeTag);
-      const row = await waitForExecution(probeTag);
-      if (row.id === expectedID) return { ...probe, row };
-      assert.equal((await rpc("plugin/client/cancel", probe.identity)).cancelled, true);
-      assert((await probe.response).error);
-      const remaining = Number(expectedID.slice("exec-".length)) - Number(row.id.slice("exec-".length));
-      assert(remaining > 1, `fixture passed retained execution ${expectedID} at ${row.id}`);
-      // A hold allocates its callback and its progress service call. A no-op
-      // allocates only the callback, so both execution-ID parities are reachable.
-      if (remaining % 2 === 1) await rpc("plugin/client/request", {
-        id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation,
-        request_id: `${probeTag}-align`, method: "noop", input: {},
-      });
-    }
-    assert.fail(`fixture could not align ${tag} with retained execution ${expectedID}`);
+  const lifecycle = async () => (await readFile(executionLifecycle, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const waitForSettlement = async row => {
+    const deadline = Date.now() + 10_000;
+    do {
+      const own = (await lifecycle()).filter(event => event.tag === row.message);
+      if (own.some(event => event.phase === "settled")) {
+        assert.deepEqual(own, ["started", "cancelled", "settled"].map(phase => ({
+          tag: row.message, phase, pid: row.detail.pid, execution_id: row.id,
+        })), "execution did not cancel and settle in its owning process");
+        return own;
+      }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
+    assert.fail(`execution did not settle in its owning process: ${row.message}`);
   };
   const publishUpdate = async () => {
     const source = join(pkg, "runtime.mjs");
@@ -340,19 +353,23 @@ runJSONLRuntime({
   };
   const initialHold = hold("diagnostics-initial");
   const initialRow = await waitForExecution("diagnostics-initial");
+  assert.equal(initialRow.generation_id, initialHold.identity.graph_generation);
   result.execution_diagnostics = { before_reload: await snapshots() };
   await reload();
-  const secondHold = await holdWithID("diagnostics-second", initialRow.id);
-  const secondRow = secondHold.row;
+  const secondHold = hold("diagnostics-second");
+  const secondRow = await waitForExecution("diagnostics-second");
+  assert.equal(secondRow.generation_id, secondHold.identity.graph_generation);
   const during = await snapshots();
   result.execution_diagnostics.during_reload = during;
   assert.equal(during.length, 2, "retained foreground execution disappeared after reload");
-  assert.equal(initialRow.id, secondRow.id, "fixture must exercise colliding host-local execution IDs");
+  assert.equal(initialHold.identity.request_id, secondHold.identity.request_id);
   assert(initialRow.generation_id && secondRow.generation_id);
   assert.notEqual(initialRow.generation_id, secondRow.generation_id);
+  assert.notEqual(initialRow.detail.pid, secondRow.detail.pid);
   assert.equal(initialRow.retained, false);
   assert.equal(secondRow.retained, false);
-  assert.equal(during.find(row => row.generation_id === initialRow.generation_id).retained, true);
+  assert.deepEqual(during.find(row => row.generation_id === initialRow.generation_id), { ...initialRow, retained: true });
+  assert.deepEqual(during.find(row => row.generation_id === secondRow.generation_id), secondRow);
   assert.deepEqual(during, await snapshots(), "unchanged diagnostics must have stable ordering and identities");
   assert.deepEqual(during.map(row => [row.generation_id, row.id]),
     [...during].sort((a, b) => a.generation_id < b.generation_id ? -1 : a.generation_id > b.generation_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
@@ -384,20 +401,33 @@ runJSONLRuntime({
   await unlink(initializeFailure);
   await reload();
   result.checks.push("failed refresh backs off across home notifications and preserves current/retained calls until repaired publication");
-  const thirdHold = await holdWithID("diagnostics-third", initialRow.id);
-  const thirdRow = thirdHold.row;
+  const thirdHold = hold("diagnostics-third");
+  const thirdRow = await waitForExecution("diagnostics-third");
+  assert.equal(thirdRow.generation_id, thirdHold.identity.graph_generation);
+  assert.equal(thirdHold.identity.request_id, initialHold.identity.request_id);
   const multiple = await snapshots();
   result.execution_diagnostics.multiple_retained = multiple;
   assert.equal(multiple.length, 3);
   assert.equal(multiple.filter(row => row.retained).length, 2);
   assert.equal(new Set(multiple.map(row => `${row.generation_id}/${row.id}`)).size, 3);
-  assert.equal(thirdRow.id, initialRow.id);
+  assert.equal(new Set(multiple.map(row => row.detail.pid)).size, 3);
+  for (const row of [initialRow, secondRow, thirdRow]) {
+    assert.deepEqual(multiple.find(value => value.generation_id === row.generation_id), { ...row, retained: row !== thirdRow });
+  }
   assert.equal((await rpc("plugin/client/cancel", initialHold.identity)).cancelled, true);
   assert((await initialHold.response).error);
+  result.execution_diagnostics.cancelled_owner = await waitForSettlement(initialRow);
   const afterCancel = await snapshots();
   result.execution_diagnostics.after_cancel = afterCancel;
-  assert.equal(afterCancel.length, 2, "old generation cancellation affected another generation");
-  assert(!afterCancel.some(row => row.generation_id === initialRow.generation_id));
+  assert.deepEqual(afterCancel, multiple.filter(row => row.generation_id !== initialRow.generation_id),
+    "old generation cancellation affected another generation");
+  assert(!(await lifecycle()).some(event => event.tag !== initialRow.message && event.phase !== "started"),
+    "cancellation reached another process with the same request ID");
+  // The terminal response can precede final request-map cleanup. Repeated
+  // cancellation may still acknowledge that old entry; it must not touch the
+  // exact surviving executions or settle their client requests.
+  result.execution_diagnostics.late_cancel = await rpc("plugin/client/cancel", initialHold.identity);
+  assert.deepEqual(await snapshots(), afterCancel, "late cancellation changed surviving executions");
   const retirementDeadline = Date.now() + 10_000;
   let retirement;
   do {
@@ -410,15 +440,21 @@ runJSONLRuntime({
   } while (Date.now() < retirementDeadline);
   assert(retirement, "diagnostic reads kept a released generation alive");
   result.execution_diagnostics.retirement = retirement;
+  assert(!secondHold.finished && !thirdHold.finished, "old cancellation settled a replacement client request");
+  assert(!(await lifecycle()).some(event => event.tag !== initialRow.message && event.phase !== "started"),
+    "late old cleanup cancelled a replacement process");
+  assert.deepEqual(await snapshots(), afterCancel, "retired owner cleanup changed surviving executions");
   await rpc("extension/package/update", { id: item.id, fingerprint: item.fingerprint, action: "disable" });
   assert((await secondHold.response).error);
   assert((await thirdHold.response).error);
+  await waitForSettlement(secondRow);
+  await waitForSettlement(thirdRow);
   assert.deepEqual(await snapshots(), [], "disable left current or retained work visible");
   result.execution_diagnostics.after_disable = await snapshots();
   const enabled = await rpc("extension/package/update", { id: item.id, fingerprint: item.fingerprint, action: "enable" });
   item = enabled.extension_inventory.find(plugin => plugin.id === item.id);
   assert.equal(item.runtime_state, "active");
-  result.checks.push("retained execution diagnostics across repeated reload, colliding IDs, isolated cancellation, and disable");
+  result.checks.push("retained execution diagnostics across repeated reload, shared request IDs, exact process cancellation/settlement, late cancellation, and disable");
   const before = await rpc("thread/list");
   const input = tag => ({ messages: [{ role: "system", content: "Return fixture data." }, { role: "user", content: tag }], max_output_tokens: 32 });
   const params = (request_id, value) => ({ id: item.id, fingerprint: item.fingerprint,

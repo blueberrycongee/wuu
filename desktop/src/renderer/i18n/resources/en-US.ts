@@ -2540,6 +2540,7 @@ export const enUS = {
   "runtime.startFailed": "Failed to start runtime",
   "composer.compactFailed": "Failed to compact context",
   "composer.sendFailed": "Failed to send",
+  "composer.sendFailedDraftRetained": "Sending failed. Your draft is still here.",
   "composer.recoveredInterruptedDraft": "Recovered text from an interrupted send. Check the conversation before sending again; attachments are not restored.",
   "composer.failedDraftSaved": "Send failed. Open the saved draft or discard it.",
   "composer.openFailedDraft": "Open draft",

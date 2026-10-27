@@ -796,10 +796,20 @@ func (h *Host) ExecutionSnapshots() []ExecutionSnapshot {
 func (h *Host) Prepare(ctx context.Context) error {
 	h.lifecycleMu.Lock()
 	defer h.lifecycleMu.Unlock()
-	return h.prepare(ctx)
+	return h.prepare(ctx, nil)
 }
 
-func (h *Host) prepare(ctx context.Context) (err error) {
+// PrepareAvailable quarantines optional preparation failures and their required
+// consumers while preserving independent clients. A non-nil required set names
+// the clients that must remain usable; nil preserves strict Prepare behavior.
+// Explicit service bindings remain mandatory regardless of the required set.
+func (h *Host) PrepareAvailable(ctx context.Context, required map[string]bool) error {
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	return h.prepare(ctx, required)
+}
+
+func (h *Host) prepare(ctx context.Context, required map[string]bool) (err error) {
 	h.mu.RLock()
 	closing := h.shutdown != nil
 	h.mu.RUnlock()
@@ -829,7 +839,27 @@ func (h *Host) prepare(ctx context.Context) (err error) {
 			continue
 		}
 		if err := h.prepareClient(ctx, client, dependencies[client.ID()]); err != nil {
-			return fmt.Errorf("prepare plugin %q: %w", client.ID(), err)
+			failure := fmt.Errorf("prepare plugin %q: %w", client.ID(), err)
+			if required == nil || required[client.ID()] || ctx.Err() != nil {
+				return failure
+			}
+			// Close consumers before providers and retain diagnostic-only clients.
+			// This shares activation's cleanup barrier: snapshot owners cannot
+			// release a failed runtime's resources while its cleanup is pending.
+			outcome, _ := h.retirePluginAndConsumers(ctx, client.ID(), failure, nil)
+			h.Add(Failed(client.ID(), errors.Join(failure, outcome.Err)))
+			h.blockFailedDependencies(ctx)
+			blocked = h.DependencyFailures()
+		}
+	}
+	if required != nil {
+		for _, status := range h.Statuses() {
+			if required[status.ID] && (status.State == StateFailed || status.State == StateStopped) {
+				return fmt.Errorf("prepare required plugin %q: %s", status.ID, status.Error)
+			}
+		}
+		if h.serviceRegistry != nil {
+			return h.serviceRegistry.ValidateBindings()
 		}
 	}
 	return nil
@@ -844,7 +874,7 @@ func (h *Host) Activate(ctx context.Context) error {
 	}
 	h.lifecycleMu.Lock()
 	defer h.lifecycleMu.Unlock()
-	if err := h.prepare(ctx); err != nil {
+	if err := h.prepare(ctx, nil); err != nil {
 		return err
 	}
 	if h.serviceRegistry != nil {

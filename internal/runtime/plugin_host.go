@@ -62,7 +62,14 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
+	return buildPluginHostWithSelection(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, required, start, turnRouter, userQuestions, selection, true, driverProfile, factories...)
+}
+
+// Inferred product compositions include every admitted addon for discovery,
+// whereas a user-authored module selection is a required composition contract.
+// Keep that provenance explicit; both resolve to non-nil module sets.
+func buildPluginHostWithSelection(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, requireSelectedModules bool, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
 	// Bare host embedders create a root resource owner; session generations pass
 	// captured capacity factories and therefore never allocate another owner.
 	factories = withCapacityProviders(factories, nil)
@@ -248,7 +255,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return err
 	}
 	for _, item := range plugins {
-		if resolved.Modules != nil {
+		if requireSelectedModules && resolved.Modules != nil {
 			required[item.ID] = true
 		}
 		if dependencyErr := host.DependencyFailures()[item.ID]; dependencyErr != nil {
@@ -295,7 +302,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		})
 		if err != nil {
 			host.Add(pluginhost.Failed(item.ID, err))
-			if required[item.ID] || pluginhost.IsCapabilityNegotiationError(err) {
+			if required[item.ID] {
 				closeErr := closeStarted()
 				return nil, nil, pluginActivationError(item.ID, err, closeErr)
 			}
@@ -398,7 +405,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		cancel()
 		return nil, nil, errors.Join(err, closeErr)
 	}
-	if err := host.Prepare(context.Background()); err != nil {
+	if err := host.PrepareAvailable(context.Background(), required); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
 	}
 	return host, kernel, nil

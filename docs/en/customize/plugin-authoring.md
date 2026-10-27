@@ -243,6 +243,15 @@ The host starts the manifest's command and exchanges one JSON object per line ov
 
 The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v2 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
 
+Return `protocol_version: 3` from `initialize` when adding capabilities, including
+observers. This is the **result** field: the host's `params.protocol_version: 1`
+identifies the transport and must not be echoed as the capability version;
+`params.capability_protocol_version` advertises the host's capability support.
+Without services, an omitted result version means legacy tool-only v1, not the
+latest version. The SDK rejects capabilities or model adapters under v1 with
+`invalid_capability_protocol` before returning their declarations. Explicit v2
+capabilities remain supported; service declarations retain the SDK's v3 selection.
+
 | Callback | Responsibility |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | Return tools, capabilities, provided services, and required services |

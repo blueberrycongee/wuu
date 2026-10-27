@@ -522,7 +522,7 @@ func NewSession(opts Options) (*Session, error) {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
 	selection := productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activePlugins, factories)
-	pluginHost, pluginKernel, err := buildPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), opts.DriverProfile, factories...)
+	pluginHost, pluginKernel, err := buildPluginHostWithSelection(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}

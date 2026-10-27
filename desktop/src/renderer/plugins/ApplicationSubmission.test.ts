@@ -199,6 +199,33 @@ describe("application submission ownership",()=>{
     expect(f.getDraft("thread:created").prompt).toBe("");
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
   });
+  it("releases a rejected send without losing the draft and admits one explicit retry", async () => {
+    const starting = deferred<{turn: Thread["turns"][number]}>();
+    window.wuu = { startTurn: vi.fn(() => starting.promise), queueTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const f = fixture(thread());
+    const submitted = f.submission.submit({ownerTabId: "thread:created"});
+    await vi.waitFor(() => expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    expect(f.submission.isOwnerPending("thread:created")).toBe(true);
+    expect(f.submission.submit({ownerTabId: "thread:created"}).accepted).toBe(false);
+    const diagnostic = "Error invoking remote method 'wuu:turn-start': Error: plugin generation refresh is waiting to retry";
+    starting.reject(new Error(diagnostic));
+    await vi.waitFor(() => expect(f.submission.getSnapshot().operations).toEqual([
+      expect.objectContaining({operationID: submitted.operationID, phase: "failed", draftPending: false, error: diagnostic}),
+    ]));
+    expect(f.getDraft("thread:created").prompt).toBe("hello");
+    expect(f.getState().running).toBe(false);
+    expect(f.getState().thread?.turns).toEqual([]);
+    expect(f.submission.isOwnerPending("thread:created")).toBe(false);
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    vi.mocked(window.wuu.startTurn).mockResolvedValueOnce({turn: {id: "retry", status: "completed", items_view: "full", items: []}});
+    expect(f.submission.submit({ownerTabId: "thread:created"}).accepted).toBe(true);
+    await vi.waitFor(() => expect(f.submission.getSnapshot().operations).toEqual([
+      expect.objectContaining({phase: "completed", draftPending: false}),
+    ]));
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(2);
+    expect(f.getDraft("thread:created").prompt).toBe("");
+    f.submission.dispose();
+  });
   it("does not replay an uncertain turn admission as a queue send and restores input",async()=>{
     window.wuu={startTurn:vi.fn().mockRejectedValue(new Error("request timed out")),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
     const f=fixture(thread());f.submission.submit({ownerTabId:"thread:created"});

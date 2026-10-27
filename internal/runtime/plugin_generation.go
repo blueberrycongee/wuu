@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ type PluginGeneration struct {
 	artifactClient    *ArtifactClient
 	mcpOAuth          *mcp.OAuthManager
 	requiredPlugins   map[string]bool
+	selectedPluginIDs []string
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
@@ -225,6 +227,47 @@ func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []
 	return s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 }
 
+// PreflightObservedExtensions prepares automatic catalog observations without
+// restarting unchanged failed implementations. A new source/configuration or
+// an explicit Refresh still gets a real preparation attempt. Required selections
+// pass through the same host checks and never gain a fallback through quarantine.
+func (s *Session) PreflightObservedExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	current := s.retainPluginGeneration()
+	defer s.releasePluginGeneration(current)
+	failed := make(map[string]error)
+	if current != nil && current.host != nil && reflect.DeepEqual(current.settings, cfg) {
+		unchanged := make(map[string]bool)
+		for _, item := range discovered {
+			for _, previous := range current.plugins {
+				if item.ID == previous.ID && item.SubjectID == previous.SubjectID && item.Fingerprint == previous.Fingerprint && item.Source == previous.Source && item.Official == previous.Official {
+					unchanged[item.ID] = true
+					break
+				}
+			}
+		}
+		dependencyFailures := current.host.DependencyFailures()
+		for _, status := range current.host.Statuses() {
+			// Dependent failures are recomputed so repairing a provider also
+			// restores its unchanged consumers. Only direct failures are sticky.
+			if unchanged[status.ID] && status.State == pluginhost.StateFailed && dependencyFailures[status.ID] == nil {
+				failed[status.ID] = errors.New(status.Error)
+			}
+		}
+	}
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, func(ctx context.Context, process pluginhost.ProcessConfig) (pluginhost.Client, error) {
+		if failure := failed[process.ID]; failure != nil {
+			if process.OnClose != nil {
+				process.OnClose()
+			}
+			return nil, failure
+		}
+		return startPluginClient(ctx, process)
+	})
+}
+
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
 // state and subsequently failed. Startup failures are excluded so one broken
 // optional plugin does not force a rebuild before every turn.
@@ -321,11 +364,26 @@ func (s *Session) PreflightExtensionPolicy(cfg config.Config, requiredIDs ...str
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	required := make(map[string]bool, len(requiredIDs))
+	required := s.requiredActivePluginRuntimes()
 	for _, id := range requiredIDs {
 		required[id] = true
 	}
 	return s.buildPluginGeneration(cfg, s.Plugins, required, nil, startPluginClient)
+}
+
+// An explicit policy transaction must keep its remaining healthy consumers
+// usable. This requirement is scoped to that transaction, never inherited by
+// ordinary catalog observation or optional implementation replacement.
+func (s *Session) requiredActivePluginRuntimes() map[string]bool {
+	required := make(map[string]bool)
+	if s.PluginHost != nil {
+		for _, status := range s.PluginHost.Statuses() {
+			if status.State == pluginhost.StateActive {
+				required[status.ID] = true
+			}
+		}
+	}
+	return required
 }
 
 // PreflightPluginRemoval builds the generation that will remain after one
@@ -351,7 +409,7 @@ func (s *Session) PreflightPluginRemoval(cfg config.Config, id string) (*PluginG
 	if !found {
 		return nil, fmt.Errorf("installed user plugin %q was not found", id)
 	}
-	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
+	return s.buildPluginGeneration(cfg, discovered, s.requiredActivePluginRuntimes(), nil, startPluginClient)
 }
 
 // PreflightPluginUpdate builds an exact approved pending package as part of a
@@ -405,13 +463,6 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	sort.Slice(discovered, func(i, j int) bool { return discovered[i].ID < discovered[j].ID })
 
 	required := map[string]bool{id: true}
-	if s.PluginHost != nil {
-		for _, status := range s.PluginHost.Statuses() {
-			if status.State == pluginhost.StateActive {
-				required[status.ID] = true
-			}
-		}
-	}
 	generation, err := s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 	if err != nil {
 		return nil, err
@@ -451,6 +502,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
+	var selectedPluginIDs []string
 	if !s.SafeMode {
 		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
@@ -467,6 +519,14 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 		active = activationPlan.Plugins
+		for _, item := range active {
+			selectedPluginIDs = append(selectedPluginIDs, item.ID)
+		}
+		// Dependency-pruned replacements remain selected. Their old healthy
+		// implementations must not look explicitly removed to accepted work.
+		for id := range activationPlan.Issues {
+			selectedPluginIDs = append(selectedPluginIDs, id)
+		}
 	}
 	// Policy and unrelated-package updates reuse admitted bytes, not mutable
 	// installations. Pin their owner through copying; the replacement then owns
@@ -490,23 +550,15 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		return nil, snapshotErr
 	}
 	ownedRoots = append(ownedRoots, snapshotRoots...)
-	// A refresh may isolate a newly broken optional runtime, but must not
-	// replace an already working runtime with a failed candidate. Requirements
-	// only apply to runtimes in the candidate, so intentional removals and
-	// disables remain possible.
+	// Targeted mutations must validate their target. Ordinary inferred addons
+	// remain optional even after a previous implementation was active: a bad
+	// replacement is diagnosed in the new graph, not a global admission fence.
 	requiredRuntimes := make(map[string]bool, len(required))
 	for id, value := range required {
 		requiredRuntimes[id] = value
 	}
-	if s.PluginHost != nil {
-		for _, status := range s.PluginHost.Statuses() {
-			if status.State == pluginhost.StateActive {
-				requiredRuntimes[status.ID] = true
-			}
-		}
-	}
 	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), s.DriverProfile, factories...)
+	host, kernel, err := buildPluginHostWithSelection(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
@@ -533,6 +585,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		state:             kernel.state,
 		settings:          cfg,
 		requiredPlugins:   requiredRuntimes,
+		selectedPluginIDs: selectedPluginIDs,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
@@ -709,7 +762,13 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		s.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
 	}
 	s.retiredPluginGenerations[old] = struct{}{}
-	activeIDs := candidate.availableModuleIDs()
+	selectedIDs := make(map[string]bool)
+	for _, id := range candidate.moduleIDs() {
+		selectedIDs[id] = true
+	}
+	for _, id := range candidate.selectedPluginIDs {
+		selectedIDs[id] = true
+	}
 	var retired []*PluginGeneration
 	for generation := range s.retiredPluginGenerations {
 		// A thread-model shadow can release its final reference independently
@@ -730,7 +789,14 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	// across those callbacks; temporary references keep the old hosts alive.
 	s.releasePluginGeneration(old)
 	for _, generation := range retired {
-		generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+		// A failed same-ID replacement does not revoke the healthy executable
+		// retained by accepted work. Removal/disable still revokes immediately,
+		// and each old graph's own failures retain their dependency semantics.
+		retainedIDs := generation.availableModuleIDs()
+		for id := range retainedIDs {
+			retainedIDs[id] = retainedIDs[id] && selectedIDs[id]
+		}
+		generation.revokeMissingPlugins(retainedIDs, s.TitleClient, s.Model)
 		s.releasePluginGeneration(generation)
 	}
 	if activationErr != nil {
@@ -758,7 +824,10 @@ func (g *PluginGeneration) moduleIDs() []string {
 }
 
 func (g *PluginGeneration) availableModuleIDs() map[string]bool {
-	failures := g.host.DependencyFailures()
+	var failures map[string]error
+	if g.host != nil {
+		failures = g.host.DependencyFailures()
+	}
 	available := make(map[string]bool)
 	for _, id := range g.moduleIDs() {
 		available[id] = failures[id] == nil

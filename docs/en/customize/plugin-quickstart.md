@@ -12,6 +12,7 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 export default {
   initialize() {
     return {
+      protocol_version: 3,
       tools: [{
         id: "greet",
         description: "Return a friendly greeting",
