@@ -49,6 +49,7 @@ function launchEnvironment(
     WUU_DEV_LAUNCH_TOKEN: token,
     WUU_DESKTOP_CORE: desktopCore,
     WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP,
+    WUU_LIST_FILES_TIMING: env.WUU_LIST_FILES_TIMING,
     WUU_DESKTOP_USE_GO_RUN: desktopCore ? undefined : "1",
     WUU_SOURCE_ROOT: root,
     WUU_HOME: devHome(env, root),

@@ -930,8 +930,8 @@ func TestToolkit_ListFilesReturnsEntryPaths(t *testing.T) {
 	if parsed.Path != "dir" || parsed.Total != 2 || parsed.OmittedEntryCount != 0 {
 		t.Fatalf("unexpected list_files metadata: %+v", parsed)
 	}
-	if !strings.HasPrefix(parsed.WorkspaceRevision, "fs:worktree:") {
-		t.Fatalf("list_files response missing filesystem workspace revision: %+v", parsed)
+	if !strings.HasPrefix(parsed.WorkspaceRevision, "result:") {
+		t.Fatalf("list_files response missing directory snapshot revision: %+v", parsed)
 	}
 	wantPaths := []string{"dir/a.txt", "dir/sub"}
 	gotPaths := make([]string, 0, len(parsed.Entries))

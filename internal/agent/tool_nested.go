@@ -11,15 +11,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-func toolIsOrchestrator(executor ToolExecutor, call providers.ToolCall) bool {
-	provider, ok := executor.(ToolMetadataProvider)
-	if !ok {
-		return false
-	}
-	metadata, found := provider.ToolMetadata(call)
-	return found && metadata.Orchestrator
-}
-
 type nestedToolScope struct {
 	runtime *TurnToolRuntime
 	parent  *toolRun
@@ -50,7 +41,7 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 	s.mu.Lock()
 	r := s.runtime
 	r.mu.Lock()
-	if r.canceled || s.ctx.Err() != nil {
+	if r.canceled || childCtx.Err() != nil {
 		r.mu.Unlock()
 		s.mu.Unlock()
 		return toolresult.Result{}, context.Canceled
@@ -62,21 +53,47 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 			s.mu.Unlock()
 			return toolresult.Result{}, errors.New("nested call ID reused with different arguments")
 		}
-	} else {
-		if len(s.calls) >= 1024 {
-			r.mu.Unlock()
-			s.mu.Unlock()
-			return toolresult.Result{}, errors.New("nested tool call limit reached")
-		}
-		localID := call.ID
-		// Never trust a child's local key as a global/provider call identity.
-		call = providers.ToolCall{ID: "nested-" + rand.Text(), Name: call.Name, Arguments: call.Arguments, Kind: call.Kind}
-		run = r.runForCallLocked(call)
-		run.parent, run.depth = s.parent, s.parent.depth+1
-		s.calls[localID] = run
-		r.startRunLocked(childCtx, run, false)
+		r.mu.Unlock()
+		s.mu.Unlock()
+		return r.awaitRunResult(childCtx, run)
+	}
+	if len(s.calls) >= 1024 {
+		r.mu.Unlock()
+		s.mu.Unlock()
+		return toolresult.Result{}, errors.New("nested tool call limit reached")
 	}
 	r.mu.Unlock()
+	localID := call.ID
+	// Never trust a child's local key as a global/provider call identity.
+	call = providers.ToolCall{ID: "nested-" + rand.Text(), Name: call.Name, Arguments: call.Arguments, Kind: call.Kind}
+	admissionCtx, finish, err := r.beginAdmission(childCtx)
+	if err != nil {
+		s.mu.Unlock()
+		return toolresult.Result{}, err
+	}
+	metadata, found, err := ResolveToolMetadata(admissionCtx, r.executor, call)
+	if err != nil {
+		finish()
+		s.mu.Unlock()
+		return toolresult.Result{}, err
+	}
+	if !found {
+		metadata = ToolMetadata{}
+	}
+	r.mu.Lock()
+	if r.canceled || childCtx.Err() != nil {
+		r.mu.Unlock()
+		finish()
+		s.mu.Unlock()
+		return toolresult.Result{}, context.Canceled
+	}
+	r.classifications[call] = metadata
+	run = r.runForCallLocked(call)
+	run.parent, run.depth = s.parent, s.parent.depth+1
+	s.calls[localID] = run
+	r.startRunLocked(childCtx, run, false)
+	r.mu.Unlock()
+	finish()
 	s.mu.Unlock()
 	return r.awaitRunResult(childCtx, run)
 }

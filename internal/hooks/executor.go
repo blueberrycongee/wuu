@@ -75,43 +75,63 @@ func (h *HookedExecutor) FinalizeToolResult(call providers.ToolCall, result tool
 // deferred tool support visible to the agent loop even when hooks decorate the
 // real Toolkit.
 func (h *HookedExecutor) SupportsTool(name string) bool {
+	supported, _ := h.SupportsToolContext(context.Background(), name)
+	return supported
+}
+
+func (h *HookedExecutor) SupportsToolContext(ctx context.Context, name string) (bool, error) {
 	if h == nil || h.inner == nil {
-		return false
+		return false, nil
 	}
-	if sp, ok := h.inner.(agent.ToolSupportProvider); ok {
-		return sp.SupportsTool(name)
+	switch h.inner.(type) {
+	case agent.ContextualToolSupport, agent.ToolSupportProvider:
+		return agent.ResolveToolSupport(ctx, h.inner, name)
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return false
+		return false, nil
 	}
-	for _, def := range h.inner.Definitions() {
+	definitions, err := h.DefinitionsContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	for _, def := range definitions {
 		if strings.EqualFold(strings.TrimSpace(def.Name), name) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // ToolMetadata forwards inner metadata, but disables speculative and concurrent
 // execution when pre-tool hooks can change the arguments after classification.
 func (h *HookedExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
-	if mp, ok := h.inner.(agent.ToolMetadataProvider); ok {
-		meta, found := mp.ToolMetadata(call)
-		if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
-			meta.ReadOnly = false
-			meta.ConcurrencySafe = false
-		}
-		return meta, found
+	metadata, found, _ := h.ToolMetadataContext(context.Background(), call)
+	return metadata, found
+}
+
+func (h *HookedExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
+	meta, found, err := agent.ResolveToolMetadata(ctx, h.inner, call)
+	if err != nil {
+		return agent.ToolMetadata{}, false, err
 	}
-	return agent.ToolMetadata{}, false
+	if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
+		meta.ReadOnly = false
+		meta.ConcurrencySafe = false
+	}
+	return meta, found, nil
 }
 
 func (h *HookedExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
-	if dp, ok := h.inner.(agent.ToolDisplayProvider); ok {
-		return dp.ToolDisplay(call)
-	}
-	return providers.ToolCallDisplay{}, false
+	display, found, _ := h.ToolDisplayContext(context.Background(), call)
+	return display, found
+}
+
+func (h *HookedExecutor) ToolDisplayContext(ctx context.Context, call providers.ToolCall) (providers.ToolCallDisplay, bool, error) {
+	return agent.ResolveToolDisplay(ctx, h.inner, call)
 }
 
 // Inner exposes the decorated executor so host-owned composition layers can be

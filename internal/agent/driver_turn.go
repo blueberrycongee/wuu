@@ -286,7 +286,11 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true
 		if streaming, ok := g.runner.SelectedToolBatch.(toolbatch.StreamingExecutor); ok {
 			step.streamToolAdmission = func(ctx context.Context, call providers.ToolCall) (bool, error) {
-				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: toolCanStartDuringStreaming(g.runner.Tools, call), ConcurrencySafe: toolCanRunConcurrently(g.runner.Tools, call)})
+				metadata, found, err := ResolveToolMetadata(ctx, g.runner.Tools, call)
+				if err != nil {
+					return false, err
+				}
+				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: found && metadata.ReadOnly && metadata.ConcurrencySafe, ConcurrencySafe: found && metadata.ConcurrencySafe})
 			}
 		}
 		// A successful model RPC ends before its streamed tools. Their lifetime
@@ -500,7 +504,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	}
 	onResult := func(call providers.ToolCall, result toolresult.Result) {
 		if g.onEvent != nil {
-			call = enrichToolCallDisplay(g.runner.Tools, call)
+			call = enrichToolCallDisplay(ctx, g.runner.Tools, call)
 			g.onEvent(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call, ToolResult: truncateLog(result.TextProjection(), 2000), ToolResultDetail: resultPointer(result)})
 			if update, ok := todoUpdateEventFromToolResult(call, result.TextProjection()); ok {
 				g.onEvent(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: update})

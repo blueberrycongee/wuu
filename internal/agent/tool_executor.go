@@ -46,6 +46,29 @@ type ToolSupportProvider interface {
 	SupportsTool(name string) bool
 }
 
+// ContextualToolSupport keeps selected-provider resolution within its caller's
+// lifetime. Failure must not fall back to a different tool surface.
+type ContextualToolSupport interface {
+	SupportsToolContext(context.Context, string) (bool, error)
+}
+
+func ResolveToolSupport(ctx context.Context, executor ToolExecutor, name string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var supported bool
+	var err error
+	if provider, ok := executor.(ContextualToolSupport); ok {
+		supported, err = provider.SupportsToolContext(ctx, name)
+	} else if provider, ok := executor.(ToolSupportProvider); ok {
+		supported = provider.SupportsTool(name)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return supported, err
+}
+
 // ToolMetadata describes a tool's scheduling and policy characteristics.
 type ToolMetadata struct {
 	// Orchestrator tools coordinate child calls but perform no leaf operations
@@ -66,6 +89,30 @@ type ToolMetadataProvider interface {
 	ToolMetadata(call providers.ToolCall) (ToolMetadata, bool)
 }
 
+// ContextualToolMetadata exposes scheduling metadata without detaching remote
+// resolution from the admission context.
+type ContextualToolMetadata interface {
+	ToolMetadataContext(context.Context, providers.ToolCall) (ToolMetadata, bool, error)
+}
+
+func ResolveToolMetadata(ctx context.Context, executor ToolExecutor, call providers.ToolCall) (ToolMetadata, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ToolMetadata{}, false, err
+	}
+	var metadata ToolMetadata
+	var found bool
+	var err error
+	if provider, ok := executor.(ContextualToolMetadata); ok {
+		metadata, found, err = provider.ToolMetadataContext(ctx, call)
+	} else if provider, ok := executor.(ToolMetadataProvider); ok {
+		metadata, found = provider.ToolMetadata(call)
+	}
+	if err := ctx.Err(); err != nil {
+		return ToolMetadata{}, false, err
+	}
+	return metadata, found, err
+}
+
 // ToolAuthorizationGate lets executor decorators route dynamically provided
 // tools through the same authority check as built-in tools.
 type ToolAuthorizationGate interface {
@@ -77,6 +124,30 @@ type ToolAuthorizationGate interface {
 // as display metadata only; it is not sent to model providers.
 type ToolDisplayProvider interface {
 	ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool)
+}
+
+// ContextualToolDisplay allows optional display enrichment to stop with the
+// stream or turn that requested it.
+type ContextualToolDisplay interface {
+	ToolDisplayContext(context.Context, providers.ToolCall) (providers.ToolCallDisplay, bool, error)
+}
+
+func ResolveToolDisplay(ctx context.Context, executor ToolExecutor, call providers.ToolCall) (providers.ToolCallDisplay, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return providers.ToolCallDisplay{}, false, err
+	}
+	var display providers.ToolCallDisplay
+	var found bool
+	var err error
+	if provider, ok := executor.(ContextualToolDisplay); ok {
+		display, found, err = provider.ToolDisplayContext(ctx, call)
+	} else if provider, ok := executor.(ToolDisplayProvider); ok {
+		display, found = provider.ToolDisplay(call)
+	}
+	if err := ctx.Err(); err != nil {
+		return providers.ToolCallDisplay{}, false, err
+	}
+	return display, found, err
 }
 
 // ToolContextProvider is an optional interface a ToolExecutor can

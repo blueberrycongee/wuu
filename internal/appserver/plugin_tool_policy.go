@@ -173,22 +173,32 @@ func (e *sessionToolPolicyExecutor) FinalizeToolResult(call providers.ToolCall, 
 }
 
 func (e *sessionToolPolicyExecutor) SupportsTool(name string) bool {
+	supported, _ := e.SupportsToolContext(context.Background(), name)
+	return supported
+}
+
+func (e *sessionToolPolicyExecutor) SupportsToolContext(ctx context.Context, name string) (bool, error) {
 	if !e.allowed(name) {
-		return false
+		return false, nil
 	}
-	provider, ok := e.base.(agent.ToolSupportProvider)
-	return !ok || provider.SupportsTool(name)
+	switch e.base.(type) {
+	case agent.ContextualToolSupport, agent.ToolSupportProvider:
+		return agent.ResolveToolSupport(ctx, e.base, name)
+	default:
+		return true, nil
+	}
 }
 
 func (e *sessionToolPolicyExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
+	metadata, found, _ := e.ToolMetadataContext(context.Background(), call)
+	return metadata, found
+}
+
+func (e *sessionToolPolicyExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
 	if !e.allowed(call.Name) {
-		return agent.ToolMetadata{}, false
+		return agent.ToolMetadata{}, false, nil
 	}
-	provider, ok := e.base.(agent.ToolMetadataProvider)
-	if !ok {
-		return agent.ToolMetadata{}, false
-	}
-	return provider.ToolMetadata(call)
+	return agent.ResolveToolMetadata(ctx, e.base, call)
 }
 
 func (e *sessionToolPolicyExecutor) AuthorizeTool(ctx context.Context, call providers.ToolCall, metadata agent.ToolMetadata) error {
@@ -202,11 +212,12 @@ func (e *sessionToolPolicyExecutor) AuthorizeTool(ctx context.Context, call prov
 }
 
 func (e *sessionToolPolicyExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
-	provider, ok := e.base.(agent.ToolDisplayProvider)
-	if !ok {
-		return providers.ToolCallDisplay{}, false
-	}
-	return provider.ToolDisplay(call)
+	display, found, _ := e.ToolDisplayContext(context.Background(), call)
+	return display, found
+}
+
+func (e *sessionToolPolicyExecutor) ToolDisplayContext(ctx context.Context, call providers.ToolCall) (providers.ToolCallDisplay, bool, error) {
+	return agent.ResolveToolDisplay(ctx, e.base, call)
 }
 
 func (e *sessionToolPolicyExecutor) LastAdditionalContext() string {

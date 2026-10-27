@@ -156,22 +156,34 @@ func (e *selectedToolExecutor) ExecuteResult(ctx context.Context, call providers
 	return result.Result, nil
 }
 func (e *selectedToolExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
-	result, err := e.client.Resolve(context.Background(), call)
+	metadata, found, _ := e.ToolMetadataContext(context.Background(), call)
+	return metadata, found
+}
+func (e *selectedToolExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
+	result, err := e.client.Resolve(ctx, call)
 	if err != nil || !result.Found || result.Metadata == nil {
-		return agent.ToolMetadata{}, false
+		return agent.ToolMetadata{}, false, err
 	}
-	return result.Metadata.AgentMetadata(), true
+	return result.Metadata.AgentMetadata(), true, nil
 }
 func (e *selectedToolExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
-	result, err := e.client.Resolve(context.Background(), call)
+	display, found, _ := e.ToolDisplayContext(context.Background(), call)
+	return display, found
+}
+func (e *selectedToolExecutor) ToolDisplayContext(ctx context.Context, call providers.ToolCall) (providers.ToolCallDisplay, bool, error) {
+	result, err := e.client.Resolve(ctx, call)
 	if err != nil || result.Display == nil {
-		return providers.ToolCallDisplay{}, false
+		return providers.ToolCallDisplay{}, false, err
 	}
-	return *result.Display, true
+	return *result.Display, true, nil
 }
 func (e *selectedToolExecutor) SupportsTool(name string) bool {
-	result, err := e.client.Resolve(context.Background(), providers.ToolCall{Name: name})
-	return err == nil && result.Supports
+	supported, _ := e.SupportsToolContext(context.Background(), name)
+	return supported
+}
+func (e *selectedToolExecutor) SupportsToolContext(ctx context.Context, name string) (bool, error) {
+	result, err := e.client.Resolve(ctx, providers.ToolCall{Name: name})
+	return err == nil && result.Supports, err
 }
 func (e *selectedToolExecutor) DiscoveredTools(call providers.ToolCall) []providers.LoadableToolDefinition {
 	e.mu.Lock()

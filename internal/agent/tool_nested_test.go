@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,142 @@ import (
 
 type orchestrationTestTools struct {
 	run func(context.Context, providers.ToolCall) (string, error)
+}
+
+type resolvingOrchestrationTools struct {
+	orchestrationTestTools
+	resolve func(context.Context, providers.ToolCall) (ToolMetadata, bool, error)
+}
+
+func (e resolvingOrchestrationTools) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (ToolMetadata, bool, error) {
+	return e.resolve(ctx, call)
+}
+
+func TestNestedMetadataAdmissionDrainsAfterParentReturns(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	resolved := make(chan providers.ToolCall, 1)
+	childDone := make(chan error, 1)
+	var unblock sync.Once
+	releaseResolution := func() { unblock.Do(func() { close(release) }) }
+	defer releaseResolution()
+	var effects atomic.Int32
+	executor := resolvingOrchestrationTools{
+		resolve: func(ctx context.Context, call providers.ToolCall) (ToolMetadata, bool, error) {
+			if call.Name == "orchestrate" {
+				return ToolMetadata{Orchestrator: true, ConcurrencySafe: true}, true, nil
+			}
+			resolved <- call
+			close(entered)
+			// The transport is still physically active after observing owner
+			// cancellation, so Close must retain this callback until it returns.
+			<-release
+			return ToolMetadata{}, false, ctx.Err()
+		},
+		orchestrationTestTools: orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+			if call.Name != "orchestrate" {
+				effects.Add(1)
+				return "unexpected effect", nil
+			}
+			scope, _ := toolctx.Nested(ctx)
+			go func() {
+				_, err := scope.Invoke(context.Background(), providers.ToolCall{ID: "local", Name: "read", Arguments: `{}`})
+				childDone <- err
+			}()
+			select {
+			case <-entered:
+				return "parent finished", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}},
+	}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "parent finished" {
+		t.Fatalf("parent failed before child admission: %+v %v", messages, err)
+	}
+	call := <-resolved
+	if !strings.HasPrefix(call.ID, "nested-") {
+		t.Errorf("metadata observed caller-local identity %q", call.ID)
+	}
+	closed := make(chan struct{})
+	go func() { runtime.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Error("Close abandoned a nested metadata callback after its parent returned")
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseResolution()
+	select {
+	case err := <-childDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("child admission after owner completion: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("child resolution did not drain")
+	}
+	select {
+	case <-closed:
+	case <-ctx.Done():
+		t.Fatal("Close did not finish after nested admission drained")
+	}
+	if effects.Load() != 0 {
+		t.Fatalf("canceled nested admission performed %d effects", effects.Load())
+	}
+}
+
+func TestNestedRepeatUsesAdmittedMetadataAndHostIdentity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var resolutions, effects atomic.Int32
+	var resolvedID, executedID string
+	executor := resolvingOrchestrationTools{
+		resolve: func(_ context.Context, call providers.ToolCall) (ToolMetadata, bool, error) {
+			if call.Name == "orchestrate" {
+				return ToolMetadata{Orchestrator: true, ConcurrencySafe: true}, true, nil
+			}
+			if resolutions.Add(1) != 1 {
+				return ToolMetadata{}, false, errors.New("provider resolution is unavailable after admission")
+			}
+			resolvedID = call.ID
+			return ToolMetadata{ReadOnly: true, ConcurrencySafe: true}, true, nil
+		},
+		orchestrationTestTools: orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+			if call.Name != "orchestrate" {
+				effects.Add(1)
+				executedID = call.ID
+				return "recorded child result", nil
+			}
+			scope, _ := toolctx.Nested(ctx)
+			child := providers.ToolCall{ID: "local", Name: "read", Arguments: `{}`}
+			first, err := scope.Invoke(ctx, child)
+			if err != nil {
+				return "", err
+			}
+			second, err := scope.Invoke(ctx, child)
+			if err != nil {
+				return "", err
+			}
+			if first.TextProjection() != second.TextProjection() {
+				return "", errors.New("admitted child outcome changed")
+			}
+			return second.TextProjection(), nil
+		}},
+	}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor})
+	defer runtime.Close()
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "recorded child result" {
+		t.Errorf("repeat did not join admitted result: %+v %v", messages, err)
+	}
+	if resolutions.Load() != 1 || effects.Load() != 1 {
+		t.Errorf("repeat resolved or executed again: resolutions=%d effects=%d", resolutions.Load(), effects.Load())
+	}
+	if resolvedID != executedID || !strings.HasPrefix(resolvedID, "nested-") {
+		t.Errorf("resolution/execution identity mismatch: resolved=%q executed=%q", resolvedID, executedID)
+	}
 }
 
 func (e orchestrationTestTools) Definitions() []providers.ToolDefinition { return nil }

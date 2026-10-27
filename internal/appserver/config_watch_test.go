@@ -208,12 +208,27 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 	// A newer build can add a field unknown to this reader.
 	write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
 	var configErr *pluginhost.HostServiceError
-	if err := srv.refreshConfigIfChanged(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
+	if _, _, err := rt.LoadEffectiveConfig(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
 		t.Fatalf("expected strict config error, got %v", err)
 	}
+	// Exercise watcher-first observation without depending on fsnotify timing.
+	// It may have already published this error; strict reads still reject it.
+	if err := srv.refreshObservedConfigChange(); err != nil {
+		var observedErr *pluginhost.HostServiceError
+		if !errors.As(err, &observedErr) || observedErr.Code != configErr.Code {
+			t.Fatalf("unexpected observed config error: %v", err)
+		}
+	}
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatalf("already observed invalid config was reported again: %v", err)
+	}
 	messages := parseOutput(t, out.String())
-	if len(notificationsByMethod(messages, NotificationConfigError)) != 1 {
+	diagnostics := notificationsByMethod(messages, NotificationConfigError)
+	if len(diagnostics) != 1 {
 		t.Fatalf("expected one visible configuration error: %s", out.String())
+	}
+	if diagnostic := remarshal[ConfigErrorNotification](t, diagnostics[0]["params"]); diagnostic.Message != configErr.Error() {
+		t.Fatalf("published diagnostic lost the strict config error: %+v", diagnostic)
 	}
 	if got := srv.providerSummaries(); !reflect.DeepEqual(got, before) {
 		t.Fatalf("invalid refresh erased inventory: %+v", got)
@@ -230,7 +245,7 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		t.Fatal(err)
 	}
 	rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
-	if rejection.Code == "" {
+	if rejection.Code == "" || rejection.Message != configErr.Error() {
 		t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
 	}
 

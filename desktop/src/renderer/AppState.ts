@@ -904,7 +904,16 @@ function reduceNotification(
         updateThreadByID(
           state,
           threadID,
-          (thread) => upsertTurn(thread, turn),
+          (thread) => {
+            const settled = upsertTurn(thread, turn);
+            const interruptedTarget = thread.interrupting_turn_id ?? activeTurnIDForThread(thread);
+            if (thread.interrupting && interruptedTarget !== turn.id) {
+              // An old terminal receipt cannot release an accepted cancellation,
+              // including when a summary snapshot has not supplied its target yet.
+              return { ...settled, status: thread.status };
+            }
+            return isThreadRunning(settled) ? settled : { ...settled, interrupting: false, interrupting_turn_id: undefined };
+          },
           threadIsActive ? { running: false, status: "ready" } : {},
         ),
         turn.id,

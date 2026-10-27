@@ -30,6 +30,7 @@ type toolRun struct {
 	order                  int
 	finalized              bool
 	concurrencySafe        bool
+	orchestrator           bool
 	streamSafe             bool
 	streamStarted          bool
 	streamAdmissionChecked bool
@@ -59,13 +60,20 @@ type TurnToolRuntime struct {
 	runContext      context.Context
 	gate            *ToolExecutionGate
 
-	mu       sync.Mutex
-	runs     []*toolRun
-	byID     map[string]*toolRun
-	canceled bool
-	started  bool
-	workers  sync.WaitGroup
-	running  map[*toolRun]context.CancelFunc
+	// Metadata and streaming admission remain serialized without holding the
+	// runtime state lock across provider callbacks.
+	admissionMu      sync.Mutex
+	admissionContext context.Context
+	cancelAdmission  context.CancelFunc
+	classifications  map[providers.ToolCall]ToolMetadata
+	mu               sync.Mutex
+	runs             []*toolRun
+	byID             map[string]*toolRun
+	canceled         bool
+	closing          bool
+	started          bool
+	workers          sync.WaitGroup
+	running          map[*toolRun]context.CancelFunc
 
 	requestContext []ContextSegment
 	stepIndex      *int
@@ -102,16 +110,20 @@ func (r *TurnToolRuntime) SetResultCallback(callback func(providers.ToolCall, to
 }
 
 func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
+	admissionContext, cancelAdmission := context.WithCancel(context.Background())
 	runtime := &TurnToolRuntime{
-		streamAdmission: config.StreamAdmission,
-		serial:          config.Serial,
-		executor:        config.Executor,
-		ledger:          config.Ledger,
-		operationID:     strings.TrimSpace(config.OperationID),
-		runContext:      config.RunContext,
-		gate:            config.Gate,
-		byID:            map[string]*toolRun{},
-		running:         map[*toolRun]context.CancelFunc{},
+		admissionContext: admissionContext,
+		cancelAdmission:  cancelAdmission,
+		classifications:  make(map[providers.ToolCall]ToolMetadata),
+		streamAdmission:  config.StreamAdmission,
+		serial:           config.Serial,
+		executor:         config.Executor,
+		ledger:           config.Ledger,
+		operationID:      strings.TrimSpace(config.OperationID),
+		runContext:       config.RunContext,
+		gate:             config.Gate,
+		byID:             map[string]*toolRun{},
+		running:          map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
 		capacity := maxToolConcurrency
@@ -140,6 +152,12 @@ func (r *TurnToolRuntime) ObserveStreamEvent(ctx context.Context, event provider
 	if r == nil || r.executor == nil {
 		return nil
 	}
+	executionCtx := ctx
+	ctx, finish, err := r.beginAdmission(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	switch event.Type {
 	case providers.EventToolUseStart:
 		if event.ToolCall == nil || strings.TrimSpace(event.ToolCall.ID) == "" {
@@ -152,7 +170,9 @@ func (r *TurnToolRuntime) ObserveStreamEvent(ctx context.Context, event provider
 		if event.ToolCall == nil || strings.TrimSpace(event.ToolCall.ID) == "" {
 			return nil
 		}
-		r.finalizeStreamTool(ctx, event.ToolCall)
+		if err := r.finalizeStreamTool(ctx, executionCtx, event.ToolCall); err != nil {
+			return err
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -165,12 +185,37 @@ func (r *TurnToolRuntime) Cancel() {
 	if r == nil {
 		return
 	}
+	r.cancelAdmission()
 	r.mu.Lock()
 	r.canceled = true
 	for _, cancel := range r.running {
 		cancel()
 	}
 	r.mu.Unlock()
+}
+
+// beginAdmission retains synchronous provider callbacks until Close, including
+// providers that observe cancellation before their physical callback returns.
+func (r *TurnToolRuntime) beginAdmission(ctx context.Context) (context.Context, func(), error) {
+	r.mu.Lock()
+	if r.canceled {
+		r.mu.Unlock()
+		return nil, nil, context.Canceled
+	}
+	r.workers.Add(1)
+	r.mu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(r.admissionContext, cancel)
+	if r.admissionContext.Err() != nil {
+		cancel()
+	}
+	r.admissionMu.Lock()
+	finish := func() { r.admissionMu.Unlock(); stop(); cancel(); r.workers.Done() }
+	if err := ctx.Err(); err != nil {
+		finish()
+		return nil, nil, err
+	}
+	return ctx, finish, nil
 }
 
 // Close waits for physical completion, including orphaned and nested calls.
@@ -180,6 +225,9 @@ func (r *TurnToolRuntime) Close() {
 		return
 	}
 	r.Cancel()
+	r.mu.Lock()
+	r.closing = true
+	r.mu.Unlock()
 	r.workers.Wait()
 }
 
@@ -237,8 +285,6 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 		existing.call.ProviderItemModel = call.ProviderItemModel
 		existing.call.Name = call.Name
 		existing.call.Kind = call.Kind
-		existing.concurrencySafe = toolCanRunConcurrently(r.executor, existing.call)
-		existing.streamSafe = toolCanStartDuringStreaming(r.executor, existing.call)
 		return
 	}
 	run := &toolRun{
@@ -253,8 +299,6 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 		order: len(r.runs),
 		done:  make(chan struct{}),
 	}
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, run.call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, run.call)
 	r.runs = append(r.runs, run)
 	r.byID[call.ID] = run
 }
@@ -271,66 +315,94 @@ func (r *TurnToolRuntime) appendStreamToolDelta(delta string) {
 	r.runs[len(r.runs)-1].call.Arguments += delta
 }
 
-func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *providers.ToolCall) {
+func (r *TurnToolRuntime) finalizeStreamTool(ctx, executionCtx context.Context, call *providers.ToolCall) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.canceled {
-		return
+		r.mu.Unlock()
+		return context.Canceled
 	}
 	run := r.byID[call.ID]
+	resolvedCall := providers.CloneToolCall(*call)
+	if run != nil && resolvedCall.Arguments == "" {
+		resolvedCall.Arguments = run.call.Arguments
+	}
+	r.mu.Unlock()
+	metadata, found, err := ResolveToolMetadata(ctx, r.executor, resolvedCall)
+	if err != nil {
+		return err
+	}
+	if !found {
+		metadata = ToolMetadata{}
+	}
+	r.mu.Lock()
+	if r.canceled || ctx.Err() != nil {
+		r.mu.Unlock()
+		return context.Canceled
+	}
 	if run == nil {
-		run = &toolRun{
-			call: providers.ToolCall{
-				ID:                   call.ID,
-				ProviderItemID:       call.ProviderItemID,
-				ProviderItemProvider: call.ProviderItemProvider,
-				ProviderItemModel:    call.ProviderItemModel,
-			},
-			order: len(r.runs),
-			done:  make(chan struct{}),
-		}
+		run = &toolRun{call: resolvedCall, order: len(r.runs), done: make(chan struct{})}
 		r.runs = append(r.runs, run)
 		r.byID[call.ID] = run
-	}
-	if call.ProviderItemID != "" {
-		run.call.ProviderItemID = call.ProviderItemID
-		run.call.ProviderItemProvider = call.ProviderItemProvider
-		run.call.ProviderItemModel = call.ProviderItemModel
-	}
-	run.call.Name = call.Name
-	run.call.Kind = call.Kind
-	if call.Arguments != "" {
-		run.call.Arguments = call.Arguments
+	} else {
+		if call.ProviderItemID == "" {
+			resolvedCall.ProviderItemID = run.call.ProviderItemID
+			resolvedCall.ProviderItemProvider = run.call.ProviderItemProvider
+			resolvedCall.ProviderItemModel = run.call.ProviderItemModel
+		}
+		run.call = resolvedCall
 	}
 	run.finalized = run.call.Arguments != ""
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, run.call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, run.call)
-	r.startReadyStreamPrefixLocked(ctx)
+	run.concurrencySafe = metadata.ConcurrencySafe
+	run.streamSafe = metadata.ReadOnly && metadata.ConcurrencySafe
+	run.orchestrator = metadata.Orchestrator
+	r.classifications[run.call] = metadata
+	r.mu.Unlock()
+	return r.startReadyStreamPrefix(ctx, executionCtx)
 }
 
-func (r *TurnToolRuntime) startReadyStreamPrefixLocked(ctx context.Context) {
-	for _, run := range r.runs {
-		if !run.finalized {
-			return
+func (r *TurnToolRuntime) startReadyStreamPrefix(ctx, executionCtx context.Context) error {
+	for index := 0; ; index++ {
+		r.mu.Lock()
+		if r.canceled || ctx.Err() != nil {
+			r.mu.Unlock()
+			return context.Canceled
 		}
-		if !run.streamSafe {
-			return
+		if index >= len(r.runs) {
+			r.mu.Unlock()
+			return nil
 		}
-		if r.streamAdmission != nil {
-			if !run.streamAdmissionChecked {
-				admitted, err := r.streamAdmission(ctx, providers.CloneToolCall(run.call))
-				run.streamAdmissionChecked = true
-				if err != nil {
-					r.ledgerErr = err
-					return
-				}
-				run.streamAdmitted = admitted
+		run := r.runs[index]
+		if !run.finalized || !run.streamSafe {
+			r.mu.Unlock()
+			return nil
+		}
+		checkAdmission := r.streamAdmission != nil && !run.streamAdmissionChecked
+		call := providers.CloneToolCall(run.call)
+		r.mu.Unlock()
+		if checkAdmission {
+			admitted, err := r.streamAdmission(ctx, call)
+			r.mu.Lock()
+			run.streamAdmissionChecked = true
+			run.streamAdmitted = admitted
+			if err != nil {
+				r.ledgerErr = err
 			}
-			if !run.streamAdmitted {
-				return
+			r.mu.Unlock()
+			if err != nil {
+				return err
 			}
 		}
-		r.startRunLocked(ctx, run, true)
+		r.mu.Lock()
+		if r.canceled || ctx.Err() != nil {
+			r.mu.Unlock()
+			return context.Canceled
+		}
+		if r.streamAdmission != nil && !run.streamAdmitted {
+			r.mu.Unlock()
+			return nil
+		}
+		r.startRunLocked(executionCtx, run, true)
+		r.mu.Unlock()
 	}
 }
 
@@ -375,6 +447,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	// Final-call registration can refresh metadata while this streamed run is
 	// already starting. Use the scheduling decision made under the runtime lock.
 	concurrencySafe := run.concurrencySafe
+	orchestrator := run.orchestrator
 	run.mu.Unlock()
 	r.started = true
 	r.running[run] = cancel
@@ -422,7 +495,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		if run.parent != nil {
 			runCtx = toolctx.WithNestedCall(runCtx)
 		}
-		if toolIsOrchestrator(r.executor, call) {
+		if orchestrator {
 			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
 		} else {
 			runCtx = toolctx.WithNestedExecutor(runCtx, nil)
@@ -531,7 +604,9 @@ func (r *TurnToolRuntime) ExecuteFinalCalls(
 	if err := r.registerFinalCalls(ctx, calls); err != nil {
 		return nil, fmt.Errorf("prepare tool batch: %w", err)
 	}
-	batches := partitionToolCalls(r.executor, calls)
+	r.mu.Lock()
+	batches := partitionToolCalls(calls, func(call providers.ToolCall) bool { return r.classifications[call].ConcurrencySafe })
+	r.mu.Unlock()
 	var toolMessages []providers.ChatMessage
 	for _, batch := range batches {
 		batchResult := r.executeBatch(ctx, batch, onResult)
@@ -659,7 +734,57 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 }
 
 func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []providers.ToolCall) error {
+	joinContext := ctx
+	ctx, finish, err := r.beginAdmission(ctx)
+	if err != nil {
+		// Stop closes new admission, not the join of effects already accepted
+		// during streaming. Their captured classification and settlement remain
+		// authoritative; joining them must not call the provider again.
+		r.mu.Lock()
+		if !r.canceled || r.closing {
+			r.mu.Unlock()
+			return err
+		}
+		for _, call := range calls {
+			run := r.byID[call.ID]
+			if run == nil || !run.streamStarted || run.call.Name != call.Name || run.call.Arguments != call.Arguments || run.call.Kind != call.Kind {
+				r.mu.Unlock()
+				return err
+			}
+		}
+		for _, call := range calls {
+			run := r.byID[call.ID]
+			r.classifications[call] = ToolMetadata{ConcurrencySafe: run.concurrencySafe, ReadOnly: run.streamSafe, Orchestrator: run.orchestrator}
+		}
+		batchID := r.batchID
+		// Close seals these retained joins under mu before waiting. This is
+		// settlement of accepted work, never renewed execution admission.
+		r.workers.Add(1)
+		r.mu.Unlock()
+		defer r.workers.Done()
+		if r.ledger != nil && batchID != "" {
+			return r.ledger.FinalizeBatch(context.WithoutCancel(joinContext), batchID)
+		}
+		return nil
+	}
+	defer finish()
+	metadata := make([]ToolMetadata, len(calls))
+	for i, call := range calls {
+		var err error
+		var found bool
+		metadata[i], found, err = ResolveToolMetadata(ctx, r.executor, call)
+		if !found {
+			metadata[i] = ToolMetadata{}
+		}
+		if err != nil {
+			return err
+		}
+	}
 	r.mu.Lock()
+	if r.canceled || ctx.Err() != nil {
+		r.mu.Unlock()
+		return context.Canceled
+	}
 	if r.byID == nil {
 		r.byID = map[string]*toolRun{}
 	}
@@ -695,8 +820,10 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 		run.call = call
 		run.order = i
 		run.finalized = true
-		run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
-		run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+		run.concurrencySafe = metadata[i].ConcurrencySafe
+		run.streamSafe = metadata[i].ReadOnly && metadata[i].ConcurrencySafe
+		run.orchestrator = metadata[i].Orchestrator
+		r.classifications[call] = metadata[i]
 		if err := r.prepareRunLocked(ctx, run); err != nil {
 			r.mu.Unlock()
 			for _, cancel := range orphanCancels {
@@ -882,8 +1009,10 @@ func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
 		finalized: true,
 		done:      make(chan struct{}),
 	}
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+	metadata := r.classifications[call]
+	run.concurrencySafe = metadata.ConcurrencySafe
+	run.streamSafe = metadata.ReadOnly && metadata.ConcurrencySafe
+	run.orchestrator = metadata.Orchestrator
 	r.runs = append(r.runs, run)
 	if call.ID != "" {
 		r.byID[call.ID] = run
@@ -955,28 +1084,4 @@ func (r *TurnToolRuntime) notifyResult(call providers.ToolCall, result toolresul
 func resultPointer(result toolresult.Result) *toolresult.Result {
 	clone := result.Clone()
 	return &clone
-}
-
-func toolCanRunConcurrently(executor ToolExecutor, call providers.ToolCall) bool {
-	if executor == nil {
-		return false
-	}
-	mp, ok := executor.(ToolMetadataProvider)
-	if !ok {
-		return false
-	}
-	meta, found := mp.ToolMetadata(call)
-	return found && meta.ConcurrencySafe
-}
-
-func toolCanStartDuringStreaming(executor ToolExecutor, call providers.ToolCall) bool {
-	if executor == nil {
-		return false
-	}
-	mp, ok := executor.(ToolMetadataProvider)
-	if !ok {
-		return false
-	}
-	meta, found := mp.ToolMetadata(call)
-	return found && meta.ReadOnly && meta.ConcurrencySafe
 }

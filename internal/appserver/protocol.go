@@ -2515,11 +2515,14 @@ type Thread struct {
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).
-	EngineID              string        `json:"engine_id,omitempty"`
-	CWD                   string        `json:"cwd"`
-	WorkspaceID           string        `json:"workspace_id,omitempty"`
-	WorkspaceKind         WorkspaceKind `json:"workspace_kind,omitempty"`
-	Status                ThreadStatus  `json:"status"`
+	EngineID      string        `json:"engine_id,omitempty"`
+	CWD           string        `json:"cwd"`
+	WorkspaceID   string        `json:"workspace_id,omitempty"`
+	WorkspaceKind WorkspaceKind `json:"workspace_kind,omitempty"`
+	Status        ThreadStatus  `json:"status"`
+	// Interrupting remains true after cancellation acceptance until execution cleanup releases the turn.
+	Interrupting          bool          `json:"interrupting,omitempty"`
+	InterruptingTurnID    string        `json:"interrupting_turn_id,omitempty"`
 	TreeInterrupted       bool          `json:"orchestration_interrupted,omitempty"`
 	ReadOnly              bool          `json:"read_only,omitempty"`
 	Ephemeral             bool          `json:"ephemeral,omitempty"`

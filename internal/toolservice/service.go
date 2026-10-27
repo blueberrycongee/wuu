@@ -283,22 +283,29 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		result = view
 	case "resolve":
 		resolved := ResolveResult{}
-		if provider, ok := executor.(agent.ToolMetadataProvider); ok {
-			m, found := provider.ToolMetadata(input.Call)
-			resolved.Found = found
-			if found {
-				resolved.Metadata = &Metadata{Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
-			}
+		m, found, err := agent.ResolveToolMetadata(ctx, executor, input.Call)
+		if err != nil {
+			return nil, err
 		}
-		if provider, ok := executor.(agent.ToolSupportProvider); ok {
-			resolved.Supports = provider.SupportsTool(input.Call.Name)
-		} else {
+		resolved.Found = found
+		if found {
+			resolved.Metadata = &Metadata{Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
+		}
+		switch executor.(type) {
+		case agent.ContextualToolSupport, agent.ToolSupportProvider:
+			resolved.Supports, err = agent.ResolveToolSupport(ctx, executor, input.Call.Name)
+			if err != nil {
+				return nil, err
+			}
+		default:
 			resolved.Supports = resolved.Found
 		}
-		if provider, ok := executor.(agent.ToolDisplayProvider); ok {
-			if display, found := provider.ToolDisplay(input.Call); found {
-				resolved.Display = &display
-			}
+		display, found, err := agent.ResolveToolDisplay(ctx, executor, input.Call)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			resolved.Display = &display
 		}
 		result = resolved
 	case "execute":

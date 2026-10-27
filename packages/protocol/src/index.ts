@@ -2101,6 +2101,10 @@ export type Thread = {
   // workspace_kind tags the thread with the workspace it was created in.
   workspace_kind?: "project" | "scratch";
   status: ThreadStatus;
+  /** Cancellation was accepted; execution cleanup has not yet released the active turn. */
+  interrupting?: boolean;
+  /** The accepted cancellation target, including in summary-only snapshots. */
+  interrupting_turn_id?: string;
   orchestration_interrupted?: boolean;
   read_only?: boolean;
   // Ephemeral threads live only in the active app-server process and must not

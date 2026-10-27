@@ -58,6 +58,15 @@ assert.equal(devHome({ WUU_HOME: " " }, "/repo"), devHome({}, "/repo"));
 assert.ok(launchEnvironment({ WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: "1" }, "cache-preservation")
   .includes("WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP=1"));
 
+assert.ok(!environment.some((entry) => entry.startsWith("WUU_LIST_FILES_TIMING=")));
+const listingDiagnostic = launchEnvironment({
+  WUU_LIST_FILES_TIMING: "1",
+  WUU_LIST_FILES_TIMING_PATH: "/do-not-forward",
+  WUU_DEBUG_WIRE: "1",
+}, "listing-diagnostic");
+assert.ok(listingDiagnostic.includes("WUU_LIST_FILES_TIMING=1"));
+assert.ok(!listingDiagnostic.some((entry) => /^(WUU_LIST_FILES_TIMING_PATH|WUU_DEBUG_WIRE)=/.test(entry)));
+
 assert.ok(environment.includes("WUU_ENABLE_CUA_MAC=1"));
 assert.ok(environment.includes("WUU_CUA_MAC_HELPER=/repo/desktop/build/bin/wuu-cua-mac"));
 assert.ok(environment.includes("WUU_CUA_MAC_PIP_HELPER=/repo/desktop/build/bin/wuu-cua-mac-pip"));

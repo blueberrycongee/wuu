@@ -113,22 +113,33 @@ func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, 
 
 type permissionCheckedContextKey struct{}
 
-func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
+func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call providers.ToolCall) (resultErr error) {
+	ctx, timing, timingOwner := beginListFilesTiming(ctx, call.Name, call.ID)
+	if timingOwner {
+		defer func() { timing.finish(ctx, resultErr) }()
+	}
+	permissionTiming := timing.start("permission", -1)
+	defer func() { permissionTiming.end(resultErr) }()
 	if checked, _ := ctx.Value(permissionCheckedContextKey{}).(bool); checked {
 		return nil
 	}
 	if t.permissionRequestHook != nil {
-		if err := t.permissionRequestHook(ctx, t, info, call); err != nil {
+		phase := timing.start("permission_hook", -1)
+		err := t.permissionRequestHook(ctx, t, info, call)
+		phase.end(err)
+		if err != nil {
 			return err
 		}
 	}
 	// The selected provider makes the policy decision before local enforcement
 	// or contextual review. Neither can turn its denial into an allowed action.
 	if t.authorizer != nil {
+		phase := timing.start("authorizer", -1)
 		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
 			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
 			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
 		})
+		phase.end(err)
 		if err != nil {
 			return authorizationDenied(info.Name, "authorization provider unavailable")
 		}
@@ -136,7 +147,10 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 			return authorizationDenied(info.Name, decision.Reason)
 		}
 	}
-	if err := t.boundary.Check(info, call); err != nil {
+	phase := timing.start("boundary", -1)
+	err := t.boundary.Check(info, call)
+	phase.end(err)
+	if err != nil {
 		return err
 	}
 	// Host plugin code is not confined by the workspace process sandbox.
@@ -144,7 +158,10 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	if info.Name == "plugin_manager" && !info.ReadOnly && t.boundary.Enforce && (!t.approveForMe || t.reviewer == nil || config.NormalizePermissionMode(t.env.PermissionMode) != config.PermissionModeStandard) {
 		return reviewBlocked(info.Name, "plugin_trust_required", "host plugin execution requires configured Approve for me authorization or an explicitly unconfined session", "ask the user to authorize plugin management through their permission settings; do not bypass workspace restrictions")
 	}
-	if err := t.reviewToolCall(ctx, info, call); err != nil {
+	phase = timing.start("review", -1)
+	err = t.reviewToolCall(ctx, info, call)
+	phase.end(err)
+	if err != nil {
 		return err
 	}
 	return nil
@@ -1929,7 +1946,11 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 
 // ExecuteEnvironmentResult checks worker authority and preserves the raw result.
 // The host owns the durable ledger, output budget and model-facing projection.
-func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.ToolCall) (output toolresult.Result, resultErr error) {
+	ctx, timing, timingOwner := beginListFilesTiming(ctx, call.Name, call.ID)
+	if timingOwner {
+		defer func() { timing.finishResult(ctx, resultErr, output.IsError) }()
+	}
 	if !executionenv.WorkspaceTool(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is not an environment tool", call.Name)
 	}
@@ -1946,7 +1967,10 @@ func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.T
 	return executeToolResult(ctx, tool, call)
 }
 
-func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) (toolresult.Result, error) {
+func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) (output toolresult.Result, resultErr error) {
+	timing := listFilesTimingFromContext(ctx, call.Name)
+	phase := timing.start("tool_execute", -1)
+	defer func() { phase.endResult(resultErr, output.IsError) }()
 	if aware, ok := tool.(CallAwareRichTool); ok {
 		return aware.ExecuteResultCall(ctx, call)
 	}

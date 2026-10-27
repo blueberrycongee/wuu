@@ -138,6 +138,11 @@ Responses 和 Chat Completions 使用经过规范化的客户端历史，保留�
 `thread_id`，创建独立对话。`thread/start` 的 `ephemeral: true` 创建内存会话，服务退出后
 无法恢复。
 
+`turn/interrupt` 成功响应只表示已接受取消，不代表清理结束。停止请求仍持有执行权时，
+会话快照包含 `interrupting: true`；即使摘要快照未包含轮次，`interrupting_turn_id` 也会
+标明目标轮次。切换会话或重新连接后应保留此状态，等待目标轮次的
+终态通知或已完成清理的快照，才能显示为已停止；重新打开会话不得重发取消请求。
+
 会话快照中的可选字段 `title_revision` 是随标题修改一起保存、单调递增的版本号，省略时
 视为零。合并列表、恢复响应或 `thread/updated` 通知时，保留版本较大的标题；
 `updated_at` 表示会话活动时间，不能用来判断标题的新旧。自动生成只填补空标题，

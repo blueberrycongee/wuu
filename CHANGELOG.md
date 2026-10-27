@@ -213,6 +213,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep accepted cancellation visible while switching conversations or reconnecting until the active turn settles, without replaying Stop or discarding the next draft.
+- Propagate Stop to selected-provider tool metadata lookups without blocking cancellation on the runtime state lock. Retain provider callbacks until they physically finish and preserve already-admitted tool results and their durable settlement.
+
+- Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
+- Keep directory listings scoped to visible entry metadata instead of hashing unrelated workspace files, preserve directory pagination checks, and record canceled listings consistently with interrupted programs.
 - Wait for current and replaced remote app-server connections to finish cleanup before the host shuts down, preventing background writes after runtime resources are released.
 
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.

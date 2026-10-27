@@ -56,25 +56,20 @@ Apply can execute module top-level code and package build scripts on the host. B
 
 ## Grow into a package
 
-For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using a source checkout matching your CLI for the SDK.
+For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using the matching SDK embedded in your CLI.
 
 ## Prepare the SDK and package
 
-Use the SDK from the checkout rather than depending on an npm registry release. Replace the first path with your checkout's absolute path, then run these commands from the directory where you want the plugin project:
+Run these commands from the directory where you want the plugin project. No Wuu checkout or npm release of `@wuu/plugin-sdk` is required:
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create hello-plugin
 cd hello-plugin
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
-npm install --save-dev esbuild
-npm pkg set 'scripts.build=tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js'
+npm run build
 ```
 
-The generator creates `plugin.json`, `package.json`, `tsconfig.json`, and `src/index.ts`. Its manifest starts `node dist/index.js` using the `wuu-plugin-v1` runtime transport. The build command above bundles the SDK into that file: Wuu's package preparation excludes `node_modules`, so plain TypeScript compilation would leave a runtime dependency missing from the installed package.
+The generator creates `plugin.json`, `package.json`, `tsconfig.json`, `src/index.ts`, and a local `sdk/` source package. `@wuu/plugin-sdk` resolves to that snapshot, while npm installs the ordinary TypeScript, type-definition, and bundler dependencies. Its manifest starts `node dist/index.js` using the `wuu-plugin-v1` runtime transport. The generated build type-checks your source and bundles the SDK into the runtime file: Wuu's package preparation excludes `node_modules`, so installed plugins do not depend on the development directory. `--type desktop` and `--type full` also generate browser-targeted desktop bundles.
 
 ## Add the tool
 

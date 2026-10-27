@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/blueberrycongee/wuu/internal/version"
 	pluginsdk "github.com/blueberrycongee/wuu/packages/plugin-sdk"
@@ -18,7 +19,18 @@ func exportPluginTypes(target string) error {
 	if err := os.Mkdir(target, 0700); err != nil {
 		return err
 	}
-	return os.CopyFS(target, pluginsdk.Sources)
+	if err := os.CopyFS(target, pluginsdk.Sources); err != nil {
+		return err
+	}
+	// Source exports let ordinary TypeScript and bundler resolution consume the
+	// exact host SDK without an unpublished npm package or a source checkout.
+	return os.WriteFile(filepath.Join(target, "package.json"), []byte(`{
+  "name": "@wuu/plugin-sdk",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./ui": "./src/ui.ts" }
+}
+`), 0600)
 }
 
 // Describe captures the same configured generation used by CLI state commands.
