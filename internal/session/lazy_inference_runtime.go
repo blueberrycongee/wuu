@@ -186,6 +186,6 @@ func (j *lazyInferenceJournal) CompleteOperation(record providers.InferenceOpera
 	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.CompleteOperation(record) })
 }
 
-func (j *lazyInferenceJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
-	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.CompleteWorkflow(record) })
+func (j *lazyInferenceJournal) CompleteWorkflow(ctx context.Context, record providers.InferenceWorkflowTerminalRecord) error {
+	return j.withJournal(ctx, func(journal providers.InferenceJournal) error { return journal.CompleteWorkflow(ctx, record) })
 }

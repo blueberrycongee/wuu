@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add opt-in, metadata-only `model.request.metrics` observations with exact request/turn correlation, host-observed first-output timing, explicit adapter-reported usage, and bounded nonblocking delivery across cancellation and plugin replacement.
+
 - Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
 - Compose explicit consumer-scoped service delegates so downstream packages can augment selected methods while reusing the remaining implementation, with the same dependency, cancellation, and retirement rules as complete provider replacements.
 - Verify independent public-SDK providers and additive service/UI cooperation through executable conformance gates, including disabled providers, rejected upgrades, retained tasks, revoked access, and uncertain delivery.
@@ -215,6 +217,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
 
+- Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.
+
 - Keep experimental project scheduling active through explicitly selected coordination decorators, while preserving stopped-generation completion and rejecting unreachable native fallback.
 - Expose the running Wuu CLI to agent authoring commands without replacing the user's `PATH`, preventing older installed CLIs from selecting a mismatched SDK. Remote Wuu workers identify their own CLI; embedded library hosts omit unavailable authoring hints.
 
@@ -222,9 +226,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
+- Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
+
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 
 - Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.
+- Keep CLI plugin disable/remove and state commands available when an optional add-on fails, while preserving failed-runtime diagnostics and required composition bindings.
 - Resolve website tab, popup, and system-permission guide resources from the desktop's ESM main bundle so browser navigation and permission guidance do not fail on missing CommonJS globals.
 - Declare MCP configuration, definition reads, and login cancellation in the resource-access contract so owner actions reach their handlers while selected policies and non-owner restrictions remain enforced.
 - Keep MCP catalog, login, and configuration failures concise and local to the failed operation, with shared opt-in diagnostics and explicit login retry without losing completed authorization.

@@ -6,6 +6,8 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["../../../packages/plugin-sdk/node_modules/@types"],
     "paths": { "@wuu/plugin-sdk": ["../../../packages/plugin-sdk/src/index.ts"] }
   },
   "include": ["*.ts"]

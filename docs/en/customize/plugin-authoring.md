@@ -476,6 +476,7 @@ accounting. Native forwarding cannot install arbitrary endpoints or credentials.
 | --- | --- |
 | `model.request.transform` | Version-1 `transform` capability. Receives `{ request, origin }`; returns `{ request? }` before provider dispatch. |
 | `model.request.observe` | Version-1 `observe` capability. Receives request and terminal response/error phases, with the logical request and host-authenticated origin. |
+| `model.request.metrics` | Version-1 metadata-only `observe` capability. Bounded, nonblocking terminal timing and adapter-reported usage; no request or response content. |
 | `model.middleware` | Version-1 `decision` capability with `propagate` errors. Wraps dispatch, returns a replacement response, or calls its single-use continuation. |
 | `model.adapter` | Version-1 `decision` capability with `propagate` errors. Supplies an explicitly selected adapter implementation. |
 
@@ -483,6 +484,65 @@ Plugin-initiated independent calls bypass request hooks and around-call middlewa
 so observing a normal request and replaying it does not recursively trigger the
 same policy. `origin.kind`, `plugin_id`, operation IDs and available session context
 are host metadata; supplying copied metadata cannot impersonate an agent request.
+
+
+### Metadata-only model performance observation
+
+Declare `MODEL_REQUEST_METRICS_CAPABILITY` (`model.request.metrics`) with
+`kind: "observe", version: 1` and protocol 2 or 3 to receive
+`ModelRequestMetricsInput`. This is separate from content-bearing
+`model.request.observe`: it sends no prompts, outputs, tool arguments, provider
+options, or raw errors, and its callbacks cannot delay or change model completion.
+It supports performance displays and latency diagnostics without retaining a
+conversation snapshot.
+
+Each terminal record describes one selected-adapter invocation, before outer
+middleware can rewrite its response. `request_id` is unique per invocation;
+`origin.operation_id` correlates retries, and `attempt_id` identifies an admitted
+attempt when available. Session metadata and `turn_id` come from authenticated
+host contexts; absent context stays absent. Independent plugin calls are included,
+except inference descending from a metrics callback, which is excluded to prevent
+recursive observation. Middleware-only cached responses and rejected model routes
+that never reach an adapter produce no record. This is not a tool-duration or
+native external-engine event feed.
+
+- `duration_ms` uses the host monotonic clock from adapter admission through the
+  terminal outcome, including capacity wait. `started_at` is a wall-clock timestamp
+  for display, not duration arithmetic.
+- `first_output_ms` is the host-observed first nonempty text, reasoning, tool output,
+  or image in a stream. It is a time-to-first-output proxy, not a provider token
+  timestamp. Unary and empty responses omit it.
+- `text_delta_events` and `text_utf8_bytes` count nonempty text deltas, not tokens.
+  They exclude reasoning and replacement events; stream resets do not erase
+  already observed traffic.
+- `usage` is the latest optional adapter assertion, labeled
+  `usage_source: "adapter_reported"`. Native provider adapters forward provider
+  usage; custom adapters can supply their own values. This is not independently
+  verified physical billing evidence. Missing usage means unknown, never zero or
+  an estimate from chunks; cancellation may leave only partial usage. A reported
+  output-token count divided by total duration is a request-wide average, not
+  instantaneous generation speed.
+- `status` is `completed`, `error`, `cancelled` (including deadline expiry), or
+  `incomplete` when a stream closes without a terminal event. Each invocation
+  captures at most one terminal record, including early iterator cancellation.
+
+Delivery is best effort and not durable. Each exact plugin registration has one
+serial callback and a queue of 64 records. Queue overflow drops new records;
+`dropped_before` reports overflow since the previous delivered callback. Callback
+execution has a five-second deadline. A timeout cancels the callback. Timeout or
+unacknowledged execution cancellation suspends
+this registration's metrics delivery until reload, discarding its queue: a cancel
+signal does not prove a remote handler has stopped. No further metrics callbacks
+are admitted behind an unacknowledged one; unrelated plugin capabilities remain
+available. Removal and generation shutdown cancel accepted delivery, discard queued
+records, and join delivery before the plugin's ordinary process cleanup; old
+records never move to a replacement registration. Delivery failures
+are isolated and appear as fixed, content-free plugin diagnostics (unless
+`error_policy: "ignore"`); overflow also leaves a diagnostic. No delivery error
+becomes a conversation toast or model failure. Do not treat the feed as an
+exactly-once billing ledger. Keep handlers short and opt into
+`concurrentCapabilities` when their own plugin must handle other callbacks while
+observing.
 
 ### Independent calls and streaming
 

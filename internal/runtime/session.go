@@ -547,6 +547,11 @@ func NewSession(opts Options) (*Session, error) {
 		}
 	}()
 	activationErr := activatePluginHost(context.Background(), pluginHost)
+	// Cold startup cannot admit a generation that lost an explicit service
+	// choice, including a services-only binding with no required module list.
+	if bindingErr := pluginHost.ServiceRegistry().ValidateBindings(); bindingErr != nil {
+		return nil, fmt.Errorf("activate initial plugin generation: %w", errors.Join(activationErr, bindingErr))
+	}
 	if activationErr != nil {
 		providers.DebugLogf("activate initial plugin generation: %v", activationErr)
 	}

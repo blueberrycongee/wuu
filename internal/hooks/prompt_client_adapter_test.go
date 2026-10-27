@@ -34,7 +34,9 @@ func (*adapterJournal) PrepareRecoveryAttempt(context.Context, providers.Inferen
 func (*adapterJournal) CompleteOperation(providers.InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (*adapterJournal) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error { return nil }
+func (*adapterJournal) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
+	return nil
+}
 
 func (j *adapterJournal) snapshot() []providers.InferenceOperation {
 	j.mu.Lock()

@@ -68,6 +68,7 @@ type RegisteredTool struct {
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
 	modelReceipts   sync.Map
+	modelMetrics    map[string]*modelMetricsDelivery
 	sensitiveOwners sync.Map
 
 	lifecycleMu         sync.Mutex
@@ -713,6 +714,7 @@ func (h *Host) retirePluginKeepingFailure(ctx context.Context, pluginID string, 
 		cause = &UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"}
 	}
 	registry.stopProviderAdmission(pluginID)
+	h.stopModelMetrics(pluginID)
 	if h.executions != nil {
 		h.executions.CancelPlugin(pluginID, cause)
 	}
@@ -1015,6 +1017,7 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	}
 }
 func (h *Host) finishShutdown(ctx context.Context, shutdown *hostShutdown, done chan struct{}) {
+	h.stopModelMetrics("")
 	h.lifecycleMu.Lock()
 	defer h.lifecycleMu.Unlock()
 	defer close(done)

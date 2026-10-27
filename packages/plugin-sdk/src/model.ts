@@ -7,6 +7,7 @@ export const MODEL_EMIT_SERVICE = "host.model.emit" as const;
 export const BACKGROUND_SERVICE = "host.background" as const;
 export const MODEL_REQUEST_TRANSFORM_CAPABILITY = "model.request.transform" as const;
 export const MODEL_REQUEST_OBSERVE_CAPABILITY = "model.request.observe" as const;
+export const MODEL_REQUEST_METRICS_CAPABILITY = "model.request.metrics" as const;
 export const MODEL_MIDDLEWARE_CAPABILITY = "model.middleware" as const;
 export const MODEL_ADAPTER_CAPABILITY = "model.adapter" as const;
 
@@ -225,6 +226,47 @@ export interface ModelResponseObserveInput {
   readonly error?: ModelErrorV1;
 }
 export type ModelRequestObserveInput = ModelResponseObserveInput;
+
+/**
+ * Metadata-only terminal observation of one selected adapter invocation.
+ * Declare model.request.metrics, kind observe, version 1 (protocol 2 or 3).
+ * It is independent of content-bearing model.request.observe and cannot alter
+ * a request. Inference descending from this callback is excluded to prevent
+ * recursive observation. Delivery is best effort: one callback per plugin, 64 queued items,
+ * a 5-second callback timeout, and cancellation on removal/generation shutdown.
+ * Timeout or unacknowledged execution cancellation suspends this registration
+ * until reload; cancellation
+ * does not prove the remote handler stopped. Queued records are discarded.
+ */
+export interface ModelRequestMetricsInput {
+  readonly version: 1;
+  /** Unique for this adapter invocation, including retries/delegated calls. */
+  readonly request_id: string;
+  readonly origin: ModelInvocationOriginV1;
+  /** Present only when a trusted execution context identifies the turn. */
+  readonly turn_id?: string;
+  readonly attempt_id?: string;
+  readonly adapter: string;
+  readonly provider?: string;
+  readonly model: string;
+  readonly streaming: boolean;
+  readonly status: "completed" | "error" | "cancelled" | "incomplete";
+  readonly started_at: string;
+  /** Host monotonic duration, including adapter admission/capacity wait. */
+  readonly duration_ms: number;
+  /** First nonempty text/reasoning/tool output or image, not a provider token timestamp. Absent for unary/empty responses. */
+  readonly first_output_ms?: number;
+  /** Nonempty content_delta events only; replacements and reasoning excluded. */
+  readonly text_delta_events: number;
+  /** UTF-8 bytes in those text deltas, never a token estimate. */
+  readonly text_utf8_bytes: number;
+  /** Latest adapter-reported usage, possibly partial on failure/cancellation. Missing means unknown, not zero. */
+  readonly usage?: ModelRequestUsage;
+  /** Adapter assertion, not independently verified physical billing evidence. */
+  readonly usage_source?: "adapter_reported";
+  /** Queue-overflow drops since this observer's previous delivered callback. */
+  readonly dropped_before?: number;
+}
 
 /**
  * Around-call model.middleware receives one single-use, execution-bound continuation.

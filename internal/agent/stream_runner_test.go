@@ -421,13 +421,18 @@ func TestStreamRunner_AfterTurnRunsAfterSuccess(t *testing.T) {
 }
 
 func TestStreamRunnerModelReceiptCompletion(t *testing.T) {
-	for _, canceled := range []bool{false, true} {
-		t.Run(fmt.Sprintf("canceled-%t", canceled), func(t *testing.T) {
+	for _, scenario := range []struct{ canceled, workflowFailure bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		canceled := scenario.canceled
+		t.Run(fmt.Sprintf("canceled-%t/workflow-failure-%t", canceled, scenario.workflowFailure), func(t *testing.T) {
 			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
 			defer stop()
 			completionErr := errors.New("receipt checkpoint failed")
 			client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "accepted output"}, {Type: providers.EventDone}}}
 			journal := &workflowRecordingJournal{}
+			workflowErr := errors.New("workflow checkpoint failed")
+			if scenario.workflowFailure {
+				journal.completionErr = workflowErr
+			}
 			tools := &driverStreamingTools{}
 			runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", Tools: tools, InferenceJournal: journal}
 			begins, finishes := 0, 0
@@ -443,12 +448,13 @@ func TestStreamRunnerModelReceiptCompletion(t *testing.T) {
 					ctx, scope = providers.NewModelReceiptScope(ctx)
 					return ctx, func() error {
 						finishes++
-						if !tools.unfrozen.Load() || len(journal.completed) != turn {
-							return errors.New("receipt completion preceded gateway or workflow cleanup")
+						if !tools.unfrozen.Load() || len(journal.completed) != turn-1 {
+							return errors.New("receipt completion preceded gateway cleanup or workflow settled too early")
 						}
 						scope.Seal()
 						close(entered)
-						return errors.Join(scope.Wait(deadline), completionErr)
+						// A producer failure must influence the workflow before owner release.
+						return scope.CheckpointSubmissions(deadline)
 					}, nil
 				}
 				runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
@@ -484,20 +490,66 @@ func TestStreamRunnerModelReceiptCompletion(t *testing.T) {
 					t.Fatalf("turn released pending receipt: %+v", result)
 				default:
 				}
-				endReceipt(nil)
+				endReceipt(completionErr)
 				select {
 				case result := <-done:
+					if scenario.workflowFailure {
+						if !errors.Is(result.err, workflowErr) {
+							t.Fatalf("workflow failure lost: %v", result.err)
+						}
+						if _, diagnostic := result.err.(*ModelReceiptCompletionError); diagnostic {
+							t.Fatal("workflow failure became a successful-reply receipt diagnostic")
+						}
+					}
+					if !canceled && !scenario.workflowFailure {
+						if _, diagnostic := result.err.(*ModelReceiptCompletionError); !diagnostic {
+							t.Fatalf("ordinary receipt failure lost diagnostic classification: %v", result.err)
+						}
+					}
 					if !errors.Is(result.err, completionErr) || errors.Is(result.err, context.Canceled) != canceled || result.result.Content != "accepted output" {
 						t.Fatalf("completion lost errors or partial output: %+v", result)
 					}
 				case <-deadline.Done():
 					t.Fatal("turn did not finish after receipt release")
 				}
+				want := providers.InferenceOutcomeFailed
+				if canceled {
+					want = providers.InferenceOutcomeCanceled
+				}
+				if len(journal.completed) != turn || journal.completed[turn-1].Outcome != want {
+					t.Fatalf("receipt failure changed workflow outcome: %+v", journal.completed)
+				}
 				if begins != turn || finishes != turn {
 					t.Fatalf("turn %d: admissions=%d completions=%d", turn, begins, finishes)
 				}
 			}
 		})
+	}
+}
+
+func TestStreamRunnerWorkflowSettlementDeadline(t *testing.T) {
+	journal := &workflowRecordingJournal{}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Model: "test", InferenceJournal: journal,
+		Client: &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "accepted output"}, {Type: providers.EventDone}}},
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			ctx, scope := providers.NewModelReceiptScope(ctx)
+			return ctx, func() error {
+				scope.Seal()
+				expired, cancel := context.WithTimeout(context.Background(), 0)
+				defer cancel()
+				return scope.CheckpointSubmissions(expired)
+			}, nil
+		},
+	}
+	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "work"}}, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrModelReceiptLifecycle) || result.Content != "accepted output" {
+		t.Fatalf("workflow deadline lost cause or output: result=%+v err=%v", result, err)
+	}
+	if _, diagnostic := err.(*ModelReceiptCompletionError); diagnostic {
+		t.Fatal("unfinished workflow became a successful-reply receipt diagnostic")
+	}
+	if len(journal.completed) != 0 {
+		t.Fatalf("expired owner wrote terminal workflow: %+v", journal.completed)
 	}
 }
 

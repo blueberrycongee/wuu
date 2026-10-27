@@ -496,13 +496,13 @@ func completeInferenceOperationDocument(tx *persistence.Tx, id string, outcome p
 	return putInferenceOperation(tx, op)
 }
 
-func (j *documentInferenceJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
+func (j *documentInferenceJournal) CompleteWorkflow(ctx context.Context, record providers.InferenceWorkflowTerminalRecord) error {
 	record.WorkflowID = strings.TrimSpace(record.WorkflowID)
 	if record.WorkflowID == "" || record.Outcome == "" {
 		return errors.New("complete inference workflow: id and outcome are required")
 	}
 	stamp := journalTime(record.At)
-	return j.write("complete inference workflow", func(tx *persistence.Tx) error {
+	return j.writeContext(ctx, "complete inference workflow", func(tx *persistence.Tx) error {
 		workflow, err := requireInferenceDocument[inferenceWorkflowDocument](tx, "inference_workflows", record.WorkflowID)
 		if err != nil {
 			return err

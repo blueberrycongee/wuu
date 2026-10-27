@@ -19,9 +19,16 @@ type ModelReceiptScope struct {
 	aborted bool
 
 	executions []*InferenceExecution
+	workflows  []receiptWorkflowCompletion
 
 	observationCtx  context.Context
 	stopObservation context.CancelCauseFunc
+}
+
+type receiptWorkflowCompletion struct {
+	workflow *InferenceWorkflow
+	journal  InferenceJournal
+	outcome  InferenceTerminalOutcome
 }
 
 type modelReceiptTicket struct {
@@ -152,15 +159,24 @@ func (s *ModelReceiptScope) Wait(ctx context.Context) error {
 // first and supply its shared cleanup context; this method owns no cancellation
 // policy. Completed receipt errors remain in the result, while healthy
 // executions still checkpoint within the remaining context budget. Unfinished
-// or aborted observation never permits a final checkpoint.
-func (s *ModelReceiptScope) CheckpointSubmissions(ctx context.Context) error {
+// or aborted observation never permits a final checkpoint. Owned workflows
+// settle afterward within the same admission and deadline, before the owner
+// announces completion or releases its captured authority.
+func (s *ModelReceiptScope) CheckpointSubmissions(ctx context.Context) (resultErr error) {
 	waitErr := s.Wait(ctx)
 	s.mu.Lock()
+	remainingWorkflows := len(s.workflows)
+	defer func() {
+		if remainingWorkflows != 0 && resultErr != nil {
+			resultErr = errors.Join(ErrInferenceWorkflowCompletion, resultErr)
+		}
+	}()
 	if s.pending != 0 || s.aborted || ctx.Err() != nil {
 		s.mu.Unlock()
 		return errors.Join(waitErr, ctx.Err())
 	}
 	executions := append([]*InferenceExecution(nil), s.executions...)
+	workflows := append([]receiptWorkflowCompletion(nil), s.workflows...)
 	s.mu.Unlock()
 	checkpointErr := waitErr
 	for _, execution := range executions {
@@ -168,6 +184,20 @@ func (s *ModelReceiptScope) CheckpointSubmissions(ctx context.Context) error {
 			return errors.Join(checkpointErr, err)
 		}
 		checkpointErr = errors.Join(checkpointErr, execution.CheckpointSubmissions(ctx))
+	}
+	for _, workflow := range workflows {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(checkpointErr, err)
+		}
+		outcome := workflow.outcome
+		if checkpointErr != nil && outcome == InferenceOutcomeSucceeded {
+			outcome = InferenceOutcomeFailed
+		}
+		if err := completeInferenceWorkflow(ctx, workflow.workflow, workflow.journal, outcome); err != nil {
+			checkpointErr = errors.Join(checkpointErr, err)
+		} else {
+			remainingWorkflows--
+		}
 	}
 	return errors.Join(checkpointErr, ctx.Err())
 }

@@ -403,7 +403,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 					outcome = providers.InferenceOutcomeCanceled
 				}
 			}
-			runErr = errors.Join(runErr, providers.CompleteInferenceWorkflow(workflow, r.InferenceJournal, outcome))
+			runErr = errors.Join(runErr, providers.CompleteInferenceWorkflowAfterReceipts(ctx, workflow, r.InferenceJournal, outcome))
 		}()
 	}
 	gateway := &streamDriverGateway{
@@ -459,6 +459,9 @@ func BeginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (cont
 	}
 	return ctx, func() error {
 		if err := finish(); err != nil {
+			if errors.Is(err, providers.ErrInferenceWorkflowCompletion) {
+				return errors.Join(ErrModelReceiptLifecycle, err)
+			}
 			return &ModelReceiptCompletionError{Err: err}
 		}
 		return nil

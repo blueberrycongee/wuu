@@ -57,6 +57,6 @@ func (j *remoteInferenceJournal) CompleteAttempt(record providers.InferenceAttem
 func (j *remoteInferenceJournal) CompleteOperation(record providers.InferenceOperationTerminalRecord) error {
 	return j.invoke(j.ctx, "CompleteOperation", record)
 }
-func (j *remoteInferenceJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
-	return j.invoke(j.ctx, "CompleteWorkflow", record)
+func (j *remoteInferenceJournal) CompleteWorkflow(ctx context.Context, record providers.InferenceWorkflowTerminalRecord) error {
+	return j.invoke(ctx, "CompleteWorkflow", record)
 }

@@ -60,7 +60,9 @@ func (*measurement) PrepareRecoveryAttempt(context.Context, providers.InferenceR
 	return nil
 }
 func (*measurement) CompleteOperation(providers.InferenceOperationTerminalRecord) error { return nil }
-func (*measurement) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error   { return nil }
+func (*measurement) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
+	return nil
+}
 
 func (m *measurement) trace() *httptrace.ClientTrace {
 	var dns, tlsStart time.Time
