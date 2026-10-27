@@ -344,6 +344,17 @@ jobs:
           set -o pipefail
           node packages/plugin-sdk/test/additive-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/additive-cooperation.log
 
+      - name: Verify optional plugin failure isolation and recovery
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_ISOLATION_EVIDENCE: ${{ github.workspace }}/.tmp/e2e/plugin-failure-isolation
+        run: |
+          set -o pipefail
+          node scripts/plugin-failure-isolation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/plugin-failure-isolation.log
+
       - name: Require executed boundary cases and passing reports
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         run: |
@@ -393,6 +404,12 @@ jobs:
           const inputs = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/inputs.json', 'utf8'));
           const binaryHash = readFileSync('.tmp/e2e/architecture-conformance/binary.sha256', 'utf8').trim().split(/\s+/)[0];
           assert.equal(inputs.binarySHA256, binaryHash, 'additive fixture used a different executable');
+          const isolation = JSON.parse(readFileSync(join(run('.tmp/e2e/plugin-failure-isolation'), 'result.json'), 'utf8'));
+          assert.equal(isolation.status, 'passed', 'plugin failure isolation did not pass');
+          assert.equal(isolation.expectBlocked, false, 'negative control is not acceptance');
+          assert.equal(isolation.binary_sha256, binaryHash, 'isolation fixture used a different executable');
+          assert(Array.isArray(isolation.checks) && isolation.checks.length >= 14, 'isolation boundaries did not execute');
+          assert.equal(new Set(isolation.checks).size, isolation.checks.length, 'isolation cases must be distinct');
           NODE
 
       - name: Preserve public boundary evidence without fixture credentials
@@ -407,6 +424,7 @@ jobs:
             .tmp/e2e/architecture-conformance/*.txt
             .tmp/e2e/architecture-conformance/*.sha256
             .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/plugin-failure-isolation/run-*/result.json
             .tmp/e2e/provider-authority/run-*/environment.json
             .tmp/e2e/provider-authority/run-*/verification.log
             .tmp/e2e/session-sharing/run-*/environment.json
