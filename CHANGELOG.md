@@ -222,6 +222,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
+- Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
+
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 
 - Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.

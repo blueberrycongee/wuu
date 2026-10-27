@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Keep the existing app-server behavioral tests connected to the shipped
@@ -49,12 +50,16 @@ func startBundledPluginTestProcess(t *testing.T, id string, router pluginhost.Se
 // Exercise the extension's public messages against the real session router and
 // settled-turn broadcast; storage writes signal completion without polling.
 type goalBridge struct {
-	server  *Server
-	state   *runtime.State
-	mu      sync.Mutex
-	value   *string
-	settled chan struct{}
-	once    sync.Once
+	server     *Server
+	state      *runtime.State
+	mu         sync.Mutex
+	value      *string
+	settled    chan struct{}
+	once       sync.Once
+	wantStatus string
+	wantTokens int64
+	rejectSend bool
+	sends      int
 }
 
 type goalSnapshot struct {
@@ -81,11 +86,17 @@ func (b *goalBridge) RouteServiceCall(ctx context.Context, id string, call plugi
 		var state map[string]goalSnapshot
 		_ = json.Unmarshal([]byte(p.Value), &state)
 		for _, g := range state {
-			if g.Status == "complete" && g.TokensUsed == 20 {
+			if g.Status == b.wantStatus && g.TokensUsed == b.wantTokens {
 				b.once.Do(func() { close(b.settled) })
 			}
 		}
 	case string(pluginhost.HostServiceSessionSend):
+		b.mu.Lock()
+		b.sends++
+		b.mu.Unlock()
+		if b.rejectSend {
+			return nil, &pluginhost.HostServiceError{Code: "host_error", Message: "unexpected continuation after failed settlement"}
+		}
 		var p pluginhost.SessionSendParams
 		_ = json.Unmarshal(call.Params, &p)
 		result, err = b.server.sendPluginSession(ctx, id, p)
@@ -113,7 +124,7 @@ func (b *goalBridge) RouteServiceCall(ctx context.Context, id string, call plugi
 func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T) {
 	response := providersResponse("working")
 	response.Usage = &providers.TokenUsage{InputTokens: 5, OutputTokens: 5}
-	bridge := &goalBridge{settled: make(chan struct{})}
+	bridge := &goalBridge{settled: make(chan struct{}), wantStatus: "complete", wantTokens: 20}
 	client := startBundledPluginTestProcess(t, "goal", bridge)
 	var threadID string
 	rt := newTestRuntime(t, &fakeClient{response: response, onChat: func(n int, _ providers.ChatRequest) {
@@ -162,6 +173,45 @@ func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T)
 	}
 	if snapshot.Goal.TokensUsed != 20 || snapshot.Goal.Status != "complete" {
 		t.Fatalf("goal = %+v", snapshot.Goal)
+	}
+}
+
+func TestGoalExtensionPausesAfterTerminalPersistenceFailure(t *testing.T) {
+	response := providersResponse("working")
+	response.Usage = &providers.TokenUsage{InputTokens: 5, OutputTokens: 5}
+	bridge := &goalBridge{settled: make(chan struct{}), wantStatus: "paused", wantTokens: 10, rejectSend: true}
+	client := startBundledPluginTestProcess(t, "goal", bridge)
+	rt := newTestRuntime(t, &fakeClient{response: response})
+	fault := &archiveSettlementFaultDocuments{Documents: rt.Documents, terminal: true}
+	rt.Documents, rt.Sessions = fault, session.NewStore(context.Background(), fault)
+	attachTestModelGeneration(t, rt)
+	rt.PluginHost.Add(client)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	bridge.server, bridge.state = srv, testRuntimeState(t, rt)
+	t.Cleanup(srv.Close)
+	if err := client.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	dispatchPayload(t, srv, "start", MethodThreadStart, ThreadStartParams{})
+	id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+	if _, err := client.ExecuteTool(context.Background(), pluginhost.ToolExecuteParams{ToolID: "create_goal", ToolExecuteInput: pluginhost.ToolExecuteInput{
+		SessionID: id, Arguments: json.RawMessage(`{"objective":"Finish the work"}`),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	fault.armed.Store(true)
+	dispatchPayload(t, srv, "turn", MethodTurnStart, TurnStartParams{ThreadID: id, Prompt: "work"})
+	select {
+	case <-bridge.settled:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("goal did not pause after failed settlement: %s", out.String())
+	}
+	bridge.mu.Lock()
+	sends := bridge.sends
+	bridge.mu.Unlock()
+	if sends != 0 {
+		t.Fatal("goal attempted a continuation after terminal persistence failed")
 	}
 }
 
