@@ -29,6 +29,8 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`, `wuu.default-navigation/sidebar.footer` | Sidebar content and footer |
 | `wuu.default-shell/workspace.header`, `wuu.default-shell/conversation.header` | Corresponding headers |
+| `wuu.default-conversation/conversation.turn.after`, `wuu.default-preview/conversation.turn.after` | After each presented turn; reported timing and usage |
+| `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
 | `wuu.default-composer/composer.above`, `wuu.default-composer/composer.toolbar` | Above the composer or in its toolbar |
 
@@ -44,6 +46,12 @@ api.registerUIContribution({
 ```
 
 Omit `mode` (or use `content`) to supply content instead of the caller’s fallback. Single-content slots reject conflicting registrations during preparation, preserving the active generation. Wrappers surround the composed content in ascending `order`, then plugin ID and contribution ID; later wrappers are outermost. A failed wrapper reports a render diagnostic and preserves its children. Removing the slot owner removes the region; unloading a contribution removes only that contribution. Provider cleanup waits for mounted views to release their effects. Graph-selected service slots retain their exact provider binding and reject wrappers. The local SDK preview uses the same content/wrapper ordering and conflict rules; wrapper failures remain visible in its browser console.
+
+For additive metrics, annotations, or contextual controls, prefer `conversation.turn.after` and `conversation.tool-activity.after` over wrapping the native content. Both accept multiple contributions in order, in bubble and IM styles. Turn addons stay inside the native turn’s measured bounds. A complete replacement of `conversation.turn` owns its contents and must render any desired slots itself. Adding, removing, or failing an additive contribution leaves the native turn and tool details mounted, preserving their disclosure state and focus. Replacing or wrapping the content changes its React ancestry and does not offer that state-preservation guarantee.
+
+The turn slot receives `ConversationTurnSlotContextV1`: `threadId` (optional), `turnId`, and a frozen `snapshot` with status, reported timestamps, duration, token usage, and usage model. Unknown metrics remain absent; do not treat them as zero. The snapshot is display data, not permission to invoke an action. Tool slots share `ConversationToolActivitySlotContextV1`, including optional `threadId`/`turnId`, `itemId`, and the existing immutable `ToolActivitySnapshot`. A preview turn without a durable thread identity must not borrow the currently selected thread. Tool contributions are visible in disclosed tool details, not the compact process summary; single command/MCP details use the same slots as grouped activities. An owning provider must be enabled and render the slot; contributions do not restore a disabled provider.
+
+[Conversation metrics](../../../examples/plugins/conversation-metrics/desktop.js) is a standalone plugin that reports turn usage and adds a local tool-result action without private imports or a replacement application. It uses `activatePresentation` so a business-service rebind does not recreate its presentation registrations.
 
 This replaces `registerSlot`, `registerSurface`, `contributes.slots`, and `contributes.surfaces`, which have been removed. Change `render(context)` to `render({ context, locale, translate })`, use a qualified target, and remove the obsolete manifest fields. `registerUIContribution` needs no parallel manifest declaration. Manifest `contributes.presenters` declarations still require matching IDs, targets, modes, priorities, and registrations during activation.
 

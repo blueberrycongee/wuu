@@ -24,6 +24,8 @@
     "desktop/scripts/session-switch-e2e.cjs": "session",
     "desktop/scripts/sidebar-scroll-fade-e2e.cjs": "shell",
     "desktop/scripts/composer-inline-e2e.cjs": "shell",
+    "desktop/scripts/conversation-addons-e2e.cjs": "shell",
+    "desktop/scripts/conversation-addons-e2e-preload.cjs": "shell",
     "desktop/scripts/app-context-e2e.cjs": "shell",
     "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
     "desktop/scripts/settings-sidebar-hit-e2e.cjs": "shell",

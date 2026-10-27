@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import type { ConversationToolActivitySlotContextV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { useI18n } from "../i18n";
 
 import type { ThreadItem } from "../../shared/protocol";
@@ -15,8 +16,14 @@ export function ToolActivityPresenter({ item, fallback }: ToolActivityPresenterP
   const { slots, slotOwner } = useConversationControls();
   const { locale } = useI18n();
   const { threadId, turnId } = useConversationTurnIdentity();
-  return item ? <slots.Slot name={`${slotOwner}/conversation.tool-activity`}
-    context={{ threadId, turnId, itemId: item.id, snapshot: toToolActivitySnapshot(item, locale) }} fallback={fallback} /> : <>{fallback}</>;
+  if (!item) return <>{fallback}</>;
+  const context: ConversationToolActivitySlotContextV1 = Object.freeze({
+    threadId, turnId, itemId: item.id, snapshot: toToolActivitySnapshot(item, locale),
+  });
+  return <>
+    <slots.Slot name={`${slotOwner}/conversation.tool-activity`} context={context} fallback={fallback} />
+    <slots.Slot name={`${slotOwner}/conversation.tool-activity.after`} context={context} />
+  </>;
 }
 
 /** The leaf owns the immutable public payload supplied to tool UI contributions. */
