@@ -239,6 +239,7 @@ func TestSessionFederationTwoHostsEndToEnd(t *testing.T) {
 	<-clientDone
 	localGate.release <- struct{}{}
 	clientCtx, clientCancel = context.WithCancel(ctx)
+	defer clientCancel()
 	clientDone = make(chan struct{})
 	go func() { defer close(clientDone); _ = client.Run(clientCtx) }()
 	if err = client.WaitAttached(ctx); err != nil {

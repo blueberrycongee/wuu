@@ -99,7 +99,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -107,6 +109,7 @@ jobs:
       - name: Install isolated capture dependencies
         run: |
           npm ci --prefix desktop
+          npm ci --prefix clients/core
           node desktop/node_modules/electron/install.js
           # Hosted images can select the slow Azure archive through a mirror list.
           for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do

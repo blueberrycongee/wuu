@@ -130,6 +130,62 @@ func TestUnknownResourceMethodCannotBorrowGlobalGrant(t *testing.T) {
 	}
 }
 
+func TestMCPManagementMethodsRequireDeclaredGlobalOwnerScope(t *testing.T) {
+	viewer, err := principal.Authenticated(principal.Identity{Kind: "user", Issuer: "fixture", Tenant: "tenant", Subject: "viewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{MethodMCPDefinitionRead, MethodMCPConfigure, MethodMCPAuthCancel} {
+		t.Run(method, func(t *testing.T) {
+			var observed []access.Request
+			allow := true
+			srv := &Server{access: connectionAccess{
+				principal: principal.LocalOwner(),
+				policy: access.PolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+					observed = append(observed, request)
+					return access.Decision{Allow: allow, Reason: "fixture-policy-denial"}, nil
+				}),
+			}}
+			// A forged shared-session scope or owner claim cannot downgrade these
+			// configuration/credential operations from their global resource.
+			req := Request{Method: method, Params: json.RawMessage(`{"name":"docs","thread_id":"shared","owner":true,"principal":{"subject":"owner"}}`)}
+			if err := srv.authorizeRequest(context.Background(), req); err != nil {
+				t.Fatalf("declared owner method: %v", err)
+			}
+			if len(observed) != 1 || observed[0].Action != method || !observed[0].Owner || len(observed[0].Resources) != 1 || observed[0].Resources[0] != (access.Resource{Kind: "global"}) {
+				t.Fatalf("wrong policy scope: %+v", observed)
+			}
+
+			allow = false
+			var denied *access.Denied
+			if err := srv.authorizeRequest(context.Background(), req); !errors.As(err, &denied) || denied.Reason != "fixture-policy-denial" {
+				t.Fatalf("owner bypassed selected policy: %v", err)
+			}
+			if len(observed) != 2 {
+				t.Fatalf("owner policy was not rechecked: %+v", observed)
+			}
+
+			allow = true
+			srv.access.principal = viewer
+			if err := srv.authorizeRequest(context.Background(), req); !errors.As(err, &denied) || denied.Reason != "delegated-action-unsupported" {
+				t.Fatalf("non-owner management request: %v", err)
+			}
+			if len(observed) != 2 {
+				t.Fatal("non-owner reached a wildcard policy for an unsupported management action")
+			}
+
+			srv.access.principal = principal.LocalOwner()
+			req.Method = method + "/unknown"
+			if err := srv.authorizeRequest(context.Background(), req); !errors.As(err, &denied) || denied.Reason != "resource-invalid" {
+				t.Fatalf("unknown method borrowed a global declaration: %v", err)
+			}
+			if len(observed) != 2 {
+				t.Fatal("unknown method reached the selected policy")
+			}
+		})
+	}
+}
+
 type capturedFrame struct {
 	payload []byte
 	guard   func() error

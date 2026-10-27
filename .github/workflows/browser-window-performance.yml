@@ -62,7 +62,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - name: Prepare the exact baseline and evidence paths
         run: |
           [[ "$BASELINE" =~ ^[a-fA-F0-9]{40}$ ]] || { echo 'Baseline must be a full commit SHA'; exit 1; }
@@ -87,6 +89,10 @@ jobs:
         run: |
           for tree in "$RUNNER_TEMP/wuu-browser-baseline" "$GITHUB_WORKSPACE"; do
             npm ci --prefix "$tree/desktop"
+            # The historical baseline predates the shared remote client package.
+            if [ -f "$tree/clients/core/package-lock.json" ]; then
+              npm ci --prefix "$tree/clients/core"
+            fi
             node "$tree/desktop/node_modules/electron/install.js"
             (
               cd "$tree"

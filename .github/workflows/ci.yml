@@ -509,11 +509,15 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
 
       - name: Install
         run: |
           npm ci --prefix desktop
+          # The desktop main process consumes the shared remote client source.
+          npm ci --prefix clients/core
           # Electron downloads lazily on require; parallel Vitest workers must
           # not extract into the same dist directory at the same time.
           node desktop/node_modules/electron/install.js
@@ -1706,7 +1710,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -1783,7 +1789,9 @@ jobs:
         run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
 
       - name: Install Desktop dependencies
-        run: npm ci --prefix desktop
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
 
       - name: Typecheck Desktop on Windows
         if: github.event_name != 'push'
@@ -1791,9 +1799,7 @@ jobs:
 
       - name: Install phone Web dependencies
         if: github.event_name != 'pull_request'
-        run: |
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
+        run: npm ci --prefix clients/mobile-web
 
       - name: Install plugin build dependencies
         if: github.event_name != 'pull_request'

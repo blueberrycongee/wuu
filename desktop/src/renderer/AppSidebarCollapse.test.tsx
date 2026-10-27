@@ -154,6 +154,7 @@ function installWuuApi(): void {
     }),
     onWindowResizeState: vi.fn(() => () => {}),
     onTerminalEvent: vi.fn(() => () => {}),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     respondToServerRequest: vi.fn().mockResolvedValue(undefined),
     rejectServerRequest: vi.fn().mockResolvedValue(undefined),
   } as unknown as WuuDesktopApi;

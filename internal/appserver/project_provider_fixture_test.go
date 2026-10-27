@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -96,7 +97,7 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	home := os.Getenv("HOME")
 	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
 	model := &embeddedModelStreamFixture{client: rt.StreamRunner.Client}
-	clients := []pluginhost.Client{background, native, state, sessions, consumer, mechanism, configuration, credentials, stateConsumer,
+	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, background, native, state, sessions, consumer, mechanism, configuration, credentials, stateConsumer,
 		model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()},
 		promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, toolservice.NewService(), &embeddedToolsConsumer{}}
 	conflicts := registry.RegisterClients(clients...)

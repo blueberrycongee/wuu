@@ -288,6 +288,7 @@ function installWuuApi(
       }),
     ),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     resumeThread: vi.fn().mockResolvedValue({ thread }),
     startThread: vi.fn().mockImplementation(async () => {
       if (options.deferThreadStart) {
@@ -334,6 +335,7 @@ function installWuuApi(
       };
     }),
     onWindowResizeState: vi.fn(() => () => {}),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     onTerminalEvent: vi.fn(() => () => {}),
     respondToServerRequest: vi.fn().mockResolvedValue(undefined),
     rejectServerRequest: vi.fn().mockResolvedValue(undefined),
