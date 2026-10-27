@@ -140,7 +140,7 @@ func (p *ProjectCoordinationProvider) Close(ctx context.Context) error {
 func (p *ProjectCoordinationProvider) startBackground(work func(*ProjectCoordinationProvider)) bool {
 	p = p.owner
 	p.lifetime.backgroundMu.Lock()
-	if !p.schedulingAllowed() || p.lifetime.closed.Load() || !p.lifetime.active.Load() || !p.selected() {
+	if !p.schedulingAllowed() || p.lifetime.closed.Load() || !p.lifetime.active.Load() {
 		p.lifetime.backgroundMu.Unlock()
 		return false
 	}
@@ -369,8 +369,7 @@ func (p *ProjectCoordinationProvider) selected() bool {
 	if p.registry == nil {
 		return false
 	}
-	id, ok := p.registry.ProviderPluginIDFor(ProjectCoordinationConsumer, ProjectCoordinationService, 1)
-	return ok && id == p.ID()
+	return p.registry.ProviderInChainFor(ProjectCoordinationConsumer, ProjectCoordinationService, 1, p.ID())
 }
 
 // ProjectAdmissionPolicy supplies worker capacity; the session domain enforces
@@ -404,7 +403,7 @@ func (p *ProjectCoordinationProvider) schedulingAllowed() bool {
 	}
 	select {
 	case <-p.lifetime.schedulerReady:
-		return true
+		return p.selected()
 	default:
 		return false
 	}
