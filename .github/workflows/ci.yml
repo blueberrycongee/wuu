@@ -739,6 +739,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard independently distributed conversation addons
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_CONVERSATION_ADDONS_OUTPUT: ${{ runner.temp }}/wuu-conversation-addons-evidence
+        run: |
+          mkdir -p "$WUU_CONVERSATION_ADDONS_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-addons-e2e.cjs 2>&1 | tee "$WUU_CONVERSATION_ADDONS_OUTPUT/run.log"
+
+      - name: Upload conversation addon evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-addon-evidence
+          path: ${{ runner.temp }}/wuu-conversation-addons-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard disabled app snapshots and system permissions
         if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3

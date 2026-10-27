@@ -185,7 +185,7 @@ describe("TurnView", () => {
 
   it("does not infer a missing thread identity from the active application", () => {
     let context: Readonly<Record<string, unknown>> | undefined;
-    composition = { Slot: props => { context = props.context; return null; } };
+    composition = { Slot: props => { if (props.name.endsWith("/conversation.turn")) context = props.context; return null; } };
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
     act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><TurnView turn={makeTurn("completed")} onStreamFrame={() => {}} /></ConversationControlsTestProvider>));
     expect(context).toEqual({ threadId: undefined, turnId: "turn-1" });

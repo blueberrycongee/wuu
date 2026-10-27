@@ -15,6 +15,7 @@ import {
   collectTurnSources,
 } from "./ToolActivityHelpers";
 import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
+import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
@@ -266,7 +267,7 @@ export function ProcessSurface({
       >
         {expanded ? <TurnSourceChips sources={sources} onOpen={onOpenURL} /> : null}
         {hasStandaloneDisclosure ? (
-          expanded ? <ToolActivityRow items={toolItems} streaming={streaming} detailsOnly /> : null
+          expanded ? <ToolActivityPresenter item={toolItems[0]} fallback={<ToolActivityRow items={toolItems} streaming={streaming} detailsOnly />} /> : null
         ) : detailRuns.map(items => items[0].type === "tool_call" ? (
           <div className="process-surface-tool-list" key={items[0].id}>
             <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />

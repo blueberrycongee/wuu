@@ -29,6 +29,8 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`、`wuu.default-navigation/sidebar.footer` | 侧栏内容和底部 |
 | `wuu.default-shell/workspace.header`、`wuu.default-shell/conversation.header` | 对应的标题区域 |
+| `wuu.default-conversation/conversation.turn.after`、`wuu.default-preview/conversation.turn.after` | 每个已展示回合之后；展示已报告的耗时和用量 |
+| `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
 | `wuu.default-composer/composer.above`、`wuu.default-composer/composer.toolbar` | 输入框上方或工具栏中 |
 
@@ -44,6 +46,12 @@ api.registerUIContribution({
 ```
 
 省略 `mode`（或使用 `content`）可提供内容，替换调用方的 fallback。单内容 Slot 在准备阶段拒绝冲突注册，并保留当前 generation。包装按 `order`、插件 ID、贡献 ID 升序组合，后面的包装位于外层。包装渲染失败会报告诊断并保留内层内容。卸载 Slot 所有者会移除该区域；卸载贡献者只移除其贡献。provider 清理会等待已挂载视图释放 effect。由服务图选择的区域继续使用精确的 provider 绑定，并拒绝包装。本地 SDK 预览采用相同的内容／包装顺序与冲突规则；包装渲染失败会记录到浏览器控制台。
+
+增加指标、注释或上下文操作时，优先使用 `conversation.turn.after` 和 `conversation.tool-activity.after`，不要为了追加内容而包裹原有界面。两个槽位都支持按顺序组合多个插件，在气泡和 IM 样式下使用同一契约。回合追加内容位于原有回合的测量边界内。完整替换 `conversation.turn` 的实现自行拥有其内容，需要自行渲染所需槽位。新增、移除或渲染失败的追加贡献不会重新挂载原有回合和工具详情，保留展开状态与焦点。替换或包裹内容会改变 React 层级，不提供这种状态保留保证。
+
+回合槽位提供 `ConversationTurnSlotContextV1`：可选的 `threadId`、`turnId`，以及冻结的 `snapshot`，包含状态、已报告的时间戳、耗时、Token 用量和用量模型。未知指标仍然缺省，不能当作零。快照仅用于展示，不代表执行操作的权限。工具槽位共用 `ConversationToolActivitySlotContextV1`，包括可选的 `threadId`/`turnId`、`itemId` 和已有的只读 `ToolActivitySnapshot`。预览回合没有持久会话标识时，不得借用当前选中的会话。工具贡献在展开的工具详情中显示，不在紧凑的过程摘要中显示；单个命令或 MCP 工具详情与工具组使用相同槽位。槽位拥有者必须已启用且实际渲染槽位；贡献不会恢复已禁用的提供方。
+
+[Conversation metrics](../../../examples/plugins/conversation-metrics/desktop.js) 是可独立分发的插件示例：显示回合用量、增加本地工具结果查看操作，不需要私有导入或替换应用。它使用 `activatePresentation`，业务服务重新绑定时不会重建展示注册。
 
 这条路径取代了已删除的 `registerSlot`、`registerSurface`、`contributes.slots` 和 `contributes.surfaces`。将 `render(context)` 改为 `render({ context, locale, translate })`，指定完整目标名称，并移除旧 manifest 字段。`registerUIContribution` 不需要重复的 manifest 声明。`contributes.presenters` 声明仍要求 ID、目标、模式、优先级与激活期间的注册一致。
 

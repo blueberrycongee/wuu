@@ -226,6 +226,26 @@ export interface ApplicationServiceV1 {
   ): Promise<ApplicationActionMapV1[Action]["result"]>;
 }
 
+/** Read-only reported turn metadata for the default conversation/preview
+ * `conversation.turn.after` slots. Missing metrics are unknown, not zero.
+ * Preview turns may have no durable thread identity; never infer the active one. */
+export type ConversationTurnSlotContextV1 = {
+  readonly threadId?: string;
+  readonly turnId: string;
+  readonly snapshot: Readonly<Pick<import("./ui-conversation.js").ApplicationConversationTurnV1,
+    "id" | "status" | "started_at" | "answer_ready_at" | "completed_at" | "duration_ms" |
+    "input_tokens" | "output_tokens" | "cache_creation_tokens" | "cache_read_tokens" | "usage_model">>;
+};
+
+/** Shared context for `conversation.tool-activity` and its additive `.after`
+ * slot. Payloads are immutable display data, not execution authority. */
+export type ConversationToolActivitySlotContextV1 = {
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly itemId: string;
+  readonly snapshot: import("./index.js").ToolActivitySnapshot;
+};
+
 /** Slots are qualified as `${ownerPluginId}/${localId}`. */
 export interface UISlotDefinition {
   readonly id: string;
