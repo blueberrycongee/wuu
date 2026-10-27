@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/cliidentity"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -35,7 +36,11 @@ func (t *PluginManagerTool) Classify(raw string) ToolClassification {
 	return ToolClassification{Risk: ToolRiskHigh, Reason: "changes trusted host plugin code or activation outside the workspace sandbox"}
 }
 func (t *PluginManagerTool) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: t.Name(), Description: "Manage Wuu plugins in this conversation. Author a TypeScript file with write_file, then apply its workspace path to publish a trusted development generation. apply may execute source code and package build scripts on the host; a confined session requires configured Approve for me authorization. status reports published and current-conversation generations separately. New tools become available at the next idle turn boundary, not midway through this turn. enable/disable address an existing plugin ID; enable never grants missing trust. This does not grant general access to WUU_HOME.", InputSchema: map[string]any{
+	description := "Manage Wuu plugins in this conversation. Author a TypeScript file with write_file, then apply its workspace path to publish a trusted development generation. apply may execute source code and package build scripts on the host; a confined session requires configured Approve for me authorization. status reports published and current-conversation generations separately. New tools become available at the next idle turn boundary, not midway through this turn. enable/disable address an existing plugin ID; enable never grants missing trust. This does not grant general access to WUU_HOME."
+	if cliidentity.Executable() != "" {
+		description += ` For authoring where bash (Git Bash on Windows) provides WUU_CLI_EXECUTABLE, use "$WUU_CLI_EXECUTABLE" plugin create <name> for a package or "$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory> for matching SDK types and a new CLI composition snapshot, not this conversation's pinned generation. The hint identifies the CLI on the execution machine, not necessarily this conversation's host; hosts without an authoring CLI omit it. PATH is unchanged: do not select an older wuu or guess an installed app path.`
+	}
+	return providers.ToolDefinition{Name: t.Name(), Description: description, InputSchema: map[string]any{
 		"type": "object", "properties": map[string]any{"action": map[string]any{"type": "string", "enum": []string{"status", "apply", "enable", "disable"}}, "path": map[string]any{"type": "string", "description": "Workspace-local TypeScript file or plugin directory for apply."}, "id": map[string]any{"type": "string", "description": "Exact plugin ID, required for enable/disable and optional for status."}}, "required": []string{"action"}, "additionalProperties": false}}
 }
 func (t *PluginManagerTool) Execute(ctx context.Context, raw string) (string, error) {
