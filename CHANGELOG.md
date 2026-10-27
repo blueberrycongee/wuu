@@ -213,6 +213,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Expose the running Wuu CLI to agent authoring commands without replacing the user's `PATH`, preventing older installed CLIs from selecting a mismatched SDK. Remote Wuu workers identify their own CLI; embedded library hosts omit unavailable authoring hints.
+
 - Wait for current and replaced remote app-server connections to finish cleanup before the host shuts down, preventing background writes after runtime resources are released.
 
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.

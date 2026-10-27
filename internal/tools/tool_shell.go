@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/blueberrycongee/wuu/internal/cliidentity"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -413,10 +414,15 @@ func shellCommandEnv(base []string) []string {
 	filtered := make([]string, 0, len(base))
 	for _, entry := range base {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok && strings.EqualFold(key, "GOROOT") {
+		if ok && (strings.EqualFold(key, "GOROOT") || strings.EqualFold(key, cliidentity.EnvironmentVariable)) {
 			continue
 		}
 		filtered = append(filtered, entry)
+	}
+	// An inherited hint may name another installation or machine. Only the
+	// owning CLI bootstrap can advertise its executable; embeddings omit it.
+	if executable := cliidentity.Executable(); executable != "" {
+		filtered = append(filtered, cliidentity.EnvironmentVariable+"="+executable)
 	}
 	return mergeEnv(filtered, nonInteractiveShellEnv())
 }

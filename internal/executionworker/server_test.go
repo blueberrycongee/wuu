@@ -171,6 +171,37 @@ text(r); console.log({results:[r]}); return r;`,
 	}
 }
 
+func TestEmbeddedWorkerDoesNotAdvertiseInheritedAuthoringCLI(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	t.Setenv("WUU_CLI_EXECUTABLE", "/host-only/old-wuu")
+	client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := client.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "embedded-worker"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.Call(ctx, "execute", executionenv.ToolRequest{Actor: "a", PermissionMode: "unconfined", Call: providers.ToolCall{Name: "bash", Arguments: `{"command":"if test -z \"${WUU_CLI_EXECUTABLE+x}\"; then printf no-authoring-cli; else printf 'misleading-cli:%s' \"$WUU_CLI_EXECUTABLE\"; fi"}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result toolresult.Result
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	var shell struct {
+		Stdout string `json:"stdout_tail"`
+	}
+	if err := json.Unmarshal([]byte(result.TextProjection()), &shell); err != nil {
+		t.Fatal(err)
+	}
+	if shell.Stdout != "no-authoring-cli" {
+		t.Fatalf("embedded worker advertised a CLI it does not implement: %s", shell.Stdout)
+	}
+}
+
 func TestWorkerTransportProgramCancellation(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
