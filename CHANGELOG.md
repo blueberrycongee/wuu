@@ -213,6 +213,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
+
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 
 - Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.

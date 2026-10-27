@@ -62,9 +62,10 @@ func handleHistory(req request) bool {
 		panic(err)
 	}
 	var control struct {
-		Mode   string `json:"mode"`
-		Gate   string `json:"gate"`
-		Marker string `json:"marker"`
+		Mode      string `json:"mode"`
+		Gate      string `json:"gate"`
+		Marker    string `json:"marker"`
+		OutputAck string `json:"outputAck"`
 	}
 	if data, err := os.ReadFile(os.Getenv("WUU_TEST_CODEX_HISTORY_CONTROL")); err == nil {
 		_ = json.Unmarshal(data, &control)
@@ -229,9 +230,24 @@ func handleHistory(req request) bool {
 				time.Sleep(5 * time.Millisecond)
 			}
 		}
+		toolsEmitted := 0
 		for _, item := range items[1:] {
 			notify("item/started", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})
 			notify("item/completed", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})
+			if control.Mode == "long-turn" && control.OutputAck != "" && (item["type"] == "commandExecution" || item["type"] == "mcpToolCall") {
+				toolsEmitted++
+				// Persistence tests need sustained output, not a scheduler-dependent
+				// overflow of the adapter's bounded stream queue. Keep the first
+				// completion and subsequent batches coupled to visible projection.
+				if toolsEmitted == 1 || toolsEmitted%64 == 0 {
+					for {
+						if data, err := os.ReadFile(control.OutputAck); err == nil && string(data) == item["id"] {
+							break
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
+			}
 		}
 		if control.Mode == "disconnect-without-terminal" {
 			notify("item/agentMessage/delta", map[string]any{"threadId": thread.ID, "turnId": id, "itemId": id + "-partial", "delta": "Retained partial output"})

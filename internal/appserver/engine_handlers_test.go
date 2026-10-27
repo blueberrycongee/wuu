@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -886,7 +885,8 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			var releaseOnce sync.Once
 			release := func() { releaseOnce.Do(func() { close(blocked.release) }) }
 			defer release()
-			out := &nativeBurstOutput{documents: blocked, terminal: make(chan Turn, 1)}
+			outputAck := filepath.Join(root, "projected-tool")
+			out := &nativeBurstOutput{documents: blocked, terminal: make(chan Turn, 1), outputAck: outputAck}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -918,7 +918,7 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 				}
 			}
 			streamGate := filepath.Join(root, "stream-ready")
-			controlData, err := json.Marshal(map[string]string{"mode": "long-turn", "gate": streamGate})
+			controlData, err := json.Marshal(map[string]string{"mode": "long-turn", "gate": streamGate, "outputAck": outputAck})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -980,18 +980,27 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("native turn did not settle")
 			}
-			tools := 0
+			tools, completedTools, largeResults := 0, 0, 0
 			for _, item := range terminal.Items {
 				if item.Type == ThreadItemToolCall {
 					tools++
+					if item.Status == ThreadItemStatusCompleted {
+						completedTools++
+					}
+					if item.Result == strings.Repeat("native-output-", 1024) {
+						largeResults++
+					}
 				}
 			}
-			t.Logf("boundary_wait=%s through_terminal=%s stream_stalled=%v terminal=%s visible_tools=%d", boundaryWait, time.Since(started), stalled, terminal.Status, tools)
+			t.Logf("boundary_wait=%s through_terminal=%s stream_stalled=%v terminal=%s visible_tools=%d error=%+v", boundaryWait, time.Since(started), stalled, terminal.Status, tools, terminal.Error)
 			if stalled {
 				t.Error("selected Documents persistence blocked stream projection")
 			}
 			if terminal.Status != TurnStatusCompleted || tools != 302 {
-				t.Errorf("long native turn lost output: status=%s tools=%d want completed/302", terminal.Status, tools)
+				t.Errorf("long native turn lost output: status=%s tools=%d want completed/302 error=%+v", terminal.Status, tools, terminal.Error)
+			}
+			if completedTools != 302 || largeResults != 300 {
+				t.Errorf("long native turn lost tool results: completed=%d large_results=%d want 302/300", completedTools, largeResults)
 			}
 			history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
 			if err != nil {
@@ -1056,6 +1065,7 @@ type nativeBurstOutput struct {
 	buffer    lockedBuffer
 	documents *nativeBoundaryDocuments
 	terminal  chan Turn
+	outputAck string
 }
 
 func (w *nativeBurstOutput) Write(data []byte) (int, error) {
@@ -1066,8 +1076,25 @@ func (w *nativeBurstOutput) Write(data []byte) (int, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return 0, err
 	}
-	if w.documents.active.Load() && bytes.Contains(data, []byte(`"type":"tool_call"`)) {
-		w.documents.progressOnce.Do(func() { close(w.documents.progress) })
+	n, err := w.buffer.Write(data)
+	if err != nil {
+		return n, err
+	}
+	if envelope.Method == NotificationItemCompleted {
+		var params ItemCompletedNotification
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			return n, err
+		}
+		if params.Item.Type == ThreadItemToolCall {
+			// Acknowledge only output that crossed the real app-server projection.
+			// The fixture bounds its next burst without relaxing completion counts.
+			if err := os.WriteFile(w.outputAck, []byte(params.Item.SourceID), 0600); err != nil {
+				return n, err
+			}
+			if w.documents.active.Load() {
+				w.documents.progressOnce.Do(func() { close(w.documents.progress) })
+			}
+		}
 	}
 	if envelope.Method == NotificationTurnCompleted || envelope.Method == NotificationTurnError {
 		var params struct{ Turn Turn }
@@ -1076,7 +1103,7 @@ func (w *nativeBurstOutput) Write(data []byte) (int, error) {
 		}
 		w.terminal <- params.Turn
 	}
-	return w.buffer.Write(data)
+	return n, nil
 }
 
 // Admin contract tests use the production selected graph with fixture binaries;
