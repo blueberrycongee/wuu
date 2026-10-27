@@ -408,8 +408,9 @@ jobs:
           assert.equal(isolation.status, 'passed', 'plugin failure isolation did not pass');
           assert.equal(isolation.expectBlocked, false, 'negative control is not acceptance');
           assert.equal(isolation.binary_sha256, binaryHash, 'isolation fixture used a different executable');
-          assert(Array.isArray(isolation.checks) && isolation.checks.length >= 14, 'isolation boundaries did not execute');
+          assert(Array.isArray(isolation.checks) && isolation.checks.length >= 15, 'isolation boundaries did not execute');
           assert.equal(new Set(isolation.checks).size, isolation.checks.length, 'isolation cases must be distinct');
+          assert(isolation.checks.includes('new send completes while real additive plugin prepare is held; activation follows explicit barrier release'), 'held additive preparation admission was not verified');
           NODE
 
       - name: Preserve public boundary evidence without fixture credentials

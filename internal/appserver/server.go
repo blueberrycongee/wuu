@@ -337,6 +337,7 @@ type Server struct {
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationRefreshing   atomic.Bool
+	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
 	pluginGenerationEpoch        atomic.Uint64
 	pluginRuntimeRevision        atomic.Uint64
 	pluginGenerationRefreshMu    sync.Mutex
@@ -778,6 +779,7 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.cancelPluginAdditivePreparation()
 		s.closeRendererClients()
 		s.closeChatGPTLogins()
 		if s.nativeHistoryCancel != nil {

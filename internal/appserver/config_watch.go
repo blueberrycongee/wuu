@@ -220,6 +220,9 @@ func (s *Server) refreshObservedConfigChange() error {
 // may inspect fingerprints without blocking turn admission; it fences only
 // after discovering a change that requires a new generation.
 func (s *Server) lockModelConfiguration() (admit func() error, release func()) {
+	if pending := s.pluginAdditivePreparation.Load(); pending != nil && s.configSourceFingerprint() != pending.configSources {
+		pending.cancel()
+	}
 	s.pluginGenerationRefreshMu.Lock()
 	s.configRefreshMu.Lock()
 	admitted := false

@@ -265,6 +265,17 @@ func (s *Session) requiredPluginMutationConsumers(targets ...string) map[string]
 // an explicit Refresh still gets a real preparation attempt. Required selections
 // pass through the same host checks and never gain a fallback through quarantine.
 func (s *Session) PreflightObservedExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	prepared, err := s.PrepareObservedPluginCatalog(cfg, discovered)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.Build(context.Background())
+}
+
+// PrepareObservedPluginCatalog copies executable inputs while the caller owns
+// the catalog read lease. Build may then initialize those immutable bytes after
+// releasing the lease, so another process can publish a cancellation or repair.
+func (s *Session) PrepareObservedPluginCatalog(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginCatalogPreparation, error) {
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
@@ -290,7 +301,7 @@ func (s *Session) PreflightObservedExtensions(cfg config.Config, discovered []pl
 			}
 		}
 	}
-	return s.buildPluginGeneration(cfg, discovered, nil, nil, func(ctx context.Context, process pluginhost.ProcessConfig) (pluginhost.Client, error) {
+	return s.preparePluginCatalog(cfg, discovered, nil, nil, func(ctx context.Context, process pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		if failure := failed[process.ID]; failure != nil {
 			if process.OnClose != nil {
 				process.OnClose()
@@ -299,6 +310,66 @@ func (s *Session) PreflightObservedExtensions(cfg config.Config, discovered []pl
 		}
 		return startPluginClient(ctx, process)
 	})
+}
+
+// ObservesPluginCatalog reports whether the committed graph represents these
+// exact inputs, including failed or dependency-blocked optional packages.
+func (s *Session) ObservesPluginCatalog(cfg config.Config, discovered []pluginpkg.Plugin) bool {
+	current := s.retainPluginGeneration()
+	defer s.releasePluginGeneration(current)
+	return current != nil && reflect.DeepEqual(current.settings, cfg) && reflect.DeepEqual(current.plugins, discovered)
+}
+
+// RetainAdditivePluginBase proves that preparing this observation cannot change
+// the committed graph's authority: only new inferred addons are present. The
+// caller must release the returned generation and revalidate before publication.
+func (s *Session) RetainAdditivePluginBase(cfg config.Config, discovered []pluginpkg.Plugin) *PluginGeneration {
+	if s == nil || s.SafeMode || cfg.Composition != nil {
+		return nil
+	}
+	base := s.retainPluginGeneration()
+	if base == nil {
+		return nil
+	}
+	valid := s.PluginGenerationAcceptsAdditivePreparation(base) && reflect.DeepEqual(base.settings, cfg) && len(discovered) > len(base.plugins)
+	byID := make(map[string]pluginpkg.Plugin, len(discovered))
+	for _, item := range discovered {
+		if _, duplicate := byID[item.ID]; duplicate {
+			valid = false
+		}
+		byID[item.ID] = item
+	}
+	for _, previous := range base.plugins {
+		if current, found := byID[previous.ID]; !found || !reflect.DeepEqual(previous, current) {
+			valid = false
+			break
+		}
+	}
+	if !valid {
+		s.releasePluginGeneration(base)
+		return nil
+	}
+	return base
+}
+
+// PluginGenerationAcceptsAdditivePreparation checks the committed graph's
+// required roots without provider calls. Quarantined optional diagnostics do
+// not make healthy selected services unavailable; required failures always do.
+func (s *Session) PluginGenerationAcceptsAdditivePreparation(base *PluginGeneration) bool {
+	if base == nil || base.host == nil || base.requiredPlugins == nil || !s.IsCurrentPluginGeneration(base) || s.PluginGenerationNeedsRecovery() {
+		return false
+	}
+	for id := range base.host.DependencyFailures() {
+		if base.requiredPlugins[id] {
+			return false
+		}
+	}
+	for _, status := range base.host.Statuses() {
+		if base.requiredPlugins[status.ID] && (status.State == pluginhost.StateFailed || status.State == pluginhost.StateStopped) {
+			return false
+		}
+	}
+	return true
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
@@ -535,7 +606,37 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	return generation, nil
 }
 
+// PluginCatalogPreparation owns immutable, unpublished package inputs between
+// catalog observation and cancellable process initialization.
+type PluginCatalogPreparation struct {
+	session           *Session
+	settings          config.Config
+	discovered        []pluginpkg.Plugin
+	active            []pluginpkg.Plugin
+	selectedPluginIDs []string
+	required          map[string]bool
+	ownedRoots        []string
+	factories         []NativeProviderFactory
+	start             pluginClientStarter
+}
+
+// Close discards a snapshot that has not been consumed by Build.
+func (p *PluginCatalogPreparation) Close() {
+	for _, root := range p.ownedRoots {
+		_ = os.RemoveAll(root)
+	}
+	p.ownedRoots = nil
+}
+
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
+	prepared, err := s.preparePluginCatalog(cfg, discovered, required, ownedRoots, start)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.Build(context.Background())
+}
+
+func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginCatalogPreparation, error) {
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	var selectedPluginIDs []string
@@ -586,6 +687,18 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		return nil, snapshotErr
 	}
 	ownedRoots = append(ownedRoots, snapshotRoots...)
+	return &PluginCatalogPreparation{
+		session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
+		selectedPluginIDs: selectedPluginIDs, required: required, ownedRoots: ownedRoots, factories: factories, start: start,
+	}, nil
+}
+
+// Build consumes the immutable snapshot exactly once. Failure transfers its
+// cleanup to the host drain barrier; success transfers it to the new generation.
+func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration, error) {
+	s, cfg, discovered, active := p.session, p.settings, p.discovered, p.active
+	required, ownedRoots, factories, start := p.required, p.ownedRoots, p.factories, p.start
+	p.ownedRoots = nil
 	// Targeted mutations must validate their target. Ordinary inferred addons
 	// remain optional even after a previous implementation was active: a bad
 	// replacement is diagnosed in the new graph, not a global admission fence.
@@ -594,7 +707,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		requiredRuntimes[id] = value
 	}
 	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
-	host, kernel, err := buildPluginHostWithSelection(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, factories...)
+	host, kernel, err := buildPluginHostWithSelection(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
@@ -609,7 +722,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 	}
 	active = availablePluginPackages(active, host)
-	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
+	systemPrompts, compactions, err := buildPluginAgentCapabilities(ctx, host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
 		closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
 		return nil, errors.Join(err, closeErr)
@@ -620,8 +733,8 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		id:                generationID,
 		state:             kernel.state,
 		settings:          cfg,
-		requiredPlugins:   requiredRuntimes,
-		selectedPluginIDs: selectedPluginIDs,
+		requiredPlugins:   kernel.requiredPlugins,
+		selectedPluginIDs: p.selectedPluginIDs,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,

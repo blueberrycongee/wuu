@@ -63,13 +63,13 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 }
 
 func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
-	return buildPluginHostWithSelection(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, required, start, turnRouter, userQuestions, selection, true, driverProfile, factories...)
+	return buildPluginHostWithSelection(context.Background(), plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, required, start, turnRouter, userQuestions, selection, true, driverProfile, factories...)
 }
 
 // Inferred product compositions include every admitted addon for discovery,
 // whereas a user-authored module selection is a required composition contract.
 // Keep that provenance explicit; both resolve to non-nil module sets.
-func buildPluginHostWithSelection(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, requireSelectedModules bool, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
+func buildPluginHostWithSelection(ctx context.Context, plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, requireSelectedModules bool, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
 	// Bare host embedders create a root resource owner; session generations pass
 	// captured capacity factories and therefore never allocate another owner.
 	factories = withCapacityProviders(factories, nil)
@@ -285,7 +285,7 @@ func buildPluginHostWithSelection(plugins []pluginpkg.Plugin, projectRoot, works
 			kernel.add(item.ID, handler)
 			onClose = handler.close
 		}
-		client, err := start(context.Background(), pluginhost.ProcessConfig{
+		client, err := start(ctx, pluginhost.ProcessConfig{
 			ID:                item.ID,
 			Command:           item.Runtime.Command,
 			Args:              item.Runtime.Args,
@@ -405,9 +405,10 @@ func buildPluginHostWithSelection(plugins []pluginpkg.Plugin, projectRoot, works
 		cancel()
 		return nil, nil, errors.Join(err, closeErr)
 	}
-	if err := host.PrepareAvailable(context.Background(), required); err != nil {
+	if err := host.PrepareAvailable(ctx, required); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
 	}
+	kernel.requiredPlugins = maps.Clone(required)
 	return host, kernel, nil
 }
 

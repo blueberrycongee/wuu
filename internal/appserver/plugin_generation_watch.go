@@ -154,6 +154,13 @@ func (s *Server) pluginGenerationObservationError() error {
 	if err != nil {
 		return err
 	}
+	if pending := s.pluginAdditivePreparation.Load(); pending != nil {
+		if s.pluginAdditiveAdmissionMatches(epoch) && s.configSourceFingerprint() == pending.configSources {
+			return nil
+		}
+		pending.cancel()
+		return errPluginGenerationRefreshBusy
+	}
 	// Recheck phase fences after sampling health, which can look healthy
 	// while failed dependencies are being retired.
 	if epoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery() &&
@@ -184,7 +191,8 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	}
 	refreshed := false
 	invalidated := false
-	defer func() {
+	handedOff := false
+	finish := func() {
 		if invalidated && !refreshed {
 			inventory, skills := s.currentExtensionState()
 			shell, surfaces := s.rt.ApplicationBindings()
@@ -200,6 +208,11 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		s.pluginGenerationRefreshMu.Unlock()
 		if refreshed {
 			s.retireIdlePluginRuntimes()
+		}
+	}
+	defer func() {
+		if !handedOff {
+			finish()
 		}
 	}()
 	// Revoke failed dependencies before an epoch/recovery early return. A pinned
@@ -251,11 +264,12 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	if err != nil {
 		return err
 	}
+	configSources := s.configSourceFingerprint()
 	inputs, err := json.Marshal(struct {
 		Epoch         uint64
 		ConfigSources string
 		Config        config.Config
-	}{epoch, s.configSourceFingerprint(), cfg})
+	}{epoch, configSources, cfg})
 	if err != nil {
 		return err
 	}
@@ -295,6 +309,30 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		failure.err = err
 		return err
 	}
+	// Revocation above has completed. Newly masked optional diagnostics must
+	// not fence an otherwise healthy additive observation; the retained base
+	// still proves required-provider health and excludes active crash recovery.
+	if s.refreshExtensionsForTest == nil && !needsRecovery {
+		if base := s.rt.RetainAdditivePluginBase(cfg, discovered); base != nil {
+			prepared, prepareErr := s.rt.PrepareObservedPluginCatalog(cfg, discovered)
+			releaseErr := errors.Join(catalog.Release(), lease.Release())
+			if prepareErr != nil || releaseErr != nil {
+				if prepared != nil {
+					prepared.Close()
+				}
+				s.rt.ReleasePluginGeneration(base)
+				return recordFailure(errors.Join(prepareErr, releaseErr))
+			}
+			handedOff = true
+			if !s.startPluginAdditivePreparation(epoch, base, cfg, configSources, discovered, prepared, func() { refreshed = true }, finish, recordFailure) {
+				handedOff = false
+				prepared.Close()
+				s.rt.ReleasePluginGeneration(base)
+				return errPluginGenerationRefreshBusy
+			}
+			return nil
+		}
+	}
 
 	var candidate *runtime.PluginGeneration
 	if s.refreshExtensionsForTest == nil {
@@ -310,37 +348,11 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		}
 		return releaseErr
 	}
-	if candidate != nil {
-		err = s.rt.ActivatePluginGeneration(candidate, nil)
-	} else {
-		err = s.refreshExtensions(cfg)
+	refreshed, err = s.publishObservedPluginGeneration(candidate, cfg, epoch, needsRecovery, lease.Release)
+	if err != nil && !refreshed {
+		return recordFailure(err)
 	}
-	if err != nil {
-		if !runtime.PluginGenerationWasCommitted(err) {
-			return recordFailure(err)
-		}
-		providers.DebugLogf("refresh plugin generation: %v", err)
-	}
-	*failure = pluginGenerationRefreshFailure{}
-	s.scheduleCurrentPluginTurnLifecycleReplay()
-	inventory, skills := s.currentExtensionState()
-	refreshed = true
-	// The refresh mutex still serializes local mutations while the shared lease
-	// is dropped and the observed epoch is published.
-	if err := lease.Release(); err != nil {
-		return err
-	}
-	s.pluginGenerationEpoch.Store(epoch)
-	if needsRecovery {
-		s.pluginRuntimeRevision.Add(1)
-	}
-	shell, surfaces := s.rt.ApplicationBindings()
-	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-		ApplicationShell: shell, ApplicationSurfaces: surfaces,
-		Epoch:              epoch,
-		ExtensionInventory: inventory,
-		Skills:             skills,
-	})
+	return err
 }
 
 // Publication is a new admission boundary. Existing events retain their own

@@ -625,6 +625,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 	if !s.pluginGenerationMutation.CompareAndSwap(false, true) {
 		return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another plugin change is running", action)
 	}
+	s.cancelPluginAdditivePreparation()
 	releaseAdmission := func() { s.pluginGenerationMutation.Store(false) }
 
 	if kind == pluginGenerationMutationExclusive {
@@ -678,10 +679,19 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 			releaseLocal()
 			return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another app-server is changing the plugin catalog", action)
 		}
+		// Epoch() was sampled before acquiring the catalog writer lock. A
+		// peer may have published in between; compare under the held lock.
+		observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+		if err != nil {
+			_ = catalogLease.Release()
+			releaseLocal()
+			return func() error { return nil }, fmt.Errorf("read plugin catalog epoch: %w", err)
+		}
+		wasSynchronized := s.pluginGenerationEpoch.Load() == observedEpoch
 		return sync.OnceValue(func() error {
 			epoch, advanceErr := catalogLease.Advance()
 			if advanceErr == nil {
-				s.pluginGenerationEpoch.Store(epoch)
+				s.adoptPluginMutationEpoch(epoch, wasSynchronized)
 			}
 			releaseErr := catalogLease.Release()
 			releaseLocal()
@@ -704,6 +714,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 		releaseLocal()
 		return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another app-server is running a turn or background work", action)
 	}
+	wasSynchronized := s.pluginGenerationEpoch.Load() == lease.Epoch()
 	epoch, err := lease.Advance()
 	if err != nil {
 		_ = lease.Release()
@@ -711,12 +722,8 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 		return func() error { return nil }, fmt.Errorf("advance plugin generation: %w", err)
 	}
 	return sync.OnceValue(func() error {
+		s.adoptPluginMutationEpoch(epoch, wasSynchronized)
 		releaseErr := lease.Release()
-		// This server performed the complete serialized transaction and already
-		// has its final runtime state: either the retained old generation or the
-		// committed new one, including activation failures. Peers still observe
-		// the advanced epoch and refresh independently.
-		s.pluginGenerationEpoch.Store(epoch)
 		releaseLocal()
 		s.retireIdlePluginRuntimes()
 		if releaseErr != nil {
@@ -726,6 +733,19 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 		}
 		return nil
 	}), nil
+}
+
+// The caller still owns local refresh/config and cross-process mutation locks.
+// A mutation that canceled an unobserved catalog must not swallow that catalog
+// on a failed/no-op transaction, or when it rebuilt only previously known IDs.
+func (s *Server) adoptPluginMutationEpoch(epoch uint64, wasSynchronized bool) {
+	if !wasSynchronized {
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil || !s.rt.ObservesPluginCatalog(cfg, pluginpkg.Discover(s.rt.RootDir, s.rt.WuuHome)) {
+			return
+		}
+	}
+	s.pluginGenerationEpoch.Store(epoch)
 }
 
 func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetadata {

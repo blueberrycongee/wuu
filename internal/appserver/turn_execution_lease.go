@@ -72,7 +72,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 		}
 		// This function owns th.mu. Never initialize or activate plugins here:
 		// their synchronous host callbacks can inspect or submit to this thread.
-		needsRefresh := lease.Epoch() != s.pluginGenerationEpoch.Load() || s.rt.PluginGenerationNeedsRecovery()
+		needsRefresh := (lease.Epoch() != s.pluginGenerationEpoch.Load() && !s.pluginAdditiveAdmissionMatches(lease.Epoch())) || s.rt.PluginGenerationNeedsRecovery()
 		if needsRefresh {
 			_ = lease.Release()
 			_ = s.startBackgroundWithState(th.state, func(binding *runtime.State) {
@@ -91,6 +91,10 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 		if newPluginLease {
 			th.releasePluginGenerationExecutionLeaseLocked()
 		}
+		return false, nil
+	}
+	if newPluginLease && th.pluginExecutionLease.Epoch() != s.pluginGenerationEpoch.Load() && !s.pluginAdditiveAdmissionMatches(th.pluginExecutionLease.Epoch()) {
+		th.releasePluginGenerationExecutionLeaseLocked()
 		return false, nil
 	}
 	current, err := s.rt.RetainState()

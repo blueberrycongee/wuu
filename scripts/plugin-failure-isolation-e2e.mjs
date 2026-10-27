@@ -59,6 +59,15 @@ async function completed(turn) {
   const message = await waitFor("message", transcript, message => message.method === "turn/completed" && message.params.turn.id === turn.id, "turn completed");
   assert.equal(message.params.turn.status, "completed", JSON.stringify(message));
 }
+async function inventoryWith(name, state) {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const catalog = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+    if (catalog.extension_inventory.some(item => item.name === name && item.runtime_state === state)) return catalog;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new Error(`Plugin inventory never reached ${name}: ${state}`);
+}
 function plugin(mode) {
   return `import { appendFileSync } from "node:fs";
 import type { RuntimePlugin } from "@wuu/plugin-sdk";
@@ -78,9 +87,22 @@ async function publish(mode, path = source) {
   await publishPath(mode, path);
 }
 async function publishPath(mode, path) {
-  const execution = spawnSync(binary, ["plugin", "dev", "--watch=false", path], { cwd: scratch, env, encoding: "utf8", timeout: 20000 });
-  publications.push({ mode, path, status: execution.status, stdout: execution.stdout, stderr: execution.stderr });
-  assert.equal(execution.status, 0, execution.stderr);
+  const deadline = Date.now() + 20000;
+  for (;;) {
+    const execution = spawnSync(binary, ["plugin", "dev", "--watch=false", path], {
+      cwd: scratch, env, encoding: "utf8", timeout: Math.max(1, deadline - Date.now()),
+    });
+    publications.push({ mode, path, at: new Date().toISOString(), status: execution.status,
+      signal: execution.signal, stdout: execution.stdout, stderr: execution.stderr, error: execution.error?.message });
+    if (execution.status === 0) return;
+    // A short watcher lease may reject publication before any generation is
+    // changed. Retry only that exact contract, preserving the same input bytes;
+    // all preparation/runtime failures and unknown outcomes remain failures.
+    const deferred = execution.status === 2 && execution.stderr.trim() ===
+      "error: dev generation refresh deferred; previous generation preserved: plugin catalog is being read or published by another operation";
+    assert(deferred && Date.now() < deadline, execution.error?.message || execution.stderr);
+    await new Promise(resolve => setTimeout(resolve, Math.min(20, deadline - Date.now())));
+  }
 }
 // Raw wire peers deliberately bypass the SDK's own initializer validation.
 async function publishRaw(id, mode, requires = []) {
@@ -88,9 +110,9 @@ async function publishRaw(id, mode, requires = []) {
   await mkdir(path, { recursive: true });
   await writeFile(join(path, "package.json"), JSON.stringify({ private: true, scripts: { build: "node -e ''" } }));
   await writeFile(join(path, "plugin.json"), JSON.stringify({ id, name: id, schema_version: 1, requires,
-    runtime: { protocol: "wuu-plugin-v1", command: process.execPath, args: ["runtime.mjs"], timeout: 1 } }));
+    runtime: { protocol: "wuu-plugin-v1", command: process.execPath, args: ["runtime.mjs"], timeout: mode === "prepare-barrier" ? 30 : 1 } }));
   await writeFile(join(path, "runtime.mjs"), `import { createInterface } from "node:readline";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const mode = ${JSON.stringify(mode)}, control = ${JSON.stringify(join(scratch, id + ".crash"))};
 const emit = value => process.stdout.write(JSON.stringify(value) + "\\n");
 createInterface({ input: process.stdin }).on("line", line => {
@@ -103,6 +125,11 @@ createInterface({ input: process.stdin }).on("line", line => {
   }
   if (request.method === "prepare" && mode === "prepare-failure") { emit({ id: request.id, error: { code: "fixture_prepare", message: "optional preparation failed" } }); return; }
   if (request.method === "prepare" && mode === "prepare-hang") return;
+  if (request.method === "prepare" && mode === "prepare-barrier") {
+    writeFileSync(control + ".entered", "held");
+    const timer = setInterval(() => { if (existsSync(control + ".release")) { clearInterval(timer); emit({ id: request.id, result: {} }); } }, 20);
+    return;
+  }
   if (request.method === "activate" && mode === "crash") setInterval(() => { if (existsSync(control)) process.exit(23); }, 20);
   if (request.method === "capability.invoke") result = { output: {} };
   emit({ id: request.id, result });
@@ -153,10 +180,9 @@ try {
     const initial = await settledSend(thread.id, "same draft after quarantine");
     assert(!initial.error, JSON.stringify(initial.error));
     await completed(initial.result.turn);
-    const refreshed = await raw("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
-    assert(!refreshed.error, JSON.stringify(refreshed.error));
-    const failed = refreshed.result.extension_inventory.find(item => item.name === "observer");
-    assert(failed, JSON.stringify(refreshed.result));
+    const refreshed = await inventoryWith("observer", "failed");
+    const failed = refreshed.extension_inventory.find(item => item.name === "observer");
+    assert(failed, JSON.stringify(refreshed));
     assert.match(JSON.stringify(failed), /protocol v1 cannot declare capabilities or host services|explicit protocol_version|protocol_version.*(?:2|3)/);
     result.quarantined = failed;
     for (const prompt of ["same draft after quarantine", "second healthy send"]) await completed((await send(prompt)).turn);
@@ -190,12 +216,13 @@ try {
     checks.push("repairing failed active replacement unblocks admission");
     await publishRaw("raw-invalid-observer", "invalid");
     await completed((await send("raw invalid handshake")).turn);
-    let catalog = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+    let catalog = await inventoryWith("raw-invalid-observer", "failed");
     assert.match(JSON.stringify(catalog.extension_inventory.find(item => item.name === "raw-invalid-observer")), /protocol v1 cannot declare capabilities or host services|explicit protocol_version|protocol_version.*(?:2|3)/);
     checks.push("raw malformed initialize response is quarantined independently of SDK validation");
     await publishRaw("crash-provider", "crash");
     await publishRaw("crash-dependent", "valid", ["crash-provider"]);
     await completed((await send("before optional crash")).turn);
+    await inventoryWith("crash-dependent", "active");
     await writeFile(join(scratch, "crash-provider.crash"), "crash the synthetic process\n");
     const crashStarts = (await readFile(probe, "utf8")).split("\n").filter(Boolean).map(JSON.parse).filter(row => row.raw === "crash-provider" && row.method === "initialize").length;
     const crashDeadline = Date.now() + 10000;
@@ -216,21 +243,32 @@ try {
     checks.push("crashed optional runtime and its required consumer quarantine; unrelated conversation recovers");
     await publishRaw("crash-provider", "valid");
     await completed((await send("provider repair restores unchanged dependent")).turn);
-    catalog = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+    catalog = await inventoryWith("crash-dependent", "active");
     assert.equal(catalog.extension_inventory.find(item => item.name === "crash-dependent").runtime_state, "active");
     checks.push("changed provider source automatically restores its unchanged required consumer");
+    await publishRaw("additive-held", "prepare-barrier");
+    const enteredDeadline = Date.now() + 10000;
+    while (!(await readFile(join(scratch, "additive-held.crash.entered"), "utf8").catch(() => ""))) {
+      assert(Date.now() < enteredDeadline, "additive candidate never entered real prepare barrier");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    await completed((await send("completes while optional preparation remains held")).turn);
+    assert(!(await readFile(probe, "utf8")).split("\n").filter(Boolean).map(JSON.parse).some(row => row.raw === "additive-held" && row.method === "activate"));
+    await writeFile(join(scratch, "additive-held.crash.release"), "release only after turn completed\n");
+    await inventoryWith("additive-held", "active");
+    checks.push("new send completes while real additive plugin prepare is held; activation follows explicit barrier release");
     for (const mode of ["hang", "prepare-failure", "prepare-hang"]) {
       await publishRaw("optional-" + mode, mode);
       const started = performance.now();
       await completed((await send("unrelated send after " + mode)).turn);
       const elapsed = performance.now() - started;
-      catalog = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+      catalog = await inventoryWith("optional-" + mode, "failed");
       const failed = catalog.extension_inventory.find(item => item.name === "optional-" + mode);
       assert.equal(failed.runtime_state, "failed", JSON.stringify(failed));
       result.failure_latency_ms ??= {}; result.failure_latency_ms[mode] = Math.round(elapsed);
     }
     checks.push("optional initialize/prepare timeout and prepare exception settle into quarantine with measured send delay");
-    result.limitations.push("Candidate preparation still fences new admission until its configured timeout; recorded latency is not zero-delay loading.");
+    result.limitations.push("Only strictly additive inferred addons prepare without fencing; replacements and authority-changing transitions remain fenced.");
     const disabled = catalog.extension_inventory.find(item => item.name === "optional-hang");
     await rpc("extension/package/update", { id: disabled.id, fingerprint: disabled.fingerprint, action: "disable" });
     await completed((await send("send after disabling quarantined addon")).turn);

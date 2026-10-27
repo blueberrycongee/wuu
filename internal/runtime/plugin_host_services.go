@@ -378,6 +378,7 @@ type executionUpdateRecorder interface {
 const kernelHostModule = "kernel"
 
 type kernelHostServices struct {
+	requiredPlugins   map[string]bool
 	stateGeneration   *PluginGeneration
 	stateOwner        *Session
 	mu                sync.RWMutex
