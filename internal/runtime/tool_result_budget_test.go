@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -130,7 +131,9 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			rt, err := NewSession(Options{RootDir: root, HomeDir: home, SafeMode: true, Config: config.Config{
+			modules := append(testStateModules(), kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, "wuu.tools.default", "wuu.tools.v1-batch", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native", modelExecutionConsumer, capacityPolicyModule, capacityResourceModule, engineExecutionConsumer, nativeEnginesModule)
+			rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
+				Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{
 					"synthetic": {Type: "openai-compatible", WireAPI: "chat", Model: "gpt-4o", ContextWindow: 262144, BaseURL: server.URL, APIKey: "synthetic-key", AuthToken: "synthetic-token"},
 				},
@@ -155,12 +158,17 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			if _, err := rt.Sessions.CreateWithMetadata("budget-thread", root); err != nil {
+				t.Fatal(err)
+			}
 			engine, err := rt.WuuEngine().Open(ctx, agentengine.OpenRequest{ThreadID: "budget-thread", RootDir: root})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer engine.Close(context.Background())
-			runner := engine.(*wuuEngineSession).runner
+			// The selected engine captures these configured defaults; its concrete
+			// session type is not part of the public engine contract.
+			runner := rt.StreamRunner
 			if runner.StreamingToolExecution || runner.DisableAutoCompact {
 				t.Fatal("test requires default completed-batch path and compaction")
 			}

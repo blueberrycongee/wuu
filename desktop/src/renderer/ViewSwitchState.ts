@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export const VIEW_SWITCH_LOADING_DELAY_MS = 180;
 
-export type PendingViewSwitchKind = "thread" | "workspace" | "runtime";
+export type PendingViewSwitchKind = "thread" | "workspace" | "runtime" | "tab";
 
 export type PendingViewSwitch = {
   kind: PendingViewSwitchKind;

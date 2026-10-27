@@ -6,10 +6,10 @@ import {
   type HeaderSnapshotV1,
   type HeaderTabDescriptorV1,
 } from "../../shared/workbench";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
+import { useApplicationWorkbench } from "./ApplicationWorkbenchContext";
+import type { UIContributionRegistryV1 as PluginHost } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 export interface HeaderPresentationProps {
   enabled?: boolean;
@@ -48,9 +48,11 @@ export function HeaderPresentation({
   onCloseTab,
   onNavigateBack,
   onNavigateForward,
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
+  host: suppliedHost,
+  controller: suppliedController,
 }: HeaderPresentationProps): JSX.Element {
+  const controller = useApplicationWorkbench(suppliedController);
+  const host = suppliedHost ?? controller.registry;
   if (!enabled) return <>{fallback}</>;
   const actions: HeaderActionId[] = [];
   if (onSelectTab) actions.push(HEADER_ACTIONS.selectTab);

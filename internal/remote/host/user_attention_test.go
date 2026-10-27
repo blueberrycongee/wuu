@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
@@ -30,7 +32,7 @@ func TestHostLifetimeAttentionReachesNeverAttachedDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := make(personalHostPusher, 4)
-	h := &Host{store: store, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, pushMinInterval: time.Minute, sessions: map[string]*deviceSession{}, subscribeUserAttention: func(context.Context, func(appserver.UserAttentionNotification)) error { return nil }}
+	h := &Host{authorizeUserAttention: func(context.Context, appserver.UserAttentionNotification) error { return nil }, store: store, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, pushMinInterval: time.Minute, sessions: map[string]*deviceSession{}, subscribeUserAttention: func(context.Context, func(appserver.UserAttentionNotification)) error { return nil }}
 	if err := h.pushUserAttention(context.Background(), admittedAttention()); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestAccountAttentionLooksUpCurrentAuthorizedRecipients(t *testing.T) {
 	host := secure.EncodeKey(store.Identity().Public())
 	client, server := personalRelayPair(t)
 	events := make(personalHostPusher, 1)
-	h := &Host{store: store, ws: client, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, pushMinInterval: time.Minute, sessions: map[string]*deviceSession{}}
+	h := &Host{authorizeUserAttention: func(context.Context, appserver.UserAttentionNotification) error { return nil }, store: store, ws: client, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, pushMinInterval: time.Minute, sessions: map[string]*deviceSession{}}
 	devices := []account.Device{{Pub: host, Role: "host", Account: "alice"}, {Pub: phone, Role: "phone", Account: "alice"}, {Pub: phone, Role: "phone", Account: "alice"}, {Pub: "foreign", Role: "phone", Account: "bobby"}, {Pub: "wrong-role", Role: "host", Account: "alice"}}
 	calls := 0
 	previous := http.DefaultTransport
@@ -162,7 +164,7 @@ func TestAccountAttentionLookupCancelsWithHost(t *testing.T) {
 	if err := store.SetAccount(&account.Credentials{Server: "https://synthetic.invalid", Token: "synthetic", Username: "alice"}); err != nil {
 		t.Fatal(err)
 	}
-	h := &Host{store: store}
+	h := &Host{authorizeUserAttention: func(context.Context, appserver.UserAttentionNotification) error { return nil }, store: store}
 	previous := http.DefaultTransport
 	requested := make(chan struct{})
 	http.DefaultTransport = personalPushTransport(func(r *http.Request) (*http.Response, error) {
@@ -237,6 +239,7 @@ func TestHostRunSubscribesBeforeAnyPhoneAttach(t *testing.T) {
 			t.Error("push incorrectly needed a device app connection")
 			return nil
 		},
+		AuthorizeUserAttention: func(context.Context, appserver.UserAttentionNotification) error { return nil },
 		SubscribeUserAttention: func(ctx context.Context, receive func(appserver.UserAttentionNotification)) error {
 			defer close(subscriberDone)
 			receive(admittedAttention())
@@ -263,4 +266,66 @@ func TestHostRunSubscribesBeforeAnyPhoneAttach(t *testing.T) {
 	}
 	<-subscriberDone
 	<-relayDone
+}
+
+// A host-owned subscription is only an event source. Directory membership and
+// local observer authority cannot bypass the selected recipient resource policy.
+func TestHostLifetimeAttentionUsesRecipientPolicy(t *testing.T) {
+	store, pub := makeStore(t, "policy-phone")
+	if err := store.SetDevicePushToken(pub, "ExponentPushToken[policy]", "ios", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	events := make(personalHostPusher, 4)
+	h := &Host{store: store, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, sessions: map[string]*deviceSession{}}
+	if err := h.pushUserAttention(context.Background(), admittedAttention()); err == nil || len(events) != 0 {
+		t.Fatal("missing resource policy delivered attention")
+	}
+	var allow atomic.Bool
+	var checks atomic.Int32
+	h.authorizeUserAttention = func(ctx context.Context, event appserver.UserAttentionNotification) error {
+		checks.Add(1)
+		caller, ok := principal.FromContext(ctx)
+		if !ok || caller.Identity().Subject != pub || event.TurnID != "turn-1" {
+			t.Fatal("resource policy did not receive the authenticated recipient and event")
+		}
+		if !allow.Load() {
+			return errors.New("recipient denied")
+		}
+		return nil
+	}
+	if err := h.pushUserAttention(context.Background(), admittedAttention()); err != nil || len(events) != 0 || len(h.sessions) != 0 {
+		t.Fatalf("denied recipient consumed push state: %v", err)
+	}
+	allow.Store(true)
+	if err := h.pushUserAttention(context.Background(), admittedAttention()); err != nil || checks.Load() < 2 {
+		t.Fatalf("authorized recipient missing attention: %v, checks=%d", err, checks.Load())
+	}
+	select {
+	case <-events:
+	case <-time.After(time.Second):
+		t.Fatal("authorized recipient missing attention")
+	}
+	allow.Store(false)
+	if err := h.pushUserAttention(context.Background(), admittedAttention()); err != nil || len(events) != 0 || checks.Load() < 4 {
+		t.Fatalf("changed policy was not rechecked: %v, checks=%d", err, checks.Load())
+	}
+}
+
+func TestHostAttentionRechecksPolicyBeforeExternalDelivery(t *testing.T) {
+	store, pub := makeStore(t, "revoked-push")
+	if err := store.SetDevicePushToken(pub, "ExponentPushToken[policy]", "ios", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	events := make(personalHostPusher, 1)
+	checks := 0
+	h := &Host{store: store, baseCtx: context.Background(), pusher: events, logf: func(string, ...any) {}, sessions: map[string]*deviceSession{}, authorizeUserAttention: func(context.Context, appserver.UserAttentionNotification) error {
+		checks++
+		if checks > 1 {
+			return errors.New("recipient revoked before delivery")
+		}
+		return nil
+	}}
+	if err := h.pushUserAttention(context.Background(), admittedAttention()); err != nil || checks != 2 || len(events) != 0 {
+		t.Fatalf("external delivery did not recheck admitted recipient: %v, checks=%d", err, checks)
+	}
 }

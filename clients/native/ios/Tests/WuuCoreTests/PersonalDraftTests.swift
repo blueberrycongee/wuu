@@ -5,7 +5,7 @@ final class PersonalDraftTests: XCTestCase {
     func testColdRecoveryPreservesExactIdentityAndBytesWithoutAutomaticSend() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let initialized: JSONValue = ["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "one", "runtime_state": "active"]]]
+        let initialized: JSONValue = ["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "one", "graph_generation": "graph-one", "runtime_state": "active"]]]
         let first = PersonalClient { _, input in ["result": ["agent": ["agent_id": input["input"]["agent_id"], "user_space_id": "local"]]] }
         try await first.configure(initialized); _ = try await first.selectAgent("main")
         let file = try InputAttachment(filename: "photo.pdf", mediaType: "application/pdf", data: Data("%PDF-exact".utf8))
@@ -33,7 +33,7 @@ final class PersonalDraftTests: XCTestCase {
     }
     func testPersonalDraftRejectsOversizedUTF8FilenameBeforeTransport() async throws {
         let client = PersonalClient { _, input in ["result": ["agent": ["agent_id": input["input"]["agent_id"], "user_space_id": "local"]]] }
-        try await client.configure(["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "one", "runtime_state": "active"]]])
+        try await client.configure(["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "one", "graph_generation": "graph-one", "runtime_state": "active"]]])
         _ = try await client.selectAgent("main")
         for name in [String(repeating: "文", count: 100) + ".pdf", "bad\u{0085}.pdf"] {
             let file = try InputAttachment(filename: name, mediaType: "application/pdf", data: Data("%PDF-data".utf8))

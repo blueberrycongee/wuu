@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -41,69 +43,74 @@ func selectedModelAdapter(req providers.ChatRequest) (providers.ChatRequest, err
 }
 
 func (c *modelAdapterClient) PrepareInferenceRequest(ctx context.Context, req providers.ChatRequest) (providers.ChatRequest, error) {
-	req, err := selectedModelAdapter(req)
+	output, err := c.auxiliary(ctx, "prepare", req, "", "")
 	if err != nil {
 		return req, err
 	}
-	if req.Adapter != "" && req.Adapter != "native" {
-		if _, err := c.host.ModelAdapter(req.Adapter); err != nil {
-			return req, err
-		}
-		return req, nil
+	if output.Request == nil {
+		return req, errors.New("model adapter omitted prepared request")
 	}
-	if preparer, ok := c.inner.(providers.InferenceRequestPreparer); ok {
-		return preparer.PrepareInferenceRequest(ctx, req)
-	}
-	return req, nil
+	return modelwire.ApplyRequest(req, *output.Request)
 }
-
 func (c *modelAdapterClient) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
-	return providers.ResolveMediaInput(c.inner, policy, options)
+	req := c.baseRequest()
+	req.MediaInput = policy
+	req.ProviderOptions = options
+	output, err := c.auxiliary(context.Background(), "media", req, "", "")
+	if err != nil || output.Media == nil {
+		return policy
+	}
+	wire := modelwire.RequestToWire(req)
+	wire.MediaInput = *output.Media
+	result, err := modelwire.ApplyRequest(req, wire)
+	if err != nil {
+		return policy
+	}
+	return result.MediaInput
 }
-
 func (c *modelAdapterClient) NativeCompactionAvailable() bool {
-	compactor, ok := c.inner.(providers.NativeCompactor)
-	return ok && compactor.NativeCompactionAvailable()
+	_, capability, err := c.selected(context.Background(), c.baseRequest())
+	if err != nil || !slices.Contains(capability.Adapter.Operations, "compact") {
+		return false
+	}
+	if slices.Contains(capability.Adapter.Operations, "compact.supported") {
+		output, err := c.auxiliary(context.Background(), "compact.supported", c.baseRequest(), "", "")
+		return err == nil && output.Supported
+	}
+	return true
 }
-
 func (c *modelAdapterClient) NativeCompact(ctx context.Context, req providers.ChatRequest) (providers.NativeCompactionResult, error) {
-	req, err := selectedModelAdapter(req)
+	output, err := c.auxiliary(ctx, "compact", req, "", "")
 	if err != nil {
 		return providers.NativeCompactionResult{}, err
 	}
-	if req.Adapter != "" && req.Adapter != "native" {
+	if !output.Supported {
 		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
 	}
-	compactor, ok := c.inner.(providers.NativeCompactor)
-	if !ok {
-		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
-	}
-	return compactor.NativeCompact(ctx, req)
-}
-
-func (c *modelAdapterClient) PrewarmSession(ctx context.Context, sessionID string) error {
-	if prewarmer, ok := c.inner.(providers.SessionPrewarmer); ok {
-		return prewarmer.PrewarmSession(ctx, sessionID)
-	}
-	return nil
-}
-
-func (c *modelAdapterClient) ApplyInferenceRecovery(ctx context.Context, plan providers.RecoveryPlan) error {
-	if applier, ok := c.inner.(providers.InferenceRecoveryApplier); ok {
-		return applier.ApplyInferenceRecovery(ctx, plan)
-	}
-	return errors.New("model provider does not support this recovery action")
-}
-
-func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
-	req, err := selectedModelAdapter(req)
+	wire := modelwire.RequestToWire(req)
+	wire.Messages = output.Replacement
+	result, err := modelwire.ApplyRequest(req, wire)
 	if err != nil {
-		return providers.ChatResponse{}, err
+		return providers.NativeCompactionResult{}, err
 	}
-	if req.Adapter == "" || req.Adapter == "native" {
-		return c.inner.Chat(ctx, req)
-	}
-	capability, err := c.host.ModelAdapter(req.Adapter)
+	response := modelwire.ChatResponseFromWire(pluginprotocol.ModelResponseV1{Usage: output.Usage})
+	return providers.NativeCompactionResult{Replacement: result.Messages, Usage: response.Usage, ProviderStateScope: output.ProviderStateScope}, nil
+}
+func (c *modelAdapterClient) PrewarmSession(ctx context.Context, id string) error {
+	_, err := c.auxiliary(ctx, "prewarm", c.baseRequest(), id, "")
+	return err
+}
+func (c *modelAdapterClient) ApplyInferenceRequestRecovery(ctx context.Context, req providers.ChatRequest, plan providers.RecoveryPlan) error {
+	_, err := c.auxiliary(ctx, "recover", req, "", string(plan.Action))
+	return err
+}
+func (c *modelAdapterClient) ApplyInferenceRecovery(ctx context.Context, plan providers.RecoveryPlan) error {
+	_, err := c.auxiliary(ctx, "recover", c.baseRequest(), "", string(plan.Action))
+	return err
+}
+
+func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest) (responseResult providers.ChatResponse, resultErr error) {
+	req, capability, err := c.selected(ctx, req)
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
@@ -111,114 +118,83 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
-	submission, err := admitPluginModelSubmission(req, capability.Adapter.Mode)
+	scope, err := c.host.OpenServiceScope(ctx, modelExecutionConsumer, capacityPolicyService, capacityResourceService)
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
-	response, callErr := invokePluginModelChat(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
-		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: false,
-	})
+	defer func() { resultErr = errors.Join(resultErr, scope.Close()) }()
+	ctx = scope.Context
+	submission, capacity, err := admitPluginModelSubmission(ctx, c.host, req, capability.Adapter.Mode)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	receipt, release := adapterReceipt(ctx, c.host, capability, req)
+	defer release()
+	response, callErr := invokePluginModelChat(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{ConfiguredModel: c.configuredModel(), AdapterID: req.Adapter, Request: modelwire.RequestToWire(req), Stream: false, Receipt: receipt})
 	callErr = errors.Join(callErr, settlePluginModelSubmission(req, submission, response.Usage, callErr))
+	callErr = errors.Join(callErr, settleModelCapacityError(capacity, callErr))
 	return response, callErr
 }
 
 func (c *modelAdapterClient) OwnsStreamAccounting() bool { return true }
 
 func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	req, err := selectedModelAdapter(req)
+	req, capability, err := c.selected(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if req.Adapter == "" || req.Adapter == "native" {
-		return c.nativeModelStream(ctx, req)
-	}
-	capability, err := c.host.ModelAdapter(req.Adapter)
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
 	if err != nil {
 		return nil, err
 	}
+	streamOwnsReceipt := false
+	defer func() {
+		if !streamOwnsReceipt {
+			endReceipt(nil)
+		}
+	}()
 	req, err = providers.EnsureInferenceAttemptContext(ctx, req, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 	if err != nil {
 		return nil, err
 	}
-	submission, err := admitPluginModelSubmission(req, capability.Adapter.Mode)
+	logicalCtx := ctx
+	scope, err := c.host.OpenServiceScope(ctx, modelExecutionConsumer, capacityPolicyService, capacityResourceService)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := invokePluginModelStream(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
-		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: true,
-	}, submission)
+	ownsScope := false
+	defer func() {
+		if !ownsScope {
+			_ = scope.Close()
+		}
+	}()
+	ctx = scope.Context
+	releasePhysical, err := req.Attempt.RetainPhysicalReceipt()
+	if err != nil {
+		return nil, err
+	}
+	physicalTransferred := false
+	defer func() {
+		if !physicalTransferred {
+			_ = releasePhysical()
+		}
+	}()
+	submission, capacity, err := admitPluginModelSubmission(ctx, c.host, req, capability.Adapter.Mode)
+	if err != nil {
+		return nil, err
+	}
+	receipt, release := adapterReceipt(ctx, c.host, capability, req)
+	streamOwnsReceipt = true
+	ownsScope = true
+	physicalTransferred = true
+	stream, err := invokePluginModelStreamWithCapacity(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{ConfiguredModel: c.configuredModel(), AdapterID: req.Adapter, Request: modelwire.RequestToWire(req), Stream: true, Receipt: receipt}, submission, capacity, func() { endReceipt(errors.Join(releasePhysical(), req.Attempt.JournalError(), scope.Close())) }, release)
 	if err != nil {
 		return nil, errors.Join(err, settlePluginModelSubmission(req, submission, nil, err))
 	}
 	out := make(chan providers.StreamEvent, 32)
+	streamOwnsReceipt = true
 	go func() {
 		defer close(out)
-		settled := false
-		defer func() {
-			if !settled {
-				cause := ctx.Err()
-				if cause == nil {
-					cause = providers.NewIncompleteStreamError("model adapter stream ended without a terminal event")
-				}
-				_ = settlePluginModelSubmission(req, submission, nil, cause)
-			}
-		}()
-		for event := range stream {
-			// Usage is recorded at the sink before buffering. Replaying it here
-			// could replace a newer receipt with an older queued event.
-			observation := event
-			observation.Usage = nil
-			if err := req.Attempt.ObserveStreamEvent(observation); err != nil {
-				event = providers.StreamEvent{Type: providers.EventError, Error: err}
-			}
-			if event.Type == providers.EventDone || event.Type == providers.EventError {
-				settled = true
-				if err := settlePluginModelSubmission(req, submission, nil, event.Error); err != nil {
-					event = providers.StreamEvent{Type: providers.EventError, Error: err}
-				}
-			}
-			select {
-			case out <- event:
-			case <-ctx.Done():
-				if !settled {
-					settled = true
-					_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()})
-				}
-				// The sink already owns receipts; only release its producer.
-				go func() {
-					for range stream {
-					}
-				}()
-				return
-			}
-		}
-	}()
-	return out, nil
-}
-
-// Native streams are observed at the selected physical provider boundary,
-// including continuations that deliberately bypass a second retry executor.
-func (c *modelAdapterClient) nativeModelStream(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	stream, err := c.inner.StreamChat(ctx, req)
-	if err == nil && stream == nil {
-		err = errors.New("native model stream is unavailable")
-	}
-	if err != nil {
-		return nil, errors.Join(err, req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: err}))
-	}
-	out := make(chan providers.StreamEvent, 32)
-	go func() {
-		defer close(out)
-		terminal := false
-		defer func() {
-			if !terminal {
-				cause := ctx.Err()
-				if cause == nil {
-					cause = providers.NewIncompleteStreamError("native model stream ended without a terminal event")
-				}
-				_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: cause})
-			}
-		}()
 		for {
 			var event providers.StreamEvent
 			var open bool
@@ -227,24 +203,19 @@ func (c *modelAdapterClient) nativeModelStream(ctx context.Context, req provider
 				if !open {
 					return
 				}
-			case <-ctx.Done():
-				drainModelReceipt(stream, req.Attempt, false)
+			case <-logicalCtx.Done():
 				return
 			}
-			if err := req.Attempt.ObserveStreamEvent(event); err != nil {
+			// Usage is recorded at the sink before buffering. Replaying it here
+			// could replace a newer receipt with an older queued event.
+			observation := event
+			observation.Usage = nil
+			if err := req.Attempt.ObserveStreamEvent(observation); err != nil {
 				event = providers.StreamEvent{Type: providers.EventError, Error: err}
-			}
-			if event.Type == providers.EventDone || event.Type == providers.EventError {
-				terminal = true
 			}
 			select {
 			case out <- event:
-			case <-ctx.Done():
-				drainModelReceipt(stream, req.Attempt, false)
-				return
-			}
-			if event.Type == providers.EventDone || event.Type == providers.EventError {
-				drainModelReceipt(stream, req.Attempt, event.Type == providers.EventDone)
+			case <-logicalCtx.Done():
 				return
 			}
 		}
@@ -252,31 +223,22 @@ func (c *modelAdapterClient) nativeModelStream(ctx context.Context, req provider
 	return out, nil
 }
 
-// Cancellation must release the logical consumer immediately. Continue draining
-// the physical producer so buffered usage is retained and its lease can finish;
-// transport clients close promptly on cancellation under the stream contract.
-func drainModelReceipt(stream <-chan providers.StreamEvent, attempt providers.InferenceAttempt, done bool) {
-	go func() {
-		for event := range stream {
-			if done {
-				continue
-			}
-			_ = attempt.ObserveStreamEvent(event)
-			done = event.Type == providers.EventDone
-		}
-	}()
-}
-
 // Direct adapters receive durable, potentially billable admission before any
 // callback runs. Delegating adapters have only logical operation accounting;
 // each child host invocation admits and reports its own physical submissions.
-func admitPluginModelSubmission(req providers.ChatRequest, mode string) (providers.InferenceSubmission, error) {
-	if mode == "delegate" {
-		return providers.InferenceSubmission{}, nil
+func admitPluginModelSubmission(ctx context.Context, host *pluginhost.Host, req providers.ChatRequest, mode string) (providers.InferenceSubmission, *modelCapacityAdmission, error) {
+	if mode == "delegate" || mode == "receipt" {
+		return providers.InferenceSubmission{}, nil, nil
 	}
-	return req.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{
-		Provider: req.Provider, Protocol: "plugin:" + req.Adapter, Transport: "extension", Mode: "model_adapter",
-	})
+	capacity, err := acquireModelCapacity(ctx, host, "provider:"+req.Provider, req.Attempt)
+	if err != nil {
+		return providers.InferenceSubmission{}, nil, err
+	}
+	submission, err := req.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: req.Provider, Protocol: "plugin:" + req.Adapter, Transport: "extension", Mode: "model_adapter"})
+	if err != nil {
+		return providers.InferenceSubmission{}, nil, errors.Join(err, capacity.settle("abandoned", nil))
+	}
+	return submission, capacity, nil
 }
 
 func settlePluginModelSubmission(req providers.ChatRequest, submission providers.InferenceSubmission, usage *providers.TokenUsage, callErr error) error {
@@ -294,27 +256,65 @@ func settlePluginModelSubmission(req providers.ChatRequest, submission providers
 
 func invokePluginModelChat(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any) (providers.ChatResponse, error) {
 	var output pluginprotocol.ModelAdapterOutput
-	if err := host.InvokeCapability(ctx, capability, input, &output); err != nil {
-		return providers.ChatResponse{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return providers.ChatResponse{}, err
+	callErr := host.InvokeCapability(ctx, capability, input, &output)
+	callErr = errors.Join(callErr, ctx.Err())
+	if output.Error != nil {
+		callErr = errors.Join(callErr, modelErrorFromWire(output.Error))
 	}
 	if output.Response == nil {
-		return providers.ChatResponse{}, errors.New("model capability returned no response")
+		if callErr == nil {
+			callErr = errors.New("model capability returned no response")
+		}
+		return providers.ChatResponse{}, callErr
 	}
-	return modelResponseFromLogical(*output.Response)
+	response, decodeErr := modelResponseFromLogical(*output.Response)
+	if callErr != nil {
+		// A late physical receipt is accounting evidence, never canceled content.
+		return providers.ChatResponse{Usage: response.Usage}, errors.Join(callErr, decodeErr)
+	}
+	return response, decodeErr
 }
 
 // Streaming capability invocations share one execution-scoped event sink.
 // Terminal events are held until the callback returns, so an exception after
 // emitting done cannot silently turn an unsuccessful invocation into success.
-func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any, submission providers.InferenceSubmission) (<-chan providers.StreamEvent, error) {
+func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any, submission providers.InferenceSubmission, cleanup ...func()) (<-chan providers.StreamEvent, error) {
+	return invokePluginModelStreamWithCapacity(ctx, host, capability, input, submission, nil, cleanup...)
+}
+func invokePluginModelStreamWithCapacity(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any, submission providers.InferenceSubmission, capacity *modelCapacityAdmission, cleanup ...func()) (<-chan providers.StreamEvent, error) {
+	launched := false
+	defer func() {
+		if !launched {
+
+			if capacity != nil {
+				_ = capacity.settle("abandoned", nil)
+			}
+			for i := len(cleanup) - 1; i >= 0; i-- {
+				cleanup[i]()
+			}
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(chan providers.StreamEvent, 32)
+	launched = true
 	go func() {
+		for _, release := range cleanup {
+			defer release()
+		}
+		if capacity != nil {
+			defer func() {
+				if err := capacity.settle("abandoned", nil); err != nil {
+					providers.DebugLogf("model capacity cleanup: %v", err)
+				}
+			}()
+		}
+		defer endReceipt(nil)
 		defer close(out)
 		var mu sync.Mutex
 		var terminal *providers.StreamEvent
@@ -332,14 +332,13 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 				return emitErr
 			}
 			event, err := modelStreamEventFromLogical(wire)
+			// The decoder keeps only independently valid physical usage even
+			// when logical event metadata is rejected.
+			submission.ObserveUsage(event.Usage)
 			if err != nil {
 				emitErr = err
 				return err
 			}
-			// Only direct adapters receive a physical submission. Preserve their
-			// validated receipts even if callback failure or cancellation prevents
-			// delivery of the held terminal event.
-			submission.ObserveUsage(event.Usage)
 			emitted = true
 			if event.Type == providers.EventDone || event.Type == providers.EventError {
 				terminal = &event
@@ -357,9 +356,19 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 		})
 		var output pluginprotocol.ModelAdapterOutput
 		callErr := host.InvokeCapability(streamCtx, capability, input, &output)
+		if callErr == nil && output.Error != nil {
+			callErr = modelErrorFromWire(output.Error)
+		}
 		mu.Lock()
 		closed = true
 		callErr = errors.Join(callErr, emitErr)
+		if output.Response != nil {
+			response, decodeErr := modelResponseFromLogical(*output.Response)
+			// Usage is validated independently and cleared by the decoder when
+			// invalid. Unrelated logical metadata must not erase physical cost.
+			submission.ObserveUsage(response.Usage)
+			callErr = errors.Join(callErr, decodeErr)
+		}
 		if callErr == nil && emitted && output.Response != nil {
 			callErr = errors.New("model capability cannot both emit events and return a response")
 		}
@@ -373,6 +382,15 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 				if err != nil {
 					callErr = err
 				} else {
+					submission.CompleteSuccess(response.Usage)
+					if capacityErr := settleModelCapacityError(capacity, nil); capacityErr != nil {
+						mu.Unlock()
+						select {
+						case out <- providers.StreamEvent{Type: providers.EventError, Error: capacityErr}:
+						case <-ctx.Done():
+						}
+						return
+					}
 					mu.Unlock()
 					for event := range events {
 						select {
@@ -394,6 +412,16 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 				failure.Usage = terminal.Usage
 			}
 			terminal = &failure
+		}
+		if terminal != nil {
+			if terminal.Error != nil {
+				submission.CompleteFailure(providers.NormalizeFailure(terminal.Error))
+			} else {
+				submission.CompleteSuccess(terminal.Usage)
+			}
+			if capacityErr := settleModelCapacityError(capacity, terminal.Error); capacityErr != nil {
+				terminal = &providers.StreamEvent{Type: providers.EventError, Error: errors.Join(terminal.Error, capacityErr)}
+			}
 		}
 		mu.Unlock()
 		select {
@@ -429,7 +457,11 @@ func (k *modelEmitInvoker) InvokeService(ctx context.Context, params pluginhost.
 	if err := decodeServiceParams(params.Params, &event); err != nil {
 		return nil, err
 	}
-	if err := host.EmitModelEvent(ctx, params.Caller, params.ExecutionID, event); err != nil {
+	scope, scopeErr := params.CallerExecution(false)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+	if err := host.EmitModelEvent(ctx, scope.PluginID, scope.ID, event); err != nil {
 		var serviceErr *pluginhost.HostServiceError
 		if errors.As(err, &serviceErr) {
 			return nil, serviceErr

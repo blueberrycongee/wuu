@@ -7,7 +7,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Only fresh output inherits the admission envelope. Checkpoints can contain
@@ -53,7 +52,7 @@ func (th *threadState) applyStreamEventWithRelationLocked(turnID string, ev prov
 	return out
 }
 
-func (s *Server) validateMessageRelation(pluginID, target string, relation *providers.MessageRelation) error {
+func (s *Server) validateMessageRelation(binding *runtime.State, pluginID, target string, relation *providers.MessageRelation) error {
 	if relation == nil {
 		return nil
 	}
@@ -64,7 +63,7 @@ func (s *Server) validateMessageRelation(pluginID, target string, relation *prov
 	if len(encoded) > 64*1024 {
 		return errors.New("message relation exceeds 64 KB")
 	}
-	metadata, found, err := session.Find(s.rt.SessionDir, target)
+	metadata, found, err := binding.Sessions.Find(target)
 	if err != nil {
 		return err
 	}
@@ -78,7 +77,7 @@ func (s *Server) validateMessageRelation(pluginID, target string, relation *prov
 	if ref.SessionID != target || ref.Seq <= 0 {
 		return errors.New("reply_to must address a message in the target session")
 	}
-	records, err := session.LoadActiveHistoryRecords(s.rt.SessionDir, target, false)
+	records, err := binding.Sessions.LoadActiveHistoryRecords(target, false)
 	if err != nil {
 		return err
 	}

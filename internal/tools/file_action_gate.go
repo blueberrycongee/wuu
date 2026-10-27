@@ -30,10 +30,12 @@ type FileAction struct {
 type fileActionContextKey struct{}
 
 // The host predicates describe this kit's captured hook generation, not the
-// latest catalog. Unknown callbacks and external authorizers are unsupported;
-// they must never be skipped or invoked inside the atomic file commit fence.
+// latest catalog. Unknown callbacks and snapshot-only authorizers are unsupported;
+// selected authorization must remain fenced rather than being skipped.
 func (t *Toolkit) LocalFileActionCallbacks() bool {
-	return t.authorizer == nil && (t.permissionRequestHook == nil || t.permissionHookLocalOnly != nil && t.permissionHookLocalOnly()) && (t.env.OnFileChanged == nil || t.fileChangedLocalOnly != nil && t.fileChangedLocalOnly())
+	authorizer, atomic := t.authorizer.(AtomicAuthorizer)
+	atomic = atomic && authorizer.SupportsAtomicAuthorization()
+	return (t.authorizer == nil || atomic) && (t.permissionRequestHook == nil || t.permissionHookLocalOnly != nil && t.permissionHookLocalOnly()) && (t.env.OnFileChanged == nil || t.fileChangedLocalOnly != nil && t.fileChangedLocalOnly())
 }
 
 func fileMutation(name string) bool { return name == "write_file" || name == "edit_file" }
@@ -43,7 +45,7 @@ func fileMutation(name string) bool { return name == "write_file" || name == "ed
 // bounded adapter. It does not expand the tool's existing file scope.
 func (t *Toolkit) PrepareFileAction(ctx context.Context, call providers.ToolCall) (FileAction, error) {
 	if !fileMutation(call.Name) || t.env.ExecutionEnvironment != nil || !t.LocalFileActionCallbacks() {
-		return FileAction{}, errors.New("Personal approval supports local write_file/edit_file without extension callbacks only")
+		return FileAction{}, errors.New("Personal approval requires local write_file/edit_file with fenced authorization and no extension hooks")
 	}
 	var args struct {
 		Path string `json:"path"`
@@ -111,7 +113,43 @@ func (t *Toolkit) ExecuteFileAction(ctx context.Context, a FileAction) (toolresu
 	if err := t.ValidateFileAction(ctx, a); err != nil {
 		return toolresult.Result{}, err
 	}
-	return t.ExecuteResult(context.WithValue(ctx, fileActionContextKey{}, a), providers.ToolCall{ID: a.CallID, Name: a.Operation, Arguments: string(a.Arguments)})
+	call := providers.ToolCall{ID: a.CallID, Name: a.Operation, Arguments: string(a.Arguments)}
+	execute := func(ctx context.Context) (toolresult.Result, error) {
+		if err := ctx.Err(); err != nil {
+			return toolresult.Result{}, err
+		}
+		return t.ExecuteResult(context.WithValue(ctx, fileActionContextKey{}, a), call)
+	}
+	if t.authorizer == nil {
+		return execute(ctx)
+	}
+	authorizer, ok := t.authorizer.(AtomicAuthorizer)
+	if !ok {
+		return toolresult.Result{}, errors.New("selected authorization effect fence unavailable")
+	}
+	tool := t.LookupTool(call.Name)
+	if tool == nil {
+		return toolresult.Result{}, errors.New("reviewed file tool unavailable")
+	}
+	request := t.authorizationRequest(buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call)
+	var result toolresult.Result
+	entered := false
+	err := authorizer.WithAuthorization(ctx, request, func(effectCtx context.Context) error {
+		if entered {
+			return errors.New("authorization effect callback repeated")
+		}
+		entered = true
+		if effectCtx == nil {
+			return errors.New("authorization effect context unavailable")
+		}
+		var err error
+		result, err = execute(context.WithValue(effectCtx, fileAuthorizationContextKey{}, fileAuthorization{t, request}))
+		return err
+	})
+	if err == nil && !entered {
+		return toolresult.Result{}, errors.New("selected authorization effect fence unavailable")
+	}
+	return result, err
 }
 func checkFileActionPrecondition(ctx context.Context, path string, data []byte, exists bool) error {
 	a, ok := ctx.Value(fileActionContextKey{}).(FileAction)

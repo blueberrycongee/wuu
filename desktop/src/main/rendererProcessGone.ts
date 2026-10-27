@@ -17,7 +17,8 @@ type RecoveryOptions = {
   app: Pick<App, "on" | "removeListener">;
   load: () => Promise<void>;
   stopTerminals: (ownerID: number) => void;
-  prompt: () => Promise<"reload" | "close">;
+  prompt: () => Promise<"reload" | "close" | "recover">;
+  recover?: () => Promise<void>;
 };
 
 // Keep the BrowserWindow and its registry/bootstrap identity. Only the renderer
@@ -88,7 +89,9 @@ export function installRendererRecovery(window: BrowserWindow, options: Recovery
     const promptGeneration = generation;
     void options.prompt().then((choice) => {
       if (!active() || generation !== promptGeneration) return;
-      if (choice === "close") {
+      if (choice === "recover") {
+        void options.recover?.();
+      } else if (choice === "close") {
         window.close();
       } else {
         attempts = 0;

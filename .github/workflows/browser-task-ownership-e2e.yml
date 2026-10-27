@@ -34,9 +34,13 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - name: Install desktop dependencies
-        run: npm ci --prefix desktop
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
       - name: Build core
         run: |
           mkdir -p desktop/build/bin
@@ -44,6 +48,7 @@ jobs:
       - name: Verify browser task ownership and takeover
         env:
           WUU_BROWSER_OWNERSHIP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/browser-task-ownership
+          WUU_BROWSER_OWNERSHIP_DIAGNOSTICS: "1"
         run: |
           mkdir -p "$WUU_BROWSER_OWNERSHIP_OUTPUT"
           set -o pipefail

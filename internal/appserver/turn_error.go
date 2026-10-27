@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -71,6 +72,13 @@ func BuildTurnError(err error, provider string) TurnError {
 	if isInternalMessageSequenceError(lowerMessage) {
 		out.Code = "invalid_message_sequence"
 		out.Category = "internal"
+	}
+
+	// Receipt admission or cleanup cancellation is an internal failure, not
+	// evidence that the user stopped the turn. Preserve more specific failures.
+	if out.Category == "" && (errors.Is(err, agent.ErrModelReceiptLifecycle) || strings.Contains(lowerMessage, agent.ErrModelReceiptLifecycle.Error())) {
+		out.Category = "internal"
+		out.Code = "model_receipt_lifecycle"
 	}
 
 	// 2. If the typed checks did not pick a category, run the agent

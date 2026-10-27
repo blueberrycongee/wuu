@@ -23,6 +23,9 @@ const PersonalFilesPolicyVersion = "personal-files.v1"
 // GetSettings creates the conservative, manual-only default on first use.
 // The host must authenticate callers and serialize policy changes with dispatch.
 func (s *Store) GetSettings(ctx context.Context, spaceID string) (Settings, error) {
+	if s.documents != nil {
+		return s.documentGetSettings(ctx, spaceID)
+	}
 	if strings.TrimSpace(spaceID) == "" {
 		return Settings{}, errors.New("Personal review settings require a space")
 	}
@@ -59,6 +62,9 @@ type SettingsEvent struct {
 // its stable owner ID and serialize changes with dispatch. An omitted actor is
 // recorded as host, never as an owner assertion, for internal host callers.
 func (s *Store) SetSettings(ctx context.Context, spaceID string, enabled bool, expectedRevision int64, ownerID ...string) (Settings, error) {
+	if s.documents != nil {
+		return s.documentSetSettings(ctx, spaceID, enabled, expectedRevision, ownerID...)
+	}
 	if expectedRevision < 1 || expectedRevision >= 1<<53-1 {
 		return Settings{}, ErrConflict
 	}
@@ -115,6 +121,12 @@ func (s *Store) SetSettings(ctx context.Context, spaceID string, enabled bool, e
 // SettingsEvents is a space-scoped host audit read. It does not authenticate a
 // client and must not be exposed as an unrestricted plugin or worker service.
 func (s *Store) SettingsEvents(ctx context.Context, spaceID string) ([]SettingsEvent, error) {
+	if s.documents != nil {
+		if strings.TrimSpace(spaceID) == "" {
+			return nil, errors.New("Personal settings audit requires a space")
+		}
+		return documentRows[SettingsEvent](ctx, s, reviewSettingsEvents, reviewPart(spaceID)+"/")
+	}
 	if strings.TrimSpace(spaceID) == "" {
 		return nil, errors.New("Personal settings audit requires a space")
 	}

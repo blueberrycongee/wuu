@@ -16,6 +16,8 @@ import (
 func TestRunningServerObservesPluginGenerationAndRetriesFailedRefresh(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -91,6 +93,8 @@ func TestRunningServerObservesPluginGenerationAndRetriesFailedRefresh(t *testing
 func TestPluginGenerationMutationWaitsForSameServerRefresh(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	refreshStarted := make(chan struct{})
 	allowRefresh := make(chan struct{})
 	srv := &Server{
@@ -152,6 +156,8 @@ func TestPluginGenerationMutationWaitsForSameServerRefresh(t *testing.T) {
 func TestPluginRefreshBackoffTracksCandidateInputsAndPreservesBusyRetry(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	calls := 0
 	failure := errors.New("candidate initialization failed")
 	srv := &Server{rt: rt, out: &lockedBuffer{}, threads: map[string]*threadState{},
@@ -202,7 +208,13 @@ func TestPluginRefreshBackoffTracksCandidateInputsAndPreservesBusyRetry(t *testi
 		name  string
 		apply func()
 	}{
-		{"config", func() { writePluginPackageFile(t, rt.ConfigPath, `{"agent":{"effort":"high"}}`) }},
+		{"config", func() {
+			data, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writePluginPackageFile(t, rt.ConfigPath, strings.Replace(string(data), `"effort": "high"`, `"effort": "low"`, 1))
+		}},
 		{"package", func() {
 			writePluginPackageFile(t, filepath.Join(rt.WuuHome, "plugins", "candidate", "plugin.json"), `{"id":"candidate","description":"repaired input"}`)
 		}},

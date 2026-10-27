@@ -7,10 +7,10 @@ start the app-server, or load user data.
 
 ## Interaction
 
-Search activity and overlapping source icons share one header. The tool summary
+Search activity and overlapping source cards share one header. The tool summary
 opens the process disclosure beneath the row, aligned to its left edge. Each
-favicon opens its source directly; hover and keyboard focus raise that icon
-above its neighbors. The group exposes its total count to screen readers.
+favicon opens its source directly; hovering raises the focused card above its
+neighbors. The group exposes its total count to screen readers.
 
 The disclosure includes ALL sources, including the icons shown in the header,
 and the existing tool timeline with the original query, status and call details.
@@ -23,11 +23,13 @@ collapsed within the group. The source count counts links, while the tool summar
 counts calls. Titles and full URLs are available on hover/focus. Source clicks
 preserve original URLs, modifiers and workspace-browser routing.
 
-Narrow headers show fewer icons without adding another collapsed row. The first
-live visible sources use the existing avatar entrance; revisiting a disclosure
-or history does not replay receipts. Reduced motion is respected. Escape closes
-the whole group and returns focus to the control that opened it. Failed or
-interrupted calls do not contribute sources.
+Narrow headers show fewer cards without adding another collapsed row. The live
+visible sources form a compact hand of overlapping cards with alternating lean
+above a shared base, then settle into a tight fan; revisiting a disclosure or
+history does not replay receipts. Reduced motion is respected. Escape closes the
+whole group and returns focus to the control that opened it. Failed or
+interrupted calls do not contribute sources. Every source remains available in
+the expanded disclosure.
 
 ## Reference
 

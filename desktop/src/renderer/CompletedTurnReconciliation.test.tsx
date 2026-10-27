@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -44,7 +45,7 @@ it.each(["notification", "refresh", "resume"] as const)("shows one answer after 
   };
   let state: AppState = { ...initialState, thread, threads: [thread] };
   const render = () => root.render(
-    <TurnView turn={state.thread!.turns[0]} onStreamFrame={() => {}} isLatestTurn />,
+    <ConversationControlsTestProvider>{<TurnView turn={state.thread!.turns[0]} onStreamFrame={() => {}} isLatestTurn />}</ConversationControlsTestProvider>,
   );
   const expectOneAnswer = () => {
     expect(container.querySelectorAll(".turn-answer-body .agent-block")).toHaveLength(1);

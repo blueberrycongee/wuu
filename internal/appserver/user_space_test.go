@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
-	"path/filepath"
-	"strings"
-	"testing"
 )
 
 func TestUserSpaceSessionBindingRecoveryAndCrossDomainDenial(t *testing.T) {
@@ -23,15 +23,15 @@ func TestUserSpaceSessionBindingRecoveryAndCrossDomainDenial(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	p := pluginhost.SessionCreateParams{RequestID: "stable-main", Name: "Mosaic", Visibility: "plugin", ContextSource: "fresh", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent-main"}
-	one, err := srv.createPluginSession(context.Background(), "personal", p)
+	one, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "personal", p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	two, err := srv.createPluginSession(context.Background(), "personal", p)
+	two, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "personal", p)
 	if err != nil || one.SessionID != two.SessionID || two.Created {
 		t.Fatalf("duplicate: %+v %v", two, err)
 	}
-	metadata, _, err := session.Find(rt.SessionDir, one.SessionID)
+	metadata, _, err := rt.Sessions.Find(one.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,22 +43,22 @@ func TestUserSpaceSessionBindingRecoveryAndCrossDomainDenial(t *testing.T) {
 		{RequestID: "other-space", Visibility: "plugin", ContextSource: "fresh", UserSpaceID: "other", ProductDomain: "personal"},
 		{RequestID: "project", Visibility: "plugin", ContextSource: "fresh", WorkspaceID: "project"},
 	} {
-		if _, err := srv.createPluginSession(context.Background(), "personal", foreign); err == nil {
+		if _, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "personal", foreign); err == nil {
 			t.Fatalf("accepted foreign binding %+v", foreign)
 		}
 	}
 	p.RequestID = "child"
 	p.ParentSessionID = one.SessionID
 	p.AgentID = "spoofed"
-	if _, err := srv.createPluginSession(context.Background(), "personal", p); err == nil {
+	if _, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "personal", p); err == nil {
 		t.Fatal("child changed responsible agent")
 	}
 	p.AgentID = ""
-	child, err := srv.createPluginSession(context.Background(), "personal", p)
+	child, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "personal", p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, _ := session.Find(rt.SessionDir, child.SessionID)
+	got, _, _ := rt.Sessions.Find(child.SessionID)
 	if got.AgentID != "agent-main" {
 		t.Fatal("child lost responsible agent")
 	}
@@ -71,7 +71,7 @@ func TestPluginClientRequestRejectsMismatchedHostScopeBeforePluginAdmission(t *t
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"scope","method":"plugin/client/request","params":{"id":"personal","fingerprint":"x","method":"agents.list","user_space_id":"other","product_domain":"personal"}}`)); err != nil {
+	if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"scope","method":"plugin/client/request","params":{"graph_generation":%q,"id":"personal","fingerprint":"x","method":"agents.list","user_space_id":"other","product_domain":"personal"}}`, rt.ExtensionSnapshot().GenerationID))); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "another user space or product domain") {
@@ -87,7 +87,7 @@ func TestUserHostRejectsAdHocThreadCreationAndFork(t *testing.T) {
 	srv := New(rt, out)
 	defer srv.Close()
 	for _, method := range []string{"thread/start", "thread/fork"} {
-		raw := []byte(fmt.Sprintf(`{"id":%q,"method":%q,"params":{}}`, method, method))
+		raw := []byte(fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":"existing"}}`, method, method))
 		if err := srv.handleLine(context.Background(), raw); err != nil {
 			t.Fatal(err)
 		}
@@ -118,6 +118,7 @@ func TestUserHostClientStorageUsesSameScopedAuthorityAsRuntime(t *testing.T) {
 	if err := rt.ExtensionSettings.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint}); err != nil {
 		t.Fatal(err)
 	}
+	attachTestModelGeneration(t, rt, pluginsettings.NewServiceWithStateRoot(pluginsettings.Module, rt.WuuHome, rt.ProductDataRoot(), rt.RootDir), &personalTestStateConsumer{})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()

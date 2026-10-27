@@ -2,39 +2,71 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
-	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // StreamCallback receives streaming events for live clients.
 type StreamCallback func(event providers.StreamEvent)
 
+// BeginModelReceipts admits one independent model run. Its completion function
+// synchronously joins bounded receipt cleanup before the caller releases state.
+type BeginModelReceiptsFunc func(context.Context) (context.Context, func() error, error)
+
+// ErrModelReceiptLifecycle identifies required receipt admission or completion
+// failures that callers must not discard as best-effort model output failures.
+var ErrModelReceiptLifecycle = errors.New("model receipt lifecycle failed")
+
+// ModelReceiptCompletionError distinguishes post-run receipt cleanup from
+// admission and execution failures. Callers may retain it as a diagnostic when
+// the run otherwise succeeded; joined execution errors must still fail the run.
+type ModelReceiptCompletionError struct {
+	Err error
+}
+
+func (e *ModelReceiptCompletionError) Error() string {
+	return ErrModelReceiptLifecycle.Error() + "\n" + e.Err.Error()
+}
+
+func (e *ModelReceiptCompletionError) Unwrap() []error {
+	return []error{ErrModelReceiptLifecycle, e.Err}
+}
+
 const maxConsecutiveProactiveCompactFailures = 3
 
-// StreamRunner manages one multi-step coding turn with streaming.
-// It is a thin wrapper around RunToolLoop that supplies a streamStep
-// adapter (Step → providers.StreamClient.StreamChat with recovery),
-// so the actual loop logic — step counting, finish handling,
-// context-overflow auto-compact — comes from the same code as Runner.
+// StreamRunner binds a selected driver to one execution and its model, tool,
+// context and persistence resources. The driver owns control flow; resources
+// retain accepted effects and drain work before the execution is released.
 type StreamRunner struct {
-	Client       providers.StreamClient
-	ProviderName string
-	Tools        ToolExecutor
-	ToolLedger   *toolledger.Ledger
-	Model        string
-	APIModel     string
+	// ResolveModelStep snapshots an authorized selection before step assembly.
+	// Nil preserves the legacy turn binding. It must not mutate active resources.
+	ResolveModelStep  func(context.Context, uint64) (*ModelStepBinding, error)
+	SelectedPolicy    *loopdriver.PolicyClient
+	SelectedToolBatch toolbatch.Executor
+	ResumeSampling    bool
+	Client            providers.StreamClient
+	ProviderName      string
+	Tools             ToolExecutor
+	ToolLedger        *toolledger.Ledger
+	Model             string
+	APIModel          string
 	// ProviderObservationKey is an opaque identity for the configured provider
 	// instance and its endpoint/protocol. Runtime construction fills it so an
 	// in-place provider reconfiguration cannot reuse stale context observations.
@@ -43,7 +75,9 @@ type StreamRunner struct {
 	// SystemPromptSections mirrors SystemPrompt as metadata only, allowing
 	// request telemetry to explain the stable prompt without exposing text.
 	SystemPromptSections []SystemPromptSectionInfo
-	// CompactionRegistry resolves a generation-owned compactor for each run.
+	// SelectedCompaction is authoritative for production turns and note forks.
+	// CompactionRegistry is only for explicit local embeddings without a service graph.
+	SelectedCompaction  *compactionservice.Client
 	CompactionRegistry  *CompactionRegistry
 	CompactionNoteStore CompactionNoteStore
 	// ArchiveHistory commits in-run messages before accepted steering is
@@ -124,6 +158,9 @@ type StreamRunner struct {
 	// append-only plugin contributions. Returned messages join live history and
 	// are persisted with the rest of the turn.
 	BeforeModelStep func(context.Context, int, []providers.ChatMessage) ([]providers.ChatMessage, error)
+	// StepPolicy runs after durable input admission and before model dispatch.
+	// It is captured with this runner's generation; errors abort the turn.
+	StepPolicy func(context.Context, int, []providers.ChatMessage) (loopdriver.StepDecision, error)
 
 	// BeforeRequestContext, when set, is called before each provider request.
 	// Returned segments are assembled into that request but are not appended
@@ -173,11 +210,15 @@ type StreamRunner struct {
 	InferenceWorkloadProfile providers.InferenceWorkloadProfile
 	// InferenceJournal is the durable write-ahead sink shared by every model
 	// round and nested compaction owned by this runner.
-	InferenceJournal providers.InferenceJournal
+	InferenceJournal   providers.InferenceJournal
+	BeginModelReceipts BeginModelReceiptsFunc
 	// LoopDriver owns turn policy while the runner remains the kernel gateway
-	// for provider, tool-ledger, history, and streaming invariants. Nil selects
-	// the behavior-compatible default driver.
+	// for provider, tool-ledger, history, and streaming invariants. Callers
+	// must select a driver explicitly or supply AcquireLoopDriver. Durable
+	// conversations pair the resolver with a DriverBindingStore.
 	LoopDriver             loopdriver.Driver
+	AcquireLoopDriver      loopdriver.AcquireFunc
+	DriverBindingStore     loopdriver.BindingStore
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
 	RequestContextStore    RequestContextStore
@@ -221,10 +262,6 @@ func (r *StreamRunner) Run(ctx context.Context, prompt string) (string, error) {
 	return res.Content, nil
 }
 
-// RunWithCallback executes a conversation turn with a per-call event callback.
-// It accepts the full message history and returns the loop result, including
-// any new messages produced during this turn and whether history was rewritten
-// by auto-compaction.
 // UpdateSystemPrompt safely updates the system prompt at runtime.
 // The new prompt takes effect on the next turn.
 func (r *StreamRunner) UpdateSystemPrompt(newPrompt string) {
@@ -246,16 +283,58 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 	return r.SystemPrompt, cloneSystemPromptSections(r.SystemPromptSections)
 }
 
-func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (LoopResult, error) {
-	driver := r.LoopDriver
-	if driver == nil {
-		driver = loopdriver.DefaultDriver{}
+// RunWithCallback executes a conversation turn through the selected driver.
+// A nil callback uses OnEvent. The result includes accepted messages and any
+// committed context replacement, including partial output on failure.
+func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (loopResult LoopResult, runErr error) {
+	if r.SelectedPolicy != nil {
+		ctx = providers.WithRecoveryPlanner(ctx, r.SelectedPolicy.StreamRecoveryPlanner())
 	}
-	descriptor := driver.Descriptor()
+	if onEvent == nil {
+		onEvent = r.OnEvent
+	}
+	driver := r.LoopDriver
+	var binding loopdriver.Binding
+	if r.AcquireLoopDriver != nil {
+		var expected *loopdriver.Binding
+		if r.DriverBindingStore != nil {
+			stored, ok, err := r.DriverBindingStore.LoadBinding(ctx)
+			if err != nil {
+				return LoopResult{}, fmt.Errorf("load loop driver binding: %w", err)
+			}
+			if ok {
+				expected = &stored
+			}
+		}
+		selected, selectedBinding, release, err := r.AcquireLoopDriver(ctx, expected)
+		if err != nil {
+			return LoopResult{}, fmt.Errorf("acquire loop driver: %w", err)
+		}
+		defer release()
+		driver, binding = selected, selectedBinding
+	} else if r.DriverBindingStore != nil {
+		return LoopResult{}, errors.New("durable loop driver binding requires a resolver")
+	}
+	if driver == nil {
+		return LoopResult{}, errors.New("loop driver is not configured")
+	}
+	descriptor, err := driver.Descriptor(ctx)
+	if err != nil {
+		return LoopResult{}, fmt.Errorf("resolve loop driver: %w", err)
+	}
 	input := loopdriver.PersistedInput{Messages: providers.CloneChatMessages(history)}
 	execution := loopdriver.ExecutionContextFromContext(ctx)
+	if execution.ExecutionID == "" {
+		// Embedded callers do not have an app-server turn. The runner owns
+		// their execution identity and carries it to every model/tool callback.
+		execution.ExecutionID = rand.Text()
+		if execution.SessionID == "" {
+			execution.SessionID = r.PromptCacheKey
+		}
+		ctx = loopdriver.WithExecutionContext(ctx, execution)
+	}
 
-	var instance loopdriver.Instance
+	var resume *loopdriver.Checkpoint
 	if r.DriverCheckpointStore != nil {
 		checkpoint, ok, err := r.DriverCheckpointStore.Load(ctx)
 		if err != nil {
@@ -273,15 +352,38 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 					loopdriver.ContractVersion,
 				)
 			}
-			instance, err = driver.Resume(execution, input, checkpoint)
-			if err != nil {
-				return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
-			}
+			resume = &checkpoint
 		}
 	}
-	if instance == nil {
-		var err error
-		instance, err = driver.Create(execution, input)
+	if r.DriverBindingStore != nil {
+		if binding.ContractVersion != loopdriver.ContractVersion || binding.DriverID != descriptor.ID || binding.DriverVersion != descriptor.Version {
+			return LoopResult{}, errors.New("resolved loop driver descriptor does not match its binding")
+		}
+		if err := r.DriverBindingStore.Bind(ctx, binding); err != nil {
+			return LoopResult{}, fmt.Errorf("bind loop driver: %w", err)
+		}
+	}
+	ctx, finishReceipts, err := BeginModelReceipts(ctx, r.BeginModelReceipts)
+	if err != nil {
+		return LoopResult{}, err
+	}
+	defer func() {
+		if completionErr := finishReceipts(); completionErr != nil {
+			if runErr == nil {
+				runErr = completionErr
+			} else {
+				runErr = errors.Join(runErr, completionErr)
+			}
+		}
+	}()
+	var instance loopdriver.Instance
+	if resume != nil {
+		instance, err = driver.Resume(ctx, execution, input, *resume)
+		if err != nil {
+			return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
+		}
+	} else {
+		instance, err = driver.Create(ctx, execution, input)
 		if err != nil {
 			return LoopResult{}, fmt.Errorf("create loop driver: %w", err)
 		}
@@ -290,13 +392,25 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		return LoopResult{}, errors.New("loop driver returned a nil instance")
 	}
 
-	gateway := &streamDriverGateway{
-		runner:     r,
-		onEvent:    onEvent,
-		descriptor: descriptor,
-		execution:  execution,
-		results:    make(map[string]LoopResult),
+	ctx = providers.WithInferenceJournal(ctx, r.InferenceJournal)
+	ctx, workflow, ownsWorkflow := providers.EnsureInferenceWorkflow(ctx, r.InferenceWorkloadProfile)
+	if ownsWorkflow {
+		defer func() {
+			outcome := providers.InferenceOutcomeSucceeded
+			if runErr != nil {
+				outcome = providers.InferenceOutcomeFailed
+				if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+					outcome = providers.InferenceOutcomeCanceled
+				}
+			}
+			runErr = errors.Join(runErr, providers.CompleteInferenceWorkflow(workflow, r.InferenceJournal, outcome))
+		}()
 	}
+	gateway := &streamDriverGateway{
+		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
+	}
+	gateway.streamTurnGateway.descriptor = descriptor
+	defer gateway.close()
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -308,6 +422,12 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	outcome, runErr := instance.Run(ctx, gateway)
 	close(done)
 	instance.Shutdown()
+	gateway.close()
+	// A failed or canceled remote call may return its initial instance state.
+	// Preserve the latest checkpoint accepted by the execution before it ended.
+	if runErr != nil && gateway.lastCheckpoint != nil {
+		outcome.Checkpoint = *gateway.lastCheckpoint
+	}
 
 	res, ok := gateway.result(outcome.ReceiptID)
 	if outcome.ReceiptID != "" && !ok {
@@ -322,358 +442,46 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 }
 
 type streamDriverGateway struct {
-	runner     *StreamRunner
-	onEvent    StreamCallback
-	descriptor loopdriver.Descriptor
-	execution  loopdriver.ExecutionContext
-	results    map[string]LoopResult
-	next       int
+	*streamTurnGateway
+	lastCheckpoint *loopdriver.Checkpoint
 }
 
-func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input loopdriver.PersistedInput, policy loopdriver.LoopPolicy) (loopdriver.ModelLoopReceipt, error) {
-	gateway.next++
-	receipt := loopdriver.ModelLoopReceipt{ID: fmt.Sprintf("model-loop-%d", gateway.next)}
-	result, err := gateway.runner.runModelToolLoop(ctx, input.Messages, gateway.onEvent, policy, gateway.descriptor, gateway.execution)
-	gateway.results[receipt.ID] = result
-	return receipt, err
+// BeginModelReceipts admits a receipt lifecycle and classifies its admission and
+// completion failures with ErrModelReceiptLifecycle, preserving original errors.
+// A nil hook returns the original context and a no-op completion function.
+func BeginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (context.Context, func() error, error) {
+	if begin == nil {
+		return ctx, func() error { return nil }, nil
+	}
+	ctx, finish, err := begin(ctx)
+	if err != nil {
+		return ctx, nil, errors.Join(ErrModelReceiptLifecycle, err)
+	}
+	return ctx, func() error {
+		if err := finish(); err != nil {
+			return &ModelReceiptCompletionError{Err: err}
+		}
+		return nil
+	}, nil
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
+	ctx, leave, err := gateway.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	if checkpoint.ContractVersion != loopdriver.ContractVersion || checkpoint.DriverID != gateway.descriptor.ID || checkpoint.DriverVersion != gateway.descriptor.Version {
 		return errors.New("loop driver attempted to write a checkpoint for another contract")
 	}
-	if gateway.runner.DriverCheckpointStore == nil {
-		return nil
-	}
-	return gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint)
-}
-
-func (gateway *streamDriverGateway) result(receiptID string) (LoopResult, bool) {
-	result, ok := gateway.results[receiptID]
-	return result, ok
-}
-
-func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback, policy loopdriver.LoopPolicy, descriptor loopdriver.Descriptor, execution loopdriver.ExecutionContext) (LoopResult, error) {
-	client, providerObservationKey := r.providerConnectionSnapshot()
-	if client == nil {
-		return LoopResult{}, errors.New("client is required")
-	}
-	if strings.TrimSpace(r.Model) == "" {
-		return LoopResult{}, errors.New("model is required")
-	}
-	ctx = providers.WithInferenceJournal(ctx, r.InferenceJournal)
-	requestModel := strings.TrimSpace(r.APIModel)
-	if requestModel == "" {
-		requestModel = r.Model
-	}
-	runUsageContract := usageContractKey(providerObservationKey, r.ProviderName, requestModel, r.Variant, r.Effort, r.ProviderOptions)
-	history = filterDurableHistory(history)
-	recoveredToolMessages, err := r.pendingToolResultMessages(ctx, history)
-	if err != nil {
-		return LoopResult{}, fmt.Errorf("recover pending tool results: %w", err)
-	}
-	history = append(history, recoveredToolMessages...)
-	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, r.ProviderOptions)
-	admission := providers.ChatRequest{Messages: history, MediaInput: mediaInput, ProviderOptions: r.ProviderOptions}
-	if _, err := providers.PrepareVideoInput(admission, mediaInput.Video); err != nil {
-		return LoopResult{}, err
-	}
-	if err := providers.ValidateRequiredMedia(providers.ApplyToolResultProjections(history), mediaInput); err != nil {
-		return LoopResult{}, err
-	}
-	runUsage, baseHistoryLen := r.prepareUsageTrackerForContract(history, runUsageContract)
-
-	effectiveOnEvent := onEvent
-
-	tools := r.Tools
-	if policy.DisableTools {
-		tools = nil
-	}
-	step := &streamStep{
-		client:                  client,
-		onEvent:                 effectiveOnEvent,
-		tools:                   tools,
-		toolLedger:              r.ToolLedger,
-		enableStreamingToolExec: r.StreamingToolExecution,
-	}
-
-	compactContextTokens := r.ContextWindowOverride
-	maxCtx := compactContextTokens
-	compactThresholdTokens := r.CompactThresholdTokens
-	if policy.DisableCompaction || r.DisableAutoCompact || r.proactiveCompactCircuitOpen() {
-		maxCtx = 0 // disables the proactive trigger inside RunToolLoop
-		compactThresholdTokens = 0
-	}
-	_, systemPromptSections := r.systemPromptSnapshot()
-	beforeStep := r.BeforeStep
-	if beforeStep != nil {
-		capturedBeforeStep := beforeStep
-		beforeStep = func() []providers.ChatMessage {
-			return filterDurableHistory(capturedBeforeStep())
+	if gateway.runner.DriverCheckpointStore != nil {
+		if err := gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint); err != nil {
+			return err
 		}
 	}
-	contextWindowProvider := r.contextWindowProvider()
-	contextWindowsEnabled := contextWindowProvider != nil && r.ArchiveHistory != nil && !policy.DisableCompaction
-	beforeRequestContext := r.BeforeRequestContext
-	if contextWindowsEnabled {
-		beforeRequestContext = withContextWindowGuidance(beforeRequestContext)
-	}
-	operationKind := r.InferenceOperationKind
-	if operationKind == "" {
-		operationKind = providers.InferenceOperationAgentRound
-	}
-	workloadProfile := r.InferenceWorkloadProfile
-	if workloadProfile == "" {
-		workloadProfile = providers.InferenceProfileInteractive
-	}
-	maxSteps := r.MaxSteps
-	if policy.ModelRoundLimit > 0 {
-		maxSteps = policy.ModelRoundLimit
-	}
-	forceToolFirstStep := r.ForceToolFirstStep
-	if policy.DisableTools {
-		forceToolFirstStep = ""
-	}
-	cfg := LoopConfig{
-		Tools:                    tools,
-		Model:                    requestModel,
-		ProviderName:             r.ProviderName,
-		ProviderObservationKey:   providerObservationKey,
-		ModelVariant:             r.Variant,
-		InferenceOperationKind:   operationKind,
-		InferenceWorkloadProfile: workloadProfile,
-		SessionID:                execution.SessionID,
-		ExecutionID:              execution.ExecutionID,
-		DriverID:                 descriptor.ID,
-		DriverVersion:            descriptor.Version,
-		ModelInputReceiptStore:   r.ModelInputReceiptStore,
-		RequestContextStore:      r.RequestContextStore,
-		Temperature:              r.Temperature,
-		MediaInput:               mediaInput,
-		MaxSteps:                 maxSteps,
-		MaxContextTokens:         maxCtx,
-		MaxInputTokens:           r.MaxInputTokens,
-		OutputReserveTokens:      r.OutputReserveTokens,
-		CompactThresholdTokens:   compactThresholdTokens,
-		CompactThresholdPct:      r.CompactThresholdPct,
-		CompactKeepRecentTokens:  r.CompactKeepRecentTokens,
-		ForceInitialCompact:      r.ForceInitialCompact && !policy.DisableCompaction,
-		CompactOnly:              r.CompactOnly && !policy.DisableCompaction,
-		ToolWaitInterrupt:        r.ToolWaitInterrupt,
-		BeforeStep:               beforeStep,
-		BeforeModelStep:          r.BeforeModelStep,
-		BeforeRequestContext:     beforeRequestContext,
-		BeforeRequest:            r.BeforeRequest,
-		SystemPromptSections:     systemPromptSections,
-		ForceToolFirstStep:       forceToolFirstStep,
-		OnRequestContext: func(info RequestContextInfo) {
-			if r.OnRequestContext != nil {
-				r.OnRequestContext(info)
-			}
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:           providers.EventRequestContext,
-				RequestContext: requestContextSummary(info),
-			})
-		},
-		OnUsage:       r.OnUsage,
-		OnTokenUsage:  r.OnTokenUsage,
-		BeforeCompact: r.BeforeCompact,
-		AfterCompact:  r.AfterCompact,
-		OnMessage: func(msg providers.ChatMessage) {
-			if effectiveOnEvent == nil || msg.Hidden || isNonDurableHistoryMessage(msg) || isInternalContextHistoryMessage(msg) {
-				return
-			}
-			copyMsg := msg
-			effectiveOnEvent(providers.StreamEvent{
-				Type:    providers.EventMessage,
-				Message: &copyMsg,
-			})
-		},
-		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
-			budget, budgetErr := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{
-				MediaInput:          mediaInput,
-				ContextTokens:       compactContextTokens,
-				InputTokens:         r.MaxInputTokens,
-				OutputReserveTokens: r.OutputReserveTokens,
-				KeepRecentTokens:    r.CompactKeepRecentTokens,
-			})
-			if budgetErr != nil {
-				return messages, budgetErr
-			}
-			definitions := toolDefinitions(tools)
-			return compact.CompactWithNativeOrSummary(ctx, messages, client, requestModel, budget, compact.NativeOptions{
-				Provider:                    r.ProviderName,
-				Tools:                       definitions,
-				Temperature:                 r.Temperature,
-				ProviderOptions:             r.ProviderOptions,
-				MediaInput:                  mediaInput,
-				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
-			})
-		},
-		CompactionRegistry:  r.CompactionRegistry,
-		CompactionNoteStore: r.CompactionNoteStore,
-		// Forward each tool result through the streaming callback so
-		// clients can render tool output live (the loop itself only
-		// records the tool message into the history).
-		OnToolResultDetail: func(call providers.ToolCall, result toolresult.Result) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			textResult := result.TextProjection()
-			toolCall := enrichToolCallDisplay(r.Tools, providers.ToolCall{
-				ID:                   call.ID,
-				ProviderItemID:       call.ProviderItemID,
-				ProviderItemProvider: call.ProviderItemProvider,
-				ProviderItemModel:    call.ProviderItemModel,
-				Name:                 call.Name,
-				Arguments:            call.Arguments,
-				Kind:                 call.Kind,
-				Display:              call.Display,
-			})
-			effectiveOnEvent(providers.StreamEvent{
-				Type:             providers.EventToolUseEnd,
-				ToolCall:         &toolCall,
-				ToolResult:       truncateLog(textResult, 2000),
-				ToolResultDetail: resultPointer(result),
-			})
-			if update, ok := todoUpdateEventFromToolResult(toolCall, textResult); ok {
-				effectiveOnEvent(providers.StreamEvent{
-					Type:       providers.EventTodoUpdate,
-					TodoUpdate: update,
-				})
-			}
-		},
-		OnCompactStart: func(reason CompactReason) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:          providers.EventCompact,
-				CompactReason: string(reason),
-				CompactPhase:  providers.CompactPhaseStarted,
-			})
-		},
-		// Surface auto-compact events as stream events. The loop fires
-		// this for both the proactive and the reactive overflow path.
-		OnCompact: func(info CompactInfo) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:           providers.EventCompact,
-				Content:        formatCompactNotice(info),
-				CompactReason:  string(info.Reason),
-				CompactPhase:   providers.CompactPhaseCompleted,
-				CompactSummary: info.Summary,
-			})
-		},
-		OnCompactAttempt: func(info CompactAttemptInfo) {
-			r.recordCompactAttempt(info)
-			if r.OnCompactAttempt != nil {
-				r.OnCompactAttempt(info)
-			}
-			if effectiveOnEvent == nil {
-				return
-			}
-			notice, ok := formatCompactAttemptNotice(info)
-			if !ok {
-				return
-			}
-			phase := providers.CompactPhaseCompleted
-			if info.Status == CompactAttemptFailed {
-				phase = providers.CompactPhaseFailed
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:          providers.EventCompact,
-				Content:       notice,
-				CompactReason: string(info.Reason),
-				CompactPhase:  phase,
-			})
-		},
-		OnToolBatchRejected: func(info ToolBatchRejectionInfo) {
-			if r.OnToolBatchRejected != nil {
-				r.OnToolBatchRejected(info)
-			}
-		},
-		UsageTracker:                runUsage,
-		Effort:                      r.Effort,
-		ProviderOptions:             provideroptions.Clone(r.ProviderOptions),
-		NativeDeferredToolDiscovery: r.NativeDeferredToolDiscovery,
-		PromptCacheKey:              r.PromptCacheKey,
-		RetainedRequestContext:      r.takeRetainedRequestContext(),
-	}
-	if cfg.RetainedRequestContext == nil && r.RequestContextStore != nil {
-		checkpoint, found, err := r.RequestContextStore.Load(ctx)
-		if err != nil {
-			return LoopResult{}, fmt.Errorf("restore request context: %w", err)
-		}
-		if found && checkpoint.Provider == cfg.ProviderName && checkpoint.Model == cfg.Model && checkpoint.DriverID == cfg.DriverID && checkpoint.DriverVersion == cfg.DriverVersion {
-			// The loop checks the durable fingerprint and current producers before
-			// reusing positions, so rewrites and removed guidance remain safe.
-			cfg.RetainedRequestContext = checkpoint.State
-		}
-	}
-	cfg.ForkCompactionNote = r.compactionNoteFork(cfg.RetainedRequestContext)
-	cfg.ArchiveHistory = r.ArchiveHistory
-	if contextWindowsEnabled {
-		cfg.FreshContextTokens = r.freshContextTargetTokens(compactThresholdTokens)
-		cfg.FreshContext = func(ctx context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			return buildFreshContext(messages, head, fixed, target, mediaInput)
-		}
-		cfg.AcceptFreshContext = func(acceptCtx context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
-			if r.CommitFreshContext != nil {
-				return r.CommitFreshContext(acceptCtx, messages, head, contextWindowProvider.CompactionKey(), CompactionNote{})
-			}
-			return messages, head, nil
-		}
-	}
-	cfg.OnCompactionNote = func(status string, noteErr error) {
-		emitCompactionNoteEvent(effectiveOnEvent, status, noteErr)
-	}
-	if policy.DisableCompaction {
-		cfg.Compact = nil
-		cfg.CompactionRegistry = nil
-	}
-
-	res, err := RunToolLoop(ctx, history, cfg, step)
-	r.storeRetainedRequestContext(res.RetainedRequestContext)
-	res.ContextTokens = runUsage.EstimateCurrent()
-	if len(recoveredToolMessages) > 0 && !res.HistoryRewritten {
-		res.NewMessages = append(append([]providers.ChatMessage(nil), recoveredToolMessages...), res.NewMessages...)
-	}
-	res.NewMessages = filterDurableHistory(res.NewMessages)
-	res.DurableNewMessages = filterDurableHistory(res.DurableNewMessages)
-	if len(recoveredToolMessages) > 0 {
-		res.DurableNewMessages = append(append([]providers.ChatMessage(nil), recoveredToolMessages...), res.DurableNewMessages...)
-	}
-	if err != nil {
-		r.commitUsageTrackerForContract(runUsage, history[:baseHistoryLen], runUsageContract)
-		return res, err
-	}
-	finalHistory := append(providers.CloneChatMessages(history[:baseHistoryLen]), res.NewMessages...)
-	if len(recoveredToolMessages) > 0 && !res.HistoryRewritten {
-		// Recovered results already belong to the input history used by the
-		// loop and were prepended to NewMessages only so callers persist them.
-		finalHistory = append(providers.CloneChatMessages(history[:baseHistoryLen]), res.NewMessages[len(recoveredToolMessages):]...)
-	}
-	if res.HistoryRewritten {
-		finalHistory = providers.CloneChatMessages(res.NewMessages)
-	}
-	r.commitUsageTrackerForContract(runUsage, finalHistory, runUsageContract)
-	if r.AfterTurn != nil {
-		fullHistory := make([]providers.ChatMessage, 0, len(history)+len(res.NewMessages))
-		fullHistory = append(fullHistory, history...)
-		fullHistory = append(fullHistory, res.NewMessages...)
-		fullHistory = filterDurableHistory(fullHistory)
-		r.AfterTurn(ctx, r, fullHistory, res)
-	}
-	return res, nil
+	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
+	gateway.lastCheckpoint = &checkpoint
+	return nil
 }
 
 func emitCompactionNoteEvent(onEvent StreamCallback, status string, noteErr error) {
@@ -740,7 +548,16 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			})
 			end++
 		}
-		messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		// A crash can leave a declaration with only some results projected.
+		// Reuse its remaining calls instead of duplicating the assistant block.
+		transcript := append(providers.CloneChatMessages(history), messages...)
+		declared, err := pendingToolCallDeclaration(transcript, calls)
+		if err != nil {
+			return nil, fmt.Errorf("recover tool batch %q: %w", batchID, err)
+		}
+		if !declared {
+			messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		}
 		for _, invocation := range pending[index:end] {
 			messages = append(messages, providers.ChatMessage{
 				Role: "tool", Name: invocation.ToolName, ToolCallID: invocation.ProviderCallID,
@@ -848,15 +665,20 @@ func (r *StreamRunner) prepareUsageTrackerForContract(history []providers.ChatMe
 	return tracker, trackedLen
 }
 
-// takeRetainedRequestContext hands the stored cross-turn request-context
-// state to the next run and clears it, so a crashed or aborted run cannot
-// replay stale state twice.
-func (r *StreamRunner) takeRetainedRequestContext() *RetainedRequestContextState {
+// snapshotRetainedRequestContext leaves the accepted insertions available if a
+// speculative compaction fails. Only SaveContextState replaces retained state.
+func (r *StreamRunner) snapshotRetainedRequestContext() *RetainedRequestContextState {
 	r.retainedContextMu.Lock()
 	defer r.retainedContextMu.Unlock()
-	state := r.retainedRequestContext
-	r.retainedRequestContext = nil
-	return state
+	if r.retainedRequestContext == nil {
+		return nil
+	}
+	state := *r.retainedRequestContext
+	state.Messages = make([]RetainedContextMessage, len(r.retainedRequestContext.Messages))
+	for index, item := range r.retainedRequestContext.Messages {
+		state.Messages[index] = RetainedContextMessage{AfterDurable: item.AfterDurable, Message: providers.CloneChatMessage(item.Message)}
+	}
+	return &state
 }
 
 // storeRetainedRequestContext publishes a run's retained request-context
@@ -867,10 +689,10 @@ func (r *StreamRunner) storeRetainedRequestContext(state *RetainedRequestContext
 	r.retainedRequestContext = state
 }
 
-// ContextWindowsAvailable reports whether the active compaction policy opts
-// into summary-free context windows.
+// ContextWindowsAvailable reports local embedding compatibility state.
+// Production setup uses ContextWindowsAvailableContext to preserve service errors.
 func (r *StreamRunner) ContextWindowsAvailable() bool {
-	return r != nil && r.contextWindowProvider() != nil
+	return r != nil && r.SelectedCompaction == nil && r.contextWindowProvider() != nil
 }
 
 func (r *StreamRunner) contextWindowProvider() ContextWindowProvider {
@@ -896,7 +718,19 @@ func (r *StreamRunner) requestModel() string {
 // and request-only context can change the prefix; cache reuse must be measured,
 // not assumed. Tool calls in the response are rejected and never executed.
 func (r *StreamRunner) CompactionNoteFork() CompactionNoteFork {
-	return r.compactionNoteFork(nil)
+	fork := r.compactionNoteFork(nil)
+	var begin BeginModelReceiptsFunc
+	if r != nil {
+		begin = r.BeginModelReceipts
+	}
+	return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (result CompactionNoteForkResult, runErr error) {
+		ctx, finishReceipts, err := BeginModelReceipts(ctx, begin)
+		if err != nil {
+			return CompactionNoteForkResult{}, err
+		}
+		defer func() { runErr = errors.Join(runErr, finishReceipts()) }()
+		return fork(ctx, history, plan)
+	}
 }
 
 func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState) CompactionNoteFork {
@@ -908,29 +742,43 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 	client, _ := r.providerConnectionSnapshot()
 	providerName := r.ProviderName
 	model := r.requestModel()
-	tools := toolDefinitions(r.Tools)
 	temperature := r.Temperature
 	effort := r.Effort
 	providerOptions := provideroptions.Clone(r.ProviderOptions)
-	nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
 	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, providerOptions)
 	beforeRequest := r.BeforeRequest
 	promptCacheKey := r.PromptCacheKey
 	inferenceJournal := r.InferenceJournal
 	inputBudget := r.freshContextTargetTokens(0)
-	return boundedCompactionNoteFork(func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+	if r.SelectedCompaction != nil {
+		inputBudget = r.MaxInputTokens
+		if inputBudget <= 0 && r.ContextWindowOverride > 0 {
+			inputBudget = r.ContextWindowOverride - max(0, r.OutputReserveTokens)
+		}
+	}
+	fork := func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+		tools, err := toolDefinitions(ctx, r.Tools)
+		if err != nil {
+			return CompactionNoteForkResult{}, err
+		}
+		nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
 		if client == nil {
 			return CompactionNoteForkResult{}, errors.New("context note client is unavailable")
 		}
-		messages := providers.CloneChatMessages(filterDurableHistory(history))
-		if retained != nil && retained.validFor(messages) {
-			messages = spliceRetainedContext(messages, retained.Messages)
+		var messages []providers.ChatMessage
+		if plan.PreparedMessages != nil {
+			messages = providers.CloneChatMessages(plan.PreparedMessages)
+		} else {
+			messages = providers.CloneChatMessages(filterDurableHistory(history))
+			if retained != nil && retained.validFor(messages) {
+				messages = spliceRetainedContext(messages, retained.Messages)
+			}
+			messages = annotateCompactionNoteHistorySeqs(messages)
+			messages = append(messages, providers.ChatMessage{
+				Role: "user", Content: strings.TrimSpace(plan.Prompt), Hidden: true, ReadOnly: true,
+				Origin: "internal", Cause: "compaction_note_fork",
+			})
 		}
-		messages = annotateCompactionNoteHistorySeqs(messages)
-		messages = append(messages, providers.ChatMessage{
-			Role: "user", Content: strings.TrimSpace(plan.Prompt), Hidden: true, ReadOnly: true,
-			Origin: "internal", Cause: "compaction_note_fork",
-		})
 		req := providers.ChatRequest{
 			Provider:                    providerName,
 			Model:                       model,
@@ -948,17 +796,15 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 			req.MaxTokens = max(1, plan.MaxBytes/3)
 		}
 		if beforeRequest != nil {
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := beforeRequest(ctx, &req); err != nil {
 				return CompactionNoteForkResult{}, fmt.Errorf("transform context note request: %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return CompactionNoteForkResult{}, err
 			}
 		}
 		req.NativeDeferredToolDiscovery = providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
-		if _, bounded := ctx.Value(compactionNoteBudgetKey{}).(int); bounded && estimateOutboundRequestTokens(req) > inputBudget {
+		if _, bounded := ctx.Value(compactionNoteBudgetKey{}).(int); bounded && inputBudget > 0 && estimateOutboundRequestTokens(req) > inputBudget {
 			return CompactionNoteForkResult{}, errors.New("transformed context note request exceeds the model input budget")
 		}
 		cacheHint := buildCacheHint(req.Messages)
@@ -981,7 +827,18 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 			return CompactionNoteForkResult{Usage: result.Usage}, errors.New("context note fork returned empty Markdown")
 		}
 		return CompactionNoteForkResult{Markdown: markdown, Usage: result.Usage}, nil
-	})
+	}
+	if r.SelectedCompaction != nil {
+		selectedFork := selectedCompactionNoteFork(r.SelectedCompaction, fork)
+		return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+			messages := providers.CloneChatMessages(filterDurableHistory(history))
+			if retained != nil && retained.validFor(messages) {
+				messages = spliceRetainedContext(messages, retained.Messages)
+			}
+			return selectedFork(ctx, messages, plan)
+		}
+	}
+	return boundedCompactionNoteFork(fork)
 }
 
 // commitUsageTracker publishes a run-local usage snapshot as the new
@@ -1268,69 +1125,14 @@ func filterDurableHistory(msgs []providers.ChatMessage) []providers.ChatMessage 
 }
 
 func requestContextSummary(info RequestContextInfo) *providers.RequestContextSummary {
-	return &providers.RequestContextSummary{
-		StepIndex:                info.StepIndex,
-		TransientMessages:        info.TransientMessages,
-		ContentBytes:             info.ContentBytes,
-		BlockKinds:               append([]string(nil), info.BlockKinds...),
-		BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
-		BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
-		SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
-		SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
-		SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
-		MessageCount:             info.MessageCount,
-		SystemMessages:           info.SystemMessages,
-		HiddenMessages:           info.HiddenMessages,
-		ToolCount:                info.ToolCount,
-		StablePrefix:             info.StablePrefix,
-		TurnPrefix:               info.TurnPrefix,
-		DynamicBytes:             info.DynamicBytes,
-		SystemBytes:              info.SystemBytes,
-		StablePrefixBytes:        info.StablePrefixBytes,
-		TurnPrefixBytes:          info.TurnPrefixBytes,
-		MessageBytes:             info.MessageBytes,
-		ToolSchemaBytes:          info.ToolSchemaBytes,
-		LoadableToolCount:        info.LoadableToolCount,
-		LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
-		LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
-		SystemHash:               info.SystemHash,
-		StablePrefixHash:         info.StablePrefixHash,
-		TurnPrefixHash:           info.TurnPrefixHash,
-		ToolSurfaceHash:          info.ToolSurfaceHash,
-		PromptCacheKey:           info.PromptCacheKey,
-		InputTokens:              info.InputTokens,
-		OutputTokens:             info.OutputTokens,
-		CacheCreationTokens:      info.CacheCreationTokens,
-		CacheReadTokens:          info.CacheReadTokens,
-		SystemSections:           systemPromptSectionSummaries(info.SystemSections),
-	}
-}
-
-func cloneStringIntMap(in map[string]int) map[string]int {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]int, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func systemPromptSectionSummaries(sections []SystemPromptSectionInfo) []providers.SystemPromptSectionSummary {
-	if len(sections) == 0 {
-		return nil
-	}
-	out := make([]providers.SystemPromptSectionSummary, 0, len(sections))
-	for _, section := range sections {
-		out = append(out, providers.SystemPromptSectionSummary{
-			Key:    section.Key,
-			Static: section.Static,
-			Bytes:  section.Bytes,
-			Hash:   section.Hash,
-		})
-	}
-	return out
+	info.BlockKinds = slices.Clone(info.BlockKinds)
+	info.BlockKindCounts = maps.Clone(info.BlockKindCounts)
+	info.BlockKindBytes = maps.Clone(info.BlockKindBytes)
+	info.SegmentLifecycleCounts = maps.Clone(info.SegmentLifecycleCounts)
+	info.SegmentPlacementCounts = maps.Clone(info.SegmentPlacementCounts)
+	info.SegmentCachePolicyCounts = maps.Clone(info.SegmentCachePolicyCounts)
+	info.SystemSections = slices.Clone(info.SystemSections)
+	return &info
 }
 
 // streamStep adapts providers.StreamClient (with recovery) to the
@@ -1338,14 +1140,20 @@ func systemPromptSectionSummaries(sections []SystemPromptSectionInfo) []provider
 // stream and consumes it to completion. Recoverable failures create distinct
 // execution attempts under the request operation's workload profile.
 type streamStep struct {
-	client  providers.StreamClient
-	onEvent StreamCallback
+	toolGate *ToolExecutionGate
+	policy   *loopdriver.PolicyClient
+	client   providers.StreamClient
+	onEvent  StreamCallback
 	// Streaming tool execution: when set, read-only tools start
 	// executing as soon as their arguments are fully received,
 	// overlapping with continued model output.
 	tools                   ToolExecutor
 	toolLedger              *toolledger.Ledger
 	enableStreamingToolExec bool
+	toolRunContext          context.Context
+	ownToolRuntime          func(*TurnToolRuntime)
+	admitStreamToolCall     func(providers.ToolCall) error
+	streamToolAdmission     func(context.Context, providers.ToolCall) (bool, error)
 }
 
 // NewStreamStep returns the shared stream-first model step used by agent loops.
@@ -1367,6 +1175,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		thinkingBuf       strings.Builder
 		images            []providers.InputImage
 		reasoningBlocks   []providers.ReasoningBlock
+		completedMessages []providers.ChatMessage
 		providerItems     []providers.ProviderItem
 		pendingTools      = map[int]*providers.ToolCall{}
 		usage             *providers.TokenUsage
@@ -1386,10 +1195,20 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		toolRuntime   *TurnToolRuntime
 	)
 	newToolRuntime := func() *TurnToolRuntime {
-		return NewTurnToolRuntime(ToolRuntimeConfig{
-			Executor: s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
-			RunContext: ctx,
+		runContext := ctx
+		if s.toolRunContext != nil {
+			runContext = ContextWithHistory(s.toolRunContext, req.Messages)
+		}
+		runtime := NewTurnToolRuntime(ToolRuntimeConfig{
+			StreamAdmission: s.streamToolAdmission,
+			Gate:            s.toolGate,
+			Executor:        s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
+			RunContext: runContext,
 		})
+		if s.ownToolRuntime != nil {
+			s.ownToolRuntime(runtime)
+		}
+		return runtime
 	}
 	currentToolRuntime := func() *TurnToolRuntime {
 		toolRuntimeMu.Lock()
@@ -1400,10 +1219,20 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		toolRuntime = newToolRuntime()
 	}
 
+	var completedCheckpoint atomic.Bool
 	observeEvent := func(eventCtx context.Context, ev providers.StreamEvent) error {
+		if (ev.Type == providers.EventAssistantItemDone && ev.Message != nil) ||
+			(ev.Type == providers.EventThinkingDone && ev.ReasoningBlock != nil) {
+			completedCheckpoint.Store(true)
+		}
 		rt := currentToolRuntime()
 		if rt == nil || !s.enableStreamingToolExec {
 			return nil
+		}
+		if ev.Type == providers.EventToolUseEnd && ev.ToolCall != nil && s.admitStreamToolCall != nil {
+			if err := s.admitStreamToolCall(*ev.ToolCall); err != nil {
+				return err
+			}
 		}
 		return rt.ObserveStreamEvent(eventCtx, ev)
 	}
@@ -1417,6 +1246,12 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 	}
 	replayGuard := func(_ providers.StreamRetryContext) error {
+		// Replaying the old payload would discard protocol-complete progress.
+		// The loop can admit a bounded continuation from this checkpoint when
+		// no tool declarations or accepted work make its effects ambiguous.
+		if completedCheckpoint.Load() {
+			return errors.New("completed assistant items require explicit continuation from saved history")
+		}
 		rt := currentToolRuntime()
 		if rt == nil {
 			return nil
@@ -1438,7 +1273,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &completedMessages, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1464,18 +1299,32 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			partialToolRuntime = nil
 		}
 		partial := StepResult{
-			ProviderItems:    providerItems,
-			Images:           images,
-			Content:          contentBuf.String(),
-			Phase:            messagePhase,
-			ProviderItemID:   providerItemID,
-			ReasoningContent: thinkingBuf.String(),
-			ReasoningBlocks:  cloneReasoningBlocks(reasoningBlocks),
-			ToolCalls:        partialToolCalls,
-			ToolRuntime:      partialToolRuntime,
+			CompletedMessages: providers.CloneChatMessages(completedMessages),
+			ProviderItems:     providerItems,
+			Images:            images,
+			Content:           contentBuf.String(),
+			Phase:             messagePhase,
+			ProviderItemID:    providerItemID,
+			ReasoningContent:  thinkingBuf.String(),
+			ReasoningBlocks:   cloneReasoningBlocks(reasoningBlocks),
+			ToolCalls:         partialToolCalls,
+			ToolRuntime:       asToolBatchRuntime(partialToolRuntime),
+			Usage:             usage,
 		}
 		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
-			return partial, errors.Join(fmt.Errorf("stream request failed: %w", err), fmt.Errorf("complete failed inference operation: %w", journalErr))
+			combined := errors.Join(err, fmt.Errorf("complete failed inference operation: %w", journalErr))
+			var recovery *providers.StreamRecoveryError
+			if errors.As(err, &recovery) {
+				info := recovery.Recovery
+				info.StopReason = "recovery_failed"
+				combined = &providers.StreamRecoveryError{Cause: combined, Recovery: info}
+			}
+			err = combined
+		}
+		// Let the loop persist complete items and decide whether to resume.
+		// Publishing an error here would leave a failure card on a recovered turn.
+		if s.onEvent != nil && !providers.IsContextOverflow(err) && resumableStreamCheckpoint(partial, err) == nil {
+			s.onEvent(providers.StreamEvent{Type: providers.EventError, Error: err})
 		}
 		return partial, fmt.Errorf("stream request failed: %w", err)
 	}
@@ -1599,7 +1448,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		FinishReason:         finishReason,
 		StopReason:           stopReason,
 		Truncated:            truncated,
-		ToolRuntime:          finalToolRuntime,
+		ToolRuntime:          asToolBatchRuntime(finalToolRuntime),
 	}, nil
 }
 
@@ -1699,6 +1548,7 @@ func (s *streamStep) runReliableStream(
 	req providers.ChatRequest,
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
+	completedMessages *[]providers.ChatMessage,
 	reasoningBlocks *[]providers.ReasoningBlock,
 	providerItems *[]providers.ProviderItem,
 	images *[]providers.InputImage,
@@ -1719,11 +1569,12 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 {
+		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 && len(*completedMessages) == 0 {
 			return
 		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
+		*completedMessages = nil
 		*reasoningBlocks = nil
 		*providerItems = nil
 		*images = nil
@@ -1789,6 +1640,7 @@ func (s *streamStep) runReliableStream(
 		client := providers.NewReliableStreamClient(
 			s.client,
 			onRetry,
+			providers.WithStreamRecoveryPlanner(s.policy.StreamRecoveryPlanner()),
 			providers.WithStreamReplayGuard(replayGuard),
 			providers.WithStreamEventObserver(eventObserver),
 		)
@@ -1804,6 +1656,17 @@ func (s *streamStep) runReliableStream(
 
 		for event := range ch {
 			switch event.Type {
+			case providers.EventAssistantItemDone:
+				if event.Message != nil && event.Message.Role == "assistant" && len(event.Message.ToolCalls) == 0 {
+					message := providers.CloneChatMessage(*event.Message)
+					message.ProviderItemProvider = req.Provider
+					message.ProviderItemModel = req.Model
+					for i := range message.ProviderItems {
+						message.ProviderItems[i].Provider = req.Provider
+						message.ProviderItems[i].Scope = req.ProviderStateScope
+					}
+					*completedMessages = append(*completedMessages, message)
+				}
 			case providers.EventProviderItem:
 				if event.ProviderItem != nil {
 					item := *event.ProviderItem
@@ -1845,6 +1708,10 @@ func (s *streamStep) runReliableStream(
 			case providers.EventThinkingDone:
 				if event.ReasoningBlock != nil {
 					*reasoningBlocks = append(*reasoningBlocks, *event.ReasoningBlock)
+					*completedMessages = append(*completedMessages, providers.ChatMessage{
+						Role: "assistant", ProviderItemProvider: req.Provider, ProviderItemModel: req.Model,
+						ReasoningBlocks: []providers.ReasoningBlock{*event.ReasoningBlock},
+					})
 				}
 
 			case providers.EventToolUseStart:
@@ -1915,6 +1782,13 @@ func (s *streamStep) runReliableStream(
 				}
 
 			case providers.EventLifecycle:
+				if event.Lifecycle != nil && event.Lifecycle.Phase == providers.StreamPhaseFailed &&
+					event.Lifecycle.FailureCategory == string(providers.FailureReplayUnsafe) &&
+					len(*completedMessages) > 0 && len(pendingTools) == 0 {
+					// The loop decides whether this checkpoint can resume. Keep a
+					// pending reconnect transient until the next connect or turn end.
+					continue
+				}
 				if event.Lifecycle != nil && event.Lifecycle.Phase == providers.StreamPhaseReconnecting && event.Lifecycle.ResetPartial {
 					resetPartialOutput()
 					for k := range pendingTools {
@@ -1964,12 +1838,6 @@ func (s *streamStep) runReliableStream(
 			return nil
 		}
 
-		if onEvent != nil && !providers.IsContextOverflow(streamErr) {
-			onEvent(providers.StreamEvent{
-				Type:  providers.EventError,
-				Error: streamErr,
-			})
-		}
 		return streamErr
 	}
 }

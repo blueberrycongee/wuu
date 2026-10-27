@@ -25,8 +25,8 @@ type owner struct {
 // The desktop and installed extensions share the existing trusted OS-user model;
 // this does not authenticate an arbitrary process as a physical human.
 func AdmitDesktop(ctx context.Context, binding userspace.Binding, bootstrap io.Reader) (context.Context, error) {
-	if ctx == nil || bootstrap == nil || binding.Validate() != nil || !binding.IsUser() || binding.Domain() != "personal" {
-		return nil, errors.New("desktop owner admission requires a Personal space")
+	if ctx == nil || bootstrap == nil || binding.Validate() != nil || !binding.IsUser() {
+		return nil, errors.New("desktop owner admission requires an explicit user binding")
 	}
 	var input struct {
 		Version       int    `json:"version"`
@@ -65,8 +65,8 @@ func RequireOwner(ctx context.Context, binding userspace.Binding) error {
 		return errors.New("owner UI transport is required")
 	}
 	proof, _ := ctx.Value(ownerKey{}).(*owner)
-	if proof == nil || ctx.Err() != nil || proof.lifetime.Err() != nil || binding.Validate() != nil || !binding.IsUser() || binding.Domain() != "personal" || !proof.binding.Matches(binding) {
-		return errors.New("live owner UI transport for this Personal space is required")
+	if proof == nil || ctx.Err() != nil || proof.lifetime.Err() != nil || binding.Validate() != nil || !binding.IsUser() || !proof.binding.Matches(binding) {
+		return errors.New("live owner UI transport for this user binding is required")
 	}
 	return nil
 }

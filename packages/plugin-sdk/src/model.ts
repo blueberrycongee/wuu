@@ -12,8 +12,10 @@ export const MODEL_ADAPTER_CAPABILITY = "model.adapter" as const;
 
 /** Portable model input. Credentials, retry state and execution authority stay in the host. */
 export interface LogicalModelRequestV1 {
+  /** Fresh sampling turn without a new durable user message; preserve when forwarding. */
+  readonly resume_sampling?: boolean;
   readonly version: 1;
-  /** Exact adapter ID; omitted uses provider_options.adapter or explicit model_alias defaults. "native" selects the host protocol. */
+  /** Exact adapter ID; omitted uses provider_options.adapter or explicit model_alias defaults. "native" is a legacy alias for the selected default adapter. */
   readonly adapter?: string;
   readonly provider?: string;
   readonly model: string;
@@ -86,6 +88,7 @@ export interface ModelProviderItemV1 {
 }
 
 export interface ModelToolCallV1 {
+ readonly display?: ModelToolCallDisplayV1;
   readonly id?: string;
   readonly name?: string;
   readonly arguments?: string;
@@ -174,6 +177,7 @@ export interface ModelResponseV1 {
 }
 
 export interface ModelErrorV1 {
+ readonly failure?: ModelFailureV1;
   readonly code: string;
   readonly message: string;
 }
@@ -184,6 +188,7 @@ export interface ModelStreamEventV1 {
   /** Opaque diagnostic/retry metadata; preserve it when forwarding events. */
   readonly provider_state?: Readonly<Record<string, unknown>>;
   readonly lifecycle?: Readonly<Record<string, unknown>>;
+  /** assistant_item_done carries a complete assistant message checkpoint; forward it without rendering an extra message. */
   readonly type: string;
   readonly content?: string;
   readonly phase?: string;
@@ -262,18 +267,40 @@ export interface ModelInvocationReadResult {
 }
 
 export interface ModelAdapterDescriptor {
-  /** Globally unique dotted identifier; "native" is reserved for host protocols. */
+  /** Globally unique dotted identifier; default selection is owned by model.adapter@1. */
   readonly id: string;
   readonly version: 1;
   /** Direct (default) pre-admits one billable-capable callback. Delegate usage is summary-only; host model child calls own their costs. */
-  readonly mode?: "direct" | "delegate";
+  readonly mode?: "direct" | "delegate" | "receipt";
+  /** Optional operations implemented by the same capability; absent operations never invoke a host fallback. */
+  readonly operations?: readonly ("prepare" | "media" | "compact" | "compact.supported" | "quota" | "validate" | "prewarm" | "recover")[];
 }
 export interface ModelAdapterInput {
+ /** Candidate provider-specific configuration; validate only, never persist or infer. */
+ readonly configuration?: Readonly<Record<string, unknown>>;
+ /** Configured model identity before API-name mapping; used with the selected configuration authority. */
+ readonly configured_model?: string;
+  readonly operation?: "prepare" | "media" | "compact" | "compact.supported" | "quota" | "validate" | "prewarm" | "recover";
+  readonly receipt?: ModelAdapterReceipt;
+  readonly session_id?: string;
+  readonly recovery_action?: string;
   readonly adapter_id: string;
   readonly request: LogicalModelRequestV1;
   readonly stream: boolean;
 }
+export interface ModelAdapterReceipt {
+ readonly id: string; readonly attempt_id: string; readonly attempt_ordinal: number; readonly operation_id: string; readonly profile: string;
+}
 export interface ModelAdapterOutput {
+ readonly quota?: unknown;
+ readonly quota_error?: string;
+ readonly error?: ModelErrorV1;
+ readonly request?: LogicalModelRequestV1;
+ readonly media?: ModelMediaInputV1;
+ readonly replacement?: readonly ModelMessageV1[];
+ readonly usage?: ModelRequestUsage;
+ readonly provider_state_scope?: string;
+ readonly supported?: boolean;
   /** For stream=true, either return response or emit a terminal event sequence, never both. */
   readonly response?: ModelResponseV1;
 }
@@ -366,4 +393,45 @@ export async function inspectBackground(host: RuntimeHost, input: BackgroundJobP
 }
 export async function cancelBackground(host: RuntimeHost, input: BackgroundJobParams): Promise<BackgroundCancelResult> {
   return await host.call("host.service.call", { service: BACKGROUND_SERVICE, method: "cancel", params: input }) as BackgroundCancelResult;
+}
+
+export const MODEL_RECEIPT_SERVICE = "host.model.receipt" as const;
+export interface ModelFailureV1 {
+ readonly origin: string; readonly category: string; readonly provider_family?: string;
+ readonly provider_code?: string; readonly http_status?: number; readonly retry_after_ms?: number;
+ readonly context_overflow?: boolean; readonly auth_refreshable?: boolean;
+ readonly confidence?: string; readonly suggested_recovery?: string;
+}
+export interface ModelSubmissionMeta {
+  /** Optional shared account identity; never include an API key or token. */
+  readonly capacity_scope?: string;
+ readonly provider: string; readonly protocol: string; readonly transport: string;
+ readonly mode?: string; readonly reason?: string; readonly request_bytes?: number;
+}
+export interface ModelSubmission { readonly id: string; readonly outcome: string; readonly usage?: ModelRequestUsage }
+export interface ModelSubmissionUpdate {
+ readonly id: string; readonly output?: string; readonly usage?: ModelRequestUsage;
+ readonly estimated?: boolean; readonly from_stream?: boolean;
+ readonly outcome?: "succeeded" | "failed" | "transport_fallback" | "abandoned";
+ readonly failure?: ModelFailureV1;
+}
+export function requireModelReceiptService(): ServiceRequirement { return { name: MODEL_RECEIPT_SERVICE, major_version: 1, required: true }; }
+/** Commit physical admission before sending. An uncertain response must not be retried or treated as permission to send. */
+export async function createModelSubmission(host: RuntimeHost, receipt: ModelAdapterReceipt, input: ModelSubmissionMeta): Promise<ModelSubmission> {
+ return await host.call("host.service.call", { service: MODEL_RECEIPT_SERVICE, method: "create", params: { receipt: receipt.id, input } }) as ModelSubmission;
+}
+/** Receipt observations and settlement remain available only while the owning callback drains. */
+export async function updateModelSubmission(host: RuntimeHost, receipt: ModelAdapterReceipt, input: ModelSubmissionUpdate, settle = false): Promise<void> {
+ await host.call("host.service.call", { service: MODEL_RECEIPT_SERVICE, method: settle ? "settle" : "observe", params: { receipt: receipt.id, input } }, { cleanup: true });
+}
+export async function inspectModelSubmissions(host: RuntimeHost, receipt: ModelAdapterReceipt): Promise<readonly ModelSubmission[]> {
+ return await host.call("host.service.call", { service: MODEL_RECEIPT_SERVICE, method: "snapshot", params: { receipt: receipt.id } }, { cleanup: true }) as readonly ModelSubmission[];
+}
+
+export interface ModelToolCallDisplayV1 {
+ readonly kind?: string;
+ readonly label?: string;
+ readonly label_translations?: Readonly<Record<string,string>>;
+ readonly text?: string;
+ readonly capability?: string;
 }

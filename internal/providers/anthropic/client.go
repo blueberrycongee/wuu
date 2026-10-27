@@ -206,6 +206,9 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
+	if autoToolChoiceOnly(req.ProviderOptions) {
+		req.ForceToolName = ""
+	}
 
 	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
 	payload, err := c.buildAnthropicRequest(req, maxTok, false)
@@ -330,6 +333,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	if err != nil {
 		return nil, err
 	}
+	if autoToolChoiceOnly(req.ProviderOptions) {
+		req.ForceToolName = ""
+	}
 
 	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
 	payload, err := c.buildAnthropicRequest(req, maxTok, true)
@@ -352,14 +358,22 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		_ = os.WriteFile(dumpPath, body, securefs.FileMode)
 		providers.DebugLogf("StreamChat: dumped request body to %s", dumpPath)
 	}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleMessagesRequest(ctx, sseClient, body, payload.UseDefaultBetas, payload.Betas, req.Attempt, "stream")
 	if err != nil {
+		endReceipt(nil)
 		providers.DebugLogf("StreamChat: error: %v", err)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readSSEStream(ctx, resp, lease, ch)
+	go func() {
+		defer endReceipt(nil)
+		c.readSSEStream(ctx, resp, lease, ch)
+	}()
 	return ch, nil
 }
 
@@ -386,6 +400,14 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		return anthropicRequest{}, err
 	}
 	req.Messages = prepared
+	if req.ResumeSampling && len(prepared) > 0 && prepared[len(prepared)-1].Role == "assistant" {
+		// Messages with thinking enabled cannot prefill an assistant reply.
+		// This adapter-only instruction starts a fresh response; it never enters
+		// the durable transcript or duplicates the original user task.
+		req.Messages = append(providers.CloneChatMessages(prepared), providers.ChatMessage{
+			Role: "user", Content: "Continue the unfinished task from the completed progress above. Do not repeat completed actions.",
+		})
+	}
 	toolSearchEnabled := shouldEnableAnthropicToolSearch(req, support)
 
 	// Parse cache control options from provider options.
@@ -750,6 +772,11 @@ func providerOptionBool(value any) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func autoToolChoiceOnly(options map[string]any) bool {
+	enabled, _ := providerOptionBool(options["toolChoiceAutoOnly"])
+	return enabled
 }
 
 func shouldEnableAnthropicToolSearch(req providers.ChatRequest, support anthropicToolSearchSupport) bool {
@@ -1140,6 +1167,7 @@ type blockState struct {
 	toolID    string
 	toolName  string
 	argsJSON  strings.Builder
+	text      strings.Builder
 	reasoning providers.ReasoningBlock
 }
 
@@ -1256,6 +1284,9 @@ func (c *Client) handleSSEEvent(
 			bs := blocks[p.Index]
 			switch p.Delta.Type {
 			case "text_delta":
+				if bs != nil {
+					bs.text.WriteString(p.Delta.Text)
+				}
 				if !emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: p.Delta.Text}) {
 					return true
 				}
@@ -1285,6 +1316,12 @@ func (c *Client) handleSSEEvent(
 		}
 		if json.Unmarshal([]byte(raw.Data), &idx) == nil {
 			if bs, ok := blocks[idx.Index]; ok {
+				if bs.blockType == "text" && bs.text.Len() > 0 {
+					message := providers.ChatMessage{Role: "assistant", Content: bs.text.String()}
+					if !emit.Send(providers.StreamEvent{Type: providers.EventAssistantItemDone, Message: &message}) {
+						return true
+					}
+				}
 				if bs.blockType == "tool_use" {
 					if !emit.Send(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: bs.toolID, Name: bs.toolName, Kind: anthropicToolCallKind(bs.toolName), Arguments: bs.argsJSON.String()}}) {
 						return true
@@ -1331,6 +1368,8 @@ func (c *Client) handleSSEEvent(
 				c.normalizeInclusiveInput(usage)
 			}
 			if usageUpdated {
+				// Keep the physical receipt even when canceled delivery stops the reader.
+				lease.ObserveUsage(usage)
 				if !emit.Send(providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationTokens: usage.CacheCreationTokens, CacheReadTokens: usage.CacheReadTokens, CacheCreationUnknown: usage.CacheCreationUnknown}}) {
 					return true
 				}
@@ -1793,4 +1832,10 @@ type messageDeltaPayload struct {
 		CacheCreationTokens *int `json:"cache_creation_input_tokens,omitempty"`
 		CacheReadTokens     *int `json:"cache_read_input_tokens,omitempty"`
 	} `json:"usage"`
+}
+
+// Close releases provider-owned pools after admitted callbacks have drained.
+func (c *Client) Close() error {
+	providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	return nil
 }

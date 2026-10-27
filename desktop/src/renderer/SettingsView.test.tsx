@@ -1,3 +1,10 @@
+import * as React from "react";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { PluginHost } from "./plugins/PluginHost";
+import { WorkbenchController } from "./plugins/Workbench";
+import type { UIContributionRegistryV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
+import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,6 +19,7 @@ import type {
   EngineListResult,
   EngineUpdateParams,
   InitializeResult,
+  RemoteControlSnapshot,
   RuntimeAdvancedSettingsUpdate,
   CodexPetSettingsUpdate,
   RuntimeConnectionUpdate,
@@ -26,21 +34,29 @@ type GlobalWindow = typeof window & { wuu: WuuDesktopApi };
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let host: PluginHost;
+let registry: UIContributionRegistryV1;
+let workbench: WorkbenchController;
 
 function noopResizeStart(): void {}
 function noopResizeKey(): void {}
 
-beforeEach(() => {
+beforeEach(async () => {
+  host = new PluginHost({ react: React });
+  await host.activateGeneration({ pluginId: "settings-fixture", generation: "one", register: api => { registry = api.contributions; } });
+  workbench = new WorkbenchController(registry);
   container = document.createElement("div");
   document.body.appendChild(container);
 });
 
-afterEach(() => {
+afterEach(async () => {
   unhoverTooltip();
   act(() => {
     root?.unmount();
   });
   root = null;
+  workbench.dispose();
+  await host.unloadAndWait("settings-fixture");
   container.remove();
   // Drop the stub so each test installs its own.
   delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
@@ -140,6 +156,7 @@ function readyEngineInventory(): EngineListResult {
 }
 
 function renderSettings(props: {
+  controls?: ReturnType<typeof createApplicationSettingsControls>;
   initialized: InitializeResult | undefined;
   running?: boolean;
   usage?: SettingsUsageResponse;
@@ -150,10 +167,14 @@ function renderSettings(props: {
   onRefreshEngineInventory?: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory?: (params: EngineUpdateParams) => Promise<EngineListResult>;
   initialPage?: SettingsPage;
+  page?: SettingsPage;
+  onPageChange?: (page: SettingsPage) => void;
+  browserSettingsAllowed?: boolean;
   runningProviderNames?: string[];
   codexPets?: CodexPetsSnapshot;
   codexPetsLoading?: boolean;
   codexPetsError?: string;
+  onCodexPetsRefresh?: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate?: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSave?: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider?: (provider: string) => Promise<void>;
@@ -174,9 +195,12 @@ function renderSettings(props: {
     window.wuu.initialSystemLocale = props.locale;
   }
   const view = (
-    <SettingsView
+    <SettingsView application={{settingsControls:props.controls ?? createApplicationSettingsControls({ host: registry, controller: workbench })}}
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
+        page={props.page}
+        onPageChange={props.onPageChange}
+        browserSettingsAllowed={props.browserSettingsAllowed}
         running={props.running ?? false}
         usage={props.usage}
         usageLoading={props.usageLoading}
@@ -189,7 +213,7 @@ function renderSettings(props: {
         codexPets={props.codexPets ?? emptyCodexPetsSnapshot()}
         codexPetsLoading={props.codexPetsLoading ?? false}
         codexPetsError={props.codexPetsError ?? ""}
-        onCodexPetsRefresh={async () => props.codexPets ?? emptyCodexPetsSnapshot()}
+        onCodexPetsRefresh={props.onCodexPetsRefresh ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         onCodexPetsUpdate={props.onCodexPetsUpdate ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         sidebarWidth={320}
         sidebarMinWidth={240}
@@ -225,6 +249,88 @@ function renderSettings(props: {
 }
 
 describe("SettingsView shell", () => {
+  it("refreshes retained build, MCP and remote reads on controls replacement and ignores late retired results", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let completeOld!: (value: RemoteControlSnapshot) => void;
+    let completeOldAction!: (value: RemoteControlSnapshot) => void;
+    const off = vi.fn();
+    const previous = { ...base, capabilities: { ...base.capabilities, remote: true },
+      getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })),
+      subscribeRemote: vi.fn(() => off),
+      setRemoteHostEnabled: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOldAction = resolve; })),
+      getRemoteControlSnapshot: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOld = resolve; })),
+    };
+    const next = { ...previous, getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })), subscribeRemote: vi.fn(() => vi.fn()),
+      getRemoteControlSnapshot: vi.fn(async () => ({ status: null, pair_uri: null, host_running: true, host_enabled: true })),
+    };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: previous }));
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-remote-page"] [role="switch"]');
+    await act(async () => toggle!.click());
+    expect(previous.setRemoteHostEnabled).toHaveBeenCalledOnce();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
+    expect(next.getBuildInfo).toHaveBeenCalledOnce();
+    expect(next.listMCPServers).toHaveBeenCalledOnce();
+    expect(off).toHaveBeenCalledOnce();
+    expect(next.subscribeRemote).toHaveBeenCalledOnce();
+    expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBe(toggle);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => {
+      completeOld({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+      completeOldAction({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+    });
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it.each(["agents", "subscriptions"] as const)("redirects legacy %s destinations into model connections for controlled navigation", (page) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const onPageChange = vi.fn();
+    renderSettings({ initialized: baseInitialized(), page: "providers", onPageChange });
+    expect(onPageChange).not.toHaveBeenCalled();
+    renderSettings({ initialized: baseInitialized(), page, onPageChange });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("providers");
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("providers");
+    expect(isSettingsPageAvailable(page)).toBe(false);
+    expect(isSettingsPageAvailable("providers")).toBe(true);
+  });
+
+  it("reports settings navigation once and restores a history page without recording it again", () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const onPageChange = vi.fn();
+    const props = { initialized: baseInitialized(), page: "general" as const, onPageChange };
+    renderSettings(props);
+    const appearance = container.querySelector<HTMLButtonElement>('[data-wuu-page="appearance"]');
+    expect(appearance).not.toBeNull();
+    act(() => { appearance?.click(); });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("appearance");
+    renderSettings({ ...props, page: "appearance" });
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("appearance");
+    act(() => { appearance?.click(); });
+    expect(onPageChange).toHaveBeenCalledTimes(1);
+
+    renderSettings({ ...props, page: "usage" });
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("usage");
+    expect(onPageChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes controlled browser navigation when the window disallows browser settings", () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    Object.assign(window.wuu, {
+      listBrowserProfiles: vi.fn(), importBrowserCookies: vi.fn(),
+      listBrowserExtensions: vi.fn(), addBrowserExtension: vi.fn(),
+      setBrowserExtensionEnabled: vi.fn(), removeBrowserExtension: vi.fn(),
+    });
+    const onPageChange = vi.fn();
+    renderSettings({ initialized: baseInitialized(), page: "browser", browserSettingsAllowed: false, onPageChange });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("providers");
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("providers");
+    expect(container.querySelector('.settings-nav [data-wuu-page="browser"]')).toBeNull();
+  });
+
+
   it("omits native settings and does not request desktop build info on a browser host", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01" } });
     window.wuu.unsupportedMethods = ["getBuildInfo", "listCodexPets", "getRemoteControlSnapshot"];
@@ -291,14 +397,15 @@ describe("SettingsView shell", () => {
 
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
-      value: vi.fn(() => toggle),
+      value: vi.fn(() => container.querySelector(".sidebar-hover-zone")),
     });
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      container.querySelector(".sidebar-hover-zone")?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
       vi.advanceTimersByTime(240);
     });
     expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
 
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => toggle) });
     act(() => {
       sidebar?.dispatchEvent(
         new MouseEvent("pointerout", {
@@ -331,10 +438,10 @@ describe("SettingsView shell", () => {
 
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
-      value: vi.fn(() => toggle),
+      value: vi.fn(() => container.querySelector(".sidebar-hover-zone")),
     });
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      container.querySelector(".sidebar-hover-zone")?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
       vi.advanceTimersByTime(240);
     });
     expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
@@ -583,30 +690,6 @@ describe("SettingsView model services", () => {
     expect(document.querySelector<HTMLInputElement>('.model-browse-dialog input[type="search"]')?.value).toBe("deepseek");
     expect(document.querySelector('[data-catalog="moonshotai-cn"]')).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it("gathers conversation defaults on General", async () => {
-    installServicesStub();
-    const onSave = vi.fn(async () => {});
-    renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
-    await flush();
-
-    const group = document.querySelector('[data-testid="settings-new-conversations"]');
-    expect(group?.querySelector('[data-testid="settings-default-engine"]')).not.toBeNull();
-    expect(group?.querySelector('[data-testid="settings-default-model-select"]')?.textContent).toContain("GPT-6 Astra");
-    expect(group?.textContent).toContain("ChatGPT");
-    expect(group?.querySelector('[aria-label="Default for new conversations"]')).not.toBeNull();
-  });
-
-  it("sends General to Model providers when no service is connected", async () => {
-    installServicesStub();
-    renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "general" });
-    await flush();
-
-    click(document.querySelector('[data-testid="settings-providers-empty"]'));
-    await flush();
-    await openProviderCatalog();
-    expect(document.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
   it("names connected services by provider identity", async () => {
@@ -1287,6 +1370,32 @@ describe("SettingsView general settings", () => {
     ).toBe(false);
   });
 
+  it("keeps retained pet actions isolated from retired completions and scope cancellation", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const firstControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const nextControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let rejectOld!: (reason: Error) => void, finishNext!: (value: CodexPetsSnapshot) => void;
+    const oldRefresh = vi.fn(() => new Promise<CodexPetsSnapshot>((_, reject) => { rejectOld = reject; }));
+    const nextRefresh = vi.fn().mockImplementationOnce(() => new Promise<CodexPetsSnapshot>(resolve => { finishNext = resolve; }))
+      .mockRejectedValueOnce(new PluginLifecycleCancellationError()).mockRejectedValueOnce(new Error("pet folder unavailable"));
+    const props = { initialPage: "appearance" as const, initialized: baseInitialized(), codexPets: emptyCodexPetsSnapshot() };
+    await act(async () => renderSettings({ ...props, controls: firstControls, onCodexPetsRefresh: oldRefresh }));
+    const refresh = container.querySelector<HTMLButtonElement>('[data-testid="settings-pet"] button')!;
+    await act(async () => refresh.click());
+    await act(async () => renderSettings({ ...props, controls: nextControls, onCodexPetsRefresh: nextRefresh }));
+    expect(container.querySelector('[data-testid="settings-pet"] button')).toBe(refresh);
+    expect(refresh.disabled).toBe(false);
+    await act(async () => refresh.click());
+    await act(async () => rejectOld(new Error("retired pet read failed")));
+    expect(refresh.disabled).toBe(true);
+    expect(container.textContent).not.toContain("retired pet read failed");
+    await act(async () => finishNext(emptyCodexPetsSnapshot()));
+    await act(async () => refresh.click());
+    expect(container.textContent).not.toContain(new PluginLifecycleCancellationError().message);
+    await act(async () => refresh.click());
+    expect(container.textContent).toContain("pet folder unavailable");
+  });
+
   it("renders Codex Pets controls and saves pet selection", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -1519,6 +1628,165 @@ describe("SettingsView About section", () => {
       mark.getAttribute("aria-label"),
     ]);
     expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
+  });
+
+  it("keeps failed MCP authentication in one actionable row with opt-in diagnostics", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const diagnostic = 'mcp initialize: HTTP 401 Unauthorized (transport "http" explicitly configured; not falling back to SSE)';
+    const server = { name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: diagnostic };
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [server] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'wuu:mcp-connect': Error: ${diagnostic}`));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="settings-mcp-enabled-docs"]')!.closest('.settings-row')!;
+    expect(row.textContent).not.toContain(diagnostic);
+    await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.connectMCPServer).toHaveBeenCalledWith("docs");
+    expect(row.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    expect(row.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.textContent).not.toContain(diagnostic);
+    const disclosure = row.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure.click());
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    expect(row.querySelector('pre')?.textContent).toContain(diagnostic);
+    expect(row.querySelector('pre')?.id).toBe(disclosure.getAttribute('aria-controls'));
+    act(() => disclosure.click());
+    expect(container.textContent).not.toContain(diagnostic);
+  });
+
+  it("reads authoritative MCP auth state after a rejected connect instead of guessing from IPC text", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn()
+      .mockResolvedValueOnce({ servers: [{ name: "docs", state: "stopped", connected: false, tool_count: 0 }] })
+      .mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "server rejected authorization" }] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error("Request failed"));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')?.getAttribute('data-tone')).toBe('warning');
+  });
+
+  it("keeps MCP failure recoverable when status refresh fails and clears diagnostics on retry success", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const server = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    api.listMCPServers = vi.fn().mockResolvedValueOnce({ servers: [server] }).mockRejectedValue(new Error('status unavailable'));
+    let resolveRetry!: (result: { status: typeof server }) => void;
+    api.connectMCPServer = vi.fn().mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRetry = resolve; }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const connect = container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!;
+    await act(async () => connect.click());
+    expect(container.querySelector('.settings-row [role="status"]')).not.toBeNull();
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('connect ECONNREFUSED');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => connect.click());
+    expect(connect.disabled).toBe(true);
+    expect(container.querySelector('pre')).toBeNull();
+    await act(async () => resolveRetry({ status: { ...server, state: "ready", connected: true, tool_count: 2 } }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+    expect(container.textContent).not.toContain('ECONNREFUSED');
+  });
+
+  it("keeps MCP list failures distinct from an empty configuration and supports retry", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockRejectedValueOnce(new Error('list transport unavailable')).mockResolvedValue({ servers: [] });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const section = container.querySelector('[data-testid="settings-mcp"]')!;
+    expect(section.querySelector('[role="status"]')).not.toBeNull();
+    expect(section.textContent).not.toContain('list transport unavailable');
+    const retry = section.querySelector<HTMLButtonElement>('button[data-testid="mcp-list-retry"]')!;
+    expect(retry).not.toBeNull();
+    await act(async () => retry.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(section.querySelector('[role="status"]')).toBeNull();
+    expect(section.querySelector('button[aria-expanded]')).toBeNull();
+  });
+
+  it("announces the failed MCP operation without claiming a live connection failed", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "ready", connected: true, tool_count: 2 }] });
+    api.disconnectMCPServer = vi.fn().mockRejectedValue(new Error('disconnect rejected'));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect docs"]')!.click());
+    const status = container.querySelector('.settings-row [role="status"]')!;
+    expect(status.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(status.textContent);
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+  });
+
+  it("does not open a late MCP authorization URL after settings unmount", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0 }] });
+    let admitted!: (result: { authorization_url: string; state: string }) => void;
+    api.startMCPAuth = vi.fn().mockReturnValue(new Promise(resolve => { admitted = resolve; }));
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="登录 docs"]')!.click());
+    act(() => root!.render(null));
+    await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
+    expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("ignores a retired MCP failure refresh when settings controls change", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const stopped = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    let completeOld!: (result: { servers: typeof stopped[] }) => void;
+    const previous = { ...base,
+      listMCPServers: vi.fn().mockResolvedValueOnce({ servers: [stopped] }).mockImplementationOnce(() => new Promise(resolve => { completeOld = resolve; })),
+      connectMCPServer: vi.fn().mockRejectedValue(new Error('old connection failed')),
+    };
+    const next = { ...base, listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...stopped, state: "ready", connected: true, tool_count: 4 }] }) };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: previous }));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    // A slow status read must not hide the already-rejected operation.
+    expect(container.querySelector('.settings-row button[aria-expanded="false"]')).not.toBeNull();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: next }));
+    await act(async () => completeOld({ servers: [{ ...stopped, state: "auth_required" }] }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+  });
+
+  it("keeps a failed MCP login recoverable and removes stale diagnostics when code entry begins", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "initial auth failure" }] });
+    api.startMCPAuth = vi.fn().mockRejectedValueOnce(new Error('authorization service unavailable'))
+      .mockResolvedValueOnce({ authorization_url: "https://auth.example.test/authorize", state: "oauth-state" });
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const login = container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')!;
+    await act(async () => login.click());
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('authorization service unavailable');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => login.click());
+    expect(api.openExternal).toHaveBeenCalledOnce();
+    expect(container.querySelector('input[aria-label="docs authorization code"]')).not.toBeNull();
+    expect(container.querySelector('pre')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
   });
 
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {

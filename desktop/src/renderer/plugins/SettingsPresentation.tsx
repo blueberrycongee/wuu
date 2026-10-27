@@ -2,7 +2,8 @@ import { useCallback, useMemo, type ReactNode } from "react";
 
 import type { InitializeResult, RuntimeAdvancedSettingsUpdate, RuntimeGeneralSettingsUpdate } from "../../shared/protocol";
 import { SETTINGS_ACTIONS, type SettingsPageSummaryV1, type SettingsSnapshotV1 } from "../../shared/workbench";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
+import { useApplicationWorkbench } from "./ApplicationWorkbenchContext";
+import type { ApplicationWorkbenchV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginPresentation } from "./PluginPresentation";
 
 export const SETTINGS_PRESENTATION_ACTIONS = Object.freeze([
@@ -19,6 +20,7 @@ export const SETTINGS_UPDATE_KEYS = Object.freeze({
 } as const);
 
 interface SettingsPresentationProps {
+  controller?: ApplicationWorkbenchV1;
   initialized?: InitializeResult;
   activePageId: string;
   availablePages: readonly SettingsPageSummaryV1[];
@@ -33,6 +35,7 @@ interface SettingsPresentationProps {
 }
 
 export function SettingsPresentation(props: SettingsPresentationProps): ReactNode {
+  const controller = useApplicationWorkbench(props.controller);
   const snapshot = useMemo(() => createSettingsSnapshot(props), [
     props.activePageId,
     props.availablePages,
@@ -64,8 +67,8 @@ export function SettingsPresentation(props: SettingsPresentationProps): ReactNod
 
   return (
     <PluginPresentation
-      host={desktopPluginHost}
-      controller={desktopWorkbenchController}
+      host={controller.registry}
+      controller={controller}
       target="settings"
       snapshot={snapshot}
       fallback={props.fallback}

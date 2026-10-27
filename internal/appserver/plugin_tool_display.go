@@ -1,11 +1,14 @@
 package appserver
 
-import "strings"
+import (
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"strings"
+)
 
 // restorePluginToolLabels upgrades only the in-memory presentation of legacy
 // calls. Saved labels remain authoritative after a plugin is renamed or removed.
-func (s *Server) restorePluginToolLabels(turns []Turn) {
-	if s.rt == nil || s.rt.PluginHost == nil {
+func restorePluginToolLabels(host *pluginhost.Host, turns []Turn) {
+	if host == nil {
 		return
 	}
 	for ti := range turns {
@@ -14,7 +17,7 @@ func (s *Server) restorePluginToolLabels(turns []Turn) {
 			if item.Type != ThreadItemToolCall || (item.Display != nil && strings.TrimSpace(item.Display.Label) != "") {
 				continue
 			}
-			tool, ok := s.rt.PluginHost.Tool(item.Name)
+			tool, ok := host.Tool(item.Name)
 			if !ok || tool.Registration.Display == nil {
 				continue
 			}

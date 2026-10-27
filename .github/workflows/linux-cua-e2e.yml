@@ -46,12 +46,21 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - name: Install isolated X11 acceptance dependencies
         run: |
+          # Match workbench acceptance: avoid the slow Azure archive on hosted images.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb openbox xcompmgr x11-utils ffmpeg
           npm ci --prefix desktop
+          npm ci --prefix clients/core
           node desktop/node_modules/electron/install.js
       - name: Build production core, helper and preview
         run: |

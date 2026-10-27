@@ -44,12 +44,13 @@ const (
 // a stricter compression instruction, then fail without replacing history.
 const maxCompactLengthRetries = 1
 
-var errCompactSummaryOutputLimit = errors.New("compact summary reached the output limit before completion")
+// ErrSummaryOutputLimit identifies an incomplete summary that must not replace history.
+var ErrSummaryOutputLimit = errors.New("compact summary reached the output limit before completion")
 
 // IsSummaryOutputLimit reports whether compaction failed because the provider
 // explicitly ended a summary at its output limit.
 func IsSummaryOutputLimit(err error) bool {
-	return errors.Is(err, errCompactSummaryOutputLimit)
+	return errors.Is(err, ErrSummaryOutputLimit)
 }
 
 const compactLengthRecoveryInstruction = `
@@ -478,7 +479,7 @@ func summarizeCompactChunkWithInputBudget(ctx context.Context, client providers.
 			if err == nil {
 				return resp.Content, nil
 			}
-			if errors.Is(err, errCompactSummaryOutputLimit) {
+			if errors.Is(err, ErrSummaryOutputLimit) {
 				outputLimitCount++
 				if outputLimitCount <= maxCompactLengthRetries {
 					continue
@@ -676,7 +677,7 @@ func validateCompactResponse(resp providers.ChatResponse) error {
 		finish = providers.NormalizeFinishReason(resp.StopReason, resp.Truncated, len(resp.ToolCalls) > 0)
 	}
 	if resp.Truncated || finish == providers.FinishReasonLength {
-		return errCompactSummaryOutputLimit
+		return ErrSummaryOutputLimit
 	}
 	if finish == providers.FinishReasonContinue {
 		// A one-shot summary cannot replace history with an intermediate response.

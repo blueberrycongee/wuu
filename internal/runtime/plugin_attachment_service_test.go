@@ -20,7 +20,8 @@ import (
 func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	home := t.TempDir()
 	dir := statepath.SessionsDir(home)
-	_, err := session.CreateManagedWithMetadata(dir, "private", t.TempDir(), session.ManagedMetadata{Owner: "plugin:personal", Visibility: pluginhost.SessionVisibilityPlugin})
+	sessions := testSessionStore(t, dir)
+	_, err := sessions.CreateManagedWithMetadata("private", t.TempDir(), session.ManagedMetadata{Owner: "plugin:personal", Visibility: pluginhost.SessionVisibilityPlugin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,10 +29,10 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	digest := sha256.Sum256([]byte(data))
 	sum := hex.EncodeToString(digest[:])
 	files, _ := json.Marshal([]providers.InputFile{{Filename: "record.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte(data)), LocalPath: "/private/never-expose"}})
-	if err := session.AppendHistoryRecord(dir, "private", session.HistoryRecord{Role: "user", Content: "read", Files: files}); err != nil {
+	if err := sessions.AppendHistoryRecord("private", session.HistoryRecord{Role: "user", Content: "read", Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := readPluginSessionHistory(context.Background(), home, "personal", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,23 +48,23 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 		t.Fatal("history leaked file path or bytes")
 	}
 	params := pluginhost.SessionAttachmentReadParams{SessionID: "private", Seq: 1, Kind: "file", Index: 0, SHA256: sum}
-	chunk, err := readPluginSessionAttachment(context.Background(), home, "personal", params)
+	chunk, err := readPluginSessionAttachment(context.Background(), sessions, nil, "personal", userspace.Binding{}, params)
 	if err != nil || len(chunk.Data) > 128*1024 || chunk.Total != len(base64.StdEncoding.EncodeToString([]byte(data))) {
 		t.Fatalf("chunk: %d %+v %v", len(chunk.Data), chunk, err)
 	}
 	params.Offset = len(chunk.Data)
-	last, err := readPluginSessionAttachment(context.Background(), home, "personal", params)
+	last, err := readPluginSessionAttachment(context.Background(), sessions, nil, "personal", userspace.Binding{}, params)
 	if err != nil || chunk.Data+last.Data != base64.StdEncoding.EncodeToString([]byte(data)) {
 		t.Fatal("chunk recovery failed", err)
 	}
-	if _, err := readPluginSessionAttachment(context.Background(), home, "other", params); err == nil {
+	if _, err := readPluginSessionAttachment(context.Background(), sessions, nil, "other", userspace.Binding{}, params); err == nil {
 		t.Fatal("foreign plugin read private attachment")
 	}
-	if _, err := readPluginSessionAttachment(context.Background(), t.TempDir(), "personal", params); err == nil {
+	if _, err := readPluginSessionAttachment(context.Background(), testSessionStore(t, t.TempDir()), nil, "personal", userspace.Binding{}, params); err == nil {
 		t.Fatal("foreign domain root read attachment")
 	}
 	params.SHA256 = strings.Repeat("0", 64)
-	if _, err := readPluginSessionAttachment(context.Background(), home, "personal", params); err == nil {
+	if _, err := readPluginSessionAttachment(context.Background(), sessions, nil, "personal", userspace.Binding{}, params); err == nil {
 		t.Fatal("digest mismatch accepted")
 	}
 }
@@ -71,21 +72,22 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 func TestPluginAttachmentSearchDoesNotExposeOrMatchWorkingCopyPaths(t *testing.T) {
 	home := t.TempDir()
 	dir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(dir, "source", t.TempDir()); err != nil {
+	sessions := testSessionStore(t, dir)
+	if _, err := sessions.CreateWithMetadata("source", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	files, _ := json.Marshal([]providers.InputFile{{Filename: "record.txt", MediaType: "text/plain", Data: "eA==", LocalPath: "/private/.input-files/session/file.txt"}})
-	if err := session.AppendHistoryRecord(dir, "source", session.HistoryRecord{Role: "user", Origin: "user", Content: "\n\nAttached files: record.txt at /private/.input-files/session/file.txt", Files: files}); err != nil {
+	if err := sessions.AppendHistoryRecord("source", session.HistoryRecord{Role: "user", Origin: "user", Content: "\n\nAttached files: record.txt at /private/.input-files/session/file.txt", Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	hidden, err := searchPluginSessionHistory(context.Background(), home, "demo", pluginhost.SessionHistorySearchParams{SessionID: "source", Query: ".input-files"})
+	hidden, err := searchPluginSessionHistory(context.Background(), sessions, "demo", userspace.Binding{}, pluginhost.SessionHistorySearchParams{SessionID: "source", Query: ".input-files"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hidden.Matches) != 0 {
 		t.Fatalf("hidden working-copy text matched visible history: %+v", hidden.Matches)
 	}
-	visible, err := searchPluginSessionHistory(context.Background(), home, "demo", pluginhost.SessionHistorySearchParams{SessionID: "source", Query: "record.txt"})
+	visible, err := searchPluginSessionHistory(context.Background(), sessions, "demo", userspace.Binding{}, pluginhost.SessionHistorySearchParams{SessionID: "source", Query: "record.txt"})
 	if err != nil || len(visible.Matches) != 1 {
 		t.Fatalf("filename lookup failed: %+v %v", visible, err)
 	}

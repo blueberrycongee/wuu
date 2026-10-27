@@ -98,10 +98,15 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 	if params.Offset < 0 || (params.SHA256 != "" && len(params.SHA256) != 64) {
 		return s.writeResponse(req.ID, nil, errors.New("invalid image offset or digest"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ScopeID, true)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	var body, cwd string
 	switch params.Kind {
 	case "thread":
-		th, err := s.historyThread(params.ScopeID)
+		th, err := s.historyThread(binding, params.ScopeID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

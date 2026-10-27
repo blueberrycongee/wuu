@@ -1,12 +1,15 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import { ConversationTurnIdentityProvider } from "./ConversationControlsContext";
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
-import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
+import { ArtifactPreviewContext, ArtifactThreadContext, ArtifactLocatorContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
-const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
-vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
-vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
+const { openPreview, renderArtifactSlot } = vi.hoisted(() => ({ openPreview: vi.fn(), renderArtifactSlot: vi.fn(({fallback}: {fallback?: React.ReactNode}) => fallback) }));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
 vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
@@ -25,7 +28,7 @@ it.each([true, false])("opens delivered and inspected images in the viewer (deli
     ));
     await act(async () => container.querySelector("button")!.click());
     expect(open).not.toHaveBeenCalled();
-    expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: artifact.uri }), container.querySelector('button'));
+    expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: artifactURL(artifact.uri) }), container.querySelector('button'));
   } finally { act(() => root.unmount()); }
 });
 
@@ -53,7 +56,9 @@ it("loads a remote image into the viewer and reuses the original bytes", async (
   } finally { act(() => root.unmount()); window.wuu = previous; }
 });
 
+function artifactURL(uri: string | undefined) {return `wuu-artifact://lease/${encodeURIComponent(uri ?? "")}`;}
 function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadItem {
+  hash = Array.from(hash).map(character=>character.charCodeAt(0).toString(16)).join("").padEnd(64,"0").slice(0,64);
   return { id, type: "tool_call", name: "present_artifact", status: "completed", result_detail: { content: [{
     type: "image", mime_type: "image/svg+xml", name,
     uri: `wuu-artifact://workspace/thread/${id}/${name}?sha256=${hash}`,
@@ -63,18 +68,19 @@ function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadIte
 
 it("routes a delivered file card using its source thread rather than the active conversation", async () => {
   const artifact = { ...collectTurnArtifacts({ items: [presentedImage("file", "snapshot")] } as Turn)[0], type: "file" as const, placement: "turn_end" as const, mimeType: "text/html" };
+  const locator = {version:1 as const,execution_host:"source-host",session_id:"source-thread"};
   const open = vi.fn();
   const container = document.createElement("div"), root = createRoot(container);
   try {
     await act(async () => root.render(
       <ArtifactPreviewContext.Provider value={open}>
         <ArtifactThreadContext.Provider value="source-thread">
-          <TurnEndArtifactOutputs artifacts={[artifact]} cwd="source-workspace" />
+          <ArtifactLocatorContext.Provider value={locator}><TurnEndArtifactOutputs artifacts={[artifact]} cwd="source-workspace" /></ArtifactLocatorContext.Provider>
         </ArtifactThreadContext.Provider>
       </ArtifactPreviewContext.Provider>,
     ));
     await act(async () => container.querySelector("button")!.click());
-    expect(open).toHaveBeenCalledWith(expect.objectContaining({ threadID: "source-thread", cwd: "source-workspace", artifact }));
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ threadID: "source-thread", cwd: "source-workspace", artifact: {...artifact,locator} }));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   } finally { act(() => root.unmount()); }
 });
@@ -96,7 +102,7 @@ it("previews HTML in a non-modal sandbox without moving focus or downloading", a
     expect(iframe.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(save).not.toHaveBeenCalled();
     await act(async () => container.querySelector("button")!.click());
-    expect(save).toHaveBeenCalledWith(artifact.name, artifact.uri);
+    expect(save).toHaveBeenCalledWith(artifact.name, artifactURL(artifact.uri));
   } finally { act(() => root.unmount()); container.remove(); composer.remove(); window.wuu = previous; }
 });
 
@@ -106,7 +112,7 @@ it.each([
 ])("opens a video card in the preview and keeps download available after playback failure ($name)", async (part) => {
   const artifact = collectTurnArtifacts({ items: [{
     id: "video", type: "tool_call", status: "completed", result_detail: { content: [{
-      type: "file", ...part, artifact: { placement: "turn_end" },
+      type: "file", ...part, artifact: { placement: "turn_end", sha256: part.uri.startsWith("wuu-artifact:") ? "a".repeat(64) : undefined },
     }] },
   }] } as Turn)[0];
   const container = document.createElement("div"), root = createRoot(container);
@@ -118,7 +124,7 @@ it.each([
     expect(video).not.toBeNull();
     expect(video.controls).toBe(true);
     expect(video.autoplay).toBe(false);
-    expect(video.src).toBe(part.uri.startsWith("wuu-artifact:") ? part.uri
+    expect(video.src).toBe(part.uri.startsWith("wuu-artifact:") ? artifactURL(part.uri)
       : `wuu-file://local/${btoa(`/workspace/${part.uri}`).replace(/=/g, "")}`);
     expect(onOpenFile).not.toHaveBeenCalled();
     await act(async () => video.dispatchEvent(new Event("error")));
@@ -168,13 +174,13 @@ it("renders only the managed SVG image and opens that exact snapshot", async () 
   openPreview.mockClear();
   try {
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} />));
-    expect(container.querySelector("img")?.getAttribute("src")).toBe(artifact.uri);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(artifactURL(artifact.uri));
     expect(container.textContent).toBe("");
     expect(container.querySelector("img")?.alt).toBe(artifact.name);
     expect(container.querySelector(".composer-image-attachment")).toBeNull();
     expect(container.querySelector(".turn-artifact-image-preview svg, iframe")).toBeNull();
     await act(async () => container.querySelector("button")!.click());
-    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" }, container.querySelector("button"));
+    expect(openPreview).toHaveBeenCalledWith({ src: artifactURL(artifact.uri), alt: "chart.svg", title: "chart.svg" }, container.querySelector("button"));
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
     expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("imagePreview.loadFailed");
     expect(container.querySelector("button")?.disabled).toBe(true);
@@ -209,7 +215,6 @@ it("uses the file-change summary chrome for a single presented file", async () =
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
     expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("wuu-promo.mp4");
-    expect(container.querySelector(".turn-artifact-meta")?.textContent).toBe("MP4");
     expect(container.querySelector(".turn-edit-summary-row")).toBeNull();
     expect(container.textContent).not.toContain("video/mp4");
   } finally { act(() => root.unmount()); container.remove(); }
@@ -232,7 +237,6 @@ it("lists multiple presented files in the same summary rows as file changes", as
       "one.pdf",
       "two.pdf",
     ]);
-    expect(rows.map((row) => row.querySelector(".turn-artifact-meta")?.textContent)).toEqual(["PDF", "PDF"]);
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
@@ -286,4 +290,25 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledWith("thread:source");
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
+});
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  let artifacts: ApplicationArtifacts;
+  return {render: (children: ReactNode) => {
+    artifacts ??= new ApplicationArtifacts({acquireArtifactSource: async ({uri,requestId}) => ({url:artifactURL(uri),leaseId:requestId!}),releaseArtifactSource:async()=>{},...window.wuu}, {resolveResourceURL: ({source, cwd}) => `wuu-file://local/${btoa(`${cwd}/${source}`).replace(/=/g, "")}`, openFile: async () => {}});
+    root.render(<ConversationControlsTestProvider composition={{Slot: renderArtifactSlot}}><ConversationTurnIdentityProvider threadId="source-thread" turnId="source-turn"><ArtifactsProvider application={{artifacts}}><ArtifactThreadContext.Provider value="thread">{children}</ArtifactThreadContext.Provider></ArtifactsProvider></ConversationTurnIdentityProvider></ConversationControlsTestProvider>);
+  }, unmount: () => root.unmount()};
+}
+
+it("routes artifact presentation through the public slot with source identity only", async () => {
+  const artifact = collectTurnArtifacts({items: [presentedImage("part", "snapshot")]})[0];
+  const container = document.createElement("div"), root = createRoot(container);
+  renderArtifactSlot.mockClear();
+  try {
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} inspectionExpanded />));
+    expect(renderArtifactSlot).toHaveBeenCalled();
+    expect(renderArtifactSlot.mock.calls[0][0]).toMatchObject({name:"wuu.default-conversation/conversation.artifact", context:{threadId:"source-thread",turnId:"source-turn",itemId:"part",partId:artifact.id,variant:"inline"}});
+    expect(Object.keys((renderArtifactSlot.mock.calls[0][0] as unknown as {context: object}).context).sort()).toEqual(["itemId","partId","threadId","turnId","variant"]);
+  } finally {act(() => root.unmount());}
 });

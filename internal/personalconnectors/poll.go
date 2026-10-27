@@ -106,6 +106,7 @@ func (b *Broker) Poll(ctx context.Context, a Actor, q PollRequest) (PollResult, 
 	digest := hash(canonical)
 	result := PollResult{SourceID: q.SourceID, Snapshot: read.Data, Scope: "bounded_query_page", ConnectionRevision: revision}
 	e = b.update(ctx, a, func(s *stored) error {
+		result.State, result.ChangeID, result.Sequence = "", "", 0
 		g, ok := s.Grants[q.ConnectionID]
 		if !ok || g.Connection.Revision != revision || g.Connection.State != "connected" || !b.activated(a, g) {
 			return fault("connection_changed")

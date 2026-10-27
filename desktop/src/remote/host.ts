@@ -50,14 +50,17 @@ async function main(): Promise<void> {
   );
   const plugins = new PluginRuntimeRequests(pool);
   const terminals = new TerminalSessionManager((peer, event) => bridge.notifyPeer(peer, "desktop/terminal/event", event));
-  const bridge = new RemoteAppServerBridge((cwd, method, params, reply, peer) => {
+  const bridge = new RemoteAppServerBridge((cwd, method, params, reply, peer, activations) => {
     const owner = `remote:${peer}`;
     if (method === "plugin/client/cancel") return plugins.cancel(owner, params as PluginClientCancelParams);
     if (method === "initialize") params = initialize();
     return requestRemoteWorkspace(projects, pool, terminals, cwd, method, params, reply, peer,
-      (context, method, params) => method === "plugin/client/request"
-        ? plugins.request(owner, context, params as PluginClientRequestParams, reply)
-        : pool.requestInContext(context, method, params, reply));
+      (context, method, params) => {
+        if (method === "initialize") return activations.initialize(context.cwd, pool.bindContextRequest(context), params);
+        return method === "plugin/client/request"
+          ? plugins.request(owner, context, params as PluginClientRequestParams, reply)
+          : pool.requestInContext(context, method, params, reply);
+      });
   }, peer => { terminals.stopForOwner(peer); plugins.closeOwner(`remote:${peer}`); });
   const startup = new AbortController();
   let stopping = false;

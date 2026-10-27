@@ -1,4 +1,5 @@
-import { hostSupports } from "./HostCapabilities";
+import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import {
   AlertCircle,
   AlertTriangle,
@@ -11,31 +12,30 @@ import {
   PanelRight,
   RefreshCw,
   Settings,
-  Sparkles,
   Terminal,
 } from "./WuuIcons";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type {
-  AppLocale,
-  ExtensionInventoryRecord,
-  ExtensionPackageAction,
-  ExtensionPackageUpdateParams,
-  PluginPackageInstallResult,
-  PluginPackageRemoveResult,
-  RuntimeContext,
-  SkillSummary,
-} from "../shared/protocol";
+import { SkillsIcon } from "./SkillsIcon";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import type { AppLocale } from "../shared/protocol";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryRecord,
+ CatalogPackageActionV1 as ExtensionPackageAction, CatalogSkillV1 as SkillSummary } from "../../../packages/plugin-sdk/src/ui-catalog";
+import { composerSkillPrompt } from "./ComposerSlashCommands";
+
 import { CatalogSearchField } from "./CatalogSearchField";
 import { CapabilityMark, skillCapability } from "./CapabilityMark";
 import { confirmAction } from "./ConfirmDialog";
+import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
 import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
 import { PluginIcon } from "./PublicIcon";
+import { SettingsControlsProvider } from "./SettingsControlsContext";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
+import { MCPServices, MCPServicesProvider, useMCPServices } from "./MCPServices";
 import { RichContent } from "./RichContent";
-import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { showErrorToast, showToast, toastErrorMessage } from "./Toast";
 
@@ -74,33 +74,58 @@ function showExtensionMutationError(error: unknown, fallback: string): void {
   showErrorToast(error, fallback);
 }
 
-export function SkillsCatalog({
-  activeContext,
-  extensionInventory = [],
-  onTrySkill,
-  onRefreshCatalog,
-  onUpdateExtensionPackage,
-  onInstallPluginPackage,
-  onRemovePluginPackage,
-}: {
-  activeContext?: RuntimeContext;
-  extensionInventory?: ExtensionInventoryRecord[];
-  onTrySkill?: (skill: SkillSummary) => void;
-  onRefreshCatalog?: () => Promise<SkillSummary[] | undefined>;
-  onUpdateExtensionPackage?: (
-    update: ExtensionPackageUpdateParams,
-  ) => Promise<void>;
-  onInstallPluginPackage?: () => Promise<PluginPackageInstallResult | undefined>;
-  onRemovePluginPackage?: (
-    id: string,
-  ) => Promise<PluginPackageRemoveResult | undefined>;
-}): JSX.Element {
+export type SkillsCatalogSection = "plugins" | "skills";
+
+const CatalogContext = createContext<ApplicationCatalogV1 | null>(null);
+function useCatalog(): ApplicationCatalogV1 {
+ const catalog = useContext(CatalogContext);
+ if (!catalog) throw new Error("Catalog application binding is required");
+ return catalog;
+}
+
+export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={props.application.catalog.getSnapshot().contextKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+}
+type SkillsCatalogProps = {
+ application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
+ active?:boolean; section?:SkillsCatalogSection; onSectionChange?:(section:SkillsCatalogSection)=>void;
+ selectedPluginID?:string; onSelectPlugin?:(id:string)=>void; openPluginRequest?:{id:string;request:number};
+};
+
+function SkillsCatalogView({
+  active = true,
+  section,
+  onSectionChange,
+  selectedPluginID: selectedPluginIDProp,
+  onSelectPlugin,
+  application,
+  openPluginRequest,
+}: SkillsCatalogProps): JSX.Element {
+  const catalog = application.catalog;
+  const catalogSnapshot = useSyncExternalStore(listener => application.subscribe(listener), () => catalog.getSnapshot(), () => catalog.getSnapshot());
+  const extensionInventory = catalogSnapshot.inventory;
+  const capabilities = catalogSnapshot.capabilities;
   const { locale, t } = useI18n();
   const [state, setState] = useState<LoadState>(initialLoadState);
   const [filter, setFilter] = useState("");
   const [previewSkill, setPreviewSkill] = useState<SkillSummary | null>(null);
-  const [selectedPluginID, setSelectedPluginID] = useState("");
-  const [chosenTab, setActiveTab] = useState<"plugins" | "skills">("plugins");
+  const [localSelectedPluginID, setLocalSelectedPluginID] = useState("");
+  const selectedPluginID = selectedPluginIDProp ?? localSelectedPluginID;
+  const setSelectedPluginID = onSelectPlugin ?? setLocalSelectedPluginID;
+  const [chosenTab, setActiveTab] = useState<SkillsCatalogSection>("plugins");
+  const previousSection = useRef(section);
+  useEffect(() => {
+    // A new shell can restore an open detail; only navigation clears it.
+    if (previousSection.current === section) return;
+    previousSection.current = section;
+    setSelectedPluginID("");
+    setPreviewSkill(null);
+  }, [section, setSelectedPluginID]);
+  useEffect(() => {
+    if (!openPluginRequest) return;
+    setSelectedPluginID(openPluginRequest.id);
+    setPreviewSkill(null);
+  }, [openPluginRequest]);
   const [packageMutation, setPackageMutation] = useState("");
   // State alone cannot stop a second click that lands before the re-render.
   const mutationInFlight = useRef(false);
@@ -109,7 +134,12 @@ export function SkillsCatalog({
     x: number;
     y: number;
   } | null>(null);
-  const contextKey = activeContext ? runtimeContextKey(activeContext) : "";
+  useEffect(() => {
+    if (active) return;
+    setPreviewSkill(null);
+    setPackageActionMenu(null);
+  }, [active]);
+  const contextKey = catalogSnapshot.contextKey;
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
 
@@ -126,14 +156,14 @@ export function SkillsCatalog({
       }
       setState((current) => ({ ...current, loading: true, error: "" }));
       try {
-        const [skillsResult] = await Promise.all([window.wuu.listSkills()]);
+        const skillsResult = await catalog.listSkills();
         if (cancelled) {
           return;
         }
         setState({
           loading: false,
           error: "",
-          skills: skillsResult.skills,
+          skills: [...skillsResult],
         });
       } catch (error) {
         if (cancelled) {
@@ -149,7 +179,7 @@ export function SkillsCatalog({
         });
       }
     }
-  }, [contextKey, locale]);
+  }, [catalog, contextKey, locale]);
 
   const visibleSkills = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -211,21 +241,33 @@ export function SkillsCatalog({
   const pluginName = (id: string) =>
     plugins.find((record) => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
 
+  async function trySkill(skill: SkillSummary): Promise<void> {
+    if (!catalog.getSnapshot().contextKey) return;
+    const { activeTabId, navigationRevision } = application.getSnapshot().tabs;
+    try {
+      await application.invoke("draft.start-with-content", {
+        text: composerSkillPrompt(skill),
+        sourceTabId: activeTabId,
+        navigationRevision,
+      });
+    } catch (error) {
+      showErrorToast(error, translateCurrent("skills.loadFailed"));
+    }
+  }
+
   async function refreshSkills(): Promise<void> {
     if (state.loading || packageMutation) return;
     const requestedContextKey = contextKey;
     setState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const skills = onRefreshCatalog
-        ? await onRefreshCatalog()
-        : (await window.wuu.listSkills()).skills;
+      const skills = await catalog.refresh();
       if (!skills || contextKeyRef.current !== requestedContextKey) {
         return;
       }
       setState({
         loading: false,
         error: "",
-        skills,
+        skills: [...skills],
       });
     } catch (error) {
       if (contextKeyRef.current !== requestedContextKey) {
@@ -240,7 +282,7 @@ export function SkillsCatalog({
   }
 
   async function updateExtensionPackage(record: ExtensionInventoryRecord, action: ExtensionPackageAction): Promise<void> {
-    if (!onUpdateExtensionPackage || mutationInFlight.current) {
+    if (!capabilities.update || mutationInFlight.current) {
       return;
     }
     mutationInFlight.current = true;
@@ -250,7 +292,7 @@ export function SkillsCatalog({
         action === "promote_update" || action === "reject_update"
           ? record.pending_update?.fingerprint
           : record.fingerprint;
-      await onUpdateExtensionPackage({ id: record.id, fingerprint, action });
+      await catalog.update({ id: record.id, fingerprint, action });
     } catch (error) {
       showExtensionMutationError(error, translateCurrent("skills.pluginUpdateFailed"));
     } finally {
@@ -271,14 +313,14 @@ export function SkillsCatalog({
   }
 
   async function installPluginPackage(): Promise<void> {
-    if (!onInstallPluginPackage || mutationInFlight.current) {
+    if (!capabilities.install || mutationInFlight.current) {
       return;
     }
     const requestedContextKey = contextKey;
     mutationInFlight.current = true;
     setPackageMutation("install");
     try {
-      const result = await onInstallPluginPackage();
+      const result = await catalog.install();
       if (!result || contextKeyRef.current !== requestedContextKey) {
         return;
       }
@@ -306,7 +348,7 @@ export function SkillsCatalog({
 
   async function removePluginPackage(record: ExtensionInventoryRecord): Promise<void> {
     const pluginID = record.provenance.plugin_id;
-    if (!onRemovePluginPackage || !pluginID || mutationInFlight.current) {
+    if (!capabilities.remove || !pluginID || mutationInFlight.current) {
       return;
     }
     const confirmed = await confirmAction({
@@ -322,7 +364,7 @@ export function SkillsCatalog({
     mutationInFlight.current = true;
     setPackageMutation(`${record.id}:remove`);
     try {
-      const result = await onRemovePluginPackage(pluginID);
+      const result = await catalog.remove(pluginID);
       if (!result || contextKeyRef.current !== requestedContextKey) {
         return;
       }
@@ -340,14 +382,14 @@ export function SkillsCatalog({
   function extensionPackageMenuItems(record: ExtensionInventoryRecord): ThreadContextMenuItem[] {
     const secondaryAction = extensionPackageSecondaryAction(record);
     const items: ThreadContextMenuItem[] = [];
-    if (onUpdateExtensionPackage && secondaryAction) {
+    if (capabilities.update && secondaryAction) {
       items.push({
         label: extensionPackageActionLabel(record, secondaryAction, t),
         disabled: Boolean(packageMutation),
         onSelect: () => updateExtensionPackage(record, secondaryAction),
       });
     }
-    if (onRemovePluginPackage && isRemovableUserPlugin(record)) {
+    if (capabilities.remove && isRemovableUserPlugin(record)) {
       if (items.length > 0) items.push({ separator: true });
       items.push({
         label: packageMutation === `${record.id}:remove`
@@ -371,7 +413,7 @@ export function SkillsCatalog({
     { key: "enabled", title: t("skills.groupEnabled"), records: quietPlugins.filter(listedOn) },
     { key: "disabled", title: t("skills.groupDisabled"), records: quietPlugins.filter((record) => !listedOn(record)) },
   ].filter((group) => group.records.length > 0);
-  const activeTab = plugins.length === 0 ? "skills" : chosenTab;
+  const activeTab = section ?? (plugins.length === 0 ? "skills" : chosenTab);
   const pluginSkills = (record: ExtensionInventoryRecord) =>
     state.skills.filter((skill) => pluginSkillID(skill.source) === record.provenance.plugin_id);
 
@@ -384,8 +426,9 @@ export function SkillsCatalog({
           pluginName={pluginName}
           packageMutation={packageMutation}
           reloading={state.loading}
-          canUpdate={Boolean(onUpdateExtensionPackage)}
-          canRemove={Boolean(onRemovePluginPackage)}
+          canUpdate={capabilities.update}
+          canRemove={capabilities.remove}
+          canInstall={capabilities.install}
           onBack={() => {
             // Coming back is entering the catalog again: rows regroup by state.
             setListedPlacement(new Map());
@@ -407,7 +450,7 @@ export function SkillsCatalog({
             onTry={() => {
               const skill = previewSkill;
               setPreviewSkill(null);
-              onTrySkill?.(skill);
+              void trySkill(skill);
             }}
           />
         ) : null}
@@ -429,30 +472,29 @@ export function SkillsCatalog({
       aria-label={t("skills.catalogLabel")}
       data-wuu-component="skills-catalog"
     >
-      {/* The titlebar already names the page, so it opens on its tools. */}
+      <SettingsPageHeader title={t(activeTab === "plugins" ? "skills.tabPlugins" : "skills.tabSkills")} />
       <div className="catalog-toolbar">
         <CatalogSearchField
           value={filter}
           placeholder={t("skills.searchPlaceholder")}
           onValueChange={setFilter}
         />
-        <button
+        <Tooltip asChild content={t("skills.refresh")}><button
           className="settings-button settings-button-ghost settings-icon-button catalog-refresh"
           type="button"
           aria-label={t("skills.refresh")}
-          title={t("skills.refresh")}
           disabled={state.loading || Boolean(packageMutation)}
           data-mutation-blocked={(Boolean(packageMutation) && !state.loading) || undefined}
           aria-busy={state.loading}
           onClick={() => void refreshSkills()}
         >
           <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
-        </button>
+        </button></Tooltip>
         <button
           className="settings-button"
           type="button"
-          disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
-          data-mutation-blocked={(Boolean(packageMutation) && hostSupports("installPluginPackage")) || undefined}
+          disabled={Boolean(packageMutation) || !capabilities.install}
+          data-mutation-blocked={(Boolean(packageMutation) && capabilities.install) || undefined}
           onClick={() => void installPluginPackage()}
         >
           <PackagePlus className="icon" aria-hidden="true" />
@@ -473,7 +515,7 @@ export function SkillsCatalog({
             className="catalog-tab"
             data-tab={tab}
             aria-selected={activeTab === tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => (onSectionChange ?? setActiveTab)(tab)}
           >
             {tab === "plugins" ? t("skills.tabPlugins") : t("skills.tabSkills")}
             <span className="catalog-tab-count">{tab === "plugins" ? visiblePlugins.length : visibleSkills.length}</span>
@@ -494,6 +536,8 @@ export function SkillsCatalog({
           </button>
         </div>
       ) : null}
+
+      {activeTab === "plugins" ? <MCPServices filter={filter} /> : null}
 
       {/* A plugin that needs a decision shows the reason instead of its
        * tagline; the decision is made on its page. */}
@@ -522,7 +566,7 @@ export function SkillsCatalog({
                 toggleDisabled={Boolean(packageMutation)}
                 toggleBusy={packageMutation.startsWith(`${record.id}:`)}
                 onOpen={() => setSelectedPluginID(record.id)}
-                onToggle={onUpdateExtensionPackage ? () => togglePlugin(record) : undefined}
+                onToggle={capabilities.update ? () => togglePlugin(record) : undefined}
               />
             ))}
           </SettingsGroup>
@@ -548,7 +592,7 @@ export function SkillsCatalog({
           onTry={() => {
             const skill = previewSkill;
             setPreviewSkill(null);
-            onTrySkill?.(skill);
+            void trySkill(skill);
           }}
         />
       ) : null}
@@ -580,13 +624,6 @@ function isRemovableUserPlugin(record: ExtensionInventoryRecord): boolean {
   );
 }
 
-function extensionPackageApproval(record: ExtensionInventoryRecord): NonNullable<ExtensionInventoryRecord["approval_state"]> {
-  if (record.approval_state) {
-    return record.approval_state;
-  }
-  return record.provenance.official ? "official" : "pending";
-}
-
 function extensionPackagePrimaryAction(record: ExtensionInventoryRecord): ExtensionPackageAction {
   if (record.pending_update) {
     return "promote_update";
@@ -610,18 +647,6 @@ function extensionPackageSecondaryAction(record: ExtensionInventoryRecord): Exte
     return "revoke";
   }
   return undefined;
-}
-
-// The switch shows whether a plugin runs. Turning on an unapproved plugin
-// is its approval, reviewed first when it asks for permissions.
-function pluginToggle(record: ExtensionInventoryRecord): { on: boolean; action: ExtensionPackageAction; review: boolean } {
-  const approval = extensionPackageApproval(record);
-  const trusted = approval === "official" || approval === "granted";
-  if (trusted) {
-    const on = record.enabled !== false;
-    return { on, action: on ? "disable" : "enable", review: false };
-  }
-  return { on: false, action: "grant", review: (record.requested_permissions?.length ?? 0) > 0 };
 }
 
 type PluginAttention = { tone: "warning" | "danger"; label: string };
@@ -738,7 +763,7 @@ function pluginContributions(
     })),
     ...skills.map((skill) => ({
       key: `skill:${skill.name}`,
-      icon: <Sparkles className="icon" aria-hidden="true" />,
+      icon: <SkillsIcon className="icon" />,
       title: skill.name,
       kind: t("skills.addsSkill"),
       onOpen: () => onPreviewSkill(skill),
@@ -752,9 +777,8 @@ function pluginContributions(
   ];
 }
 
-// The plugin page answers what it does, whether it runs, and what it adds.
-// Permissions appear only while someone is deciding whether to trust it,
-// right under the notice that asks for that decision.
+// Keep identity and enablement together, then put configuration before reference
+// content. Approval notices and permissions precede both when a decision is due.
 function PluginDetailPage({
   record,
   skills,
@@ -763,6 +787,7 @@ function PluginDetailPage({
   reloading,
   canUpdate,
   canRemove,
+  canInstall,
   onBack,
   onToggle,
   onPrimaryAction,
@@ -777,6 +802,7 @@ function PluginDetailPage({
   reloading: boolean;
   canUpdate: boolean;
   canRemove: boolean;
+  canInstall: boolean;
   onBack: () => void;
   onToggle: () => void;
   onPrimaryAction: (action: ExtensionPackageAction) => void;
@@ -846,16 +872,28 @@ function PluginDetailPage({
 
       <header className="plugin-page-header">
         <PluginMark record={record} className="plugin-page-mark" />
-        <h1 className="plugin-page-title">{record.name}</h1>
+        <div className="plugin-page-identity">
+          <h1 className="plugin-page-title">{record.name}</h1>
+          <div className="plugin-page-meta">
+            {record.developer ? <span>{t("skills.pluginDeveloper", { name: record.developer })}</span> : null}
+            <span>{pluginSourceLabel(record, t)}</span>
+          </div>
+        </div>
         {record.description ? <p className="plugin-page-tagline">{record.description}</p> : null}
-        <div className="settings-detail-actions">
+      </header>
+
+      <div className="plugin-page-controls">
+        <span className="plugin-page-state" aria-live="polite">
+          {mutating ? t("skills.pluginUpdating") : t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}
+        </span>
+        <div className="plugin-page-actions">
           {hasMoreActions ? (
             <button
               type="button"
               className="settings-button settings-button-ghost settings-icon-button extension-package-more"
               aria-label={t("skills.pluginMoreActions", { name: record.name })}
               aria-haspopup="menu"
-              disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
+              disabled={Boolean(packageMutation) || !canInstall}
               onClick={(event) => onMoreActions(event.currentTarget)}
             >
               <MoreHorizontal className="icon" aria-hidden="true" />
@@ -884,7 +922,7 @@ function PluginDetailPage({
             </button>
           )}
         </div>
-      </header>
+      </div>
 
       {notices.length > 0 ? (
         <div className="plugin-detail-notices">
@@ -903,41 +941,50 @@ function PluginDetailPage({
         <SettingsSection title={t("skills.pluginPermissions")}>
           <SettingsGroup>
             {permissionRows.map((permission) => (
-              <div className="catalog-row plugin-permission-row" key={permission.code} title={permission.code}>
+              <Tooltip asChild content={permission.code} key={permission.code}><div className="catalog-row plugin-permission-row">
                 <span className="catalog-row-title">{permission.label}</span>
-              </div>
+              </div></Tooltip>
             ))}
           </SettingsGroup>
         </SettingsSection>
       ) : null}
 
-      {record.long_description ? <p className="plugin-page-about">{record.long_description}</p> : null}
+      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
+      <MCPServices pluginID={record.provenance.plugin_id ?? record.id} enabled={toggle.on && !deciding} />
+
+      {record.long_description ? (
+        <SettingsSection title={t("skills.pluginAbout")}>
+          <p className="plugin-page-about">{record.long_description}</p>
+        </SettingsSection>
+      ) : null}
 
       {contributions.length > 0 ? (
         <SettingsSection title={t("skills.pluginAdds")}>
-          <SettingsGroup>
+          <ul className="plugin-contributions">
             {contributions.map((item) => {
               const content = (
                 <>
                   <span className="catalog-row-mark">{item.icon}</span>
-                  <span className="catalog-row-title">{item.title}</span>
-                  <span className="catalog-row-meta">{item.kind}</span>
+                  <span className="plugin-contribution-copy">
+                    <span className="catalog-row-title">{item.title}</span>
+                    <span className="plugin-contribution-kind">{item.kind}</span>
+                  </span>
                   {item.onOpen ? <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" /> : null}
                 </>
               );
-              return item.onOpen ? (
-                <button key={item.key} type="button" className="catalog-row" onClick={item.onOpen}>{content}</button>
-              ) : (
-                <div key={item.key} className="catalog-row plugin-contribution">{content}</div>
+              return (
+                <li key={item.key}>
+                  {item.onOpen ? (
+                    <button type="button" className="plugin-contribution" onClick={item.onOpen}>{content}</button>
+                  ) : (
+                    <div className="plugin-contribution">{content}</div>
+                  )}
+                </li>
               );
             })}
-          </SettingsGroup>
+          </ul>
         </SettingsSection>
       ) : null}
-
-      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
-
-      {record.developer ? <p className="plugin-page-footnote">{t("skills.pluginDeveloper", { name: record.developer })}</p> : null}
     </>
   );
 }
@@ -946,9 +993,11 @@ function PluginMark({ record, className = "catalog-row-mark" }: {
   record: ExtensionInventoryRecord;
   className?: string;
 }): JSX.Element {
+  const catalog = useCatalog();
+  const loadIcon = useMemo(() => (id:string, fingerprint:string, path:string) => catalog.loadIcon(id,fingerprint,path), [catalog]);
   return (
     <span className={className} aria-hidden="true">
-      <PluginIcon icon={record.icon} pluginId={record.id} fingerprint={record.fingerprint ?? ""} />
+      <PluginIcon loadIcon={loadIcon} icon={record.icon} pluginId={record.id} fingerprint={record.fingerprint ?? ""} />
     </span>
   );
 }
@@ -975,6 +1024,8 @@ function PluginRow({
 }): JSX.Element {
   const { t } = useI18n();
   const toggle = pluginToggle(record);
+  const { servers } = useMCPServices();
+  const needsMCPAuth = toggle.on && servers.some(server => server.plugin_id === (record.provenance.plugin_id ?? record.id) && ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state));
   // A grant or change needs the fingerprint it approves.
   const toggleUnavailable = toggle.action === "grant" && !toggle.review && !record.fingerprint;
   const showSwitch = !attention && Boolean(onToggle);
@@ -998,8 +1049,8 @@ function PluginRow({
             {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
             {attention.label}
           </span>
-        ) : record.description ? (
-          <span className="catalog-row-description" title={record.description}>{record.description}</span>
+        ) : needsMCPAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone="warning">{t("mcp.needsAuth")}</span> : record.description ? (
+          <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
         <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
       </button>
@@ -1043,7 +1094,7 @@ function CatalogRow({
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
       <span className="catalog-row-title">{title}</span>
-      {description ? <span className="catalog-row-description" title={description}>{description}</span> : null}
+      {description ? <TruncatedText as="span" className="catalog-row-description" text={description} /> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
     </button>
@@ -1077,10 +1128,10 @@ function SkillsList({
             title={skill.name}
             description={catalogSkillDescription(skill)}
             trailing={pluginID ? (
-              <span className="catalog-row-meta" title={t("skills.pluginSkillTitle")}>
+              <Tooltip asChild content={t("skills.pluginSkillTitle")}><span className="catalog-row-meta">
                 <PluginBlocksIcon className="icon-sm" aria-hidden="true" />
                 {pluginName(pluginID)}
-              </span>
+              </span></Tooltip>
             ) : undefined}
             onOpen={() => onPreview(skill)}
           />
@@ -1109,6 +1160,7 @@ function SkillPreviewDialog({
   onTry: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const catalog = useCatalog();
   const [contentState, setContentState] = useState<SkillContentState>({
     loading: true,
     error: "",
@@ -1118,7 +1170,7 @@ function SkillPreviewDialog({
   useEffect(() => {
     let cancelled = false;
     setContentState({ loading: true, error: "", content: "" });
-    void window.wuu.readSkillContent({ name: skill.name, source: skill.source })
+    void catalog.readSkill({ name: skill.name, source: skill.source })
       .then((result) => {
         if (!cancelled) {
           setContentState({ loading: false, error: "", content: stripFrontmatter(result.content) });
@@ -1136,7 +1188,7 @@ function SkillPreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [skill.name, skill.source]);
+  }, [catalog, skill.name, skill.source]);
 
   return (
     // The mark, the name and close share one row like the Model services
@@ -1214,8 +1266,4 @@ function sourceRank(source: string): number {
     default:
       return 3;
   }
-}
-
-function runtimeContextKey(context: RuntimeContext): string {
-  return context.kind === "project" ? `project:${context.project_id}` : `no_project:${context.cwd}`;
 }

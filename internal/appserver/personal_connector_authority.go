@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"strconv"
 )
 
@@ -14,24 +15,34 @@ import (
 // Confirmation is invalid after task cancellation, a new requirement revision,
 // session archival, plugin disablement, or a newer human turn in the main chat.
 func (p *personalActions) connectorAuthority(ctx context.Context, actor personalconnectors.Actor) (string, error) {
+	if err := p.server.authorizePersonalOperation(ctx, "connectors.call", actor.SessionID); err != nil {
+		return "", err
+	}
 	binding := p.server.rt.UserBinding()
 	if actor.ProductDomain != "personal" || actor.UserSpaceID != binding.UserSpaceID || actor.SessionID == "" || p.server.rt.SafeMode {
 		return "", errors.New("Personal connector authority is unavailable")
 	}
-	snapshot := p.server.rt.ExtensionSnapshot()
-	subject := ""
-	fingerprint := ""
-	for _, item := range snapshot.ActivePlugins {
-		if item.ID == "personal" {
-			subject = item.SubjectID
-			fingerprint = item.Fingerprint
-			break
-		}
+	state, err := p.retainState(ctx)
+	if err != nil {
+		return "", err
 	}
-	if subject == "" || snapshot.PluginHost == nil {
-		return "", errors.New("Personal plugin is unavailable")
+	defer state.Close()
+	selected, services, err := p.selectedTaskProvider(state)
+	if err != nil {
+		return "", err
 	}
-	metadata, found, err := session.Find(p.server.rt.SessionDir, actor.SessionID)
+	doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
+	if err != nil {
+		return "", err
+	}
+	return p.connectorAuthorityForState(ctx, state, selected, actor, doc)
+}
+func (p *personalActions) connectorAuthorityForState(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, actor personalconnectors.Actor, doc pluginsettings.StateDocument) (string, error) {
+	binding := p.server.rt.UserBinding()
+	if actor.ProductDomain != binding.ProductDomain || actor.UserSpaceID != binding.UserSpaceID || actor.SessionID == "" || p.server.rt.SafeMode {
+		return "", errors.New("Personal connector authority is unavailable")
+	}
+	metadata, found, err := state.Sessions.Find(actor.SessionID)
 	if err != nil {
 		return "", err
 	}
@@ -40,12 +51,12 @@ func (p *personalActions) connectorAuthority(ctx context.Context, actor personal
 	}
 	taskID := ""
 	if metadata.ParentID == "" {
-		head, err := session.ReadHistoryPage(ctx, p.server.rt.SessionDir, actor.SessionID, 1, 1)
+		head, err := state.Sessions.WithContext(ctx).ReadHistoryPage(actor.SessionID, 1, 1)
 		if err != nil {
 			return "", err
 		}
 		start := max(1, head.HeadSeq-255)
-		page, err := session.ReadHistoryPage(ctx, p.server.rt.SessionDir, actor.SessionID, start, 256)
+		page, err := state.Sessions.WithContext(ctx).ReadHistoryPage(actor.SessionID, start, 256)
 		if err != nil {
 			return "", err
 		}
@@ -60,24 +71,22 @@ func (p *personalActions) connectorAuthority(ctx context.Context, actor personal
 		}
 		taskID = "conversation:" + actor.SessionID + ":" + strconv.Itoa(seq)
 	}
-	var digest string
-	err = pluginsettings.InspectState(p.stateRoot(), p.server.rt.RootDir, subject, pluginsettings.ScopeUser, func(doc pluginsettings.StateDocument) error {
-		authority, err := p.authority(ctx, actor.SessionID, taskID, doc)
-		if err != nil {
-			return err
-		}
-		if !authority.Active || authority.BoundaryReason != "" {
-			return errors.New("Personal task authority changed")
-		}
-		raw, err := json.Marshal(struct {
-			Scope  any
-			Plugin string
-		}{authority.Scope, fingerprint})
-		if err != nil {
-			return err
-		}
-		digest = personalHash(raw)
-		return nil
-	})
-	return digest, err
+	authority, err := p.authority(ctx, state, selected, actor.SessionID, taskID, doc)
+	if err != nil {
+		return "", err
+	}
+	if !authority.Active || authority.BoundaryReason != "" {
+		return "", errors.New("Personal task authority changed")
+	}
+	if _, _, err := p.selectedTaskProvider(state); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(struct {
+		Scope  any
+		Plugin string
+	}{authority.Scope, selected.Fingerprint})
+	if err != nil {
+		return "", err
+	}
+	return personalHash(raw), nil
 }

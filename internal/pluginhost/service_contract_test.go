@@ -22,6 +22,14 @@ func TestValidateServiceDescriptor(t *testing.T) {
 		wantErrSub string
 	}{
 		{name: "valid", mutate: func(*ServiceDescriptor) {}},
+		{name: "underscored method", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "history_fork" }},
+		{name: "PascalCase method and schema", mutate: func(d *ServiceDescriptor) {
+			d.Methods[0] = ServiceMethodDescriptor{Name: "ReadControl", InputSchema: "session.domain.ReadControl.input.v1", OutputSchema: "session.domain.ReadControl.output.v1"}
+		}},
+		{name: "qualified PascalCase method", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "Journal.Close" }},
+		{name: "empty method segment", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "Journal..Close" }, wantErrSub: "method name"},
+		{name: "method path is not identifier", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "Journal/Close" }, wantErrSub: "method name"},
+		{name: "method whitespace", mutate: func(d *ServiceDescriptor) { d.Methods[0].Name = "Read Control" }, wantErrSub: "method name"},
 		{name: "name must be dotted", mutate: func(d *ServiceDescriptor) { d.Name = "search" }, wantErrSub: "dotted"},
 		{name: "name must be lowercase", mutate: func(d *ServiceDescriptor) { d.Name = "Search.provider" }, wantErrSub: "dotted lowercase"},
 		{name: "version must be semver", mutate: func(d *ServiceDescriptor) { d.Version = "1.2" }, wantErrSub: "semver"},
@@ -146,7 +154,6 @@ func TestValidateServiceNegotiation(t *testing.T) {
 				ProvidedServices: []ServiceDescriptor{validServiceDescriptor()},
 				RequiredServices: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1}},
 			},
-			wantErrSub: "both provided and required",
 		},
 		{
 			name: "negative major",

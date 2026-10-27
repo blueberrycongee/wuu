@@ -14,16 +14,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
@@ -41,6 +43,24 @@ var (
 	errShutdown            = errors.New("app-server shutdown requested")
 	errExecutionRunChanged = errors.New("thread execution belongs to a different Run")
 )
+
+type threadTurnCompletion struct {
+	turnID        string
+	done          chan struct{}
+	durabilityErr error
+}
+
+func (c *threadTurnCompletion) failed() bool {
+	if c == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return c.durabilityErr != nil
+	default:
+		return false
+	}
+}
 
 type threadState struct {
 	ID         string
@@ -64,6 +84,7 @@ type threadState struct {
 	UpdatedAt      time.Time
 	LastAccessedAt time.Time
 	Title          string
+	TitleRevision  int64
 	ModelProvider  string
 	Model          string
 	ModelVariant   string
@@ -95,7 +116,9 @@ type threadState struct {
 	PersistHistory           bool
 	ReadOnly                 bool
 	Ephemeral                bool
+	ephemeralDriver          ephemeralDriverState
 	execRuntime              *runtime.ThreadRuntime
+	state                    *runtime.State
 	pendingRuntimeReset      bool
 	runtimeSelectionMutation bool
 	runtimeSubscription      *threadRuntimeSubscription
@@ -110,8 +133,13 @@ type threadState struct {
 	currentExecutionRunID string
 	currentTurnResumed    bool
 	runningProviderName   string
+	runningModelRevision  uint64
+	stepModelSelection    bool
 	runningModel          string
 	cancel                context.CancelFunc
+	// The captured runner's immutable outcome is published by closing done.
+	turnCompletion *threadTurnCompletion
+
 	// idleWaiters are closed when this thread releases execution. Follow-up
 	// turn/start after a visible final answer waits here instead of failing busy.
 	idleWaiters []chan struct{}
@@ -119,7 +147,7 @@ type threadState struct {
 	// after the current turn's answer is already visible. Cancelling leftover
 	// provider work must complete that turn, not mark it interrupted.
 	completeAfterAnswerReadyCancel bool
-	executionLease                 *session.ThreadExecutionLease
+	executionLease                 *session.DocumentThreadExecutionLease
 	pluginExecutionLease           *session.PluginGenerationLease
 	pluginLeaseReleaseLoop         bool
 	onPluginLeaseQuiescent         func()
@@ -156,6 +184,8 @@ type threadState struct {
 }
 
 type threadRuntimeSubscription struct {
+	state               *runtime.State
+	modelState          *runtime.State
 	statusCh            chan subagent.Notification
 	streamCh            chan subagent.StreamNotification
 	processCh           chan process.Event
@@ -196,13 +226,18 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	personalActions  *personalActions
-	clientInputMu    sync.Mutex
-	clientInputOwner string
-	clientInputLease *session.ThreadExecutionLease
-	rt               *runtime.Session
-	out              io.Writer
-	writeMu          sync.Mutex
+	personalActions   *personalActions
+	clientInputMu     sync.Mutex
+	clientInputOwner  string
+	clientInputLease  *session.DocumentThreadExecutionLease
+	trustedTransport  trustedTransportState
+	sessionFederation *SessionFederation
+	access            connectionAccess
+	artifactReads     sync.Map
+	rpcTiming         *rpcTimingRecorder
+	rt                *runtime.Session
+	out               io.Writer
+	writeMu           sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
@@ -218,6 +253,8 @@ type Server struct {
 	clientCallSeq               uint64
 	clientMethods               map[string]struct{}
 	deferredNotificationContent atomic.Bool
+	rendererClients             rendererClientScope
+	projectRegistration         *projectServerRegistration
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -228,9 +265,10 @@ type Server struct {
 
 	mu      sync.Mutex
 	threads map[string]*threadState
+	// Title attempts outlive cached thread snapshots and are deduplicated by ID.
+	titleGenerations map[sessionCacheKey]bool
 
 	runMu             sync.Mutex
-	runStore          *execution.Store
 	runs              map[string]*runTracker
 	activeRunByThread map[string]string
 
@@ -267,14 +305,10 @@ type Server struct {
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
-	claudeEngineModelCatalog claudeengine.ModelCatalog
-	engineModelCatalogMu     sync.Mutex
-	engineModelCatalogCache  map[string]*engineModelCatalogCacheEntry
-
 	chatGPTMu         sync.Mutex
 	chatGPTManager    *siwc.Manager
+	chatGPTBindings   map[string]*chatGPTBinding
 	chatGPTHTTP       *http.Client
-	chatGPTAttempts   map[string]bool
 	chatGPTModelCache map[string][]chatgpt.ModelInfo
 
 	xaiLoginMu sync.Mutex
@@ -290,7 +324,7 @@ type Server struct {
 	// not cached, so a late store write is picked up on the next
 	// resolve.
 	participantMu           sync.Mutex
-	participantSummaryCache map[string]participant.Summary
+	participantSummaryCache map[sessionCacheKey]participant.Summary
 
 	inferenceMaintenanceStop     chan struct{}
 	inferenceMaintenanceDone     chan struct{}
@@ -298,9 +332,8 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
-	engineHostMu                 sync.Mutex
-	codexHost                    *codexengine.Host
-	codexHostRelease             func()
+	engineScopeMu                sync.Mutex
+	engineScopes                 map[agentengine.EngineID]engineScope
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
 	nativeHistoryCtx             context.Context
@@ -308,6 +341,8 @@ type Server struct {
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
+	pluginGenerationRefreshing   atomic.Bool
+	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
 	pluginGenerationEpoch        atomic.Uint64
 	pluginRuntimeRevision        atomic.Uint64
 	pluginGenerationRefreshMu    sync.Mutex
@@ -317,7 +352,7 @@ type Server struct {
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
-	pluginLifecycleReplayPending atomic.Bool
+	pluginLifecycleReplay        pluginLifecycleReplayState
 	refreshExtensionsForTest     func(config.Config) error
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
@@ -325,26 +360,19 @@ type Server struct {
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 
-	// sideThreadStore persists side threads (1:<=1 binding per main
-	// thread). Nil when SessionDir is unset; handleSideThreadOpen /
-	// handleSideThreadGetHistory treat nil as the "feature off" path.
-	sideThreadStore *sidethread.Store
-	controlMu       sync.Mutex
-	projectCreateMu sync.Mutex
+	controlMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
-	inboxMu                sync.Mutex
-	projectInboxMu         sync.Mutex
-	projectCapacityRetries map[string]map[string]func() bool
-	projectInboxDrains     map[string]*projectInboxDrain
-	projectInboxAfterFunc  func(time.Duration, func()) func()
-	sideTurnMu             sync.Mutex
-	sideTurns              map[string]*sideThreadTurn
+	inboxMu    sync.Mutex
+	sideTurnMu sync.Mutex
+	sideTurns  map[string]*sideThreadTurn
 }
 
-func New(rt *runtime.Session, out io.Writer) *Server {
+func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
+		rpcTiming:        newRPCTimingRecorder(),
+		access:           connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
 		rt:      rt,
 		out:     out,
@@ -365,7 +393,12 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		activeRunByThread:            make(map[string]string),
 		modelCatalogHTTPClient:       http.DefaultClient,
 	}
-	s.retainCodexHost()
+	for _, option := range options {
+		if err := option(s); err != nil {
+			s.startupErr = err
+			return s
+		}
+	}
 	s.bindUserQuestions()
 	if rt != nil {
 		catalogHome := strings.TrimSpace(rt.WuuHome)
@@ -416,21 +449,28 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		bootOwner = first
 		s.bootOwner = first
 	}
-	if rt != nil && strings.TrimSpace(rt.SessionDir) != "" {
-		s.sideThreadStore = sidethread.NewStore(filepath.Join(rt.SessionDir, "sidethreads"))
-		runStore, err := execution.NewStore(rt.SessionDir)
-		if err != nil {
-			s.startupErr = fmt.Errorf("open execution run store: %w", err)
+
+	binding, err := rt.RetainState()
+	if err != nil {
+		s.startupErr = err
+		return s
+	}
+	defer binding.Close()
+	if strings.TrimSpace(rt.SessionDir) != "" {
+		if err := sidethread.NewStore(context.Background(), binding.Documents).ImportLegacy(filepath.Join(rt.SessionDir, "sidethreads"), bootOwner); err != nil {
+			s.startupErr = fmt.Errorf("import legacy side threads: %w", err)
 			return s
 		}
-		s.runStore = runStore
 	}
 	if bootOwner {
-		s.recoverSideThreadsOnBoot()
-		s.settleOnBoot()
+		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
+			s.startupErr = err
+			return s
+		}
+		s.settleOnBoot(binding)
 	}
 	if s.clientInputReceiptsEnabled() {
-		if err := session.RecoverClientInputs(rt.SessionDir, s.clientInputScope("", "")); err != nil {
+		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope("", "")); err != nil {
 			s.startupErr = err
 			return s
 		}
@@ -452,19 +492,51 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		unbindTurns := rt.PluginSessionRouter.BindExtended(
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
-			s.controlPluginSession,
+			func(ctx context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
+				binding, err := runtime.RetainProductInvocationState(ctx)
+				if err != nil {
+					return pluginhost.SessionControlResult{}, err
+				}
+				defer binding.Close()
+				return s.controlPluginSession(binding, ctx, pluginID, p)
+			},
 		)
+		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
+		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
+			if strings.HasPrefix(operation, "personal/") {
+				operation = strings.TrimPrefix(operation, "personal/")
+				_, execution, known := personalhost.OperationAccess(operation)
+				if !known {
+					return ctx, errors.New("Personal operation is unavailable")
+				}
+				if reference != nil {
+					resources := []access.Resource{{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}}
+					if execution {
+						resources = append(resources, access.Resource{Kind: "session", ID: sessionID})
+					}
+					var err error
+					ctx, err = rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, sessionID, "personal/"+operation, resources...)
+					if err != nil {
+						return ctx, err
+					}
+				}
+				return ctx, s.authorizePersonalOperation(ctx, operation, sessionID)
+			}
+			ctx, err := s.restoreUserSessionAuthorization(ctx, pluginID, reference, operation, sessionID)
+			if err != nil {
+				return ctx, err
+			}
+			return ctx, s.authorizeUserSessionOperation(ctx, operation, sessionID)
+		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient() }
-		s.startBackground(s.replayPendingPluginTurnLifecycles)
+		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
+		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
-	if rt != nil && rt.SessionDir != "" {
-		s.startProjectRecovery()
-	}
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
+
 	return s
 }
 
@@ -484,10 +556,16 @@ func (s *Server) maintainSessionStorage(ctx context.Context) {
 }
 
 func (s *Server) maintainSessionStoragePass(ctx context.Context) {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("retain storage maintenance state: %v", err)
+		return
+	}
+	defer binding.Close()
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return
 	}
-	redundant, err := session.MaintainRedundantStorage(ctx, s.rt.SessionDir)
+	redundant, err := binding.Sessions.WithContext(ctx).MaintainRedundantStorage()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -504,7 +582,7 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 			redundant.CheckpointBytesAfter,
 		)
 	}
-	result, err := session.MaintainModelInputReceipts(ctx, s.rt.SessionDir, time.Now().UTC())
+	result, err := binding.Sessions.WithContext(ctx).MaintainModelInputReceipts(time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -532,7 +610,7 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 			cursors.BytesAfter,
 		)
 	}
-	orphanWorktrees, err := s.cleanupOrphanWorktrees()
+	orphanWorktrees, err := s.cleanupOrphanWorktrees(binding)
 	if err != nil {
 		providers.DebugLogf("worktree storage maintenance: %v", err)
 	} else if orphanWorktrees > 0 {
@@ -545,17 +623,17 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 
 // settleOnBoot reconciles orphaned provider operations without starting a turn.
 // Recovery is best-effort so a transient journal error does not block startup.
-func (s *Server) settleOnBoot() {
+func (s *Server) settleOnBoot(binding *runtime.State) {
 	if s == nil || s.rt == nil {
 		return
 	}
 	now := time.Now().UTC()
-	if s.rt.InferenceJournalRuntime != nil {
-		recoveries, recoverErr := s.rt.InferenceJournalRuntime.ReconcileOrphans(now)
+	if binding.InferenceJournalRuntime != nil {
+		recoveries, recoverErr := binding.InferenceJournalRuntime.ReconcileOrphans(now)
 		if recoverErr != nil {
 			providers.DebugLogf("settleOnBoot pass4 (inference journal): %v", recoverErr)
 		} else if len(recoveries) > 0 {
-			s.persistRecoveredTurnTerminals(recoveries, now)
+			s.persistRecoveredTurnTerminals(binding, recoveries, now)
 			var safe, blocked, abandoned int
 			for _, recovery := range recoveries {
 				switch recovery.Action {
@@ -569,13 +647,13 @@ func (s *Server) settleOnBoot() {
 			}
 			providers.DebugLogf("settleOnBoot pass4: inference operations recovered (safe=%d blocked=%d abandoned=%d)", safe, blocked, abandoned)
 		}
-		if pruned, pruneErr := s.rt.InferenceJournalRuntime.Prune(now); pruneErr != nil {
+		if pruned, pruneErr := binding.InferenceJournalRuntime.Prune(now); pruneErr != nil {
 			providers.DebugLogf("settleOnBoot pass5 (inference journal retention): %v", pruneErr)
 		} else if pruned > 0 {
 			providers.DebugLogf("settleOnBoot pass5: pruned %d old inference operation(s)", pruned)
 		}
-		if s.runStore != nil {
-			recovered, err := s.runStore.ReconcileOrphans(context.Background(), s.rt.InferenceJournalRuntime.RuntimeID(), now)
+		if runStore, err := execution.NewStore(binding.Documents); recoverErr == nil && err == nil {
+			recovered, err := runStore.ReconcileOrphans(context.Background(), binding.InferenceJournalRuntime.RuntimeID(), now)
 			if err != nil {
 				providers.DebugLogf("settleOnBoot pass6 (execution runs): %v", err)
 			} else if len(recovered) > 0 {
@@ -585,7 +663,7 @@ func (s *Server) settleOnBoot() {
 	}
 }
 
-func (s *Server) persistRecoveredTurnTerminals(recoveries []session.InferenceCrashRecovery, now time.Time) {
+func (s *Server) persistRecoveredTurnTerminals(binding *runtime.State, recoveries []session.InferenceCrashRecovery, now time.Time) {
 	owners := make(map[string]struct{})
 	for _, recovery := range recoveries {
 		ownerID := strings.TrimSpace(recovery.OwnerID)
@@ -594,14 +672,14 @@ func (s *Server) persistRecoveredTurnTerminals(recoveries []session.InferenceCra
 		}
 	}
 	for ownerID := range owners {
-		loaded, err := s.loadPersistedThreadSnapshot(ownerID)
+		loaded, err := s.loadPersistedThreadSnapshot(binding, ownerID)
 		if err != nil {
 			if !errors.Is(err, session.ErrSessionNotFound) {
 				providers.DebugLogf("settleOnBoot turn projection %q: %v", ownerID, err)
 			}
 			continue
 		}
-		turns := turnsFromPersistedHistory(ownerID, loaded.displayHistory, now, s.resolveParticipantSummary)
+		turns := turnsFromPersistedHistory(ownerID, loaded.displayHistory, now, s.participantResolver(binding))
 		if len(turns) == 0 {
 			continue
 		}
@@ -610,7 +688,7 @@ func (s *Server) persistRecoveredTurnTerminals(recoveries []session.InferenceCra
 			continue
 		}
 		message := "execution interrupted because the previous app server exited"
-		if err := session.AppendHistoryRecord(s.rt.SessionDir, ownerID, session.HistoryRecord{
+		if err := binding.Sessions.AppendHistoryRecord(ownerID, session.HistoryRecord{
 			Role: "meta", Content: turnTerminalHistoryRecord, DisplayContent: message,
 			ClientID: turn.ID, StopReason: string(TurnStatusInterrupted), At: now,
 		}); err != nil {
@@ -641,10 +719,9 @@ func turnHasFinalAnswer(turn Turn) bool {
 }
 
 func (s *Server) startInferenceJournalMaintenance() {
-	if s == nil || s.rt == nil || s.rt.InferenceJournalRuntime == nil {
+	if s == nil || s.rt == nil {
 		return
 	}
-	journalRuntime := s.rt.InferenceJournalRuntime
 	s.inferenceMaintenanceDone = make(chan struct{})
 	go func() {
 		defer close(s.inferenceMaintenanceDone)
@@ -653,15 +730,25 @@ func (s *Server) startInferenceJournalMaintenance() {
 		for {
 			select {
 			case now := <-ticker.C:
-				recoveries, err := journalRuntime.ReconcileOrphans(now.UTC())
-				if err != nil {
-					providers.DebugLogf("inference journal maintenance: %v", err)
-					continue
-				}
-				if len(recoveries) > 0 {
-					s.persistRecoveredTurnTerminals(recoveries, now.UTC())
-					providers.DebugLogf("inference journal maintenance: recovered %d orphan operation(s)", len(recoveries))
-				}
+				func() {
+					binding, err := s.rt.RetainState()
+					if err != nil {
+						providers.DebugLogf("retain journal maintenance state: %v", err)
+						return
+					}
+					defer binding.Close()
+					if binding.InferenceJournalRuntime == nil {
+						return
+					}
+					recoveries, err := binding.InferenceJournalRuntime.ReconcileOrphans(now.UTC())
+					if err != nil {
+						providers.DebugLogf("inference journal maintenance: %v", err)
+						return
+					}
+					if len(recoveries) > 0 {
+						s.persistRecoveredTurnTerminals(binding, recoveries, now.UTC())
+					}
+				}()
 			case <-s.inferenceMaintenanceStop:
 				return
 			}
@@ -694,6 +781,7 @@ func (s *Server) startBackground(work func()) bool {
 	s.backgroundMu.Unlock()
 	go func() {
 		defer s.backgroundWG.Done()
+		defer s.rpcTiming.flushResponses()
 		work()
 	}()
 	return true
@@ -725,13 +813,17 @@ func (s *Server) Close() {
 	if s == nil {
 		return
 	}
+	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.cancelPluginAdditivePreparation()
+		s.closeRendererClients()
 		s.closeChatGPTLogins()
 		if s.nativeHistoryCancel != nil {
 			s.nativeHistoryCancel()
 		}
 		s.cancelPluginClientRequests()
+		s.cancelArtifactReads()
 		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
@@ -759,13 +851,14 @@ func (s *Server) Close() {
 		s.backgroundMu.Unlock()
 
 		s.mu.Lock()
-		threads := make([]*threadState, 0, len(s.threads))
-		for _, th := range s.threads {
+		closingThreads := s.threads
+		threads := make([]*threadState, 0, len(closingThreads))
+		for _, th := range closingThreads {
 			if th != nil {
 				threads = append(threads, th)
 			}
 		}
-		clear(s.threads)
+		s.threads = make(map[string]*threadState)
 		s.mu.Unlock()
 
 		// Close worker-turn admission before the first cancellation wave. BeginShutdown
@@ -827,8 +920,13 @@ func (s *Server) Close() {
 		clear(s.drainingQueuedTurns)
 		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
+			th := closingThreads[threadID]
+			if th == nil || th.state == nil {
+				providers.DebugLogf("cannot persist queued shutdown lifecycle for thread %q: captured state is unavailable", threadID)
+				continue
+			}
 			for _, entry := range entries {
-				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+				s.notifyPluginTurnDiscardedWithRetry(th.state, threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
 		s.agentCompletionMu.Lock()
@@ -839,14 +937,11 @@ func (s *Server) Close() {
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
 			s.releaseThreadRuntime(th)
+			if th.state != nil {
+				_ = th.state.Close()
+			}
 		}
-		s.engineHostMu.Lock()
-		releaseHost := s.codexHostRelease
-		s.codexHost, s.codexHostRelease = nil, nil
-		s.engineHostMu.Unlock()
-		if releaseHost != nil {
-			releaseHost()
-		}
+		s.releaseEngineScopes()
 		s.clientInputMu.Lock()
 		if s.clientInputLease != nil {
 			_ = s.clientInputLease.Release()
@@ -857,8 +952,11 @@ func (s *Server) Close() {
 		if s.clientInputReceiptsEnabled() && clientInputOwner != "" {
 			scope := s.clientInputScope("", "")
 			scope.LiveOwner = clientInputOwner
-			if err := session.RecoverClientInputs(s.rt.SessionDir, scope); err != nil {
-				providers.DebugLogf("recover accepted inputs on close: %v", err)
+			if binding, err := s.rt.RetainState(); err == nil {
+				if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, scope); err != nil {
+					providers.DebugLogf("recover accepted inputs on close: %v", err)
+				}
+				_ = binding.Close()
 			}
 		}
 		s.releasePresence()
@@ -982,23 +1080,29 @@ func shutdownExecutionActive(threads []*threadState, controls map[*agentcontrol.
 	return false
 }
 
-func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer) error {
-	return runStdio(ctx, rt, in, out, nil, false)
+func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, options ...ServerOption) error {
+	return runStdio(ctx, rt, in, out, nil, false, options...)
 }
 
 // RunStdioForDevice runs the protocol loop for a remote device session,
 // binding the device/push_* methods to the transport's per-device registrar.
 // Local desktop sessions call RunStdio, which leaves the registrar nil so
 // those methods fail explicitly instead of parking tokens nowhere.
-func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar) error {
-	return runStdio(ctx, rt, in, out, registrar, true)
+func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, options ...ServerOption) error {
+	return runStdio(ctx, rt, in, out, registrar, true, options...)
 }
 
-func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, remoteDevice bool) error {
+func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, remoteDevice bool, options ...ServerOption) error {
 	if rt == nil {
 		return errors.New("runtime session is required")
 	}
-	s := New(rt, out)
+	if caller, ok := principal.FromContext(ctx); ok {
+		options = append(options, WithPrincipal(caller))
+	}
+	if _, authenticated := principal.FromContext(ctx); !remoteDevice && !authenticated {
+		options = append(options, WithTrustedLocalTransport())
+	}
+	s := New(rt, out, options...)
 	s.pushRegistrar = registrar
 	s.remoteDevice = remoteDevice
 	defer s.Close()
@@ -1008,7 +1112,9 @@ func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Wri
 	if s.bootOwner && strings.TrimSpace(rt.WuuHome) != "" {
 		maintenanceCtx, cancel := context.WithCancel(context.Background())
 		s.storageMaintenanceCancel = cancel
-		if !s.startBackground(func() { s.maintainSessionStorage(maintenanceCtx) }) {
+		if !s.startBackground(func() {
+			s.maintainSessionStorage(maintenanceCtx)
+		}) {
 			cancel()
 			s.storageMaintenanceCancel = nil
 		}
@@ -1016,17 +1122,25 @@ func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Wri
 	return runStdioScanner(ctx, s, in)
 }
 
-func (s *Server) handleLine(ctx context.Context, raw []byte) error {
+func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time) error {
 	if s == nil {
 		return errors.New("app-server is required")
 	}
 	if s.startupErr != nil {
 		return s.startupErr
 	}
+	defer s.rpcTiming.flushResponses()
+	handlerStarted := s.rpcTiming.now()
 	var req Request
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return s.writeResponse(nil, nil, fmt.Errorf("parse request: %w", err))
 	}
+	var received time.Time
+	if len(readAt) != 0 {
+		received = readAt[0]
+	}
+	req.timing = s.rpcTiming.begin(req, handlerStarted, received)
+	defer req.timing.mark("handler_end")
 	// A line with an id but no method is the desktop client's Response to a
 	// server-initiated request (browser/*). Route it to the waiting caller
 	// before the method switch, otherwise it falls through to default and gets
@@ -1035,7 +1149,28 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		s.deliverClientResponse(raw)
 		return nil
 	}
+
+	if strings.HasPrefix(req.Method, "transport/") {
+		return s.handleTrustedTransport(ctx, req)
+	}
+	ctx = principal.WithContext(ctx, s.Principal(ctx))
+	var effectErr error
+	ctx, effectErr = requestEffectContext(ctx, req)
+	if effectErr != nil {
+		return s.writeResponse(req.ID, nil, effectErr)
+	}
+	if err := s.authorizeRequest(ctx, req); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.trackAuthorizedRequest(ctx, req); err != nil {
+		return err
+	}
+	ctx = s.captureAuthorizedResponse(ctx, req)
 	switch req.Method {
+	case "session/federation":
+		return s.handleSessionFederation(ctx, req)
+	case MethodStateInspectionsList, MethodStateInspectionsReconcile:
+		return s.handleStateInspections(ctx, req)
 	case MethodInitialize:
 		return s.handleInitialize(req)
 	case MethodConfigRead:
@@ -1075,8 +1210,12 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handlePluginPackageRemove(req)
 	case MethodPluginDesktopModuleRead:
 		return s.handlePluginDesktopModuleRead(req)
+	case MethodPluginDesktopActivation:
+		return s.handlePluginDesktopActivation(req)
 	case MethodPluginIconRead:
 		return s.handlePluginIconRead(req)
+	case "plugin/skin-image/read":
+		return s.handlePluginImageRead(req, true)
 	case MethodPluginSettingGet:
 		return s.handlePluginSettingGet(req)
 	case MethodPluginSettingSet:
@@ -1096,7 +1235,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodPluginClientRequest:
 		return s.handlePluginClientRequest(ctx, req)
 	case MethodPluginClientCancel:
-		return s.handlePluginClientCancel(req)
+		return s.handlePluginClientCancel(ctx, req)
 	case MethodUserQuestionList:
 		return s.handleUserQuestionList(req)
 	case MethodUserQuestionRespond:
@@ -1153,28 +1292,38 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadHistoryRead(req)
 	case "message/image/read":
 		return s.handleMarkdownImageRead(ctx, req)
+	case "thread/artifact/resolve", "thread/artifact/read", "thread/artifact/cancel":
+		return s.handleThreadArtifactRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
-		return s.handleThreadAttachmentRead(req)
+		return s.handleThreadAttachmentRead(ctx, req)
 	case MethodThreadFork, MethodThreadEditMessage:
-		handle := s.handleThreadFork
+		if req.Method == MethodThreadFork && s.rt != nil && s.rt.UserBinding().IsUser() {
+			return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+		}
+		binding, stateErr := s.rt.RetainState()
+		if stateErr != nil {
+			return s.writeResponse(req.ID, nil, stateErr)
+		}
+		defer binding.Close()
+		handle := s.handleThreadForkForState
 		if req.Method == MethodThreadEditMessage {
-			handle = s.handleThreadEditMessage
+			handle = s.handleThreadEditMessageForState
 		}
 		var params struct {
 			ThreadID string `json:"thread_id"`
 		}
 		if json.Unmarshal(req.Params, &params) == nil && s.rt != nil {
-			metadata, found, err := session.Find(s.rt.SessionDir, strings.TrimSpace(params.ThreadID))
+			metadata, found, err := binding.Sessions.Find(strings.TrimSpace(params.ThreadID))
 			if err == nil && found && metadata.EngineRef != "" && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
 				// A native history RPC can wait on another process. Keep unrelated
 				// conversation reads and Stop requests off that wait; the handler's
 				// per-thread mutation lease still serializes its own conversation.
-				if !s.startBackground(func() {
+				if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
 					operationCtx, cancel := context.WithCancel(ctx)
 					stop := context.AfterFunc(s.nativeHistoryCtx, cancel)
 					defer stop()
 					defer cancel()
-					if err := handle(operationCtx, req); err != nil {
+					if err := handle(binding, operationCtx, req); err != nil {
 						log.Printf("wuu: %s: %v", req.Method, err)
 					}
 				}) {
@@ -1183,7 +1332,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 				return nil
 			}
 		}
-		return handle(ctx, req)
+		return handle(binding, ctx, req)
 	case MethodThreadContextComposition:
 		return s.handleThreadContextComposition(req)
 	case MethodInstructionsList:
@@ -1208,16 +1357,24 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadSearch(req)
 	case MethodThreadPreview:
 		return s.handleThreadPreview(req)
+	case "session/share/preview", "session/share/create", "session/share/read", "session/share/attachment/read", "session/share/revoke":
+		return s.handleSessionShare(ctx, req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
 	case "thread/control/return":
 		return s.handleThreadControl(ctx, req)
 	case "thread/control/take":
 		return s.handleThreadTakeControl(req)
-	case MethodProjectWork:
-		return s.handleProjectWork(req)
-	case MethodProjectSession:
-		return s.handleProjectSession(req)
+	case MethodProjectWork, MethodProjectSession:
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		if req.Method == MethodProjectWork {
+			return s.handleProjectWork(binding, req)
+		}
+		return s.handleProjectSession(binding, req)
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:
@@ -1323,6 +1480,12 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleProcessCancelNotifications(req)
 	case MethodMCPList:
 		return s.handleMCPList(req)
+	case MethodMCPDefinitionRead:
+		return s.handleMCPDefinitionRead(ctx, req)
+	case MethodMCPConfigure:
+		return s.handleMCPConfigure(ctx, req)
+	case MethodMCPAuthCancel:
+		return s.handleMCPAuthCancel(ctx, req)
 	case MethodMCPConnect:
 		return s.handleMCPConnect(ctx, req)
 	case MethodMCPDisconnect:
@@ -1392,6 +1555,10 @@ func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
 		Type:      ev.Type,
 		Content:   ev.Content,
 		Truncated: ev.Truncated,
+	}
+	if ev.ModelStep != nil {
+		copy := *ev.ModelStep
+		out.ModelStep = &copy
 	}
 	if ev.Message != nil && !ev.Message.Hidden {
 		out.Message = ev.Message
@@ -1505,6 +1672,7 @@ func decodeParams(raw json.RawMessage, dst any) error {
 }
 
 func (s *Server) writeResponse(id json.RawMessage, result any, err error) error {
+	started := s.rpcTiming.now()
 	resp := Response{ID: id, Result: result}
 	if err != nil {
 		resp.Result = nil
@@ -1513,7 +1681,13 @@ func (s *Server) writeResponse(id json.RawMessage, result any, err error) error 
 			Message: err.Error(),
 		}
 	}
-	return s.writeJSON(resp)
+	var denied *access.Denied
+	if errors.As(err, &denied) {
+		resp.Error.Code = "access_denied"
+	}
+	writeErr := s.writeJSON(resp)
+	s.rpcTiming.responseWritten(id, started, writeErr)
+	return writeErr
 }
 
 func (s *Server) writeNotification(method string, params any) error {
@@ -1547,11 +1721,38 @@ func (s *Server) writeJSON(v any) error {
 }
 
 func (s *Server) writeJSONContext(ctx context.Context, v any) error {
+	// A shared host is an internal fanout, not an authenticated recipient.
+	// Its private sink establishes a fresh guard for each real connection.
+	if notification, ok := v.(Notification); ok {
+		if sink, ok := s.out.(interface{ writeRecipientNotification(Notification) error }); ok {
+			return sink.writeRecipientNotification(notification)
+		}
+	}
+	var allowed bool
+	var guard func() error
+	v, guard, allowed = s.authorizeOutbound(ctx, v)
+	if !allowed {
+		return nil
+	}
+	var transportErr error
+	v, transportErr = s.wrapTrustedTransportResponse(v, guard)
+	if transportErr != nil {
+		return transportErr
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	// Order the authority check with takeover/release notifications. An old
 	// cancelled request must not be written after a fresh control grant.
 	if err := activity.ControlErr(ctx); err != nil {
+		return err
+	}
+	if guarded, ok := s.out.(GuardedWriter); ok {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		raw = append(raw, '\n')
+		_, err = guarded.WriteAuthorized(raw, guard)
 		return err
 	}
 	enc := json.NewEncoder(s.out)

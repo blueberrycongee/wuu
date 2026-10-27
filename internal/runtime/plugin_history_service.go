@@ -9,15 +9,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
-func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, binding userspace.Binding, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
+func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, binding userspace.Binding, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistoryReadParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
-	sessDir, meta, err := loadVisibleHistorySession(wuuHome, pluginID, params.SessionID)
+	meta, err := loadVisibleHistorySession(ctx, store, pluginID, params.SessionID, binding)
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
@@ -37,7 +36,7 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, bin
 		}
 		cursor = &decoded
 	}
-	page, err := session.ReadHistoryQuery(ctx, sessDir, session.HistoryReadQuery{
+	page, err := store.WithContext(ctx).ReadHistoryQuery(session.HistoryReadQuery{
 		SessionID: meta.ID, StartSeq: params.StartSeq, EndSeq: params.EndSeq, SnapshotSeq: params.SnapshotSeq, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
@@ -49,7 +48,7 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, bin
 	}
 	var receipts map[string]providers.ClientInputReceipt
 	if receiptEnabled {
-		receipts, err = session.ClientInputHistoryReceipts(sessDir, session.ClientInputScope{Binding: binding, SessionID: meta.ID, PluginID: pluginID})
+		receipts, err = store.WithContext(ctx).ClientInputHistoryReceipts(session.ClientInputScope{Binding: binding, SessionID: meta.ID, PluginID: pluginID})
 		if err != nil {
 			return pluginhost.SessionHistoryPage{}, historyServiceError(err)
 		}
@@ -80,11 +79,11 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, bin
 	return result, nil
 }
 
-func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, params pluginhost.SessionHistorySearchParams) (pluginhost.SessionHistoryPage, error) {
+func searchPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, binding userspace.Binding, params pluginhost.SessionHistorySearchParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistorySearchParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
-	sessDir, meta, err := loadVisibleHistorySession(wuuHome, pluginID, params.SessionID)
+	meta, err := loadVisibleHistorySession(ctx, store, pluginID, params.SessionID, binding)
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
@@ -102,7 +101,7 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 	}
 	minimum, _ := time.Parse(time.RFC3339Nano, params.TimeMin)
 	maximum, _ := time.Parse(time.RFC3339Nano, params.TimeMax)
-	page, err := session.SearchHistoryQuery(ctx, sessDir, session.HistorySearchQuery{TimeMin: minimum, TimeMax: maximum, View: params.View,
+	page, err := store.WithContext(ctx).SearchHistoryQuery(session.HistorySearchQuery{TimeMin: minimum, TimeMax: maximum, View: params.View,
 		SessionID: meta.ID, Query: params.Query, StartSeq: params.StartSeq, EndSeq: params.EndSeq,
 		SnapshotSeq: params.SnapshotSeq, BeforeSeq: params.BeforeSeq, Limit: limit, Cursor: cursor,
 	})
@@ -139,24 +138,25 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 	return result, nil
 }
 
-func loadVisibleHistorySession(wuuHome, pluginID, sessionID string) (string, session.Session, error) {
-	home := strings.TrimSpace(wuuHome)
-	if home == "" {
-		return "", session.Session{}, serviceError("service_unavailable", "session history is unavailable")
+func loadVisibleHistorySession(ctx context.Context, store *session.Store, pluginID, sessionID string, binding userspace.Binding) (session.Session, error) {
+	if store == nil {
+		return session.Session{}, serviceError("service_unavailable", "session history is unavailable")
 	}
-	sessDir := statepath.SessionsDir(home)
-	meta, ok, err := session.Find(sessDir, sessionID)
+	meta, ok, err := store.WithContext(ctx).Find(sessionID)
 	if err != nil {
-		return "", session.Session{}, historyServiceError(err)
+		return session.Session{}, historyServiceError(err)
 	}
 	if !ok {
-		return "", session.Session{}, serviceError("not_found", "session history is unavailable")
+		return session.Session{}, serviceError("not_found", "session history is unavailable")
+	}
+	if binding.Validate() != nil || !binding.Matches(userspace.Binding{UserSpaceID: meta.UserSpaceID, ProductDomain: meta.ProductDomain}) {
+		return session.Session{}, serviceError("domain_denied", "session belongs to another user space or product domain")
 	}
 	owner := "plugin:" + strings.TrimSpace(pluginID)
 	if meta.Visibility == pluginhost.SessionVisibilityPlugin && meta.Owner != owner {
-		return "", session.Session{}, serviceError("not_found", "session history is unavailable")
+		return session.Session{}, serviceError("not_found", "session history is unavailable")
 	}
-	return sessDir, meta, nil
+	return meta, nil
 }
 
 func historyServiceError(err error) error {

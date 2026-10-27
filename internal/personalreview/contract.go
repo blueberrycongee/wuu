@@ -183,10 +183,14 @@ type Options struct {
 	Store      *Store
 	Operations map[string]Operation
 	Clock      func() time.Time
-	// WithAuthority must hold the host's task/policy/connection revision lock
-	// through use, including handler dispatch. Revocation and task changes must
-	// acquire that same lock. The callback may run more than once per action.
+	// WithAuthority reads a consistent selected authority snapshot for proposals,
+	// review and owner decisions. It does not authorize external effects.
 	WithAuthority func(context.Context, Scope, func(Authority) error) error
+	// WithExecutionAuthority must fence task/policy/connection revocation for
+	// the complete callback, including durable dispatch claim and effect. A
+	// selected snapshot plus a local mutex is not this boundary. Nil preserves
+	// inspection and decisions but rejects dispatch before claiming the action.
+	WithExecutionAuthority func(context.Context, Scope, func(context.Context, Authority) error) error
 	// Authenticate reads host transport identity. Never decode it from the
 	// Resolution or accept plugin/worker/GenUI-declared identity as proof.
 	Authenticate func(context.Context) (Identity, error)
@@ -196,3 +200,5 @@ type Options struct {
 var ErrConflict = errors.New("personal_review_revision_conflict")
 var ErrUnauthorized = errors.New("personal_review_owner_confirmation_required")
 var ErrNotFound = errors.New("personal_review_not_found")
+
+var ErrExecutionAuthorityUnavailable = errors.New("personal_review_execution_authority_unavailable")

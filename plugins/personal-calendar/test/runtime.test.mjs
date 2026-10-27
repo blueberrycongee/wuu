@@ -31,9 +31,9 @@ async function run(domain) {
   });
   const request = (method, params) => new Promise((resolve, reject) => { const id = `synthetic-${++sequence}`; pending.set(id, { resolve, reject }); send({ id, method, params }); });
   try {
-    const definition = await request('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: 'personal-calendar', plugin_root: '.', project_root: '', wuu_home: '/synthetic', data_root: '/synthetic/personal', user_space_id: 'protocol-user', product_domain: domain, supported_host_services: ['host.service.call'] });
+    const definition = await request('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: 'personal-calendar', plugin_root: '.', project_root: '', wuu_home: '/synthetic', data_root: '/synthetic/personal', user_space_id: 'protocol-user', product_domain: domain, supported_host_services: ['host.service.call'] });
     assert.deepEqual(definition.tools, []);
-    await request('activate');
+    await request('prepare'); await request('activate');
     for (const tool_id of ['calendar_agenda', 'calendar_refresh', 'calendar_propose', 'calendar_operation', 'calendar_confirm']) {
       const effectsBefore = frames.filter(frame => frame.method).length;
       await assert.rejects(request('tool.execute', { tool_id, arguments: {}, session_id: 'synthetic-session', thread_id: 'synthetic-session', call_id: `removed-${tool_id}`, execution_id: `removed-${tool_id}`, cwd: '.' }), /tool.execute is not implemented/);

@@ -1,14 +1,16 @@
 package appserver
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/plugincredentials"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -19,12 +21,20 @@ func (s *Server) handlePluginSettingGet(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, definition, key, err := s.activePluginSetting(params.ID, params.Fingerprint, params.Key)
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
+	plugin, definition, key, err := s.activePluginSettingIn(services.Snapshot, params.ID, params.Fingerprint, params.Key)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if definition.Type == pluginpkg.SettingTypeSecret {
+		return s.pluginSecretSetting(req, services, plugin, definition, key, nil)
+	}
 	scope := PluginValueScope(definition.Scope)
-	document, err := pluginsettings.Read(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, pluginsettings.Scope(scope))
+	document, err := services.Settings.Read(context.Background(), plugin.SubjectID, pluginsettings.Scope(scope))
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -43,16 +53,69 @@ func (s *Server) handlePluginSettingSet(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, definition, key, err := s.activePluginSetting(params.ID, params.Fingerprint, params.Key)
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := validatePluginSettingValue(definition, params.Value); err != nil {
+	defer release()
+	plugin, definition, key, err := s.activePluginSettingIn(services.Snapshot, params.ID, params.Fingerprint, params.Key)
+	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := pluginpkg.ValidateSettingValue(definition, params.Value); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	patch := make(map[string]json.RawMessage, len(params.Patch))
+	if len(params.Patch) > 255 {
+		return s.writeResponse(req.ID, nil, errors.New("plugin setting patch exceeds 255 additional keys"))
+	}
+	for patchKey, value := range params.Patch {
+		_, patchDefinition, localKey, err := s.activePluginSettingIn(services.Snapshot, params.ID, params.Fingerprint, patchKey)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if localKey == key || patch[localKey] != nil {
+			return s.writeResponse(req.ID, nil, errors.New("plugin setting patch contains a duplicate key"))
+		}
+		if patchDefinition.Scope != definition.Scope || patchDefinition.Type == pluginpkg.SettingTypeSecret || definition.Type == pluginpkg.SettingTypeSecret {
+			return s.writeResponse(req.ID, nil, errors.New("plugin setting patch must contain non-secret keys in one scope"))
+		}
+		if err := pluginpkg.ValidateSettingValue(patchDefinition, value); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		patch[localKey] = value
+	}
+	if definition.Type == pluginpkg.SettingTypeSecret {
+		var value string
+		_ = json.Unmarshal(params.Value, &value)
+		return s.pluginSecretSetting(req, services, plugin, definition, key, &value)
+	}
 	scope := PluginValueScope(definition.Scope)
-	document, err := pluginsettings.Update(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, pluginsettings.Scope(scope), plugin.Fingerprint, func(values map[string]json.RawMessage) error {
+	document, err := services.Settings.Update(context.Background(), plugin.SubjectID, pluginsettings.Scope(scope), plugin.Fingerprint, func(values map[string]json.RawMessage) error {
 		values[key] = append(json.RawMessage(nil), params.Value...)
+		for patchKey, value := range patch {
+			values[patchKey] = append(json.RawMessage(nil), value...)
+		}
+		// Validate every declared value in this independently committed scope.
+		// Removed declarations remain stored for downgrade compatibility, but
+		// are never exposed as active settings.
+		for qualified, candidateDefinition := range plugin.Settings {
+			if candidateDefinition.Scope != definition.Scope || candidateDefinition.Type == pluginpkg.SettingTypeSecret {
+				continue
+			}
+			candidateKey := strings.TrimPrefix(qualified, plugin.ID+".")
+			candidate, exists := values[candidateKey]
+			if !exists {
+				var err error
+				candidate, err = json.Marshal(candidateDefinition.Default)
+				if err != nil {
+					return err
+				}
+			}
+			if err := pluginpkg.ValidateSettingValue(candidateDefinition, candidate); err != nil {
+				return fmt.Errorf("setting %q: %w", candidateKey, err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -95,11 +158,32 @@ func (s *Server) handlePluginDiagnosticsList(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, err := s.requireActiveDesktopPlugin(params.ID, params.Fingerprint)
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	diagnostics := s.rt.PluginHost.ContributionDiagnostics(plugin.ID)
+	defer release()
+	params.ID, params.Fingerprint = strings.TrimSpace(params.ID), strings.TrimSpace(params.Fingerprint)
+	var pluginID string
+	for _, module := range services.Snapshot.NativeRendererModules() {
+		if module.SubjectID != params.ID {
+			continue
+		}
+		if params.Fingerprint != module.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("plugin generation is no longer active"))
+		}
+		pluginID = module.ID
+		break
+	}
+	if pluginID == "" {
+		plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		pluginID = plugin.ID
+	}
+	host := services.Snapshot.PluginHost
+	diagnostics := host.ContributionDiagnostics(pluginID)
 	result := make([]PluginContributionDiagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		result = append(result, PluginContributionDiagnostic{
@@ -107,7 +191,39 @@ func (s *Server) handlePluginDiagnosticsList(req Request) error {
 			Message:      diagnostic.Message,
 		})
 	}
-	return s.writeResponse(req.ID, PluginDiagnosticsResult{ID: plugin.SubjectID, Diagnostics: result}, nil)
+	result = append(result, pluginRendererDiagnostics(host, pluginID)...)
+	return s.writeResponse(req.ID, PluginDiagnosticsResult{ID: params.ID, Diagnostics: result}, nil)
+}
+
+func pluginRendererDiagnostics(host *pluginhost.Host, pluginID string) []PluginContributionDiagnostic {
+	registry := host.ServiceRegistry()
+	if registry == nil {
+		return nil
+	}
+	composition := registry.Snapshot(0).Composition
+	if composition == nil {
+		return nil
+	}
+	var diagnostics []PluginContributionDiagnostic
+	for _, module := range composition.Modules {
+		if module.ID != pluginID || module.Renderer == nil {
+			continue
+		}
+		for _, client := range module.Renderer.Clients {
+			for _, phase := range []struct {
+				name  string
+				state *pluginhost.RendererPhaseSnapshot
+			}{{"registration", client.Registration}, {"render", client.Render}, {"cleanup", client.Cleanup}} {
+				if phase.state != nil && phase.state.Status == "failed" {
+					diagnostics = append(diagnostics, PluginContributionDiagnostic{
+						Contribution: "renderer/" + client.RendererID + "/" + phase.name,
+						Message:      phase.state.Message,
+					})
+				}
+			}
+		}
+	}
+	return diagnostics
 }
 
 // handlePluginGenerationDiagnosticsList exposes retired plugin generation
@@ -136,7 +252,12 @@ func (s *Server) handlePluginStorageGet(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, err := s.requireActiveDesktopPlugin(params.ID, params.Fingerprint)
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -147,7 +268,7 @@ func (s *Server) handlePluginStorageGet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := pluginsettings.ReadState(s.rt.ProductDataRoot(), s.rt.RootDir, plugin.SubjectID, scope)
+	document, err := services.Settings.ReadState(context.Background(), plugin.SubjectID, scope)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -163,7 +284,12 @@ func (s *Server) handlePluginStorageSet(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, err := s.requireActiveDesktopPlugin(params.ID, params.Fingerprint)
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -174,7 +300,7 @@ func (s *Server) handlePluginStorageSet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := pluginsettings.UpdateState(s.rt.ProductDataRoot(), s.rt.RootDir, plugin.SubjectID, scope, func(values map[string]string) error {
+	document, err := services.Settings.UpdateState(context.Background(), plugin.SubjectID, scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -185,8 +311,8 @@ func (s *Server) handlePluginStorageSet(req Request) error {
 	return s.writeResponse(req.ID, PluginStorageResult{ID: plugin.SubjectID, Scope: params.Scope, Key: params.Key, Value: &value}, nil)
 }
 
-func (s *Server) activePluginSetting(id, fingerprint, key string) (pluginpkg.Plugin, pluginpkg.SettingDefinition, string, error) {
-	plugin, err := s.requireActiveDesktopPlugin(id, fingerprint)
+func (s *Server) activePluginSettingIn(snapshot runtime.ExtensionSnapshot, id, fingerprint, key string) (pluginpkg.Plugin, pluginpkg.SettingDefinition, string, error) {
+	plugin, err := s.requireActiveDesktopPluginIn(snapshot, id, fingerprint)
 	if err != nil {
 		return pluginpkg.Plugin{}, pluginpkg.SettingDefinition{}, "", err
 	}
@@ -203,42 +329,41 @@ func (s *Server) activePluginSetting(id, fingerprint, key string) (pluginpkg.Plu
 	return plugin, definition, key, nil
 }
 
-func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.Plugin, error) {
-	plugin, _, err := s.requireActiveDesktopPluginHost(id, fingerprint)
-	return plugin, err
-}
-
 // Admission and dispatch must use the same generation snapshot. Reading the
 // mutable Session.PluginHost again can route old-fingerprint input to new code.
 func (s *Server) requireActiveDesktopPluginHost(id, fingerprint string) (pluginpkg.Plugin, *pluginhost.Host, error) {
+	snapshot := s.rt.ExtensionSnapshot()
+	plugin, err := s.requireActiveDesktopPluginIn(snapshot, id, fingerprint)
+	return plugin, snapshot.PluginHost, err
+}
+
+func (s *Server) requireActiveDesktopPluginIn(snapshot runtime.ExtensionSnapshot, id, fingerprint string) (pluginpkg.Plugin, error) {
 	id, fingerprint = strings.TrimSpace(id), strings.TrimSpace(fingerprint)
 	if id == "" || fingerprint == "" {
-		return pluginpkg.Plugin{}, nil, errors.New("plugin id and fingerprint are required")
+		return pluginpkg.Plugin{}, errors.New("plugin id and fingerprint are required")
 	}
-	snapshot := s.rt.ExtensionSnapshot()
 	for _, plugin := range snapshot.Plugins {
 		if plugin.SubjectID != id {
 			continue
 		}
 		if plugin.Fingerprint != fingerprint {
-			return pluginpkg.Plugin{}, nil, errors.New("plugin generation is no longer active")
+			return pluginpkg.Plugin{}, errors.New("plugin generation is no longer active")
 		}
 		settings := extensions.Settings{}
 		if snapshot.ExtensionSettings != nil {
 			settings = *snapshot.ExtensionSettings
-		} else if cfg := s.currentExtensionConfig(); cfg.Extensions != nil {
-			settings = *cfg.Extensions
+
 		}
 		approval, state, _, enabled := pluginPackageInventoryState(settings, plugin)
 		if !enabled || (approval != ExtensionApprovalGranted && approval != ExtensionApprovalOfficial) || (state != ExtensionStateGranted && state != ExtensionStateActive) {
-			return pluginpkg.Plugin{}, nil, errors.New("desktop plugin is not approved and enabled")
+			return pluginpkg.Plugin{}, errors.New("desktop plugin is not approved and enabled")
 		}
 		if err := desktopPluginRuntimeError(snapshot.PluginHost, plugin.ID); err != nil {
-			return pluginpkg.Plugin{}, nil, err
+			return pluginpkg.Plugin{}, err
 		}
-		return plugin, snapshot.PluginHost, nil
+		return plugin, nil
 	}
-	return pluginpkg.Plugin{}, nil, fmt.Errorf("plugin %q is not available in this workspace", id)
+	return pluginpkg.Plugin{}, fmt.Errorf("plugin %q is not available in this workspace", id)
 }
 
 func desktopPluginRuntimeError(host *pluginhost.Host, id string) error {
@@ -262,32 +387,24 @@ func pluginStorageScope(scope PluginValueScope) (pluginsettings.Scope, error) {
 	}
 }
 
-func validatePluginSettingValue(definition pluginpkg.SettingDefinition, raw json.RawMessage) error {
-	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
-		return errors.New("plugin setting value must be valid JSON within 65536 bytes")
+// Secret settings share the existing fingerprint-gated UI route but never enter
+// pluginsettings files, broadcasts or read responses. Empty input removes a token.
+func (s *Server) pluginSecretSetting(req Request, services *runtime.StateServices, plugin pluginpkg.Plugin, definition pluginpkg.SettingDefinition, key string, value *string) error {
+	binding, err := plugincredentials.BindingFor(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, key, definition.CredentialOrigins)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return errors.New("plugin setting value is invalid")
-	}
-	valid := false
-	switch definition.Type {
-	case pluginpkg.SettingTypeBoolean:
-		_, valid = value.(bool)
-	case pluginpkg.SettingTypeString:
-		_, valid = value.(string)
-	case pluginpkg.SettingTypeNumber:
-		_, valid = value.(json.Number)
-	case pluginpkg.SettingTypeEnum:
-		text, ok := value.(string)
-		for _, candidate := range definition.Enum {
-			valid = valid || (ok && text == candidate)
+	store := services.Credentials
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if value != nil {
+		if err := plugincredentials.Set(ctx, store, binding, *value); err != nil {
+			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if !valid {
-		return fmt.Errorf("plugin setting value does not match declared type %q", definition.Type)
+	configured, err := plugincredentials.Configured(ctx, store, binding)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	return nil
+	return s.writeResponse(req.ID, PluginSettingResult{ID: plugin.SubjectID, Key: key, Scope: PluginValueScopeUser, Value: json.RawMessage(`""`), Configured: &configured}, nil)
 }

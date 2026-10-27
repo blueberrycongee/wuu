@@ -23,7 +23,13 @@ interface Stored {
   windows?: Record<string, CachedWindow>; selected_window?: string;
   refresh?: { id: string; query: CalendarQuery };
 }
-export interface PersonalCalendarOptions { reader?: CalendarReader; writer?: CalendarWriter; clock?: () => Date }
+export type CalendarTargetValidator = (target: { task_id: string; requirements_revision: number } & WriteTarget, signal: AbortSignal) => Promise<void>;
+/** An injected writer must bring its composition's current task-authority
+ * validator. The Calendar service cannot depend back on its Personal consumer. */
+export type PersonalCalendarOptions = { reader?: CalendarReader; clock?: () => Date } & (
+  | { writer?: undefined; validateTarget?: never }
+  | { writer: CalendarWriter; validateTarget: CalendarTargetValidator }
+);
 const object = (raw: unknown): Record<string, unknown> => {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid calendar parameters');
@@ -36,14 +42,25 @@ const sameQuery = (a: CalendarQuery, b: CalendarQuery) => a.calendar_id === b.ca
 export class PersonalCalendarPlugin implements RuntimePlugin {
   readonly concurrentServices = [service];
   readonly concurrentCapabilities = ['plugin.client.request'];
-  private host!: RuntimeHost;
+  private readonly host: RuntimeHost = {
+    supports: method => this.admittedHost().supports(method),
+    call: (method, params, options) => this.admittedHost().call(method, params, options),
+  };
+  private admittedHost(): RuntimeHost {
+    const scope = this.callScope.getStore();
+    if (!scope) throw new Error('Calendar host call requires an admitted callback');
+    return scope.host;
+  }
   private space = ''; private key = ''; private owner = randomUUID();
   private available = false; private active = false; private abort = new AbortController();
   private callScope = new AsyncLocalStorage<{ host: RuntimeHost; sessionID: string }>();
   private reader: CalendarReader; private clock: () => Date;
-  private writer?: CalendarWriter; private operations?: CalendarOperations;
+  private writer?: CalendarWriter; private validateTarget?: CalendarTargetValidator; private operations?: CalendarOperations;
   private inFlight?: { query: CalendarQuery; promise: Promise<unknown>; abort: AbortController };
-  constructor(options: PersonalCalendarOptions = {}) { this.reader = options.reader ?? new ConnectedCalendarReader({
+  constructor(options: PersonalCalendarOptions = {}) {
+    if (options.writer && typeof options.validateTarget !== 'function') throw new Error('calendar target_validator_required');
+    this.validateTarget = options.validateTarget;
+    this.reader = options.reader ?? new ConnectedCalendarReader({
       status: async signal => decodeCalendarConnection(await this.connectedCall('status', {}, signal)),
       authorize: async signal => decodeCalendarConnection(await this.connectedCall('authorize', {}, signal)),
       eventsPage: (connectionID, query, signal) => { const { account_id: _account, ...bounded } = query; return this.connectedCall('events', { connection_id: connectionID, query: bounded }, signal); },
@@ -54,18 +71,18 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
     return callPersonalHost(scope.host, `calendar.read.${method}`, input, scope.sessionID, signal);
   }
   initialize(params: RuntimeInitializeParams, host: RuntimeHost, lifecycle: RuntimeLifecycleContext): RuntimeInitializeResult {
-    this.host = host; this.space = params.user_space_id?.trim() ?? '';
+    this.space = params.user_space_id?.trim() ?? '';
     this.available = params.product_domain === 'personal' && Boolean(this.space);
     this.key = `calendar.v1.${createHash('sha256').update(this.space).digest('hex')}`;
     if (lifecycle.signal.aborted) this.abort.abort(); else lifecycle.signal.addEventListener('abort', () => { this.active = false; this.abort.abort(); this.operations?.stopOutstanding(); }, { once: true });
     if (!this.available) return { protocol_version: 3, provided_services: [], capabilities: [], tools: [] };
-    this.operations = new CalendarOperations({ host, space: this.space, owner: this.owner, signal: this.abort.signal, writer: this.writer, clock: this.clock,
+    this.operations = new CalendarOperations({ host: this.host, space: this.space, owner: this.owner, signal: this.abort.signal, writer: this.writer, clock: this.clock,
       guard: async () => { await this.current(); },
       validateTarget: async target => { await this.validateOperationTarget(target); },
       beforeMutation: async () => { await this.update(current => { if (current!.disabled) throw new Error('calendar disconnected'); return { ...current!, state: 'error', error_code: 'calendar_write_pending', refresh: undefined, windows: Object.fromEntries(Object.entries(current!.windows!).map(([key, window]) => [key, { ...window, state: 'error', error_code: 'calendar_write_pending' }])) }; }); this.inFlight?.abort.abort(); },
     });
-    return { protocol_version: 3, lifecycle_version: 1,
-      required_services: [...(['host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.context'] as const).map(requireKernelService), { name: 'personal.agents', major_version: 1, required: false }, { name: 'host.personal', major_version: 1, required: true }],
+    return { protocol_version: 3, lifecycle_version: 2,
+      required_services: [...(['host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.context'] as const).map(requireKernelService), { name: 'host.personal', major_version: 1, required: true }],
       provided_services: [{ name: service, version: '1.0.0', methods: methods.map(name => ({ name, input_schema: `calendar.personal.${name}.request.v1`, output_schema: 'calendar.personal.snapshot.v1' })) }],
       capabilities: [{ id: 'plugin.client.request', kind: 'decision', version: 1 }],
       // Keep existing calendar state and client reconciliation available without
@@ -73,7 +90,10 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
       tools: [],
     };
   }
-  async activate(): Promise<void> {
+  activate(host: RuntimeHost): Promise<void> {
+    return this.callScope.run({ host, sessionID: '' }, () => this.activateScoped());
+  }
+  private async activateScoped(): Promise<void> {
     if (!this.available || this.abort.signal.aborted) return;
     await this.update(current => {
       const state = current ?? this.empty(), windows = { ...state.windows };
@@ -164,25 +184,28 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
   private async validateOperationTarget(target: { task_id: string; requirements_revision: number } & WriteTarget): Promise<void> {
     const context = await this.session(target.session_id);
     if (context.agent_id !== target.agent_id || target.user_space_id !== this.space) throw new Error('operation actor scope mismatch');
-    const response = await this.host.call('host.service.call', { service: 'personal.agents', method: 'tasks.get', params: { task_id: target.task_id, session_id: target.session_id } }) as { task?: { task_id: string; user_space_id: string; agent_id: string; requirements_revision: number; state: string; cancel_requested?: boolean } };
-    const task = response.task;
-    if (!task || task.task_id !== target.task_id || task.user_space_id !== this.space || task.agent_id !== target.agent_id || task.requirements_revision !== target.requirements_revision || task.cancel_requested || ['stopped', 'failed', 'completed'].includes(task.state)) throw new Error('operation task requirements revision or scope changed');
+    if (!this.validateTarget) throw new Error('calendar target_validator_required');
+    await this.validateTarget(target, this.abort.signal);
   }
-  async invokeService(call: ServiceInvokeParams, _host?: RuntimeHost, execution?: RuntimeExecutionContext): Promise<unknown> {
+  async invokeService(call: ServiceInvokeParams, host: RuntimeHost, execution?: RuntimeExecutionContext): Promise<unknown> {
     this.assertActive(); if (call.service !== service) throw new Error('unknown calendar service');
     const input = object(call.params);
-    if (call.caller !== 'kernel') {
-      if (['disconnect', 'clear-cache'].includes(call.method) || input.reconnect === true) await callPersonalHost(_host ?? this.host, 'owner.check', {}, undefined, execution?.signal);
-      else await this.session(input.session_id);
-    }
-    return this.callScope.run({ host: _host ?? this.host, sessionID: typeof input.session_id === 'string' ? input.session_id : '' }, () => this.request(call.method, input, execution?.signal));
+    return this.callScope.run({ host, sessionID: typeof input.session_id === 'string' ? input.session_id : '' }, async () => {
+      if (call.caller !== 'kernel') {
+        if (['disconnect', 'clear-cache'].includes(call.method) || input.reconnect === true) await callPersonalHost(host, 'owner.check', {}, undefined, execution?.signal);
+        else await this.session(input.session_id);
+      }
+      return this.request(call.method, input, execution?.signal);
+    });
   }
-  async invokeCapability(call: CapabilityInvokeParams, _host?: RuntimeHost, execution?: RuntimeExecutionContext): Promise<{ output: unknown }> {
+  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost, execution?: RuntimeExecutionContext): Promise<{ output: unknown }> {
     this.assertActive(); if (call.capability !== 'plugin.client.request') throw new Error('unknown calendar capability');
     const input = object(call.input); if (typeof input.method !== 'string') throw new Error('invalid calendar method');
     const params = object(input.input), method = input.method.replace(/^calendar\./, "");
-    await callPersonalHost(_host ?? this.host, 'owner.check', {}, undefined, execution?.signal);
-    return this.callScope.run({ host: _host ?? this.host, sessionID: typeof params.session_id === 'string' ? params.session_id : '' }, async () => ({ output: { result: await this.request(method, params, execution?.signal, true) } }));
+    return this.callScope.run({ host, sessionID: typeof params.session_id === 'string' ? params.session_id : '' }, async () => {
+      await callPersonalHost(host, 'owner.check', {}, undefined, execution?.signal);
+      return { output: { result: await this.request(method, params, execution?.signal, true) } };
+    });
   }
   private async request(method: string, input: Record<string, unknown>, executionSignal?: AbortSignal, client = false): Promise<unknown> {
     this.assertActive();

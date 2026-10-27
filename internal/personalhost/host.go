@@ -30,6 +30,9 @@ type Calendar interface {
 	Close() error
 }
 type Options struct {
+	// Authorize is the selected resource policy. Live owner transport admission
+	// and verified session identity are additional proof, never substitutes.
+	Authorize                     func(context.Context, string, string) error
 	Connectors                    Connectors
 	ConnectorsUnavailableCode     string
 	OpenConnectorAuthorizationURL func(context.Context, string) error
@@ -72,6 +75,18 @@ func (h *Host) Close() error {
 // Call's verifiedSession is resolved from host session metadata before dispatch.
 // Control operations derive their actor from the separate owner admission.
 func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, verifiedSession string) (json.RawMessage, error) {
+	if _, _, known := OperationAccess(operation); !known {
+		return nil, errors.New("Personal host operation is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if h.options.Authorize == nil {
+		return nil, errors.New("Personal resource authorization is unavailable")
+	}
+	if err := h.options.Authorize(ctx, operation, verifiedSession); err != nil {
+		return nil, err
+	}
 
 	if strings.HasPrefix(operation, "connectors.") {
 		return h.callConnectors(ctx, operation, raw, verifiedSession)

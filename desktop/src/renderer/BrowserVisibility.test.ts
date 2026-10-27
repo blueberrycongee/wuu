@@ -104,6 +104,22 @@ describe("pickBoundsRect", () => {
 });
 
 describe("observeBrowserPanelBounds", () => {
+  it("measures its own panel instead of another mounted browser", () => {
+    const other = document.createElement("div"); other.className = "workspace-browser-host";
+    const panel = document.createElement("section");
+    const host = document.createElement("div"); host.className = "workspace-browser-host"; panel.append(host);
+    document.body.append(other, panel);
+    vi.spyOn(other, "getBoundingClientRect").mockReturnValue({ x: 1, y: 2, left: 1, top: 2, width: 10, height: 20 } as DOMRect);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ x: 100, y: 200, left: 100, top: 200, width: 300, height: 400 } as DOMRect);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.push(callback); return frames.length; });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const report = vi.fn(); const cleanup = observeBrowserPanelBounds(report, panel);
+    frames.shift()?.(0);
+    expect(report).toHaveBeenCalledExactlyOnceWith({ x: 100, y: 200, width: 300, height: 400 });
+    cleanup();
+  });
+
   it("stops requesting frames after a stable measurement", () => {
     const frame = document.createElement("div");
     frame.className = "workspace-browser-frame";

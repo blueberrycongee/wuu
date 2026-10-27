@@ -2,28 +2,28 @@ import { useCallback, useLayoutEffect, type RefObject } from "react";
 
 // Measure the live textarea, not the deferred draft in the surrounding composer.
 // This also counts soft wraps and preserves the browser's IME/selection state.
-export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, expanded: boolean, value: string): void {
+export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string): void {
   const resize = useCallback(() => {
     const input = ref.current;
     const composer = input?.closest<HTMLElement>(".composer");
     const stack = input?.closest<HTMLElement>(".composer-stack");
     if (!input || !composer || !stack) return;
+    // Covered workspaces keep their draft mounted. Measuring a hidden textarea
+    // still forces layout twice, even though none of its pixels can be shown.
+    if (input.checkVisibility && !input.checkVisibility({ checkVisibilityCSS: true })) return;
     if (!input.offsetWidth) {
       stack.style.removeProperty("--composer-input-growth");
       return;
     }
 
     const scrollTop = input.scrollTop;
-    if (stack.dataset.documentComposer) {
-      delete stack.dataset.multiline;
-    }
+    // Measure at the collapsed layout before deciding whether the draft wraps.
+    // Measuring the taller layout instead alternates between the two whenever
+    // text fits one but not the other. Deleting back to one line restores the
+    // capsule without clearing the draft.
+    delete stack.dataset.multiline;
     input.style.height = "0px";
-    // Measure each document draft at its compact width before deciding whether
-    // it wraps. Using the wider stacked editor would alternate layouts; this
-    // also lets deleting back to one line collapse without clearing the draft.
-    // Placeholder text must fit too, even before the user enters a draft.
-    if (stack.dataset.documentComposer
-      && input.scrollHeight > input.offsetHeight + 1) {
+    if (input.scrollHeight > input.offsetHeight + 1) {
       stack.dataset.multiline = "true";
     }
     const baseInputHeight = input.offsetHeight;
@@ -33,15 +33,16 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     const style = getComputedStyle(input);
     const borderHeight = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
     const maximum = Math.max(baseInputHeight, parseFloat(style.maxHeight));
-    const desired = expanded ? maximum
-      : input.value || stack.dataset.documentComposer ? input.scrollHeight + borderHeight : baseInputHeight;
+    const desired = input.value || stack.dataset.documentComposer
+      ? input.scrollHeight + borderHeight
+      : baseInputHeight;
     input.style.height = `${Math.max(baseInputHeight, Math.min(maximum, desired))}px`;
     input.scrollTop = scrollTop;
 
     // Grow upward without moving the send controls or the conversation's scroll
     // anchor. Put the offset on the common ancestor of the frame and queue tray.
     stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - baseComposerHeight)}px`);
-  }, [expanded, ref]);
+  }, [ref]);
 
   // Run after every local value commit, including history, paste, and send-clear.
   useLayoutEffect(resize, [resize, value]);
@@ -63,6 +64,11 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     const preferences = new MutationObserver(scheduleResize);
     preferences.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
     preferences.observe(document.body, { attributes: true, attributeFilter: ["style", "class"] });
+    // Visibility-only switches do not deliver ResizeObserver entries. Refit on
+    // reveal, including a draft or viewport that changed while covered.
+    for (let ancestor = input.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      preferences.observe(ancestor, { attributes: true, attributeFilter: ["hidden", "inert"] });
+    }
     window.addEventListener("resize", scheduleResize);
     window.visualViewport?.addEventListener("resize", scheduleResize);
     document.fonts?.addEventListener("loadingdone", scheduleResize);

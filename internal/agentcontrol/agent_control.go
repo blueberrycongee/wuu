@@ -30,9 +30,13 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -45,9 +49,8 @@ import (
 // orchestration tools inside that worker can resolve relative child paths.
 type WorkerToolkitFactory func(rootDir string, wt WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error)
 
-// WorkerSystemPromptFactory builds the base prompt for a registered worker.
-// AgentControl still wraps it with the worker role and working-directory
-// instructions.
+// WorkerSystemPromptFactory returns the complete worker system prompt.
+// Empty output is authoritative; errors stop launch without a native fallback.
 type WorkerSystemPromptFactory func(rootDir string, wt WorkerType, meta agentthread.Metadata, isolation IsolationMode) (string, error)
 
 // ParticipantStore persists participant identities used by restored runs. It is
@@ -59,6 +62,8 @@ type ParticipantStore interface {
 
 // AgentControl owns the orchestration runtime for one wuu session.
 type AgentControl struct {
+	legacyArtifactDirs             []string
+	documents                      persistence.Documents
 	useCurrentTemperatureOnRestore bool
 
 	manager       *subagent.Manager
@@ -228,6 +233,9 @@ type ProviderClientResolver func(providerName string) (providers.StreamClient, e
 
 // Config holds the dependencies needed to build an AgentControl.
 type Config struct {
+	// Documents pins child state to the parent execution's selected provider.
+	Documents          persistence.Documents
+	LegacyArtifactDirs []string
 	// Client is the streaming LLM client every worker spawned by this
 	// agent control runtime will share. It must be a StreamClient (not just a
 	// Client) so workers run through the same streaming transport as
@@ -272,12 +280,16 @@ type Config struct {
 	// ParticipantStore, when set, persists the ephemeral participant
 	// identity created for each spawned worker. Optional: when nil,
 	// participant IDs are still generated in-memory but not persisted.
-	ParticipantStore  ParticipantStore
-	MaxParallel       int
-	InferenceJournal  providers.InferenceJournal
-	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
-	OnSubagentStart   func(context.Context, string) error
-	OnSubagentStop    func(context.Context, string) error
+	ParticipantStore      ParticipantStore
+	MaxParallel           int
+	InferenceJournal      providers.InferenceJournal
+	BeginModelReceipts    agent.BeginModelReceiptsFunc
+	ToolLedgerFactory     func(ownerID string) (*toolledger.Ledger, error)
+	SelectedCompaction    *compactionservice.Client
+	AcquireLoopDriver     loopdriver.AcquireFunc
+	ConfigureWorkerRunner func(*agent.StreamRunner, string, string)
+	OnSubagentStart       func(context.Context, string) error
+	OnSubagentStop        func(context.Context, string) error
 }
 
 // New constructs an AgentControl. Worktree isolation is only available
@@ -316,7 +328,11 @@ func New(cfg Config) (*AgentControl, error) {
 		CompactKeepRecentTokens: cfg.DefaultCompactKeepRecentTokens,
 		DisableAutoCompact:      cfg.DefaultDisableAutoCompact,
 		InferenceJournal:        cfg.InferenceJournal,
+		BeginModelReceipts:      cfg.BeginModelReceipts,
 		ToolLedgerFactory:       cfg.ToolLedgerFactory,
+		AcquireLoopDriver:       cfg.AcquireLoopDriver,
+		ConfigureRunner:         cfg.ConfigureWorkerRunner,
+		SelectedCompaction:      cfg.SelectedCompaction,
 		OnSubagentStart:         cfg.OnSubagentStart,
 		OnSubagentStop:          cfg.OnSubagentStop,
 	})
@@ -331,6 +347,8 @@ func New(cfg Config) (*AgentControl, error) {
 		harnessDir = filepath.Join(filepath.Dir(cfg.ThreadDir), "harness")
 	}
 	c := &AgentControl{
+		legacyArtifactDirs:             append([]string(nil), cfg.LegacyArtifactDirs...),
+		documents:                      cfg.Documents,
 		useCurrentTemperatureOnRestore: cfg.UseCurrentTemperatureOnRestore,
 
 		manager:                  mgr,
@@ -342,9 +360,9 @@ func New(cfg Config) (*AgentControl, error) {
 		historyDir:               cfg.HistoryDir,
 		threadDir:                cfg.ThreadDir,
 		threads:                  threadRegistry,
-		threadStore:              agentthread.NewStore(cfg.ThreadDir),
+		threadStore:              agentThreadStore(cfg.Documents, cfg.SessionID, cfg.ThreadDir, cfg.LegacyArtifactDirs...),
 		harnessDir:               harnessDir,
-		harnessStore:             harness.NewStore(harnessDir),
+		harnessStore:             harnessStateStore(cfg.Documents, cfg.SessionID, harnessDir, cfg.LegacyArtifactDirs...),
 		failureSink:              cfg.FailureSink,
 		reportSink:               cfg.ReportSink,
 		workerFact:               cfg.WorkerFactory,
@@ -641,10 +659,10 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 	c.historyDir = historyDir
 	if len(threadDir) > 0 && strings.TrimSpace(threadDir[0]) != "" {
 		c.threadDir = strings.TrimSpace(threadDir[0])
-		c.threadStore = agentthread.NewStore(c.threadDir)
+		c.threadStore = agentThreadStore(c.documents, c.sessionID, c.threadDir, c.legacyArtifactDirs...)
 	} else if strings.TrimSpace(historyDir) != "" {
 		c.threadDir = filepath.Join(filepath.Dir(historyDir), "threads")
-		c.threadStore = agentthread.NewStore(c.threadDir)
+		c.threadStore = agentThreadStore(c.documents, c.sessionID, c.threadDir, c.legacyArtifactDirs...)
 	}
 	c.restoreAgentResultDeliveries()
 	if c.threadDir != "" {
@@ -667,7 +685,7 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 
 func (c *AgentControl) setHarnessDir(dir string) {
 	c.harnessDir = strings.TrimSpace(dir)
-	c.harnessStore = harness.NewStore(c.harnessDir)
+	c.harnessStore = harnessStateStore(c.documents, c.sessionID, c.harnessDir, c.legacyArtifactDirs...)
 }
 
 // SessionID returns the bound session ID, or "session-pending" if
@@ -1267,7 +1285,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 		}
 	}
 
-	// 4. Compose system prompt: type-specific role + working dir + base prompt.
+	// 4. Resolve the complete worker system prompt before launch.
 	sys, err := c.workerSystemPrompt(workerRoot, wt, threadMeta, isolation)
 	if err != nil {
 		c.settleSpawnLaunchFailure(workerID, fmt.Errorf("worker system prompt: %w", err))
@@ -1304,6 +1322,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 		spawnProviderName = pinProviderName(req.ModelPin)
 	}
 	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		ID:                 workerID,
 		ParticipantID:      participantID,
 		Type:               wtype,
@@ -1773,6 +1792,7 @@ func (c *AgentControl) Fork(ctx context.Context, req ForkRequest, parentHistory 
 	}
 
 	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		ID:                 workerID,
 		ParticipantID:      prt.ID,
 		Type:               wt.Name,
@@ -2352,29 +2372,22 @@ func (c *AgentControl) registerRootThread() {
 }
 
 func (c *AgentControl) workerSystemPrompt(rootDir string, wt WorkerType, meta agentthread.Metadata, isolation IsolationMode) (string, error) {
+	if c != nil && c.workerPrompt != nil {
+		return c.workerPrompt(rootDir, wt, meta, isolation)
+	}
+	// Explicit embedded callers without a selected callback use native policy.
 	base := ""
 	if c != nil {
 		base = c.defaultSys
-	}
-	if c != nil && c.workerPrompt != nil {
-		customBase, err := c.workerPrompt(rootDir, wt, meta, isolation)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(customBase) != "" {
-			base = customBase
-		}
 	}
 	return composeWorkerSystemPrompt(base, wt, rootDir, isolation), nil
 }
 
 func withInitialSystemPrompt(history []providers.ChatMessage, systemPrompt string) []providers.ChatMessage {
-	sys := strings.TrimSpace(systemPrompt)
-	if sys == "" {
-		return providers.CloneChatMessages(history)
-	}
 	out := make([]providers.ChatMessage, 0, len(history)+1)
-	out = append(out, providers.ChatMessage{Role: "system", Content: sys})
+	if systemPrompt != "" {
+		out = append(out, providers.ChatMessage{Role: "system", Content: systemPrompt})
+	}
 	start := 0
 	for start < len(history) && strings.TrimSpace(history[start].Role) == "system" {
 		start++
@@ -3379,6 +3392,7 @@ func (c *AgentControl) startQueuedSpawn(ctx context.Context, prepared preparedSp
 			return
 		}
 		_, err = c.manager.Spawn(context.WithoutCancel(ctx), subagent.SpawnOptions{
+			HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 			ID:                 prepared.WorkerID,
 			ParticipantID:      participantID,
 			Type:               prepared.WorkerType.Name,
@@ -4716,10 +4730,10 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 		return nil, nil
 	}
 	path := filepath.Join(c.historyDir, id+".json")
-	if _, err := os.Stat(path); err != nil {
+	run, err := c.loadWorkerSnapshot(path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	run, err := subagent.LoadPersistedRun(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot resume agent %q: reading snapshot: %w", id, err)
 	}
@@ -4792,6 +4806,7 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 	}
 
 	sa, err := c.manager.Restore(subagent.RestoreOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		Run:           run,
 		Toolkit:       workerKit,
 		Model:         modelOverride,
@@ -4880,7 +4895,7 @@ func (c *AgentControl) reconcileOrphanedHarnessTasks() {
 				}
 			}
 			if !found && strings.TrimSpace(c.historyDir) != "" {
-				if run, loadErr := subagent.LoadPersistedRun(filepath.Join(c.historyDir, task.ID+".json")); loadErr == nil && isFinalSubAgentStatus(run.Status) {
+				if run, loadErr := c.loadWorkerSnapshot(filepath.Join(c.historyDir, task.ID+".json")); loadErr == nil && isFinalSubAgentStatus(run.Status) {
 					snap = snapshotFromPersistedRun(run)
 					found = true
 				}
@@ -4929,9 +4944,15 @@ func (c *AgentControl) reconcileUnownedHarnessTask(task harness.Task, now time.T
 	if newLease {
 		defer c.releaseWorkerExecution(task.ID)
 	}
-	if strings.TrimSpace(c.historyDir) != "" {
+	if c.documents != nil || strings.TrimSpace(c.historyDir) != "" {
 		path := filepath.Join(c.historyDir, task.ID+".json")
-		if run, loadErr := subagent.LoadPersistedRun(path); loadErr == nil && isFinalSubAgentStatus(run.Status) {
+		run, loadErr := c.loadWorkerSnapshot(path)
+		if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+			// Provider failure is not evidence that the worker has no terminal
+			// record. Preserve every projection until authority is readable.
+			return fmt.Errorf("load worker %s for reconciliation: %w", task.ID, loadErr)
+		}
+		if loadErr == nil && isFinalSubAgentStatus(run.Status) {
 			// The worker finished and only terminal recording was lost.
 			snap := snapshotFromPersistedRun(run)
 			c.recordHarnessStatus(subagent.Notification{AgentID: task.ID, Status: run.Status, Snapshot: snap})
@@ -5031,7 +5052,7 @@ func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Ti
 		CreatedAt: now,
 	})
 	if strings.TrimSpace(c.historyDir) != "" {
-		_, _ = subagent.MarkPersistedRunInterrupted(filepath.Join(c.historyDir, task.ID+".json"), reason, now)
+		_, _ = c.markWorkerSnapshotInterrupted(task.ID, reason, now)
 	}
 	c.markAgentThreadInterrupted(task.ID, now)
 }
@@ -5296,47 +5317,10 @@ func appendForkWorktreeReminder(prompt, workerRoot string, isolation IsolationMo
 // of the working directory and isolation mode, then appends the base
 // prompt (typically the main agent's instructions and skills).
 func composeWorkerSystemPrompt(base string, wt WorkerType, workerRoot string, isolation IsolationMode) string {
-	var b strings.Builder
-	b.WriteString(wt.SystemPrompt)
-	b.WriteString("\n\n")
-	if wt.Role != "" || wt.ContextScope != "" || wt.OutputSchema != "" || len(wt.SuccessCriteria) > 0 {
-		b.WriteString("## Role Contract\n")
-		if wt.Role != "" {
-			fmt.Fprintf(&b, "Role: %s\n", wt.Role)
-		}
-		if wt.ContextScope != "" {
-			fmt.Fprintf(&b, "Context scope: %s\n", wt.ContextScope)
-		}
-		if wt.OutputSchema != "" {
-			fmt.Fprintf(&b, "Output schema: %s\n", wt.OutputSchema)
-		}
-		if len(wt.SuccessCriteria) > 0 {
-			b.WriteString("Success criteria:\n")
-			for _, item := range wt.SuccessCriteria {
-				fmt.Fprintf(&b, "- %s\n", item)
-			}
-		}
-		b.WriteString("\n")
-	}
-	switch isolation {
-	case IsolationWorktree:
-		fmt.Fprintf(&b, "Your working directory is %s — an isolated worktree for this worker. ", workerRoot)
-		b.WriteString("Edits you make stay sandboxed; the orchestrator will inspect the worktree after you finish. ")
-	default: // inplace
-		fmt.Fprintf(&b, "Your working directory is %s — the SHARED parent repository. ", workerRoot)
-		b.WriteString("You are running inplace (no worktree isolation), so be especially careful: ")
-		b.WriteString("read-only operations are safe, but any file you modify is visible to the orchestrator and other workers immediately. ")
-	}
-	b.WriteString("All file paths in your tools resolve relative to this directory. ")
-	b.WriteString("Treat command execution as non-interactive when the active tool surface exposes it. Never rely on editors, pagers, password prompts, or confirmation dialogs. If command execution is unavailable under the active tool surface, report skipped command-based verification instead of inventing another path. Profile-specific tool-surface guidance tells you which command capability exists and how to use it. ")
-	b.WriteString("You cannot spawn or manage other agents from this worker. If the task seems to require additional delegation, report that need in your final handoff so the parent can decide and coordinate.\n")
-	if base != "" {
-		b.WriteString("\n---\n\n")
-		b.WriteString(base)
-		b.WriteString("\n\n---\n\n")
-		b.WriteString("Worker override: if any inherited text above describes the MAIN interactive agent as read-only, or says file changes / command execution must be delegated, ignore that text. It applies to the parent, not to you. If a tool is in your tool list, you may use it unless your task prompt explicitly forbids it.")
-	}
-	return b.String()
+	return promptservice.AssembleWorkerPrompt(base, workerRoot, promptservice.WorkerContext{
+		Type: wt.Name, Role: wt.Role, Prompt: wt.SystemPrompt, ContextScope: wt.ContextScope,
+		OutputSchema: wt.OutputSchema, SuccessCriteria: wt.SuccessCriteria, Isolation: string(isolation),
+	}).Content
 }
 
 // newAgentControlWorkerID generates a worker ID. Mirrors subagent's
@@ -5349,4 +5333,49 @@ func newAgentControlWorkerID(typ string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%s", typ, hex.EncodeToString(b))
+}
+
+// Standalone embedders without a selected graph retain their explicit local
+// store. Product callers always provide Documents, including replacement peers.
+func agentThreadStore(documents persistence.Documents, sessionID, dir string, artifactDirs ...string) *agentthread.Store {
+	if documents != nil {
+		dirs := []string{dir}
+		for _, artifactDir := range artifactDirs {
+			dirs = append(dirs, filepath.Join(artifactDir, "threads"))
+		}
+		return agentthread.NewDocumentStore(documents, sessionID, dirs...)
+	}
+	return agentthread.NewStore(dir)
+}
+func harnessStateStore(documents persistence.Documents, sessionID, dir string, artifactDirs ...string) *harness.Store {
+	if documents != nil {
+		dirs := []string{dir}
+		for _, artifactDir := range artifactDirs {
+			dirs = append(dirs, filepath.Join(artifactDir, "harness"))
+		}
+		return harness.NewDocumentStore(documents, sessionID, dirs...)
+	}
+	return harness.NewStore(dir)
+}
+
+func (c *AgentControl) workerLegacyPaths(path string) []string {
+	paths := []string{path}
+	for _, dir := range c.legacyArtifactDirs {
+		paths = append(paths, filepath.Join(dir, "workers", filepath.Base(path)))
+	}
+	return paths
+}
+func (c *AgentControl) loadWorkerSnapshot(path string) (subagent.PersistedRun, error) {
+	if c.documents == nil {
+		return subagent.LoadPersistedRun(path)
+	}
+	id := strings.TrimSuffix(filepath.Base(path), ".json")
+	return subagent.LoadPersistedRunFromDocuments(c.documents, c.sessionID, id, c.workerLegacyPaths(path)...)
+}
+func (c *AgentControl) markWorkerSnapshotInterrupted(id, reason string, now time.Time) (bool, error) {
+	path := filepath.Join(c.historyDir, id+".json")
+	if c.documents == nil {
+		return subagent.MarkPersistedRunInterrupted(path, reason, now)
+	}
+	return subagent.MarkDocumentRunInterrupted(c.documents, c.sessionID, id, reason, now, c.workerLegacyPaths(path)...)
 }

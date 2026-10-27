@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/url"
 	"sort"
@@ -159,6 +160,8 @@ func normalizeProviderCoordinatorConfig(cfg ProviderCoordinatorConfig) ProviderC
 }
 
 type ProviderCoordinator struct {
+	closed bool
+	done   chan struct{}
 	mu     sync.Mutex
 	cfg    ProviderCoordinatorConfig
 	nextID uint64
@@ -240,6 +243,9 @@ func (l *ProviderLease) RecordSubmission(attempt InferenceAttempt, meta Inferenc
 	if l.submission.Valid() {
 		panic("providers: provider lease already owns a submission")
 	}
+	if meta.CapacityScope == "" {
+		meta.CapacityScope = string(l.scope)
+	}
 	submission, err := attempt.RecordSubmission(meta)
 	if err != nil {
 		return InferenceSubmission{}, err
@@ -313,6 +319,7 @@ type ProviderCoordinatorSnapshot struct {
 
 func NewProviderCoordinator(cfg ProviderCoordinatorConfig) *ProviderCoordinator {
 	return &ProviderCoordinator{
+		done:   make(chan struct{}),
 		cfg:    normalizeProviderCoordinatorConfig(cfg),
 		scopes: make(map[ProviderScope]*providerScopeState),
 	}
@@ -320,7 +327,7 @@ func NewProviderCoordinator(cfg ProviderCoordinatorConfig) *ProviderCoordinator 
 
 func (c *ProviderCoordinator) Acquire(ctx context.Context, scope ProviderScope, priority ProviderPriority) (*ProviderLease, error) {
 	if c == nil {
-		return &ProviderLease{}, nil
+		return &ProviderLease{scope: normalizeProviderScope(scope)}, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -334,6 +341,10 @@ func (c *ProviderCoordinator) Acquire(ctx context.Context, scope ProviderScope, 
 		ready:    make(chan *ProviderLease, 1),
 	}
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, errors.New("provider coordinator is closed")
+	}
 	c.nextID++
 	waiter.id = c.nextID
 	state := c.stateLocked(scope)
@@ -343,11 +354,27 @@ func (c *ProviderCoordinator) Acquire(ctx context.Context, scope ProviderScope, 
 
 	select {
 	case lease := <-waiter.ready:
+		c.mu.Lock()
+		closed := c.closed
+		c.mu.Unlock()
+		if closed {
+			lease.Release()
+			return nil, errors.New("provider coordinator is closed")
+		}
 		if err := ctx.Err(); err != nil {
 			lease.Release()
 			return nil, err
 		}
 		return lease, nil
+	case <-c.done:
+		if !c.cancelWaiter(scope, waiter.id) {
+			select {
+			case lease := <-waiter.ready:
+				lease.Release()
+			default:
+			}
+		}
+		return nil, errors.New("provider coordinator is closed")
 	case <-ctx.Done():
 		if !c.cancelWaiter(scope, waiter.id) {
 			// scheduleLocked already granted the slot. Drain and release it so a
@@ -428,6 +455,9 @@ func (c *ProviderCoordinator) stateLocked(scope ProviderScope) *providerScopeSta
 }
 
 func (c *ProviderCoordinator) scheduleLocked(scope ProviderScope, state *providerScopeState, now time.Time) {
+	if c.closed {
+		return
+	}
 	gate := state.cooldownUntil
 	if state.circuitUntil.After(gate) {
 		gate = state.circuitUntil
@@ -530,6 +560,9 @@ func (c *ProviderCoordinator) nextAdmissibleWaiter(state *providerScopeState) in
 }
 
 func (c *ProviderCoordinator) armTimerLocked(scope ProviderScope, state *providerScopeState, when time.Time) {
+	if c.closed {
+		return
+	}
 	if state.timer != nil && !when.Before(state.timerAt) {
 		return
 	}
@@ -601,4 +634,26 @@ func normalizeProviderScope(scope ProviderScope) ProviderScope {
 		return ProviderScope("unknown-provider#default")
 	}
 	return scope
+}
+
+// Close seals admission and stops every policy timer. Existing leases remain
+// accountable and may settle, but closure never grants another waiting send.
+func (c *ProviderCoordinator) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	close(c.done)
+	for _, state := range c.scopes {
+		if state.timer != nil {
+			state.timer.Stop()
+			state.timer = nil
+			state.timerAt = time.Time{}
+		}
+	}
 }

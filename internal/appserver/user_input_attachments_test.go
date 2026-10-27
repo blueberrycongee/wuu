@@ -27,7 +27,7 @@ func TestUserHostClientAttachmentsPersistAndRetryWithoutNewCopies(t *testing.T) 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
-	created, err := srv.createPluginSession(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "attachment-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "attachment-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestUserHostClientAttachmentsPersistAndRetryWithoutNewCopies(t *testing.T) 
 	sum := hex.EncodeToString(digest[:])
 	ref := pluginhost.SessionInputAttachment{SHA256: sum, Filename: "note.txt", MediaType: "text/plain"}
 	params := pluginhost.SessionSendParams{RequestID: "attachment-send", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "", Attachments: []pluginhost.SessionInputAttachment{ref}}}
-	if _, err := srv.sendPluginSession(context.Background(), "fixture", params); err == nil {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", params); err == nil {
 		t.Fatal("background plugin admitted user attachment")
 	}
 	params.UserInputRequestID = "selection"
@@ -45,12 +45,12 @@ func TestUserHostClientAttachmentsPersistAndRetryWithoutNewCopies(t *testing.T) 
 		t.Fatal(err)
 	}
 	ctx := runtime.WithClientUserInput(context.Background(), "fixture", proof)
-	first, err := srv.sendPluginSession(ctx, "fixture", params)
+	first, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), "fixture", params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitForMethod(t, out, NotificationTurnCompleted)
-	history, err := loadChatMessages(rt.SessionDir, created.SessionID)
+	history, err := loadChatMessages(rt.Sessions, created.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestUserHostClientAttachmentsPersistAndRetryWithoutNewCopies(t *testing.T) 
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		t.Fatalf("working copy outside user files root: %s", path)
 	}
-	second, err := srv.sendPluginSession(ctx, "fixture", params)
+	second, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), "fixture", params)
 	if err != nil || second.TurnID != first.TurnID {
 		t.Fatalf("retry changed turn: %+v %+v %v", first, second, err)
 	}

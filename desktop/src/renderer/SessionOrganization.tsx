@@ -38,7 +38,7 @@ export type SessionOrganizationController = SessionOrganization & {
   moveThreadToFolder: (threadID: string, folderID?: string) => Promise<void>;
 };
 
-export function useSessionOrganization(threads: ThreadSummary[]): SessionOrganizationController {
+export function useSessionOrganization(threads: ThreadSummary[], supplied?: SessionOrganizationController): SessionOrganizationController {
   const [folders, setFolders] = useState<SessionGroup[]>([]);
   const [optimisticFolders, setOptimisticFolders] = useState<Record<string, string>>({});
   const folderReorderRevisionRef = useRef(0);
@@ -48,7 +48,7 @@ export function useSessionOrganization(threads: ThreadSummary[]): SessionOrganiz
   );
 
   useEffect(() => {
-    if (!window.wuu?.getSessionOrganization) return;
+    if (supplied || !window.wuu?.getSessionOrganization) return;
     let cancelled = false;
     void window.wuu.getSessionOrganization().then((result) => {
       if (cancelled) return;
@@ -58,7 +58,7 @@ export function useSessionOrganization(threads: ThreadSummary[]): SessionOrganiz
       if (!cancelled) showErrorToast(error, translateCurrent("sessionOrganization.loadFailed"), "session-organization-load");
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [Boolean(supplied)]);
 
   useEffect(() => {
     const byID = new Map(threads.map((thread) => [thread.id, thread]));
@@ -85,6 +85,7 @@ export function useSessionOrganization(threads: ThreadSummary[]): SessionOrganiz
     }
   }
 
+  if (supplied) return supplied;
   return {
     folders,
     folderByThreadID,
@@ -187,6 +188,7 @@ export function clearReconciledAssignments(
 }
 
 export type SessionOrganizationActions = SessionOrganization & {
+  revealThread?: (threadId: string) => Promise<void>;
   togglePinned: (thread: ThreadSummary, fallback: (thread: ThreadSummary) => void) => void;
   moveToFolder: (thread: ThreadSummary, folderID?: string) => void;
   createFolderForThread: (thread: ThreadSummary) => void;

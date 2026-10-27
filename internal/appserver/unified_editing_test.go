@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -39,12 +38,15 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			kit.ConfigureSurfaceForProviderModel("custom", model, true)
 			// Shell sandbox support is tested separately; run this fixture on every OS.
 			kit.SetBoundary(tools.UnconfinedBoundary())
-			rt.Toolkit = kit
+			rt.Toolkit = nil
+			rt.StreamRunner.Tools = kit
 			require.NoError(t, os.WriteFile(filepath.Join(rt.RootDir, "value.txt"), []byte("before\nrepeat\nrepeat\n"), 0600))
 			var changed []string
-			kit.SetOnFileChanged(func(path string) { changed = append(changed, filepath.Base(path)) })
+			kit.SetOnFileChanged(func(_ context.Context, path string) { changed = append(changed, filepath.Base(path)) })
+			// Publish the actual observed toolkit as this fixture's selected tool executor.
+			attachTestModelGeneration(t, rt)
 
-			sess, err := session.CreateWithMetadata(rt.SessionDir, "historical-patch", rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata("historical-patch", rt.RootDir)
 			require.NoError(t, err)
 			oldArgs := `{"patchText":"*** Begin Patch\n*** Add File: value.txt\n+before\n+repeat\n+repeat\n*** End Patch"}`
 			oldResult := `{"files":[{"path":"value.txt","action":"add","diff":"+before\n+repeat\n+repeat"}]}`
@@ -54,9 +56,10 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 				{Role: "tool", Name: "apply_patch", ToolCallID: "historical-call", Content: oldResult},
 				{Role: "assistant", Content: "Created value.txt"},
 			}
-			require.NoError(t, rewriteChatHistory(rt.SessionDir, sess.ID, history))
+			require.NoError(t, rewriteChatHistory(rt.Sessions, sess.ID, history))
 			out := &lockedBuffer{}
 			srv := New(rt, out)
+			t.Cleanup(srv.Close)
 			require.NoError(t, srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"resume","method":"thread/resume","params":{"session_id":%q}}`, sess.ID))))
 			resumed := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, out.String()), "resume")["result"])
 			require.Len(t, resumed.Thread.Turns, 1)
@@ -72,7 +75,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			require.JSONEq(t, oldResult, historicalItem.Result)
 
 			require.NoError(t, srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"Update value.txt and create ready.txt, then verify both files."}}`, sess.ID))))
-			messages := waitForMethod(t, out, NotificationTurnCompleted)
+			messages := waitForTurnCompletedForThread(t, out, sess.ID)
 			completed := remarshal[TurnCompletedNotification](t, notificationByMethod(t, messages, NotificationTurnCompleted)["params"])
 			require.Equal(t, TurnStatusCompleted, completed.Turn.Status)
 			results := map[string]ThreadItem{}
@@ -105,7 +108,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 				require.True(t, names["edit_file"] && names["write_file"])
 				require.False(t, names["apply_patch"])
 			}
-			persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+			persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 			require.NoError(t, err)
 			var oldCall, oldReply bool
 			for _, msg := range persisted {

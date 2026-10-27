@@ -2,13 +2,13 @@ package appserver
 
 import (
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -41,6 +41,7 @@ const (
 	MethodPluginPackageInstall            = "plugin/package/install"
 	MethodPluginPackageRemove             = "plugin/package/remove"
 	MethodPluginDesktopModuleRead         = "plugin/desktop-module/read"
+	MethodPluginDesktopActivation         = "plugin/desktop-activation"
 	MethodPluginIconRead                  = "plugin/icon/read"
 	MethodPluginSettingGet                = "plugin/setting/get"
 	MethodPluginSettingSet                = "plugin/setting/set"
@@ -115,6 +116,9 @@ const (
 	MethodProcessStop                     = "process/stop"
 	MethodProcessCancelNotifications      = "process/cancel-notifications"
 	MethodMCPList                         = "mcp/list"
+	MethodMCPDefinitionRead               = "mcp/definition/read"
+	MethodMCPConfigure                    = "mcp/configure"
+	MethodMCPAuthCancel                   = "mcp/auth/cancel"
 	MethodMCPConnect                      = "mcp/connect"
 	MethodMCPDisconnect                   = "mcp/disconnect"
 	MethodMCPRefresh                      = "mcp/refresh"
@@ -203,9 +207,11 @@ const (
 )
 
 type PluginInventoryChangedNotification struct {
-	Epoch              uint64                     `json:"epoch"`
-	ExtensionInventory []ExtensionInventoryRecord `json:"extension_inventory"`
-	Skills             []SkillSummary             `json:"skills"`
+	ApplicationShell    *runtime.ApplicationShellBinding           `json:"application_shell"`
+	ApplicationSurfaces map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
+	Epoch               uint64                                     `json:"epoch"`
+	ExtensionInventory  []ExtensionInventoryRecord                 `json:"extension_inventory"`
+	Skills              []SkillSummary                             `json:"skills"`
 }
 
 type ConfigErrorNotification struct {
@@ -224,6 +230,7 @@ type ConfigChangedNotification struct {
 }
 
 type Request struct {
+	timing *rpcRequestTiming
 	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params,omitempty"`
@@ -297,33 +304,36 @@ type UserHostIsolationSummary struct {
 }
 
 type InitializeResult struct {
-	UserHostIsolation  *UserHostIsolationSummary    `json:"user_host_isolation,omitempty"`
-	UserSpaceID        string                       `json:"user_space_id,omitempty"`
-	ProductDomain      string                       `json:"product_domain,omitempty"`
-	Status             string                       `json:"status"`
-	Issues             []RuntimeIssue               `json:"issues,omitempty"`
-	ProtocolVersion    string                       `json:"protocol_version"`
-	Core               CoreBuildInfo                `json:"core"`
-	Provider           string                       `json:"provider"`
-	Model              string                       `json:"model"`
-	Effort             string                       `json:"effort,omitempty"`
-	Variant            string                       `json:"variant,omitempty"`
-	MaxParallel        int                          `json:"max_parallel"`
-	RuntimeHost        RuntimeHostSummary           `json:"runtime_host"`
-	WorkspaceRoot      string                       `json:"workspace_root"`
-	Permissions        PermissionSummary            `json:"permissions"`
-	ExtensionTrust     ExtensionTrustSummary        `json:"extension_trust"`
-	ExtensionInventory []ExtensionInventoryRecord   `json:"extension_inventory,omitempty"`
-	ModelProfile       *ModelProfileSummary         `json:"model_profile,omitempty"`
-	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
-	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
-	Providers          []ProviderSummary            `json:"providers,omitempty"`
-	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
-	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
-	CatalogProviders   []CatalogProviderSummary     `json:"catalog_providers"`
-	Features           FeatureFlags                 `json:"features"`
+	UserHostIsolation   *UserHostIsolationSummary                  `json:"user_host_isolation,omitempty"`
+	UserSpaceID         string                                     `json:"user_space_id,omitempty"`
+	ProductDomain       string                                     `json:"product_domain,omitempty"`
+	ResourceAccess      ResourceAccessCapabilities                 `json:"resource_access"`
+	ApplicationShell    *runtime.ApplicationShellBinding           `json:"application_shell"`
+	ApplicationSurfaces map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
+	Status              string                                     `json:"status"`
+	Issues              []RuntimeIssue                             `json:"issues,omitempty"`
+	ProtocolVersion     string                                     `json:"protocol_version"`
+	Core                CoreBuildInfo                              `json:"core"`
+	Provider            string                                     `json:"provider"`
+	Model               string                                     `json:"model"`
+	Effort              string                                     `json:"effort,omitempty"`
+	Variant             string                                     `json:"variant,omitempty"`
+	MaxParallel         int                                        `json:"max_parallel"`
+	RuntimeHost         RuntimeHostSummary                         `json:"runtime_host"`
+	WorkspaceRoot       string                                     `json:"workspace_root"`
+	Permissions         PermissionSummary                          `json:"permissions"`
+	ExtensionTrust      ExtensionTrustSummary                      `json:"extension_trust"`
+	ExtensionInventory  []ExtensionInventoryRecord                 `json:"extension_inventory,omitempty"`
+	ModelProfile        *ModelProfileSummary                       `json:"model_profile,omitempty"`
+	ToolSurface         *ToolSurfaceSummary                        `json:"tool_surface,omitempty"`
+	ModelRoles          []ModelRoleSummary                         `json:"model_roles,omitempty"`
+	ModelAliases        map[string]ModelAliasSummary               `json:"model_aliases,omitempty"`
+	ProjectModels       config.ProjectModelsConfig                 `json:"project_models,omitempty"`
+	Providers           []ProviderSummary                          `json:"providers,omitempty"`
+	AdvancedSettings    AdvancedSettingsSummary                    `json:"advanced_settings"`
+	GeneralSettings     GeneralSettingsSummary                     `json:"general_settings"`
+	CatalogProviders    []CatalogProviderSummary                   `json:"catalog_providers"`
+	Features            FeatureFlags                               `json:"features"`
 }
 
 type FeatureFlags struct {
@@ -395,13 +405,14 @@ type BrowserScreenshotResult struct {
 }
 
 type BrowserOpenTabParams struct {
-	ExecutionID string `json:"execution_id,omitempty"`
-	ThreadID    string `json:"thread_id"`
-	TurnID      string `json:"turn_id,omitempty"`
-	RequestID   string `json:"request_id,omitempty"`
-	Workdir     string `json:"workdir"`
-	TabID       string `json:"tab_id"`
-	InitialURL  string `json:"initial_url,omitempty"`
+	ExecutionID    string `json:"execution_id,omitempty"`
+	ThreadID       string `json:"thread_id"`
+	TurnID         string `json:"turn_id,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	Workdir        string `json:"workdir"`
+	TabID          string `json:"tab_id"`
+	InitialURL     string `json:"initial_url,omitempty"`
+	WorkspaceTabID string `json:"workspace_tab_id,omitempty"`
 }
 
 type BrowserCloseTabParams struct {
@@ -440,10 +451,13 @@ type BrowserRequestCancelledParams struct {
 }
 
 type BrowserListedTab struct {
-	TabID  string `json:"tab_id"`
-	URL    string `json:"url,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status,omitempty"`
+	TabID       string `json:"tab_id"`
+	URL         string `json:"url,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Active      bool   `json:"active,omitempty"`
+	Source      string `json:"source,omitempty"`
 }
 
 // BrowserTurnStartedParams announces an immutable execution identity before
@@ -491,8 +505,9 @@ type BrowserFinalizeParams struct {
 }
 
 type BrowserListTabsResult struct {
-	TabIDs []string           `json:"tab_ids"`
-	Tabs   []BrowserListedTab `json:"tabs,omitempty"`
+	WorkspaceTabs []BrowserListedTab `json:"workspace_tabs,omitempty"`
+	TabIDs        []string           `json:"tab_ids"`
+	Tabs          []BrowserListedTab `json:"tabs,omitempty"`
 }
 
 type RuntimeIssue struct {
@@ -576,16 +591,40 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	Name       string `json:"name"`
-	State      string `json:"state"`
-	AuthStatus string `json:"auth_status,omitempty"`
-	Connected  bool   `json:"connected"`
-	ToolCount  int    `json:"tool_count"`
-	Error      string `json:"error,omitempty"`
+	PluginID         string `json:"plugin_id,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Editable         bool   `json:"editable,omitempty"`
+	OAuthRedirectURI string `json:"oauth_redirect_uri,omitempty"`
+	Name             string `json:"name"`
+	State            string `json:"state"`
+	AuthStatus       string `json:"auth_status,omitempty"`
+	Connected        bool   `json:"connected"`
+	ToolCount        int    `json:"tool_count"`
+	Error            string `json:"error,omitempty"`
 }
 
 type MCPListResult struct {
 	Servers []MCPServerStatus `json:"servers"`
+}
+
+type MCPConfigureParams struct {
+	Servers  map[string]*config.MCPServerConfig `json:"servers"`
+	Revision string                             `json:"revision,omitempty"`
+}
+
+type MCPDefinitionResult struct {
+	Config   config.MCPServerConfig `json:"config"`
+	Revision string                 `json:"revision"`
+}
+
+type MCPAuthStartParams struct {
+	Name        string `json:"name"`
+	RedirectURI string `json:"redirect_uri,omitempty"`
+}
+
+type MCPAuthCancelParams struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 type MCPServerActionParams struct {
@@ -753,6 +792,23 @@ type ExtensionThemeDescriptor struct {
 	Syntax map[string]string `json:"syntax,omitempty"`
 }
 
+type ExtensionSkinDescriptor struct {
+	ID    string               `json:"id"`
+	Name  string               `json:"name"`
+	Light ExtensionSkinVariant `json:"light"`
+	Dark  ExtensionSkinVariant `json:"dark"`
+}
+
+type ExtensionSkinVariant struct {
+	Background string `json:"background"`
+	Foreground string `json:"foreground"`
+	Image      string `json:"image,omitempty"`
+	Position   string `json:"position,omitempty"`
+	Overlay    string `json:"overlay,omitempty"`
+	Hover      string `json:"hover,omitempty"`
+	Active     string `json:"active,omitempty"`
+}
+
 type ExtensionSettingType string
 
 const (
@@ -760,6 +816,7 @@ const (
 	ExtensionSettingString  ExtensionSettingType = "string"
 	ExtensionSettingNumber  ExtensionSettingType = "number"
 	ExtensionSettingEnum    ExtensionSettingType = "enum"
+	ExtensionSettingSecret  ExtensionSettingType = "secret"
 )
 
 type ExtensionSettingScope string
@@ -777,22 +834,22 @@ const (
 )
 
 type ExtensionSettingDescriptor struct {
-	ID          string                    `json:"id"`
-	Type        ExtensionSettingType      `json:"type"`
-	Title       string                    `json:"title"`
-	Description string                    `json:"description,omitempty"`
-	Default     any                       `json:"default"`
-	Enum        []string                  `json:"enum,omitempty"`
-	Scope       ExtensionSettingScope     `json:"scope"`
-	Apply       ExtensionSettingApplyMode `json:"apply"`
+	ID                string                    `json:"id"`
+	Type              ExtensionSettingType      `json:"type"`
+	Title             string                    `json:"title"`
+	Description       string                    `json:"description,omitempty"`
+	Default           any                       `json:"default"`
+	Enum              []string                  `json:"enum,omitempty"`
+	Scope             ExtensionSettingScope     `json:"scope"`
+	Apply             ExtensionSettingApplyMode `json:"apply"`
+	CredentialOrigins []string                  `json:"credential_origins,omitempty"`
 }
 
 type ExtensionContributions struct {
 	Commands       []ExtensionCommandDescriptor               `json:"commands,omitempty"`
 	Themes         []ExtensionThemeDescriptor                 `json:"themes,omitempty"`
+	Skins          []ExtensionSkinDescriptor                  `json:"skins,omitempty"`
 	Settings       []ExtensionSettingDescriptor               `json:"settings,omitempty"`
-	Slots          []ExtensionSlotContributionDescriptor      `json:"slots,omitempty"`
-	Surfaces       []ExtensionSurfaceContributionDescriptor   `json:"surfaces,omitempty"`
 	Presenters     []ExtensionPresenterContributionDescriptor `json:"presenters,omitempty"`
 	Navigation     []ExtensionViewEntryDescriptor             `json:"navigation,omitempty"`
 	WorkspaceTools []ExtensionViewEntryDescriptor             `json:"workspace_tools,omitempty"`
@@ -813,21 +870,6 @@ type ExtensionIconDescriptor struct {
 	Path  string `json:"path,omitempty"`
 	Light string `json:"light,omitempty"`
 	Dark  string `json:"dark,omitempty"`
-}
-
-type ExtensionSlotContributionDescriptor struct {
-	ID     string `json:"id"`
-	Target string `json:"target"`
-	Order  int    `json:"order,omitempty"`
-	Title  string `json:"title,omitempty"`
-}
-
-type ExtensionSurfaceContributionDescriptor struct {
-	ID     string `json:"id"`
-	Target string `json:"target"`
-	Mode   string `json:"mode"`
-	Order  int    `json:"order,omitempty"`
-	Title  string `json:"title,omitempty"`
 }
 
 type ExtensionPresenterContributionDescriptor struct {
@@ -852,40 +894,42 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	ID string `json:"id"`
+	GraphGeneration string `json:"graph_generation,omitempty"`
+	ID              string `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// LongDescription and Developer come from the plugin manifest's interface.
-	LongDescription      string                           `json:"long_description,omitempty"`
-	Developer            string                           `json:"developer,omitempty"`
-	Icon                 *ExtensionIconDescriptor         `json:"icon,omitempty"`
-	Kind                 extensions.Kind                  `json:"kind"`
-	Provenance           extensions.Provenance            `json:"provenance"`
-	State                ExtensionState                   `json:"state"`
-	Executable           bool                             `json:"executable,omitempty"`
-	Fingerprint          string                           `json:"fingerprint,omitempty"`
-	PackageSource        string                           `json:"package_source,omitempty"`
-	GrantScope           extensions.GrantScope            `json:"grant_scope,omitempty"`
-	RequestedPermissions []string                         `json:"requested_permissions,omitempty"`
-	UnsupportedFields    []string                         `json:"unsupported_fields,omitempty"`
-	ParentID             string                           `json:"parent_id,omitempty"`
-	ApprovalState        ExtensionApprovalState           `json:"approval_state,omitempty"`
-	RuntimeState         ExtensionRuntimeState            `json:"runtime_state,omitempty"`
-	LastError            string                           `json:"last_error,omitempty"`
-	Requires             []string                         `json:"requires,omitempty"`
-	Dependencies         []extensions.PackageDependency   `json:"dependencies,omitempty"`
-	ResolvedDependencies []string                         `json:"resolved_dependencies,omitempty"`
-	Breaks               []string                         `json:"breaks,omitempty"`
-	Conflicts            []string                         `json:"conflicts,omitempty"`
-	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
-	Enabled              *bool                            `json:"enabled,omitempty"`
-	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
-	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
-	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
-	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
+	LongDescription              string                           `json:"long_description,omitempty"`
+	Developer                    string                           `json:"developer,omitempty"`
+	Icon                         *ExtensionIconDescriptor         `json:"icon,omitempty"`
+	Kind                         extensions.Kind                  `json:"kind"`
+	Provenance                   extensions.Provenance            `json:"provenance"`
+	State                        ExtensionState                   `json:"state"`
+	Executable                   bool                             `json:"executable,omitempty"`
+	Fingerprint                  string                           `json:"fingerprint,omitempty"`
+	PackageSource                string                           `json:"package_source,omitempty"`
+	GrantScope                   extensions.GrantScope            `json:"grant_scope,omitempty"`
+	RequestedPermissions         []string                         `json:"requested_permissions,omitempty"`
+	UnsupportedFields            []string                         `json:"unsupported_fields,omitempty"`
+	ParentID                     string                           `json:"parent_id,omitempty"`
+	ApprovalState                ExtensionApprovalState           `json:"approval_state,omitempty"`
+	RuntimeState                 ExtensionRuntimeState            `json:"runtime_state,omitempty"`
+	LastError                    string                           `json:"last_error,omitempty"`
+	Requires                     []string                         `json:"requires,omitempty"`
+	Dependencies                 []extensions.PackageDependency   `json:"dependencies,omitempty"`
+	ResolvedRequiredDependencies []string                         `json:"resolved_required_dependencies,omitempty"`
+	ResolvedDependencies         []string                         `json:"resolved_dependencies,omitempty"`
+	Breaks                       []string                         `json:"breaks,omitempty"`
+	Conflicts                    []string                         `json:"conflicts,omitempty"`
+	ActivationIssues             []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
+	Enabled                      *bool                            `json:"enabled,omitempty"`
+	EnabledOverride              *bool                            `json:"enabled_override,omitempty"`
+	Desktop                      *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
+	Contributions                *ExtensionContributions          `json:"contributions,omitempty"`
+	PendingUpdate                *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
 }
 
 type ExtensionPackageAction string
@@ -901,6 +945,16 @@ const (
 )
 
 type ExtensionPackageUpdateParams struct {
+	ID          string                             `json:"id,omitempty"`
+	Fingerprint string                             `json:"fingerprint,omitempty"`
+	Action      ExtensionPackageAction             `json:"action,omitempty"`
+	Updates     []ExtensionPackageEnablementUpdate `json:"updates,omitempty"`
+}
+
+// ExtensionPackageEnablementUpdate changes one package's enabled override in
+// an atomic selection. Action accepts only enable or disable, never trust or
+// pending-package updates. A supplied fingerprint must match the catalog.
+type ExtensionPackageEnablementUpdate struct {
 	ID          string                 `json:"id"`
 	Fingerprint string                 `json:"fingerprint,omitempty"`
 	Action      ExtensionPackageAction `json:"action"`
@@ -1017,13 +1071,16 @@ type PluginSettingSetParams struct {
 	Fingerprint string          `json:"fingerprint"`
 	Key         string          `json:"key"`
 	Value       json.RawMessage `json:"value"`
+	// Patch is an atomic set of additional non-secret keys in the primary key's scope.
+	Patch map[string]json.RawMessage `json:"patch,omitempty"`
 }
 
 type PluginSettingResult struct {
-	ID    string           `json:"id"`
-	Key   string           `json:"key"`
-	Scope PluginValueScope `json:"scope"`
-	Value json.RawMessage  `json:"value"`
+	Configured *bool            `json:"configured,omitempty"`
+	ID         string           `json:"id"`
+	Key        string           `json:"key"`
+	Scope      PluginValueScope `json:"scope"`
+	Value      json.RawMessage  `json:"value"`
 }
 
 type PluginDiagnosticsParams struct {
@@ -1072,6 +1129,8 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	// ApplyAt opts a conversation into durable next-step model selection. Empty preserves whole-turn behavior.
+	ApplyAt          string  `json:"apply_at,omitempty"`
 	ChatGPTAccountID *string `json:"chatgpt_account_id,omitempty"`
 	// ResetModel clears all external model overrides before applying supplied fields.
 	ResetModel     bool               `json:"reset_model,omitempty"`
@@ -1153,7 +1212,15 @@ type AuthXAILoginCancelParams struct {
 	LoginID string `json:"login_id"`
 }
 
+type ModelSelectionIntentSummary struct {
+	Revision uint64 `json:"revision"`
+	ApplyAt  string `json:"apply_at"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
 type ConfigModelUpdateResult struct {
+	ModelSelection   *ModelSelectionIntentSummary `json:"model_selection,omitempty"`
 	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
 	Provider         string                       `json:"provider"`
@@ -1537,6 +1604,9 @@ type EngineInfo struct {
 	// UpdateURL opens vendor guidance. Wuu does not manage CLI installation.
 	UpdateURL    string   `json:"update_url,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	// RequiresHostModel is the selected engine's client readiness/model-source
+	// metadata, not a backend authorization decision or credential validation.
+	RequiresHostModel *bool `json:"requires_host_model,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
 	Enabled bool `json:"enabled"`
 	// BinaryPath is the resolved CLI binary path, when the engine uses one.
@@ -1583,24 +1653,9 @@ type EngineLatestRequest struct {
 	UsageReported       bool   `json:"usage_reported,omitempty"`
 }
 
-type EnginePermissionModeInfo struct {
-	Mode  string `json:"mode"`
-	ID    string `json:"id,omitempty"`
-	Label string `json:"label,omitempty"`
-}
+type EnginePermissionModeInfo = pluginprotocol.EnginePermissionModeInfo
 
-type EngineModelInfo struct {
-	Options []enginecatalog.ModelOption `json:"options,omitempty"`
-	// ResolvedModel is the CLI-reported target of ID; ID remains the selection value.
-	ResolvedModel    string   `json:"resolved_model,omitempty"`
-	FastMode         bool     `json:"fast_mode,omitempty"`
-	DefaultSpeed     string   `json:"default_speed,omitempty"`
-	ID               string   `json:"id"`
-	DisplayName      string   `json:"display_name,omitempty"`
-	DefaultEffort    string   `json:"default_effort,omitempty"`
-	SupportedEfforts []string `json:"supported_efforts,omitempty"`
-	IsDefault        bool     `json:"is_default,omitempty"`
-}
+type EngineModelInfo = pluginprotocol.EngineModelInfo
 
 // EngineListResult is the engine/list response: current engine inventory
 // plus the persisted settings the settings UI edits.
@@ -2032,6 +2087,9 @@ type GitCommitMessageResult struct {
 }
 
 type TurnStartParams struct {
+	// ResumeAfterTurnID starts a new turn without adding user input. The latest
+	// durable turn must still match, fencing stale and duplicate submissions.
+	ResumeAfterTurnID string `json:"resume_after_turn_id,omitempty"`
 	// ClientID correlates renderer intent with the persisted user item.
 	ClientID       string                         `json:"client_id,omitempty"`
 	ThreadID       string                         `json:"thread_id"`
@@ -2296,6 +2354,9 @@ type UserLocation struct {
 // UserAttentionNotification is emitted only after the current persisted owner
 // admits attention. Raw terminal events are not push authorization.
 type UserAttentionNotification struct {
+	// Process-local provenance is never accepted from a notification payload.
+	authorization *userAttentionEvent
+
 	// ItemCount counts initially admitted results, not a per-item delivery receipt.
 	// Only the latest UserLocation is retained and revalidated at delivery.
 	ItemCount     int          `json:"item_count,omitempty"`
@@ -2322,18 +2383,21 @@ type TurnErrorNotification struct {
 	Category   string `json:"category,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	IndexError string `json:"index_error,omitempty"`
 	Turn       Turn   `json:"turn"`
 }
 
 type TurnUsageNotification struct {
-	ThreadID            string `json:"thread_id"`
-	TurnID              string `json:"turn_id"`
-	Model               string `json:"model,omitempty"`
-	InputTokens         int    `json:"input_tokens"`
-	OutputTokens        int    `json:"output_tokens"`
-	ContextTokens       int    `json:"context_tokens,omitempty"`
-	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`
+	Provider               string `json:"provider,omitempty"`
+	ModelSelectionRevision uint64 `json:"model_selection_revision,omitempty"`
+	ThreadID               string `json:"thread_id"`
+	TurnID                 string `json:"turn_id"`
+	Model                  string `json:"model,omitempty"`
+	InputTokens            int    `json:"input_tokens"`
+	OutputTokens           int    `json:"output_tokens"`
+	ContextTokens          int    `json:"context_tokens,omitempty"`
+	CacheCreationTokens    int    `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens        int    `json:"cache_read_tokens,omitempty"`
 	// ContextWindowTokens is the resolved runtime context ceiling for the
 	// active provider/model at the time of this usage snapshot. It may be the
 	// model window or a lower provider input cap. The renderer uses it to show
@@ -2359,6 +2423,7 @@ type TurnCompletedNotification struct {
 	StopReason               string        `json:"stop_reason,omitempty"`
 	Truncated                bool          `json:"truncated,omitempty"`
 	TracePath                string        `json:"trace_path,omitempty"`
+	IndexError               string        `json:"index_error,omitempty"`
 	AwaitingAutoContinuation bool          `json:"awaiting_auto_continuation,omitempty"`
 }
 
@@ -2465,21 +2530,26 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
-	ModelOptions   map[string]string     `json:"model_options,omitempty"`
-	Speed          string                `json:"speed,omitempty"`
-	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
-	ID             string                `json:"id"`
-	Source         string                `json:"source,omitempty"`
+	RunningModelProvider string                `json:"running_model_provider,omitempty"`
+	RunningModel         string                `json:"running_model,omitempty"`
+	RunningModelRevision uint64                `json:"running_model_revision,omitempty"`
+	ModelOptions         map[string]string     `json:"model_options,omitempty"`
+	Speed                string                `json:"speed,omitempty"`
+	SessionControl       *ThreadSessionControl `json:"session_control,omitempty"`
+	ID                   string                `json:"id"`
+	Source               string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectRole string `json:"project_role,omitempty"`
 	// ProjectExists resolves grouping independently of coordinator visibility.
 	// Lists, resumes and metadata responses include it; incremental events may omit it.
-	ProjectExists  *bool  `json:"project_exists,omitempty"`
-	ParentID       string `json:"parent_id,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Preview        string `json:"preview"`
-	Title          string `json:"title,omitempty"`
+	ProjectExists *bool  `json:"project_exists,omitempty"`
+	ParentID      string `json:"parent_id,omitempty"`
+	AgentPath     string `json:"agent_path,omitempty"`
+	Preview       string `json:"preview"`
+	Title         string `json:"title,omitempty"`
+	// TitleRevision orders persisted title changes independently of turn activity.
+	TitleRevision  int64  `json:"title_revision,omitempty"`
 	ModelProvider  string `json:"model_provider"`
 	Model          string `json:"model"`
 	ModelVariant   string `json:"model_variant"`
@@ -2737,6 +2807,7 @@ type ToolCallOutputNotification struct {
 }
 
 type StreamEventPayload struct {
+	ModelStep        *providers.ModelStepSummary      `json:"model_step,omitempty"`
 	Type             providers.StreamEventType        `json:"type"`
 	Content          string                           `json:"content,omitempty"`
 	Message          *providers.ChatMessage           `json:"message,omitempty"`

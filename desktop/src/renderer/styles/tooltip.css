@@ -16,22 +16,36 @@
   /* Above every app surface, including the image preview band
      (~2.147483e9): a tooltip is the topmost transient layer. */
   z-index: 2147483500;
-  max-width: 280px;
-  padding: 5px 9px;
-  /* The one material every transient layer shares: menus, hover cards,
-   * tooltips, and notices. */
+  inset: 0 auto auto 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  padding: 6px 10px;
   border: 1px solid var(--menu-border);
   border-radius: var(--radius-xs);
-  background: var(--menu-bg);
-  box-shadow: var(--menu-shadow);
+  /* An opaque reading surface stays legible over text, images and web pages. */
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
   color: var(--ink);
-  font-size: var(--font-sm);
-  line-height: 1.4;
+  font-family: var(--appearance-ui-font);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  font-style: normal;
+  line-height: 1.45;
+  text-align: start;
+  letter-spacing: normal;
+  text-transform: none;
   /* Preserve intentional line breaks in source text (errors, commands);
      everything else wraps inside the max-width. */
   white-space: pre-line;
   overflow-wrap: anywhere;
+  overflow: hidden;
   pointer-events: none;
-  --enter-y: 2px;
-  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
+  /* A pure fade preserves the geometry measured during placement. */
+  animation: wuu-fade-in var(--motion-fast) var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip-layer { animation: none; }
 }

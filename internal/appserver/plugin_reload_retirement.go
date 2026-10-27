@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 // retireIdlePluginRuntimes releases superseded generations without waiting for
@@ -13,6 +14,7 @@ func (s *Server) retireIdlePluginRuntimes() {
 	if s == nil || s.rt == nil || s.closed.Load() {
 		return
 	}
+	s.retireEngineScopes()
 	s.mu.Lock()
 	threads := make([]*threadState, 0, len(s.threads))
 	for _, th := range s.threads {
@@ -20,6 +22,7 @@ func (s *Server) retireIdlePluginRuntimes() {
 	}
 	s.mu.Unlock()
 	var retired []detachedThreadRuntime
+	var states []*runtime.State
 	for _, th := range threads {
 		if th == nil {
 			continue
@@ -36,7 +39,7 @@ func (s *Server) retireIdlePluginRuntimes() {
 				th.workerTreeFrozen = true
 				cancel := th.cancel
 				th.mu.Unlock()
-				if _, err := s.interruptThreadExecution(th.ID, "", ""); err != nil {
+				if _, err := s.interruptThreadExecution(th.state, th.ID, "", ""); err != nil {
 					// A held-input persistence failure must not leave the provider
 					// executing after its owner has been disabled.
 					if cancel != nil {
@@ -48,18 +51,22 @@ func (s *Server) retireIdlePluginRuntimes() {
 				// interrupt core drains these only when a foreground turn exists.
 				queued := s.discardQueuedTurns(th.ID)
 				for _, entry := range queued {
-					s.notifyPluginTurnDiscarded(th.ID, entry, "session owner plugin is unavailable")
+					s.notifyPluginTurnDiscarded(th.state, th.ID, entry, "session owner plugin is unavailable")
 				}
 				s.notifyQueuedTurnsDequeued(th.ID, queuedTurnIDs(queued))
 			}
 		}
 		th.mu.Lock()
 		rt := th.execRuntime
-		if rt != nil && rt.PluginGeneration != nil &&
-			!th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
-			!s.rt.IsCurrentPluginGeneration(rt.PluginGeneration) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
+		if th.state != nil && th.state.Generation != nil &&
+			!th.turnCompletion.failed() && !th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
+			!th.nativeHistoryMutation && s.activeExecutionRunID(th.ID) == "" &&
+			(!s.rt.IsCurrentPluginGeneration(th.state.Generation) || (rt != nil && rt.CompositionID != "")) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
 			retired = append(retired, detachThreadRuntimeLocked(th))
 			th.maybeReleasePluginGenerationExecutionLeaseLocked()
+			if !s.rt.IsCurrentPluginGeneration(th.state.Generation) {
+				states = append(states, th.state)
+			}
 		}
 		th.mu.Unlock()
 	}
@@ -67,5 +74,11 @@ func (s *Server) retireIdlePluginRuntimes() {
 	// locks may be held while the detached generation drains.
 	for _, detached := range retired {
 		s.releaseDetachedThreadRuntime(detached)
+	}
+	// Keep the display projection cached, but release its superseded ownership.
+	// The next request loads through its own captured store; running callbacks
+	// already hold independent State references through their final writes.
+	for _, state := range states {
+		_ = state.Close()
 	}
 }

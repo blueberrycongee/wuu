@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -31,28 +33,29 @@ func TestPersonalFileApprovalProductionEntry(t *testing.T) {
 	rt.RootDir = rt.UserBinding().Root(rt.WuuHome)
 	rt.DataRoot = rt.UserBinding().State(rt.WuuHome)
 	rt.SessionDir = filepath.Join(rt.DataRoot, "sessions")
+	rebindPersonalTestDocuments(t, rt)
 	if err := os.MkdirAll(rt.RootDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}, SubjectID: "plugin:bundled:personal"}}
-	rt.PluginHost = pluginhost.New(&pluginClientRequestTestRuntime{id: "personal"})
+	attachPersonalBoundaryGeneration(t, rt)
 	var kitErr error
 	rt.Toolkit, kitErr = tools.New(rt.RootDir)
 	if kitErr != nil {
 		t.Fatal(kitErr)
 	}
 	id := "personal-file-main"
-	_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: id, UserSpaceID: "local", ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my note to note.txt."}})
+	_, err := rt.Sessions.CreateInitialized(session.Session{ID: id, UserSpaceID: "local", ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my note to note.txt."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := NewUserHost(rt)
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer host.Close()
-	owner, err := clientauthority.AdmitDesktop(context.Background(), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+	owner, err := clientauthority.AdmitDesktop(personalTestOwner(context.Background()), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +65,7 @@ func TestPersonalFileApprovalProductionEntry(t *testing.T) {
 	}
 	kit.SetSessionID(id)
 	call := providers.ToolCall{ID: "file-call", Name: "write_file", Arguments: `{"path":"note.txt","content":"saved once"}`}
-	if _, err = kit.Execute(context.Background(), call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
+	if _, err = kit.Execute(owner, call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
 		t.Fatalf("must wait for manual owner: %v", err)
 	}
 	if _, err = os.Stat(filepath.Join(rt.RootDir, "note.txt")); !os.IsNotExist(err) {
@@ -94,7 +97,7 @@ func TestPersonalFileApprovalProductionEntry(t *testing.T) {
 	if _, err = host.personal.Call(owner, "review.resolve", command, ""); err != nil {
 		t.Fatal("same decision must be idempotent", err)
 	}
-	if _, err = kit.Execute(context.Background(), call); err != nil {
+	if _, err = kit.Execute(owner, call); err != nil {
 		t.Fatal("completed exact replay should return receipt", err)
 	}
 	t.Log("real UserHost + Toolkit write_file + owner transport + durable engine; external account/network/model calls=0")
@@ -108,7 +111,7 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			f := newPersonalBoundaryFixture(t, nil)
 			worker := "approval-worker"
-			_, err := session.CreateInitialized(f.rt.SessionDir, session.Session{ID: worker, ParentID: f.id, AgentID: "main", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", CWD: f.rt.RootDir}, nil)
+			_, err := f.rt.Sessions.CreateInitialized(session.Session{ID: worker, ParentID: f.id, AgentID: "main", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", CWD: f.rt.RootDir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +131,7 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 				t.Fatal(err)
 			}
 			kit.SetSessionID(worker)
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(f.owner)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { _, err := kit.Execute(ctx, f.call()); done <- err }()
@@ -205,44 +208,42 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 
 type personalReceiptServiceClient struct {
 	pluginClientRequestTestRuntime
-	calls int
+	calls atomic.Int32
 }
 
 func (c *personalReceiptServiceClient) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return []pluginhost.ServiceDescriptor{{Name: "personal.agents", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "actions.sync", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}}}}
+	return []pluginhost.ServiceDescriptor{{Name: "personal.agents", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "actions.sync", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}, {Name: "actions.resume", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}}}}
 }
 func (c *personalReceiptServiceClient) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (c *personalReceiptServiceClient) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
-	c.calls++
+	c.calls.Add(1)
 	return json.RawMessage(`{"accepted":true}`), nil
 }
 
-// Host recovery is a kernel service call, not an undeclared self-dependency.
-// A different provider advertising the same service must never receive it.
-func TestPersonalReceiptKernelRouteIsBoundToPersonalProvider(t *testing.T) {
-	for _, providerID := range []string{"personal", "unrelated"} {
+// Recovery follows the selected service, while the receipt's durable session
+// ownership prevents retargeting old actions to a different provider.
+func TestPersonalReceiptRouteUsesSelectedProviderAndRetainsOwnerBinding(t *testing.T) {
+	for _, providerID := range []string{"personal", "replacement"} {
 		t.Run(providerID, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			provider := &personalReceiptServiceClient{pluginClientRequestTestRuntime: pluginClientRequestTestRuntime{id: providerID}}
-			clients := []pluginhost.Client{provider}
-			if providerID != "personal" {
-				clients = append(clients, &pluginClientRequestTestRuntime{id: "personal"})
-			}
-			registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
-			if len(conflicts) != 0 {
-				t.Fatal(conflicts)
-			}
-			registry.Activate()
-			rt.PluginHost = pluginhost.New(clients...)
-			rt.PluginHost.AttachServiceRegistry(registry, nil)
-			p := &personalActions{server: &Server{rt: rt}}
-			err := p.productAction(context.Background(), "actions.sync", personalreview.Record{})
-			if providerID == "personal" {
-				if err != nil || provider.calls != 1 {
-					t.Fatalf("host kernel route failed: calls=%d err=%v", provider.calls, err)
+			attachTestModelGeneration(t, rt, provider, NewPersonalActionsConsumer())
+			p := &personalActions{server: newOwnerHandlerFixture(rt, &lockedBuffer{})}
+			for _, owner := range []string{providerID, "other-owner"} {
+				metadata, err := rt.Sessions.CreateInitialized(session.Session{ID: "receipt-" + owner, Owner: "plugin:" + owner, UserSpaceID: "receipt-space", ProductDomain: "personal", Visibility: "plugin"}, nil)
+				if err != nil {
+					t.Fatal(err)
 				}
-			} else if err == nil || provider.calls != 0 {
-				t.Fatalf("foreign service reached: calls=%d err=%v", provider.calls, err)
+				record := personalreview.Record{Action: personalreview.Action{Proposal: personalreview.Proposal{Scope: personalreview.Scope{SessionID: metadata.ID, SpaceID: metadata.UserSpaceID}}}}
+				before := provider.calls.Load()
+				err = p.productAction(personalTestOwner(context.Background()), "actions.sync", record)
+				if owner == providerID {
+					if err != nil || provider.calls.Load() != before+1 {
+						t.Fatalf("selected provider was not called: calls=%d err=%v", provider.calls.Load(), err)
+					}
+				} else if err == nil || provider.calls.Load() != before {
+					t.Fatalf("foreign receipt reached selected provider: calls=%d err=%v", provider.calls.Load(), err)
+				}
 			}
 		})
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/tools"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // NewThreadCapabilityRuntime binds host browser and CUA capabilities to an
@@ -54,6 +53,8 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			return nil, err
 		}
 	}
+	documents, sessions, host := s.Documents, s.Sessions, s.PluginHost
+	artifacts := s.artifactClient
 	generation := s.pluginGeneration
 	generation.retain()
 	dispatcher := s.HookDispatcher
@@ -67,13 +68,10 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			s.releasePluginGeneration(generation)
 		}
 	}()
-	result := &ThreadRuntime{
+	result := &ThreadRuntime{SessionID: id,
 		Toolkit: kit, ActivityRegistry: s.ActivityRegistry,
 		Selection: selection, PluginGeneration: generation,
-	}
-	if kit == nil {
-		retained = true
-		return result, nil
+		Documents: documents, Sessions: sessions, PluginHost: host,
 	}
 
 	stateDir, err := s.executionStateDir()
@@ -88,19 +86,39 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		}
 	}
 	artifactDir := statepath.SessionArtifactDir(stateDir, id)
+	if kit == nil {
+		manager, err := s.processManagerForThread(root, stateDir)
+		if err != nil {
+			return nil, err
+		}
+		result.ProcessManager = manager
+		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(root, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())}
+		result.processHooks = dispatcher
+		if host != nil && selectsRuntimeModule(host, toolExecutionConsumer) {
+			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
+		}
+		result.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: selection.PermissionMode}, false, nil)
+		retained = true
+		return result, nil
+	}
 	kit.ConfigureExternalCapabilities()
 	ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: selection.PermissionMode})
 	kit.SetApproveForMe(false)
 	kit.SetStateDir(stateDir)
-	kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+	kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
 	kit.SetSessionID(id)
 	kit.SetSessionDir(artifactDir)
-	kit.SetSessionsDir(s.SessionDir)
-	kit.SetWorkingNotesHome(wuuHome)
-	kit.SetBrowserTabs(tools.NewBrowserTabStore(statepath.ThreadBrowserTabsPath(stateDir, id)))
+	kit.SetSessionStore(sessions)
+	kit.SetWorkingNotesHome(s.ProductDataRoot())
+	kit.SetProtectedPaths(memoryProtectedPaths(wuuHome, s.UserBinding()))
+	browserTabs, err := selectedBrowserTabStore(documents, wuuHome, s.SessionDir, stateDir, id)
+	if err != nil {
+		return nil, err
+	}
+	kit.SetBrowserTabs(browserTabs)
 	kit.SetImageInputSupported(true)
 	kit.SetAgentIdentity(id, agentthread.RootPath)
-	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, artifactDir))
+	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), artifactDir))
 	if dispatcher != nil {
 		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
 			_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
@@ -110,9 +128,8 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			return err
 		}, func() bool { return !dispatcher.HasHooks(hooks.PermissionRequest) })
 	}
-	// Only Toolkit owns the exported implementations. Generation-owned hooks
-	// remain active, but runtime plugin tools cannot intercept a capability name.
-	result.CapabilityTools = newPluginAwareToolExecutor(kit, nil, dispatcher, id, id, kit.RootDir())
+	// The selected registry owns the capability surface for external engines too.
+	result.CapabilityTools = newPluginAwareToolExecutor(kit, host, dispatcher, id, id, kit.RootDir())
 	retained = true
 	return result, nil
 }

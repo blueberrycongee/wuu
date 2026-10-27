@@ -1,10 +1,13 @@
-import { act, useState } from "react";
+import { act, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildFileSelectionPart, FileSelectionProvider, useFileSelectionActions,
   type FileSelectionPart, type FileSelectionSource,
 } from "./FileSelectionContext";
+import { ApplicationFileSelection } from "./plugins/ApplicationFileSelection";
+import { initialState, emptyComposerDraft, type AppState } from "./AppState";
+import { fileSelectionRevision } from "./FileSelectionMapping";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts, useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 
 let root: Root;
@@ -15,7 +18,7 @@ let owner = "";
 const edit = vi.fn<(part: FileSelectionPart) => Promise<boolean>>();
 const source: FileSelectionSource = {
   workspace: "/project", path: "notes.md", start_line: 3, start_column: 1,
-  end_line: 3, end_column: 8, quote: "中文 😀 原文", revision: "version-one",
+  end_line: 3, end_column: 8, quote: "中文 😀 原文", revision: fileSelectionRevision("中文 😀 原文"),
 };
 
 function Probe({ value, setValue }: { value: string; setValue: (value: string) => void }): JSX.Element {
@@ -28,8 +31,22 @@ function Harness({ storageKey, initialPrompt = "question" }: { storageKey: strin
   const [value, setValue] = useState(initialPrompt);
   prompt = value;
   owner = storageKey;
-  return <FileSelectionProvider ownerKey={storageKey} getPrompt={() => prompt}
-    setPrompt={setValue} onEdit={edit} onOpenFile={() => {}}>
+  const valueRef = useRef(value); valueRef.current = value;
+  const application = useMemo(() => {
+    const listeners = new Set<() => void>();
+    const context = {kind:"no_project" as const,cwd:"/project"};
+    const connection = {connection:{status:"connected" as const}};
+    const service = new ApplicationFileSelection({
+      getState: () => ({...initialState,initialized:{} as AppState["initialized"],activeContext:context,activeSessionTabID:storageKey,sessionTabs:[{id:storageKey,kind:"draft",context,title:"",createdAt:1,...emptyComposerDraft(),prompt:valueRef.current}]}),
+      subscribeState: listener => {listeners.add(listener);return ()=>{listeners.delete(listener);};},
+      isNavigationPending:()=>false,getDraft:()=>({...emptyComposerDraft(),prompt:valueRef.current}),
+      setDraft:(_id,draft)=>{valueRef.current=draft.prompt;setValue(draft.prompt);listeners.forEach(listener=>listener());},
+      submission:{submitIndependent:(_id,message)=>edit(message.contentParts![0] as FileSelectionPart),getSnapshot:()=>({operations:[]})},
+      preview:{invoke:vi.fn()},previewContent:{readFile:vi.fn().mockResolvedValue({text:source.quote})},side:{available:()=>false,open:vi.fn()},
+    });
+    return {fileSelection:service,getSnapshot:()=>connection,subscribe:()=>()=>{}};
+  },[storageKey]);
+  return <FileSelectionProvider application={application} source={{ownerTabId:storageKey}}>
     <Probe value={value} setValue={setValue} />
   </FileSelectionProvider>;
 }

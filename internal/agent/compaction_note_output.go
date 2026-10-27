@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -62,5 +63,61 @@ func boundedCompactionNoteFork(fork CompactionNoteFork) CompactionNoteFork {
 			}
 		}
 		return CompactionNoteForkResult{Usage: usage}, fmt.Errorf("context note output rejected after 3 attempts: %w", outputErr)
+	}
+}
+
+// The selected provider owns retry admission and the complete inference input.
+// Host checks only cancellation, model output validity and usage accounting.
+func selectedCompactionNoteFork(client *compactionservice.Client, fork CompactionNoteFork) CompactionNoteFork {
+	return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+		var usage *providers.TokenUsage
+		var failure string
+		for attempt := 0; ; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return CompactionNoteForkResult{Usage: usage}, err
+			}
+			selected, err := client.NoteAttempt(ctx, compactionservice.NoteAttemptRequest{Messages: history, Plan: compactionservice.HandoffPlan{Prompt: plan.Prompt, MaxBytes: plan.MaxBytes}, Attempt: attempt, PreviousFailure: failure})
+			if err != nil {
+				return CompactionNoteForkResult{Usage: usage}, err
+			}
+			if !selected.Invoke {
+				return CompactionNoteForkResult{Usage: usage}, fmt.Errorf("selected note policy stopped inference: %s", failure)
+			}
+			if err = providers.ValidateToolCallHistory(selected.Messages); err != nil {
+				return CompactionNoteForkResult{Usage: usage}, err
+			}
+			current := plan
+			current.Prompt = selected.Prompt
+			current.MaxBytes = selected.MaxBytes
+			current.PreparedMessages = selected.Messages
+			result, err := fork(ctx, history, current)
+			if result.Usage != nil {
+				if usage == nil {
+					usage = &providers.TokenUsage{}
+				}
+				usage.InputTokens += result.Usage.InputTokens
+				usage.OutputTokens += result.Usage.OutputTokens
+				usage.CacheReadTokens += result.Usage.CacheReadTokens
+				usage.CacheCreationTokens += result.Usage.CacheCreationTokens
+				usage.CacheCreationUnknown = usage.CacheCreationUnknown || result.Usage.CacheCreationUnknown
+			}
+			if ctx.Err() != nil {
+				return CompactionNoteForkResult{Usage: usage}, ctx.Err()
+			}
+			if err != nil && !errors.Is(err, errCompactionNoteTruncated) {
+				return CompactionNoteForkResult{Usage: usage}, err
+			}
+			markdown := strings.TrimSpace(result.Markdown)
+			if err == nil {
+				if markdown == "" {
+					return CompactionNoteForkResult{Usage: usage}, errors.New("context note fork returned empty Markdown")
+				}
+				if current.MaxBytes <= 0 || len(markdown) <= current.MaxBytes {
+					return CompactionNoteForkResult{Markdown: markdown, Usage: usage}, nil
+				}
+				err = fmt.Errorf("compaction note is %d UTF-8 bytes; limit is %d", len(markdown), current.MaxBytes)
+			}
+			failure = err.Error()
+		}
 	}
 }

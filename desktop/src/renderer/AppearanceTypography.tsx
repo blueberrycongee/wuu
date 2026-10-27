@@ -1,14 +1,15 @@
+import { useSettingsControls } from "./SettingsControlsContext";
+import type { SettingsAppearanceV1 as AppearancePreferences } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useEffect, useState } from "react";
 import { useI18n } from "./i18n";
-import { appearanceDefaults, observeAppearance, readAppearance, saveAppearance, type AppearancePreferences } from "./AppearancePreferences";
 import { MessageFlowFontSizeControl } from "./MessageFlowFontSizeSection";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
-import { isMonospaceFont, listLocalFonts } from "./LocalFonts";
-import { desktopPlatform } from "./platform";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
+  const controls = useSettingsControls();
+  const { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } = controls;
   const { t } = useI18n();
   const [preferences, setPreferences] = useState(readAppearance);
   const [sizeDraft, setSizeDraft] = useState(() => String(readAppearance().codeSize));
@@ -21,13 +22,16 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");
     try {
-      const names = await listLocalFonts();
-      setLocalFonts(names);
-      setMonoFonts(names.filter(isMonospaceFont));
+      const fonts = await controls.listLocalFonts();
+      setLocalFonts(fonts.names);
+      setMonoFonts(fonts.monospace);
       setFontStatus("ready");
     } catch { setFontStatus("error"); }
   }
-  useEffect(() => observeAppearance(() => setPreferences(readAppearance())), []);
+  useEffect(() => {
+    setPreferences(readAppearance());
+    return observeAppearance(() => setPreferences(readAppearance()));
+  }, [observeAppearance, readAppearance]);
   function update(patch: Partial<AppearancePreferences>) {
     try {
       saveAppearance({ ...readAppearance(), ...patch });
@@ -60,8 +64,8 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     const names = key === "codeFont" ? monoFonts : localFonts;
     const current = preferences[key];
     const defaultLabel = key === "contentFont"
-      ? t("settings.defaultContentFont", { font: preferences.uiFont || t("settings.systemFontFamily") })
-      : t("settings.systemFont");
+      ? t("settings.defaultContentFont", { font: preferences.uiFont || "vivo Sans SC" })
+      : key === "uiFont" ? t("settings.defaultContentFont", { font: "vivo Sans SC" }) : t("settings.systemFont");
     const options = [{ value: "", label: defaultLabel }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
@@ -77,6 +81,12 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       onClick={() => update({ uiFont: appearanceDefaults.uiFont, contentFont: appearanceDefaults.contentFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>
+      <SettingsRow title={t("settings.messageStyle")}>
+        <SelectMenu ariaLabel={t("settings.messageStyle")} value={preferences.messageStyle}
+          onChange={(value) => update({ messageStyle: value as AppearancePreferences["messageStyle"] })}
+          options={[{ value: "bubble", label: t("settings.messageStyleBubble") }, { value: "im", label: t("settings.messageStyleIM") }]}
+          triggerClassName="settings-select-trigger" />
+      </SettingsRow>
       <SettingsRow title={t("settings.textInterface")}>
         {fontPicker("uiFont")}
         <MessageFlowFontSizeControl />
@@ -96,7 +106,7 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </SettingsRow>
     </SettingsGroup>
-    {desktopPlatform() === "darwin" && <SettingsGroup>
+    {controls.capabilities.platform === "darwin" && <SettingsGroup>
       <SettingsRow title={t("settings.fontSmoothing")} hint={t("settings.fontSmoothingHint")}>
         <SelectMenu ariaLabel={t("settings.fontSmoothing")} value={preferences.fontSmoothing}
           onChange={(value) => update({ fontSmoothing: value as AppearancePreferences["fontSmoothing"] })}

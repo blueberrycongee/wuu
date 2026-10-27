@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
@@ -22,7 +24,15 @@ func TestUserHostArtifactsPublishAndReadWithinProductDataRoot(t *testing.T) {
 	if err := os.WriteFile(file, []byte("synthetic scoped artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	part, err := newArtifactPublisher(dataRoot)(context.Background(), tools.ArtifactPublishRequest{Path: file, StateDir: stateDir, ThreadID: "main", CallID: "synthetic", CWD: filepath.Dir(file)})
+	provider := NewArtifactService(ArtifactModule, dataRoot, stateDir)
+	if err := provider.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close(context.Background())
+	client := NewArtifactClient(func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+		return provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ArtifactServiceName, Method: method, Params: input})
+	})
+	part, err := NewArtifactPublisher(client)(context.Background(), tools.ArtifactPublishRequest{Path: file, StateDir: stateDir, ThreadID: "main", CallID: "synthetic", CWD: filepath.Dir(file)})
 	if err != nil {
 		t.Fatal(err)
 	}

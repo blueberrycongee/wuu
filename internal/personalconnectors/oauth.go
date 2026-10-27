@@ -115,9 +115,12 @@ func (b *Broker) Start(ctx context.Context, a Actor, r ConnectRequest) (Authoriz
 		return AuthorizationAttempt{}, e
 	}
 	previous := ""
+	requestedAccount := r.AccountID
 	epoch := ""
 	e = b.update(ctx, a, func(s *stored) error {
 		epoch = s.Epochs[r.ConnectionID]
+		previous = ""
+		r.AccountID = requestedAccount
 		if old, ok := s.Grants[r.ConnectionID]; ok {
 			if old.Connection.Provider != r.Provider || r.AccountID != "" && old.Connection.AccountID != r.AccountID {
 				return fault("connection_changed")

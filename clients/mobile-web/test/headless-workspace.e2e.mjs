@@ -115,7 +115,12 @@ async function failStartup(name, port, args, options) {
 async function connected() {
   await page.locator('.app-shell').waitFor();
   await page.locator('.web-connection-status').waitFor({ state: 'hidden', timeout: 45_000 });
-  await until(() => page.evaluate(() => window.wuu.listProjects().then(() => true, () => false)), 'browser RPC ready');
+  // Snapshot reads are allowed during restoration; a regular read must also
+  // succeed before the fixture can exercise terminal ownership or other actions.
+  await until(async () => {
+    const rpcReady = await page.evaluate(() => window.wuu.listWorkspaceFiles().then(() => true, () => false));
+    return rpcReady && await page.locator('.web-connection-status').isHidden();
+  }, 'browser restoration and RPC ready');
 }
 async function terminal(pidFile) {
   return page.evaluate(async pidFile => {

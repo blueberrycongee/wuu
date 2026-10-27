@@ -7,6 +7,8 @@ public struct PersonalCalendarConfirmation: Sendable {
     public let preview: JSONValue
     fileprivate let owner: UUID
     fileprivate let agentID: String
+    // Consent belongs to the displayed connection/selection, unlike a recoverable message draft.
+    fileprivate let epoch: UInt64
 }
 
 public enum PersonalClientError: Error, Equatable, LocalizedError {
@@ -40,8 +42,8 @@ public actor PersonalClient {
     private let owner = UUID()
     private var epoch: UInt64 = 0
     private var verifiedScope: JSONValue?
-    private var binding: (id: String, fingerprint: String)?
-    private var calendarBinding: (id: String, fingerprint: String)?
+    private var binding: (id: String, fingerprint: String, graph: String)?
+    private var calendarBinding: (id: String, fingerprint: String, graph: String)?
     public private(set) var selectedAgentID: String?
 
     public init(transport: @escaping Transport) { self.transport = transport }
@@ -56,6 +58,7 @@ public actor PersonalClient {
     }
 
     /// Call with the current connection's initialize result, again after every reconnect/reload.
+    /// The admitted graph is captured separately from the plugin's code fingerprint.
     public func configure(_ initialized: JSONValue) throws {
         invalidate()
         guard initialized["user_space_id"].string == "local", initialized["product_domain"].string == "personal" else { throw PersonalClientError.unavailable }
@@ -67,13 +70,15 @@ public actor PersonalClient {
         guard let record = bundled ?? (candidates.count == 1 ? candidates.first : nil),
               record["runtime_state"].string == "active", record["enabled"] != .bool(false),
               let id = record["id"].string, !id.isEmpty,
-              let fingerprint = record["fingerprint"].string, !fingerprint.isEmpty else {
+              let fingerprint = record["fingerprint"].string, !fingerprint.isEmpty,
+              let graph = record["graph_generation"].string, !graph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PersonalClientError.unavailable
         }
-        binding = (id, fingerprint)
+        binding = (id, fingerprint, graph)
         let calendars = initialized["extension_inventory"].array.filter { $0["id"].string == "plugin:bundled:personal-calendar" || $0["provenance"]["plugin_id"].string == "personal-calendar" }
         if let calendar = calendars.first(where: { $0["id"].string == "plugin:bundled:personal-calendar" }) ?? (calendars.count == 1 ? calendars.first : nil), calendar["runtime_state"].string == "active", calendar["enabled"] != .bool(false),
-           let id = calendar["id"].string, let fingerprint = calendar["fingerprint"].string, !id.isEmpty, !fingerprint.isEmpty { calendarBinding = (id, fingerprint) }
+           let id = calendar["id"].string, let fingerprint = calendar["fingerprint"].string, !id.isEmpty, !fingerprint.isEmpty,
+           let graph = calendar["graph_generation"].string, !graph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { calendarBinding = (id, fingerprint, graph) }
     }
 
     /// Inventory events omit immutable host scope; only the verified live initialization can supply it.
@@ -215,7 +220,7 @@ public actor PersonalClient {
               case .array = preview["fields"]["attendees"], preview["availability"]["checked_at"].string != nil,
               case .array = preview["availability"]["conflicting_event_ids"] else { throw PersonalClientError.invalidResponse }
         if preview["kind"].string == "reschedule", !validCalendarFields(preview["original_event"]["fields"]) { throw PersonalClientError.invalidResponse }
-        return PersonalCalendarConfirmation(preview: preview, owner: owner, agentID: agentID)
+        return PersonalCalendarConfirmation(preview: preview, owner: owner, agentID: agentID, epoch: epoch)
     }
     private func validCalendarFields(_ fields: JSONValue) -> Bool {
         guard !(fields["summary"].string ?? "").isEmpty, fields["location"].string != nil, case .array(let attendees) = fields["attendees"] else { return false }
@@ -230,7 +235,7 @@ public actor PersonalClient {
         }
     }
     public func confirmCalendar(_ confirmation: PersonalCalendarConfirmation) async throws -> JSONValue {
-        guard confirmation.owner == owner, confirmation.agentID == selectedAgentID else { throw PersonalClientError.selectionChanged }
+        guard confirmation.owner == owner, confirmation.agentID == selectedAgentID, confirmation.epoch == epoch else { throw PersonalClientError.selectionChanged }
         let preview = confirmation.preview
         return try await request("operations.confirm", input: ["operation_id": preview["operation_id"], "expected_revision": preview["revision"], "preview_digest": preview["preview_digest"]], calendar: true)
     }
@@ -294,19 +299,22 @@ public actor PersonalClient {
     }
 
     private func request(_ method: String, input: JSONValue = [:], userInput: JSONValue? = nil, expectedEpoch: UInt64? = nil, calendar: Bool = false) async throws -> JSONValue {
+        try Task.checkCancellation()
         if let expectedEpoch, expectedEpoch != epoch { throw PersonalClientError.selectionChanged }
         guard let binding = calendar ? calendarBinding : binding else { throw PersonalClientError.unavailable }
         let stamp = epoch
         do {
             var params: [String: JSONValue] = ["id": .string(binding.id),
-                "fingerprint": .string(binding.fingerprint), "method": .string(method), "input": input,
+                "fingerprint": .string(binding.fingerprint), "graph_generation": .string(binding.graph), "method": .string(method), "input": input,
                 "request_id": .string(UUID().uuidString), "user_space_id": "local", "product_domain": "personal"]
             if let userInput { params["user_input"] = userInput }
             let envelope = try await transport("plugin/client/request", .object(params))
+            try Task.checkCancellation()
             guard stamp == epoch else { throw PersonalClientError.selectionChanged }
             guard case .object(let value) = envelope, let result = value["result"] else { throw PersonalClientError.invalidResponse }
             return result
         } catch {
+            try Task.checkCancellation()
             guard stamp == epoch else { throw PersonalClientError.selectionChanged }
             let message = error.localizedDescription
             if message.contains("user_host_isolation_required:") { throw PersonalClientError.isolationRequired }

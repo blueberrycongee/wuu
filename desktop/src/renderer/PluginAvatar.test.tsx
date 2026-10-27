@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginAvatar } from "./PluginAvatar";
 import { PublicIcon } from "./PublicIcon";
 import { PluginHost } from "./plugins/PluginHost";
-import { createPluginUIKit, type PluginUIAvatarProps } from "../shared/workbench";
+import { createPluginUIKit, type PluginUIAvatarProps, type PluginUIKit } from "../shared/workbench";
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
@@ -33,9 +33,10 @@ const bodySelector = ".mo-bob > g:not(.mo-eyes) > path";
 const circlePath = _layout("circle-contract", { traits: { shape: 0.1 } }).body.path;
 
 describe("Plugin avatar public contract", () => {
-  it("shares one circular identity between the public icon and injected UI avatar", () => {
+  it("shares one circular identity between the public icon and injected UI avatar", async () => {
     const host = new PluginHost({ react: React, avatarComponent: PluginAvatar });
-    const ui = host.ui;
+    let ui!: PluginUIKit;
+    await host.activateGeneration({ pluginId: "avatar-contract", generation: "test", register: api => { ui = api.ui; } });
     const rendered = render(<><PublicIcon name="mascot" /><ui.Avatar size={64} /></>);
     const marks = rendered.querySelectorAll("[data-agent-avatar-id]");
     expect(marks).toHaveLength(2);
@@ -51,6 +52,7 @@ describe("Plugin avatar public contract", () => {
     }
     expect(faces[0].querySelector(".mo-eyes")?.innerHTML).toBe(faces[1].querySelector(".mo-eyes")?.innerHTML);
     expect(marks[0].getAttribute("data-agent-avatar-motion")).toBe("static");
+    host.unload("avatar-contract");
   });
 
   it("keeps the same sphere and headphones through work, failure and recovery without morph artwork", () => {

@@ -24,23 +24,27 @@ type PluginWorkspaceDiscardHandler func(context.Context, string, pluginhost.Work
 // PluginSessionRouter lets plugin processes outlive individual app-server
 // bindings without coupling runtime construction to an app-server package.
 type PluginSessionRouter struct {
-	personalBinding    uint64
-	personalHost       PersonalHostHandler
-	clientBinding      uint64
-	clientInvalidation func(context.Context, *pluginhost.Host, pluginhost.ClientInvalidation) error
-	mu                 sync.RWMutex
-	create             PluginSessionCreateHandler
-	send               PluginSessionSendHandler
-	list               PluginSessionListHandler
-	cancel             PluginSessionCancelHandler
-	inspect            PluginSessionInspectHandler
-	control            PluginSessionControlHandler
-	workspaceStatus    PluginWorkspaceStatusHandler
-	workspaceApply     PluginWorkspaceApplyHandler
-	workspaceDiscard   PluginWorkspaceDiscardHandler
-	binding            uint64
-	processBinding     uint64
-	processSession     func(context.Context, string, bool) (string, bool, error)
+	sessionResourceBinding        uint64
+	sessionResourceAccess         SessionResourceAccessHandler
+	executionAuthorizationBinding uint64
+	executionAuthorization        ExecutionAuthorizationHandler
+	personalBinding               uint64
+	personalHost                  PersonalHostHandler
+	clientBinding                 uint64
+	clientInvalidation            func(context.Context, *pluginhost.Host, pluginhost.ClientInvalidation) error
+	mu                            sync.RWMutex
+	create                        PluginSessionCreateHandler
+	send                          PluginSessionSendHandler
+	list                          PluginSessionListHandler
+	cancel                        PluginSessionCancelHandler
+	inspect                       PluginSessionInspectHandler
+	control                       PluginSessionControlHandler
+	workspaceStatus               PluginWorkspaceStatusHandler
+	workspaceApply                PluginWorkspaceApplyHandler
+	workspaceDiscard              PluginWorkspaceDiscardHandler
+	binding                       uint64
+	processBinding                uint64
+	processSession                func(context.Context, string, bool) (string, bool, error)
 }
 
 func NewPluginSessionRouter() *PluginSessionRouter { return &PluginSessionRouter{} }
@@ -209,4 +213,39 @@ func (r *PluginSessionRouter) Send(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, errors.New("session service is unavailable")
 	}
 	return handler(ctx, pluginID, params)
+}
+
+type SessionResourceAccessHandler func(context.Context, string, string, *pluginhost.ExecutionAuthorizationReference, string) (context.Context, error)
+
+func (r *PluginSessionRouter) BindSessionResourceAccess(handler SessionResourceAccessHandler) func() {
+	r.mu.Lock()
+	r.sessionResourceBinding++
+	binding := r.sessionResourceBinding
+	r.sessionResourceAccess = handler
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.sessionResourceBinding == binding {
+				r.sessionResourceAccess = nil
+			}
+		})
+	}
+}
+func (s *pluginHostServices) authorizeSessionResource(ctx context.Context, sessionID string, ref *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
+	if !s.binding.IsUser() {
+		return ctx, nil
+	}
+	if s.turnRouter == nil {
+		return ctx, errors.New("session resource policy is unavailable")
+	}
+	s.turnRouter.mu.RLock()
+	handler := s.turnRouter.sessionResourceAccess
+	s.turnRouter.mu.RUnlock()
+	if handler == nil {
+		return ctx, errors.New("session resource policy is unavailable")
+	}
+	return handler(ctx, s.pluginID, sessionID, ref, operation)
 }

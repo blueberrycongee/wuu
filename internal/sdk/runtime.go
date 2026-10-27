@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,10 +13,10 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -43,6 +44,9 @@ type Host struct {
 // Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// CompositionProfile explicitly selects a shipped or configured product profile.
+	// Empty preserves the configured profile; identity never selects a product.
+	CompositionProfile string
 	// PersonalConnectors supplies trusted test/embedding dependencies, never RPC credentials.
 	PersonalConnectors                    personalconnectors.Options
 	OpenPersonalConnectorAuthorizationURL func(context.Context, string) error
@@ -111,12 +115,14 @@ type Options struct {
 // Close must be called after all Serve calls return; it rejects an early close
 // instead of racing shared provider, plugin, and persistence resources.
 type Runtime struct {
-	mu       sync.Mutex
-	core     *runtime.Session
-	userHost *appserver.UserHost
-	serving  int
-	closed   bool
-	closeErr error
+	mu             sync.Mutex
+	core           *runtime.Session
+	serviceRelease func()
+	userHost       *appserver.UserHost
+	bindings       *appserver.RuntimeBindings
+	serving        int
+	closed         bool
+	closeErr       error
 }
 
 // New builds the default Wuu host using the same composition path as the
@@ -188,18 +194,22 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := runtimeconfig.ApplyOverrides(&cfg, runtimeconfig.Overrides{
-		AgentProfile:   opts.AgentProfile,
-		MaxTurns:       opts.MaxTurns,
-		Effort:         opts.Effort,
-		Variant:        opts.Variant,
-		PermissionMode: opts.PermissionMode,
-	}); err != nil {
+	overrides := runtimeconfig.Overrides{
+		CompositionProfile: opts.CompositionProfile,
+		AgentProfile:       opts.AgentProfile,
+		MaxTurns:           opts.MaxTurns,
+		Effort:             opts.Effort,
+		Variant:            opts.Variant,
+		PermissionMode:     opts.PermissionMode,
+	}
+	if err := runtimeconfig.ApplyOverrides(&cfg, overrides); err != nil {
 		return nil, err
 	}
 
+	bindings := appserver.NewRuntimeBindings()
 	core, err := runtime.NewSession(runtime.Options{
 		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
+		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
@@ -210,7 +220,7 @@ func New(opts Options) (*Runtime, error) {
 		Config:                   cfg,
 		ProviderName:             strings.TrimSpace(opts.Provider),
 		ModelOverride:            strings.TrimSpace(opts.Model),
-		PermissionModeExplicit:   strings.TrimSpace(opts.PermissionMode) != "",
+		Overrides:                overrides,
 		NoTools:                  opts.NoTools,
 		NonInteractive:           opts.NonInteractive,
 		SafeMode:                 opts.SafeMode,
@@ -218,9 +228,23 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &Runtime{core: core}
+	result := &Runtime{core: core, bindings: bindings}
 	if binding.IsUser() {
 		personalOptions := personalhost.Options{}
+		var selected *runtime.StateServices
+		if host.Kind == runtime.HostLocal && !opts.SafeMode {
+			selected, result.serviceRelease, err = core.RetainStateServices()
+			if err != nil {
+				_, _ = core.Cleanup()
+				return nil, err
+			}
+		}
+		initialized := false
+		defer func() {
+			if !initialized && result.serviceRelease != nil {
+				result.serviceRelease()
+			}
+		}()
 		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode {
 			connectorOptions := opts.PersonalConnectors
 			connectorHome, pathErr := statepath.Home(homeDir)
@@ -230,15 +254,10 @@ func New(opts Options) (*Runtime, error) {
 			}
 			connectorOptions.StateDir = filepath.Join(binding.State(connectorHome), "connectors")
 			if connectorOptions.Store == nil {
-				connectorOptions.Store, err = credentialstore.NewDesktopStore()
+				connectorOptions.Store = selected.Credentials
 			}
-			if err != nil {
-				personalOptions.ConnectorsUnavailableCode = "secure_store_unavailable"
-				err = nil
-			} else {
-				personalOptions.Connectors = personalconnectors.New(connectorOptions)
-				personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
-			}
+			personalOptions.Connectors = personalconnectors.New(connectorOptions)
+			personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
 		} else {
 			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
 		}
@@ -254,6 +273,9 @@ func New(opts Options) (*Runtime, error) {
 			}
 			calendarOptions := opts.PersonalCalendar
 			calendarOptions.StateDir = filepath.Join(binding.State(stateHome), "calendar")
+			if calendarOptions.Store == nil {
+				calendarOptions.Store = selected.Credentials
+			}
 			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
 			if calendarErr != nil {
 				personalOptions.UnavailableCode = "secure_store_unavailable"
@@ -266,7 +288,7 @@ func New(opts Options) (*Runtime, error) {
 				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
 			}
 		}
-		result.userHost, err = appserver.NewUserHost(core, personalOptions)
+		result.userHost, err = appserver.NewUserHost(core, personalOptions, appserver.WithRuntimeBindings(bindings))
 		if err != nil {
 			if personalOptions.Calendar != nil {
 				_ = personalOptions.Calendar.Close()
@@ -277,6 +299,7 @@ func New(opts Options) (*Runtime, error) {
 			_, _ = core.Cleanup()
 			return nil, err
 		}
+		initialized = true
 	}
 	return result, nil
 }
@@ -284,15 +307,24 @@ func New(opts Options) (*Runtime, error) {
 // Serve runs one app-server JSONL connection until the client requests
 // shutdown, the input closes, or the protocol returns an error. The caller owns
 // in and out.
+// Serve is the trusted local-pipe embedding entrypoint. Network transports
+// must use ServeProviderAuthenticated or carry a verified device principal.
 func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	return r.ServeForDevice(ctx, in, out, nil)
+	if ctx != nil {
+		if _, ok := principal.FromContext(ctx); !ok {
+			ctx = principal.WithContext(ctx, principal.LocalOwner())
+		}
+	}
+	return r.serve(ctx, in, out, nil, nil)
 }
 
-// ServeForDevice attaches an authenticated transport and its device-bound push
-// registrar. User hosts keep executing after this connection closes; Close is
-// the explicit authority shutdown after all connections return. The owner must
-// cancel/close its transports before Close; Coding retains its existing connection life.
+// ServeForDevice accepts an already-authenticated device principal and its
+// bound push registrar; it never upgrades a transport to local owner authority.
 func (r *Runtime) ServeForDevice(ctx context.Context, in io.Reader, out io.Writer, registrar appserver.PushRegistrar) error {
+	return r.serve(ctx, in, out, nil, nil, registrar)
+}
+
+func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage, registrars ...appserver.PushRegistrar) error {
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -320,16 +352,34 @@ func (r *Runtime) ServeForDevice(ctx context.Context, in io.Reader, out io.Write
 		r.mu.Unlock()
 	}()
 
+	if credential != nil {
+		identity, err := core.AuthenticateTransport(ctx, *credential)
+		if err != nil {
+			_ = json.NewEncoder(out).Encode(map[string]any{"id": authenticationID, "error": map[string]string{"code": "authentication_failed", "message": "identity provider rejected the credential"}})
+			return errors.New("authentication failed")
+		}
+		ctx = principal.WithContext(ctx, identity)
+		if err := json.NewEncoder(out).Encode(map[string]any{"id": authenticationID, "result": principal.Authentication{Identity: identity.Identity(), ExpiresAt: identity.ExpiresAt()}}); err != nil {
+			return err
+		}
+	}
+	var registrar appserver.PushRegistrar
+	if len(registrars) > 0 {
+		registrar = registrars[0]
+	}
 	if r.userHost != nil {
 		return r.userHost.Serve(ctx, in, out, registrar)
 	}
-	return appserver.RunStdioForDevice(ctx, core, in, out, registrar)
+	return appserver.RunStdioForDevice(ctx, core, in, out, registrar, appserver.WithRuntimeBindings(r.bindings))
 }
 
 // SubscribeUserAttention observes owner-admitted notifications for the user
 // host without a phone or desktop connection. The receiver must honor ctx for
 // external work. Close ends the subscription; Coding runtimes reject it.
 func (r *Runtime) SubscribeUserAttention(ctx context.Context, receive func(appserver.UserAttentionNotification)) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -340,7 +390,26 @@ func (r *Runtime) SubscribeUserAttention(ctx context.Context, receive func(appse
 	if closed || host == nil {
 		return errors.New("active user host is required")
 	}
+	if _, ok := principal.FromContext(ctx); !ok {
+		ctx = principal.WithContext(ctx, principal.LocalOwner())
+	}
 	return host.SubscribeUserAttention(ctx, receive)
+}
+
+// AuthorizeUserAttention verifies one recipient against the selected resource
+// policy and the original host-minted event provenance. Transport adapters must
+// pass a verified recipient principal; this method never grants local ownership.
+func (r *Runtime) AuthorizeUserAttention(ctx context.Context, event appserver.UserAttentionNotification) error {
+	if r == nil || ctx == nil {
+		return errors.New("runtime and context are required")
+	}
+	r.mu.Lock()
+	host, closed := r.userHost, r.closed
+	r.mu.Unlock()
+	if closed || host == nil {
+		return errors.New("active user host is required")
+	}
+	return host.AuthorizeUserAttention(ctx, event)
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.
@@ -360,6 +429,10 @@ func (r *Runtime) Close() error {
 	if r.userHost != nil {
 		r.closeErr = r.userHost.Close()
 		r.userHost = nil
+	}
+	if r.serviceRelease != nil {
+		r.serviceRelease()
+		r.serviceRelease = nil
 	}
 	if r.core != nil {
 		_, coreErr := r.core.Cleanup()

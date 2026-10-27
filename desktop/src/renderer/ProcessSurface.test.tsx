@@ -6,20 +6,20 @@
  * lifecycle in a single component, so the assertion below guards the
  * gray process row against remounting mid-stream.
  */
-import { act, type ReactElement } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSurface } from "./ProcessSurface";
 import { ContextCompactionNotice } from "./TurnNotice";
-import {
-  PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
-  PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
-} from "./ProcessSummary";
 import type { ThreadItem } from "../shared/protocol";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+let composition: UICompositionV1 = { Slot: ({ fallback }) => <>{fallback}</> };
 import { modelMascotAccessory } from "./WuuMascot";
-import { translateCurrent as t } from "./i18n";
-import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
+
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
 
 beforeAll(() => {
   // jsdom does not lay out real heights. Stub getBoundingClientRect so
@@ -163,15 +163,6 @@ function makeSearch(
   };
 }
 
-function makeSearches(
-  count: number,
-  status: ThreadItem["status"] = "in_progress",
-): ThreadItem[] {
-  return Array.from({ length: count }, (_, index) =>
-    makeSearch(`search-${index + 1}`, `query-${index + 1}`, status),
-  );
-}
-
 function makeReasoning(
   id: string,
   text: string,
@@ -198,14 +189,14 @@ function render(
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<ProcessSurface {...props} /> as ReactElement);
+    root!.render(<ConversationControlsTestProvider composition={composition}><ProcessSurface {...props} /></ConversationControlsTestProvider>);
   });
   return { container };
 }
 
 function rerender(props: SurfaceProps): void {
   act(() => {
-    root!.render(<ProcessSurface {...props} /> as ReactElement);
+    root!.render(<ConversationControlsTestProvider composition={composition}><ProcessSurface {...props} /></ConversationControlsTestProvider>);
   });
 }
 
@@ -235,9 +226,7 @@ function setProcessFoldOpen(
 
 afterEach(() => {
   unmount();
-  desktopPluginHost.unload("test:tool-activity-presenter");
-  desktopPluginHost.unload("test:process-wrapper");
-  desktopPluginHost.unload("test:process-replacement");
+  composition = { Slot: ({ fallback }) => <>{fallback}</> };
 });
 
 describe("ProcessSurface", () => {
@@ -256,94 +245,17 @@ describe("ProcessSurface", () => {
     expect(onOpenURL).toHaveBeenCalledWith("http://app.local:3000", undefined);
   });
 
-  it("nests the single-tool presenter inside the complete process boundary", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: () => <span data-tool-presenter-root>tool</span>,
-        });
-      },
-    });
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:process-wrapper",
-      generation: "one",
-      register(api) {
-        api.registerPresenter({
-          id: "wrapper",
-          target: "conversation.process",
-          key: "tool-group",
-          mode: "wrap",
-          render: ({ fallback }) => <section data-process-wrapper>{fallback}</section>,
-        });
-      },
-    });
-    const item = makeReadFile("tool-1", "a.ts");
-    item.display = { capability: "activity.read" };
-    const { container } = render({ processItems: [item], streaming: false });
-
-    expect(container.querySelector("[data-process-wrapper] [data-tool-presenter-root]")).not.toBeNull();
-
-    await act(async () => desktopPluginHost.activateGeneration({
-      pluginId: "test:process-replacement",
-      generation: "one",
-      register(api) {
-        api.registerPresenter({
-          id: "replacement",
-          target: "conversation.process",
-          key: "tool-group",
-          render: () => <strong data-process-replacement>process</strong>,
-        });
-      },
-    }));
-
-    expect(container.querySelector("[data-process-wrapper] [data-process-replacement]")?.textContent).toBe("process");
-    expect(container.querySelector("[data-tool-presenter-root]")).toBeNull();
-  });
-
-  it("lets a matching presenter replace the complete single-tool surface root", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: ({ activity }) => (
-            <section data-tool-presenter-root>{activity.toolName}</section>
-          ),
-        });
-      },
-    });
-    const item = makeReadFile("tool-1", "a.ts");
-    item.display = { capability: "activity.read" };
-    const { container } = render({ processItems: [item], streaming: false });
-
-    expect(container.querySelector("section[data-tool-presenter-root]")?.textContent).toBe("read_file");
+  it("lets the public process slot replace the complete single-tool surface", () => {
+    composition = { Slot: ({ name, fallback }) => name.endsWith("/conversation.process") ? <section data-process-replacement>process</section> : <>{fallback}</> };
+    const { container } = render({ processItems: [makeReadFile("tool-1", "a.ts")], streaming: false });
+    expect(container.querySelector("[data-process-replacement]")?.textContent).toBe("process");
     expect(container.querySelector(".process-surface")).toBeNull();
   });
 
-  it("dispatches matching presenter rows in an expanded multi-tool timeline", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: ({ activity }) => <div data-timeline-presenter={activity.id} />,
-        });
-      },
-    });
-    const presented = makeReadFile("tool-1", "a.ts");
-    presented.display = { capability: "activity.read" };
-    const native = makeReadFile("tool-2", "b.ts");
-    const { container } = render({ processItems: [presented, native], streaming: false });
+  it("dispatches public tool slots in an expanded multi-tool timeline", () => {
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("/conversation.tool-activity") && context?.itemId === "tool-1" ? <div data-timeline-presenter="tool-1" /> : <>{fallback}</> };
+    const { container } = render({ processItems: [makeReadFile("tool-1", "a.ts"), makeReadFile("tool-2", "b.ts")], streaming: false });
     setProcessFoldOpen(container.querySelector("details"), true);
-
     expect(container.querySelector("[data-timeline-presenter=tool-1]")).toBeTruthy();
     expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(1);
   });
@@ -441,8 +353,7 @@ describe("ProcessSurface", () => {
     const row = container.querySelector(".process-surface-row");
     expect(row?.classList.contains("is-live-gray")).toBe(true);
     expect(row?.classList.contains("is-streaming")).toBe(false);
-    const label = container.querySelector(".process-surface-reasoning-label");
-    expect(label?.textContent).toBe("思考过程");
+    expect(container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("a.ts");
   });
 
   it("does not surface intermediate tool failures in the conversation", () => {
@@ -505,7 +416,7 @@ describe("ProcessSurface", () => {
     expect(detailsAfter?.hasAttribute("open")).toBe(false);
   });
 
-  it("renders the reasoning summary segment with '思考过程' when settled", () => {
+  it("keeps the latest tool in the summary when reasoning settles", () => {
     const { container } = render({
       processItems: [
         makeReadFile("tool-1", "a.ts", "completed"),
@@ -516,10 +427,11 @@ describe("ProcessSurface", () => {
     const label = container.querySelector(
       ".process-surface-reasoning-label",
     );
-    expect(label?.textContent).toBe("思考过程");
+    expect(label).toBeNull();
+    expect(container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("a.ts");
   });
 
-  it("renders '正在思考' while reasoning is still in progress", () => {
+  it("keeps the latest tool in the summary while reasoning continues", () => {
     const { container } = render({
       processItems: [
         makeReadFile("tool-1", "a.ts", "completed"),
@@ -530,7 +442,8 @@ describe("ProcessSurface", () => {
     const label = container.querySelector(
       ".process-surface-reasoning-label",
     );
-    expect(label?.textContent).toBe("正在思考");
+    expect(label).toBeNull();
+    expect(container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("a.ts");
   });
 
   it("keeps the previous process label briefly while the new label enters", async () => {
@@ -615,7 +528,7 @@ describe("ProcessSurface", () => {
     expect(detailsAfter?.open).toBe(true);
   });
 
-  it("renders a count segment for multiple files of the same kind", () => {
+  it("summarizes files in a settled group", () => {
     const { container } = render({
       processItems: [
         makeReadFile("tool-1", "a.ts", "completed"),
@@ -624,8 +537,7 @@ describe("ProcessSurface", () => {
       ],
       streaming: false,
     });
-    const count = container.querySelector(".process-surface-count");
-    expect(count?.textContent).toBe("3");
+    expect(container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("3");
   });
 
   it("keeps concrete actions in a mixed summary and the remaining tools in its details", () => {
@@ -667,8 +579,8 @@ describe("ProcessSurface", () => {
     });
 
     const summary = container.querySelector(".process-surface-summary-line");
-    expect(summary?.textContent).toContain("bun run verify-database");
-    expect(summary?.textContent).not.toContain("cron");
+    expect(summary?.getAttribute("aria-label")).toContain("cron");
+    expect(summary?.getAttribute("aria-label")).toContain("bun run verify-database");
     setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
     expect(container.querySelector(".activity-timeline")?.textContent).toContain("cron");
   });
@@ -695,10 +607,19 @@ describe("ProcessSurface", () => {
     });
     const rows = container.querySelectorAll(".activity-timeline-item");
     expect(rows[rows.length - 1].textContent).toContain("bun run verify-recovery");
+    const summary = container.querySelector(".process-surface-summary-line");
+    expect(summary?.getAttribute("aria-label")).toContain("bun run verify-recovery");
     expect(container.querySelector<HTMLDetailsElement>("details.process-surface-fold")?.open).toBe(true);
+
+    rerender({
+      processItems: items.map(item => ({ ...item, status: "completed" })),
+      streaming: false,
+    });
+    expect(summary?.getAttribute("aria-label")).toContain("12");
+    expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(items.length);
   });
 
-  it("keeps a useful count when many calls are all the same kind", () => {
+  it("summarizes a long historical group of the same kind", () => {
     const { container } = render({
       processItems: [
         makeReadFile("tool-1", "a.ts"),
@@ -710,11 +631,11 @@ describe("ProcessSurface", () => {
     });
 
     expect(
-      container.querySelector(".process-surface-count")?.textContent,
-    ).toBe("4");
+      container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label"),
+    ).toContain("4");
   });
 
-  it("reports the current phase instead of appending reasoning to a long summary", () => {
+  it("keeps the last command visible while reasoning continues", () => {
     const { container } = render({
       processItems: [
         makeReadFile("read-1", "a.ts"),
@@ -740,7 +661,7 @@ describe("ProcessSurface", () => {
 
     expect(
       container.querySelector(".process-surface-summary-line .process-label-content")?.textContent,
-    ).toBe(t("process.thinkingAfterOperations", { count: 4 }));
+    ).toContain("npm test");
     const summary = container.querySelector(".process-surface-summary-line");
     const blobatar = summary?.querySelector<SVGSVGElement>(
       "svg.process-surface-blobatar",
@@ -773,9 +694,7 @@ describe("ProcessSurface", () => {
         : item),
       streaming: true,
     });
-    expect(summary?.getAttribute("aria-label")).toBe(
-      t("process.thinkingAfterOperations", { count: 4 }),
-    );
+    expect(summary?.getAttribute("aria-label")).toContain("cache_write");
   });
 
   it("keeps the blobatar off a settled synthesized toolcall row", () => {
@@ -878,174 +797,6 @@ describe("ProcessSurface", () => {
     expect(next?.getAttribute("data-wuu-mascot-activity")).toBe("edit");
   });
 
-  it("marks the count is-changing for ~180ms when the value changes", async () => {
-    const { container } = render({
-      processItems: [
-        makeReadFile("tool-1", "a.ts", "completed"),
-        makeReadFile("tool-2", "b.ts", "completed"),
-      ],
-      streaming: false,
-      active: true,
-    });
-    const countBefore = container.querySelector(".process-surface-count");
-    expect(countBefore?.textContent).toBe("2");
-    expect(countBefore?.classList.contains("is-changing")).toBe(false);
-
-    rerender({
-      processItems: [
-        makeReadFile("tool-1", "a.ts", "completed"),
-        makeReadFile("tool-2", "b.ts", "completed"),
-        makeReadFile("tool-3", "c.ts", "completed"),
-      ],
-      streaming: false,
-      active: true,
-    });
-    const countDuring = container.querySelector(".process-surface-count");
-    expect(countDuring?.textContent).toBe("3");
-    const highlightCount = container.querySelector(".process-label-highlight .process-surface-count");
-    expect(highlightCount?.textContent).toBe(countDuring?.textContent);
-    expect(highlightCount?.classList.contains("is-changing")).toBe(true);
-    expect(countDuring?.classList.contains("is-changing")).toBe(true);
-
-    // Past the 180ms window, the class is cleared.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 220));
-    });
-    const countAfter = container.querySelector(".process-surface-count");
-    expect(countAfter?.classList.contains("is-changing")).toBe(false);
-  });
-
-  it("debounces live same-kind count ticks and flushes on settle", () => {
-    vi.useFakeTimers();
-    try {
-      const { container } = render({
-        processItems: makeSearches(2),
-        streaming: true,
-      });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      rerender({ processItems: makeSearches(3), streaming: true });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      act(() => {
-        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
-      });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      rerender({ processItems: makeSearches(4), streaming: true });
-      act(() => {
-        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
-      });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      act(() => {
-        vi.advanceTimersByTime(1);
-      });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
-
-      rerender({ processItems: makeSearches(5), streaming: true });
-      rerender({ processItems: makeSearches(5, "completed"), streaming: false });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("5");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("snaps a delayed aggregated count when the conversation becomes visible", () => {
-    vi.useFakeTimers();
-    try {
-      if (container) unmount();
-      container = document.createElement("div");
-      document.body.appendChild(container);
-      root = createRoot(container);
-      const mount = (active: boolean, count: number): void => {
-        act(() => {
-          root!.render(
-            (
-              <ConversationRenderActivityProvider active={active}>
-                <ProcessSurface processItems={makeSearches(count)} streaming />
-              </ConversationRenderActivityProvider>
-            ) as ReactElement,
-          );
-        });
-      };
-      mount(false, 2);
-      mount(false, 4);
-      // A hidden conversation keeps the frozen count it last published.
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      mount(true, 4);
-      // The first visible frame snaps the frozen count to the live aggregation.
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
-      expect(container.querySelector(".process-text-motion-enter")).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("caps how long a live count can stay stale during a continuous burst", () => {
-    vi.useFakeTimers();
-    try {
-      const { container } = render({
-        processItems: makeSearches(2),
-        streaming: true,
-      });
-
-      rerender({ processItems: makeSearches(3), streaming: true });
-      act(() => {
-        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
-      });
-      rerender({ processItems: makeSearches(4), streaming: true });
-      act(() => {
-        vi.advanceTimersByTime(
-          PROCESS_SUMMARY_COUNT_MAX_WAIT_MS - (PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1),
-        );
-      });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("keeps the expanded tool trail live while the summary count is held", () => {
-    vi.useFakeTimers();
-    try {
-      const { container } = render({
-        processItems: makeSearches(2),
-        streaming: true,
-      });
-      setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
-
-      rerender({ processItems: makeSearches(3), streaming: true });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-      expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(3);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("publishes a new process kind immediately even while a count is held", () => {
-    vi.useFakeTimers();
-    try {
-      const { container } = render({
-        processItems: makeSearches(2),
-        streaming: true,
-      });
-      rerender({ processItems: makeSearches(3), streaming: true });
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
-
-      rerender({
-        processItems: [...makeSearches(3), makeReadFile("read-1", "session.ts", "in_progress")],
-        streaming: true,
-      });
-      const summary = container.querySelector(".process-surface-summary-line .process-label-content")?.textContent;
-      expect(summary).toContain("3");
-      expect(summary).toContain("session.ts");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("uses the renderProcessItem callback for reasoning items in the body", () => {
     const { container } = render({
       processItems: [
@@ -1083,11 +834,7 @@ describe("ProcessSurface", () => {
       ".process-surface-reasoning-list",
     );
     expect(list).toBeNull();
-    // Summary still mentions 思考过程.
-    const label = container.querySelector(
-      ".process-surface-reasoning-label",
-    );
-    expect(label?.textContent).toBe("思考过程");
+    expect(container.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("2");
   });
 
   describe("fold body scroll container", () => {

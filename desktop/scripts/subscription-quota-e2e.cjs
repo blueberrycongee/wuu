@@ -10,7 +10,7 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow } = require('electron');
 
-const desktop = path.resolve(__dirname, '..');
+const desktop = path.resolve(process.env.WUU_QUOTA_DESKTOP || path.join(__dirname, '..'));
 const output = path.resolve(process.env.WUU_QUOTA_OUTPUT || path.join(desktop, 'out/subscription-quota-e2e'));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-quota-'));
 const home = path.join(fixture, 'wuu');
@@ -22,7 +22,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 Object.assign(process.env, {
   WUU_HOME: home, HOME: userHome, CODEX_HOME: path.join(userHome, '.codex'),
   GROK_HOME: path.join(userHome, '.grok'), CLAUDE_CONFIG_DIR: path.join(userHome, '.claude'),
-  WUU_ENABLE_BROWSER: '0', WUU_SAFE_MODE: '1', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
+  WUU_ENABLE_BROWSER: '0', WUU_SAFE_MODE: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
 });
 delete process.env.ELECTRON_RENDERER_URL;
 const key = path.join(fixture, 'key.pem');
@@ -180,16 +180,17 @@ async function verifyDetailContentLayout(win, name, context) {
   assert.ok(layout.measured > 0, `${name} must have visible account or allowance content to measure`);
   assert.deepEqual(layout.problems, [], `${name} ${context}`);
 }
-async function capture(win, name) {
+async function capture(win, name, fullWindow = false) {
   await evaluate(win, async () => {
     await document.fonts.ready;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
-  const bounds = await evaluate(win, () => {
+  const bounds = await evaluate(win, fullWindow => {
+    if (fullWindow) return { x: 0, y: 0, width: innerWidth, height: innerHeight };
     const page = document.querySelector('.settings-page').getBoundingClientRect();
     const x = Math.max(0, Math.floor(page.x)), y = Math.max(0, Math.floor(page.y));
     return { x, y, width: Math.min(innerWidth - x, Math.ceil(page.width)), height: Math.min(innerHeight - y, Math.ceil(page.height)) };
-  });
+  }, fullWindow);
   const zoom = win.webContents.getZoomFactor();
   const [width, height] = win.getContentSize();
   const x = Math.floor(bounds.x * zoom), y = Math.floor(bounds.y * zoom);
@@ -234,7 +235,12 @@ async function run() {
   const endpoint = `http://127.0.0.1:${upstream.address().port}/backend-api/codex`;
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity']
     .map(id => [id, { enabled: false, binary_path: path.join(fixture, `absent-${id}`) }]));
-  const config = { default_provider: 'personal', engines, providers: {
+  const config = { default_provider: 'personal', engines,
+    // This fixture selects the native document provider so its durable state can
+    // be inspected through the public CLI export, without decoding backend files.
+    composition: { version: 3, profile: 'desktop', services: [
+      { service: 'state.documents', major: 1, provider: 'wuu.state.sqlite' },
+    ] }, providers: {
     personal: { type: 'openai-codex', base_url: endpoint, api_key: firstToken, model: 'gpt-fixture' },
     team: { type: 'openai-codex', base_url: endpoint, api_key: secondToken, model: 'gpt-fixture' },
     deepseek: { type: 'openai-compatible', base_url: 'https://api.deepseek.com', api_key: 'fixture-deepseek', model: 'deepseek-chat' },
@@ -245,6 +251,21 @@ async function run() {
   const configPath = path.join(home, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify(config));
   const originalConfig = fs.readFileSync(configPath, 'utf8');
+  function readQuotaDocuments() {
+    const exported = path.join(fixture, 'state-export.json');
+    const result = spawnSync(core, ['state', 'export', '--dir', path.join(home, 'sessions/documents'), '--file', exported], {
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const state = JSON.parse(fs.readFileSync(exported, 'utf8'));
+    const documents = state.documents.filter(document => document.namespace === 'subscription.quota');
+    assert.ok(documents.length > 0, 'Successful quota reads must create durable documents in the selected provider.');
+    const persisted = JSON.stringify(documents);
+    for (const provider of Object.values(config.providers)) {
+      assert.ok(!persisted.includes(provider.api_key), 'Quota documents must not retain provider credentials.');
+    }
+    return { revision: state.revision, documents };
+  }
   const stamp = '2026-01-01T00:00:00Z';
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'repo', name: 'quota-fixture', path: project,
     created_at: stamp, updated_at: stamp }], active_context: { kind: 'project', project_id: 'repo', cwd: project } }));
@@ -289,6 +310,18 @@ async function run() {
   assert.equal(findQuota(fresh, 'router').balances[0].amount, '0.20000000000000001');
   assert.deepEqual(findQuota(fresh, 'kimi').windows.map(window => window.used_percent), [15, 25]);
   assert.equal(findQuota(fresh, 'unknown').status, 'unsupported');
+  const persistedFresh = readQuotaDocuments();
+  const persistedSnapshots = persistedFresh.documents.filter(document => document.value.values.snapshot);
+  const observed = fresh.subscription_providers.filter(provider => provider.quota.status === 'available');
+  assert.equal(persistedSnapshots.length, observed.length, 'Each observed account must have its own durable snapshot.');
+  for (const provider of observed) {
+    const matches = persistedSnapshots.filter(document => document.value.values.snapshot.account.id === provider.quota.account.id);
+    assert.equal(matches.length, 1, `${provider.name} must retain its credential-scoped account identity.`);
+    assert.equal(matches[0].value.values.snapshot.status, 'available');
+    assert.deepEqual(matches[0].value.values.snapshot.windows, provider.quota.windows);
+    assert.deepEqual(matches[0].value.values.snapshot.balances, provider.quota.balances);
+  }
+  const personalSnapshotKey = persistedSnapshots.find(document => document.value.values.snapshot.account.id === first.account.id).key;
   assert.deepEqual(await evaluate(main, selector => [...document.querySelectorAll(`${selector} meter`)].map(meter => meter.value), card('personal')), [63, 0]);
   assert.equal(await evaluate(main, () => {
     const personal = document.querySelector('[data-testid="subscription-builtin-personal"]');
@@ -311,10 +344,38 @@ async function run() {
   assert.equal(await evaluate(main, selector => document.querySelector(selector).textContent.includes('12.3400 USD'), card('deepseek')), true, 'The observed balance remains visible in connection detail.');
   await openProviderDetail(main, 'personal');
   const resetTimes = await evaluate(main, selector => [...document.querySelectorAll(`${selector} time.connection-usage-reset`)].map(time => ({
-    datetime: time.dateTime, exact: time.getAttribute('aria-label'), title: time.title,
+    datetime: time.dateTime, exact: time.getAttribute('aria-label'),
+    localDate: new Intl.DateTimeFormat(document.documentElement.lang, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+    }).format(new Date(time.dateTime)),
   })), card('personal'));
   assert.equal(resetTimes.length, 2);
-  assert.ok(resetTimes.every(time => time.exact === time.title && time.exact.includes(String(new Date().getFullYear())) && Number.isFinite(Date.parse(time.datetime))));
+  assert.deepEqual(resetTimes.map(time => time.datetime), first.windows.map(window => window.resets_at),
+    'Each reset instant must match its observed account allowance.');
+  // Reset hints use the shared tooltip, not the browser's native title. Check
+  // both the accessible exact date and what a real pointer hover reveals.
+  for (const [index, time] of resetTimes.entries()) {
+    assert.ok(time.exact?.includes(time.localDate), `Reset label must expose its full local date and timezone: ${JSON.stringify(time)}`);
+    const point = await evaluate(main, ({ selector, index }) => {
+      const node = document.querySelectorAll(`${selector} time.connection-usage-reset`)[index];
+      const rect = node.getBoundingClientRect();
+      const point = { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      if (!rect.width || !rect.height || !node.contains(document.elementFromPoint(point.x, point.y))) throw new Error('Reset time must be visible and hit-testable.');
+      return point;
+    }, { selector: card('personal'), index });
+    main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+    await waitFor(main, exact => [...document.querySelectorAll('[role="tooltip"]')].some(tooltip => {
+      const rect = tooltip.getBoundingClientRect(), style = getComputedStyle(tooltip);
+      return tooltip.textContent === exact && rect.width > 0 && rect.height > 0
+        && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+        && style.visibility === 'visible' && Number(style.opacity) > 0;
+    }), time.exact);
+    // Tooltip portals may extend beyond the settings card crop while remaining
+    // fully inside the viewport; retain the whole window as visual evidence.
+    await capture(main, `01-reset-${index + 1}-tooltip.png`, true);
+    main.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
+    await waitFor(main, () => !document.querySelector('[role="tooltip"]'));
+  }
   await capture(main, '01-fresh-light.png');
   await evaluate(main, selector => document.querySelector(selector).scrollIntoView({ block: 'start' }), card('personal'));
   await capture(main, '01-accounts-light.png');
@@ -390,10 +451,10 @@ async function run() {
   assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfig, 'Observation must not change the default, model, or credentials.');
   assert.ok(requests.every(request => request.method === 'GET'), 'No inference was submitted.');
   assert.ok(requests.every(request => ['/backend-api/wham/usage', '/user/balance', '/api/v1/credits', '/coding/v1/usages'].includes(request.path)), 'Only quota endpoints were requested.');
-  for (const file of fs.readdirSync(path.join(home, 'quota-snapshots'))) {
-    const persisted = fs.readFileSync(path.join(home, 'quota-snapshots', file), 'utf8');
-    assert.ok(!persisted.includes(firstToken) && !persisted.includes(secondToken) && !persisted.includes('fixture-deepseek'));
-  }
+  const persistedAfterSignIn = readQuotaDocuments();
+  assert.equal(persistedAfterSignIn.documents.length, persistedFresh.documents.length, 'Rejected credentials retain a durable tombstone, not a missing account.');
+  assert.equal(persistedAfterSignIn.documents.find(document => document.key === personalSnapshotKey)?.value.values.snapshot, null,
+    'Rejected credentials must durably clear their allowance so restart cannot resurrect it.');
   const { build } = await import('vite');
   await build({ configFile: false, root: path.join(desktop, 'dev/subscriptions'), base: './', logLevel: 'warn',
     build: { outDir: path.join(fixture, 'preview') } });
@@ -425,7 +486,8 @@ async function run() {
   preview.destroy();
   fs.writeFileSync(path.join(output, 'evidence.json'), JSON.stringify({
     fresh: fresh.subscription_providers.map(provider => ({ name: provider.name, quota: provider.quota })),
-    stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, captures, configUnchanged: true, inferenceRequests: 0,
+    persistence: { provider: 'wuu.state.sqlite', namespace: 'subscription.quota', fresh: persistedFresh, afterSignIn: persistedAfterSignIn },
+    resetTimes, stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, captures, configUnchanged: true, inferenceRequests: 0,
   }, null, 2));
   console.log("Subscription quota E2E passed; synthetic UI evidence saved.");
 }

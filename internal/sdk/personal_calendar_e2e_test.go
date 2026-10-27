@@ -152,7 +152,7 @@ func TestPersonalCalendarSDKCompositionE2E(t *testing.T) {
 		return calendarResponse(200, map[string]any{"timeZone": "UTC", "items": []any{map[string]any{"id": "fixture-event", "status": "confirmed", "summary": "SDK synthetic appointment", "start": map[string]string{"dateTime": "2026-10-24T10:00:00Z"}, "end": map[string]string{"dateTime": "2026-10-24T11:00:00Z"}}}}), nil
 	})
 	urls := make(chan string, 4)
-	options := Options{UserSpaceID: "local", ProductDomain: "personal", WorkDir: t.TempDir(), HomeDir: t.TempDir(), ConfigPath: configPath, PersonalCalendar: personalcalendar.DesktopOptions{ClientID: clientID, Store: store, HTTPClient: &http.Client{Transport: transport}}, OpenPersonalCalendarAuthorizationURL: func(_ context.Context, raw string) error {
+	options := Options{CompositionProfile: "personal", UserSpaceID: "local", ProductDomain: "personal", WorkDir: t.TempDir(), HomeDir: t.TempDir(), ConfigPath: configPath, PersonalCalendar: personalcalendar.DesktopOptions{ClientID: clientID, Store: store, HTTPClient: &http.Client{Transport: transport}}, OpenPersonalCalendarAuthorizationURL: func(_ context.Context, raw string) error {
 		if err := personalcalendar.ValidateAuthorizationURL(raw); err != nil {
 			return err
 		}
@@ -206,7 +206,7 @@ func TestPersonalCalendarSDKCompositionE2E(t *testing.T) {
 		invoke := func(client *Client, method string, input any) (json.RawMessage, error) {
 			raw, _ := json.Marshal(input)
 			var out appserver.PluginClientRequestResult
-			e := client.rpc.call(ctx, appserver.MethodPluginClientRequest, appserver.PluginClientRequestParams{ID: id, Fingerprint: fingerprint, Method: method, Input: raw}, &out)
+			e := client.rpc.call(ctx, appserver.MethodPluginClientRequest, appserver.PluginClientRequestParams{ID: id, Fingerprint: fingerprint, GraphGeneration: rt.core.ExtensionSnapshot().GenerationID, Method: method, Input: raw}, &out)
 			return out.Result, e
 		}
 		return rt, c, invoke

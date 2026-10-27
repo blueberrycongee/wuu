@@ -5,11 +5,13 @@ import type { WuuDesktopApi } from "../shared/protocol";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+let disposeFixture: (() => Promise<void>) | undefined;
 const originalHost = window.wuu;
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root?.unmount());
   root = undefined;
+  await disposeFixture?.(); disposeFixture = undefined;
   container?.remove();
   window.wuu = originalHost;
   vi.unstubAllEnvs();
@@ -23,6 +25,8 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
     vi.resetModules();
     const { SidebarAccountMenu } = await import("./SidebarAccountMenu");
+    const { DesktopControlsProvider } = await import("./DesktopControlsContext");
+    const { ApplicationDesktop } = await import("./plugins/ApplicationDesktop");
     const { SettingsView } = await import("./SettingsView");
     const { translateCurrent: t } = await import("./i18n");
     const { PhoneNavigationContext } = await import("./PhoneNavigationContext");
@@ -44,13 +48,17 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     const onOpenSettings = vi.fn();
     const onOpenAccount = vi.fn();
     const openDevices = vi.fn();
+    const desktop = new ApplicationDesktop();
+    const lifetime = new AbortController();
     await act(async () => root!.render(
       <PhoneNavigationContext.Provider value={{ openDevices }}>
-        <SidebarAccountMenu disabled={false} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
+        <DesktopControlsProvider controls={desktop.createScope(lifetime.signal)}>
+          <SidebarAccountMenu disabled={false} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
+        </DesktopControlsProvider>
       </PhoneNavigationContext.Provider>,
     ));
     await act(async () => container!.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    const menuItems = Array.from(document.querySelectorAll<HTMLButtonElement>('.sidebar-account-menu [role="menuitem"]'));
     expect(menuItems.map(item => item.textContent)).toEqual([t("settings.usage"), t("sidebar.settings")]);
     expect(remoteAccount).not.toHaveBeenCalled();
     await act(async () => menuItems.find(item => item.textContent === t("sidebar.settings"))!.click());
@@ -60,8 +68,21 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
 
     const pets = { home: "", enabled: false, selected_id: "", pets: [], errors: [] };
     const engines = { engines: [] };
+    const { createApplicationSettingsControls } = await import("./plugins/hostApplicationSettingsControls");
+    const [{ PluginHost }, { WorkbenchController }, react] = await Promise.all([
+      import("./plugins/PluginHost"), import("./plugins/Workbench"), import("react"),
+    ]);
+    const host = new PluginHost({ react });
+    let settingsControls!: ReturnType<typeof createApplicationSettingsControls>;
+    await host.activateGeneration({ pluginId: "phone-settings-fixture", generation: "one", register: api => {
+      const workbench = new WorkbenchController(api.contributions);
+      settingsControls = createApplicationSettingsControls({ host: api.contributions, controller: workbench });
+      disposeFixture = async () => { workbench.dispose(); await host.unloadAndWait("phone-settings-fixture"); };
+    } });
+    const application = { settingsControls };
     await act(async () => root!.render(
       <SettingsView
+        application={application}
         initialPage={initialPage}
         running={false}
         codexPetsLoading={false}
@@ -99,5 +120,7 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
     expect(getRemoteControlSnapshot).not.toHaveBeenCalled();
     expect(onRemoteControlEvent).not.toHaveBeenCalled();
+    lifetime.abort();
+    await desktop.dispose();
   });
 });

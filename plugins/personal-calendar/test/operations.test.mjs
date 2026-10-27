@@ -19,7 +19,7 @@ class Host {
   values = new Map(); taskRevision = 1; taskState = 'running'; taskCancelRequested = false;
   async call(method, p) {
     if (method === 'host.session.context') return { session_id: p.session_id, user_space_id: 'one', product_domain: 'personal', agent_id: 'agent-one', parent_session_id: '' };
-    if (method === 'host.service.call') { assert.equal(p.service, 'personal.agents'); assert.equal(p.method, 'tasks.get'); return { task: { task_id: 'dinner-task', user_space_id: 'one', agent_id: 'agent-one', requirements_revision: this.taskRevision, state: this.taskState, cancel_requested: this.taskCancelRequested } }; }
+    if (method === 'host.service.call') assert.fail(`unexpected circular service dependency ${p.service}`);
     if (p.key !== undefined) assert.ok(Buffer.byteLength(p.key) <= 128, 'host.storage rejects keys longer than 128 bytes');
     const key = `${p.scope}:${p.key}`;
     if (method === 'host.storage.keys') return { keys: [...this.values.keys()].filter(key => key.startsWith(`${p.scope}:`)).map(key => key.slice(p.scope.length + 1)) };
@@ -51,14 +51,22 @@ class Provider {
     return json(this.events.get(body.id ?? id));
   };
 }
-async function fixture({ host = new Host(), provider = new Provider(), authorization = async () => grant, writer = true } = {}) {
-  const plugin = new PersonalCalendarPlugin({ clock: now, ...(writer ? { writer: new GoogleCalendarWriter({ authorize: authorization, fetch: provider.fetch, clock: now }) } : {}) });
-  const lifetime = new AbortController(); plugin.initialize({ product_domain: 'personal', user_space_id: 'one' }, host, { signal: lifetime.signal }); await plugin.activate();
-  const service = (method, params = {}) => plugin.invokeService({ service: 'calendar.personal', method, params, caller: 'kernel' });
+async function fixture({ host = new Host(), provider = new Provider(), authorization = async () => grant, writer = true, validator = true } = {}) {
+  const plugin = new PersonalCalendarPlugin({ clock: now, ...(writer ? { writer: new GoogleCalendarWriter({ authorize: authorization, fetch: provider.fetch, clock: now }), ...(validator ? {validateTarget: async target => { if(target.task_id!=='dinner-task' || target.user_space_id!=='one' || target.agent_id!=='agent-one' || target.requirements_revision!==host.taskRevision || host.taskCancelRequested || ['stopped','failed','completed'].includes(host.taskState)) throw new Error('operation task requirements revision or scope changed'); }} : {}) } : {}) });
+  const lifetime = new AbortController(); plugin.initialize({ product_domain: 'personal', user_space_id: 'one' }, host, { signal: lifetime.signal }); await plugin.activate(host);
+  const service = (method, params = {}) => plugin.invokeService({ service: 'calendar.personal', method, params, caller: 'kernel' }, host);
   const client = async (method, input = {}) => (await plugin.invokeCapability({ capability: 'plugin.client.request', input: { method: `calendar.${method}`, input } }, { call: (name,p,...args) => name === 'host.service.call' && p.service === 'host.personal' && p.params.operation === 'owner.check' ? Promise.resolve({ok:true,value:{ok:true}}) : host.call(name,p,...args) })).output.result;
   const confirm = op => client('operations.confirm', { operation_id: op.operation_id, expected_revision: op.revision, preview_digest: op.preview_digest });
   return { host, provider, plugin, lifetime, service, client, confirm };
 }
+
+
+test('injected Calendar writer requires an explicit target validator before any effect', async () => {
+  const provider = new Provider();
+  await assert.rejects(fixture({provider,validator:false}), /target.validator|target_validator/);
+  assert.equal(provider.requests.length,0);
+  assert.equal(provider.writes,0);
+});
 
 test('readonly default cannot propose writes; models and services cannot confirm even with forged booleans', async () => {
   const bare = await fixture({ writer: false }); await assert.rejects(bare.service('operations.propose', proposal()), /unconnected|not_configured/);

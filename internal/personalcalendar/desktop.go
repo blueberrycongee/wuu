@@ -17,7 +17,8 @@ import (
 const clientNamespace = "personal.google-calendar.client.v1"
 
 // DesktopOptions is trusted host composition, never decoded from plugin RPC.
-// Nil dependencies use the OS secure store and the ordinary HTTPS client.
+// Store is the selected credential provider; nil never opens an OS fallback.
+// A nil HTTP client uses the ordinary HTTPS client.
 type DesktopOptions struct {
 	ClientID   string
 	StateDir   string
@@ -73,11 +74,7 @@ func NewDesktop(options DesktopOptions) (*Broker, error) {
 	}
 	store := options.Store
 	if store == nil {
-		var err error
-		store, err = credentialstore.NewDesktopStore()
-		if err != nil {
-			return nil, fault("secure_store_unavailable")
-		}
+		return nil, fault("secure_store_unavailable")
 	}
 	raw, err := store.Get(context.Background(), clientNamespace, key(options.ClientID))
 	if errors.Is(err, credentialstore.ErrNotFound) {

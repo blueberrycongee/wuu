@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent
 } from "react";
-import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import type { FloatingMenuAlign, FloatingMenuPlacement } from "./ComposerTypes";
 import { isTouchWebShell } from "./ComposerFocus";
 import { useI18n } from "./i18n";
@@ -103,6 +103,7 @@ export function SelectMenu({
   const { t } = useI18n();
   const anchorRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [open, setOpen] = useState(false);
@@ -212,15 +213,15 @@ export function SelectMenu({
       if (anchorRef.current?.contains(target)) {
         return;
       }
-      if (isInsideFloatingMenu(target, "select-menu")) {
+      if (menuRef.current?.contains(target)) {
         return;
       }
       setOpen(false);
       setSearchQuery("");
     }
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
     };
   }, [open]);
 
@@ -330,6 +331,7 @@ export function SelectMenu({
           flip={flip}
         >
           <div
+            ref={menuRef}
             className="select-menu-panel"
             role="menu"
             aria-label={ariaLabel}

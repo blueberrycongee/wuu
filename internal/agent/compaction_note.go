@@ -22,9 +22,10 @@ type CompactionNote struct {
 }
 
 type CompactionNotePlan struct {
-	Prompt         string
-	IntervalTokens int
-	MaxBytes       int
+	PreparedMessages []providers.ChatMessage
+	Prompt           string
+	IntervalTokens   int
+	MaxBytes         int
 }
 
 type CompactionNoteForkResult struct {
@@ -115,6 +116,9 @@ func generateCompactionNote(
 	messages []providers.ChatMessage,
 	force bool,
 ) (CompactionNote, *providers.TokenUsage, error) {
+	if selected, ok := provider.(*selectedNoteProvider); ok {
+		return generateSelectedNote(ctx, selected, store, fork, model, messages, force)
+	}
 	if err := ctx.Err(); err != nil {
 		return CompactionNote{}, nil, err
 	}

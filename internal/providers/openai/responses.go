@@ -99,13 +99,21 @@ func (c *Client) responsesStreamChatSSE(ctx context.Context, payload responsesRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleResponsesRequest(ctx, c.streamHTTPClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
 	if err != nil {
+		endReceipt(nil)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readResponsesSSE(ctx, resp, lease, ch, state)
+	go func() {
+		defer endReceipt(nil)
+		c.readResponsesSSE(ctx, resp, lease, ch, state)
+	}()
 	return ch, nil
 }
 
@@ -392,6 +400,9 @@ func mergeResponsesProviderOptions(object map[string]any, options map[string]any
 			}
 			mergeProviderOptionValue(object, key, value)
 		}
+	}
+	if !temperatureSupported(options) {
+		delete(object, "temperature")
 	}
 }
 
@@ -1040,6 +1051,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			pending.setArguments(event)
 
 		case "response.output_item.done":
+			emitResponsesCompletedMessage(emit, event.Item)
 			if item, ok := responsesOutputItemReplayInput(event.Item); ok {
 				responseItems = append(responseItems, item)
 			}
@@ -1986,4 +1998,24 @@ func responsesOrderedReplay(msg providers.ChatMessage, provider, scope, model st
 		return nil, false
 	}
 	return ordered, true
+}
+
+func emitResponsesCompletedMessage(emit *providers.StreamEmitter, item responsesOutputItem) {
+	if item.Type != "message" {
+		return
+	}
+	native, ok := responsesOutputItemReplayInput(item)
+	if !ok {
+		return
+	}
+	data, err := json.Marshal(native)
+	if err != nil {
+		return
+	}
+	message := providers.ChatMessage{
+		Role: "assistant", Content: responsesInputItemText(native),
+		Phase: providers.NormalizeMessagePhase(item.Phase), ProviderItemID: native.ID,
+		ProviderItems: []providers.ProviderItem{{Type: "message", Data: string(data)}},
+	}
+	emit.Send(providers.StreamEvent{Type: providers.EventAssistantItemDone, Message: &message})
 }

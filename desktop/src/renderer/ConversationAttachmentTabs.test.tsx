@@ -1,3 +1,5 @@
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -5,11 +7,12 @@ import { useWorkspaceToolState } from "./WorkspaceToolState";
 import { useConversationAttachmentTabs } from "./ConversationAttachmentTabs";
 
 it.each([false, true])("keeps Coding tabs, active-file and activation history unchanged with saved open=%s", async savedOpen => {
+  const { application, dispose } = await createScopedTestApplication(new ApplicationController());
   const writes = vi.fn();
   let coding!: ReturnType<typeof useWorkspaceToolState>, twin!: ReturnType<typeof useConversationAttachmentTabs>;
   function Harness() {
     const [open, setOpen] = useState(savedOpen);
-    coding = useWorkspaceToolState({ rightPanelOpen: open, rightPanelGlobalized: false, setRightPanelOpenWithMotion: value => { writes(value); setOpen(value); } });
+    coding = useWorkspaceToolState({ application, rightPanelOpen: open, rightPanelGlobalized: false, setRightPanelOpenWithMotion: value => { writes(value); setOpen(value); } });
     twin = useConversationAttachmentTabs();
     return null;
   }
@@ -29,7 +32,10 @@ it.each([false, true])("keeps Coding tabs, active-file and activation history un
     writes.mockClear();
     const attachment = { resourceId: "twin:1", name: "a.txt", mediaType: "text/plain", size: 1, read: async () => new Blob(["x"]) };
     await act(async () => twin.openAttachment(attachment));
+    await act(async () => twin.openAttachment(attachment));
+    expect(twin.state.tabs).toHaveLength(1);
     await act(async () => twin.openAttachment({ ...attachment, resourceId: "twin:2" }));
+    expect(twin.state.tabs).toHaveLength(2);
     await act(async () => twin.focusTab(twin.state.tabs[0].id));
     await act(async () => twin.setManualGlobalized(true));
     await act(async () => twin.focusConversation());
@@ -46,5 +52,5 @@ it.each([false, true])("keeps Coding tabs, active-file and activation history un
     expect(coding.workspaceActiveViewTabID).toBe(diff);
     await act(async () => coding.closeWorkspaceViewTab(diff));
     expect(coding.workspaceActiveViewTabID).toBe(second);
-  } finally { act(() => root.unmount()); }
+  } finally { act(() => root.unmount()); dispose(); }
 });

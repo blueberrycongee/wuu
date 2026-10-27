@@ -12,7 +12,9 @@ import (
 func (b *Broker) ensureFresh(ctx context.Context, a Actor, id string) error {
 	var g Grant
 	lease := ""
+	leaseID := nonce()
 	err := b.update(ctx, a, func(s *stored) error {
+		lease = ""
 		var ok bool
 		g, ok = s.Grants[id]
 		if !ok {
@@ -30,7 +32,7 @@ func (b *Broker) ensureFresh(ctx context.Context, a Actor, id string) error {
 		if g.RefreshLease != "" {
 			return fault("refresh_outcome_unknown")
 		}
-		lease = nonce()
+		lease = leaseID
 		g.RefreshLease = lease
 		s.Grants[id] = g
 		return nil

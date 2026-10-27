@@ -1,3 +1,7 @@
+import { Tooltip } from "../Tooltip";
+import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationWorkbenchV1, WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
@@ -5,7 +9,6 @@ import type { ExtensionInventoryRecord } from "../../shared/protocol";
 import {
   STATUS_ACTIONS,
   WORKBENCH_LAYOUT_STATE_VERSION,
-  type InspectorSectionHostAPI,
   type OpenViewOptions,
   type PresentationHost,
   type RendererCategory,
@@ -22,15 +25,16 @@ import {
   isPublicThemeTokenName,
 } from "../../shared/themeContract.generated";
 import type {
-  PluginHost,
-  RegisteredRenderer,
-  RegisteredViewType,
-} from "./PluginHost";
+  UIContributionRegistryV1 as PluginHost,
+  RegisteredRendererV1 as RegisteredRenderer,
+  RegisteredViewV1 as RegisteredViewType,
+} from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { useI18n } from "../i18n";
 import { X } from "../WuuIcons";
 import { createPluginTranslator } from "./pluginI18n";
 import { PluginPresentation } from "./PluginPresentation";
 import { PluginCommandActions, usePluginCommandActions } from "./PluginCommandActions";
+import { PluginWebPageViewContext } from "./PluginWebPage";
 
 const LAYOUT_STORAGE_KEY = "wuu.plugin-workbench.layout.v1";
 const MAX_STORAGE_VALUE_LENGTH = 1_048_576;
@@ -58,6 +62,8 @@ export interface WorkbenchSnapshot extends WorkbenchLayoutState {
   /** Registered definitions are host-owned immutable snapshots. */
   viewTypes: readonly RegisteredViewType[];
   renderers: readonly RegisteredRenderer[];
+  /** Mounted native pages own their layout and lifetime, regardless of plugin ID. */
+  webPageViewIds: readonly string[];
 }
 
 const EMPTY_STATE: WorkbenchLayoutState = Object.freeze({
@@ -68,26 +74,30 @@ const EMPTY_STATE: WorkbenchLayoutState = Object.freeze({
 });
 
 export class WorkbenchController {
+  get registry(): PluginHost { return this.host; }
   private readonly listeners = new Set<() => void>();
   private readonly storage: StorageLike;
   private readonly unsubscribeHost: () => void;
   private readonly themeObserver: MutationObserver;
   private state: WorkbenchLayoutState;
   private snapshot: WorkbenchSnapshot;
+  private readonly webPageViews = new Map<string, number>();
   private availablePluginIds: ReadonlySet<string> | undefined;
   private readonly pendingRestoredViewIds: Set<string>;
   private nextInstance = 1;
   private appliedThemeTokens = new Set<string>();
+  private disposed = false;
   services: WorkbenchServices;
 
   constructor(
     readonly host: PluginHost,
     services: WorkbenchServices = {},
     storage: StorageLike = window.localStorage,
+    checkpoint?: WorkbenchSnapshotV1,
   ) {
     this.services = services;
     this.storage = storage;
-    this.state = readLayoutState(storage);
+    this.state = checkpoint ? freezeLayoutState(checkpoint) : readLayoutState(storage);
     this.pendingRestoredViewIds = new Set(this.state.views.map((view) => view.id));
     this.nextInstance = nextViewInstanceSequence(this.state.views);
     this.snapshot = this.createSnapshot();
@@ -97,11 +107,20 @@ export class WorkbenchController {
     this.reconcileHost();
   }
 
+  renderLayers = (input: { readonly settingsOnly?: boolean }): React.ReactNode => <DesktopWorkbench host={this.host} controller={this} services={this.services} {...input} />;
+
+  renderContent = (input: Parameters<ApplicationWorkbenchV1["renderContent"]>[0]): React.ReactNode => <WorkbenchContentRenderer controller={this} {...input} />;
+
+  renderView = (input: Parameters<ApplicationWorkbenchV1["renderView"]>[0]): React.ReactNode => <PluginViewContent controller={this} {...input} />;
+
   updateServices(services: WorkbenchServices): void {
+    this.assertActive();
     this.services = services;
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.unsubscribeHost();
     this.themeObserver.disconnect();
     for (const token of this.appliedThemeTokens) {
@@ -111,14 +130,38 @@ export class WorkbenchController {
     this.listeners.clear();
   }
 
+  private assertActive(): void {
+    if (this.disposed) throw new PluginLifecycleCancellationError();
+  }
+
   subscribe = (listener: () => void): (() => void) => {
+    if (this.disposed) return () => {};
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
 
   getSnapshot = (): WorkbenchSnapshot => this.snapshot;
 
+  retainWebPage(viewId: string): () => void {
+    this.assertActive();
+    const count = this.webPageViews.get(viewId) ?? 0;
+    this.webPageViews.set(viewId, count + 1);
+    if (count === 0) this.publish();
+    return () => {
+      if (this.disposed) return;
+      const remaining = this.webPageViews.get(viewId)! - 1;
+      if (remaining > 0) this.webPageViews.set(viewId, remaining);
+      else {
+        this.webPageViews.delete(viewId);
+        this.publish();
+      }
+    };
+  }
+
   setAvailablePluginIds(pluginIds: ReadonlySet<string>): void {
+    this.assertActive();
+    if (this.availablePluginIds?.size === pluginIds.size
+      && [...pluginIds].every(id => this.availablePluginIds!.has(id))) return;
     this.availablePluginIds = new Set(pluginIds);
     this.reconcileHost();
   }
@@ -136,6 +179,7 @@ export class WorkbenchController {
     options: OpenViewOptions,
     preferredPluginId?: string,
   ): string {
+    this.assertActive();
     const definition = this.findViewType(viewTypeId, preferredPluginId);
     if (!definition) {
       throw new Error(`Plugin view type is not available: ${viewTypeId}`);
@@ -169,6 +213,7 @@ export class WorkbenchController {
   }
 
   async closeView(instanceId: string): Promise<void> {
+    this.assertActive();
     const closing = this.state.views.find((view) => view.id === instanceId);
     if (!closing) return;
     const views = this.state.views.filter((view) => view.id !== instanceId);
@@ -187,6 +232,7 @@ export class WorkbenchController {
   }
 
   activateView(instanceId: string): void {
+    this.assertActive();
     const view = this.state.views.find((candidate) => candidate.id === instanceId);
     if (!view) return;
     const definition = this.findViewType(view.viewTypeId, view.pluginId);
@@ -196,10 +242,10 @@ export class WorkbenchController {
       ...this.state,
       activeViewByRegion: { ...this.state.activeViewByRegion, [view.region]: view.id },
     });
-    this.host.publishHostEvent({ type: "workbench.view.activated", pluginId: view.pluginId, viewTypeId: view.viewTypeId });
   }
 
   deactivateRegion(region: ViewPlacementRegion): void {
+    this.assertActive();
     if (this.state.activeViewByRegion[region] === HIDDEN_REGION_VIEW_ID) return;
     this.replaceState({
       ...this.state,
@@ -215,20 +261,26 @@ export class WorkbenchController {
   createViewHostAPI(view: WorkbenchViewState): ViewHostAPI {
     const activation = this.host.getGenerationActivation(view.pluginId, view.generation);
     const requireActive = (): void => {
+      this.assertActive();
       if (!activation || this.host.getGenerationActivation(view.pluginId, view.generation) !== activation) {
         throw new Error("Plugin host context is no longer active");
       }
     };
+    const invoke = async <T,>(operation: () => T | Promise<T>): Promise<T> => {
+      requireActive();
+      const result = await operation();
+      requireActive();
+      return result;
+    };
     return Object.freeze({
-      getStorage: async (key: string, scope: "user" | "workspace" = "workspace") => { requireActive(); return this.getPluginStorage(view.pluginId, view.generation, key, scope); },
-      setStorage: async (key: string, value: string, scope: "user" | "workspace" = "workspace") => { requireActive(); return this.setPluginStorage(view.pluginId, view.generation, key, value, scope); },
-      getSetting: async (key: string) => { requireActive(); return this.getPluginSetting(view.pluginId, view.generation, key); },
-      executeCommand: async (commandId: string, input?: unknown) => { requireActive(); return this.executeCommand(view.pluginId, commandId, input); },
-      openView: async (viewTypeId: string, options?: OpenViewOptions) => {
-        requireActive();
+      getStorage: (key: string, scope: "user" | "workspace" = "workspace") => invoke(() => this.getPluginStorage(view.pluginId, view.generation, key, scope)),
+      setStorage: (key: string, value: string, scope: "user" | "workspace" = "workspace") => invoke(() => this.setPluginStorage(view.pluginId, view.generation, key, value, scope)),
+      getSetting: (key: string) => invoke(() => this.getPluginSetting(view.pluginId, view.generation, key)),
+      executeCommand: (commandId: string, input?: unknown) => invoke(() => this.executeCommand(view.pluginId, commandId, input)),
+      openView: (viewTypeId: string, options?: OpenViewOptions) => invoke(() => {
         this.openResolvedView(viewTypeId, options ?? {}, view.pluginId);
-      },
-      closeView: async () => { requireActive(); this.closeView(view.id); },
+      }),
+      closeView: () => invoke(() => this.closeView(view.id)),
     });
   }
 
@@ -245,25 +297,6 @@ export class WorkbenchController {
     return this.createViewHostAPI(rendererView);
   }
 
-  createInspectorHostAPI(pluginId: string, generation: string): InspectorSectionHostAPI {
-    const activation = this.host.getGenerationActivation(pluginId, generation);
-    const requireActive = (): void => {
-      if (!activation || this.host.getGenerationActivation(pluginId, generation) !== activation) {
-        throw new Error("Plugin host context is no longer active");
-      }
-    };
-    return Object.freeze({
-      executeCommand: async (commandId: string, input?: unknown) => {
-        requireActive();
-        return this.executeCommand(pluginId, commandId, input);
-      },
-      openView: async (viewTypeId: string, options?: OpenViewOptions) => {
-        requireActive();
-        this.openResolvedView(viewTypeId, options ?? {}, pluginId);
-      },
-    });
-  }
-
   createPresentationHostAPI(
     pluginId: string,
     generation: string,
@@ -277,17 +310,22 @@ export class WorkbenchController {
       ...base,
       actions: advertised,
       invoke: async (action: string, input?: unknown) => {
+        this.assertActive();
         if (!activation || this.host.getGenerationActivation(pluginId, generation) !== activation) {
           throw new Error("Plugin host context is no longer active");
         }
         if (!advertised.includes(action)) throw new Error(`Presentation action is not supported: ${action}`);
         if (!dispatcher) throw new Error("Presentation action dispatcher is unavailable");
-        return dispatcher(action, input);
+        const result = await dispatcher(action, input);
+        this.assertActive();
+        if (this.host.getGenerationActivation(pluginId, generation) !== activation) throw new Error("Plugin host context is no longer active");
+        return result;
       },
     });
   }
 
   private reconcileHost(): void {
+    if (this.disposed) return;
     const definitions = new Map(
       this.host.getViewTypes().map((view) => [viewTypeKey(view.pluginId, view.id), view]),
     );
@@ -304,10 +342,10 @@ export class WorkbenchController {
       }
       this.pendingRestoredViewIds.delete(view.id);
       if (!definition) return [];
+      // Persistence is resolved per instance when opened, including explicit overrides.
       return [{
         ...view,
         generation: definition.generation,
-        persistence: definition.persistence ?? view.persistence,
       }];
     });
 
@@ -345,6 +383,7 @@ export class WorkbenchController {
   }
 
   private applyThemeTokens(): void {
+    if (this.disposed) return;
     for (const token of this.appliedThemeTokens) {
       document.documentElement.style.removeProperty(token);
     }
@@ -401,6 +440,7 @@ export class WorkbenchController {
       activeViewByRegion: Object.freeze(activeViewByRegion),
       viewTypes: this.host.getViewTypes(),
       renderers: this.host.getRenderers(),
+      webPageViewIds: Object.freeze(views.filter((view) => this.webPageViews.has(view.id)).map((view) => view.id)),
     });
   }
 
@@ -465,23 +505,29 @@ export class WorkbenchController {
   }
 }
 
+type WorkbenchInventoryEntry = Pick<ExtensionInventoryRecord, "id" | "kind" | "enabled" | "state" | "approval_state">;
+
 export interface DesktopWorkbenchProps {
+  settingsOnly?: boolean;
   host: PluginHost;
   controller?: WorkbenchController;
-  inventory?: readonly ExtensionInventoryRecord[];
+  inventory?: readonly WorkbenchInventoryEntry[];
   services?: WorkbenchServices;
 }
 
 export function DesktopWorkbench({
+  settingsOnly = false,
   host,
   controller: suppliedController,
   inventory,
   services = EMPTY_WORKBENCH_SERVICES,
 }: DesktopWorkbenchProps): JSX.Element {
-  const [controller] = React.useState(() => suppliedController ?? new WorkbenchController(host, services));
+  // The React tree can outlive a business provider. Only an internally owned
+  // controller is retained; a newly supplied authority replaces the old one.
+  const controller = React.useMemo(() => suppliedController ?? new WorkbenchController(host, services), [host, suppliedController]);
   const snapshot = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot);
 
-  React.useEffect(() => controller.updateServices(services), [controller, services]);
+  React.useEffect(() => { if (controller.services !== services) controller.updateServices(services); }, [controller, services]);
   React.useEffect(() => () => {
     if (!suppliedController) controller.dispose();
   }, [controller, suppliedController]);
@@ -493,26 +539,32 @@ export function DesktopWorkbench({
   }, [controller, inventory]);
 
   const portals = viewRegions.flatMap((region) => {
+    if (settingsOnly && region !== "settings") return [];
     const visible = visibleWorkbenchView(snapshot, region);
-    if (!visible) return [];
     const views = snapshot.views.filter((view) => view.region === region);
-    return [
-      <WorkbenchRegionPortal
-        key={`${region}:${visible.view.id}:${visible.view.generation}`}
-        region={region}
-      >
-        <WorkbenchView
-          key={`${visible.view.id}:${visible.view.generation}`}
-          controller={controller}
-          definition={visible.definition}
-          view={visible.view}
-          siblingViews={views}
-        />
-      </WorkbenchRegionPortal>,
-    ];
+    return views.flatMap((view) => {
+      const definition = snapshot.viewTypes.find((item) =>
+        item.pluginId === view.pluginId && item.id === view.viewTypeId && item.generation === view.generation);
+      if (!definition) return [];
+      return [
+        <WorkbenchRegionPortal
+          key={`${region}:${view.id}:${view.generation}`}
+          region={region}
+        >
+          <WorkbenchView
+            controller={controller}
+            definition={definition}
+            view={view}
+            siblingViews={views}
+            active={visible?.view.id === view.id}
+            hasWebPage={snapshot.webPageViewIds.includes(view.id)}
+          />
+        </WorkbenchRegionPortal>,
+      ];
+    });
   });
 
-  portals.push(createPortal(
+  if (!settingsOnly) portals.push(createPortal(
     <StatusPresentation host={host} controller={controller} />,
     document.body,
     "plugin-workbench-status",
@@ -565,10 +617,8 @@ function StatusPresentation({ host, controller }: StatusPresentationProps): Reac
   const fallback = statusItems.length === 0 ? null : (
     <div className="plugin-workbench-status" role="status">
       {statusItems.map((item) => (
-        <button
-          key={`${item.pluginId}:${item.id}`}
+        <Tooltip asChild content={item.tooltip} key={`${item.pluginId}:${item.id}`}><button aria-description={item.tooltip}
           type="button"
-          title={item.tooltip}
           onClick={() => {
             if (!item.command) return;
             const command = host.getCommands().find((candidate) =>
@@ -578,7 +628,7 @@ function StatusPresentation({ host, controller }: StatusPresentationProps): Reac
         >
           {item.icon ? <span aria-hidden="true">{item.icon}</span> : null}
           {item.label}
-        </button>
+        </button></Tooltip>
       ))}
     </div>
   );
@@ -623,6 +673,8 @@ interface WorkbenchViewProps {
   definition: RegisteredViewType;
   view: WorkbenchViewState;
   siblingViews: readonly WorkbenchViewState[];
+  active: boolean;
+  hasWebPage: boolean;
 }
 
 function viewCommandContext(view: WorkbenchViewState) {
@@ -636,18 +688,36 @@ function viewCommandContext(view: WorkbenchViewState) {
   });
 }
 
-function WorkbenchView({ controller, definition, view, siblingViews }: WorkbenchViewProps): JSX.Element {
+function WorkbenchView({ controller, definition, view, siblingViews, active, hasWebPage }: WorkbenchViewProps): React.ReactNode {
+  const retainWebPage = React.useCallback(() => controller.retainWebPage(view.id), [controller, view.id]);
+  const webPageView = React.useMemo(() => ({ active, retain: retainWebPage }), [active, retainWebPage]);
   const View = definition.render;
   const commandContext = React.useMemo(() => viewCommandContext(view), [view]);
   const hasTitleActions = usePluginCommandActions(controller.host, commandContext).length > 0;
-  const host = React.useMemo(() => controller.createViewHostAPI(view), [controller, view]);
+  const activation = controller.host.getGenerationActivation(view.pluginId, view.generation);
+  React.useEffect(() => controller.host.retainGeneration(view.pluginId, view.generation), [controller, view.pluginId, view.generation, activation]);
+  // Inventory refreshes replace view snapshots without changing their lifetime.
+  const host = React.useMemo(
+    () => controller.createViewHostAPI(view),
+    [controller, view.id, view.pluginId, view.generation, activation],
+  );
   const { locale, t } = useI18n();
   const translate = React.useMemo(
     () => createPluginTranslator(controller.host, locale),
     [controller.host, locale],
   );
+  // Ordinary plugin views still unmount when hidden. A native page keeps its
+  // owner mounted until the page, view, or extension generation is removed.
+  if (!active && !hasWebPage) return null;
   return (
-    <section className={`plugin-workbench-view plugin-workbench-view-${view.region}`} data-plugin-id={view.pluginId}>
+    <section
+      className={`plugin-workbench-view plugin-workbench-view-${view.region}`}
+      data-plugin-id={view.pluginId}
+      data-workbench-view-id={view.id}
+      hidden={!active}
+      inert={!active}
+      style={active ? undefined : { display: "none" }}
+    >
       {view.region !== "primary" || hasTitleActions ? <header className="plugin-workbench-view-header">
         <div role="tablist" aria-label={t("plugins.viewTabs")}>
           {siblingViews.map((sibling) => (
@@ -670,26 +740,27 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
             context={commandContext}
             buttonClassName="settings-button settings-button-ghost settings-icon-button"
           />
-          <button
+          <Tooltip asChild content={t("common.close")}><button
             type="button"
             className="settings-button settings-button-ghost settings-icon-button"
             aria-label={t("common.close")}
-            title={t("common.close")}
             onClick={() => void controller.closeView(view.id)}
           >
             <X className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         </div>
       </header> : null}
       <PluginErrorBoundary
         key={`${view.pluginId}:${view.generation}:${view.id}`}
         pluginId={view.pluginId}
         generation={view.generation}
-        activation={controller.host.getGenerationActivation(view.pluginId, view.generation)}
+        activation={activation}
         services={controller.services}
         onUseDefault={() => void controller.closeView(view.id)}
       >
-        <View host={host} context={view.context} locale={locale} translate={translate} />
+        <PluginWebPageViewContext.Provider value={webPageView}>
+          <View host={host} context={view.context} locale={locale} translate={translate} />
+        </PluginWebPageViewContext.Provider>
       </PluginErrorBoundary>
     </section>
   );
@@ -736,6 +807,8 @@ export function PluginViewContent({
     () => createPluginTranslator(controller.host, locale),
     [controller.host, locale, snapshot],
   );
+  const activation = definition && controller.host.getGenerationActivation(definition.pluginId, definition.generation);
+  React.useEffect(() => definition ? controller.host.retainGeneration(definition.pluginId, definition.generation) : undefined, [controller, definition, activation]);
   if (!definition || !host || !view) {
     return <div className="plugin-workbench-error" role="status">{t("plugins.viewUnavailable")}</div>;
   }
@@ -783,6 +856,8 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
     props.controller.getSnapshot,
   );
   const renderer = props.controller.getRenderer(props.category, props.contentType);
+  const activation = renderer && props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation);
+  React.useEffect(() => renderer ? props.controller.host.retainGeneration(renderer.pluginId, renderer.generation) : undefined, [props.controller, renderer, activation]);
   if (!renderer) return <>{props.fallback}</>;
   const Renderer = renderer.render;
   return (
@@ -859,7 +934,7 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
 const viewRegions: readonly ViewPlacementRegion[] = ["navigation", "primary", "auxiliary", "inspector", "settings", "overlay"];
 const HIDDEN_REGION_VIEW_ID = "__wuu_hidden_region__";
 
-/** The view DesktopWorkbench actually portals, or undefined when that region is closed. */
+/** The foreground view, or undefined when that region is closed. */
 export function visibleWorkbenchView(
   snapshot: WorkbenchSnapshot,
   region: ViewPlacementRegion,
@@ -898,7 +973,7 @@ function rendererMatches(renderer: RegisteredRenderer, contentType: string): boo
   return renderer.match.test(contentType);
 }
 
-function isAvailablePlugin(plugin: ExtensionInventoryRecord): boolean {
+function isAvailablePlugin(plugin: WorkbenchInventoryEntry): boolean {
   return plugin.kind === "plugin"
     && plugin.enabled !== false
     && (plugin.state === "active" || plugin.state === "granted")
@@ -989,4 +1064,31 @@ function isViewRegion(value: unknown): value is ViewPlacementRegion {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The selected provider owns this instance, its subscriptions, theme effects and durable
+ * layout. Preparing a different provider never allocates a competing global controller. */
+export function createDefaultWorkbench(
+  registry: PluginHost,
+  application: () => Pick<ApplicationServiceV1, "invoke" | "catalog" | "subscribe" | "getSnapshot">,
+  checkpoint?: WorkbenchSnapshotV1,
+): ApplicationWorkbenchV1 & { start(): void; dispose(): void } {
+  const controller = new WorkbenchController(registry, {
+    getSetting: async (pluginId, generation, key) => (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value,
+    getStorage: async (pluginId, generation, key, scope) => (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value,
+    setStorage: async (pluginId, generation, key, value, scope) => { await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope }); },
+    openSettings: () => { void application().invoke("settings.open", { pageId: "providers" }); },
+    disablePlugin: pluginId => application().catalog.update({ id: pluginId, action: "disable" }),
+    requestRegionVisible: region => { void application().invoke("navigation.reveal-region", { region }); },
+  }, window.localStorage, checkpoint);
+  const reconcile = () => {
+    // Initial loading is not an authoritative empty inventory: retain saved views
+    // until initialization publishes the selected graph and installed packages.
+    if (application().getSnapshot().phase === "starting") return;
+    controller.setAvailablePluginIds(new Set(application().catalog.getSnapshot().inventory.filter(isAvailablePlugin).map(plugin => plugin.id)));
+  };
+  let unsubscribe: (() => void) | undefined;
+  const dispose = controller.dispose.bind(controller);
+  controller.dispose = () => { unsubscribe?.(); unsubscribe = undefined; dispose(); };
+  return Object.assign(controller, { start() { unsubscribe ??= application().subscribe(reconcile); reconcile(); } });
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,47 +26,20 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 		for _, released := range []bool{false, true} {
 			for _, stopped := range []bool{false, true} {
 				t.Run(fmt.Sprintf("hook_%v_released_%v_stop_%v", duringHook, released, stopped), func(t *testing.T) {
-					srv, client, calls, rt := newProjectFixture(t)
-					lead := startProject(t, client, "Run adoption stop")
-					lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
-					if err != nil || !ok {
-						t.Fatalf("lead lease: %v %v", ok, err)
-					}
-					defer lease.Release()
-					var worker ThreadStartResult
-					client.rpc(t, MethodThreadStart, ThreadStartParams{}, &worker)
-					id := worker.Thread.ID
-					if released {
-						old, err := session.ChangeControl(rt.SessionDir, id, "prior-manager", session.ControlActive, 0)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if _, err = session.ChangeControl(rt.SessionDir, id, "prior-manager", session.ControlReleased, old.Revision); err != nil {
-							t.Fatal(err)
-						}
-					}
-					journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "run-adoption")
-					if err != nil {
-						t.Fatal(err)
-					}
-					defer journal.Close()
-					rt.InferenceJournalRuntime = journal
-					rt.ActivityRegistry = activity.NewRegistry()
-					peer := New(rt, &lockedBuffer{})
-					defer peer.Close()
-					start := func(prompt string) RunStartResult {
-						var result RunStartResult
-						client.rpc(t, MethodRunStart, RunStartParams{ThreadID: id, Prompt: prompt, OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`), Request: execution.Request{Mode: execution.ModeStart}}, &result)
-						return result
-					}
-					started := start("run-adoption-original")
-					first := calls.next(t, "run-adoption-original")
 					var release func()
+					var entered chan struct{}
+					var enabled atomic.Bool
+					var promptHooks []hooks.HookConfig
 					if duringHook {
-						entered, releasedHook := make(chan struct{}, 1), make(chan struct{})
+						entered = make(chan struct{}, 1)
+						releasedHook := make(chan struct{})
 						var once sync.Once
 						release = func() { once.Do(func() { close(releasedHook) }) }
 						gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							if !enabled.Load() {
+								_, _ = w.Write([]byte("{}"))
+								return
+							}
 							select {
 							case entered <- struct{}{}:
 							default:
@@ -78,9 +52,49 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						}))
 						defer gate.Close()
 						defer release()
-						rt.HookDispatcher.Replace(hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-							hooks.UserPromptSubmit: {{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)}},
-						})))
+						promptHooks = append(promptHooks, hooks.HookConfig{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)})
+					}
+					srv, client, calls, rt := newProjectFixture(t, promptHooks...)
+					lead := startProject(t, client, "Run adoption stop")
+					lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
+					if err != nil || !ok {
+						t.Fatalf("lead lease: %v %v", ok, err)
+					}
+					defer lease.Release()
+					var worker ThreadStartResult
+					client.rpc(t, MethodThreadStart, ThreadStartParams{}, &worker)
+					id := worker.Thread.ID
+					if released {
+						old, err := rt.Sessions.ChangeControl(id, "prior-manager", session.ControlActive, 0)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if _, err = rt.Sessions.ChangeControl(id, "prior-manager", session.ControlReleased, old.Revision); err != nil {
+							t.Fatal(err)
+						}
+					}
+					journal, err := rt.Sessions.NewInferenceJournalRuntime("run-adoption")
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer journal.Close()
+					rt.InferenceJournalRuntime = journal
+					rt.ActivityRegistry = activity.NewRegistry()
+					runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
+					if err != nil {
+						t.Fatal(err)
+					}
+					peer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
+					defer peer.Close()
+					start := func(prompt string) RunStartResult {
+						var result RunStartResult
+						client.rpc(t, MethodRunStart, RunStartParams{ThreadID: id, Prompt: prompt, OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`), Request: execution.Request{Mode: execution.ModeStart}}, &result)
+						return result
+					}
+					started := start("run-adoption-original")
+					first := calls.next(t, id, "run-adoption-original")
+					if duringHook {
+						enabled.Store(true)
 						first.response <- providersResponse(`{"wrong":true}`)
 						select {
 						case <-entered:
@@ -88,11 +102,11 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 							t.Fatal("correction did not enter prompt hook")
 						}
 					}
-					if _, err := peer.adoptProjectSession(lead.ID, id); err != nil {
+					if _, err := peer.adoptProjectSession(testRuntimeState(t, peer.rt), lead.ID, id); err != nil {
 						t.Fatal(err)
 					}
 					if stopped {
-						if err := peer.takeSessionControl(id, session.ControlPaused); err != nil {
+						if err := peer.takeSessionControl(testRuntimeState(t, peer.rt), id, session.ControlPaused); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -102,14 +116,14 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						first.response <- providersResponse(`{"wrong":true}`)
 					}
 					if !stopped {
-						calls.next(t, "run-adoption-original").response <- providersResponse(`{"wrong_again":true}`)
-						calls.next(t, "run-adoption-original").response <- providersResponse(`{"ok":true}`)
+						calls.next(t, id, "run-adoption-original").response <- providersResponse(`{"wrong_again":true}`)
+						calls.next(t, id, "run-adoption-original").response <- providersResponse(`{"ok":true}`)
 					}
 					waitRun := func(runID string, denyProvider bool) execution.Run {
 						deadline := time.Now().Add(gatedProviderTimeout)
 						var run execution.Run
 						for time.Now().Before(deadline) {
-							run, err = srv.runStore.Get(context.Background(), runID)
+							run, err = runStore.Get(context.Background(), runID)
 							if err != nil {
 								t.Fatal(err)
 							}
@@ -140,8 +154,8 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					assertSchemaUserTurns(t, srv, id, turns)
 					if stopped {
 						fresh := start("run-adoption-fresh")
-						calls.next(t, "run-adoption-fresh").response <- providersResponse(`{"wrong":true}`)
-						calls.next(t, "run-adoption-fresh").response <- providersResponse(`{"ok":true}`)
+						calls.next(t, id, "run-adoption-fresh").response <- providersResponse(`{"wrong":true}`)
+						calls.next(t, id, "run-adoption-fresh").response <- providersResponse(`{"ok":true}`)
 						run = waitRun(fresh.Run.ID, false)
 						if run.Status != execution.StatusCompleted || len(run.Turns) != 2 {
 							t.Fatalf("fresh Run after stop: %+v", run)

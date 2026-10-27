@@ -15,8 +15,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -27,6 +31,7 @@ import (
 func TestServerThreadDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -59,7 +64,7 @@ func TestServerThreadDeleteRemovesSessionAndArtifacts(t *testing.T) {
 		t.Fatalf("unexpected delete result: %+v", deleteResult)
 	}
 
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil {
 		t.Fatalf("session.Find after delete: %v", err)
 	} else if ok {
 		t.Fatalf("session %q should be gone after thread/delete", threadID)
@@ -83,6 +88,7 @@ func TestServerThreadDeleteRemovesSessionAndArtifacts(t *testing.T) {
 func TestServerThreadDeleteRejectsRunningThread(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -113,7 +119,7 @@ func TestServerThreadDeleteRejectsRunningThread(t *testing.T) {
 	if resp["error"] == nil {
 		t.Fatalf("deleting a running thread must fail, got %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("running thread must survive a rejected delete: ok=%v err=%v", ok, err)
 	}
 }
@@ -128,6 +134,7 @@ func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testi
 	blocking := newBlockingStreamClient("side reply")
 	rt.StreamRunner.Client = blocking
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
@@ -135,7 +142,7 @@ func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testi
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "side-delete-start")["result"]).Thread.ID
-	if _, err := srv.sendSideThreadMessage(threadID, "status?"); err != nil {
+	if _, err := srv.sendSideThreadMessage(testRuntimeState(t, srv.rt), threadID, "status?"); err != nil {
 		t.Fatalf("side send: %v", err)
 	}
 	select {
@@ -149,25 +156,28 @@ func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testi
 	if busy["error"] == nil || !strings.Contains(fmt.Sprint(busy["error"]), "side thread is running") {
 		t.Fatalf("delete did not report the running side thread: %+v", busy)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("rejected delete removed main thread: ok=%t err=%v", ok, err)
 	}
 
 	close(blocking.release)
-	waitForSideThreadStatus(t, srv.sideThreadStore, threadID, sidethread.StatusCompleted)
+	waitForSideThreadStatus(t, sideStoreForTest(t, srv), threadID, sidethread.StatusCompleted)
 	dispatchPayload(t, srv, "side-delete-idle", MethodThreadDelete, ThreadDeleteParams{ThreadID: threadID})
 	idle := responseByID(t, parseOutput(t, out.String()), "side-delete-idle")
 	if idle["error"] != nil {
 		t.Fatalf("delete after side completion failed: %+v", idle["error"])
 	}
-	if exists, err := srv.sideThreadStore.Exists(threadID); err != nil || exists {
+	if exists, err := sideStoreForTest(t, srv).Exists(threadID); err != nil || exists {
 		t.Fatalf("deleted side thread was recreated: exists=%t err=%v", exists, err)
 	}
 }
 
 func TestServerThreadDeletePreservesMainThreadWhenSideCleanupFails(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	fault := &sideDeleteFaultDocuments{Documents: rt.Documents}
+	rt.Documents = fault
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"side-cleanup-start","method":"thread/start"}`)); err != nil {
@@ -175,17 +185,14 @@ func TestServerThreadDeletePreservesMainThreadWhenSideCleanupFails(t *testing.T)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "side-cleanup-start")["result"]).Thread.ID
 
-	invalidStoreDir := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(invalidStoreDir, []byte("blocked"), 0o600); err != nil {
-		t.Fatalf("seed invalid side store: %v", err)
-	}
-	srv.sideThreadStore = sidethread.NewStore(invalidStoreDir)
+	fault.fail = true
+
 	dispatchPayload(t, srv, "side-cleanup-delete", MethodThreadDelete, ThreadDeleteParams{ThreadID: threadID})
 	resp := responseByID(t, parseOutput(t, out.String()), "side-cleanup-delete")
 	if resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "delete side thread") {
 		t.Fatalf("side cleanup failure was not returned: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("failed side cleanup removed the main thread: ok=%t err=%v", ok, err)
 	}
 }
@@ -193,16 +200,17 @@ func TestServerThreadDeletePreservesMainThreadWhenSideCleanupFails(t *testing.T)
 func TestServerThreadDeleteRestoresSideThreadWhenMainDeleteFails(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"main-delete-failure-start","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "main-delete-failure-start")["result"]).Thread.ID
-	if _, err := srv.sideThreadStore.BeginTurn(threadID, "keep me", "side-user", "side-assistant"); err != nil {
+	if _, err := sideStoreForTest(t, srv).BeginTurn(threadID, "keep me", "side-user", "side-assistant"); err != nil {
 		t.Fatalf("seed side thread: %v", err)
 	}
-	if _, _, err := srv.sideThreadStore.FinishTurn(threadID, "side-assistant", "preserved reply", sidethread.StatusCompleted, ""); err != nil {
+	if _, _, err := sideStoreForTest(t, srv).FinishTurn(threadID, "side-assistant", "preserved reply", sidethread.StatusCompleted, ""); err != nil {
 		t.Fatalf("finish side thread: %v", err)
 	}
 	srv.deleteSessionForTest = func(string) (session.Session, error) {
@@ -214,14 +222,14 @@ func TestServerThreadDeleteRestoresSideThreadWhenMainDeleteFails(t *testing.T) {
 	if resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "injected main delete failure") {
 		t.Fatalf("main delete failure was not returned: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("failed main delete removed thread: ok=%t err=%v", ok, err)
 	}
-	side, err := srv.sideThreadStore.Load(threadID)
+	side, err := sideStoreForTest(t, srv).Load(threadID)
 	if err != nil || len(side.Messages) != 2 || side.Messages[1].Text != "preserved reply" {
 		t.Fatalf("side thread was not restored after main delete failure: side=%+v err=%v", side, err)
 	}
-	if _, err := os.Stat(filepath.Join(srv.sideThreadStore.Dir(), ".deleting", threadID+".json")); !errors.Is(err, os.ErrNotExist) {
+	if count, err := sideDeleteStageCount(rt.Documents, threadID); err != nil || count != 0 {
 		t.Fatalf("side delete stage survived rollback: %v", err)
 	}
 }
@@ -229,6 +237,7 @@ func TestServerThreadDeleteRestoresSideThreadWhenMainDeleteFails(t *testing.T) {
 func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -238,6 +247,8 @@ func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 
 	workerClient := newBlockingStreamClient("done")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -291,7 +302,7 @@ func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 	if resp["error"] == nil {
 		t.Fatalf("deleting a thread with an active background agent must fail, got %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("thread with an active agent must survive a rejected delete: ok=%v err=%v", ok, err)
 	}
 }
@@ -300,19 +311,23 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	ownerRuntime := newTestRuntime(t, &fakeClient{})
 	ownerRuntime.StateDir = filepath.Join(ownerRuntime.RootDir, ".wuu-state")
 	rootID := "cross-server-child-delete"
-	if _, err := session.CreateWithMetadata(ownerRuntime.SessionDir, rootID, ownerRuntime.RootDir); err != nil {
+	if _, err := ownerRuntime.Sessions.CreateWithMetadata(rootID, ownerRuntime.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
 
+	bindThreadDeleteArtifacts(t, ownerRuntime, &threadDeleteArtifactProvider{})
 	owner := New(ownerRuntime, &lockedBuffer{})
 	t.Cleanup(owner.Close)
-	rootThread, err := owner.ensureThreadLoaded(rootID)
+	rootThread, err := owner.ensureThreadLoaded(testRuntimeState(t, owner.rt), rootID)
 	if err != nil {
 		t.Fatalf("load owner thread: %v", err)
 	}
 	artifactDir := statepath.SessionArtifactDir(ownerRuntime.StateDir, rootID)
 	workerClient := newBlockingStreamClient("nested done")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		Documents:         ownerRuntime.Documents,
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   ownerRuntime.RootDir,
@@ -367,8 +382,10 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	contenderRuntime := newTestRuntime(t, &fakeClient{})
 	contenderRuntime.RootDir = ownerRuntime.RootDir
 	contenderRuntime.SessionDir = ownerRuntime.SessionDir
+	contenderRuntime.Documents, contenderRuntime.Sessions = ownerRuntime.Documents, ownerRuntime.Sessions
 	contenderRuntime.StateDir = ownerRuntime.StateDir
 	contenderOut := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, contenderRuntime, &threadDeleteArtifactProvider{})
 	contender := New(contenderRuntime, contenderOut)
 	t.Cleanup(contender.Close)
 
@@ -376,7 +393,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	if resp := responseByID(t, parseOutput(t, contenderOut.String()), "delete-active"); resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "active agents") {
 		t.Fatalf("cross-server delete must reject the durable active nested child: %+v", resp)
 	}
-	if _, ok, err := session.Find(ownerRuntime.SessionDir, rootID); err != nil || !ok {
+	if _, ok, err := ownerRuntime.Sessions.Find(rootID); err != nil || !ok {
 		t.Fatalf("rejected delete removed the root session: ok=%t err=%v", ok, err)
 	}
 
@@ -386,7 +403,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	if resp := responseByID(t, parseOutput(t, contenderOut.String()), "delete-terminal"); resp["error"] != nil {
 		t.Fatalf("terminal durable child state should allow delete: %+v", resp["error"])
 	}
-	if _, ok, err := session.Find(ownerRuntime.SessionDir, rootID); err != nil {
+	if _, ok, err := ownerRuntime.Sessions.Find(rootID); err != nil {
 		t.Fatalf("find deleted root session: %v", err)
 	} else if ok {
 		t.Fatal("root session survived delete after all children became terminal")
@@ -400,11 +417,13 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StateDir = filepath.Join(rt.RootDir, ".wuu-state")
 	const rootID = "terminal-worker-delete-observer"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(&fakeClient{response: providers.ChatResponse{Content: "done"}}),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -462,13 +481,14 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	}
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	dispatchPayload(t, srv, "delete-observer-busy", MethodThreadDelete, ThreadDeleteParams{ThreadID: rootID})
 	if resp := responseByID(t, parseOutput(t, out.String()), "delete-observer-busy"); resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "active agents") {
 		t.Fatalf("delete must reject the terminal worker lease observer: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, rootID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(rootID); err != nil || !ok {
 		t.Fatalf("rejected delete removed the root session: ok=%t err=%v", ok, err)
 	}
 
@@ -478,7 +498,7 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	if resp := responseByID(t, parseOutput(t, out.String()), "delete-observer-released"); resp["error"] != nil {
 		t.Fatalf("delete after worker lease release failed: %+v", resp["error"])
 	}
-	if _, ok, err := session.Find(rt.SessionDir, rootID); err != nil {
+	if _, ok, err := rt.Sessions.Find(rootID); err != nil {
 		t.Fatalf("find deleted root session: %v", err)
 	} else if ok {
 		t.Fatal("root session survived delete after worker lease release")
@@ -524,6 +544,7 @@ func TestThreadHasDurableActiveAgentsIgnoresCrashStaleProjectedStates(t *testing
 			}); err != nil {
 				t.Fatalf("seed harness task: %v", err)
 			}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
 			active, err := srv.threadHasDurableActiveAgents(rootID)
@@ -554,6 +575,7 @@ func TestThreadHasDurableActiveAgentsIgnoresCrashStaleProjectedStates(t *testing
 		}); err != nil {
 			t.Fatalf("seed agent thread: %v", err)
 		}
+		bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 		srv := New(rt, &lockedBuffer{})
 		t.Cleanup(srv.Close)
 		active, err := srv.threadHasDurableActiveAgents(rootID)
@@ -578,6 +600,7 @@ func TestThreadHasDurableActiveAgentsIgnoresCrashStaleProjectedStates(t *testing
 		}); err != nil {
 			t.Fatalf("seed spawn queue: %v", err)
 		}
+		bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 		srv := New(rt, &lockedBuffer{})
 		t.Cleanup(srv.Close)
 		active, err := srv.threadHasDurableActiveAgents(rootID)
@@ -611,6 +634,7 @@ func waitForNoDurableActiveAgents(t *testing.T, srv *Server, threadID string) {
 func TestServerThreadDeleteStopsRuntimeSubscription(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -657,6 +681,7 @@ func TestServerThreadDeleteCleansForkWorktree(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	initAppserverGitRepo(t, rt.RootDir)
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -702,7 +727,7 @@ func TestServerThreadDeleteCleansForkWorktree(t *testing.T) {
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
 		t.Fatalf("fork worktree should be removed with the thread, stat err = %v", err)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, forkResult.Thread.ID); err != nil {
+	if _, ok, err := rt.Sessions.Find(forkResult.Thread.ID); err != nil {
 		t.Fatalf("session.Find after delete: %v", err)
 	} else if ok {
 		t.Fatalf("fork session should be gone after thread/delete")
@@ -725,29 +750,30 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			const threadID = "guarded-delete"
-			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "keep my history"}); err != nil {
+			if err := rt.Sessions.AppendHistoryRecord(threadID, session.HistoryRecord{Role: "user", Content: "keep my history"}); err != nil {
 				t.Fatal(err)
 			}
 			if test.archived {
-				if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+				if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if test.restored {
-				if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+				if _, err := rt.Sessions.UpdateArchived(threadID, false); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := srv.sideThreadStore.BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
+			if _, err := sideStoreForTest(t, srv).BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := srv.sideThreadStore.FinishTurn(threadID, "side-assistant", "keep my reply", sidethread.StatusCompleted, ""); err != nil {
+			if _, _, err := sideStoreForTest(t, srv).FinishTurn(threadID, "side-assistant", "keep my reply", sidethread.StatusCompleted, ""); err != nil {
 				t.Fatal(err)
 			}
 			dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{
@@ -757,10 +783,10 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 			if gotError := response["error"] != nil; gotError != test.wantError {
 				t.Fatalf("delete error = %t, want %t: %+v", gotError, test.wantError, response)
 			}
-			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != test.wantError {
+			if _, found, err := rt.Sessions.Find(threadID); err != nil || found != test.wantError {
 				t.Fatalf("session retained = %t, want %t: %v", found, test.wantError, err)
 			}
-			if exists, err := srv.sideThreadStore.Exists(threadID); err != nil || exists != test.wantError {
+			if exists, err := sideStoreForTest(t, srv).Exists(threadID); err != nil || exists != test.wantError {
 				t.Fatalf("side thread retained = %t, want %t: %v", exists, test.wantError, err)
 			}
 			if !test.wantError {
@@ -769,15 +795,15 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 			if !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
 				t.Fatalf("guard rejection did not explain archive eligibility: %+v", response)
 			}
-			history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+			history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
 			if err != nil || len(history) != 1 || history[0].Content != "keep my history" {
 				t.Fatalf("rejected deletion changed history: %+v, %v", history, err)
 			}
-			side, err := srv.sideThreadStore.Load(threadID)
+			side, err := sideStoreForTest(t, srv).Load(threadID)
 			if err != nil || len(side.Messages) != 2 || side.Messages[1].Text != "keep my reply" {
 				t.Fatalf("rejected deletion changed side history: %+v, %v", side, err)
 			}
-			if _, err := os.Stat(filepath.Join(srv.sideThreadStore.Dir(), ".deleting", threadID+".json")); !errors.Is(err, os.ErrNotExist) {
+			if count, err := sideDeleteStageCount(rt.Documents, threadID); err != nil || count != 0 {
 				t.Fatalf("rejected deletion did not roll back side staging: %v", err)
 			}
 		})
@@ -792,6 +818,7 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current-workspace")
 			rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			const threadID = "foreign-archive-delete"
@@ -799,10 +826,10 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, filepath.Join(t.TempDir(), "foreign-project")); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata(threadID, filepath.Join(t.TempDir(), "foreign-project")); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+			if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 				t.Fatal(err)
 			}
 			artifactDir := statepath.SessionArtifactDir(foreignStateDir, threadID)
@@ -816,7 +843,8 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 				}
 			}
 			otherStore := t.TempDir()
-			if _, err := session.CreateWithMetadata(otherStore, threadID, rt.RootDir); err != nil {
+			otherStoreStore := newAppserverTestStore(t, otherStore)
+			if _, err := otherStoreStore.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 				t.Fatal(err)
 			}
 			dispatchPayload(t, srv, "list", MethodThreadListArchived, ThreadListParams{CWD: rt.RootDir})
@@ -832,7 +860,7 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if queued && !strings.Contains(fmt.Sprint(response["error"]), "active agents") {
 				t.Fatalf("foreign queued worker rejection lost its reason: %+v", response)
 			}
-			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != queued {
+			if _, found, err := rt.Sessions.Find(threadID); err != nil || found != queued {
 				t.Fatalf("foreign archived session retained = %t, want %t: %v", found, queued, err)
 			}
 			_, artifactErr := os.Stat(artifactDir)
@@ -842,7 +870,7 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if !queued && !errors.Is(artifactErr, os.ErrNotExist) {
 				t.Fatalf("foreign artifacts survived deletion: %v", artifactErr)
 			}
-			if _, found, err := session.Find(otherStore, threadID); err != nil || !found {
+			if _, found, err := otherStoreStore.Find(threadID); err != nil || !found {
 				t.Fatalf("deletion escaped the configured session store: found=%t err=%v", found, err)
 			}
 		})
@@ -852,49 +880,50 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 func TestServerThreadDeleteArchivedRechecksRestoreAfterSideStaging(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "restore-after-side-stage"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "survive restoration"}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord(threadID, session.HistoryRecord{Role: "user", Content: "survive restoration"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.sideThreadStore.BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
+	if _, err := sideStoreForTest(t, srv).BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := srv.sideThreadStore.FinishTurn(threadID, "side-assistant", "side reply", sidethread.StatusCompleted, ""); err != nil {
+	if _, _, err := sideStoreForTest(t, srv).FinishTurn(threadID, "side-assistant", "side reply", sidethread.StatusCompleted, ""); err != nil {
 		t.Fatal(err)
 	}
 	srv.deleteSessionForTest = func(id string) (session.Session, error) {
-		if _, err := os.Stat(filepath.Join(srv.sideThreadStore.Dir(), ".deleting", id+".json")); err != nil {
+		if count, err := sideDeleteStageCount(rt.Documents, id); err != nil || count != 1 {
 			t.Fatalf("side deletion was not staged before restore: %v", err)
 		}
 		// Another archive caller may restore after any handler-level precheck.
-		if _, err := session.UpdateArchived(rt.SessionDir, id, false); err != nil {
+		if _, err := rt.Sessions.UpdateArchived(id, false); err != nil {
 			t.Fatal(err)
 		}
 		srv.deleteSessionForTest = nil
-		return srv.deleteThreadSession(id, true)
+		return srv.deleteThreadSession(testRuntimeState(t, srv.rt), id, true)
 	}
 	dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{"thread_id": threadID, "only_if_archived": true})
 	response := responseByID(t, parseOutput(t, out.String()), "delete")
 	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
 		t.Fatalf("restore before the delete transaction must reject deletion: %+v", response)
 	}
-	metadata, found, err := session.Find(rt.SessionDir, threadID)
+	metadata, found, err := rt.Sessions.Find(threadID)
 	if err != nil || !found || metadata.ArchivedAt != nil {
 		t.Fatalf("restored session was changed: found=%t metadata=%+v err=%v", found, metadata, err)
 	}
-	history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+	history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
 	if err != nil || len(history) != 1 || history[0].Content != "survive restoration" {
 		t.Fatalf("restored history changed: %+v, %v", history, err)
 	}
-	side, err := srv.sideThreadStore.Load(threadID)
+	side, err := sideStoreForTest(t, srv).Load(threadID)
 	if err != nil || len(side.Messages) != 2 || side.Messages[1].Text != "side reply" {
 		t.Fatalf("side staging was not rolled back: %+v, %v", side, err)
 	}
@@ -905,10 +934,11 @@ func TestServerThreadDeleteKeepsUnrelatedGlobalArtifacts(t *testing.T) {
 	rt.WuuHome = t.TempDir()
 	rt.StateDir = t.TempDir()
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "same-id-different-store"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "unrelated-global-workspace")
@@ -939,10 +969,11 @@ func TestServerThreadDeleteRejectsSymlinkedForeignArtifactPaths(t *testing.T) {
 				rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
 				rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current")
 				out := &lockedBuffer{}
+				bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 				srv := New(rt, out)
 				t.Cleanup(srv.Close)
 				const threadID = "foreign-symlink"
-				if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+				if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 					t.Fatal(err)
 				}
 				foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "foreign")
@@ -969,7 +1000,7 @@ func TestServerThreadDeleteRejectsSymlinkedForeignArtifactPaths(t *testing.T) {
 				if response["error"] == nil {
 					t.Fatalf("delete traversed unsafe foreign artifact path: %+v", response)
 				}
-				if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+				if _, found, err := rt.Sessions.Find(threadID); err != nil || !found {
 					t.Fatalf("unsafe artifact path did not preserve session: found=%t err=%v", found, err)
 				}
 				if _, err := os.Stat(marker); err != nil {
@@ -986,10 +1017,11 @@ func TestServerThreadDeleteRejectsSymlinkedForeignWorkspace(t *testing.T) {
 	rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
 	rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current")
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "foreign-workspace-symlink"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
@@ -1009,10 +1041,292 @@ func TestServerThreadDeleteRejectsSymlinkedForeignWorkspace(t *testing.T) {
 	if response["error"] == nil {
 		t.Fatalf("unsafe workspace path bypassed active worker protection: %+v", response)
 	}
-	if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+	if _, found, err := rt.Sessions.Find(threadID); err != nil || !found {
 		t.Fatalf("unsafe workspace path did not preserve session: found=%t err=%v", found, err)
 	}
 	if queue, err := store.ListQueueItems(); err != nil || len(queue) != 1 || queue[0].ID != "queued-worker" {
 		t.Fatalf("unsafe workspace path changed queued work: %+v, %v", queue, err)
+	}
+}
+
+func TestServerThreadDeleteRetriesSelectedArtifactsAfterDocumentCommit(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	provider := &threadDeleteArtifactProvider{err: errors.New("selected cleanup response lost")}
+	bindThreadDeleteArtifacts(t, rt, provider)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	const id = "partial-artifact-delete"
+	if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err := srv.workspaceStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(statepath.SessionArtifactDir(stateDir, id), "artifacts", "foreign-provider-copy")
+	if err := os.MkdirAll(filepath.Dir(local), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(local, []byte("must remain with its owner"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	request := func(requestID string) map[string]any {
+		t.Helper()
+		data, err := json.Marshal(map[string]any{"id": requestID, "method": MethodThreadDelete, "params": ThreadDeleteParams{ThreadID: id}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.handleLine(context.Background(), data); err != nil {
+			t.Fatal(err)
+		}
+		return responseByID(t, parseOutput(t, out.String()), requestID)
+	}
+	failed := request("first")
+	if failed["error"] == nil || !strings.Contains(fmt.Sprint(failed["error"]), "session deleted") || provider.calls != 1 {
+		t.Fatalf("partial deletion was not reported: %+v, calls=%d", failed, provider.calls)
+	}
+	if _, found, err := rt.Sessions.Find(id); err != nil || found {
+		t.Fatalf("committed document deletion rolled back: found=%v err=%v", found, err)
+	}
+	provider.err = nil
+	if response := request("retry"); response["error"] != nil || response["result"] == nil || provider.calls != 2 {
+		t.Fatalf("missing document prevented selected cleanup retry: %+v calls=%d", response, provider.calls)
+	}
+	if data, err := os.ReadFile(local); err != nil || string(data) != "must remain with its owner" {
+		t.Fatalf("selected cleanup deleted unselected native data: %q %v", data, err)
+	}
+}
+
+func TestServerThreadDeleteReportsSideCommitFailureAndRetriesWithoutMainRow(t *testing.T) {
+	for _, artifactFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("artifact_failure_%t", artifactFailure), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			fault := &deleteCommitFaultDocuments{Documents: rt.Documents, namespace: "wuu.sidethread.deleting.v1"}
+			rt.Documents = fault
+			artifacts := &threadDeleteArtifactProvider{}
+			if artifactFailure {
+				artifacts.err = errors.New("selected artifact cleanup failed")
+			}
+			bindThreadDeleteArtifacts(t, rt, artifacts)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const id = "partial-side-delete"
+			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			side := sideStoreForTest(t, srv)
+			if _, err := side.BeginTurn(id, "side history", "question", "answer"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := side.FinishTurn(id, "answer", "retained answer", sidethread.StatusCompleted, ""); err != nil {
+				t.Fatal(err)
+			}
+			fault.err = errors.New("selected side cleanup failed")
+			for attempt := 1; attempt <= 2; attempt++ {
+				requestID := fmt.Sprintf("delete-%d", attempt)
+				dispatchPayload(t, srv, requestID, MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+				response := responseByID(t, parseOutput(t, out.String()), requestID)
+				message := fmt.Sprint(response["error"])
+				if response["error"] == nil || response["result"] != nil || !strings.Contains(message, "session deleted") ||
+					!strings.Contains(message, "incomplete") || !strings.Contains(message, "retry thread/delete") ||
+					!strings.Contains(message, "selected side cleanup failed") {
+					t.Fatalf("attempt %d hid incomplete side cleanup: %+v", attempt, response)
+				}
+				if artifactFailure && !strings.Contains(message, "selected artifact cleanup failed") {
+					t.Fatalf("side failure hid artifact failure: %+v", response)
+				}
+				if artifacts.calls != attempt {
+					t.Fatalf("artifact cleanup calls = %d, want %d", artifacts.calls, attempt)
+				}
+				if _, found, err := rt.Sessions.Find(id); err != nil || found {
+					t.Fatalf("main deletion was not retained: found=%t err=%v", found, err)
+				}
+				if count, err := sideDeleteStageCount(fault, id); err != nil || count != 1 {
+					t.Fatalf("failed cleanup lost its staged history: count=%d err=%v", count, err)
+				}
+				if history, err := side.Load(id); err != nil || len(history.Messages) != 2 || history.Messages[1].Text != "retained answer" {
+					t.Fatalf("fixture did not retain readable side history: %+v err=%v", history, err)
+				}
+			}
+			fault.err, artifacts.err = nil, nil
+			dispatchPayload(t, srv, "cleanup-retry", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response := responseByID(t, parseOutput(t, out.String()), "cleanup-retry")
+			if response["error"] != nil || response["result"] == nil || artifacts.calls != 3 {
+				t.Fatalf("explicit retry did not complete deletion: %+v calls=%d", response, artifacts.calls)
+			}
+			if exists, err := side.Exists(id); err != nil || exists {
+				t.Fatalf("successful cleanup retained side history: exists=%t err=%v", exists, err)
+			}
+			if count, err := sideDeleteStageCount(fault, id); err != nil || count != 0 {
+				t.Fatalf("successful cleanup retained deletion stage: count=%d err=%v", count, err)
+			}
+		})
+	}
+}
+
+func TestServerThreadDeleteKeepsSideStageWhenMainCommitOutcomeIsUnknown(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("main_commit_applied_%t", applied), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			fault := &deleteCommitFaultDocuments{Documents: rt.Documents, namespace: "wuu.sessions.v1", apply: applied}
+			rt.Documents = fault
+			rt.Sessions = session.NewStore(context.Background(), fault)
+			artifacts := &threadDeleteArtifactProvider{}
+			bindThreadDeleteArtifacts(t, rt, artifacts)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const id = "unknown-main-delete"
+			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			side := sideStoreForTest(t, srv)
+			if _, err := side.BeginTurn(id, "preserve the cleanup intent", "question", "answer"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := side.FinishTurn(id, "answer", "recoverable history", sidethread.StatusCompleted, ""); err != nil {
+				t.Fatal(err)
+			}
+			fault.err = errors.New("main deletion response lost")
+			dispatchPayload(t, srv, "unknown", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response := responseByID(t, parseOutput(t, out.String()), "unknown")
+			if response["error"] == nil || response["result"] != nil || artifacts.calls != 0 {
+				t.Fatalf("unknown main commit was treated as complete: %+v artifact calls=%d", response, artifacts.calls)
+			}
+			if _, found, err := rt.Sessions.Find(id); err != nil || found != !applied {
+				t.Fatalf("injected commit outcome changed: found=%t applied=%t err=%v", found, applied, err)
+			}
+			if count, err := sideDeleteStageCount(fault, id); err != nil || count != 1 {
+				t.Fatalf("uncertain main deletion rolled back its side cleanup intent: count=%d err=%v", count, err)
+			}
+			if history, err := side.Load(id); err != nil || len(history.Messages) != 2 || history.Messages[1].Text != "recoverable history" {
+				t.Fatalf("unknown outcome lost readable history: %+v err=%v", history, err)
+			}
+			if message := fmt.Sprint(response["error"]); !strings.Contains(message, "outcome is unknown") || !strings.Contains(message, "retry thread/delete") {
+				t.Fatalf("unknown outcome omitted recovery guidance: %+v", response)
+			}
+			fault.err = nil
+			dispatchPayload(t, srv, "retry-unknown", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response = responseByID(t, parseOutput(t, out.String()), "retry-unknown")
+			if response["error"] != nil || response["result"] == nil || artifacts.calls != 1 {
+				t.Fatalf("explicit retry did not finish deletion: %+v artifact calls=%d", response, artifacts.calls)
+			}
+			if _, found, err := rt.Sessions.Find(id); err != nil || found {
+				t.Fatalf("retry retained main session: found=%t err=%v", found, err)
+			}
+			if exists, err := side.Exists(id); err != nil || exists {
+				t.Fatalf("retry retained side history: exists=%t err=%v", exists, err)
+			}
+		})
+	}
+}
+
+type deleteCommitFaultDocuments struct {
+	persistence.Documents
+	namespace string
+	err       error
+	apply     bool
+}
+
+func (d *deleteCommitFaultDocuments) Commit(ctx context.Context, transaction persistence.Transaction) (persistence.Receipt, error) {
+	if d.err != nil {
+		for _, write := range transaction.Writes {
+			if write.Namespace == d.namespace && write.Delete {
+				if d.apply {
+					if _, err := d.Documents.Commit(ctx, transaction); err != nil {
+						return persistence.Receipt{}, err
+					}
+				}
+				return persistence.Receipt{}, d.err
+			}
+		}
+	}
+	return d.Documents.Commit(ctx, transaction)
+}
+
+type threadDeleteArtifactProvider struct {
+	calls int
+	err   error
+}
+
+func (*threadDeleteArtifactProvider) ID() string { return "test.delete-artifacts" }
+func (p *threadDeleteArtifactProvider) Status() pluginhost.Status {
+	return pluginhost.Status{ID: p.ID(), State: pluginhost.StateActive}
+}
+func (*threadDeleteArtifactProvider) Close(context.Context) error                       { return nil }
+func (*threadDeleteArtifactProvider) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (*threadDeleteArtifactProvider) ProvidedServices() []pluginhost.ServiceDescriptor {
+	return []pluginhost.ServiceDescriptor{{Name: runtime.ArtifactServiceName, Version: "1.1.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "delete-thread", InputSchema: "state.artifacts.delete-thread.input.v1", OutputSchema: "state.artifacts.delete-thread.output.v1"}}}}
+}
+func (p *threadDeleteArtifactProvider) InvokeService(_ context.Context, input pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if input.Method != "delete-thread" {
+		return nil, errors.New("unexpected artifact method")
+	}
+	p.calls++
+	if p.err != nil {
+		return nil, p.err
+	}
+	var request struct {
+		ThreadID string `json:"thread_id"`
+	}
+	if err := json.Unmarshal(input.Params, &request); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{"thread_id": request.ThreadID, "deleted": true})
+}
+
+type threadDeleteServiceConsumer struct{}
+
+func (*threadDeleteServiceConsumer) ID() string { return runtime.StateServicesConsumer }
+func (c *threadDeleteServiceConsumer) Status() pluginhost.Status {
+	return pluginhost.Status{ID: c.ID(), State: pluginhost.StateActive}
+}
+func (*threadDeleteServiceConsumer) Close(context.Context) error                      { return nil }
+func (*threadDeleteServiceConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (*threadDeleteServiceConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: runtime.ArtifactServiceName, MajorVersion: 1, Required: true}, {Name: config.ServiceName, MajorVersion: 1, Required: true}}
+}
+func bindThreadDeleteArtifacts(t *testing.T, rt *runtime.Session, artifacts *threadDeleteArtifactProvider) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.DefaultProvider = rt.ProviderName
+	cfg.Providers = map[string]config.ProviderConfig{rt.ProviderName: {Type: "openai-compatible", Model: rt.Model, BaseURL: "https://example.test/v1"}}
+	source := config.NewMemoryService("test.delete-config", cfg)
+	consumer := &threadDeleteServiceConsumer{}
+	attachTestModelGeneration(t, rt, source, artifacts, consumer)
+}
+
+// This failure targets side-history staging while session/lease reads stay usable.
+type sideDeleteFaultDocuments struct {
+	persistence.Documents
+	fail bool
+}
+
+func (d *sideDeleteFaultDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if d.fail && strings.HasPrefix(q.Namespace, "wuu.sidethread.") {
+		return persistence.View{}, errors.New("selected side-thread storage unavailable")
+	}
+	return d.Documents.Read(ctx, q)
+}
+func sideDeleteStageCount(d persistence.Documents, id string) (int, error) {
+	v, err := d.Read(context.Background(), persistence.Query{Namespace: "wuu.sidethread.deleting.v1", Keys: []string{id}})
+	return len(v.Documents), err
+}
+
+func TestDurableChildMigrationIncludesEveryArtifactRoot(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	rootID := "multi-root-child-migration"
+	empty, populated := t.TempDir(), t.TempDir()
+	harnessDir := filepath.Join(statepath.SessionArtifactDir(populated, rootID), "harness")
+	if err := harness.NewStore(harnessDir).UpsertQueueItem(harness.QueueItem{ID: "queued", Kind: "agent_spawn"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := srv.threadHasDurableActiveAgents(rootID, empty, populated)
+	if err != nil || !active {
+		t.Fatalf("later legacy root omitted: active=%v err=%v", active, err)
 	}
 }

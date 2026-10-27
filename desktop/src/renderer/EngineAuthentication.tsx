@@ -1,3 +1,6 @@
+import { Tooltip } from "./Tooltip";
+import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useEffect, useRef, useState } from "react";
 import type { EngineAuthResult } from "../shared/protocol";
 import { GrokLogin } from "./GrokLogin";
@@ -13,6 +16,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
   onAuthenticated?: () => void | Promise<void>;
   onReuseLocal: () => void | Promise<void>;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [methods, setMethods] = useState<EngineAuthResult["methods"]>();
@@ -27,9 +31,9 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     return () => {
       const current = operation.current;
       operation.current = undefined;
-      if (current?.kind === "auth") void window.wuu.cancelEngineAuth(engineID).catch(() => {});
+      if (current?.kind === "auth") void settingsControls.cancelEngineAuth(engineID).catch(() => {});
     };
-  }, [engineID]);
+  }, [engineID, settingsControls]);
 
   async function run(method?: string): Promise<void> {
     if (disabled || operation.current) return;
@@ -40,8 +44,8 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     setMethods(undefined);
     try {
       const next = method
-        ? await window.wuu.authenticateEngine(engineID, method)
-        : await window.wuu.listEngineAuthMethods(engineID);
+        ? await settingsControls.authenticateEngine(engineID, method)
+        : await settingsControls.listEngineAuthMethods(engineID);
       if (operation.current !== current || current.cancelled) return;
       setMethods(next.methods.filter(choice => choice.id && (!choice.type || choice.type === "agent")));
       // An ACP acknowledgment need not prove a provider account is signed in.
@@ -53,7 +57,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
         await onAuthenticated?.();
       }
     } catch (e) {
-      if (operation.current === current && !current.cancelled) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !current.cancelled && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (operation.current === current) {
         operation.current = undefined;
@@ -72,7 +76,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     try {
       await onReuseLocal();
     } catch (e) {
-      if (operation.current === current) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (operation.current === current) {
         operation.current = undefined;
@@ -86,7 +90,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     if (!current || current.kind !== "auth") return;
     current.cancelled = true;
     try {
-      await window.wuu.cancelEngineAuth(engineID);
+      await settingsControls.cancelEngineAuth(engineID);
       if (operation.current === current) {
         operation.current = undefined;
         setBusy(null);
@@ -94,7 +98,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
       }
     } catch (e) {
       // A failed cancellation must not admit another request over the first.
-      if (operation.current === current) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -112,9 +116,9 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
           </button>
           {busy === "auth" ? <button className="settings-button" type="button" data-testid="engine-auth-cancel" onClick={() => void cancel()}>{t("common.cancel")}</button> : null}
           {methods?.map((method) => (
-            <button className="settings-button" type="button" key={method.id} title={method.description} disabled={disabled || Boolean(busy)} data-testid="engine-auth-method" onClick={() => void run(method.id)}>
+            <Tooltip asChild content={method.description} key={method.id}><button aria-description={method.description} className="settings-button" type="button" disabled={disabled || Boolean(busy)} data-testid="engine-auth-method" onClick={() => void run(method.id)}>
               {method.name}
-            </button>
+            </button></Tooltip>
           ))}
         </div>
         <small className="settings-muted-line settings-engine-detail" role="status">

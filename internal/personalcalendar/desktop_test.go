@@ -13,6 +13,9 @@ func TestDesktopClientConfigurationStaysInHostStore(t *testing.T) {
 	ctx := context.Background()
 	id := "synthetic.apps.googleusercontent.com"
 	dir := filepath.Join(t.TempDir(), "calendar")
+	if _, err := NewDesktop(DesktopOptions{ClientID: id, StateDir: dir}); err == nil || err.Error() != fault("secure_store_unavailable").Error() {
+		t.Fatalf("missing selected credential store did not fail closed: %v", err)
+	}
 	if _, err := NewDesktop(DesktopOptions{Store: s, StateDir: dir}); err == nil {
 		t.Fatal("empty client became configured")
 	}

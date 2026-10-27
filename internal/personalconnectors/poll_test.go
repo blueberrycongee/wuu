@@ -20,7 +20,7 @@ func TestPollBaselineChangeRestartAndReconnect(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	b := New(Options{Store: s, HTTPClient: client})
+	b := newTestBroker(Options{Store: s, HTTPClient: client})
 	defer b.Close()
 	g := Grant{Connection: Connection{ID: "gmail", Provider: "gmail", AccountID: "subject", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}}, AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour)}
 	if e := b.RegisterVerified(ctx, a, g); e != nil {
@@ -36,7 +36,7 @@ func TestPollBaselineChangeRestartAndReconnect(t *testing.T) {
 	if e != nil || change.State != "changed" || change.Sequence != 1 || change.ChangeID == "" {
 		t.Fatalf("change %#v %v", change, e)
 	}
-	restarted := New(Options{Store: s, HTTPClient: client})
+	restarted := newTestBroker(Options{Store: s, HTTPClient: client})
 	defer restarted.Close()
 	same, e := restarted.Poll(ctx, a, q)
 	if e != nil || same.State != "unchanged" || same.Sequence != 1 || same.ChangeID != "" {
@@ -70,7 +70,7 @@ func TestPollRejectsWritesAndUnapprovedWorkWithoutHTTP(t *testing.T) {
 	ctx := context.Background()
 	s := &memoryStore{values: map[string][]byte{}}
 	a := Actor{"personal", "space", "s"}
-	b := New(Options{Store: s})
+	b := newTestBroker(Options{Store: s})
 	defer b.Close()
 	g := Grant{Connection: Connection{ID: "work", Provider: "slack", AccountID: "T:U", Domain: "work", Scopes: []string{"channels:history"}, Resources: []string{"C123"}}, AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour)}
 	if e := b.RegisterVerified(ctx, a, g); e != nil {
@@ -92,7 +92,7 @@ func TestPollConcurrentOldResponseDoesNotRollBackNewerSnapshot(t *testing.T) {
 	response := func(body string) *http.Response {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
 	}
-	baseline := New(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) { return response(`{"threads":[]}`), nil })}})
+	baseline := newTestBroker(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) { return response(`{"threads":[]}`), nil })}})
 	defer baseline.Close()
 	g := Grant{Connection: Connection{ID: "g", Provider: "gmail", AccountID: "subject", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}}, AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour)}
 	if e := baseline.RegisterVerified(ctx, a, g); e != nil {
@@ -104,7 +104,7 @@ func TestPollConcurrentOldResponseDoesNotRollBackNewerSnapshot(t *testing.T) {
 	}
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	old := New(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+	old := newTestBroker(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -114,7 +114,7 @@ func TestPollConcurrentOldResponseDoesNotRollBackNewerSnapshot(t *testing.T) {
 		}
 	})}})
 	defer old.Close()
-	fresh := New(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) { return response(`{"threads":[{"id":"new"}]}`), nil })}})
+	fresh := newTestBroker(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) { return response(`{"threads":[{"id":"new"}]}`), nil })}})
 	defer fresh.Close()
 	done := make(chan error, 1)
 	go func() { _, e := old.Poll(ctx, a, q); done <- e }()
@@ -142,7 +142,7 @@ func TestPollFailureDoesNotAdvanceCheckpoint(t *testing.T) {
 	a := Actor{"personal", "space", "s"}
 	status := 200
 	body := `{"threads":[]}`
-	b := New(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}})
 	defer b.Close()
@@ -171,7 +171,7 @@ func TestPollCheckpointsAndChangesAreSessionBound(t *testing.T) {
 	a := Actor{"personal", "space", "one"}
 	other := Actor{"personal", "space", "two"}
 	body := `{"threads":[{"id":"first"}]}`
-	b := New(Options{Store: store, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{Store: store, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}})
 	defer b.Close()

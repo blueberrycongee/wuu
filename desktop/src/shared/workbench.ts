@@ -190,12 +190,15 @@ export interface PluginUIToolbarToggleProps extends Omit<React.ButtonHTMLAttribu
   "aria-label": string;
 }
 
-export interface PluginUITextInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "children"> {
+export interface PluginUITextInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "children" | "value" | "defaultValue"> {
+  value?: string | number;
+  defaultValue?: string | number;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
 
-export interface PluginUITextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children"> {
+export interface PluginUITextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "value"> {
+  value?: string;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
@@ -205,7 +208,9 @@ export interface PluginUICheckboxProps extends Omit<React.InputHTMLAttributes<HT
   description?: React.ReactNode;
 }
 
-export interface PluginUISelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+export interface PluginUISelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "value" | "defaultValue"> {
+  value?: string | number;
+  defaultValue?: string | number;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
@@ -239,6 +244,11 @@ export interface PluginUIAvatarProps {
   status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
   motion?: "static" | "ambient";
   className?: string;
+}
+
+export interface PluginUIWebPageProps {
+  readonly url: string;
+  readonly title?: string;
 }
 
 /**
@@ -285,7 +295,7 @@ export interface PluginUIConversationViewProps {
   presentation?: "standard" | "bubbles";
   conversationId: string;
   sessionId?: string;
-  sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding" };
+  sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding"; compositionProfile?: string };
   onQuestionReply?: (requestId: string, prompt: string, relation?: import("./protocol").MessageRelation) => Promise<void>;
   actions?: React.ReactNode;
   title: string;
@@ -353,6 +363,7 @@ export interface PluginUIKit {
   readonly ConversationAttachment: React.ComponentType<PluginUIConversationAttachmentProps>;
   readonly ConversationComposer: React.ComponentType<PluginUIConversationComposerProps>;
   readonly ConversationMessage: React.ComponentType<PluginUIConversationMessageProps>;
+  readonly WebPage: React.ComponentType<PluginUIWebPageProps>;
   readonly ComposerDrawer: React.ComponentType<ComposerDrawerProps>;
   readonly Page: React.ComponentType<PluginUIPageProps>;
   readonly Panel: React.ComponentType<PluginUIContainerProps>;
@@ -372,7 +383,7 @@ export interface PluginUIKit {
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
 }
 
-export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>): PluginUIKit {
+export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>): Omit<PluginUIKit, "WebPage"> {
   function StaticAvatar({ size = 24, className }: PluginUIAvatarProps): React.ReactNode {
     // Lightweight hosts without the desktop renderer keep an existing static agent mark.
     return react.createElement("svg", {
@@ -690,29 +701,10 @@ export interface InspectorSnapshotV1 {
   readonly todo?: InspectorTodoSnapshotV1;
 }
 
-export interface InspectorSectionHostAPI {
-  executeCommand(commandId: string, input?: unknown): Promise<unknown>;
-  openView(viewTypeId: ViewTypeId, options?: OpenViewOptions): Promise<void>;
-}
-
-export interface InspectorSectionRenderProps {
-  readonly snapshot: InspectorSnapshotV1;
-  readonly host: InspectorSectionHostAPI;
-}
-
-export interface InspectorSectionDefinition {
-  readonly id: string;
-  readonly title: string;
-  readonly priority?: number;
-  /** Return false when this section has no meaningful content for the snapshot. */
-  readonly when?: (snapshot: InspectorSnapshotV1) => boolean;
-  readonly render: React.ComponentType<InspectorSectionRenderProps>;
-}
-
 export const PRESENTATION_TARGETS = [
-  "conversation.item", "conversation.process", "conversation.tool-activity",
-  "conversation.composer", "header.conversation", "header.workspace",
-  "navigation.primary", "app.status", "content.preview", "settings",
+  "conversation.item", "conversation.process",
+  "header.conversation", "header.workspace",
+  "app.status", "content.preview", "settings",
 ] as const;
 export type BuiltInPresentationTarget = (typeof PRESENTATION_TARGETS)[number];
 export type PresentationTarget = BuiltInPresentationTarget | (string & {});
@@ -1078,16 +1070,6 @@ export const CONVERSATION_ITEM_ACTIONS = {
 } as const;
 export type ConversationItemActionId = (typeof CONVERSATION_ITEM_ACTIONS)[keyof typeof CONVERSATION_ITEM_ACTIONS];
 
-export const COMPOSER_ACTIONS = {
-  setDraft: "conversation.composer.set-draft",
-  addAttachment: "conversation.composer.add-attachment",
-  removeAttachment: "conversation.composer.remove-attachment",
-  setSubmissionMode: "conversation.composer.set-submission-mode",
-  submit: "conversation.composer.submit",
-  stop: "conversation.composer.stop",
-} as const;
-export type ComposerActionId = (typeof COMPOSER_ACTIONS)[keyof typeof COMPOSER_ACTIONS];
-
 export const HEADER_ACTIONS = {
   selectTab: "header.select-tab",
   closeTab: "header.close-tab",
@@ -1095,13 +1077,6 @@ export const HEADER_ACTIONS = {
   navigateForward: "header.navigate-forward",
 } as const;
 export type HeaderActionId = (typeof HEADER_ACTIONS)[keyof typeof HEADER_ACTIONS];
-
-export const NAVIGATION_ACTIONS = {
-  activateNode: "navigation.activate-node",
-  pinNode: "navigation.pin-node",
-  unpinNode: "navigation.unpin-node",
-} as const;
-export type NavigationActionId = (typeof NAVIGATION_ACTIONS)[keyof typeof NAVIGATION_ACTIONS];
 
 export const STATUS_ACTIONS = { activateItem: "status.activate-item" } as const;
 export type StatusActionId = (typeof STATUS_ACTIONS)[keyof typeof STATUS_ACTIONS];
@@ -1194,18 +1169,6 @@ export interface ToolActivitySnapshot {
   readonly resultText?: string;
   readonly structuredResult?: ToolActivityStructuredResult;
   readonly error?: string;
-}
-
-export interface ToolActivityPresenterProps {
-  readonly activity: ToolActivitySnapshot;
-  readonly host: ViewHostAPI;
-  readonly fallback: React.ReactNode;
-}
-
-export interface ToolActivityPresenterDefinition {
-  readonly id: string;
-  readonly key: string;
-  readonly render: React.ComponentType<ToolActivityPresenterProps>;
 }
 
 /** Current on-disk workbench state schema. */
@@ -1354,13 +1317,15 @@ export interface CSSSnippet {
  * plugin manifest but typed for the TypeScript workbench API.
  */
 export interface PluginSettingDefinition {
-  type: "boolean" | "string" | "number" | "enum";
+  type: "boolean" | "string" | "number" | "enum" | "secret";
   title: string;
   description?: string;
   default: unknown;
   enum?: string[];
   scope: "user" | "workspace";
-  apply: "live" | "restart";
+  apply: "live" | "next-operation" | "restart";
+  /** Exact HTTPS origins allowed to receive this secret as a Bearer token. Required for secret settings. */
+  credential_origins?: string[];
 }
 
 /**

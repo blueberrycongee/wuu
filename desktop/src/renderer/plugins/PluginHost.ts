@@ -1,6 +1,23 @@
+import { BrowserControlsProvider } from "../BrowserControlsContext";
+import { PluginViewAttachmentPreviews } from "./PluginViewAttachmentPreviews";
+import { PluginConversationScope } from "./PluginConversationScope";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { showToast, dismissToast } from "../Toast";
+import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
+import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
+import type { HostApplicationService } from "./HostApplicationService";
+import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
+import type {
+  ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1, ApplicationProviderDefinition,
+  ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition, ApplicationPresentationAPI,
+} from "../../../../packages/plugin-sdk/src/ui";
 import type * as React from "react";
-import type { ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
+import type { PluginDesktopActivationParams, ExtensionInventoryRecord, ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
 import { settleOnAbort } from "./activation";
+import { createPluginWebPage } from "./PluginWebPage";
+import { retainPresentationReads } from "./PresentationApplication";
 
 import type {
   CSSSnippet,
@@ -9,7 +26,6 @@ import type {
   ComposerInlineCompletionProviderRegistration,
   ComposerInlineCompletionProviderHandle,
   ComposerInlineCompletionRefresh,
-  InspectorSectionDefinition,
   PluginUIKit,
   PluginUIAvatarProps,
   PluginConversationComponents,
@@ -21,10 +37,10 @@ import type {
   RendererDefinition,
   StatusItemDefinition,
   ThemeTokens,
-  ToolActivityPresenterDefinition,
   ViewPlacementContribution,
   ViewPlacementRegion,
   ViewTypeDefinition,
+  ViewHostAPI,
 } from "../../shared/workbench";
 import { createPluginUIKit, VIEW_PLACEMENT_REGIONS } from "../../shared/workbench";
 import {
@@ -33,50 +49,11 @@ import {
   isPublicThemeTokenName,
 } from "../../shared/themeContract.generated";
 
-export const PLUGIN_SLOT_IDS = [
-  "sidebar.primary",
-  "sidebar.footer",
-  "workspace.header",
-  "conversation.header",
-  "conversation.message.before",
-  "conversation.message.after",
-  "composer.above",
-  "composer.toolbar",
-] as const;
-
-export type PluginSlotId = (typeof PLUGIN_SLOT_IDS)[number];
-
-export const PLUGIN_SURFACE_IDS = [
-  "conversation.timeline",
-  "conversation.message",
-] as const;
-
-export type PluginSurfaceId = (typeof PLUGIN_SURFACE_IDS)[number];
-
 export interface Disposable {
   dispose(): void;
 }
 
-export type PluginSlotRenderContext = Readonly<Record<string, unknown>>;
-
-export interface PluginSlotRegistration {
-  id: string;
-  order?: number;
-  render(context: PluginSlotRenderContext): React.ReactNode;
-}
-
-export type PluginSurfaceMode = "replace" | "wrap";
-
-export interface PluginSurfaceRegistration {
-  id: string;
-  mode: PluginSurfaceMode;
-  order?: number;
-  render(context: PluginSlotRenderContext, fallback: React.ReactNode): React.ReactNode;
-}
-
 export interface PluginContributionDeclarations {
-  readonly slots?: readonly Readonly<{ id: string; target: PluginSlotId; order?: number; title?: string }>[];
-  readonly surfaces?: readonly Readonly<{ id: string; target: PluginSurfaceId; mode: PluginSurfaceMode; order?: number; title?: string }>[];
   readonly presenters?: readonly Readonly<{ id: string; target: PresentationTarget; mode: PresentationMode; priority?: number; title?: string }>[];
   readonly navigation?: readonly PluginViewEntryDeclaration[];
   readonly workspace_tools?: readonly PluginViewEntryDeclaration[];
@@ -169,7 +146,7 @@ export interface ComposerStatusSourceRegistration {
   subscribe(context: ComposerStatusContext, listener: () => void): () => void;
 }
 
-export interface PluginGenerationApi {
+export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** The React runtime owned by the Wuu renderer. Plugin bundles should use this object. */
   readonly react: typeof React;
   /** Host-owned primitives that inherit the active Wuu theme and layout rhythm. */
@@ -179,6 +156,7 @@ export interface PluginGenerationApi {
   /** Aborted when staging fails, is superseded, or this generation is disposed. */
   readonly signal: AbortSignal;
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  invokeService<TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput>;
   readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** List live threads inside a workspace, addressed by its root path (the
@@ -186,8 +164,6 @@ export interface PluginGenerationApi {
    * ephemeral and archived threads are excluded by the host. */
   listThreads(workspaceRoot: string): Promise<readonly PluginThreadSummary[]>;
   onHostEvent(handler: (event: unknown) => void): Disposable;
-  registerSlot(slotId: PluginSlotId, contribution: PluginSlotRegistration): Disposable;
-  registerSurface(surfaceId: PluginSurfaceId, contribution: PluginSurfaceRegistration): Disposable;
   registerCommand(command: PluginCommandRegistration): Disposable;
   /** Show a session-local card at the bottom of a conversation. */
   showConversationCard(card: ConversationCardRegistration): ConversationCardHandle;
@@ -207,8 +183,6 @@ export interface PluginGenerationApi {
   setNavigationTitle(id: string, title: string): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
-  /** Register a short, context-driven summary in the host-owned Inspector. */
-  registerInspectorSection(definition: InspectorSectionDefinition): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
   registerRenderer(definition: RendererDefinition): Disposable;
   /** Apply theme token overrides for a specific theme. */
@@ -218,7 +192,6 @@ export interface PluginGenerationApi {
   /** Register a status bar item. */
   registerStatusItem(item: StatusItemDefinition): Disposable;
   registerPresenter(definition: PresenterDefinition): Disposable;
-  registerToolActivityPresenter(definition: ToolActivityPresenterDefinition): Disposable;
 }
 
 export interface PluginRuntimeInvokeOptions {
@@ -226,6 +199,7 @@ export interface PluginRuntimeInvokeOptions {
   readonly workspaceRoot?: string;
   readonly userSpaceId?: string;
   readonly productDomain?: "personal" | "coding";
+  readonly compositionProfile?: string;
   readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly resumeReceiptId?: string; readonly relation?: import("../../shared/protocol").MessageRelation; readonly attachments?: readonly { readonly sha256: string; readonly filename: string; readonly media_type: string; readonly data: string }[] };
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
@@ -249,26 +223,19 @@ export interface PluginThreadSummary {
   readonly title: string;
   readonly updatedAt?: string;
   readonly pinned?: boolean;
+  readonly latestCompletedTurnId?: string;
 }
 
 export interface ActivatePluginGenerationOptions {
+  /** Public manifest identity; installation scope remains in pluginId. */
+  manifestId?: string;
+  graphGeneration?: string;
   pluginId: string;
   generation: string;
   contributions?: PluginContributionDeclarations;
   /** Cancels staging only; a published generation owns its own lifetime. */
   signal?: AbortSignal;
   register(api: PluginGenerationApi): void | Promise<void>;
-}
-
-export interface RegisteredPluginSlotContribution extends PluginSlotRegistration {
-  readonly pluginId: string;
-  readonly generation: string;
-  readonly title?: string;
-}
-
-export interface RegisteredPluginSurfaceContribution extends PluginSurfaceRegistration {
-  readonly pluginId: string;
-  readonly generation: string;
 }
 
 export interface RegisteredPluginCommand extends PluginCommandRegistration {
@@ -310,12 +277,6 @@ export interface RegisteredViewType extends ViewTypeDefinition {
   readonly order: number;
 }
 
-export interface RegisteredInspectorSection extends InspectorSectionDefinition {
-  readonly pluginId: string;
-  readonly generation: string;
-  readonly order: number;
-}
-
 export interface RegisteredViewPlacement {
   readonly pluginId: string;
   readonly generation: string;
@@ -351,11 +312,6 @@ export interface RegisteredComposerInlineCompletionProvider extends ComposerInli
   readonly order: number;
 }
 
-export interface RegisteredToolActivityPresenter extends ToolActivityPresenterDefinition {
-  readonly pluginId: string;
-  readonly generation: string;
-}
-
 export interface RegisteredPresenter extends PresenterDefinition {
   readonly pluginId: string;
   readonly generation: string;
@@ -373,14 +329,14 @@ export interface PluginConflictCandidate {
 
 export interface PluginContributionConflict {
   readonly key: string;
-  readonly kind: "surface" | "presenter";
+  readonly kind: "presenter";
   readonly target: string;
   readonly presentationKey?: string;
   readonly candidates: readonly PluginConflictCandidate[];
   readonly winnerPluginId: string;
 }
 
-export type PluginDiagnosticKind = "activation" | "cleanup" | "render";
+export type PluginDiagnosticKind = "activation" | "cleanup" | "render" | "runtime";
 
 export interface PluginGenerationDiagnostic {
   readonly pluginId: string;
@@ -388,12 +344,31 @@ export interface PluginGenerationDiagnostic {
   readonly kind: PluginDiagnosticKind;
   readonly message: string;
   readonly cause: unknown;
-  readonly slotId?: PluginSlotId;
-  readonly surfaceId?: PluginSurfaceId;
   readonly contributionId?: string;
 }
 
+export interface RegisteredApplicationShell extends ApplicationShellDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly application: ApplicationServiceV1;
+}
+
+export interface RegisteredUISlot extends UISlotDefinition {
+  readonly application: ApplicationServiceV1;
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly name: string;
+}
+
+export interface RegisteredUIContribution extends UIContributionDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly application: ApplicationServiceV1;
+}
+
 export interface PluginHostOptions {
+  reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
+  application?: HostApplicationService;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
   renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>;
@@ -405,12 +380,15 @@ export interface PluginHostOptions {
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
     generation: string;
+    graphGeneration?: string;
+    service?: string;
     method: string;
     input?: unknown;
     workspaceId?: string;
     workspaceRoot?: string;
     userSpaceId?: string;
     productDomain?: "personal" | "coding";
+    compositionProfile?: string;
     userInput?: PluginRuntimeInvokeOptions["userInput"];
     signal?: AbortSignal;
   }>) => Promise<unknown>;
@@ -425,19 +403,6 @@ interface OrderedRecord {
   readonly id: string;
   readonly order: number;
   removed: boolean;
-}
-
-interface SlotRecord extends OrderedRecord {
-  readonly slotId: PluginSlotId;
-  readonly title?: string;
-  readonly render: PluginSlotRegistration["render"];
-}
-
-interface SurfaceRecord extends OrderedRecord {
-  readonly surfaceId: PluginSurfaceId;
-  readonly mode: PluginSurfaceMode;
-  readonly title?: string;
-  readonly render: PluginSurfaceRegistration["render"];
 }
 
 interface CommandRecord extends OrderedRecord, PluginCommandPresentation {
@@ -476,12 +441,6 @@ interface ViewPlacementRecord extends OrderedRecord {
   readonly region: ViewPlacementRegion;
 }
 
-interface InspectorSectionRecord extends OrderedRecord {
-  readonly title: string;
-  readonly when: InspectorSectionDefinition["when"];
-  readonly render: InspectorSectionDefinition["render"];
-}
-
 interface RendererRecord extends OrderedRecord {
   readonly definition: RendererDefinition;
 }
@@ -517,16 +476,36 @@ interface PresenterRecord extends OrderedRecord {
   readonly mode: PresentationMode;
   readonly title?: string;
   readonly render: PresenterDefinition["render"];
-  readonly compatibilityRender?: ToolActivityPresenterDefinition["render"];
 }
 
+interface ApplicationShellRecord extends OrderedRecord { readonly definition: RegisteredApplicationShell }
+interface UISlotRecord extends OrderedRecord { readonly definition: RegisteredUISlot }
+interface UIContributionRecord extends OrderedRecord { readonly definition: RegisteredUIContribution }
+
 interface GenerationState {
+  readonly manifestId: string;
+  presentationOnly: boolean;
+  presentationApplication?: { binding: number; service: ApplicationServiceV1 };
+  graphGeneration?: string;
+  activation: number;
+  registrationReported: boolean;
+  renderedViews: number;
+  renderFailed: boolean;
+  cleanupFailed: boolean;
+  retainedViews: number;
+  cleaned: boolean;
+  cleanupStarted: boolean;
+  activatingProvider: boolean;
+  readonly cleanupComplete: Promise<void>;
+  readonly completeCleanup: () => void;
+  readonly shells: ApplicationShellRecord[];
+  readonly applicationProviders: ApplicationProviderRecord[];
+  readonly uiSlots: UISlotRecord[];
+  readonly uiContributions: UIContributionRecord[];
   readonly pluginId: string;
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
   readonly navigationTitles: Map<string, string>;
-  readonly slots: SlotRecord[];
-  readonly surfaces: SurfaceRecord[];
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -534,14 +513,13 @@ interface GenerationState {
   // Phase C — Workbench
   readonly views: ViewTypeRecord[];
   readonly viewPlacements: ViewPlacementRecord[];
-  readonly inspectorSections: InspectorSectionRecord[];
   readonly renderers: RendererRecord[];
   readonly themeTokens: ThemeTokenRecord[];
   readonly cssSnippets: CSSSnippetRecord[];
   readonly statusItems: StatusItemRecord[];
   readonly composerStatusSources: ComposerStatusSourceRecord[];
   readonly composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[];
-  readonly toolActivityPresenters: PresenterRecord[];
+  readonly presenters: PresenterRecord[];
   readonly registrationKeys: Set<string>;
   readonly hostEventHandlers: Set<(event: unknown) => void>;
   readonly teardown: Disposable[];
@@ -556,13 +534,10 @@ interface PendingActivation {
   readonly state: GenerationState;
 }
 
-const EMPTY_SLOT_SNAPSHOT: readonly RegisteredPluginSlotContribution[] = Object.freeze([]);
-const EMPTY_SURFACE_SNAPSHOT: readonly RegisteredPluginSurfaceContribution[] = Object.freeze([]);
 const EMPTY_COMMAND_SNAPSHOT: readonly RegisteredPluginCommand[] = Object.freeze([]);
 const EMPTY_CONVERSATION_CARD_SNAPSHOT: readonly RegisteredConversationCard[] = Object.freeze([]);
 const EMPTY_VIEW_SNAPSHOT: readonly RegisteredViewType[] = Object.freeze([]);
 const EMPTY_VIEW_PLACEMENT_SNAPSHOT: readonly RegisteredViewPlacement[] = Object.freeze([]);
-const EMPTY_INSPECTOR_SECTION_SNAPSHOT: readonly RegisteredInspectorSection[] = Object.freeze([]);
 const EMPTY_VIEW_ENTRY_SNAPSHOT: readonly RegisteredPluginViewEntry[] = Object.freeze([]);
 const EMPTY_RENDERER_SNAPSHOT: readonly RegisteredRenderer[] = Object.freeze([]);
 const EMPTY_THEME_TOKEN_SNAPSHOT: readonly RegisteredThemeTokens[] = Object.freeze([]);
@@ -570,7 +545,6 @@ const EMPTY_STATUS_ITEM_SNAPSHOT: readonly RegisteredStatusItem[] = Object.freez
 const EMPTY_COMPOSER_STATUS_SOURCE_SNAPSHOT: readonly RegisteredComposerStatusSource[] = Object.freeze([]);
 const EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT: readonly RegisteredComposerInlineCompletionProvider[] = Object.freeze([]);
 const EMPTY_PRESENTER_SNAPSHOT: readonly RegisteredPresenter[] = Object.freeze([]);
-const EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT: readonly RegisteredToolActivityPresenter[] = Object.freeze([]);
 const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({});
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
@@ -589,7 +563,13 @@ export class PluginGenerationSupersededError extends Error {
  */
 export class PluginHost {
   readonly react: typeof React;
-  readonly ui: PluginUIKit;
+  private readonly ui: Omit<PluginUIKit, "WebPage">;
+  readonly applicationProviders = new ApplicationProviders();
+  private applicationBinding?: ApplicationProviderBinding;
+  private readonly application?: HostApplicationService;
+  private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
+  private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
+  private uiContributionSnapshot: readonly RegisteredUIContribution[] = Object.freeze([]);
 
   private readonly activationTimeoutMs: number;
   private readonly styleContainer?: PluginHostOptions["styleContainer"];
@@ -597,12 +577,15 @@ export class PluginHost {
   private readonly workspaceLister?: PluginHostOptions["listWorkspaces"];
   private readonly threadLister?: PluginHostOptions["listThreads"];
   private readonly visibleHistoryReader?: PluginHostOptions["readVisibleHistory"];
+  private readonly reportActivation?: PluginHostOptions["reportActivation"];
+  private reportQueue: Promise<void> = Promise.resolve();
+  private reportFailure?: string;
+  private readonly reportFailures = new Map<string, string>();
+  private inventoryGraphs?: Map<string, string | undefined>;
+  private readonly activationCounts = new Map<string, number>();
+  private readonly reportedActivations = new Map<string, number>();
   private readonly activeGenerations = new Map<string, GenerationState>();
   private readonly pendingActivations = new Map<string, PendingActivation>();
-  private readonly slotSnapshots = new Map<PluginSlotId, readonly RegisteredPluginSlotContribution[]>();
-  private readonly slotListeners = new Map<PluginSlotId, Set<() => void>>();
-  private readonly surfaceSnapshots = new Map<PluginSurfaceId, readonly RegisteredPluginSurfaceContribution[]>();
-  private readonly surfaceListeners = new Map<PluginSurfaceId, Set<() => void>>();
   private readonly listeners = new Set<() => void>();
   private readonly localeSnapshots = new Map<string, Readonly<Record<string, string>>>();
   private readonly diagnostics = new Map<string, readonly PluginGenerationDiagnostic[]>();
@@ -616,7 +599,6 @@ export class PluginHost {
   private nextConversationCardSequence = 1;
   private viewSnapshot: readonly RegisteredViewType[] = EMPTY_VIEW_SNAPSHOT;
   private viewPlacementSnapshot: readonly RegisteredViewPlacement[] = EMPTY_VIEW_PLACEMENT_SNAPSHOT;
-  private inspectorSectionSnapshot: readonly RegisteredInspectorSection[] = EMPTY_INSPECTOR_SECTION_SNAPSHOT;
   private navigationSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private workspaceToolSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private settingsPageSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
@@ -628,13 +610,14 @@ export class PluginHost {
   private composerInlineCompletionProviderSnapshot: readonly RegisteredComposerInlineCompletionProvider[] = EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT;
   private readonly composerInlineCompletionProviderListeners = new Set<() => void>();
   private presenterSnapshot: readonly RegisteredPresenter[] = EMPTY_PRESENTER_SNAPSHOT;
-  private toolActivityPresenterSnapshot: readonly RegisteredToolActivityPresenter[] = EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT;
 
   constructor(options: PluginHostOptions) {
     this.activationTimeoutMs = options.activationTimeoutMs ?? ACTIVATION_TIMEOUT_MS;
     if (!Number.isFinite(this.activationTimeoutMs) || this.activationTimeoutMs <= 0) {
       throw new Error("Plugin activation timeout must be a positive finite duration");
     }
+    this.reportActivation = options.reportActivation;
+    this.application = options.application;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react, options.renderConversationContent, options.conversationComponents, options.avatarComponent);
     this.styleContainer = options.styleContainer;
@@ -645,9 +628,18 @@ export class PluginHost {
   }
 
   async activateGeneration(options: ActivatePluginGenerationOptions): Promise<Disposable> {
+    return (await this.prepareGeneration(options)).activate();
+  }
+
+  /** Stage without retiring consumers; dependency owners commit only after every preparation succeeds. */
+  async prepareGeneration(options: ActivatePluginGenerationOptions): Promise<{ activate(): Promise<Disposable>; dispose(): void }> {
     const pluginId = requireNonEmpty(options.pluginId, "plugin id");
     const generation = requireNonEmpty(options.generation, "plugin generation");
-    const state = createGenerationState(pluginId, generation, options.contributions);
+    if (this.reportActivation) requireNonEmpty(options.graphGeneration ?? "", "committed graph generation");
+    const state = createGenerationState(pluginId, generation, options.contributions, requireNonEmpty(options.manifestId ?? pluginId, "manifest id"));
+    state.graphGeneration = options.graphGeneration;
+    state.activation = (this.activationCounts.get(pluginId) ?? 0) + 1;
+    this.activationCounts.set(pluginId, state.activation);
     const pending: PendingActivation = { state };
 
     const previousPending = this.pendingActivations.get(pluginId);
@@ -672,8 +664,15 @@ export class PluginHost {
       this.assertDeclaredContributionsRegistered(state);
       this.assertViewPlacementTargets(state);
       this.assertDeclaredViewEntryTargets(state);
-      this.assertToolActivityPresenterOwnership(state);
+      this.assertUIComposition(state);
+      const selected = state.applicationProviders.find(record => this.applicationBinding && record.pluginId === this.applicationBinding.pluginId && record.generation === this.applicationBinding.generation && record.id === this.applicationBinding.id);
+      if (selected) {
+        state.activatingProvider = true;
+        try { await settleOnAbort(() => this.applicationProviders.prepare(selected), state.lifetime.signal); }
+        finally { state.activatingProvider = false; }
+      }
     } catch (error: unknown) {
+      options.signal?.removeEventListener("abort", cancel);
       state.acceptingRegistrations = false;
       if (this.pendingActivations.get(pluginId) === pending) {
         this.pendingActivations.delete(pluginId);
@@ -689,18 +688,32 @@ export class PluginHost {
         message: `Plugin generation registration failed: ${errorMessage(error)}`,
         cause: error,
       });
+      this.reportRegistration(state, "failed");
       this.disposeGeneration(state, error);
       throw error;
     } finally {
       clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", cancel);
     }
 
+    let activation: Promise<Disposable> | undefined;
+    const commit = async (): Promise<Disposable> => {
     if (state.disposed || this.pendingActivations.get(pluginId) !== pending) {
       this.disposeGeneration(state);
       throw new PluginGenerationSupersededError(pluginId, generation);
     }
 
+    const selected = state.applicationProviders.find(record => this.applicationBinding && record.pluginId === this.applicationBinding.pluginId && record.generation === this.applicationBinding.generation && record.id === this.applicationBinding.id);
+    if (selected) {
+      state.activatingProvider = true;
+      try { await settleOnAbort(() => this.applicationProviders.select(selected), state.lifetime.signal); }
+      catch (error) {
+        if (this.pendingActivations.get(pluginId) === pending) this.pendingActivations.delete(pluginId);
+        this.reportRegistration(state, "failed"); this.disposeGeneration(state, error);
+        this.addDiagnostic({ pluginId, generation, kind: "activation", message: `Application activation failed: ${errorMessage(error)}`, cause: error });
+        throw error;
+      } finally { state.activatingProvider = false; }
+    }
+    state.lifetime.signal.throwIfAborted();
     this.pendingActivations.delete(pluginId);
     const previous = this.activeGenerations.get(pluginId);
     if (this.diagnostics.delete(diagnosticKey(pluginId, generation))) {
@@ -708,6 +721,7 @@ export class PluginHost {
     }
     this.activeGenerations.set(pluginId, state);
     state.active = true;
+    this.reportRegistration(state, "active");
     if (previous) {
       previous.active = false;
       this.disposeGeneration(previous);
@@ -720,16 +734,64 @@ export class PluginHost {
         this.unload(pluginId);
       }
     });
+    };
+    return {
+      activate: () => activation ??= commit().finally(() => options.signal?.removeEventListener("abort", cancel)),
+      dispose: () => {
+        options.signal?.removeEventListener("abort", cancel);
+        if (this.pendingActivations.get(pluginId) === pending) { this.pendingActivations.delete(pluginId); this.disposeGeneration(state); }
+      },
+    };
+  }
+
+  /** Opt-in is recorded before registration, never inferred from provider identity. */
+  registerPresentation(api: PluginGenerationApi, register: (api: ApplicationPresentationAPI) => void | Promise<void>): void | Promise<void> {
+    const state = this.pendingActivations.get(api.pluginId)?.state;
+    if (!state || state.lifetime.signal !== api.signal) throw new Error("Presentation registration is no longer pending");
+    state.presentationOnly = true;
+    return register(Object.freeze({ react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
+      registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
+      registerUIContribution: api.registerUIContribution }));
+  }
+
+  canRebindPresentation(pluginId: string, generation: string): boolean {
+    const state = this.activeGenerations.get(pluginId);
+    return Boolean(state?.presentationOnly && state.generation === generation && !state.disposed && !state.renderFailed);
+  }
+
+  /** Renew graph acknowledgements without replacing presentation registrations. */
+  rebindPresentation(pluginId: string, generation: string, graphGeneration?: string): void {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || !this.canRebindPresentation(pluginId, generation)) throw new Error("Presentation cannot be rebound");
+    state.graphGeneration = graphGeneration;
+    state.activation = (this.activationCounts.get(pluginId) ?? 0) + 1;
+    this.activationCounts.set(pluginId, state.activation);
+    state.registrationReported = false;
+    this.reportRegistration(state, "active");
+    if (state.renderedViews > 0) this.report(state, "render", state.renderFailed ? "failed" : "active");
+    this.notifyListeners();
+  }
+
+  getPresentationApplication(pluginId: string, generation: string, fallback: ApplicationServiceV1): ApplicationServiceV1 {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state?.presentationOnly || state.generation !== generation) return fallback;
+    const binding = this.applicationProviders.getBindingRevision();
+    if (!state.presentationApplication || this.applicationProviders.current && state.presentationApplication.binding !== binding) {
+      const service = this.createApplicationService(state, true);
+      const lifetime = this.applicationProviders.current?.lifetime?.signal ?? state.lifetime.signal;
+      state.presentationApplication = { binding, service: retainPresentationReads(service, lifetime) };
+    }
+    return state.presentationApplication.service;
   }
 
   disable(pluginId: string): void {
     this.unload(pluginId);
   }
 
-  unload(pluginId: string): void {
+  unload(pluginId: string, preservePreparation = false): void {
     const normalizedPluginId = requireNonEmpty(pluginId, "plugin id");
     const pending = this.pendingActivations.get(normalizedPluginId);
-    if (pending) {
+    if (pending && !preservePreparation) {
       this.pendingActivations.delete(normalizedPluginId);
       this.disposeGeneration(pending.state, new PluginGenerationSupersededError(normalizedPluginId, pending.state.generation));
     }
@@ -742,6 +804,157 @@ export class PluginHost {
     active.active = false;
     this.disposeGeneration(active);
     this.refreshPublicState();
+  }
+
+  /** A mounted React consumer keeps this activation's resources through effect cleanup. */
+  retainGeneration(pluginId: string, generation: string): () => void {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || state.generation !== generation || state.disposed) throw new Error("Plugin generation is no longer active");
+    state.retainedViews++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      // Passive unmount cleanup runs parent-first. Release after the complete
+      // subtree has had an opportunity to dispose its captured resources.
+      queueMicrotask(() => { state.retainedViews--; this.finishGenerationCleanup(state); });
+    };
+  }
+
+  unloadAndWait(pluginId: string, preservePreparation = false): Promise<void> | undefined {
+    const state = this.activeGenerations.get(pluginId);
+    this.unload(pluginId, preservePreparation);
+    return state && !state.cleaned ? state.cleanupComplete : undefined;
+  }
+
+  getApplicationBinding = (): ApplicationProviderBinding | undefined => this.applicationBinding;
+
+  /** The Go graph is the sole authority; unselected registrations remain dormant. */
+  async selectApplicationBinding(binding?: ApplicationProviderBinding): Promise<void> {
+    this.applicationBinding = binding;
+    if (!binding) { await this.applicationProviders.select(undefined); return; }
+    const record = this.applicationProviders.find(binding);
+    if (record) await this.applicationProviders.select(record);
+  }
+
+  getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
+
+  getUISlot(name: string): RegisteredUISlot | undefined {
+    return this.uiSlotSnapshot.find(slot => slot.name === name);
+  }
+
+  getUIContributions(name: string): readonly RegisteredUIContribution[] {
+    return this.uiContributionSnapshot.filter(contribution => contribution.target === name);
+  }
+
+  getUICompositionSnapshot = (): readonly RegisteredUIContribution[] => this.uiContributionSnapshot;
+
+  private assertUIComposition(staging: GenerationState): void {
+    const generations = [...this.activeGenerations.values()].filter(state => state.pluginId !== staging.pluginId);
+    generations.push(staging);
+    for (const state of generations) for (const slot of state.uiSlots) {
+      if (slot.removed) continue;
+      const contributions = generations.flatMap(candidate => candidate.uiContributions)
+        .filter(item => !item.removed && item.definition.target === slot.definition.name);
+      if (slot.definition.service) {
+        if (contributions.some(item => item.definition.mode === "wrap")) throw new Error(`Selected UI surfaces cannot be wrapped: ${slot.definition.name}`);
+      } else if (slot.definition.cardinality === "one" && contributions.filter(item => item.definition.mode !== "wrap").length > 1) {
+        throw new Error(`UI slot conflict: ${slot.definition.name}`);
+      }
+    }
+  }
+
+  private createApplicationService(state: GenerationState, pinProvider = false): ApplicationServiceV1 {
+    let workbench: ApplicationServiceV1["workbench"] | undefined;
+    let desktop: ApplicationServiceV1["desktop"] | undefined;
+    let composerPresentation: ApplicationServiceV1["composerPresentation"] | undefined;
+    const getPluginHost = () => this;
+    let providerScope: ApplicationServiceV1 | undefined;
+    let providerLifetime: AbortController | undefined;
+    const lifetime = new AbortController();
+    const retire = () => {
+      lifetime.abort(new PluginLifecycleCancellationError(state.lifetime.signal.reason ?? providerLifetime?.signal.reason));
+      state.lifetime.signal.removeEventListener("abort", retire);
+      providerLifetime?.signal.removeEventListener("abort", retire);
+    };
+    state.lifetime.signal.addEventListener("abort", retire, { once: true });
+    const assertApplicationActive = () => {
+      lifetime.signal.throwIfAborted();
+      this.assertActive(state);
+      providerLifetime?.signal.throwIfAborted();
+    };
+    const service = (): HostApplicationService | ApplicationServiceV1 => {
+      assertApplicationActive();
+      if (this.application) return this.application;
+      if (!providerScope) {
+        providerScope = this.applicationProviders.createScope(lifetime.signal);
+        providerLifetime = this.applicationProviders.current!.lifetime;
+        providerLifetime!.signal.addEventListener("abort", retire, { once: true });
+        if (providerLifetime!.signal.aborted) retire();
+      }
+      return providerScope;
+    };
+    // A presentation closure may capture only invoke and call it much later.
+    // Pin its authority now, before any read; it must never lazily bind a successor.
+    if (pinProvider && !this.application) {
+      if (this.applicationProviders.current) service();
+      else lifetime.abort(new PluginLifecycleCancellationError(new Error("No application provider is active")));
+    }
+    return Object.freeze({
+      contractVersion: 1 as const,
+      get workbench() { return workbench ??= scopeApplicationWorkbench(() => service().workbench, lifetime.signal); },
+      get composerPresentation() { const source = service(); return "createComposerPresentationScope" in source ? composerPresentation ??= source.createComposerPresentationScope(lifetime.signal, getPluginHost) : source.composerPresentation; },
+      get desktop() { const source = service(); return "createDesktopScope" in source ? desktop ??= source.createDesktopScope(lifetime.signal) : source.desktop; },
+      webWorkspace: scopeApplicationWebWorkspace(() => service().webWorkspace, lifetime.signal, assertApplicationActive),
+      environment: scopeApplicationEnvironment(() => service().environment, lifetime.signal, assertApplicationActive),
+      artifacts: scopeApplicationArtifacts(() => service().artifacts, lifetime.signal, assertApplicationActive),
+      onboarding: scopeApplicationOnboarding(() => service().onboarding, lifetime.signal, assertApplicationActive),
+      browser: scopeApplicationBrowser(() => service().browser, lifetime.signal, assertApplicationActive),
+      fileSelection: scopeApplicationFileSelection(() => service().fileSelection, lifetime.signal, assertApplicationActive),
+      projects: scopeApplicationProjects(() => service().projects, lifetime.signal, assertApplicationActive),
+      terminals: scopeApplicationTerminals(() => service().terminals, lifetime.signal, assertApplicationActive),
+      catalog: scopeApplicationCatalog(() => service().catalog, lifetime.signal, assertApplicationActive),
+      previewContent: scopeApplicationPreviewContent(() => service().previewContent, lifetime.signal, assertApplicationActive),
+      conversationText: scopeApplicationConversationText(() => service().conversationText, lifetime.signal, assertApplicationActive),
+      settingsControls: scopeApplicationSettingsControls(() => service().settingsControls, lifetime.signal, assertApplicationActive),
+      getSnapshot: () => service().getSnapshot(),
+      subscribe: (listener: () => void) => {
+        const unsubscribe = service().subscribe(() => {
+          if (state.active && !state.disposed && !providerLifetime?.signal.aborted) listener();
+        });
+        const disposable = createDisposable(unsubscribe);
+        const stop = () => {
+          lifetime.signal.removeEventListener("abort", stop);
+          disposable.dispose();
+          const index = state.teardown.indexOf(disposable);
+          if (index >= 0) state.teardown.splice(index, 1);
+        };
+        state.teardown.push(disposable);
+        lifetime.signal.addEventListener("abort", stop, { once: true });
+        if (lifetime.signal.aborted) stop();
+        return stop;
+      },
+      invoke: async <Action extends keyof ApplicationActionMapV1>(
+        action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal },
+      ): Promise<ApplicationActionMapV1[Action]["result"]> => {
+        const application = service();
+        const signal = options?.signal ? AbortSignal.any([lifetime.signal, options.signal]) : lifetime.signal;
+        signal.throwIfAborted();
+        if (action === "preview.set-visibility" && "setPreviewVisibility" in application) {
+          application.setPreviewVisibility((input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open, lifetime.signal);
+          return undefined as ApplicationActionMapV1[Action]["result"];
+        }
+        try {
+          const result = await application.invoke(action, input, { signal });
+          assertApplicationActive();
+          signal.throwIfAborted();
+          return result;
+        } catch (error) {
+          if (lifetime.signal.aborted) throw lifetime.signal.reason;
+          throw error;
+        }
+      },
+    });
   }
 
   /** Resolve host action rows without publishing diagnostics during React rendering. */
@@ -780,38 +993,6 @@ export class PluginHost {
     });
   }
 
-  getSlotSnapshot(slotId: PluginSlotId): readonly RegisteredPluginSlotContribution[] {
-    return this.slotSnapshots.get(slotId) ?? EMPTY_SLOT_SNAPSHOT;
-  }
-
-  subscribeSlot(slotId: PluginSlotId, listener: () => void): () => void {
-    let listeners = this.slotListeners.get(slotId);
-    if (!listeners) {
-      listeners = new Set();
-      this.slotListeners.set(slotId, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      listeners?.delete(listener);
-    };
-  }
-
-  getSurfaceSnapshot(surfaceId: PluginSurfaceId): readonly RegisteredPluginSurfaceContribution[] {
-    return this.surfaceSnapshots.get(surfaceId) ?? EMPTY_SURFACE_SNAPSHOT;
-  }
-
-  subscribeSurface(surfaceId: PluginSurfaceId, listener: () => void): () => void {
-    let listeners = this.surfaceListeners.get(surfaceId);
-    if (!listeners) {
-      listeners = new Set();
-      this.surfaceListeners.set(surfaceId, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      listeners?.delete(listener);
-    };
-  }
-
   getCommands(): readonly RegisteredPluginCommand[] {
     return this.commandSnapshot;
   }
@@ -839,10 +1020,6 @@ export class PluginHost {
 
   getViewPlacements(): readonly RegisteredViewPlacement[] {
     return this.viewPlacementSnapshot;
-  }
-
-  getInspectorSections(): readonly RegisteredInspectorSection[] {
-    return this.inspectorSectionSnapshot;
   }
 
   getNavigationEntries(): readonly RegisteredPluginViewEntry[] {
@@ -891,14 +1068,6 @@ export class PluginHost {
   subscribeComposerInlineCompletionProviders(listener: () => void): () => void {
     this.composerInlineCompletionProviderListeners.add(listener);
     return () => this.composerInlineCompletionProviderListeners.delete(listener);
-  }
-
-  getToolActivityPresenters(): readonly RegisteredToolActivityPresenter[] {
-    return this.toolActivityPresenterSnapshot;
-  }
-
-  getToolActivityPresenter(key: string): RegisteredToolActivityPresenter | undefined {
-    return this.getToolActivityPresenters().find((presenter) => presenter.key === key);
   }
 
   getPresenters(target: PresentationTarget, key?: string): readonly RegisteredPresenter[] {
@@ -953,26 +1122,6 @@ export class PluginHost {
     this.setConflictPreferences({ ...this.conflictPreferences, [key]: pluginId });
   }
 
-  recordRenderFailure(
-    contribution: RegisteredPluginSlotContribution | RegisteredPluginSurfaceContribution,
-    location: { slotId: PluginSlotId } | { surfaceId: PluginSurfaceId },
-    error: unknown,
-  ): void {
-    const current = "slotId" in location
-      ? this.getSlotSnapshot(location.slotId) : this.getSurfaceSnapshot(location.surfaceId);
-    if (!current.some((record) => record === contribution)) return;
-    const kind = "slotId" in location ? "slot" : "surface";
-    this.addDiagnostic({
-      pluginId: contribution.pluginId,
-      generation: contribution.generation,
-      kind: "render",
-      message: `Plugin ${kind} contribution ${contribution.id} failed to render: ${errorMessage(error)}`,
-      cause: error,
-      ...location,
-      contributionId: contribution.id,
-    });
-  }
-
   recordPresenterFailure(contribution: RegisteredPresenter, error: unknown): void {
     if (!this.presenterSnapshot.includes(contribution)) return;
     this.addDiagnostic({
@@ -997,18 +1146,6 @@ export class PluginHost {
     });
   }
 
-  recordInspectorFailure(contribution: RegisteredInspectorSection, error: unknown): void {
-    if (!this.inspectorSectionSnapshot.includes(contribution)) return;
-    this.addDiagnostic({
-      pluginId: contribution.pluginId,
-      generation: contribution.generation,
-      kind: "render",
-      message: `Plugin Inspector section ${contribution.id} failed to render: ${errorMessage(error)}`,
-      cause: error,
-      contributionId: contribution.id,
-    });
-  }
-
   publishHostEvent(event: unknown): void {
     for (const state of this.activeGenerations.values()) {
       for (const handler of state.hostEventHandlers) {
@@ -1027,7 +1164,92 @@ export class PluginHost {
     }
   }
 
+  private createContributionRegistry(state: GenerationState): UIContributionRegistryV1 {
+    const diagnosticViews = new WeakMap<readonly PluginGenerationDiagnostic[], readonly { kind: PluginDiagnosticKind; message: string }[]>();
+    const names: readonly (keyof UIContributionRegistryV1)[] = [
+      "subscribe", "getGenerationActivation", "retainGeneration", "observeGenerationRender", "hasActivePlugin",
+      "getCommands", "resolveCommandActions", "executeCommandAction", "recordCommandFailure",
+      "getConversationCards", "subscribeConversationCards", "recordConversationCardFailure", "getViewTypes",
+      "getViewPlacements", "getNavigationEntries", "getWorkspaceTools", "getSettingsPages", "getRenderers",
+      "getThemeTokens", "getStatusItems", "getPresenters", "recordPresenterFailure", "getLocaleEntries",
+      "getComposerStatusSources", "subscribeComposerStatusSources", "getComposerInlineCompletionProviders",
+      "subscribeComposerInlineCompletionProviders", "getConflicts", "getGenerationDiagnostics", "setConflictPreferences",
+    ];
+    const registry = Object.fromEntries(names.map(name => [name, (...args: unknown[]) => {
+      if (name !== "getGenerationActivation" && name !== "getGenerationDiagnostics") state.lifetime.signal.throwIfAborted();
+      const method = this[name] as (...args: unknown[]) => unknown;
+      const result = method.apply(this, args);
+      if (name === "getGenerationDiagnostics") {
+        const source = result as readonly PluginGenerationDiagnostic[];
+        let view = diagnosticViews.get(source);
+        if (!view) { view = Object.freeze(source.map(({ kind, message }) => Object.freeze({ kind, message }))); diagnosticViews.set(source, view); }
+        return view;
+      }
+      if ((name.startsWith("subscribe") || name === "retainGeneration") && typeof result === "function") {
+        let active = true;
+        const stop = () => { if (!active) return; active = false; state.lifetime.signal.removeEventListener("abort", stop); result(); };
+        state.lifetime.signal.addEventListener("abort", stop, { once: true });
+        return stop;
+      }
+      return result;
+    }]));
+    return Object.freeze(registry) as unknown as UIContributionRegistryV1;
+  }
+
   private createGenerationApi(state: GenerationState): PluginGenerationApi {
+    const application = this.createApplicationService(state);
+    const scopedConversation = <Props extends object>(Component: React.ComponentType<Props>): React.ComponentType<Props> =>
+      props => this.react.createElement(PluginConversationScope, { application, signal: state.lifetime.signal,
+        children: this.react.createElement(Component, props) });
+    const conversationUI = {
+      ConversationView: scopedConversation(this.ui.ConversationView),
+      ConversationMessage: scopedConversation(this.ui.ConversationMessage),
+      ConversationComposer: scopedConversation(this.ui.ConversationComposer),
+      ConversationAttachment: scopedConversation(this.ui.ConversationAttachment),
+    };
+    const invokeRequest = async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions, service?: string): Promise<unknown> => {
+      if (!this.runtimeInvoker) {
+        throw new Error("Plugin runtime requests are unavailable");
+      }
+      this.assertActive(state);
+      options?.signal?.throwIfAborted();
+      const controller = new AbortController();
+      const abort = () => controller.abort(options?.signal?.reason);
+      options?.signal?.addEventListener("abort", abort, { once: true });
+      state.runtimeRequests.add(controller);
+      try {
+        const result = await this.runtimeInvoker({
+          pluginId: state.pluginId,
+          generation: state.generation,
+          graphGeneration: state.graphGeneration,
+          ...(service !== undefined ? { service } : {}),
+          method: requireNonEmpty(method, "plugin runtime method"),
+          input,
+          signal: controller.signal,
+          ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+          ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+          ...(options?.userSpaceId ? { userSpaceId: options.userSpaceId } : {}),
+          ...(options?.productDomain ? { productDomain: options.productDomain } : {}),
+          ...(options?.compositionProfile ? { compositionProfile: options.compositionProfile } : {}),
+          ...(options?.userInput ? { userInput: options.userInput } : {}),
+        });
+        this.assertActive(state);
+        controller.signal.throwIfAborted();
+        return result;
+      } catch (error) {
+        // A retired invocation is not a failure in its successor's workspace.
+        // Fence rejected results too: transport can reject before cleanup callbacks run.
+        if (state.disposed || state.lifetime.signal.aborted) throw new PluginLifecycleCancellationError(error);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const operation = `${service ?? "runtime"}/${method}`.replace(/[^a-zA-Z0-9_.:/-]/g, "_").slice(0, 160);
+        this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "runtime",
+          message: `Plugin runtime request failed: ${operation}`, cause: error });
+        throw error;
+      } finally {
+        state.runtimeRequests.delete(controller);
+        options?.signal?.removeEventListener("abort", abort);
+      }
+    };
     const registerViewPlacement = (
       contribution: {
         id: string;
@@ -1053,41 +1275,82 @@ export class PluginHost {
 
     return Object.freeze({
       react: this.react,
-      ui: this.ui,
-      pluginId: state.pluginId,
-      generation: state.generation,
-      signal: state.lifetime.signal,
-      invokeRuntime: async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => {
-        if (!this.runtimeInvoker) {
-          throw new Error("Plugin runtime requests are unavailable");
-        }
+      application,
+      contributions: this.createContributionRegistry(state),
+      showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
         this.assertActive(state);
-        options?.signal?.throwIfAborted();
-        const controller = new AbortController();
-        const abort = () => controller.abort(options?.signal?.reason);
-        options?.signal?.addEventListener("abort", abort, { once: true });
-        state.runtimeRequests.add(controller);
-        try {
-          const result = await this.runtimeInvoker({
+        const id = showToast({ message: input.message, tone: input.tone,
+          dedupeKey: `plugin:${state.pluginId}:${input.key ?? input.message}` });
+        const dispose = () => { if (id !== undefined) dismissToast(id); state.lifetime.signal.removeEventListener("abort", dispose); };
+        state.lifetime.signal.addEventListener("abort", dispose, { once: true });
+        return createDisposable(dispose);
+      },
+      registerApplicationProvider: (definition: ApplicationProviderDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "application-provider", definition.id);
+        const record = this.applicationProviders.register({ pluginId: state.pluginId, generation: state.generation, id, graphGeneration: state.graphGeneration }, definition);
+        state.applicationProviders.push(record);
+        return { dispose: () => { void this.applicationProviders.remove(record).catch(error => this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "cleanup", message: errorMessage(error), cause: error })); } };
+      },
+      registerApplicationShell: (definition: ApplicationShellDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "application-shell", definition.id);
+        const record: ApplicationShellRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
+          definition: Object.freeze({ ...definition, id, pluginId: state.pluginId, generation: state.generation, application }),
+        };
+        state.shells.push(record);
+        return this.ownRecord(state, record);
+      },
+      registerUISlot: (definition: UISlotDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "ui-slot", definition.id);
+        if (id.includes("/")) throw new Error("UI slot id must be local to its owner");
+        if (definition.cardinality !== "one" && definition.cardinality !== "many") throw new Error("Invalid UI slot cardinality");
+        if (definition.service !== undefined) {
+          requireNonEmpty(definition.service, "UI surface service");
+          if (definition.cardinality !== "one") throw new Error("Selected UI surfaces require cardinality one");
+        }
+        const record: UISlotRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
+          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation, application }),
+        };
+        state.uiSlots.push(record);
+        return this.ownRecord(state, record);
+      },
+      registerUIContribution: (definition: UIContributionDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "ui-contribution", definition.id);
+        const target = requireNonEmpty(definition.target, "UI slot target");
+        if (!target.includes("/")) throw new Error("UI slot target must include its owner");
+        if (definition.mode !== undefined && definition.mode !== "content" && definition.mode !== "wrap") throw new Error("Invalid UI contribution mode");
+        const record: UIContributionRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: normalizeOrder(definition.order), removed: false,
+          definition: Object.freeze({ ...definition, id, target, pluginId: state.pluginId, generation: state.generation, application }),
+        };
+        state.uiContributions.push(record);
+        return this.ownRecord(state, record);
+      },
+      ui: Object.freeze({
+        ...this.ui,
+        ...conversationUI,
+        WebPage: createPluginWebPage(this.react, state.lifetime.signal, (error) => {
+          this.addDiagnostic({
             pluginId: state.pluginId,
             generation: state.generation,
-            method: requireNonEmpty(method, "plugin runtime method"),
-            input,
-            signal: controller.signal,
-            ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-            ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
-            ...(options?.userSpaceId ? { userSpaceId: options.userSpaceId } : {}),
-            ...(options?.productDomain ? { productDomain: options.productDomain } : {}),
-            ...(options?.userInput ? { userInput: options.userInput } : {}),
+            kind: "cleanup",
+            message: `Plugin web page cleanup failed: ${errorMessage(error)}`,
+            cause: error,
           });
-          this.assertActive(state);
-          controller.signal.throwIfAborted();
-          return result;
-        } finally {
-          state.runtimeRequests.delete(controller);
-          options?.signal?.removeEventListener("abort", abort);
-        }
-      },
+        }, application.webWorkspace),
+      }),
+      pluginId: state.pluginId,
+      manifestId: state.manifestId,
+      generation: state.generation,
+      signal: state.lifetime.signal,
+      invokeRuntime: (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => invokeRequest(method, input, options),
+      invokeService: async <TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput> =>
+        await invokeRequest(request.method, request.params, options, requireNonEmpty(request.service, "plugin service name")) as TOutput,
       readVisibleHistory: async (request: PluginVisibleHistoryRequest) => {
         if (!this.visibleHistoryReader) throw new Error("Visible conversation history is unavailable");
         this.assertActive(state);
@@ -1120,44 +1383,6 @@ export class PluginHost {
         state.teardown.push(disposable);
         return disposable;
       },
-      registerSlot: (slotId: PluginSlotId, contribution: PluginSlotRegistration) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, `slot:${slotId}`, contribution.id);
-        const order = normalizeOrder(contribution.order);
-        this.assertDeclaredContribution(state, "slot", { id, target: slotId, order });
-        const record: SlotRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order,
-          slotId,
-          title: declaredContributionTitle(state, "slot", id),
-          render: contribution.render,
-          removed: false,
-        };
-        state.slots.push(record);
-        return this.ownRecord(state, record);
-      },
-      registerSurface: (surfaceId: PluginSurfaceId, contribution: PluginSurfaceRegistration) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, `surface:${surfaceId}`, contribution.id);
-        const order = normalizeOrder(contribution.order);
-        const mode = normalizeSurfaceMode(contribution.mode);
-        this.assertDeclaredContribution(state, "surface", { id, target: surfaceId, mode, order });
-        const record: SurfaceRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order,
-          surfaceId,
-          mode,
-          title: declaredContributionTitle(state, "surface", id),
-          render: contribution.render,
-          removed: false,
-        };
-        state.surfaces.push(record);
-        return this.ownRecord(state, record);
-      },
       registerCommand: (command: PluginCommandRegistration) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "command", command.id);
@@ -1188,7 +1413,7 @@ export class PluginHost {
       },
       showConversationCard: (card: ConversationCardRegistration): ConversationCardHandle => {
         this.assertUsable(state);
-        const threadId = card.threadId?.trim() || this.activeConversationThreadId;
+        const threadId = card.threadId?.trim() || (this.application || this.applicationProviders.current ? application.getSnapshot().conversation.threadId : this.activeConversationThreadId);
         if (!threadId) {
           throw new Error("Plugin conversation card requires an active or explicit thread id");
         }
@@ -1362,6 +1587,7 @@ export class PluginHost {
           try {
             cleanup();
           } catch (error: unknown) {
+            state.cleanupFailed = true;
             this.addDiagnostic({
               pluginId: state.pluginId,
               generation: state.generation,
@@ -1390,9 +1616,12 @@ export class PluginHost {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
         validatePublicIcon(definition.icon, `Plugin view ${id}`);
+        const RegisteredView = definition.render;
+        const render: ViewTypeDefinition["render"] = props => this.react.createElement(BrowserControlsProvider, { service: application.browser, children:
+          this.react.createElement(PluginViewAttachmentPreviews, { children: this.react.createElement(RegisteredView, props) }) });
         const record: ViewTypeRecord = {
           pluginId: state.pluginId, generation: state.generation, id,
-          order: 0, removed: false, definition: { ...definition, id },
+          order: 0, removed: false, definition: { ...definition, id, render },
         };
         state.views.push(record);
         return this.ownRecord(state, record);
@@ -1406,23 +1635,6 @@ export class PluginHost {
           region,
           priority: contribution.priority,
         });
-      },
-
-      registerInspectorSection: (definition: InspectorSectionDefinition) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, "inspector-section", definition.id);
-        const record: InspectorSectionRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order: normalizeOrder(definition.priority),
-          removed: false,
-          title: requireNonEmpty(definition.title, "Inspector section title"),
-          when: definition.when,
-          render: definition.render,
-        };
-        state.inspectorSections.push(record);
-        return this.ownRecord(state, record);
       },
 
       registerRenderer: (definition: RendererDefinition) => {
@@ -1475,43 +1687,23 @@ export class PluginHost {
         this.assertAccepting(state);
         const id = this.claimExactRegistrationId(state, "presenter", definition.id);
         const target = requireExactNonEmpty(definition.target, "presenter target");
+        if (target === "conversation.composer" || target === "navigation.primary") {
+          throw new Error(`Retired presenter target ${target}; use registerUIContribution with the selected composer's or navigation provider's slots`);
+        }
         const key = definition.key === undefined ? undefined : requireExactNonEmpty(definition.key, "presenter key");
         if (typeof definition.render !== "function") throw new Error("Plugin presenter render must be a function");
         const mode = normalizePresentationMode(definition.mode);
         const order = normalizeOrder(definition.priority);
-        this.assertDeclaredContribution(state, "presenter", { id, target, mode, priority: order });
+        this.assertDeclaredPresenter(state, { id, target, mode, priority: order });
         const record: PresenterRecord = {
           pluginId: state.pluginId, generation: state.generation, id, target, key,
-          mode, order, title: declaredContributionTitle(state, "presenter", id),
+          mode, order, title: state.declaredContributions?.presenters?.find(declaration => declaration.id === id)?.title,
           removed: false, render: definition.render,
         };
-        state.toolActivityPresenters.push(record);
+        state.presenters.push(record);
         return this.ownRecord(state, record);
       },
 
-      registerToolActivityPresenter: (definition: ToolActivityPresenterDefinition) => {
-        this.assertAccepting(state);
-        const id = this.claimExactRegistrationId(state, "tool activity presenter", definition.id);
-        const key = requireExactNonEmpty(definition.key, "tool activity presenter key");
-        if (typeof definition.render !== "function") {
-          throw new Error("Plugin tool activity presenter render must be a function");
-        }
-        if (state.toolActivityPresenters.some((record) => !record.removed && record.key === key)) {
-          throw new Error(`Duplicate plugin tool activity presenter key: ${key}`);
-        }
-        this.assertToolActivityPresenterKeyAvailable(state.pluginId, key);
-        const record: PresenterRecord = {
-          pluginId: state.pluginId, generation: state.generation, id, key,
-          target: "conversation.tool-activity", mode: "replace",
-          order: 0, removed: false,
-          render: (props) => this.react.createElement(definition.render, {
-            activity: props.snapshot as never, host: props.host, fallback: props.fallback,
-          }),
-          compatibilityRender: definition.render,
-        };
-        state.toolActivityPresenters.push(record);
-        return this.ownRecord(state, record);
-      },
     });
   }
 
@@ -1586,7 +1778,7 @@ export class PluginHost {
   }
 
   private assertActive(state: GenerationState): void {
-    if (this.activeGenerations.get(state.pluginId) !== state || state.disposed) {
+    if (state.disposed || this.activeGenerations.get(state.pluginId) !== state && !(state.activatingProvider && this.pendingActivations.get(state.pluginId)?.state === state)) {
       throw new Error("Plugin generation is no longer active");
     }
   }
@@ -1598,7 +1790,7 @@ export class PluginHost {
   }
 
   private assertUsable(state: GenerationState): void {
-    if (state.disposed || (!state.acceptingRegistrations && !state.active)) {
+    if (state.disposed || (!state.acceptingRegistrations && !state.active && !state.activatingProvider)) {
       throw new Error(`Plugin generation ${state.pluginId}@${state.generation} is no longer active`);
     }
   }
@@ -1623,71 +1815,26 @@ export class PluginHost {
     return id;
   }
 
-  private assertToolActivityPresenterKeyAvailable(pluginId: string, key: string): void {
-    for (const state of this.activeGenerations.values()) {
-      if (state.pluginId !== pluginId && state.toolActivityPresenters.some((record) =>
-        !record.removed && record.compatibilityRender !== undefined && record.key === key)) {
-        throw new Error(`Tool activity presenter key is already owned by another plugin: ${key}`);
-      }
-    }
-    for (const pending of this.pendingActivations.values()) {
-      const state = pending.state;
-      if (!state.disposed && state.pluginId !== pluginId
-        && state.toolActivityPresenters.some((record) =>
-          !record.removed && record.compatibilityRender !== undefined && record.key === key)) {
-        throw new Error(`Tool activity presenter key is already owned by another plugin: ${key}`);
-      }
-    }
-  }
-
-  private assertToolActivityPresenterOwnership(state: GenerationState): void {
-    for (const presenter of state.toolActivityPresenters) {
-      if (!presenter.removed && presenter.compatibilityRender !== undefined && presenter.key !== undefined) {
-        this.assertToolActivityPresenterKeyAvailable(state.pluginId, presenter.key);
-      }
-    }
-  }
-
-  private assertDeclaredContribution(
+  private assertDeclaredPresenter(
     state: GenerationState,
-    kind: "slot" | "surface" | "presenter",
-    actual: Readonly<{ id: string; target: string; mode?: string; order?: number; priority?: number }>,
+    actual: Readonly<{ id: string; target: string; mode: string; priority: number }>,
   ): void {
-    const declarations = state.declaredContributions;
-    if (!declarations) return;
-    const declared = kind === "slot" ? declarations.slots
-      : kind === "surface" ? declarations.surfaces
-      : declarations.presenters;
+    const declared = state.declaredContributions?.presenters;
     if (declared === undefined) return;
-    const match = declared.find((candidate) => candidate.id === actual.id);
+    const match = declared.find(candidate => candidate.id === actual.id);
     if (!match) {
-      throw new Error(`Plugin ${kind} registration ${actual.id} is not declared in the manifest`);
+      throw new Error(`Plugin presenter registration ${actual.id} is not declared in the manifest`);
     }
-    const declaredOrder = "priority" in match
-      ? normalizeOrder(match.priority)
-      : normalizeOrder("order" in match ? match.order : undefined);
-    const actualOrder = actual.priority ?? actual.order ?? 0;
-    const declaredMode = "mode" in match ? match.mode : undefined;
-    if (match.target !== actual.target || declaredMode !== actual.mode || declaredOrder !== actualOrder) {
-      throw new Error(`Plugin ${kind} registration ${actual.id} does not match its manifest declaration`);
+    if (match.target !== actual.target || match.mode !== actual.mode || normalizeOrder(match.priority) !== actual.priority) {
+      throw new Error(`Plugin presenter registration ${actual.id} does not match its manifest declaration`);
     }
   }
 
   private assertDeclaredContributionsRegistered(state: GenerationState): void {
     const declarations = state.declaredContributions;
     if (!declarations) return;
-    for (const declaration of declarations.slots ?? []) {
-      if (!state.slots.some((record) => !record.removed && record.id === declaration.id)) {
-        throw new Error(`Manifest slot contribution ${declaration.id} was not registered during activation`);
-      }
-    }
-    for (const declaration of declarations.surfaces ?? []) {
-      if (!state.surfaces.some((record) => !record.removed && record.id === declaration.id)) {
-        throw new Error(`Manifest surface contribution ${declaration.id} was not registered during activation`);
-      }
-    }
     for (const declaration of declarations.presenters ?? []) {
-      if (!state.toolActivityPresenters.some((record) => !record.removed && record.id === declaration.id)) {
+      if (!state.presenters.some((record) => !record.removed && record.id === declaration.id)) {
         throw new Error(`Manifest presenter contribution ${declaration.id} was not registered during activation`);
       }
     }
@@ -1725,62 +1872,151 @@ export class PluginHost {
     state.disposed = true;
     state.acceptingRegistrations = false;
     state.lifetime.abort(reason);
-    for (const request of state.runtimeRequests) request.abort();
+    for (const request of state.runtimeRequests) request.abort(new PluginLifecycleCancellationError(reason));
+    this.finishGenerationCleanup(state);
+  }
+
+  private finishGenerationCleanup(state: GenerationState): void {
+    if (!state.disposed || state.retainedViews > 0 || state.cleanupStarted) return;
+    state.cleanupStarted = true;
     for (const disposable of [...state.teardown].reverse()) {
-      disposable.dispose();
+      try { disposable.dispose(); }
+      catch (error: unknown) {
+        state.cleanupFailed = true;
+        this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "cleanup", message: `Plugin cleanup failed: ${errorMessage(error)}`, cause: error });
+      }
     }
+    const complete = () => {
+      if (state.registrationReported) this.report(state, "cleanup", state.cleanupFailed ? "failed" : "disposed");
+      state.cleaned = true;
+      state.completeCleanup();
+    };
+    if (state.applicationProviders.length === 0) { complete(); return; }
+    void Promise.allSettled(state.applicationProviders.map(record => this.applicationProviders.remove(record))).then(results => {
+      for (const result of results) if (result.status === "rejected") {
+        state.cleanupFailed = true;
+        this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "cleanup", message: errorMessage(result.reason), cause: result.reason });
+      }
+      complete();
+    });
+  }
+
+  reportApplicationActivationFailure(pluginId: string, generation: string, graphGeneration: string | undefined, error: unknown): void {
+    const message = this.applicationProviders.failure ?? errorMessage(error);
+    this.addDiagnostic({ pluginId, generation, kind: "activation", message, cause: error });
+    this.report({ pluginId, generation, graphGeneration, activation: this.activationCounts.get(pluginId) ?? 0 }, "registration", "failed", message);
+  }
+
+  private reportRegistration(state: GenerationState, status: "active" | "failed"): void {
+    state.registrationReported = true;
+    this.report(state, "registration", status);
+    if (state.cleaned) this.report(state, "cleanup", state.cleanupFailed ? "failed" : "disposed");
+  }
+
+  private report(state: Pick<GenerationState, "pluginId" | "generation" | "graphGeneration" | "activation">, phase: PluginDesktopActivationParams["phase"], status: PluginDesktopActivationParams["status"], failureMessage?: string): void {
+    const send = this.reportActivation;
+    if (!send) return;
+    const params: PluginDesktopActivationParams = {
+      id: state.pluginId, fingerprint: state.generation, graph_generation: state.graphGeneration!, activation: state.activation, phase, status,
+      ...(status === "failed" ? { message: failureMessage ?? `Plugin desktop ${phase} failed; inspect local diagnostics` } : {}),
+    };
+    this.reportQueue = this.reportQueue.then(async () => {
+      // A newly committed graph owns the registry. Its obsolete callbacks may
+      // still finish effect cleanup, but cannot update the replacement graph.
+      if (this.inventoryGraphs && this.inventoryGraphs.get(params.id) !== params.graph_generation) return;
+      if (params.activation < (this.reportedActivations.get(params.id) ?? 0)) return;
+      if (phase === "registration") this.reportedActivations.set(params.id, params.activation);
+      await send(params);
+      if (phase === "registration" && this.reportFailures.delete(state.pluginId)) {
+        this.reportFailure = [...this.reportFailures.values()].join("\n") || undefined;
+        this.notifyListeners();
+      }
+    }).catch((error: unknown) => {
+      if (this.inventoryGraphs && this.inventoryGraphs.get(params.id) !== params.graph_generation) return;
+      const message = `Desktop activation report failed for ${state.pluginId}: ${errorMessage(error)}`;
+      this.reportFailures.set(state.pluginId, message);
+      this.reportFailure = [...this.reportFailures.values()].join("\n");
+      this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "activation", message, cause: error });
+    });
+  }
+
+  setInventoryGraphs(inventory: readonly ExtensionInventoryRecord[]): void {
+    this.inventoryGraphs = new Map(inventory.map(plugin => [plugin.id, plugin.graph_generation]));
+  }
+
+  flushActivationReports(): Promise<void> { return this.reportQueue; }
+  getActivationReportFailure = (): string | undefined => this.reportFailure;
+
+  observeGenerationRender(pluginId: string, generation: string, initialError?: Error): { failed(error: Error): void; dispose(): void } {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || state.generation !== generation) throw new Error("Plugin generation is no longer active");
+    state.renderedViews++;
+    let disposed = false;
+    const observer = {
+      failed: (error: Error) => {
+        if (disposed || state.cleaned || state.renderFailed) return;
+        state.renderFailed = true;
+        this.addDiagnostic({ pluginId, generation, kind: "render", message: `Plugin UI render failed: ${errorMessage(error)}`, cause: error });
+        this.report(state, "render", "failed");
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        state.renderedViews--;
+        if (!state.cleaned && !state.renderFailed && state.renderedViews === 0) this.report(state, "render", "disposed");
+      },
+    };
+    if (initialError) observer.failed(initialError);
+    else if (!state.renderFailed && state.renderedViews === 1) this.report(state, "render", "active");
+    return observer;
   }
 
   private refreshPublicState(replaceSnapshots = false): void {
     let changed = false;
+    const live = [...this.activeGenerations.values()];
+    const shells = live.flatMap(state => state.shells.filter(record => !record.removed).map(record => record.definition));
+    const slots = live.flatMap(state => state.uiSlots.filter(record => !record.removed).map(record => record.definition));
+    const contributions = live.flatMap(state => state.uiContributions.filter(record => !record.removed)).sort(compareOrdered).map(record => record.definition);
+    if (shells.length !== this.applicationShells.length || shells.some((value, index) => value !== this.applicationShells[index])) {
+      this.applicationShells = Object.freeze(shells);
+      changed = true;
+    }
+    if (slots.length !== this.uiSlotSnapshot.length || slots.some((value, index) => value !== this.uiSlotSnapshot[index])
+      || contributions.length !== this.uiContributionSnapshot.length || contributions.some((value, index) => value !== this.uiContributionSnapshot[index])) {
+      this.uiSlotSnapshot = Object.freeze(slots);
+      this.uiContributionSnapshot = Object.freeze(contributions);
+      changed = true;
+    }
     const conflicts: PluginContributionConflict[] = [];
-    const slotRecords = new Map<PluginSlotId, SlotRecord[]>();
-    const surfaceRecords = new Map<PluginSurfaceId, SurfaceRecord[]>();
     const commands: CommandRecord[] = [];
     const locales: LocaleRecord[] = [];
     const styles: StyleRecord[] = [];
     const views: ViewTypeRecord[] = [];
     const viewPlacements: ViewPlacementRecord[] = [];
-    const inspectorSections: InspectorSectionRecord[] = [];
     const renderers: RendererRecord[] = [];
     const themeTokens: ThemeTokenRecord[] = [];
     const cssSnippets: CSSSnippetRecord[] = [];
     const statusItems: StatusItemRecord[] = [];
     const composerStatusSources: ComposerStatusSourceRecord[] = [];
     const composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[] = [];
-    const toolActivityPresenters: PresenterRecord[] = [];
+    const presenters: PresenterRecord[] = [];
     const navigationEntries: RegisteredPluginViewEntry[] = [];
     const workspaceTools: RegisteredPluginViewEntry[] = [];
     const settingsPages: RegisteredPluginViewEntry[] = [];
 
     for (const state of this.activeGenerations.values()) {
-      for (const record of state.slots) {
-        if (!record.removed) {
-          const records = slotRecords.get(record.slotId) ?? [];
-          records.push(record);
-          slotRecords.set(record.slotId, records);
-        }
-      }
-      for (const record of state.surfaces) {
-        if (!record.removed) {
-          const records = surfaceRecords.get(record.surfaceId) ?? [];
-          records.push(record);
-          surfaceRecords.set(record.surfaceId, records);
-        }
-      }
       commands.push(...state.commands.filter((record) => !record.removed));
       locales.push(...state.locales.filter((record) => !record.removed));
       styles.push(...state.styles.filter((record) => !record.removed));
       views.push(...state.views.filter((record) => !record.removed));
       viewPlacements.push(...state.viewPlacements.filter((record) => !record.removed));
-      inspectorSections.push(...state.inspectorSections.filter((record) => !record.removed));
       renderers.push(...state.renderers.filter((record) => !record.removed));
       themeTokens.push(...state.themeTokens.filter((record) => !record.removed));
       cssSnippets.push(...state.cssSnippets.filter((record) => !record.removed));
       statusItems.push(...state.statusItems.filter((record) => !record.removed));
       composerStatusSources.push(...state.composerStatusSources.filter((record) => !record.removed));
       composerInlineCompletionProviders.push(...state.composerInlineCompletionProviders.filter((record) => !record.removed));
-      toolActivityPresenters.push(...state.toolActivityPresenters.filter((record) => !record.removed));
+      presenters.push(...state.presenters.filter((record) => !record.removed));
       const declaredEntry = (entry: PluginViewEntryDeclaration): RegisteredPluginViewEntry => Object.freeze({
         ...entry,
         pluginId: state.pluginId,
@@ -1789,40 +2025,6 @@ export class PluginHost {
       navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title })));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
-    }
-
-    for (const slotId of PLUGIN_SLOT_IDS) {
-      const next = Object.freeze((slotRecords.get(slotId) ?? [])
-        .sort(compareOrdered)
-        .map(toPublicSlotContribution));
-      const previous = this.slotSnapshots.get(slotId) ?? EMPTY_SLOT_SNAPSHOT;
-      if (replaceSnapshots || !sameContributions(previous, next)) {
-        this.slotSnapshots.set(slotId, next);
-        changed = true;
-        for (const listener of this.slotListeners.get(slotId) ?? []) {
-          listener();
-        }
-      }
-    }
-
-    for (const surfaceId of PLUGIN_SURFACE_IDS) {
-      const resolved = resolveReplaceConflict(
-        "surface",
-        surfaceId,
-        undefined,
-        (surfaceRecords.get(surfaceId) ?? []).sort(compareOrdered),
-        this.conflictPreferences,
-      );
-      if (resolved.conflict) conflicts.push(resolved.conflict);
-      const next = Object.freeze(resolved.records.map(toPublicSurfaceContribution));
-      const previous = this.surfaceSnapshots.get(surfaceId) ?? EMPTY_SURFACE_SNAPSHOT;
-      if (replaceSnapshots || !sameContributions(previous, next)) {
-        this.surfaceSnapshots.set(surfaceId, next);
-        changed = true;
-        for (const listener of this.surfaceListeners.get(surfaceId) ?? []) {
-          listener();
-        }
-      }
     }
 
     const nextCommands = Object.freeze(commands.sort(compareOrdered).map(toPublicCommand));
@@ -1842,14 +2044,6 @@ export class PluginHost {
     );
     if (replaceSnapshots || !sameContributions(this.viewPlacementSnapshot, nextViewPlacements)) {
       this.viewPlacementSnapshot = nextViewPlacements;
-      changed = true;
-    }
-
-    const nextInspectorSections = Object.freeze(
-      inspectorSections.sort(compareOrdered).map(toPublicInspectorSection),
-    );
-    if (replaceSnapshots || !sameContributions(this.inspectorSectionSnapshot, nextInspectorSections)) {
-      this.inspectorSectionSnapshot = nextInspectorSections;
       changed = true;
     }
 
@@ -1918,7 +2112,7 @@ export class PluginHost {
     }
 
     const resolvedPresenters = resolvePresenterConflicts(
-      toolActivityPresenters.sort(compareOrdered),
+      presenters.sort(compareOrdered),
       this.conflictPreferences,
     );
     conflicts.push(...resolvedPresenters.conflicts);
@@ -1926,20 +2120,6 @@ export class PluginHost {
     if (replaceSnapshots || !sameContributions(this.presenterSnapshot, nextPresenters)) {
       this.presenterSnapshot = nextPresenters;
       this.presenterQuerySnapshots.clear();
-      changed = true;
-    }
-
-    const nextToolActivityPresenters = Object.freeze(toolActivityPresenters
-      .filter((record) => record.compatibilityRender !== undefined && record.key !== undefined)
-      .map((record) => Object.freeze({
-        pluginId: record.pluginId,
-        generation: record.generation,
-        id: record.id,
-        key: record.key!,
-        render: record.compatibilityRender!,
-      })));
-    if (replaceSnapshots || !sameContributions(this.toolActivityPresenterSnapshot, nextToolActivityPresenters)) {
-      this.toolActivityPresenterSnapshot = nextToolActivityPresenters;
       changed = true;
     }
 
@@ -2083,29 +2263,46 @@ export class PluginHost {
 function createGenerationState(
   pluginId: string,
   generation: string,
-  declaredContributions?: PluginContributionDeclarations,
+  declaredContributions: PluginContributionDeclarations | undefined,
+  manifestId: string,
 ): GenerationState {
+  let completeCleanup!: () => void;
+  const cleanupComplete = new Promise<void>(resolve => { completeCleanup = resolve; });
   return {
+    manifestId,
+    presentationOnly: false,
+    activation: 0,
+    registrationReported: false,
+    renderedViews: 0,
+    renderFailed: false,
+    cleanupFailed: false,
+    retainedViews: 0,
+    cleaned: false,
+    cleanupStarted: false,
+    activatingProvider: false,
+    cleanupComplete,
+    completeCleanup,
     pluginId,
     generation,
     declaredContributions,
     navigationTitles: new Map(),
-    slots: [],
-    surfaces: [],
+    shells: [],
+    applicationProviders: [],
+    uiSlots: [],
+    uiContributions: [],
     commands: [],
     conversationCards: [],
     styles: [],
     locales: [],
     views: [],
     viewPlacements: [],
-    inspectorSections: [],
     renderers: [],
     themeTokens: [],
     cssSnippets: [],
     statusItems: [],
     composerStatusSources: [],
     composerInlineCompletionProviders: [],
-    toolActivityPresenters: [],
+    presenters: [],
     registrationKeys: new Set(),
     hostEventHandlers: new Set(),
     teardown: [],
@@ -2115,28 +2312,6 @@ function createGenerationState(
     active: false,
     disposed: false,
   };
-}
-
-function toPublicSlotContribution(record: SlotRecord): RegisteredPluginSlotContribution {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    order: record.order,
-    title: record.title,
-    render: record.render,
-  });
-}
-
-function toPublicSurfaceContribution(record: SurfaceRecord): RegisteredPluginSurfaceContribution {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    order: record.order,
-    mode: record.mode,
-    render: record.render,
-  });
 }
 
 function toPublicCommand(record: CommandRecord): RegisteredPluginCommand {
@@ -2173,19 +2348,6 @@ function toPublicViewPlacement(record: ViewPlacementRecord): RegisteredViewPlace
     order: record.order,
     view: record.view,
     region: record.region,
-  });
-}
-
-function toPublicInspectorSection(record: InspectorSectionRecord): RegisteredInspectorSection {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    title: record.title,
-    priority: record.order,
-    order: record.order,
-    when: record.when,
-    render: record.render,
   });
 }
 
@@ -2250,31 +2412,16 @@ function toPublicPresenter(record: PresenterRecord): RegisteredPresenter {
   });
 }
 
-function declaredContributionTitle(
-  state: GenerationState,
-  kind: "slot" | "surface" | "presenter",
-  id: string,
-): string | undefined {
-  const declarations = kind === "slot"
-    ? state.declaredContributions?.slots
-    : kind === "surface"
-      ? state.declaredContributions?.surfaces
-      : state.declaredContributions?.presenters;
-  return declarations?.find((declaration) => declaration.id === id)?.title;
-}
-
 function conflictPreferenceKey(
-  kind: "surface" | "presenter",
+  kind: "presenter",
   target: string,
   presentationKey?: string,
 ): string {
-  return kind === "surface"
-    ? `surface:${target}`
-    : `presenter:${target}:${presentationKey ?? ""}`;
+  return `${kind}:${target}:${presentationKey ?? ""}`;
 }
 
 function resolveReplaceConflict<T extends OrderedRecord & { mode: "replace" | "wrap"; title?: string }>(
-  kind: "surface" | "presenter",
+  kind: "presenter",
   target: string,
   presentationKey: string | undefined,
   records: T[],
@@ -2370,13 +2517,6 @@ function normalizeViewPlacementRegion(region: unknown): ViewPlacementContributio
     throw new Error(`Unsupported plugin View placement region: ${String(region)}`);
   }
   return region as ViewPlacementContribution["region"];
-}
-
-function normalizeSurfaceMode(mode: PluginSurfaceMode): PluginSurfaceMode {
-  if (mode !== "replace" && mode !== "wrap") {
-    throw new Error(`Unsupported plugin surface mode: ${String(mode)}`);
-  }
-  return mode;
 }
 
 function normalizePresentationMode(mode: PresentationMode | undefined): PresentationMode {

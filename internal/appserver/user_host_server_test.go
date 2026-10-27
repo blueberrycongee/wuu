@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -27,16 +29,17 @@ func TestUserHostOutlivesConnectionsAndKeepsOneSessionAuthority(t *testing.T) {
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
-	host, err := NewUserHost(rt)
+	attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer host.Close()
-	created, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "always-on-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "main"})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "always-on-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "main"})
 	if err != nil {
 		t.Fatal("headless session authority missing", err)
 	}
-	sent, err := rt.PluginSessionRouter.Send(context.Background(), "fixture", pluginhost.SessionSendParams{RequestID: "always-on-work", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "continue after phone leaves"}})
+	sent, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionSendParams{RequestID: "always-on-work", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "continue after phone leaves"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +51,9 @@ func TestUserHostOutlivesConnectionsAndKeepsOneSessionAuthority(t *testing.T) {
 	in, out := io.Pipe()
 	buffer := &lockedBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- host.Serve(context.Background(), in, buffer, nil) }()
+	go func() {
+		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, buffer, nil)
+	}()
 	fmt.Fprintln(out, `{"id":"same","method":"initialize"}`)
 	if got := waitForResponseByID(t, buffer, "same"); got["error"] != nil {
 		t.Fatal(got)
@@ -57,19 +62,21 @@ func TestUserHostOutlivesConnectionsAndKeepsOneSessionAuthority(t *testing.T) {
 	waitForResponseByID(t, buffer, "bye")
 	out.Close()
 	<-done
-	inspected, err := rt.PluginSessionRouter.Inspect(context.Background(), "fixture", pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: "always-on-work"})
+	inspected, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: "always-on-work"})
 	if err != nil || inspected.Turn == nil || inspected.Turn.State != "running" {
 		t.Fatalf("disconnect stopped execution: %+v %v", inspected, err)
 	}
 	close(model.release)
-	result, err := rt.PluginSessionRouter.Inspect(context.Background(), "fixture", pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: "always-on-work", Wait: "terminal", TimeoutMS: 2000})
+	result, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: "always-on-work", Wait: "terminal", TimeoutMS: 2000})
 	if err != nil || result.Turn == nil || result.Turn.State != "completed" || result.Turn.TurnID != sent.TurnID {
 		t.Fatalf("headless completion failed: %+v %v", result, err)
 	}
 	secondIn, secondOut := io.Pipe()
 	reconnected := &lockedBuffer{}
 	secondDone := make(chan error, 1)
-	go func() { secondDone <- host.Serve(context.Background(), secondIn, reconnected, nil) }()
+	go func() {
+		secondDone <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), secondIn, reconnected, nil)
+	}()
 	fmt.Fprintln(secondOut, `{"id":"same","method":"initialize"}`)
 	waitForResponseByID(t, reconnected, "same")
 	if strings.Contains(reconnected.String(), `"id":"bye"`) {
@@ -77,7 +84,7 @@ func TestUserHostOutlivesConnectionsAndKeepsOneSessionAuthority(t *testing.T) {
 	}
 	secondOut.Close()
 	<-secondDone
-	retry, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "always-on-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "main"})
+	retry, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "always-on-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "main"})
 	if err != nil || retry.SessionID != created.SessionID {
 		t.Fatal("reconnect changed stable session", err)
 	}
@@ -98,7 +105,7 @@ func (w *userHostBlockedOutput) Write(p []byte) (int, error) {
 func TestUserHostSlowClientDoesNotBlockOtherConnections(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
-	host, err := NewUserHost(rt)
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,13 +113,17 @@ func TestUserHostSlowClientDoesNotBlockOtherConnections(t *testing.T) {
 	slowIn, slowWrite := io.Pipe()
 	slow := &userHostBlockedOutput{entered: make(chan struct{}), release: make(chan struct{})}
 	slowDone := make(chan error, 1)
-	go func() { slowDone <- host.Serve(context.Background(), slowIn, slow, nil) }()
+	go func() {
+		slowDone <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), slowIn, slow, nil)
+	}()
 	fmt.Fprintln(slowWrite, `{"id":"same","method":"initialize"}`)
 	<-slow.entered
 	in, write := io.Pipe()
 	out := &lockedBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- host.Serve(context.Background(), in, out, nil) }()
+	go func() {
+		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, out, nil)
+	}()
 	fmt.Fprintln(write, `{"id":"same","method":"initialize"}`)
 	waitForResponseByID(t, out, "same")
 	finished := make(chan struct{})
@@ -136,7 +147,7 @@ func TestUserHostSlowClientDoesNotBlockOtherConnections(t *testing.T) {
 
 func TestUserHostRequiresExplicitUserBinding(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	if host, err := NewUserHost(rt); err == nil {
+	if host, err := NewUserHost(rt, personalhost.Options{}); err == nil {
 		host.Close()
 		t.Fatal("legacy Coding was moved to user host lifecycle")
 	}
@@ -152,9 +163,9 @@ func TestUserHostOmittedRequestIDDoesNotBlockPeersOrRetainUserProof(t *testing.T
 	firstIn, firstWrite := io.Pipe()
 	firstOutput := &lockedBuffer{}
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- host.Serve(ctx, firstIn, firstOutput, nil) }()
+	go func() { firstDone <- host.Serve(personalTestOwner(ctx), firstIn, firstOutput, nil) }()
 	relation := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: "main", Seq: 7}, Metadata: map[string]json.RawMessage{"task_links": json.RawMessage(`[{"task_id":"task","requirements_revision":2}]`)}}
-	params := PluginClientRequestParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Method: "hold", UserInput: &runtime.ClientUserInput{RequestID: "business-message", Prompt: "literal submission", Relation: relation}}
+	params := PluginClientRequestParams{GraphGeneration: host.runtime.ExtensionSnapshot().GenerationID, ID: item.SubjectID, Fingerprint: item.Fingerprint, Method: "hold", UserInput: &runtime.ClientUserInput{RequestID: "business-message", Prompt: "literal submission", Relation: relation}}
 	frame, _ := json.Marshal(map[string]any{"id": "held", "method": MethodPluginClientRequest, "params": params})
 	fmt.Fprintln(firstWrite, string(frame))
 	var proof context.Context
@@ -175,7 +186,7 @@ func TestUserHostOmittedRequestIDDoesNotBlockPeersOrRetainUserProof(t *testing.T
 	secondIn, secondWrite := io.Pipe()
 	secondOutput := &lockedBuffer{}
 	secondDone := make(chan error, 1)
-	go func() { secondDone <- host.Serve(ctx, secondIn, secondOutput, nil) }()
+	go func() { secondDone <- host.Serve(personalTestOwner(ctx), secondIn, secondOutput, nil) }()
 	defer secondWrite.Close()
 	fmt.Fprintln(secondWrite, `{"id":"peer","method":"initialize"}`)
 	waitForResponseByID(t, secondOutput, "peer")
@@ -228,8 +239,8 @@ func newHeldUserHost(t *testing.T, client pluginhost.Client) (*UserHost, pluginp
 	if err := rt.ExtensionSettings.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint}); err != nil {
 		t.Fatal(err)
 	}
-	rt.PluginHost = pluginhost.New(client)
-	host, err := NewUserHost(rt)
+	attachTestModelGeneration(t, rt, client)
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +254,9 @@ func TestUserHostTransportRejectsGenericMutationAndExport(t *testing.T) {
 	in, writer := io.Pipe()
 	out := &lockedBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- host.Serve(context.Background(), in, out, nil) }()
+	go func() {
+		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, out, nil)
+	}()
 	defer func() { writer.Close(); <-done }()
 	for _, method := range []string{MethodPluginStorageSet, MethodThreadListAll, MethodWorkspaceList, MethodConfigRead} {
 		params := PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "personal.state", Value: "client overwrite"}
@@ -254,7 +267,23 @@ func TestUserHostTransportRejectsGenericMutationAndExport(t *testing.T) {
 			t.Errorf("generic operation reached shared authority: %v", response)
 		}
 	}
-	fmt.Fprintln(writer, `{"id":"still-live","method":"initialize","params":{"capabilities":{"reverse_rpc":{"methods":["browser/exec"]}}}}`)
+	for _, scope := range []struct{ id, space, domain string }{
+		{"foreign-space", "other-space", "personal"},
+		{"foreign-domain", "local", "coding"},
+	} {
+		frame, _ := json.Marshal(map[string]any{"id": scope.id, "method": MethodUserQuestionList, "params": map[string]string{"user_space_id": scope.space, "product_domain": scope.domain}})
+		fmt.Fprintln(writer, string(frame))
+		response := waitForResponseByID(t, out, scope.id)
+		if response["error"] == nil || response["result"] != nil || !strings.Contains(fmt.Sprint(response["error"]), "another user space or product domain") {
+			t.Errorf("foreign host binding reached user-question broker: %+v", response)
+		}
+	}
+	fmt.Fprintln(writer, `{"id":"scoped-questions","method":"user-question/list","params":{"user_space_id":"local","product_domain":"personal"}}`)
+	questions := waitForResponseByID(t, out, "scoped-questions")
+	if strings.Contains(fmt.Sprint(questions["error"]), "unknown field") {
+		t.Fatalf("validated routing scope leaked into question contract: %+v", questions)
+	}
+	fmt.Fprintln(writer, `{"id":"still-live","method":"initialize","params":{"user_space_id":"local","product_domain":"personal","capabilities":{"reverse_rpc":{"methods":["browser/exec"]}}}}`)
 	response := waitForResponseByID(t, out, "still-live")
 	result := remarshal[InitializeResult](t, response["result"])
 	if result.Features.Browser {
@@ -269,7 +298,8 @@ func TestUserHostTerminalLocationsOnlyExposeResponsibleMainAgent(t *testing.T) {
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
-	host, err := NewUserHost(rt)
+	attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,20 +307,22 @@ func TestUserHostTerminalLocationsOnlyExposeResponsibleMainAgent(t *testing.T) {
 	in, writer := io.Pipe()
 	out := &lockedBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- host.Serve(context.Background(), in, out, nil) }()
+	go func() {
+		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, out, nil)
+	}()
 	defer func() { writer.Close(); <-done }()
 	fmt.Fprintln(writer, `{"id":"init","method":"initialize"}`)
 	waitForResponseByID(t, out, "init")
-	main, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "push-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
+	main, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "push-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "push-task", Visibility: "plugin", ContextSource: "fresh", ParentSessionID: main.SessionID})
+	child, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "push-task", Visibility: "plugin", ContextSource: "fresh", ParentSessionID: main.SessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{main.SessionID, child.SessionID} {
-		_, err = rt.PluginSessionRouter.Send(context.Background(), "fixture", pluginhost.SessionSendParams{RequestID: "send-" + id, SessionID: id, Input: pluginhost.SessionInput{Prompt: "finish"}})
+		_, err = rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionSendParams{RequestID: "send-" + id, SessionID: id, Input: pluginhost.SessionInput{Prompt: "finish"}})
 		if err != nil {
 			t.Fatal(err)
 		}

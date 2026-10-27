@@ -16,7 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
@@ -76,12 +77,21 @@ type workspaceReferenceResult struct {
 }
 
 func (s *Server) handleWorkspaceView(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params workspaceViewParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	rootPath, err := s.workspaceViewRoot(params.Root)
+	rootPath, err := s.workspaceViewRoot(binding, params.Root)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.requireRequestAccess(req, req.Method, nil, access.Resource{Kind: "workspace", ID: rootPath}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	root, err := os.OpenRoot(rootPath)
@@ -170,7 +180,7 @@ func readWorkspaceChunk(root *os.Root, params workspaceViewParams) (workspaceChu
 
 // A browser may navigate a registered workspace or a session's worktree. It
 // cannot turn a caller-supplied root into a machine-wide file server.
-func (s *Server) workspaceViewRoot(requested string) (string, error) {
+func (s *Server) workspaceViewRoot(binding *runtime.State, requested string) (string, error) {
 	if requested == "" {
 		requested = s.rt.RootDir
 	}
@@ -204,7 +214,7 @@ func (s *Server) workspaceViewRoot(requested string) (string, error) {
 			return target, nil
 		}
 	}
-	sessions, err := session.List(s.rt.SessionDir, 0)
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return "", err
 	}

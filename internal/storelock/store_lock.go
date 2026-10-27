@@ -7,6 +7,7 @@
 package storelock
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,11 +19,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
-const fileName = ".store.lock"
+// FileName is the retained advisory-lock inode in a store directory.
+const FileName = ".store.lock"
 
-// Healthy transactions hold the lock for milliseconds; an owner that keeps it
-// past acquireTimeout is wedged, and waiting on it would wedge this process
-// too, so Acquire surfaces an error instead.
+// Ordinary transactions should finish within acquireTimeout. Full-store
+// verification uses AcquireUntilCanceled because its duration scales with data.
 const (
 	acquireTimeout    = time.Minute
 	acquireRetryDelay = 25 * time.Millisecond
@@ -35,38 +36,87 @@ var errLockHeld = errors.New("store lock is held by another owner")
 // Lock owns an exclusive operating-system advisory lock. The sidecar remains
 // in place after release so every contender continues locking the same inode.
 type Lock struct {
-	mu   sync.Mutex
-	file *os.File
+	mu      sync.Mutex
+	file    *os.File
+	waiters *lockWaiters
 }
 
 // Acquire blocks until it exclusively owns the durable store rooted at dir,
-// or fails after acquireTimeout when another owner holds the lock for longer
-// than any healthy transaction can.
+// or fails after acquireTimeout. Use AcquireUntilCanceled when the same fence
+// also protects long-running verification or maintenance transactions.
 func Acquire(dir string) (*Lock, error) {
+	return AcquireContext(context.Background(), dir)
+}
+
+// AcquireContext observes cancellation while waiting for another writer. A
+// successful acquisition belongs to the caller until Release, even if ctx ends.
+func AcquireContext(ctx context.Context, dir string) (*Lock, error) {
+	return acquire(ctx, dir, acquireTimeout)
+}
+
+// AcquireUntilCanceled waits for long transactions such as full-store admission
+// verification. Only the caller's context limits the wait; elapsed time cannot
+// distinguish a healthy large traversal from a stalled owner. The OS releases
+// ownership if the owner exits, and cancellation never steals the lock.
+func AcquireUntilCanceled(ctx context.Context, dir string) (*Lock, error) {
+	return acquire(ctx, dir, 0)
+}
+
+func acquire(ctx context.Context, dir string, timeout time.Duration) (*Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return nil, errors.New("store directory is required")
 	}
-	path := filepath.Join(dir, fileName)
+	path, err := filepath.Abs(filepath.Join(dir, FileName))
+	if err != nil {
+		return nil, err
+	}
 	file, err := securefs.OpenFile(path, os.O_CREATE|os.O_RDWR, securefs.FileMode)
 	if err != nil {
 		return nil, fmt.Errorf("open store lock: %w", err)
 	}
-	deadline := time.Now().Add(acquireTimeout)
+	waiters := retainLockWaiters(path)
+	acquired := false
+	defer func() {
+		if !acquired {
+			waiters.release(false)
+		}
+	}()
+	deadline := time.Now().Add(timeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		// Subscribe before attempting the OS lock so a release between a failed
+		// attempt and the wait cannot be lost.
+		released := waiters.nextRelease()
 		err := tryLockFile(file)
 		if err == nil {
-			return &Lock{file: file}, nil
+			acquired = true
+			return &Lock{file: file, waiters: waiters}, nil
 		}
 		if !errors.Is(err, errLockHeld) {
 			_ = file.Close()
 			return nil, fmt.Errorf("lock store: %w", err)
 		}
-		if !time.Now().Before(deadline) {
+		if timeout > 0 && !time.Now().Before(deadline) {
 			_ = file.Close()
-			return nil, fmt.Errorf("lock store: %s held by another owner for over %s", path, acquireTimeout)
+			return nil, fmt.Errorf("lock store: %s held by another owner for over %s", path, timeout)
 		}
-		time.Sleep(acquireRetryDelay)
+		timer := time.NewTimer(acquireRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-released:
+			timer.Stop()
+		case <-timer.C:
+		}
 	}
 }
 
@@ -82,5 +132,7 @@ func (l *Lock) Release() error {
 	}
 	file := l.file
 	l.file = nil
-	return errors.Join(unlockFile(file), file.Close())
+	err := errors.Join(unlockFile(file), file.Close())
+	l.waiters.release(true)
+	return err
 }

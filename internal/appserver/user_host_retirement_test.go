@@ -8,7 +8,6 @@ import (
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Disable must settle owned execution, while same-ID replacement and legacy
@@ -35,6 +34,7 @@ func TestUserHostRetirementCancelsOnlyUnavailablePluginOwners(t *testing.T) {
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
 			th := newThreadState("owned-session", []providers.ChatMessage{{Role: "user", Content: "Keep this conversation"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+			th.state = testRuntimeState(t, rt)
 			th.Owner, th.Visibility = tc.owner, pluginhost.SessionVisibilityPlugin
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
@@ -65,11 +65,11 @@ func TestUserHostRetirementPreservesStoredMainBinding(t *testing.T) {
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	created, err := srv.createPluginSession(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "main-binding", Name: "Fixture", Visibility: "plugin", ContextSource: "fresh", UserSpaceID: "local", ProductDomain: "personal", AgentID: "named-agent"})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "main-binding", Name: "Fixture", Visibility: "plugin", ContextSource: "fresh", UserSpaceID: "local", ProductDomain: "personal", AgentID: "named-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	th, err := srv.ensureThreadLoaded(created.SessionID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), created.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestUserHostRetirementPreservesStoredMainBinding(t *testing.T) {
 	if ctx.Err() == nil {
 		t.Fatal("disabled owner retained active main turn")
 	}
-	stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+	stored, found, err := rt.Sessions.Find(created.SessionID)
 	if err != nil || !found || stored.AgentID != "named-agent" || stored.Owner != "plugin:fixture" {
 		t.Fatalf("persistent main binding changed: %+v, found %v, error %v", stored, found, err)
 	}
@@ -96,6 +96,7 @@ func TestUserHostUnavailableOwnerRejectsTurnAdmission(t *testing.T) {
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
 			th := newThreadState("unavailable-owner", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+			th.state = testRuntimeState(t, rt)
 			th.Owner = "plugin:fixture"
 			srv.threads[th.ID] = th
 			started, admitted, err := srv.startThreadUserTurn(context.Background(), th, providers.ChatMessage{Role: "user", Content: "Do not revive a disabled owner"}, turnRuntimeSnapshot{}, false, turnReadOnlyFail)
@@ -123,6 +124,7 @@ func TestUserHostOwnerDisabledAfterReservationCannotStartTurn(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	th := newThreadState("reserved-owner", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.Owner = "plugin:fixture"
 	srv.threads[th.ID] = th
 	reserved := false

@@ -11,7 +11,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 const threadGetName = "thread_get"
@@ -22,16 +21,13 @@ const threadGetName = "thread_get"
 // makes "copy an ID, paste it to an agent" actually useful — the agent
 // resolves the pasted ID back to the full conversation.
 //
-// Source of truth is the user-level SQLite sessions database
-// (statepath.SessionsDir(statepath.Home(""))). Root thread IDs are
-// equal to session IDs because handleThreadStart writes both with the
-// same session.NewID() value.
+// Reads use the session store captured by the owning runtime generation.
 type ThreadGetTool struct {
-	env *Env
+	store *session.Store
 }
 
-func NewThreadGetTool(env *Env) *ThreadGetTool {
-	return &ThreadGetTool{env: env}
+func NewThreadGetTool(store *session.Store) *ThreadGetTool {
+	return &ThreadGetTool{store: store}
 }
 
 func (t *ThreadGetTool) Name() string { return threadGetName }
@@ -44,7 +40,7 @@ func (t *ThreadGetTool) Definition() providers.ToolDefinition {
 		Name: threadGetName,
 		Description: "thread_get looks up a Wuu thread ID / session ID and returns a bounded semantic page: a context anchor plus recent complete turns. Use page.next to read the next older non-overlapping page. " +
 			"Use this when a user pastes a thread ID or asks you to investigate a conversation by ID. " +
-			"Do not inspect legacy workspace session directories or guess session files; this tool reads the supported SQLite session store.",
+			"Do not inspect legacy workspace session directories or guess session files; this tool reads the configured session store.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -90,10 +86,6 @@ func (t *ThreadGetTool) Classify(argsJSON string) ToolClassification {
 }
 
 func (t *ThreadGetTool) Execute(ctx context.Context, args string) (string, error) {
-	_ = ctx
-	if t == nil || t.env == nil {
-		return "", fmt.Errorf("thread_get: env is not configured")
-	}
 	var a struct {
 		ThreadID         string `json:"thread_id"`
 		BeforeSeq        int    `json:"before_seq"`
@@ -114,19 +106,11 @@ func (t *ThreadGetTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("thread_get: snapshot_seq and expected_snapshot are required with before_seq")
 	}
 
-	sessDir := strings.TrimSpace(t.env.SessionsDir)
-	if sessDir == "" {
-		home, err := statepath.Home("")
-		if err != nil {
-			return "", fmt.Errorf("thread_get: resolve wuu home: %w", err)
-		}
-		sessDir = statepath.SessionsDir(home)
+	if t.store == nil {
+		return "", errors.New("thread_get: session store is unavailable")
 	}
-	if sessDir == "" {
-		return "", errors.New("thread_get: sessions dir is empty")
-	}
-
-	meta, ok, err := session.Find(sessDir, id)
+	store := t.store.WithContext(ctx)
+	meta, ok, err := store.Find(id)
 	if err != nil {
 		return "", fmt.Errorf("thread_get: lookup %q: %w", id, err)
 	}
@@ -134,7 +118,7 @@ func (t *ThreadGetTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("%w: %q", session.ErrSessionNotFound, id)
 	}
 
-	records, err := session.LoadHistoryRecords(sessDir, id, true)
+	records, err := store.LoadHistoryRecords(id, true)
 	if err != nil {
 		return "", fmt.Errorf("thread_get: load history %q: %w", id, err)
 	}

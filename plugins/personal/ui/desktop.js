@@ -2,7 +2,7 @@ import { createSettingsPanels } from "./settings-panels.js";
 export async function activate(api) {
   const React = api.react, h = React.createElement;
   const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
-  const route = { userSpaceId: "local", productDomain: "personal" };
+  const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
   const call = async (method, input) => {
     if (method !== "capture.send") return api.invokeRuntime(method, input, route);
     // Share material is normalized in the owner UI before admission. The exact
@@ -690,7 +690,7 @@ export async function activate(api) {
     identityListeners.forEach(listener => listener(value));
     return value;
   };
-  const routineStatus = (status, locale, t) => status === "active" ? locale.startsWith("zh") ? "已启用" : "Enabled" : t(status);
+  const routineStatus = (status, locale, t) => status === "needs_authorization" ? locale.startsWith("zh") ? "需要重新授权" : "Authorization required" : status === "active" ? locale.startsWith("zh") ? "已启用" : "Enabled" : t(status);
   const routineSchedule = (routine, locale) => {
     const zh = locale.startsWith("zh"), fields = routine.cron?.trim().split(/\s+/), zone = routine.timezone || "UTC";
     if (!fields) { const at = new Date(routine.run_at); return Number.isFinite(at.getTime()) ? `${zh ? "仅一次 · " : "Once · "}${new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)}` : (zh ? "未设置" : "Not scheduled"); }
@@ -756,6 +756,10 @@ export async function activate(api) {
         view === "details" ? h(React.Fragment, null,
           h("div", { className: "mosaic-routine-card mosaic-routine-active" }, h(Checkbox, { label: routineStatus(routine.status, locale, t), role: "switch", "aria-checked": routine.status === "active", checked: routine.status === "active", "aria-label": label("Enabled", "已启用"), "data-action": "toggle-routine", disabled: busy || routine.cancellation_pending || !["active","paused"].includes(routine.status), onChange: () => mutateRoutine(routine.status === "active" ? "routines.pause" : "routines.resume", { expected_revision: routine.revision }) })),
           routine.cancellation_pending && h("p", { role: "status" }, t("applyingChanges")), routine.last_error && h("p", { role: "alert" }, routine.last_error),
+          routine.authorization?.expires_at && h("p", { role: "status" }, label("Unattended authorization expires: ", "无人值守授权到期："), stamp(routine.authorization.expires_at)),
+          routine.status === "needs_authorization" && h(React.Fragment, null,
+            h("p", null, label("This schedule is paused. Renewing starts from the next scheduled time; missed runs are not replayed.", "此安排已暂停。重新授权后从下一次计划时间开始，不会补执行过期期间错过的任务。")),
+            h(Button, { "data-action": "authorize-routine", disabled: busy || routine.cancellation_pending, onClick: () => mutateRoutine("routines.authorize", { expected_revision: routine.revision }) }, label("Renew authorization", "重新授权"))),
           h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Instruction", "完整指令")), h("div", { className: "mosaic-routine-card mosaic-routine-instruction" }, routine.prompt)),
           h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "执行计划")), h("dl", { className: "mosaic-routine-card mosaic-routine-schedule" },
             h("div", null, h("dt", null, label("Repeats", "重复规则")), h("dd", null, routineSchedule(routine, locale))), h("div", null, h("dt", null, t("timezone")), h("dd", null, routine.timezone)), h("div", null, h("dt", null, label("Next run", "下次执行")), h("dd", null, routine.status === "active" && routine.binding?.next_run_at ? stamp(routine.binding.next_run_at) : routine.status === "active" ? label("Awaiting scheduler", "等待调度确认") : routineStatus(routine.status, locale, t)))), h("p", { className: "mosaic-routine-meta" }, routine.kind === "task" ? label("Task", "任务") : label("Reminder", "提醒"), " · ", routine.missed_policy === "skip" ? label("Skip missed runs", "错过时跳过") : label("Catch up once after a missed run", "错过后补执行一次"))),
@@ -1095,8 +1099,15 @@ export async function activate(api) {
         finally { checking = false; if (recheck) { recheck = false; void check(); } }
       };
       const timer = setInterval(check, 5000);
+      let homeActive = false;
+      const stopWorkbench = api.application.workbench.subscribe(() => {
+        const snapshot = api.application.workbench.getSnapshot();
+        const active = new Set(Object.values(snapshot.activeViewByRegion));
+        const next = snapshot.views.some(view => active.has(view.id) && view.pluginId === api.pluginId && view.viewTypeId === "personal.home");
+        if (next && !homeActive) void check();
+        homeActive = next;
+      });
       const subscription = api.onHostEvent(event => {
-        if (event.type === "workbench.view.activated" && event.pluginId === api.pluginId && event.viewTypeId === "personal.home") { void check(); return; }
         const invalidation = event.message?.params;
         if (event.kind === "notification" && event.message?.method === "plugin/client/invalidated") {
           if (invalidation?.plugin_id === api.pluginId && invalidation?.fingerprint === api.generation && invalidation?.user_space_id === route.userSpaceId && invalidation?.product_domain === route.productDomain && invalidation?.topic === "reactions") void refreshReactions(currentAgent.current).catch(report);
@@ -1107,7 +1118,7 @@ export async function activate(api) {
         if (event.kind === "notification" && /delta$/.test(event.message?.method || "")) return;
         if (event.type === "routine-state-changed" || event.kind === "notification") void check();
       });
-      return () => { clearInterval(timer); subscription.dispose(); };
+      return () => { clearInterval(timer); stopWorkbench(); subscription.dispose(); };
     }, []);
     const mutate = async action => { if (controlRef.current) return; controlRef.current = true; setBusy(true); setError(""); try { await action(); } catch (cause) { report(cause); } finally { controlRef.current = false; if (mounted.current) setBusy(false); } };
     React.useLayoutEffect(() => {

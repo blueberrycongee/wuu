@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { requireKernelService, type RuntimeHost, type RuntimePlugin } from "@wuu/plugin-sdk";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin } from "@wuu/plugin-sdk";
 import { parseCronExpression, validateTimezone } from "./schedule.js";
 
 interface PendingEvent { event_id: string; scheduled_at: string; binding_revision: number; status: "pending"; lease_owner?: string; lease_until?: string; retry_at?: string }
@@ -22,10 +23,10 @@ function mutation(input: unknown): Mutation {
   return { ...value, ...(value.payload ? { payload: object(value.payload) } : {}) } as unknown as Mutation;
 }
 
-/** The binding's durable event is the outbox; callbacks must deduplicate event_id. */
+/** The binding's durable event is the producer-owned outbox. Consumers pull,
+ * deduplicate event_id, then acknowledge; the scheduler never calls them back. */
 export class UserRoutineScheduler {
   private prefix: string;
-  private instance = randomUUID();
   private stopped = false;
   constructor(private host: RuntimeHost, space: string, private clock = () => new Date()) { this.prefix = `routines.v1.${digest(space)}.`; }
   stop(): void { this.stopped = true; }
@@ -86,73 +87,123 @@ export class UserRoutineScheduler {
       return { ...current, revision: current.revision + 1, request_id: input.request_id, request_hash: hash, status: stop ? "stopped" : "paused", pending_event: undefined, next_run_at: undefined };
     }))!;
   }
+  async pending(owner: string): Promise<RoutineBinding[]> {
+    const timestamp = this.clock().getTime();
+    return (await this.list(owner)).filter(binding => binding.status === "active" && binding.pending_event &&
+      (!binding.pending_event.retry_at || Date.parse(binding.pending_event.retry_at) <= timestamp) &&
+      (!binding.pending_event.lease_until || Date.parse(binding.pending_event.lease_until) <= timestamp));
+  }
+  private dispatchInput(raw: unknown) {
+    const input = object(raw);
+    for (const key of ["binding_id", "event_id", "claim_id"] as const) if (typeof input[key] !== "string" || !input[key]) throw new Error(`${key} is required`);
+    if (!Number.isSafeInteger(input.binding_revision) || Number(input.binding_revision) < 1) throw new Error("binding_revision is required");
+    return input as {binding_id:string;event_id:string;claim_id:string;binding_revision:number;accepted?:boolean;defer_until?:string};
+  }
+  async claim(raw: unknown, owner: string): Promise<{claimed:boolean;binding?:RoutineBinding}> {
+    const input = this.dispatchInput(raw), timestamp = this.clock();
+    const binding = await this.update(input.binding_id, current => {
+      if (!current || current.owner !== owner) throw new Error("routine binding belongs to another consumer");
+      const event = current.pending_event;
+      if (current.status !== "active" || current.revision !== input.binding_revision || event?.event_id !== input.event_id) throw new Error("stale routine event revision");
+      if (event.retry_at && Date.parse(event.retry_at) > timestamp.getTime()) return current;
+      if (event.lease_owner !== input.claim_id && event.lease_until && Date.parse(event.lease_until) > timestamp.getTime()) return current;
+      return {...current,pending_event:{...event,lease_owner:input.claim_id,lease_until:new Date(timestamp.getTime()+30_000).toISOString()}};
+    });
+    return binding?.pending_event?.lease_owner === input.claim_id ? {claimed:true,binding} : {claimed:false};
+  }
+  async acknowledge(raw: unknown, owner: string): Promise<RoutineBinding> {
+    const input = this.dispatchInput(raw);
+    if (input.accepted === true && input.defer_until !== undefined || input.accepted !== true && !input.defer_until) throw new Error("exactly one acknowledgment outcome is required");
+    if (input.defer_until && (!Number.isFinite(Date.parse(input.defer_until)) || Date.parse(input.defer_until) <= this.clock().getTime())) throw new Error("invalid trigger deferral");
+    return (await this.update(input.binding_id, current => {
+      if (!current || current.owner !== owner) throw new Error("routine binding belongs to another consumer");
+      if (current.last_event_id === input.event_id && input.accepted === true && current.revision === input.binding_revision) return current;
+      const event = current.pending_event;
+      if (current.status !== "active" || current.revision !== input.binding_revision || event?.event_id !== input.event_id) throw new Error("stale routine event revision");
+      if (event.lease_owner !== input.claim_id) throw new Error("routine event claim changed");
+      if (input.defer_until) return {...current,pending_event:{...event,lease_owner:undefined,lease_until:undefined,retry_at:input.defer_until}};
+      return {...current,pending_event:undefined,last_event_id:event.event_id,last_error:undefined,status:current.cron ? "active" : "completed",next_run_at:current.cron ? parseCronExpression(current.cron).nextRun(this.clock(),current.timezone).toISOString() : undefined};
+    }))!;
+  }
   async tick(): Promise<void> {
     if (this.stopped) return;
     for (const snapshot of await this.list()) {
       if (this.stopped) return;
       const timestamp = this.clock();
-      if (snapshot.status !== "active" || (!snapshot.pending_event && (!snapshot.next_run_at || Date.parse(snapshot.next_run_at) > timestamp.getTime()))) continue;
-      const claimed = await this.update(snapshot.binding_id, current => {
-        if (!current || current.status !== "active" || current.revision !== snapshot.revision) return undefined;
-        let pending = current.pending_event;
-        if (pending?.retry_at && Date.parse(pending.retry_at) > timestamp.getTime()) return undefined;
-        if (pending?.lease_until && Date.parse(pending.lease_until) > timestamp.getTime()) return undefined;
-        if (!pending) {
-          if (!current.next_run_at || Date.parse(current.next_run_at) > timestamp.getTime()) return undefined;
-          if (current.missed_policy === "skip" && timestamp.getTime() - Date.parse(current.next_run_at) > 60_000) return { ...current, status: current.cron ? "active" : "completed", next_run_at: current.cron ? parseCronExpression(current.cron).nextRun(timestamp, current.timezone).toISOString() : undefined };
-          pending = { event_id: `routine-event-${digest(`${current.binding_id}\0${current.revision}\0${current.next_run_at}`)}`, binding_revision: current.revision, scheduled_at: current.next_run_at, status: "pending" };
-        }
-        return { ...current, pending_event: { ...pending, lease_owner: this.instance, lease_until: new Date(timestamp.getTime() + 30_000).toISOString() } };
+      if (snapshot.status !== "active" || snapshot.pending_event || !snapshot.next_run_at || Date.parse(snapshot.next_run_at) > timestamp.getTime()) continue;
+      await this.update(snapshot.binding_id, current => {
+        if (!current || current.status !== "active" || current.revision !== snapshot.revision || current.pending_event || !current.next_run_at || Date.parse(current.next_run_at) > timestamp.getTime()) return current;
+        if (current.missed_policy === "skip" && timestamp.getTime() - Date.parse(current.next_run_at) > 60_000) return {...current,status:current.cron ? "active" : "completed",next_run_at:current.cron ? parseCronExpression(current.cron).nextRun(timestamp,current.timezone).toISOString() : undefined};
+        return {...current,pending_event:{event_id:`routine-event-${digest(`${current.binding_id}\0${current.revision}\0${current.next_run_at}`)}`,binding_revision:current.revision,scheduled_at:current.next_run_at,status:"pending"}};
       });
-      if (!claimed?.pending_event || claimed.pending_event.lease_owner !== this.instance) continue;
-      const event = claimed.pending_event;
-      try {
-        if (this.stopped) return;
-        const response = await this.host.call("host.service.call", { service: "automation.trigger", method: "fire", params: { binding_id: claimed.binding_id, event_id: event.event_id, binding_revision: event.binding_revision, scheduled_at: event.scheduled_at, payload: claimed.payload } }) as { accepted?: boolean; defer_until?: string };
-        if (this.stopped) return;
-        await this.update(claimed.binding_id, current => {
-          if (!current || current.revision !== claimed.revision || current.pending_event?.event_id !== event.event_id || current.pending_event.lease_owner !== this.instance) return current;
-          if (response.defer_until) {
-            if (!Number.isFinite(Date.parse(response.defer_until)) || Date.parse(response.defer_until) <= this.clock().getTime()) throw new Error("invalid trigger deferral");
-            return { ...current, pending_event: { ...event, lease_owner: undefined, lease_until: undefined, retry_at: response.defer_until } };
-          }
-          if (!response.accepted) throw new Error("trigger did not acknowledge the event");
-          return { ...current, pending_event: undefined, last_event_id: event.event_id, last_error: undefined, status: current.cron ? "active" : "completed", next_run_at: current.cron ? parseCronExpression(current.cron).nextRun(this.clock(), current.timezone).toISOString() : undefined };
-        });
-      } catch (error) {
-        await this.update(claimed.binding_id, current => current?.pending_event?.event_id === event.event_id && current.pending_event.lease_owner === this.instance ? { ...current, pending_event: { ...current.pending_event, lease_owner: undefined, lease_until: undefined }, last_error: String(error) } : current);
-      }
     }
   }
+
 }
 
 export function createUserAutomationPlugin(): RuntimePlugin {
-  let scheduler: UserRoutineScheduler;
+  let scheduler: UserRoutineScheduler, pluginID: string;
   let timer: ReturnType<typeof setInterval> | undefined;
   let running = Promise.resolve();
-  const tick = () => { running = running.then(() => scheduler.tick()).catch(error => { console.error("user routine recovery:", error); }); };
+  let lifetime: AbortSignal;
+  const scope = new AsyncLocalStorage<RuntimeHost>();
+  const admittedHost = () => {
+    const host = scope.getStore();
+    if (!host) throw new Error("routine call requires an admitted execution");
+    return host;
+  };
+  const scoped: RuntimeHost = {
+    supports: method => admittedHost().supports(method),
+    call: (method, params, options) => admittedHost().call(method, params, options),
+  };
   return {
     concurrentServices: ["automation.routines"],
-    initialize(params, host) {
+    initialize(params) {
       if (!params.user_space_id) throw new Error("user routines require a trusted user space");
-      scheduler = new UserRoutineScheduler(host, params.user_space_id);
+      pluginID = params.plugin_id;
+      scheduler = new UserRoutineScheduler(scoped, params.user_space_id);
       return { protocol_version: 3, tools: [], capabilities: [],
-        required_services: [...(["host.storage.get", "host.storage.keys", "host.storage.compare_exchange"] as const).map(requireKernelService), { name: "automation.trigger", major_version: 1, required: false }],
-        provided_services: [{ name: "automation.routines", version: "1.1.0", methods: ["validate", "upsert", "read", "list", "pause", "stop"].map(name => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }] };
+        required_services: [requireBackgroundService(), ...(["host.storage.get", "host.storage.keys", "host.storage.compare_exchange"] as const).map(requireKernelService)],
+        provided_services: [{ name: "automation.routines", version: "1.2.0", methods: ["validate", "upsert", "read", "list", "pause", "stop", "run", "pending", "claim", "acknowledge"].map(name => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }] };
     },
-    activate(_host, lifecycle) { lifecycle.signal.addEventListener("abort", () => { clearInterval(timer); scheduler.stop(); }, { once: true }); tick(); timer = setInterval(tick, 15_000); },
+    async activate(host, lifecycle) {
+      lifetime = lifecycle.signal;
+      if (lifetime.aborted) { scheduler.stop(); return; }
+      lifetime.addEventListener("abort", () => { clearInterval(timer); scheduler.stop(); }, { once: true });
+      await startBackground(host, { key: "routines", service: "automation.routines", method: "run" });
+    },
     async shutdown() { clearInterval(timer); scheduler.stop(); await running; },
-    async invokeService(call) {
-      if (call.service !== "automation.routines") throw new Error("unknown routine service");
-      const input = object(call.params ?? {});
-      switch (call.method) {
-        case "validate": return { schedule: scheduler.validate(input) };
-        case "upsert": return { binding: await scheduler.upsert(input, call.caller) };
-        case "pause": case "stop": return { binding: await scheduler.pause(input, call.caller, call.method === "stop") };
-        case "list": return { bindings: await scheduler.list(call.caller) };
-        case "read": { const binding = await scheduler.read(String(input.binding_id ?? "")); if (binding.owner !== call.caller) throw new Error("routine belongs to another consumer"); return { binding }; }
-        default: throw new Error("unknown routine method");
-      }
+    async invokeService(call, host, execution) {
+      return scope.run(host, async () => {
+        if (call.service !== "automation.routines") throw new Error("unknown routine service");
+        if (call.method === "run") {
+          if (call.caller !== pluginID) throw new Error("routine scheduler requires its owner");
+          if (!execution) throw new Error("routine scheduler execution is unavailable");
+          const signal = AbortSignal.any([lifetime, execution.signal]);
+          if (signal.aborted) return {};
+          const stop = new Promise<void>(resolve => signal.addEventListener("abort", () => { clearInterval(timer); resolve(); }, { once: true }));
+          const tick = () => {
+            running = running.then(() => signal.aborted ? undefined : scheduler.tick()).catch(error => {
+              if (!signal.aborted) console.error("user routine recovery:", error);
+            });
+          };
+          tick(); timer = setInterval(tick, 15_000);
+          await stop; await running;
+          return {};
+        }
+        const input = object(call.params ?? {});
+        switch (call.method) {
+          case "validate": return { schedule: scheduler.validate(input) };
+          case "upsert": return { binding: await scheduler.upsert(input, call.caller) };
+          case "pause": case "stop": return { binding: await scheduler.pause(input, call.caller, call.method === "stop") };
+          case "list": return { bindings: await scheduler.list(call.caller) };
+          case "pending": return { bindings: await scheduler.pending(call.caller) };
+          case "claim": return scheduler.claim(input, call.caller);
+          case "acknowledge": return { binding: await scheduler.acknowledge(input, call.caller) };
+          case "read": { const binding = await scheduler.read(String(input.binding_id ?? "")); if (binding.owner !== call.caller) throw new Error("routine belongs to another consumer"); return { binding }; }
+          default: throw new Error("unknown routine method");
+        }
+      });
     },
   };
 }

@@ -8,6 +8,7 @@
 }
 
 :root {
+  --control-icon-ink: var(--ink-soft);
   --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   /* Icon-only actions follow their glyphs, not text-field height. */
   --control-size-toolbar: calc(var(--icon-size) + 12px);
@@ -21,6 +22,32 @@
   --control-toolbar-inset: calc(var(--pane-inset) - var(--control-toolbar-glyph-offset));
 }
 
+/* Quiet utility glyphs independently of labels; status and brand artwork keep
+ * their semantic colors. Ribbon selection is expressed by its row background. */
+:is(.sidebar-ribbon-button, .sidebar-section-item, .nav-item,
+    .settings-nav-item, .sidebar-settings-button, .sidebar-notifications-button,
+    .sidebar-row-icon-button, .sidebar-functional-action, .composer-tool-button,
+    .titlebar .icon-button, .settings-titlebar .icon-button,
+    .workspace-panel-tabbar .icon-button, .shell-right-sidebar-toggle) > :is(svg.wuu-icon, svg.lucide),
+.sidebar-ribbon-website-icon,
+.project-row .project-row-icon {
+  color: var(--control-icon-ink);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+:is(.sidebar-section-item, .nav-item,
+    .settings-nav-item, .sidebar-settings-button, .sidebar-notifications-button,
+    .sidebar-row-icon-button, .sidebar-functional-action, .composer-tool-button,
+    .titlebar .icon-button, .settings-titlebar .icon-button,
+    .workspace-panel-tabbar .icon-button, .shell-right-sidebar-toggle):is(:hover, :focus-visible, .active,
+    [aria-current="page"], [aria-pressed="true"], [aria-expanded="true"])
+    > :is(svg.wuu-icon, svg.lucide),
+.project-row:is(:hover, :focus-visible, .active) .project-row-icon {
+  color: inherit;
+}
+
+/* Sidebar row actions use the same utility glyph scale as toolbars. Keep
+ * navigation artwork and row hit targets independent of this action size. */
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
     .session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
@@ -30,12 +57,6 @@
 
 :is(.session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
   --control-icon-size: var(--control-icon-size-dismiss);
-}
-
-/* Row actions share the navigation glyph scale. Utility classes must not
- * make pin/archive smaller than new-thread. */
-:is(.sidebar-row-icon-button, .sidebar-notifications-button) {
-  --control-icon-size: var(--sidebar-primary-icon-size);
 }
 
 /* Section heading + is a heading accessory, not a navigation glyph.

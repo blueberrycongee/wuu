@@ -17,14 +17,29 @@ type Reviewer interface {
 	Review(ctx context.Context, request approvefor.Request) (approvefor.Decision, error)
 }
 
+type reviewAuthority struct {
+	SessionID, PermissionMode, CWD string
+	Enabled                        bool
+	Reviewer                       Reviewer
+}
+
 func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
-	if t == nil || !t.approveForMe || t.env == nil || (t.fileActionGate != nil && fileMutation(call.Name)) {
+	if t == nil || t.env == nil || (t.fileActionGate != nil && fileMutation(call.Name)) {
+		return nil
+	}
+	return reviewAuthorizedToolCall(ctx, reviewAuthority{SessionID: t.env.SessionID, PermissionMode: t.env.PermissionMode, CWD: t.env.RootDir, Enabled: t.approveForMe, Reviewer: t.reviewer}, info, call)
+}
+
+// reviewAuthorizedToolCall is shared by native tools and the host process
+// gateway; replacing the tool registry cannot bypass an enabled review policy.
+func reviewAuthorizedToolCall(ctx context.Context, authority reviewAuthority, info ToolInfo, call providers.ToolCall) error {
+	if !authority.Enabled {
 		return nil
 	}
 	req := approvefor.Request{
-		SessionID:      t.env.SessionID,
+		SessionID:      authority.SessionID,
 		CallID:         strings.TrimSpace(call.ID),
-		PermissionMode: t.env.PermissionMode,
+		PermissionMode: authority.PermissionMode,
 		Tool: approvefor.Tool{
 			Name:        info.Name,
 			Kind:        string(info.Kind),
@@ -34,8 +49,8 @@ func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call provid
 			Reason:      info.Reason,
 		},
 		Arguments:       call.Arguments,
-		CWD:             t.env.RootDir,
-		ReferencedPaths: reviewShellPaths(call, t.env.RootDir),
+		CWD:             authority.CWD,
+		ReferencedPaths: reviewShellPaths(call, authority.CWD),
 	}
 	if reason := approvefor.HardDenyReason(req); reason != "" {
 		return reviewBlocked(info.Name, "review_forbidden", reason, "this is a hard permission boundary; do not retry, bypass it or ask for conversational approval to override it; explain the restriction and offer a permitted alternative")
@@ -43,10 +58,10 @@ func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call provid
 	if !approvefor.NeedsReview(req) {
 		return nil
 	}
-	if t.reviewer == nil {
+	if authority.Reviewer == nil {
 		return reviewFailed(info.Name, "approve for me is enabled but no reviewer is available")
 	}
-	decision, err := t.reviewer.Review(ctx, req)
+	decision, err := authority.Reviewer.Review(ctx, req)
 	if err != nil {
 		return reviewFailed(info.Name, "reviewer unavailable")
 	}

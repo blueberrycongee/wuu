@@ -25,7 +25,7 @@ for (const directory of [output, home, ...projects]) mkdirSync(directory, { recu
 app.setPath('userData', join(fixture, 'profile'));
 app.disableHardwareAcceleration();
 app.on('window-all-closed', () => {});
-Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: cua ? '0' : '1', WUU_ENABLE_BROWSER: '1', WUU_ENABLE_CUA_LINUX: cua ? '1' : '0',
+Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: '0', WUU_ENABLE_BROWSER: '1', WUU_ENABLE_CUA_LINUX: cua ? '1' : '0',
   WUU_DESKTOP_CORE: resolve(process.env.WUU_EXTERNAL_CAPABILITIES_CORE ?? join(desktop, 'build/bin/wuu-core')),
   WUU_SOURCE_ROOT: resolve(desktop, '..'), CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: join(home, '.claude') });
 delete process.env.ELECTRON_RENDERER_URL;
@@ -54,7 +54,7 @@ type Scenario = { marker: string; engine: string; context: RuntimeContext; threa
 const scenarios = new Map<string, Scenario>();
 const commands = new Map<number, ReturnType<typeof deferred<MCPResponse>>>();
 const activities = new Map<string, ActivitySession>();
-const terminal = new Map<string, { status?: string; error?: unknown }>();
+const terminal = new Map<string, { status?: string; error?: unknown; category?: string; code?: string; index_error?: string }>();
 const checks: string[] = [];
 const transcript: unknown[] = [];
 const events: unknown[] = [];
@@ -137,8 +137,8 @@ function notify(event: ServerEvent) {
   }
   coordinator?.handleServerEvent(event);
   if (['turn/completed', 'turn/error'].includes(event.message.method)) {
-    const params = event.message.params as unknown as { thread_id: string; turn?: { status?: string }; error?: unknown };
-    terminal.set(params.thread_id, { status: params.turn?.status, error: params.error });
+    const params = event.message.params as unknown as { thread_id: string; turn?: { status?: string }; error?: unknown; category?: string; code?: string; index_error?: string };
+    terminal.set(params.thread_id, { status: params.turn?.status, error: params.error, category: params.category, code: params.code, index_error: params.index_error });
     for (const scenario of scenarios.values()) if (scenario.thread === params.thread_id) scenario.completed.resolve();
   }
 }
@@ -357,8 +357,10 @@ async function run() {
     await pool.requestInContext(scenario.context, `activity/${action}`, { thread_id: scenario.thread, activity_id: activity.id, execution_id: activity.execution_id });
     await bounded(`${action} interrupts its external engine`, scenario.completed.promise);
     const settled = terminal.get(scenario.thread);
+    // Diagnostic chains can include cancellation from the public service transport.
+    // Assert protocol classification without concealing receipt or index failures.
     check(`${action} settles its external turn as interrupted`, settled?.status === 'interrupted' &&
-      (!settled.error || String(settled.error).split('\n').every(line => line === 'context canceled')), settled);
+      settled.category === 'cancelled' && settled.code !== 'model_receipt_lifecycle' && !settled.index_error, settled);
     check(`${action} revokes the old MCP turn capability`, await staleCall(scenario, { action: 'click', tab_id: activity.target, x: 140, y: 125 }));
   }
   check('Takeover and stop do not affect the sibling workspace turn', !terminal.has(c.thread));
@@ -375,7 +377,9 @@ async function run() {
   await pool.requestInContext(c.context, 'turn/interrupt', { thread_id: c.thread });
   gate.resume.resolve();
   await bounded('interrupted external engine settles', c.completed.promise);
-  check('The interrupted external turn settles as interrupted', terminal.get(c.thread)?.status === 'interrupted', terminal.get(c.thread));
+  const interrupted = terminal.get(c.thread);
+  check('The interrupted external turn settles as interrupted', interrupted?.status === 'interrupted' &&
+    interrupted.category === 'cancelled' && interrupted.code !== 'model_receipt_lifecycle' && !interrupted.index_error, interrupted);
   await waitFor('cancelled real host request settles', () => browserReplies.has(capture.id));
   check('Cancellation rejects the pending browser screenshot', Boolean(browserReplies.get(capture.id)?.error));
   check('Late screenshot completion cannot overwrite an existing preview', readFileSync(destination, 'utf8') === 'previous-history-preview');

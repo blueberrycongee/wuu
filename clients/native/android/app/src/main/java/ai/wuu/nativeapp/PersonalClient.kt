@@ -2,10 +2,14 @@ package ai.wuu.nativeapp
 
 import java.io.IOException
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
 
 enum class PersonalTaskAction(val method: String) { UPDATE("update"), STOP("stop"), RESUME("resume") }
-class PersonalCalendarConfirmation internal constructor(internal val snapshot: String, internal val owner: UUID, internal val agentID: String) { val preview: JSONObject get() = JSONObject(snapshot) }
+/** Consent belongs to the displayed connection/selection, unlike a recoverable message draft. */
+class PersonalCalendarConfirmation internal constructor(internal val snapshot: String, internal val owner: UUID, internal val agentID: String, internal val epoch: Long) { val preview: JSONObject get() = JSONObject(snapshot) }
 
 enum class PersonalClientFailure { UNAVAILABLE, ISOLATION_REQUIRED, NO_AGENT_SELECTED, SELECTION_CHANGED, INVALID_RESPONSE, EMPTY_MESSAGE }
 class PersonalClientException(val reason: PersonalClientFailure) : IOException(when (reason) {
@@ -23,7 +27,7 @@ class PersonalMessageDraft internal constructor(val agentID: String, val request
 /** One instance per authenticated account and host; discard on identity change. No new grants or connections. */
 class PersonalClient(private var transport: suspend (String, JSONObject) -> JSONObject) {
     constructor(remote: Remote) : this({ method, params -> remote.call(method, params) })
-    private data class Binding(val id: String, val fingerprint: String)
+    private data class Binding(val id: String, val fingerprint: String, val graph: String)
     private val owner = UUID.randomUUID()
     private var epoch = 0L
     private var verifiedScope: Pair<String, String>? = null
@@ -38,7 +42,7 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
         configure(initialized)
     }
 
-    /** Use the current connection's initialize result again after each reconnect or plugin reload. */
+    /** Capture the admitted graph separately from the code fingerprint after each reconnect or reload. */
     @Synchronized fun configure(initialized: JSONObject) {
         invalidate()
         if (initialized.optString("user_space_id") != "local" || initialized.optString("product_domain") != "personal") throw PersonalClientException(PersonalClientFailure.UNAVAILABLE)
@@ -48,12 +52,14 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
             it.optString("id") == "plugin:bundled:personal" || it.optJSONObject("provenance")?.optString("plugin_id") == "personal"
         }
         val record = candidates.firstOrNull { it.optString("id") == "plugin:bundled:personal" } ?: candidates.singleOrNull()
+        val graph = record?.opt("graph_generation") as? String
         if (record == null || record.optString("runtime_state") != "active" || record.opt("enabled") == false ||
-            record.optString("id").isBlank() || record.optString("fingerprint").isBlank()) throw PersonalClientException(PersonalClientFailure.UNAVAILABLE)
-        binding = Binding(record.getString("id"), record.getString("fingerprint"))
+            record.optString("id").isBlank() || record.optString("fingerprint").isBlank() || graph.isNullOrBlank()) throw PersonalClientException(PersonalClientFailure.UNAVAILABLE)
+        binding = Binding(record.getString("id"), record.getString("fingerprint"), graph)
         val calendars = (0 until (inventory?.length() ?: 0)).mapNotNull { inventory?.optJSONObject(it) }.filter { it.optString("id") == "plugin:bundled:personal-calendar" || it.optJSONObject("provenance")?.optString("plugin_id") == "personal-calendar" }
         val calendar = calendars.firstOrNull { it.optString("id") == "plugin:bundled:personal-calendar" } ?: calendars.singleOrNull()
-        if (calendar != null && calendar.optString("runtime_state") == "active" && calendar.opt("enabled") != false && calendar.optString("id").isNotEmpty() && calendar.optString("fingerprint").isNotEmpty()) calendarBinding = Binding(calendar.getString("id"), calendar.getString("fingerprint"))
+        val calendarGraph = calendar?.opt("graph_generation") as? String
+        if (calendar != null && calendar.optString("runtime_state") == "active" && calendar.opt("enabled") != false && calendar.optString("id").isNotEmpty() && calendar.optString("fingerprint").isNotEmpty() && !calendarGraph.isNullOrBlank()) calendarBinding = Binding(calendar.getString("id"), calendar.getString("fingerprint"), calendarGraph)
     }
 
     /** Inventory events cannot recreate scope after disconnect; only verified live initialization supplies it. */
@@ -121,10 +127,10 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
         return result
     }
     suspend fun searchHistory(query: String, timeMin: String? = null, timeMax: String? = null, cursor: String? = null): JSONObject {
-        val agentID = selectedAgentID ?: throw PersonalClientException(PersonalClientFailure.NO_AGENT_SELECTED)
+        val (agentID, stamp) = selectedSnapshot()
         val input = json("agent_id" to agentID, "query" to query, "limit" to 25)
         timeMin?.let { input.put("time_min", it) }; timeMax?.let { input.put("time_max", it) }; cursor?.let { input.put("cursor", it) }
-        return request("agents.search", input)
+        return request("agents.search", input, stamp)
     }
     suspend fun memory(query: String = ""): JSONObject {
         val (agentID, stamp) = selectedSnapshot()
@@ -173,7 +179,7 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     @Synchronized fun prepareCalendarConfirmation(preview: JSONObject): PersonalCalendarConfirmation {
         val agentID = requireSelected(); val fields = preview.optJSONObject("fields"); val availability = preview.optJSONObject("availability")
         if (preview.optString("agent_id") != agentID || preview.optString("user_space_id") != "local" || preview.optString("status") != "proposed" || preview.optLong("revision") < 1 || !preview.optString("preview_digest").matches(Regex("[a-f0-9]{64}")) || preview.optString("kind") !in listOf("create", "reschedule") || listOf("operation_id", "task_id", "account_id", "calendar_id", "notification_notice").any { preview.optString(it).isBlank() } || fields == null || !validCalendarFields(fields) || preview.optLong("requirements_revision") < 1 || fields.optString("send_updates") !in listOf("all", "externalOnly", "none") || fields.optJSONArray("attendees") == null || availability?.optString("checked_at").isNullOrEmpty() || availability?.optJSONArray("conflicting_event_ids") == null || (preview.optString("kind") == "reschedule" && !validCalendarFields(preview.optJSONObject("original_event")?.optJSONObject("fields")))) throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
-        return PersonalCalendarConfirmation(preview.toString(), owner, agentID)
+        return PersonalCalendarConfirmation(preview.toString(), owner, agentID, epoch)
     }
     private fun validCalendarFields(fields: JSONObject?): Boolean {
         if (fields == null || fields.optString("summary").isBlank() || !fields.has("location")) return false
@@ -187,7 +193,7 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
         }
     }
     suspend fun confirmCalendar(confirmation: PersonalCalendarConfirmation): JSONObject {
-        val stamp = synchronized(this) { if (confirmation.owner != owner || confirmation.agentID != selected) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED); epoch }
+        val stamp = synchronized(this) { if (confirmation.owner != owner || confirmation.agentID != selected || confirmation.epoch != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED); epoch }
         val preview = confirmation.preview
         return request("operations.confirm", json("operation_id" to preview.getString("operation_id"), "expected_revision" to preview.getLong("revision"), "preview_digest" to preview.getString("preview_digest")), stamp, calendar = true)
     }
@@ -244,19 +250,24 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     @Synchronized private fun selectedSnapshot(): Pair<String, Long> = requireSelected() to epoch
 
     private suspend fun request(method: String, input: JSONObject = JSONObject(), expectedEpoch: Long? = null, userInput: JSONObject? = null, calendar: Boolean = false): JSONObject {
+        coroutineContext.ensureActive()
         val (target, stamp, call) = synchronized(this) {
             if (expectedEpoch != null && expectedEpoch != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED)
             Triple((if (calendar) calendarBinding else binding) ?: throw PersonalClientException(PersonalClientFailure.UNAVAILABLE), epoch, transport)
         }
         try {
-            val params = json("id" to target.id, "fingerprint" to target.fingerprint,
+            val params = json("id" to target.id, "fingerprint" to target.fingerprint, "graph_generation" to target.graph,
                 "method" to method, "input" to input, "request_id" to UUID.randomUUID().toString(),
                 "user_space_id" to "local", "product_domain" to "personal")
             if (userInput != null) params.put("user_input", userInput)
             val envelope = call("plugin/client/request", params)
+            coroutineContext.ensureActive()
             synchronized(this) { if (stamp != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED) }
             return envelope.optJSONObject("result") ?: throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
+            coroutineContext.ensureActive()
             synchronized(this) { if (stamp != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED) }
             val message = error.message.orEmpty()
             if (message.contains("user_host_isolation_required:")) throw PersonalClientException(PersonalClientFailure.ISOLATION_REQUIRED)

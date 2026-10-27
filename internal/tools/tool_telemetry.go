@@ -468,7 +468,7 @@ func toolArtifactRefKey(key string) bool {
 	}
 }
 
-func workspaceRevision(ctx context.Context, rootDir string) string {
+func workspaceRevision(ctx context.Context, rootDir, runtimeHome string) string {
 	if rootDir == "" {
 		return ""
 	}
@@ -484,7 +484,7 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 	statusCmd.Dir = rootDir
 	statusOut, err := statusCmd.Output()
 	if err != nil {
-		return filesystemRevisionFallback(revCtx, rootDir)
+		return filesystemRevisionFallback(revCtx, rootDir, runtimeHome)
 	}
 
 	head := ""
@@ -509,7 +509,7 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 
 	head = trimRevisionToken(head)
 	if head == "" {
-		return filesystemRevisionFallback(revCtx, rootDir)
+		return filesystemRevisionFallback(revCtx, rootDir, runtimeHome)
 	}
 	if len(head) >= 12 {
 		head = head[:12]
@@ -518,21 +518,25 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 	return "git:" + head + ":worktree:" + hex.EncodeToString(sum[:])[:16]
 }
 
-func filesystemRevisionFallback(ctx context.Context, rootDir string) string {
-	digest, ok := filesystemWorkspaceRevision(ctx, rootDir)
+func filesystemRevisionFallback(ctx context.Context, rootDir, runtimeHome string) string {
+	digest, ok := filesystemWorkspaceRevision(ctx, rootDir, runtimeHome)
 	if !ok {
 		return ""
 	}
 	return "fs:worktree:" + digest[:16]
 }
 
-func filesystemWorkspaceRevision(ctx context.Context, rootDir string) (string, bool) {
+func filesystemWorkspaceRevision(ctx context.Context, rootDir, runtimeHome string) (string, bool) {
 	root, err := filepath.Abs(rootDir)
 	if err != nil {
 		return "", false
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	runtimeHomeInfo, _ := os.Stat(runtimeHome)
+	if runtimeHomeInfo != nil && os.SameFile(info, runtimeHomeInfo) {
 		return "", false
 	}
 
@@ -559,6 +563,14 @@ func filesystemWorkspaceRevision(ctx context.Context, rootDir string) (string, b
 		}
 		name := entry.Name()
 		if entry.IsDir() {
+			// Raw reads of live SQLite files release this process's POSIX locks
+			// when closed. Runtime state must never enter workspace digests, even
+			// with a custom home name or a symlink spelling of its directory.
+			if runtimeHomeInfo != nil {
+				if info, err := entry.Info(); err == nil && os.SameFile(info, runtimeHomeInfo) {
+					return filepath.SkipDir
+				}
+			}
 			if isWorkspaceRevisionSkippedDir(name) {
 				return filepath.SkipDir
 			}

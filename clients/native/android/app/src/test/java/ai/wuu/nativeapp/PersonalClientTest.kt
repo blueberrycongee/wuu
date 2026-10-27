@@ -2,7 +2,11 @@ package ai.wuu.nativeapp
 
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +15,7 @@ import org.junit.Test
 
 class PersonalClientTest {
     private fun initialized() = json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json(
-        "id" to "plugin:bundled:personal", "fingerprint" to "generation-one", "runtime_state" to "active")))
+        "id" to "plugin:bundled:personal", "fingerprint" to "generation-one", "graph_generation" to "graph-one", "runtime_state" to "active")))
 
     @Test fun discoveryAndSelectionNeverFallBackToWorkspaceOrThread() = runTest {
         val calls = mutableListOf<JSONObject>()
@@ -24,6 +28,7 @@ class PersonalClientTest {
         client.configure(initialized()); client.selectAgent("travel")
         assertEquals(1, calls.size)
         assertEquals("generation-one", calls.single().getString("fingerprint"))
+        assertEquals("graph-one", calls.single().getString("graph_generation"))
         assertEquals("local", calls.single().getString("user_space_id"))
         assertEquals("personal", calls.single().getString("product_domain"))
         assertEquals("travel", calls.single().getJSONObject("input").getString("agent_id"))
@@ -65,6 +70,25 @@ class PersonalClientTest {
         try { client.listAgents(); fail("Isolation gate accepted") }
         catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.ISOLATION_REQUIRED, error.reason) }
         assertEquals(1, calls)
+    }
+
+    @Test fun cancelledSendDoesNotDispatchOrReplayDraft() = runTest {
+        val calls = mutableListOf<JSONObject>()
+        val client = PersonalClient { _, params ->
+            calls += params
+            json("result" to json("agent" to json("agent_id" to "main", "user_space_id" to "local")))
+        }
+        client.configure(initialized()); client.selectAgent("main")
+        val draft = client.prepareMessage("Keep this request")
+        var cancelled = false
+        launch(start = CoroutineStart.UNDISPATCHED) {
+            coroutineContext.cancel()
+            try { client.send(draft); fail("Cancelled send was dispatched") }
+            catch (_: CancellationException) { cancelled = true }
+        }.join()
+        assertTrue(cancelled); assertEquals(1, calls.size)
+        client.send(draft)
+        assertEquals(draft.requestID, calls.last().getJSONObject("input").getString("request_id"))
     }
 
     @Test fun recoveryKeepsBusinessIdentityAndRejectsForeignTasks() = runTest {
@@ -123,12 +147,54 @@ class PersonalClientTest {
     @Test fun inventoryRefreshUsesOnlyPreviouslyVerifiedLiveScope() = runTest {
         val calls = mutableListOf<JSONObject>()
         val client = PersonalClient { _, params -> calls += params; json("result" to json("agent" to json("agent_id" to "main", "user_space_id" to "local"))) }
-        val inventory = json("extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "generation-two", "runtime_state" to "active")))
-        try { client.configure(inventory); fail("Missing immutable scope accepted") } catch (_: PersonalClientException) {}
+        val inventory = json("user_space_id" to "foreign", "product_domain" to "coding", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "generation-two", "graph_generation" to "graph-two", "runtime_state" to "active")))
+        try { client.configure(inventory); fail("Foreign immutable scope accepted") } catch (_: PersonalClientException) {}
         client.configure(initialized()); client.refreshInventory(inventory); client.selectAgent("main")
         assertEquals("generation-two", calls.last().getString("fingerprint"))
+        assertEquals("graph-two", calls.last().getString("graph_generation"))
+        assertEquals("local", calls.last().getString("user_space_id"))
+        assertEquals("personal", calls.last().getString("product_domain"))
         client.invalidate()
         try { client.refreshInventory(inventory); fail("Disconnected authority restored") } catch (_: PersonalClientException) {}
+    }
+
+    @Test fun missingOrMalformedGraphFailsClosedWithoutUsingFingerprint() = runTest {
+        val calls = mutableListOf<JSONObject>()
+        val client = PersonalClient { _, params -> calls += params; json("result" to json("agents" to JSONArray())) }
+        for (graph in listOf(JSONObject.NULL, "", "  ", 7)) {
+            client.configure(initialized())
+            val inventory = initialized().also { it.getJSONArray("extension_inventory").getJSONObject(0).put("graph_generation", graph) }
+            try { client.refreshInventory(inventory); fail("Invalid graph admitted") }
+            catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.UNAVAILABLE, error.reason) }
+            try { client.listAgents(); fail("Previous graph remained callable") }
+            catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.UNAVAILABLE, error.reason) }
+        }
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun graphOnlyRefreshFencesPendingSendAndPreservesExplicitRetryIdentity() = runTest {
+        val started = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val calls = mutableListOf<JSONObject>()
+        val client = PersonalClient { _, params ->
+            calls += params
+            if (params.getString("method") == "agents.open") json("result" to json("agent" to json("agent_id" to "main", "user_space_id" to "local")))
+            else { started.complete(Unit); release.await(); json("result" to json("state" to "accepted")) }
+        }
+        client.configure(initialized()); client.selectAgent("main")
+        val draft = client.prepareMessage("Keep this request")
+        val pending = async { runCatching { client.send(draft) } }
+        started.await()
+        client.refreshInventory(initialized().also { it.getJSONArray("extension_inventory").getJSONObject(0).put("graph_generation", "graph-two") })
+        client.selectAgent("main"); release.complete(Unit)
+        assertEquals(PersonalClientFailure.SELECTION_CHANGED, (pending.await().exceptionOrNull() as PersonalClientException).reason)
+        assertEquals(listOf("agents.open", "agents.send", "agents.open"), calls.map { it.getString("method") })
+        assertEquals("graph-one", calls[1].getString("graph_generation"))
+        client.send(draft)
+        assertEquals("graph-two", calls.last().getString("graph_generation"))
+        assertEquals(draft.requestID, calls.last().getJSONObject("input").getString("request_id"))
+        client.stopReply()
+        assertEquals("agents.stop_reply", calls.last().getString("method"))
+        assertEquals("graph-two", calls.last().getString("graph_generation"))
     }
 
     @Test fun heldAttachmentSurvivesSameAgentRefreshButNotAgentSwitch() = runTest {

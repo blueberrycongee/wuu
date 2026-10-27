@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
@@ -131,6 +132,7 @@ if (liveLayout) {
 let submittedTurns = 0;
 
 const desktopAPI = {
+  initialLanguagePreference: process.env.WUU_RESIZE_E2E_LOCALE,
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -275,7 +277,7 @@ const desktopAPI = {
     provider: "e2e",
     model: "mock-resize",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-resize" }],
+    providers: [{ name: "e2e", type: "mock", model: "mock-resize", api_key_configured: true }],
     // Layout journeys open /side through the same public contribution gate.
     extension_inventory: [{
       id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
@@ -288,7 +290,8 @@ const desktopAPI = {
     generalSettings = { ...generalSettings, ...settings };
     return { general_settings: generalSettings };
   },
-  listEngines: async () => ({ engines: [] }),
+  // This fixture runs the synthetic Wuu backend, not an empty composition.
+  listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
   getBuildInfo: async () => ({
     core: undefined,
     desktop: { version: "resize-e2e", date: "1970-01-01T00:00:00Z" }
@@ -296,7 +299,7 @@ const desktopAPI = {
   updateRuntimeSettings: async (provider, model) => ({
     provider,
     model,
-    providers: [{ name: provider, type: "mock", model }]
+    providers: [{ name: provider, type: "mock", model, api_key_configured: true }]
   }),
   loadCodexModels: async (provider) => ({
     provider,
@@ -309,6 +312,8 @@ const desktopAPI = {
       : resizeThread
   }),
   listThreads: async () => ({ threads: [resizeThread] }),
+  listAllThreads: async () => ({ threads: [resizeThread] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   openSideThread: async () => ({ summary: sideSummary }),
   getSideThreadHistory: async () => ({
@@ -355,7 +360,11 @@ const desktopAPI = {
     browserSurface: async (workdir, tabID) => ({ workdir, tabID, url: "https://resize.invalid/local-fixture", title: "Local responsive fixture", loading: false, canGoBack: false, canGoForward: false }),
     reportBrowserBounds: (workdir, tabID, rect) => ipcRenderer.send("test:browser-bounds", { workdir, tabID, rect }),
     reportBrowserPiPHostLayout: payload => ipcRenderer.send("test:pip-host", payload),
+    browserCommand: async ({ workdir, tabID }) => desktopAPI.browserSurface(workdir, tabID),
     onBrowserSurface: () => () => undefined,
+    onBrowserTabAdopted: () => () => undefined,
+    onBrowserUserInput: () => () => undefined,
+    onBrowserDock: () => () => undefined,
     onBrowserInvalidate: () => () => undefined,
     suppressBrowserOverlay: () => undefined
   } : {}),
@@ -365,9 +374,23 @@ const desktopAPI = {
   },
   onWindowResizeState: () => () => undefined
 };
+// Opt-in titlebar geometry capabilities must remain self-contained so the
+// sandboxed native QA wrapper can use this preload without local require().
+// Caption actions are renderer-only stubs, never evidence of OS hit testing.
+if (process.env.WUU_TITLEBAR_FIXTURE_PLATFORM) {
+  desktopAPI.platform = process.env.WUU_TITLEBAR_FIXTURE_PLATFORM;
+  desktopAPI.hostKind = "desktop";
+  if (desktopAPI.platform === "darwin") {
+    desktopAPI.windowSetControls = async () => undefined;
+    desktopAPI.windowClose = async () => undefined;
+    desktopAPI.windowMinimize = async () => undefined;
+    desktopAPI.windowToggleMaximize = async () => undefined;
+    desktopAPI.windowToggleFullScreen = async () => undefined;
+  }
+}
 // Focused renderer journeys may extend this shared synthetic backend without
 // copying it or adding test-only hooks to production renderer code.
 const extend = process.env.WUU_RENDERER_E2E_EXTENSION
   ? require(process.env.WUU_RENDERER_E2E_EXTENSION)
   : (api) => api;
-contextBridge.exposeInMainWorld("wuu", extend(desktopAPI));
+contextBridge.exposeInMainWorld("wuu", extend(withDefaultShell(desktopAPI)));

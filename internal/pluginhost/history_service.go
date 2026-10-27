@@ -16,26 +16,28 @@ const (
 )
 
 type SessionHistoryReadParams struct {
-	SessionID   string `json:"session_id"`
-	StartSeq    int    `json:"start_seq,omitempty"`
-	EndSeq      int    `json:"end_seq,omitempty"`
-	SnapshotSeq int    `json:"snapshot_seq,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Cursor      string `json:"cursor,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	StartSeq               int                              `json:"start_seq,omitempty"`
+	EndSeq                 int                              `json:"end_seq,omitempty"`
+	SnapshotSeq            int                              `json:"snapshot_seq,omitempty"`
+	Limit                  int                              `json:"limit,omitempty"`
+	Cursor                 string                           `json:"cursor,omitempty"`
 }
 
 type SessionHistorySearchParams struct {
-	View        string `json:"view,omitempty"`
-	TimeMin     string `json:"time_min,omitempty"`
-	TimeMax     string `json:"time_max,omitempty"`
-	SessionID   string `json:"session_id"`
-	Query       string `json:"query"`
-	StartSeq    int    `json:"start_seq,omitempty"`
-	EndSeq      int    `json:"end_seq,omitempty"`
-	SnapshotSeq int    `json:"snapshot_seq,omitempty"`
-	BeforeSeq   int    `json:"before_seq,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Cursor      string `json:"cursor,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	View                   string                           `json:"view,omitempty"`
+	TimeMin                string                           `json:"time_min,omitempty"`
+	TimeMax                string                           `json:"time_max,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	Query                  string                           `json:"query"`
+	StartSeq               int                              `json:"start_seq,omitempty"`
+	EndSeq                 int                              `json:"end_seq,omitempty"`
+	SnapshotSeq            int                              `json:"snapshot_seq,omitempty"`
+	BeforeSeq              int                              `json:"before_seq,omitempty"`
+	Limit                  int                              `json:"limit,omitempty"`
+	Cursor                 string                           `json:"cursor,omitempty"`
 }
 
 type SessionHistoryAttachment struct {
@@ -48,12 +50,13 @@ type SessionHistoryAttachment struct {
 }
 
 type SessionAttachmentReadParams struct {
-	SessionID string `json:"session_id"`
-	Seq       int    `json:"seq"`
-	Kind      string `json:"kind"`
-	Index     int    `json:"index"`
-	SHA256    string `json:"sha256"`
-	Offset    int    `json:"offset,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	Seq                    int                              `json:"seq"`
+	Kind                   string                           `json:"kind"`
+	Index                  int                              `json:"index"`
+	SHA256                 string                           `json:"sha256"`
+	Offset                 int                              `json:"offset,omitempty"`
 }
 
 type SessionAttachmentReadResult struct {

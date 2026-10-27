@@ -1,6 +1,7 @@
 import { dialog, type BrowserWindow, type Session } from "electron";
-import { basename, extname } from "node:path";
-import { writeBufferFileAtomicSync } from "./atomicFile";
+import { open, rename, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { basename, dirname, extname, join } from "node:path";
 
 /** Save original bytes only after the user chooses a destination. */
 export async function saveArtifactFile(
@@ -17,7 +18,7 @@ export async function saveArtifactFile(
   // use the sender's session so their existing path/integrity checks still run.
   const response = await (url.protocol === "data:" ? fetch(source) : session.fetch(source));
   if (!response.ok) throw new Error(`Could not read artifact (${response.status})`);
-  const bytes = Buffer.from(await response.arrayBuffer());
+
   const mime = response.headers.get("content-type")?.split(";")[0].toLowerCase();
   const extension = ({
     "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
@@ -32,6 +33,25 @@ export async function saveArtifactFile(
   if (!suggested || /^\.+$/.test(suggested)) suggested = "image";
   if (extension && !extname(suggested)) suggested += extension;
   const result = await dialog.showSaveDialog(parent, { defaultPath: suggested });
-  if (result.canceled || !result.filePath) return;
-  writeBufferFileAtomicSync(result.filePath, bytes);
+  if (result.canceled || !result.filePath) { await response.body?.cancel(); return; }
+  // Download directly into a private sibling; never buffer a cloud artifact or
+  // replace the user's existing file before the complete digest is verified.
+  const temporary = join(dirname(result.filePath), `.${basename(result.filePath)}.${randomUUID()}.tmp`);
+  const reader = response.body?.getReader();
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(temporary, "wx", 0o600);
+    const hash = createHash("sha256");
+    if (reader) while (true) {
+      const {done, value} = await reader.read(); if (done) break;
+      hash.update(value); await file.writeFile(value);
+    }
+    const digest = response.headers.get("x-artifact-sha256");
+    if (url.protocol === "wuu-artifact:" && (!digest || hash.digest("hex") !== digest)) throw new Error("Artifact contents changed");
+    await file.sync(); await file.close(); file = undefined;
+    await rename(temporary, result.filePath);
+  } finally {
+    await reader?.cancel(); await file?.close();
+    await rm(temporary, {force:true});
+  }
 }

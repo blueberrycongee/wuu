@@ -128,7 +128,7 @@ function ToolSourceRecord({ item, code, label, language, children, detailsOnly, 
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const details = (
-    <div className="program-tool-details">
+    <div className="program-tool-details" data-tool={item.name}>
       <RichCodeBlock code={code} displayedCode={code} language={language} />
       {children}
       {item.error ? <p>{item.error}</p> : null}
@@ -244,6 +244,7 @@ export function ToolActivityRow({
     // Keep source verbatim; stringValue trims meaningful indentation and newlines.
     if (typeof code === "string" && code.trim()) {
       const cwd = isCommand ? stringValue(args, "cwd") : undefined;
+      const output = item.result || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n");
       return (
         <ToolSourceRecord
           key={item.id}
@@ -254,14 +255,14 @@ export function ToolActivityRow({
           detailsOnly={detailsOnly}
         >
           {cwd ? <p>{t("toolActivity.workingDirectory")}: <code>{cwd}</code></p> : null}
-          {isCommand && item.result ? (
+          {!item.remote_content_ref && output ? (
             <div className="command-tool-output">
               <p>{t("toolActivity.commandOutput")}</p>
-              <RichCodeBlock code={item.result} displayedCode={item.result} language="text" />
+              <RichCodeBlock code={output} displayedCode={output} language="text" />
             </div>
           ) : null}
-          {isCommand && item.remote_content_ref ? (
-            <RemoteItemContent item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
+          {item.remote_content_ref ? (
+            <RemoteItemContent key={item.remote_content_ref} item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
           ) : null}
         </ToolSourceRecord>
       );

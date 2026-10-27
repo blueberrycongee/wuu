@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from "react";
 import { Pencil } from "./WuuIcons";
 import { useI18n } from "./i18n";
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 
 /** A local display alias never changes the connection's configuration identity. */
 export function ConnectionTitle({ connectionKey, fallback, disabled = false, suffix }: {
   connectionKey: string; fallback: string; disabled?: boolean; suffix?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
-  const preferences = useConnectionDisplayPreferences();
+  const preferences = useSettingsConnectionDisplay();
   const label = preferences.label(connectionKey, fallback);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);

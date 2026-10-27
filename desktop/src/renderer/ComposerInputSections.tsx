@@ -1,3 +1,4 @@
+import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
 import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -16,6 +17,7 @@ import {
   ListTodo,
   Paperclip,
   PencilLine,
+  Play,
   Square,
   LoaderCircle,
   RotateCw,
@@ -47,6 +49,8 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
+import { showErrorToast } from "./Toast";
+import { type TurnContinuationTarget } from "./TurnContinuation";
 import { MessageCopyButton } from "./MessageActions";
 import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
@@ -95,8 +99,39 @@ export function ComposerStopIcon({ state, submitting = false }: { state?: "pendi
   return <Square aria-hidden="true" />;
 }
 
+export function ComposerContinueButton({ continuation, disabled }: {
+  continuation: TurnContinuationTarget;
+  disabled: boolean;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  return (
+    <Tooltip asChild content={t("composer.continue")}><button
+      className="composer-action-button composer-send-button"
+      type="button"
+      data-wuu-component="composer-send"
+      data-wuu-state={pending ? "continuing" : "continue"}
+      aria-label={t("composer.continue")}
+      aria-busy={pending || undefined}
+      disabled={disabled || pending}
+      onClick={() => {
+        if (disabled || pendingRef.current) return;
+        pendingRef.current = true;
+        setPending(true);
+        void continuation.continue().catch(showErrorToast).finally(() => {
+          pendingRef.current = false;
+          setPending(false);
+        });
+      }}
+    >
+      {pending ? <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" /> : <Play aria-hidden="true" />}
+    </button></Tooltip>
+  );
+}
+
 export function SplitPaneComposer({
-  pluginHost = desktopPluginHost,
+  pluginHost,
   placeholder,
   allowWorkspaceReferences = true,
   prompt,
@@ -107,10 +142,14 @@ export function SplitPaneComposer({
   onChangeSelection,
   onRemoveSelection,
   running,
-  readOnly,
+  readOnly: sessionReadOnly,
+  interactionDisabled = false,
   sendDisabled: requestedSendDisabled = false,
   stopState,
   submitting = false,
+  draftPending = false,
+  clearOnSubmit = true,
+  continuation,
   queryHistorySessionID,
   workspaceId,
   workspaceRoot,
@@ -137,11 +176,16 @@ export function SplitPaneComposer({
   onRemoveSelection?: (id: string) => void;
   running: boolean;
   readOnly: boolean;
+  /** Temporary ownership transfer lock; does not change session semantics. */
+  interactionDisabled?: boolean;
   /** Instant view switches keep `running` on for the spinner but must not
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  draftPending?: boolean;
+  clearOnSubmit?: boolean;
+  continuation?: TurnContinuationTarget;
   queryHistorySessionID?: string;
   workspaceId?: string;
   workspaceRoot?: string;
@@ -153,12 +197,13 @@ export function SplitPaneComposer({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
 }): JSX.Element {
+  const readOnly = sessionReadOnly || interactionDisabled;
   const { t } = useI18n();
   const connected = useWorkbenchConnected();
-  const sendDisabled = requestedSendDisabled || Boolean(stopState) || !connected;
+  const sendDisabled = requestedSendDisabled || draftPending || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const [submissionRevision, setSubmissionRevision] = useState(0);
@@ -187,11 +232,13 @@ export function SplitPaneComposer({
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
   const draftSignature = JSON.stringify([prompt, images.map(image => image.id), files.map(file => file.id), selections]);
   const submittedDraftRef = useRef<string | undefined>(undefined);
+  useEffect(() => () => { submittedDraftRef.current = undefined; }, []);
   useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
   const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
+  const showContinue = continuation && !running && !submitting && !hasDraft && !readOnly;
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
 
   function focusComposerSoon(): void {
@@ -235,7 +282,7 @@ export function SplitPaneComposer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
-  useComposerHeight(textareaRef, false, visiblePromptValue);
+  useComposerHeight(textareaRef, visiblePromptValue);
   const fileSelectionActions = useFileSelectionActions();
   const onAttachmentPickerClick = useComposerAttachmentFocus(
     textareaRef, queryHistorySessionID, fileSelectionActions?.ownerKey, readOnly,
@@ -258,8 +305,9 @@ export function SplitPaneComposer({
     inputDraftUpdates.current.push(nextPrompt);
     setPrompt(nextPrompt);
   }
+  const services = useComposerServices();
   const inline = useComposerInlineCompletion({
-    host: pluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    host: pluginHost ?? services?.presentation ?? desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: JSON.stringify([workspaceId, workspaceRoot, queryHistorySessionID]), revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
@@ -330,12 +378,30 @@ export function SplitPaneComposer({
     const contentParts = collapsedContentPartsForPrompt(currentPrompt);
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : currentPrompt;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
-    if (accepted === false) return;
-    inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
     submittedDraftRef.current = currentSignature;
-    composing.current = false;
-    setSubmissionRevision((revision) => revision + 1);
+    const dispatched = inline.actions.prepareDispatch(canonicalPrompt, running ? "queue" : "send");
+    const finish = (accepted: boolean | void): void => {
+      if (accepted !== false) dispatched();
+      if (submittedDraftRef.current !== currentSignature) return;
+      if (accepted === false) {
+        submittedDraftRef.current = undefined;
+        return;
+      }
+      if (!clearOnSubmit) {
+        submittedDraftRef.current = undefined;
+        return;
+      }
+      composing.current = false;
+      setSubmissionRevision((revision) => revision + 1);
+    };
+    try {
+      const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
+      if (accepted instanceof Promise) void accepted.then(finish, () => finish(false));
+      else finish(accepted);
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
     if (textarea && document.activeElement !== textarea) {
@@ -363,7 +429,7 @@ export function SplitPaneComposer({
     if (handleQueryHistoryKeyDown(event)) {
       return;
     }
-    if (event.key === "Escape" && running && !sendDisabled && !event.repeat) {
+    if (event.key === "Escape" && (running || draftPending) && !requestedSendDisabled && connected && !event.repeat) {
       event.preventDefault();
       onInterrupt();
       return;
@@ -439,37 +505,6 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <textarea
-                  ref={textareaRef}
-                  data-wuu-component="composer-input"
-                  value={visiblePromptValue}
-                  placeholder={inline.text ? "" : readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
-                  disabled={readOnly}
-                  aria-readonly={readOnly}
-                  aria-describedby={inline.text ? inline.descriptionId : undefined}
-                  onFocus={() => inline.observe()}
-                  onBlur={() => inline.observe()}
-                  onSelect={() => inline.observe()}
-                  onCompositionStart={() => { composing.current = true; inline.observe(true); }}
-                  onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
-                  onChange={(event) => {
-                    updateVisiblePrompt(event.target.value);
-                    inline.observe();
-                  }}
-                  onPaste={(event) =>
-                    handleCollapsedComposerPaste(event, {
-                      readOnly,
-                      fileAttachmentsEnabled: true,
-                      onPasteAttachmentFiles,
-                      onFold: resetQueryHistoryNavigation
-                    })
-                  }
-                  onKeyDown={handleKeyDown}
-                />
-                {inline.text ? <ComposerInlineCompletionOverlay inputRef={textareaRef} value={visiblePromptValue} text={inline.text} /> : null}
-                {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
-                  {t("composer.inlineCompletionAvailable", { text: inline.text })}
-                </span> : null}
                 <div className="composer-bar split-composer-bar">
                   <div className="composer-bar-left">
                     {mobileWeb ? (
@@ -482,21 +517,51 @@ export function SplitPaneComposer({
                         onPickFiles={() => attachmentInputRef.current?.click()}
                       />
                     ) : (
-                      <button
+                      <Tooltip asChild content={t("composer.addAttachment")}><button
                         className="composer-tool-button composer-attach-button"
                         type="button"
                         aria-label={t("composer.addAttachment")}
-                        title={t("composer.addAttachment")}
                         disabled={readOnly}
                         onClick={() => attachmentInputRef.current?.click()}
                       >
                         <Paperclip aria-hidden="true" />
-                      </button>
+                      </button></Tooltip>
                     )}
                   </div>
+                  <textarea
+                    ref={textareaRef}
+                    data-wuu-component="composer-input"
+                    value={visiblePromptValue}
+                    placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
+                    disabled={readOnly}
+                    aria-readonly={readOnly}
+                    aria-describedby={inline.text ? inline.descriptionId : undefined}
+                    onFocus={() => inline.observe()}
+                    onBlur={() => inline.observe()}
+                    onSelect={() => inline.observe()}
+                    onCompositionStart={() => { composing.current = true; inline.observe(true); }}
+                    onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
+                    onChange={(event) => {
+                      updateVisiblePrompt(event.target.value);
+                      inline.observe();
+                    }}
+                    onPaste={(event) =>
+                      handleCollapsedComposerPaste(event, {
+                        readOnly,
+                        fileAttachmentsEnabled: true,
+                        onPasteAttachmentFiles,
+                        onFold: resetQueryHistoryNavigation
+                      })
+                    }
+                    onKeyDown={handleKeyDown}
+                  />
+                  {inline.text ? <ComposerInlineCompletionOverlay inputRef={textareaRef} value={visiblePromptValue} text={inline.text} /> : null}
+                  {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
+                    {t("composer.inlineCompletionAvailable", { text: inline.text })}
+                  </span> : null}
                   <div className="composer-bar-right">
                     {showStop ? (
-                      <button
+                      <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
@@ -504,13 +569,21 @@ export function SplitPaneComposer({
                         data-wuu-state={stopState ?? (submitting ? "submitting" : "stop")}
                         aria-busy={stopState === "pending" || submitting || undefined}
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
-                        title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
                         <ComposerStopIcon state={stopState} submitting={submitting} />
-                      </button>
+                      </button></Tooltip>
+                    ) : showContinue ? (
+                      <ComposerContinueButton
+                        key={`${continuation.threadID}:${continuation.turnID}`}
+                        continuation={continuation}
+                        disabled={sendDisabled}
+                      />
                     ) : (
-                      <button
+                      <Tooltip asChild content={sendLabel}><button
                         className="composer-action-button composer-send-button"
+                        data-wuu-component="composer-send"
+                        data-wuu-state={draftPending ? "submitting" : "send"}
+                        aria-busy={draftPending || undefined}
                         onPointerDown={(event) => {
                           if (event.button === 0 && document.activeElement === textareaRef.current) {
                             event.preventDefault();
@@ -519,11 +592,10 @@ export function SplitPaneComposer({
                         type="button"
                         onClick={submitComposer}
                         aria-label={sendLabel}
-                        title={sendLabel}
                         disabled={readOnly || sendDisabled || !hasDraft}
                       >
-                        <ArrowUp aria-hidden="true" />
-                      </button>
+                        {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
+                      </button></Tooltip>
                     )}
                   </div>
                 </div>
@@ -624,9 +696,9 @@ export function ComposerQueueStrip({
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip
-          content={hasUnconfirmedMessages ? t("composer.nativeDeliveryUnconfirmed") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
+          content={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
           disabled={
-            !hasUnconfirmedMessages && (expanded ||
+            !hasUnconfirmedMessages && !hasHeldMessages && (expanded ||
             !latestMessage ||
             queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage))
           }
@@ -635,9 +707,10 @@ export function ComposerQueueStrip({
             className="composer-pending-preview"
             role="status"
             aria-live="polite"
+            aria-description={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : undefined}
           >
             {hasUnconfirmedMessages
-              ? t("composer.nativeDeliveryUnconfirmed")
+              ? t("composer.deliveryUnconfirmed")
               : expanded
               ? hasHeldMessages
                 ? t("composer.heldNotice")
@@ -710,7 +783,7 @@ function ComposerQueueItem({
       className={`composer-queue-row ${kind}`}
       data-position={position}
       aria-busy={Boolean(message.operationState)}
-      aria-description={message.deliveryUnconfirmed ? t("composer.nativeDeliveryUnconfirmed") : undefined}
+      aria-description={message.deliveryUnconfirmed ? t("composer.deliveryUnconfirmedDetails") : undefined}
     >
       <span className="composer-queue-index" aria-hidden="true">
         {position}
@@ -742,19 +815,24 @@ function ComposerQueueItem({
             getText={() => message.text || queuedMessageFullPreview(message)}
           />
         ) : (
-          <button
+          <Tooltip asChild content={t("common.edit")}><button
             type="button"
             className="composer-queue-action composer-input-header-action edit"
             aria-label={editLabel}
-            title={t("common.edit")}
             onClick={onEdit}
             disabled={Boolean(message.operationState)}
           >
             <PencilLine className="icon-sm" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
         )}
         {onGuide ? (
-          <button
+          <Tooltip asChild content={
+              message.held
+                ? t("composer.continueHeldTitle")
+                : kind === "guide"
+                  ? t("composer.convertToQueueTitle")
+                  : t("composer.convertToGuideTitle")
+            }><button
             type="button"
             className="composer-queue-action composer-input-header-action"
             aria-label={
@@ -764,13 +842,6 @@ function ComposerQueueItem({
                   ? t("composer.convertToQueue", { position })
                   : t("composer.convertToGuide", { position })
             }
-            title={
-              message.held
-                ? t("composer.continueHeldTitle")
-                : kind === "guide"
-                  ? t("composer.convertToQueueTitle")
-                  : t("composer.convertToGuideTitle")
-            }
             onClick={onGuide}
             disabled={dispatchDisabled || message.deliveryUnconfirmed}
           >
@@ -779,18 +850,17 @@ function ComposerQueueItem({
             ) : (
               <CornerDownRight className="icon-sm" aria-hidden="true" />
             )}
-          </button>
+          </button></Tooltip>
         ) : null}
-        <button
+        <Tooltip asChild content={t("common.remove")}><button
           type="button"
           className="composer-queue-action composer-input-header-action danger"
           aria-label={t("composer.removeQueuedMessage", { position })}
-          title={t("common.remove")}
           onClick={onRemove}
           disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
-        </button>
+        </button></Tooltip>
       </div>
     </li>
   );

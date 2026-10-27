@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "feishu-workspace",
+  "name": "Feishu Workspace",
+  "description": "Optional Feishu web workspace and official document API tools. Browser login and API authorization are separate.",
+  "icon": {
+    "light": "icon-light.svg",
+    "dark": "icon-dark.svg"
+  },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 30
+  },
+  "desktop": {
+    "entry": "desktop.js"
+  },
+  "contributes": {
+    "navigation": [
+      {
+        "id": "feishu-entry",
+        "view": "feishu.web",
+        "title": "Feishu / 飞书",
+        "icon": {
+          "light": "icon-light.svg",
+          "dark": "icon-dark.svg"
+        },
+        "order": 80
+      }
+    ],
+    "settings": {
+      "workspace-url": {
+        "type": "string",
+        "title": "Feishu workspace URL / 飞书工作区网址",
+        "description": "HTTPS Feishu page opened by the ribbon. Web login works independently of API setup. / 侧栏打开的飞书网页；网页登录与 API 授权相互独立。",
+        "default": "https://www.feishu.cn/drive/home/",
+        "scope": "user",
+        "apply": "restart"
+      },
+      "token-kind": {
+        "type": "enum",
+        "title": "API identity / API 身份",
+        "description": "user: user_access_token enables document search. tenant: tenant_access_token supports authorized docx reads/writes only. / user 支持搜索；tenant 仅支持有权限的新版文档读写。",
+        "default": "user",
+        "enum": [
+          "user",
+          "tenant"
+        ],
+        "scope": "user",
+        "apply": "live"
+      },
+      "access-token": {
+        "type": "secret",
+        "title": "Feishu access token / 飞书访问令牌",
+        "description": "Stored by the OS credential service; sent only to open.feishu.cn. Supply an authorized user_access_token or tenant_access_token matching API identity. Replace it when expired; no automatic OAuth refresh. Never enter an App Secret here. / 由系统凭据服务保存，仅发送到 open.feishu.cn；令牌过期后需替换。请勿填写 App Secret。",
+        "default": "",
+        "scope": "user",
+        "apply": "live",
+        "credential_origins": [
+          "https://open.feishu.cn"
+        ]
+      }
+    }
+  },
+  "interface": {
+    "displayName": "Feishu Workspace",
+    "shortDescription": "Feishu web page and explicit document search, read, create and edit tools.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

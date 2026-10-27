@@ -143,7 +143,19 @@ func NormalizeFailure(err error) NormalizedFailure {
 	return failure
 }
 
+// FailureEvidence preserves classification across transport boundaries without
+// making a driver reconstruct provider-specific error strings.
+type FailureEvidence interface {
+	FailureEvidence() NormalizedFailure
+}
+
 func normalizeFailure(err error) NormalizedFailure {
+	var evidence FailureEvidence
+	if errors.As(err, &evidence) {
+		failure := evidence.FailureEvidence()
+		failure.Cause = err
+		return failure
+	}
 	failure := NormalizedFailure{
 		Origin:                   FailureOriginProtocol,
 		Category:                 FailureUnknown,

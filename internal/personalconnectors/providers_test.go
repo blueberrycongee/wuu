@@ -172,7 +172,7 @@ func TestNotionBrokerAppendAndReadbackEndToEnd(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(data)), Header: http.Header{}}, nil
 			})}
-			b := New(Options{Store: store, HTTPClient: client, Authorization: func(context.Context, Actor) (string, error) { return "host-turn-1", nil }})
+			b := newTestBroker(Options{Store: store, HTTPClient: client, Authorization: func(context.Context, Actor) (string, error) { return "host-turn-1", nil }})
 			defer b.Close()
 			err := b.RegisterVerified(ctx, a, Grant{Connection: Connection{ID: "notion", Provider: "notion", AccountID: "bot", Domain: "personal", Scopes: []string{"read_content", "insert_content"}, Resources: []string{"0123456789abcdef0123456789abcdef"}}, AccessToken: "synthetic", ExpiresAt: time.Now().Add(time.Hour)})
 			if err != nil {
@@ -205,7 +205,7 @@ func TestDrivePDFTransportAndSelectionEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	a := Actor{"personal", "space", "session"}
 	calls := 0
-	b := New(Options{Store: &memoryStore{values: map[string][]byte{}}, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{Store: &memoryStore{values: map[string][]byte{}}, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.URL.Query().Get("alt") != "media" {
 			t.Fatal("not media endpoint")

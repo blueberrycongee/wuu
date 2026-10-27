@@ -40,12 +40,15 @@ func (e *Engine) Host() *Host {
 
 // Descriptor describes the codex engine.
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
+	requiresHostModel := false
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineID("codex"),
-		Version: "1",
+		ID:                agentengine.EngineID("codex"),
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"default-permission-unconfined",
 			"active-turn-steering",
 			"approval-requests",
 			"user-input-requests",
@@ -1006,7 +1009,6 @@ func (sub *turnSubscription) next() (turnNotification, error) {
 		sub.mu.Lock()
 		err := sub.streamErr
 		ready := sub.turnID != ""
-		sub.mu.Unlock()
 		if ready && clientDone == nil && sub.client != nil {
 			clientDone = sub.client.done
 		}
@@ -1016,8 +1018,11 @@ func (sub *turnSubscription) next() (turnNotification, error) {
 		}
 		// Drain accepted notifications before a transport-close signal. A native
 		// process can exit immediately after writing its successful terminal.
+		// Keep this poll and the error/terminal decision atomic with enqueue so
+		// a terminal cannot overtake output accepted after an empty-queue poll.
 		select {
 		case event, ok := <-events:
+			sub.mu.Unlock()
 			if !ok {
 				if err != nil {
 					return turnNotification{}, err
@@ -1030,9 +1035,9 @@ func (sub *turnSubscription) next() (turnNotification, error) {
 		// A failed/invalid start response can race output already accepted by
 		// the reader. Drain that bound output before reporting its failure.
 		if err != nil {
+			sub.mu.Unlock()
 			return turnNotification{}, err
 		}
-		sub.mu.Lock()
 		var terminal *turnNotification
 		if ready {
 			terminal = sub.terminal

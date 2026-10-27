@@ -12,6 +12,7 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 export default {
   initialize() {
     return {
+      protocol_version: 3,
       tools: [{
         id: "greet",
         description: "Return a friendly greeting",
@@ -32,7 +33,7 @@ export default {
 wuu plugin dev ./hello.ts
 ```
 
-此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不调用 `initialize`，再发布独立快照的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束后，会话在下一次空闲轮次边界接入更新。实际宿主随后提供读取阶段服务并初始化候选。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
+此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不调用 `initialize`，再发布独立快照的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束且宿主完成准备与激活后，会话才能在空闲轮次边界接入更新。实际宿主随后通过 `initialize` 收集候选的声明，再调用 `prepare`，通过所选服务验证状态。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
 
 请使用普通 `.ts` 文件，不支持符号链接。单文件路径仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。其他本地文件、npm 依赖、JSX 或自定义 `tsconfig` 转换需要下方的插件包流程。直接执行 TypeScript 不进行类型检查。stdout 保留给协议，诊断信息使用 `console.error`。导入模块会执行顶层代码，验证期间也一样。开发授权表示信任这个来源，不会沙箱化代码，也不代表已批准分发包。
 
@@ -45,9 +46,9 @@ wuu plugin dev ./hello.ts
 1. 用 `write_file` 将 `hello.ts` 保存到会话工作区。
 2. 发现 `plugin_manager` 后，调用 `{"action":"apply","path":"./hello.ts"}`，也可以传入插件目录。Apply 与 `wuu plugin dev --watch=false` 一样只发布一次，不启动监听器。
 3. 检查结果，然后结束当前轮次。该轮次的工具定义仍绑定旧 generation。
-4. 在下一次空闲轮次中发现并调用新的问候工具。用 `{"action":"status"}` 或带准确 `id` 的 status 比较已发布状态与当前会话的 generation。确认实际工具结果后，才能判断它可用。
+4. 宿主激活已发布的 generation 后，在空闲轮次中发现并调用新的问候工具。用 `{"action":"status"}` 或带准确 `id` 的 status 比较已发布状态与当前会话的 generation。确认实际工具结果后，才能判断它可用。
 
-当前会话接入更新前，未完成的会话工作者和受管进程必须先结束。不要让当前轮次持有持续运行的 `wuu plugin dev` 监听器；请使用上面的一次性 apply 流程。
+新增可选插件可能仍在准备，其他轮次则继续运行。发布本身不代表工具已可用；app-server 客户端可按照 [generation 契约](plugin-system.md#运行时-generation)，等待同一服务器已提交清单中的准确指纹。当前会话接入更新前，未完成的会话工作者和受管进程必须先结束。不要让当前轮次持有持续运行的 `wuu plugin dev` 监听器；请使用上面的一次性 apply 流程。
 
 Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证或导入之前，必须使用 `unconfined` 会话，或在 `standard` 模式下由已启用并配置的权限审核器返回允许决定。只读模式拒绝变更。工作区写入权限本身不授权宿主代码执行。可执行程序和插件存储由宿主选择；该工具不授予对 `$WUU_HOME` 的通用文件系统访问权限。不支持远程执行环境中的源码路径。
 
@@ -176,7 +177,7 @@ WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
 第一条命令通过 JSONL 驱动实际分发的插件可执行文件，使用一次性宿主服务，
 覆盖工具、持久状态、后台任务、取消和关闭。协议记录、运行时哈希和结果保存到
 `.tmp/e2e/bundled-plugins/`。第二条通过本地合成模型端点驱动真实 Go app-server，
-验证运行中轮次内发布、下一轮采用、保留最后可用版本，以及禁用清理，无需模型
+验证运行中轮次内发布、同一服务器就绪后采用、保留最后可用版本，以及禁用清理，无需模型
 账号。两条命令都不检查桌面贡献的实际渲染。
 
 ## 分发插件包
@@ -184,10 +185,9 @@ WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
 ```bash
 wuu plugin pack .
 wuu plugin install ./hello-plugin-0.1.0.zip
-wuu plugin approve hello-plugin
 ```
 
-当前 CLI 会先暂存本地包，再由批准操作启用代码执行。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
+安装本地包即确认信任并启用代码执行。同一已记录来源的更新继承信任；来源改变需要确认。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
 
 持久状态、服务和生命周期回调见[编写插件](plugin-authoring.md)。如果要添加界面而非模型工具，请使用[桌面插件快速上手](desktop-plugin-quickstart.md)。
 

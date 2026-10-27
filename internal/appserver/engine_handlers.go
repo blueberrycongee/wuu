@@ -3,53 +3,25 @@ package appserver
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
-	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/externalengine"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
-
-const (
-	engineModelCatalogTTL       = 2 * time.Minute
-	engineModelDiscoveryTimeout = 30 * time.Second
-)
-
-type engineModelCatalogCacheEntry struct {
-	gate       chan struct{}
-	key        [32]byte
-	completed  time.Time
-	err        error
-	status     string
-	binaryPath string
-	models     []EngineModelInfo
-	modes      []EnginePermissionModeInfo
-	expiresAt  time.Time
-}
-
-func (e *engineModelCatalogCacheEntry) load(binaryPath string, now time.Time) ([]EngineModelInfo, bool) {
-	models, _, ok := e.loadCatalog(binaryPath, now)
-	return models, ok
-}
-
-func (e *engineModelCatalogCacheEntry) loadCatalog(binaryPath string, now time.Time) ([]EngineModelInfo, []EnginePermissionModeInfo, bool) {
-	if e == nil || e.binaryPath != binaryPath || !now.Before(e.expiresAt) {
-		return nil, nil, false
-	}
-	return cloneEngineModels(e.models), cloneEnginePermissionModes(e.modes), true
-}
 
 // handleEngineList reports the engine inventory and the persisted engine
 // settings for the settings UI.
 func (s *Server) handleEngineList(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		IncludeQuota  bool   `json:"include_quota"`
 		RefreshModels bool   `json:"refresh_models"`
@@ -71,10 +43,10 @@ func (s *Server) handleEngineList(req Request) error {
 		if err := s.rt.RefreshEngineSettings(); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		s.retainCodexHost()
+		s.releaseEngineScopes()
 	}
 	result := EngineListResult{
-		Engines:  s.engineInventoryAt(firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
+		Engines:  s.engineInventoryForState(binding, firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
@@ -82,8 +54,8 @@ func (s *Server) handleEngineList(req Request) error {
 		// Historical statistics belong to the opt-in dashboard request, not
 		// navigation or the composer inventory. Copy providers before enriching
 		// them so cached configuration summaries remain history-free.
-		s.attachSubscriptionActivity(result.Engines, result.SubscriptionProviders)
-		s.attachSubscriptionQuotas(result.Engines, result.SubscriptionProviders)
+		s.attachSubscriptionActivity(binding, result.Engines, result.SubscriptionProviders)
+		s.attachSubscriptionQuotasForState(binding, result.Engines, result.SubscriptionProviders)
 	}
 	return s.writeResponse(req.ID, result, nil)
 }
@@ -101,7 +73,7 @@ func (s *Server) handleEngineUpdate(req Request) error {
 	if err := s.rt.UpdateEngineSettings(params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.retainCodexHost()
+	s.releaseEngineScopes()
 	return s.writeResponse(req.ID, EngineListResult{
 		Engines:  s.engineInventory(),
 		Settings: s.engineSettingsFromConfig(),
@@ -122,117 +94,52 @@ func (s *Server) engineInventoryWithRefresh(refreshModels bool) []EngineInfo {
 }
 
 func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo {
-	var out []EngineInfo
-	// Built-in engine is always present.
-	out = append(out, EngineInfo{
-		ID:       string(agentengine.EngineWuu),
-		Version:  "1",
-		Enabled:  true,
-		BinaryOK: true,
-	})
-	descriptors := make(map[agentengine.EngineID]agentengine.Descriptor)
-	if s.rt.Engines() != nil {
-		for _, desc := range s.rt.Engines().Descriptors() {
-			descriptors[desc.ID] = desc
-		}
+	if s.rt == nil {
+		return nil
 	}
-	settings := s.engineSettingsFromConfig()
-	type acpProbe struct {
-		index int
-		entry enginecatalog.Entry
-		path  string
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil
 	}
-	var probes []acpProbe
-	claudeIndex := -1
-	for _, entry := range enginecatalog.Entries() {
-		id := agentengine.EngineID(entry.ID)
-		desc := descriptors[id]
-		info := EngineInfo{
-			ID:           string(id),
-			DisplayName:  entry.Name,
-			Protocol:     entry.Protocol,
-			InstallURL:   entry.InstallURL,
-			UpdateURL:    entry.UpdateURL,
-			Version:      desc.Version,
-			Capabilities: append([]string(nil), desc.Capabilities...),
-			Enabled:      s.rt.EngineAvailable(id),
-		}
-		if id == "claude" || id == "grok" {
-			info.Capabilities = append(info.Capabilities, "account-quota")
-		}
-		switch id {
-		case "codex":
-			path, err := s.codexBinaryPath()
-			info.BinaryPath = path
-			info.BinaryOK, info.Error = binaryStatus(path, err)
-			if info.Enabled && info.BinaryOK {
-				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
-			}
-		case "claude":
-			path, err := s.claudeBinaryPath()
-			info.BinaryPath = path
-			info.BinaryOK, info.Error = binaryStatus(path, err)
-			if info.Enabled && info.BinaryOK {
-				claudeIndex = len(out)
-			}
-		default:
-			override := ""
-			if setting := settings.Binary(entry.ID); setting != nil {
-				override = setting.BinaryPath
-			}
-			path, err := entry.Resolve(override)
-			info.BinaryPath = path
-			info.BinaryOK, info.Error = binaryStatus(path, err)
-			info.PermissionModes = hostPermissionModes(entry.Protocol)
-			if info.Enabled && info.BinaryOK {
-				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
-			}
-		}
-		out = append(out, info)
-	}
+	defer binding.Close()
+	return s.engineInventoryForState(binding, root, refreshModels)
+}
+
+func (s *Server) engineInventoryForState(binding *runtime.State, root string, refreshModels bool) []EngineInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	descriptors := binding.EngineDescriptors(ctx)
+	out := make([]EngineInfo, len(descriptors))
 	var wg sync.WaitGroup
-	for index := range out {
-		if !out[index].BinaryOK || (out[index].ID != "codex" && out[index].ID != "claude") {
-			continue
-		}
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			out[index].CLIVersion = enginecatalog.ObserveVersion(context.Background(), out[index].ID, out[index].BinaryPath)
-		}(index)
-	}
-	if claudeIndex >= 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			info := &out[claudeIndex]
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	for i, descriptor := range descriptors {
+		wg.Go(func() {
+			info := EngineInfo{ID: string(descriptor.ID), Version: descriptor.Version, Capabilities: append([]string(nil), descriptor.Capabilities...), RequiresHostModel: descriptor.RequiresHostModel, Enabled: true}
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			models, err := s.claudeEngineModelCatalog.List(ctx, info.BinaryPath, root, refreshModels)
-			info.Models = claudeEngineModels(models)
-			info.ModelsStatus = enginecatalog.CatalogStatus(len(models), err)
-			if err != nil && len(models) > 0 {
-				info.ModelsStatus = "stale"
+			var description pluginprotocol.EngineDescription
+			if err := binding.CallEngine(ctx, descriptor.ID, "describe", struct{}{}, &description); err != nil {
+				info.Error = err.Error()
+			} else {
+				info.DisplayName, info.Protocol, info.InstallURL, info.UpdateURL = description.DisplayName, description.Protocol, description.InstallURL, description.UpdateURL
+				info.CLIVersion, info.BinaryPath, info.BinaryOK, info.Error = description.CLIVersion, description.BinaryPath, description.BinaryOK, description.Error
+				info.PermissionModes = description.PermissionModes
+				if description.Enabled != nil {
+					info.Enabled = *description.Enabled
+				}
 			}
-			if err != nil && !errors.Is(err, enginecatalog.ErrCatalogUnsupported) {
-				info.ModelsError = err.Error()
+			if info.Enabled && info.BinaryOK {
+				var models pluginprotocol.EngineModelsResult
+				if err := binding.CallEngine(ctx, descriptor.ID, "models", pluginprotocol.EngineModelsRequest{CWD: root, Refresh: refreshModels}, &models); err != nil {
+					info.ModelsStatus, info.ModelsError = "error", err.Error()
+				} else {
+					info.Models, info.ModelsStatus, info.ModelsError = models.Models, models.Status, models.Error
+					if len(models.PermissionModes) > 0 {
+						info.PermissionModes = models.PermissionModes
+					}
+				}
 			}
-		}()
-	}
-	for _, probe := range probes {
-		wg.Add(1)
-		go func(probe acpProbe) {
-			defer wg.Done()
-			models, modes, status, err := s.cachedEngineCatalog(probe.entry, probe.path, root, refreshModels)
-			out[probe.index].ModelsStatus = status
-			if err != nil && !errors.Is(err, enginecatalog.ErrCatalogUnsupported) {
-				out[probe.index].ModelsError = err.Error()
-			}
-			out[probe.index].Models = models
-			if len(modes) > 0 {
-				out[probe.index].PermissionModes = modes
-			}
-		}(probe)
+			out[i] = info
+		})
 	}
 	wg.Wait()
 	return out
@@ -242,13 +149,13 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 // read failure leaves the fields empty:
 // the inventory itself is still usable, and the dashboard says the request is
 // unknown rather than inventing a status.
-func (s *Server) attachSubscriptionActivity(engines []EngineInfo, providers []ProviderSummary) {
+func (s *Server) attachSubscriptionActivity(binding *runtime.State, engines []EngineInfo, providers []ProviderSummary) {
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return
 	}
 	keys := make([]session.SubscriptionActivityKey, 0, len(engines))
 	for _, engine := range engines {
-		if engine.ID == "" || engine.ID == string(agentengine.EngineWuu) {
+		if engine.ID == "" {
 			continue
 		}
 		keys = append(keys, session.SubscriptionActivityKey{EngineID: engine.ID})
@@ -259,7 +166,7 @@ func (s *Server) attachSubscriptionActivity(engines []EngineInfo, providers []Pr
 	if len(keys) == 0 {
 		return
 	}
-	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
+	activity, err := binding.Sessions.LatestSubscriptionActivity(keys)
 	if err != nil {
 		return
 	}
@@ -300,294 +207,14 @@ func engineLatestRequest(record session.SubscriptionActivity) *EngineLatestReque
 	return latest
 }
 
-// cachedEngineCatalog serializes probes for an engine and rechecks native
-// configuration before publishing. Failed refreshes retain only same-context
-// results, accompanied by the error; successful empty responses replace them.
-func (s *Server) cachedEngineCatalog(entry enginecatalog.Entry, binary, root string, force bool) ([]EngineModelInfo, []EnginePermissionModeInfo, string, error) {
-	requested := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), engineModelDiscoveryTimeout)
-	defer cancel()
-	s.engineModelCatalogMu.Lock()
-	if s.engineModelCatalogCache == nil {
-		s.engineModelCatalogCache = make(map[string]*engineModelCatalogCacheEntry)
-	}
-	cache := s.engineModelCatalogCache[entry.ID]
-	if cache == nil {
-		cache = &engineModelCatalogCacheEntry{gate: make(chan struct{}, 1)}
-		s.engineModelCatalogCache[entry.ID] = cache
-	}
-	s.engineModelCatalogMu.Unlock()
-	select {
-	case cache.gate <- struct{}{}:
-		defer func() { <-cache.gate }()
-	case <-ctx.Done():
-		return nil, nil, "error", ctx.Err()
-	}
-	key, err := enginecatalog.DiscoveryContext(entry.ID, binary, root)
-	if err != nil {
-		cache.models, cache.modes, cache.completed, cache.expiresAt = nil, nil, time.Time{}, time.Time{}
-		cache.status, cache.err = "", nil
-		return nil, nil, "error", err
-	}
-	if key != cache.key {
-		cache.key, cache.binaryPath = key, binary
-		cache.models, cache.modes, cache.completed, cache.err = nil, nil, time.Time{}, nil
-		cache.expiresAt = time.Time{}
-		cache.status = ""
-	}
-	if cache.completed.After(requested) || !force && time.Now().Before(cache.expiresAt) {
-		models, modes, _ := cache.loadCatalog(binary, cache.completed)
-		return models, modes, cache.status, cache.err
-	}
-	var models []EngineModelInfo
-	var modes []EnginePermissionModeInfo
-	var discoverErr error
-	if entry.Protocol == "codex" {
-		// Discovery uses a short-lived host in the session directory so a live
-		// conversation cannot keep an obsolete account/configuration snapshot.
-		discovered, err := codexengine.NewHost(binary, root).ListModels(ctx)
-		models, discoverErr = codexEngineModels(discovered), err
-	} else {
-		discovered, err := externalengine.New(entry, binary, root).DiscoverCatalog(ctx)
-		models, modes, discoverErr = acpEngineModels(discovered.Models), acpEnginePermissionModes(discovered.Modes), err
-	}
-	current, err := enginecatalog.DiscoveryContext(entry.ID, binary, root)
-	if err != nil || current != key {
-		cache.models, cache.modes, cache.completed, cache.expiresAt = nil, nil, time.Time{}, time.Time{}
-		cache.status, cache.err = "", nil
-		if err != nil {
-			return nil, nil, "error", err
-		}
-		return nil, nil, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
-	}
-	cache.completed, cache.err = time.Now(), discoverErr
-	previousStatus := cache.status
-	cache.status = enginecatalog.CatalogStatus(len(models), discoverErr)
-	ttl := engineModelCatalogTTL
-	if discoverErr == nil || errors.Is(discoverErr, enginecatalog.ErrCatalogUnsupported) {
-		cache.models, cache.modes = models, modes
-	} else {
-		ttl = 5 * time.Second
-		if previousStatus == "ready" || previousStatus == "empty" || previousStatus == "stale" {
-			cache.status = "stale"
-		} else {
-			cache.models, cache.modes = models, modes
-			if len(models) > 0 {
-				cache.status = "partial"
-			}
-		}
-	}
-	cache.expiresAt = cache.completed.Add(ttl)
-	return cloneEngineModels(cache.models), cloneEnginePermissionModes(cache.modes), cache.status, cache.err
-}
-
-func (s *Server) invalidateACPEngineModelCatalog(engineID string) {
-	s.engineModelCatalogMu.Lock()
-	defer s.engineModelCatalogMu.Unlock()
-	delete(s.engineModelCatalogCache, engineID)
-}
-
-func hostPermissionModes(protocol string) []EnginePermissionModeInfo {
-	switch protocol {
-	case "acp", "opencode":
-		return []EnginePermissionModeInfo{{Mode: "standard"}, {Mode: "unconfined"}}
-	default:
-		return nil
-	}
-}
-
-func acpEnginePermissionModes(modes []externalengine.HostPermissionMode) []EnginePermissionModeInfo {
-	out := make([]EnginePermissionModeInfo, 0, len(modes))
-	for _, mode := range modes {
-		id := strings.TrimSpace(mode.Mode)
-		if id == "" {
-			continue
-		}
-		out = append(out, EnginePermissionModeInfo{
-			Mode:  id,
-			ID:    strings.TrimSpace(mode.ID),
-			Label: strings.TrimSpace(mode.Label),
-		})
-	}
-	return out
-}
-
-func cloneEnginePermissionModes(modes []EnginePermissionModeInfo) []EnginePermissionModeInfo {
-	if modes == nil {
-		return nil
-	}
-	cloned := make([]EnginePermissionModeInfo, len(modes))
-	copy(cloned, modes)
-	return cloned
-}
-
-func acpEngineModels(models []externalengine.DiscoveredModel) []EngineModelInfo {
-	out := make([]EngineModelInfo, 0, len(models))
-	for _, model := range models {
-		id := strings.TrimSpace(model.ID)
-		if id == "" {
-			continue
-		}
-		out = append(out, EngineModelInfo{
-			ID:               id,
-			DisplayName:      strings.TrimSpace(model.DisplayName),
-			DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
-			SupportedEfforts: append([]string(nil), model.SupportedEfforts...),
-			IsDefault:        model.IsDefault,
-			FastMode:         model.FastMode,
-			DefaultSpeed:     model.DefaultSpeed,
-			Options:          enginecatalog.CloneModelOptions(model.Options),
-		})
-	}
-	return out
-}
-
-func cloneEngineModels(models []EngineModelInfo) []EngineModelInfo {
-	if models == nil {
-		return nil
-	}
-	cloned := make([]EngineModelInfo, len(models))
-	for i, model := range models {
-		cloned[i] = model
-		cloned[i].Options = enginecatalog.CloneModelOptions(model.Options)
-		cloned[i].SupportedEfforts = append([]string(nil), model.SupportedEfforts...)
-	}
-	return cloned
-}
-
-func codexEngineModels(models []codexengine.ModelListItem) []EngineModelInfo {
-	out := make([]EngineModelInfo, 0, len(models))
-	for _, model := range models {
-		id := strings.TrimSpace(model.Model)
-		if id == "" {
-			id = strings.TrimSpace(model.ID)
-		}
-		if id == "" {
-			continue
-		}
-		efforts := make([]string, 0, len(model.SupportedReasoningEfforts))
-		for _, effort := range model.SupportedReasoningEfforts {
-			if value := strings.TrimSpace(string(effort.ReasoningEffort)); value != "" {
-				efforts = append(efforts, value)
-			}
-		}
-		fast := false
-		for _, tier := range model.ServiceTiers {
-			if tier.ID == "fast" || tier.ID == "priority" {
-				fast = true
-			}
-		}
-		if len(model.ServiceTiers) == 0 {
-			for _, tier := range model.AdditionalSpeedTiers {
-				if tier == "fast" {
-					fast = true
-				}
-			}
-		}
-		defaultSpeed := "standard"
-		if model.DefaultServiceTier == "fast" || model.DefaultServiceTier == "priority" {
-			defaultSpeed = "fast"
-		}
-		out = append(out, EngineModelInfo{
-			FastMode: fast, DefaultSpeed: defaultSpeed,
-			ID:               id,
-			DisplayName:      strings.TrimSpace(model.DisplayName),
-			DefaultEffort:    strings.TrimSpace(string(model.DefaultReasoningEffort)),
-			SupportedEfforts: efforts,
-			IsDefault:        model.IsDefault,
-		})
-	}
-	return out
-}
-
-func claudeEngineModels(models []claudeengine.ModelInfo) []EngineModelInfo {
-	out := make([]EngineModelInfo, 0, len(models))
-	for _, model := range models {
-		name := strings.TrimSpace(model.DisplayName)
-		if name == "" || name == model.ResolvedModel {
-			name = model.Value
-		}
-		if model.ResolvedModel != "" && !strings.Contains(name, model.ResolvedModel) {
-			name += " · " + model.ResolvedModel
-		}
-		out = append(out, EngineModelInfo{
-			ID: model.Value, DisplayName: name, ResolvedModel: model.ResolvedModel,
-			SupportedEfforts: append([]string(nil), model.SupportedEffortLevels...),
-			FastMode:         model.SupportsFastMode,
-		})
-	}
-	return out
-}
-
-// claudeBinaryPath resolves the claude binary: a settings override, otherwise
-// the shared lookup (env override, PATH, and desktop install locations).
-func (s *Server) claudeBinaryPath() (string, error) {
-	if cfg := s.engineSettingsFromConfig(); cfg != nil && cfg.Claude != nil {
-		if path := strings.TrimSpace(cfg.Claude.BinaryPath); path != "" {
-			return path, nil
-		}
-	}
-	return claudeengine.ResolveBinary()
-}
-
 // engineSettingsFromConfig returns the persisted engine settings section.
 func (s *Server) engineSettingsFromConfig() *config.EnginesConfig {
 	if s.rt == nil {
 		return nil
 	}
 	cfg, _, err := s.rt.LoadEffectiveConfig()
-	if err != nil || cfg.Engines == nil {
+	if err != nil {
 		return nil
 	}
 	return cfg.Engines
-}
-
-// codexBinaryPath resolves the codex binary: a settings override, otherwise
-// the shared lookup (env override, PATH, and desktop install locations).
-func (s *Server) codexBinaryPath() (string, error) {
-	if cfg := s.engineSettingsFromConfig(); cfg != nil && cfg.Codex != nil {
-		if path := strings.TrimSpace(cfg.Codex.BinaryPath); path != "" {
-			return path, nil
-		}
-	}
-	return codexengine.ResolveBinary()
-}
-
-// binaryStatus reports whether a resolved binary path exists and is
-// executable, or whether the resolution failed.
-func binaryStatus(path string, resolveErr error) (bool, string) {
-	if resolveErr != nil {
-		return false, resolveErr.Error()
-	}
-	if strings.TrimSpace(path) == "" {
-		return false, "no binary path resolved"
-	}
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
-		return false, "binary not found at " + path
-	}
-	if !filepath.IsAbs(path) {
-		return false, "binary path is not absolute: " + path
-	}
-	return true, ""
-}
-
-// retainCodexHost owns the server lifetime, independently of turn leases. A
-// settings replacement releases this server's old owner without stopping turns
-// or another Server that still uses that host.
-func (s *Server) retainCodexHost() {
-	s.engineHostMu.Lock()
-	host := s.rt.CodexHost()
-	if s.closed.Load() || s.codexHost == host {
-		s.engineHostMu.Unlock()
-		return
-	}
-	release := s.codexHostRelease
-	s.codexHost, s.codexHostRelease = host, nil
-	if host != nil {
-		s.codexHostRelease = host.Retain()
-	}
-	s.engineHostMu.Unlock()
-	if release != nil {
-		release()
-	}
 }

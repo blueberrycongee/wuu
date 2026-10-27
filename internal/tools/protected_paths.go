@@ -112,13 +112,16 @@ func (e *Env) confineProtectedCommand(ctx context.Context, cmd *exec.Cmd) error 
 }
 
 func (e *Env) workspaceRevision(ctx context.Context, root string) string {
-	if e == nil || len(e.ProtectedPaths) == 0 {
-		return workspaceRevision(ctx, root)
+	if e == nil {
+		return workspaceRevision(ctx, root, "")
+	}
+	if len(e.ProtectedPaths) == 0 {
+		return workspaceRevision(ctx, root, e.RuntimeHome)
 	}
 	if e.rejectProtectedPath(root, false) != nil {
 		return ""
 	}
 	// Git can invoke external helpers and read global configuration. A guarded
 	// in-process digest avoids both subprocess escape and cross-domain telemetry.
-	return filesystemRevisionFallback(e.withProtectedPaths(ctx), root)
+	return filesystemRevisionFallback(e.withProtectedPaths(ctx), root, e.RuntimeHome)
 }

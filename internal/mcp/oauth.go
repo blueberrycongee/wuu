@@ -82,6 +82,7 @@ type authorizationServerMetadata struct {
 }
 
 type pendingOAuth struct {
+	Exchanging      bool
 	LoginGeneration string
 	State           string
 	Verifier        string
@@ -236,13 +237,22 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 	key := strings.TrimSpace(options.ServerID)
 	m.mu.Lock()
 	pending, ok := m.pending[key]
-	if ok && pending.State == options.State {
-		delete(m.pending, key)
+	accepted := ok && pending.State == options.State && !pending.Exchanging
+	if accepted {
+		pending.Exchanging = true
+		m.pending[key] = pending
 	}
 	m.mu.Unlock()
-	if !ok || pending.State != options.State {
+	if !accepted {
 		return OAuthStatus{}, errors.New("invalid or expired OAuth state")
 	}
+	defer func() {
+		m.mu.Lock()
+		if m.pending[key].State == options.State {
+			delete(m.pending, key)
+		}
+		m.mu.Unlock()
+	}()
 	if !sameOAuthResource(pending.ResourceURL, options.ResourceURL) {
 		return OAuthStatus{}, ErrOAuthResourceMismatch
 	}
@@ -298,6 +308,38 @@ func (m *OAuthManager) Status(ctx context.Context, serverID, resourceURL string)
 		return OAuthStatus{}, err
 	}
 	return oauthStatus(serverID, token), nil
+}
+
+// Cancel invalidates this attempt without signing out an existing account.
+// The generation fence also rejects a token exchange already in flight.
+func (m *OAuthManager) Cancel(ctx context.Context, serverID, state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending, exists := m.pending[serverID]
+	if !exists || state == "" || pending.State != state {
+		return nil
+	}
+	generation, err := randomURLToken(32)
+	if err != nil {
+		return err
+	}
+	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+		var token storedOAuthToken
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &token); err != nil {
+				return nil, err
+			}
+		}
+		if token.LoginGeneration != pending.LoginGeneration {
+			return data, nil
+		}
+		token.LoginGeneration = generation
+		return json.Marshal(token)
+	})
+	if err == nil {
+		delete(m.pending, serverID)
+	}
+	return err
 }
 
 // AccessToken returns a credential only for the resource used during login.

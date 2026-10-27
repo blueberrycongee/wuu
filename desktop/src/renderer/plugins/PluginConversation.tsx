@@ -1,3 +1,4 @@
+import { usePluginConversationLifetime } from "./PluginConversationScope";
 import { InteractiveAnswer } from "./personal-genui/InteractiveAnswer";
 import { ConversationReaction } from "./ConversationReaction";
 import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentPreview";
@@ -5,7 +6,7 @@ import * as React from "react";
 import { Component, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PluginUIConversationAttachmentProps, PluginUIConversationComposerProps, PluginUIConversationMessageProps, PluginUIConversationViewProps } from "../../shared/workbench";
 import { SplitPaneComposer } from "../ComposerInputSections";
-import { FileSelectionProvider } from "../FileSelectionContext";
+import { FileSelectionIsolation } from "../FileSelectionContext";
 import { ArtifactThreadContext } from "../ArtifactPreviewContext";
 import { SideConversationAvailableContext } from "../ResponseSelection";
 import { ThreadItemView } from "../ThreadItemView";
@@ -124,15 +125,17 @@ export function PluginConversationView({ presentation = "standard", conversation
 }
 
 function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId: string; scope: NonNullable<PluginUIConversationViewProps["sessionScope"]>; onReply?: PluginUIConversationViewProps["onQuestionReply"] }): JSX.Element | null {
+  const lifetime = usePluginConversationLifetime();
   const [questions, setQuestions] = useState<UserQuestionRequest[]>([]);
   const [error, setError] = useState("");
-  const context = useMemo<RuntimeContext>(() => ({ kind: "user", user_space_id: scope.userSpaceId, product_domain: scope.productDomain, cwd: "" }), [scope.userSpaceId, scope.productDomain]);
+  const context = useMemo<RuntimeContext>(() => ({ kind: "user", user_space_id: scope.userSpaceId, product_domain: scope.productDomain, ...(scope.compositionProfile ? { composition_profile: scope.compositionProfile } : {}), cwd: "" }), [scope.userSpaceId, scope.productDomain, scope.compositionProfile]);
   const resolved = useRef(new Set<string>());
   useEffect(() => {
+    if (lifetime?.aborted) return;
     let current = true, readVersion = 0;
     setQuestions([]); setError(""); resolved.current.clear();
     const read = async () => {
-      if (typeof window.wuu?.listUserQuestions !== "function") return;
+      if (!current || lifetime?.aborted || typeof window.wuu?.listUserQuestions !== "function") return;
       const version = ++readVersion;
       try {
         // The host validates the user/domain route. Its question list includes
@@ -149,11 +152,14 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
       // bodies; re-read through the scoped host even for a foreign notification.
       if (["user-question/requested", "user-question/resolved"].includes(event.message.method)) void read();
     });
-    return () => { current = false; window.clearInterval(refreshTimer); off?.(); };
-  }, [sessionId, context]);
+    const cleanup = () => { current = false; window.clearInterval(refreshTimer); off?.(); };
+    lifetime?.addEventListener("abort", cleanup, { once: true });
+    return () => { cleanup(); lifetime?.removeEventListener("abort", cleanup); };
+  }, [sessionId, context, lifetime]);
   const remove = (id: string) => { resolved.current.add(id); setQuestions(items => items.filter(item => item.request_id !== id)); };
-  const cancel = async (id: string) => { const result = await window.wuu.cancelUserQuestion(id, context); if (!result.resolved) throw new Error("Question is no longer available; refresh the conversation"); remove(id); };
+  const cancel = async (id: string) => { lifetime?.throwIfAborted(); const result = await window.wuu.cancelUserQuestion(id, context); lifetime?.throwIfAborted(); if (!result.resolved) throw new Error("Question is no longer available; refresh the conversation"); remove(id); };
   const replyToOffer = async (question: UserQuestionRequest, prompt: string) => {
+    lifetime?.throwIfAborted();
     if (!onReply) throw new Error("This conversation cannot submit an offer reply");
     // Admit the reply before resolving the non-blocking offer. The question ID
     // lets the transport retry a lost acknowledgement without sending twice.
@@ -165,17 +171,20 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
     {error && <p role="alert">{error}</p>}
     {questions.map(question => <UserQuestionCard key={question.request_id} request={question}
       onAnswer={async answer => {
+        lifetime?.throwIfAborted();
         if (question.mode === "offer" && !question.reply_to_tool) {
           const prompt = question.questions.map(item => { const value = answer.answers.find(entry => entry.id === item.id); return `${item.question}\n${[...(value?.selected ?? []), ...(value?.custom?.trim() ? [value.custom.trim()] : [])].join(", ")}`; }).join("\n\n");
           await replyToOffer(question, prompt); return;
         }
-        const result = await window.wuu.answerUserQuestion(question.request_id, answer, context); if (!result.resolved) throw new Error("Question is no longer available; refresh the conversation"); remove(question.request_id);
+        const result = await window.wuu.answerUserQuestion(question.request_id, answer, context); lifetime?.throwIfAborted(); if (!result.resolved) throw new Error("Question is no longer available; refresh the conversation"); remove(question.request_id);
       }}
-      onHold={async () => { const result = await window.wuu.holdUserQuestion(question.request_id, context); if (result.resolved) { remove(question.request_id); return; } setQuestions(items => items.map(item => item.request_id === question.request_id ? { ...item, expires_at: undefined } : item)); }}
+      onHold={async () => { lifetime?.throwIfAborted(); const result = await window.wuu.holdUserQuestion(question.request_id, context); lifetime?.throwIfAborted(); if (result.resolved) { remove(question.request_id); return; } setQuestions(items => items.map(item => item.request_id === question.request_id ? { ...item, expires_at: undefined } : item)); }}
       onCustom={async text => {
+        lifetime?.throwIfAborted();
         if (!text?.trim()) return;
         if (!question.reply_to_tool) { await replyToOffer(question, text.trim()); return; }
         const result = await window.wuu.answerUserQuestion(question.request_id, { answers: [{ id: question.questions[0].id, selected: [], custom: text.trim() }] }, context);
+        lifetime?.throwIfAborted();
         if (!result.resolved) throw new Error("Question is no longer available; refresh the conversation"); remove(question.request_id);
       }}
       onCancel={() => cancel(question.request_id)} />)}
@@ -200,8 +209,8 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
   const processDisplay = processTurn ? buildAssistantTurnDisplay(processTurn, id) ?? { entries: [], hasAnswer: false } : undefined;
   const textMessageContent = processTurn && processDisplay ? <AssistantTurnShell turn={processTurn} display={processDisplay}
         processLabel={process!.label} processContent={process!.details} onStreamFrame={noop} actionableAgentMessageID={id} latestAgentMessageID={latest ? id : undefined}
-        messagePresentation={{ pluginHost: conversationHost, linkPolicy, messageActions }} trailingContent={inlineAttachments} /> : <ThreadItemView turnID={messageTurnId} turnStatus={turnStatus} turnStartedAt={timestamp}
-        turnAnswerReadyAt={streaming ? undefined : timestamp} streaming={streaming} onStreamFrame={noop} pluginHost={conversationHost}
+        messagePresentation={{ linkPolicy, messageActions }} trailingContent={inlineAttachments} /> : <ThreadItemView turnID={messageTurnId} turnStatus={turnStatus} turnStartedAt={timestamp}
+        turnAnswerReadyAt={streaming ? undefined : timestamp} streaming={streaming} onStreamFrame={noop}
         actionableAgentMessageID={role === "assistant" ? id : undefined} latestAgentMessageID={latest ? id : undefined}
         messageActions={messageActions} messageAttachments={inlineAttachments} linkPolicy={linkPolicy} item={item} />;
   const messageContent = interactive?.length ? <>{(content.trim() || process) && textMessageContent}{interactive.map((part, index) => <InteractiveAnswer key={index} {...part} fallback={part.fallbackText ?? content} />)}</> : textMessageContent;
@@ -364,12 +373,12 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
 export function PluginConversationComposer({ replyContext, conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
   const images = attachments.filter(file => ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(file.media_type)).map(file => ({ ...file }));
   const files = attachments.filter(file => !images.some(image => image.id === file.id)).map(file => ({ ...file }));
-  return <FileSelectionProvider disabled getPrompt={() => prompt} setPrompt={noop} onEdit={async () => false} onOpenFile={noop}>
+  return <FileSelectionIsolation>
     {replyContext && <div className="plugin-composer-reply-context" data-reply-context="" role="group" aria-label={replyContext.label}><div><span>{replyContext.label}</span><p>{replyContext.preview}</p></div><button type="button" className="settings-button settings-button-ghost" data-action="cancel-reply" aria-label={replyContext.cancelLabel} onClick={replyContext.onCancel}>{replyContext.cancelLabel}</button></div>}
     <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false}
       placeholder={placeholder} prompt={prompt} setPrompt={onChangePrompt} images={images} files={files}
       running={running} submitting={submitting} queuedCount={queuedCount} pendingCount={pendingCount} stopState={stopState} readOnly={disabled} sendDisabled={sendDisabled} queryHistorySessionID={`plugin:${conversationId}`}
       onPasteAttachmentFiles={onAddAttachments} onRemoveFile={onRemoveAttachment} onRemoveImage={onRemoveAttachment}
       onSend={text => { onSend(text ?? prompt); return false; }} onInterrupt={onStop} />
-  </FileSelectionProvider>;
+  </FileSelectionIsolation>;
 }

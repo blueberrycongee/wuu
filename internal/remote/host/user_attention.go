@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 )
@@ -27,7 +28,7 @@ func (h *Host) runUserAttention(ctx context.Context, relayReady <-chan struct{})
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return h.subscribeUserAttention(ctx, func(event appserver.UserAttentionNotification) {
+	return h.subscribeUserAttention(principal.WithContext(ctx, principal.LocalOwner()), func(event appserver.UserAttentionNotification) {
 		if err := h.pushUserAttention(ctx, event); err != nil && ctx.Err() == nil {
 			h.logf("remote user attention: %v", err)
 		}
@@ -35,6 +36,9 @@ func (h *Host) runUserAttention(ctx context.Context, relayReady <-chan struct{})
 }
 
 func (h *Host) pushUserAttention(ctx context.Context, event appserver.UserAttentionNotification) error {
+	if h.authorizeUserAttention == nil {
+		return errors.New("user attention resource policy is unavailable")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -56,6 +60,16 @@ func (h *Host) pushUserAttention(ctx context.Context, event appserver.UserAttent
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		caller, err := h.devicePrincipal(pub)
+		if err != nil {
+			continue
+		}
+		authorize := func(deliveryCtx context.Context) error {
+			return h.authorizeUserAttention(principal.WithContext(deliveryCtx, caller), event)
+		}
+		if err := authorize(ctx); err != nil {
+			continue
+		}
 		session := h.ensureSession(pub)
 		session.mu.Lock()
 		push := false
@@ -64,7 +78,7 @@ func (h *Host) pushUserAttention(ctx context.Context, event appserver.UserAttent
 		}
 		session.mu.Unlock()
 		if push {
-			h.sendPushContext(ctx, pub, hint, "", location, accountOnly)
+			h.sendPushContext(ctx, pub, hint, "", location, accountOnly, authorize)
 		}
 	}
 	return ctx.Err()

@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserControlsProvider } from "./BrowserControlsContext";
+import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
 
 const pdfMocks = vi.hoisted(() => {
   const globalWorkerOptions: { workerSrc?: string } = {};
@@ -31,6 +33,7 @@ const pdfMocks = vi.hoisted(() => {
     loadingTask,
     viewer,
     viewerSignals: [] as AbortSignal[],
+    linkService: undefined as undefined | { addLinkAttributes: (link: HTMLAnchorElement, url: string) => void },
   };
 });
 
@@ -53,6 +56,8 @@ vi.mock("./styles/workspace-pdf-preview.css?inline", () => ({
 
 vi.mock("pdfjs-dist/web/pdf_viewer.mjs", () => ({
   PDFLinkService: class {
+    externalLinkEnabled = true;
+    addLinkAttributes(link: HTMLAnchorElement, url: string): void { link.href = url; }
     setDocument(): void {}
     setViewer(): void {}
   },
@@ -78,7 +83,8 @@ vi.mock("pdfjs-dist/web/pdf_viewer.mjs", () => ({
     }
   },
   PDFViewer: class {
-    constructor(options: { abortSignal: AbortSignal }) {
+    constructor(options: { abortSignal: AbortSignal; linkService: NonNullable<typeof pdfMocks.linkService> }) {
+      pdfMocks.linkService = options.linkService;
       pdfMocks.viewerSignals.push(options.abortSignal);
       return pdfMocks.viewer;
     }
@@ -328,4 +334,27 @@ describe("WorkspacePdfPreview", () => {
     expect(container.querySelector("[data-workspace-pdf-preview]")).toBeNull();
   });
 
+});
+
+it("opens PDF external annotations through the explicit service and stops after unmount", async () => {
+  const openExternal = vi.fn().mockResolvedValue(undefined);
+  const browser = new ApplicationBrowser({ api: { openExternal }, onActivityChanged: vi.fn() });
+  await act(async () => root.render(<BrowserControlsProvider service={browser}><WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" /></BrowserControlsProvider>));
+  act(() => pdfMocks.eventBus!.dispatch("pagesinit", {}));
+  const link = document.createElement("a");
+  pdfMocks.linkService!.addLinkAttributes(link, "https://example.com/docs");
+  await act(async () => link.click());
+  expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
+  act(() => root.render(<div />));
+  await act(async () => link.click());
+  expect(openExternal).toHaveBeenCalledTimes(1);
+  browser.dispose();
+});
+
+it("leaves PDF external annotations unavailable without the public service", async () => {
+  await act(async () => root.render(<WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" />));
+  act(() => pdfMocks.eventBus!.dispatch("pagesinit", {}));
+  const link = document.createElement("a");
+  pdfMocks.linkService!.addLinkAttributes(link, "https://example.com/docs");
+  expect(link.hasAttribute("href")).toBe(false);
 });

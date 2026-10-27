@@ -7,7 +7,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PersonalControlsTest {
-    private fun initialized() = json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "personal-one", "runtime_state" to "active")).put(json("id" to "plugin:bundled:personal-calendar", "fingerprint" to "calendar-one", "runtime_state" to "active")))
+    private fun initialized() = json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "personal-one", "graph_generation" to "graph-one", "runtime_state" to "active")).put(json("id" to "plugin:bundled:personal-calendar", "fingerprint" to "calendar-one", "graph_generation" to "calendar-graph-one", "runtime_state" to "active")))
     @Test fun calendarDayWindowUsesRFC3339SecondsAndLocalDSTBoundaries() {
         val day = java.time.LocalDate.of(2026, 3, 8)
         val (from, to) = personalCalendarDayWindow(day, java.time.ZoneId.of("America/New_York"))
@@ -68,10 +68,38 @@ class PersonalControlsTest {
         val confirmation = client.prepareCalendarConfirmation(preview)
         preview.put("revision", 99).put("preview_digest", "b".repeat(64)); client.confirmCalendar(confirmation)
         assertEquals("plugin:bundled:personal-calendar", calls.last().getString("id")); assertEquals("calendar-one", calls.last().getString("fingerprint"))
+        assertEquals("calendar-graph-one", calls.last().getString("graph_generation"))
         assertEquals(3, calls.last().getJSONObject("input").getInt("expected_revision")); assertEquals("a".repeat(64), calls.last().getJSONObject("input").getString("preview_digest"))
         client.selectAgent("other")
         try { client.confirmCalendar(confirmation); fail("Approval crossed agents") } catch (_: PersonalClientException) {}
+        client.selectAgent("main")
+        try { client.confirmCalendar(confirmation); fail("Approval survived leaving and reopening the assistant") } catch (_: PersonalClientException) {}
+        val beforeReconnect = client.prepareCalendarConfirmation(preview)
+        client.configure(initialized()); client.selectAgent("main")
+        try { client.confirmCalendar(beforeReconnect); fail("Approval survived reconnect") }
+        catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.SELECTION_CHANGED, error.reason) }
+        val beforeRefresh = client.prepareCalendarConfirmation(preview)
+        client.refreshInventory(initialized().also {
+            it.getJSONArray("extension_inventory").getJSONObject(0).put("graph_generation", "graph-two")
+            it.getJSONArray("extension_inventory").getJSONObject(1).put("graph_generation", "calendar-graph-two")
+        })
+        client.selectAgent("main")
+        try { client.confirmCalendar(beforeRefresh); fail("Approval crossed graphs with unchanged source") }
+        catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.SELECTION_CHANGED, error.reason) }
+        client.confirmCalendar(client.prepareCalendarConfirmation(preview))
+        assertEquals("calendar-graph-two", calls.last().getString("graph_generation"))
+        assertEquals(2, calls.count { it.getString("method") == "operations.confirm" })
         client.invalidate()
         try { client.calendarOperations(); fail("Authority survived disconnect") } catch (_: PersonalClientException) {}
+    }
+
+    @Test fun missingCalendarGraphDoesNotBorrowPersonalAuthority() = runTest {
+        val calls = mutableListOf<JSONObject>()
+        val client = PersonalClient { _, p -> calls += p; json("result" to json("agent" to json("agent_id" to "main", "user_space_id" to "local"))) }
+        client.configure(initialized().also { it.getJSONArray("extension_inventory").getJSONObject(1).remove("graph_generation") })
+        client.selectAgent("main")
+        try { client.calendarOperations(); fail("Calendar borrowed Personal's graph") }
+        catch (error: PersonalClientException) { assertEquals(PersonalClientFailure.UNAVAILABLE, error.reason) }
+        assertEquals(1, calls.size)
     }
 }

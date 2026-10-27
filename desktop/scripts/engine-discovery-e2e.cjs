@@ -47,7 +47,7 @@ Object.assign(process.env, {
   CLAUDE_CONFIG_DIR: path.join(userHome, '.claude'),
   SHELL: process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash',
   WUU_DESKTOP_CORE: core, WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0',
-  WUU_SAFE_MODE: '1', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
+  WUU_SAFE_MODE: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
 });
 for (const name of Object.keys(process.env)) {
   if (/^WUU_[A-Z0-9_]+_BINARY$/.test(name) || ['ELECTRON_RENDERER_URL', 'NVM_DIR', 'MISE_DATA_DIR', 'XDG_DATA_HOME', 'ZDOTDIR'].includes(name)) delete process.env[name];

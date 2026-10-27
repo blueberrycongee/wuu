@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -55,7 +56,7 @@ After acceptance use dispatch_delivery to ask the technical lead to perform auth
 
 // Host-owned project instructions follow the current implementation on reload;
 // they must not be frozen into a session's create-time user instructions.
-func effectiveSessionInstructions(metadata session.Session) string {
+func defaultProjectInstructions(metadata session.Session) string {
 	if metadata.Source == projectSource {
 		return projectCoordinatorInstructions
 	}
@@ -86,7 +87,7 @@ Use the ordinary session tools and workspace. Inspect the code and choose the im
 
 const projectSessionInstructions = `A project coordinator manages this session; your first message is its brief. The coordinator reads your final answer each time a turn ends, and the user can read this session, write to it, or take it over at any time. End each turn with a plain report: what you did, choices you made that the brief did not settle, the evidence (commands run and their results), and open questions. In a session with its own worktree, your changes reach the workspace only when the user applies them.`
 
-func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
+func (s *ProjectCoordinationProvider) startProjectThread(ctx context.Context, selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
 	if !projectAgentEnabled {
 		return nil, errProjectAgentDisabled
 	}
@@ -104,7 +105,7 @@ func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID
 	if workspaceID == "" {
 		return nil, errors.New("a project needs a registered workspace")
 	}
-	return s.createHostSessionThread(projectSessionOwner, projectSource, "", hostSessionCreateParams{
+	return s.createManagedSession(ctx, projectSessionOwner, projectSource, "", hostSessionCreateParams{
 		Name: name, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		Workspace: "shared", WorkspaceID: workspaceID, WorkspaceRoot: strings.TrimSpace(params.CWD),
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort,
@@ -114,8 +115,8 @@ func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID
 
 // projectCoordinator resolves a live project. Archived and deleted projects
 // no longer manage their sessions.
-func (s *Server) projectCoordinator(id string) (session.Session, bool) {
-	metadata, found, err := session.Find(s.rt.SessionDir, strings.TrimSpace(id))
+func (s *ProjectCoordinationProvider) projectCoordinator(id string) (session.Session, bool) {
+	metadata, found, err := s.store.Find(strings.TrimSpace(id))
 	if err != nil || !found || metadata.Source != projectSource || metadata.ArchivedAt != nil {
 		return session.Session{}, false
 	}
@@ -123,8 +124,8 @@ func (s *Server) projectCoordinator(id string) (session.Session, bool) {
 }
 
 // projectManagedSession resolves one of a project's live managed sessions.
-func (s *Server) projectManagedSession(projectID, sessionID string) (session.Session, error) {
-	metadata, found, err := session.Find(s.rt.SessionDir, strings.TrimSpace(sessionID))
+func (s *ProjectCoordinationProvider) projectManagedSession(projectID, sessionID string) (session.Session, error) {
+	metadata, found, err := s.store.Find(strings.TrimSpace(sessionID))
 	if err != nil {
 		return session.Session{}, err
 	}
@@ -151,31 +152,31 @@ func projectIDForSession(metadata session.Session) string {
 // afterProjectTurn reports a managed session's finished turn to its project
 // and lets a coordinator pick up input that arrived while it was busy. An
 // interrupted coordinator turn does not immediately restart on queued input.
-func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) {
+func (s *ProjectCoordinationProvider) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) {
 	th.mu.Lock()
 	source := th.Source
 	projectID := th.ProjectID
 	th.mu.Unlock()
 	if source == projectSessionSource {
-		s.startBackground(func() { s.kickProjectInboxDrain(projectID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.kickProjectInboxDrain(projectID) })
 	}
 	switch {
 	case source == projectSessionSource && !compactOnly:
-		s.startBackground(func() {
-			s.recordProjectResult(th, turn)
-			if turn.Status != TurnStatusInterrupted {
-				s.drainSessionInbox(th.ID)
-			}
-		})
+		// Completion belongs to the admitted invocation even when generation
+		// replacement has already stopped its autonomous scheduler.
+		s.recordProjectResult(th, turn)
+		if turn.Status != TurnStatusInterrupted {
+			s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(th.ID) })
+		}
 	case source == projectSource && turn.Status != TurnStatusInterrupted:
-		s.startBackground(func() { s.drainSessionInbox(th.ID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(th.ID) })
 	}
 }
 
 // recordProjectResult tells the coordinator once that a managed turn ended.
 // Interrupted turns are informational: reporting them must not restart
 // stopped work.
-func (s *Server) recordProjectResult(th *threadState, turn Turn) {
+func (s *ProjectCoordinationProvider) recordProjectResult(th *threadState, turn Turn) {
 	if turn.Status == TurnStatusInProgress {
 		return
 	}
@@ -185,7 +186,7 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if _, live := s.projectCoordinator(projectID); !live {
 		return
 	}
-	control, ok, err := session.ReadControl(s.rt.SessionDir, th.ID)
+	control, ok, err := s.store.ReadControl(th.ID)
 	if err != nil || !ok || control.State != session.ControlActive || control.ManagerID != projectID {
 		return
 	}
@@ -219,18 +220,18 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 			continue
 		}
 		replyID := clientID + ":" + item.RelatedSessionID
-		if recorded, err := session.InboxHas(s.rt.SessionDir, replyID); err != nil || recorded {
+		if recorded, err := s.store.InboxHas(replyID); err != nil || recorded {
 			continue
 		}
 		parent, actor, fence, err := s.projectActor(item.RelatedSessionID)
 		if err != nil || parent.ID != projectID || actor.ProjectRole != "side" || fence == nil {
-			if err := session.SettleInbox(s.rt.SessionDir, replyID, item.RelatedSessionID); err != nil {
+			if err := s.store.SettleInbox(replyID, item.RelatedSessionID); err != nil {
 				providers.DebugLogf("settle side result: %v", err)
 			}
 			continue
 		}
 		message := session.InboxMessage{ClientID: replyID, SessionID: actor.ID, RelatedSessionID: th.ID, Cause: projectCauseResult, Content: report.String(), Wake: wake, Controls: []session.Control{control, *fence}}
-		if err := session.EnqueueInbox(s.rt.SessionDir, message); err != nil {
+		if err := s.store.EnqueueInbox(message); err != nil {
 			providers.DebugLogf("enqueue side result: %v", err)
 			continue
 		}
@@ -256,7 +257,7 @@ func projectResultClientID(sessionID, turnID string) string {
 
 // noticeProjectUserMessage persists the intervention independently of turn
 // completion, so a running lead can see it at its next steering boundary.
-func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
+func (s *ProjectCoordinationProvider) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
 	if !isHumanUserMessage(msg) {
 		return
 	}
@@ -277,7 +278,7 @@ func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMes
 		providers.DebugLogf("record work intervention: %v", err)
 	} else if found && w.Phase != "stopped" {
 		brief := w.Brief + "\n\nDirect user input in " + th.ID + ":\n" + msg.Content
-		if _, err := s.projectWork(context.Background(), projectID, "user-input:"+th.ID+":"+identity, tools.ProjectWorkRequest{Operation: "update", WorkID: w.ID, Revision: w.Revision, Brief: brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs + "\n" + identity}); err != nil {
+		if _, err := s.projectWork(s.ctx, projectID, "user-input:"+th.ID+":"+identity, tools.ProjectWorkRequest{Operation: "update", WorkID: w.ID, Revision: w.Revision, Brief: brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs + "\n" + identity}); err != nil {
 			providers.DebugLogf("apply direct work intervention: %v", err)
 		}
 	}
@@ -297,26 +298,26 @@ func finalAnswerText(turn Turn) string {
 
 // enqueueProjectInput records host input for a coordinator. wake starts a
 // coordinator turn when it is idle; other input joins its next turn.
-func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, cause, content string, wake bool) {
+func (s *ProjectCoordinationProvider) enqueueProjectInput(projectID, relatedSessionID, clientID, cause, content string, wake bool) {
 	if !projectAgentEnabled {
 		return
 	}
-	if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{
+	if err := s.store.EnqueueInbox(session.InboxMessage{
 		ClientID: clientID, SessionID: projectID, RelatedSessionID: relatedSessionID, Cause: cause, Content: content, Wake: wake,
 	}); err != nil {
 		providers.DebugLogf("queue project input %q: %v", clientID, err)
 		return
 	}
-	s.startBackground(func() { s.drainSessionInbox(projectID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(projectID) })
 }
 
 // startProjectRecovery checks at start-up whether any project work may need
 // recovery and replays it in the background; an idle store costs one read.
-func (s *Server) startProjectRecovery() {
+func (s *ProjectCoordinationProvider) startProjectRecovery() {
 	if !projectAgentEnabled {
 		return
 	}
-	controls, err := session.ListControls(s.rt.SessionDir)
+	controls, err := s.store.ListControls()
 	if err != nil {
 		providers.DebugLogf("recover project sessions: %v", err)
 		return
@@ -331,7 +332,7 @@ func (s *Server) startProjectRecovery() {
 		pending = pending || control.State != session.ControlReleased && !strings.HasPrefix(control.ManagerID, "plugin:")
 	}
 	if !pending {
-		targets, err := session.InboxTargets(s.rt.SessionDir)
+		targets, err := s.store.InboxTargets()
 		if err != nil {
 			providers.DebugLogf("recover project inbox: %v", err)
 			return
@@ -339,7 +340,7 @@ func (s *Server) startProjectRecovery() {
 		pending = len(targets) > 0
 	}
 	if !pending {
-		if projects, err := session.List(s.rt.SessionDir, 0); err == nil {
+		if projects, err := s.store.List(0); err == nil {
 			for _, project := range projects {
 				if project.Source == projectSource && project.ArchivedAt == nil {
 					pending = true
@@ -349,13 +350,13 @@ func (s *Server) startProjectRecovery() {
 		}
 	}
 	if pending {
-		s.startBackground(s.recoverProjectInbox)
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.recoverProjectInbox() })
 	}
 }
 
 // Remove this compatibility path when stores predating intervention events are
 // no longer supported. Project membership never requires a return-control step.
-func (s *Server) restoreProjectMembership(id string, old session.Control) error {
+func (s *ProjectCoordinationProvider) restoreProjectMembership(id string, old session.Control) error {
 	if _, live := s.projectCoordinator(old.ManagerID); !live {
 		return nil
 	}
@@ -368,7 +369,7 @@ func (s *Server) restoreProjectMembership(id string, old session.Control) error 
 	}
 	s.controlMu.Lock()
 	defer s.controlMu.Unlock()
-	current, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	current, ok, err := s.store.ReadControl(id)
 	if err != nil || !ok || current != old {
 		return err
 	}
@@ -384,36 +385,44 @@ func (s *Server) restoreProjectMembership(id string, old session.Control) error 
 	th.mu.Unlock()
 	if turnID != "" {
 		clientID := projectResultClientID(id, turnID)
-		if err := session.SettleInbox(s.rt.SessionDir, clientID, old.ManagerID); err != nil {
+		if err := s.store.SettleInbox(clientID, old.ManagerID); err != nil {
 			return err
 		}
 		// Completion routing also reports side-dispatched turns independently
 		// of the lead receipt. Settle those receipts before activating control.
 		for _, item := range items {
 			if item.Type == ThreadItemUserMessage && isGeneratedSessionInput(item.Origin) && item.Cause == "project" && item.RelatedSessionID != old.ManagerID && item.RelatedSessionID != "" {
-				if err := session.SettleInbox(s.rt.SessionDir, clientID+":"+item.RelatedSessionID, item.RelatedSessionID); err != nil {
+				if err := s.store.SettleInbox(clientID+":"+item.RelatedSessionID, item.RelatedSessionID); err != nil {
 					return err
 				}
 			}
 		}
 	}
-	if _, err := session.ChangeControl(s.rt.SessionDir, id, old.ManagerID, session.ControlActive, old.Revision); err != nil {
+	if _, err := s.store.ChangeControl(id, old.ManagerID, session.ControlActive, old.Revision); err != nil {
 		return err
 	}
-	s.revokeSessionInputs(id)
-	s.publishSessionControl(id)
+	s.revokeSessionInputs(s.binding, id)
+	s.publishSessionControl(s.binding, id)
 	return nil
 }
 
 // loadDurableProjectTurns reads output and terminal evidence from one active
 // physical transcript. Provider checkpoints may omit terminal metadata; cached
 // UI turns can default unfinished history to completed while a later turn runs.
-func (s *Server) loadDurableProjectTurns(id string) ([]Turn, error) {
-	history, err := loadPersistedMessages(s.rt.SessionDir, id, true)
+func (s *ProjectCoordinationProvider) loadDurableProjectTurns(id string) ([]Turn, error) {
+	records, err := s.store.LoadActiveHistoryRecords(id, true)
 	if err != nil {
 		return nil, err
 	}
-	turns := turnsFromPersistedHistory(id, history, time.Now().UTC(), s.resolveParticipantSummary)
+	history := make([]persistedMessage, 0, len(records))
+	for _, record := range records {
+		message, err := persistedMessageFromHistoryRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, message)
+	}
+	turns := turnsFromPersistedHistory(id, history, time.Now().UTC(), func(id string) (participant.Summary, bool) { return s.resolveParticipantSummary(s.binding, id) })
 	terminals := make(map[string]TurnStatus)
 	for _, record := range history {
 		if record.Role == "meta" && record.Content == turnTerminalHistoryRecord && record.ClientID != "" {
@@ -436,11 +445,11 @@ func (s *Server) loadDurableProjectTurns(id string) ([]Turn, error) {
 // recoverProjectInbox freezes and reports managed turns that ended while no
 // host was running, then retries undelivered coordinator input. Each step is
 // idempotent, so running them again never duplicates a delivery.
-func (s *Server) recoverProjectInbox() {
+func (s *ProjectCoordinationProvider) recoverProjectInbox() {
 	if !projectAgentEnabled {
 		return
 	}
-	if projects, err := session.List(s.rt.SessionDir, 0); err == nil {
+	if projects, err := s.store.List(0); err == nil {
 		for _, p := range projects {
 			if p.Source == projectSource && p.ArchivedAt == nil {
 				root, workspaceID, err := s.sessionWorkspace(p)
@@ -456,7 +465,7 @@ func (s *Server) recoverProjectInbox() {
 	if !projectAgentEnabled {
 		return
 	}
-	controls, err := session.ListControls(s.rt.SessionDir)
+	controls, err := s.store.ListControls()
 	if err != nil {
 		providers.DebugLogf("recover project sessions: %v", err)
 		return
@@ -487,7 +496,7 @@ func (s *Server) recoverProjectInbox() {
 			s.recordProjectResult(th, turns[len(turns)-1])
 		}
 	}
-	targets, err := session.InboxTargets(s.rt.SessionDir)
+	targets, err := s.store.InboxTargets()
 	if err != nil {
 		providers.DebugLogf("recover project inbox: %v", err)
 		return
@@ -499,8 +508,8 @@ func (s *Server) recoverProjectInbox() {
 
 // ensureOwnedThreadLoaded loads a session only in the host that executes its
 // workspace; another project's host leaves it alone.
-func (s *Server) ensureOwnedThreadLoaded(id string) (*threadState, error) {
-	metadata, found, err := session.Find(s.rt.SessionDir, id)
+func (s *ProjectCoordinationProvider) ensureOwnedThreadLoaded(id string) (*threadState, error) {
+	metadata, found, err := s.store.Find(id)
 	if err != nil || !found || metadata.ArchivedAt != nil {
 		return nil, err
 	}
@@ -508,14 +517,14 @@ func (s *Server) ensureOwnedThreadLoaded(id string) (*threadState, error) {
 	if err != nil || !s.ownsSessionWorkspace(root, workspaceID) {
 		return nil, err
 	}
-	return s.ensureThreadLoaded(id)
+	return s.ensureThreadLoaded(s.binding, id)
 }
 
 // drainSessionInbox hands pending host input to its session: it steers a
 // running turn or, for input that wakes the session, starts one. Input that
 // cannot be admitted now stays pending for the session's next turn start or
 // end, the next delivery, or the next start-up.
-func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capacityFull bool) {
+func (s *ProjectCoordinationProvider) drainSessionInboxTarget(target string, allowStart bool) (capacityFull bool) {
 	if !projectAgentEnabled {
 		return
 	}
@@ -525,7 +534,7 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 	if err != nil || th == nil {
 		return
 	}
-	pending, err := session.PendingInbox(s.rt.SessionDir, target)
+	pending, err := s.store.PendingInbox(target)
 	if err != nil {
 		providers.DebugLogf("read inbox for %q: %v", target, err)
 		return
@@ -535,7 +544,7 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 		// Old pending control notices no longer describe the project's policy;
 		// retain delivered history, but do not replay their return-control advice.
 		obsolete := message.Cause == projectCauseTakeover || message.Cause == projectCausePause || message.Cause == projectCauseReturn
-		if err := session.ValidateInboxControls(s.rt.SessionDir, message.ClientID); err != nil {
+		if err := s.store.ValidateInboxControls(message.ClientID); err != nil {
 			if !errors.Is(err, session.ErrControlChanged) {
 				providers.DebugLogf("validate work inbox: %v", err)
 				return
@@ -543,7 +552,7 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 			obsolete = true
 		}
 		for _, control := range message.Controls {
-			if err := session.ValidateControl(s.rt.SessionDir, control); err != nil {
+			if err := s.store.ValidateControl(control); err != nil {
 				if !errors.Is(err, session.ErrControlChanged) {
 					providers.DebugLogf("validate inbox %q: %v", message.ClientID, err)
 					return
@@ -558,7 +567,7 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 			obsolete = obsolete || sourceErr != nil || targetErr != nil || sourceProject.ID != targetProject.ID
 		}
 		if obsolete {
-			if err := session.SettleInbox(s.rt.SessionDir, message.ClientID, target); err != nil {
+			if err := s.store.SettleInbox(message.ClientID, target); err != nil {
 				providers.DebugLogf("discard obsolete inbox %q: %v", message.ClientID, err)
 				return
 			}
@@ -574,35 +583,24 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 			Origin: sessionInputHost, Cause: message.Cause,
 			PresentationKind: sessionPresentationMessage, RelatedSessionID: message.RelatedSessionID, ReadOnly: true,
 		}
-		if related, found, err := session.Find(s.rt.SessionDir, message.RelatedSessionID); err == nil && found {
+		if related, found, err := s.store.Find(message.RelatedSessionID); err == nil && found {
 			msg.Name = related.Title
 		}
-		permissions, err := s.resolveThreadTurnPermissions(th, nil)
-		if err != nil {
-			providers.DebugLogf("resolve inbox permissions for %q: %v", target, err)
-			return
-		}
-		snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
+		input := ManagedSessionSubmit{SessionID: target, Message: msg, AllowStart: wake && allowStart}
 		for _, control := range message.Controls {
 			if control.SessionID == target {
-				snapshot.Control = &control
+				input.Control = &control
 			}
 		}
-		if !wake || !allowStart {
-			// Do not fall through to starting a turn if the target became idle
-			// between inspecting the inbox and admitting this informational input.
-			if _, ok := s.steerSessionInput(th, msg, snapshot); !ok {
-				return
-			}
-			continue
-		}
-		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, sessionIfRunningSteer, snapshot); err != nil || !ok {
-			if err != nil {
-				providers.DebugLogf("deliver inbox %q: %v", message.ClientID, err)
-				capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
-			}
+		var submission ManagedSessionSubmission
+		if err := s.callManagedSession(s.ctx, "submit", input, &submission); err != nil {
+			providers.DebugLogf("deliver inbox %q: %v", message.ClientID, err)
 			return
 		}
+		if !submission.Admitted {
+			return submission.CapacityFull
+		}
+
 	}
 	return
 }

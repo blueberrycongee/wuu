@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { requireKernelService, type RuntimeHost, type RuntimePlugin, type TurnLifecycleInput, type AgentTurnCompletedInput } from "@wuu/plugin-sdk";
+import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type TurnLifecycleInput, type AgentTurnCompletedInput } from "@wuu/plugin-sdk";
 
 const storageKey = "dream.state";
 const zeroTime = "0001-01-01T00:00:00Z";
@@ -30,7 +30,7 @@ function personalDreamPrompt(records: string): string {
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 export function createDreamPlugin(): RuntimePlugin {
-  let host: RuntimeHost, state = initialState(), running = false, stopped = false;
+  let pluginID = "", state = initialState(), running = false, stopped = false;
   let personalSpace = "", storageScope: "workspace" | "user" = "workspace";
   let timer: ReturnType<typeof setInterval> | undefined;
   let saves: Promise<unknown> = Promise.resolve();
@@ -45,13 +45,13 @@ export function createDreamPlugin(): RuntimePlugin {
   }
   async function saveBestEffort(host: RuntimeHost): Promise<void> { try { await save(host); } catch (error) { console.error("dream state save failed:", error); } }
   function snapshot(): State { return structuredClone(state); }
-  async function fail(error: unknown): Promise<void> {
+  async function fail(host: RuntimeHost, error: unknown): Promise<void> {
     if (stopped) return;
     running = false; state.last_status = "failed"; state.last_finished_at = new Date().toISOString(); state.last_error = errorText(error);
     delete state.active_request_id; delete state.active_session_id;
     await saveBestEffort(host);
   }
-  async function launch(parentID: string, modelAlias: string | undefined, projectMemory: string): Promise<void> {
+  async function launch(host: RuntimeHost, parentID: string, modelAlias: string | undefined, projectMemory: string): Promise<void> {
     const id = `dream-${randomBytes(10).toString("hex")}`, requestID = `${id}:turn`;
     try {
       // Publish the identity before dispatch so an immediate terminal lifecycle
@@ -69,12 +69,7 @@ export function createDreamPlugin(): RuntimePlugin {
       await save(host);
       if (stopped) return;
       await host.call("host.session.send", { request_id: requestID, session_id: created.session_id, input: { prompt: personalSpace ? personalDreamPrompt(projectMemory) : dreamPrompt(projectMemory) }, cause: "dream.consolidate" }, { signal: abort.signal });
-    } catch (error) { if (state.active_request_id === requestID) await fail(error); }
-  }
-  function startLaunch(parentID: string, modelAlias: string | undefined, memory: string): void {
-    const pending = launch(parentID, modelAlias, memory);
-    work.add(pending);
-    void pending.finally(() => work.delete(pending));
+    } catch (error) { if (state.active_request_id === requestID) await fail(host, error); }
   }
   async function startDream(host: RuntimeHost, force = false): Promise<void> {
     const now = new Date(), settings = state.settings;
@@ -104,10 +99,11 @@ export function createDreamPlugin(): RuntimePlugin {
     }
     if (stopped) return;
     state.last_status = "running"; state.last_started_at = now.toISOString(); state.last_finished_at = zeroTime; delete state.last_error;
-    startLaunch(parentID, modelAlias, projectMemory);
+    // Submit before returning so all work retains this admitted callback.
+    await launch(host, parentID, modelAlias, projectMemory);
   }
-  function tick(): void {
-    const pending = startDream(host).catch(error => fail(error));
+  function tick(host: RuntimeHost): void {
+    const pending = startDream(host).catch(error => fail(host, error));
     work.add(pending);
     void pending.finally(() => work.delete(pending));
   }
@@ -135,11 +131,24 @@ export function createDreamPlugin(): RuntimePlugin {
     }
   }
   return {
-    async initialize(params, runtimeHost) {
+    concurrentServices: ["dream.scheduler"],
+    initialize(params) {
       personalSpace = params.product_domain === "personal" ? params.user_space_id?.trim() ?? "" : "";
       if (params.product_domain === "personal" && !personalSpace) throw new Error("Personal Dream requires a host-bound user space");
       storageScope = personalSpace ? "user" : "workspace";
-      host = runtimeHost; state = initialState(); running = false; stopped = false;
+      pluginID = params.plugin_id; state = initialState(); running = false; stopped = false;
+      return {
+        provided_services: [{ name: "dream.scheduler", version: "1.0.0", methods: [{ name: "run", input_schema: "dream.scheduler.run.input.v1", output_schema: "dream.scheduler.run.output.v1" }] }],
+        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })), { id: "plugin.client.request", kind: "decision" as const, version: 1 }],
+        required_services: [
+          requireBackgroundService(),
+          ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
+          ...(personalSpace ? [requireKernelService("host.session.context")] : []),
+          { name: personalSpace ? "memory.records" : "memory.session", major_version: 1 },
+        ],
+      };
+    },
+    async prepare(host) {
       const result = await host.call("host.storage.get", { scope: storageScope, key: storageKey });
       if (result.value !== null) {
         let loaded: Partial<State>;
@@ -168,22 +177,26 @@ export function createDreamPlugin(): RuntimePlugin {
           delete state.active_request_id; delete state.active_session_id;
         }
       }
-      return {
-        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })), { id: "plugin.client.request", kind: "decision" as const, version: 1 }],
-        required_services: [
-          ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
-          ...(personalSpace ? [requireKernelService("host.session.context")] : []),
-          { name: personalSpace ? "memory.records" : "memory.session", major_version: 1 },
-        ],
-      };
+
     },
-    async activate(_runtimeHost, lifecycle) {
+    async activate(host, lifecycle) {
       if (lifecycle.signal.aborted) { stop(); return; }
       lifecycle.signal.addEventListener("abort", stop, { once: true });
       await save(host);
-      if (!stopped) timer = setInterval(tick, 15_000);
+      if (!stopped) await startBackground(host, { key: "scheduler", service: "dream.scheduler", method: "run" });
     },
     async shutdown() { stop(); await Promise.all([...work]); await saves; },
+    async invokeService(call, host, execution) {
+      if (call.service !== "dream.scheduler" || call.method !== "run") throw new Error("unknown Dream service");
+      if (call.caller !== pluginID) throw new Error("Dream scheduler requires its owner");
+      if (!execution) throw new Error("Dream scheduler execution is unavailable");
+      const signal = AbortSignal.any([abort.signal, execution.signal]);
+      if (signal.aborted) return {};
+      const cancelled = new Promise<void>(resolve => signal.addEventListener("abort", () => { clearInterval(timer); resolve(); }, { once: true }));
+      timer = setInterval(() => { if (!signal.aborted) tick(host); }, 15_000);
+      await cancelled; await Promise.all([...work]); await saves;
+      return {};
+    },
     async invokeCapability(call, host) {
       switch (call.capability) {
         case "agent.turn.completed": {

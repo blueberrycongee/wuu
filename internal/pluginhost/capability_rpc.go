@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,16 +29,16 @@ import (
 //
 // ## Protocol version
 //
-// Protocol version 2 adds capability negotiation and is the only production
-// Host-to-plugin extension seam. Protocol version 3 adds service
+// Protocol version 1 retains tool calls; version 2 adds capability negotiation.
+// Protocol version 3 adds service
 // provide/consume declarations routed through the generation-scoped service
 // registry.
 const (
 	CapabilityProtocolVersion = 3
 	CapabilityProtocolName    = "wuu-plugin-v2"
-	// RuntimeLifecycleVersion identifies the side-effect-free prepare phase
-	// followed by explicit post-commit activation.
-	RuntimeLifecycleVersion = 1
+	// RuntimeLifecycleVersion separates declarations (initialize), dependency-
+	// ordered state validation (prepare), and post-commit effects (activate).
+	RuntimeLifecycleVersion = 2
 
 	// CapabilityAgentRequestTransform lets a plugin transform the complete,
 	// provider-neutral request immediately before provider validation and send.
@@ -45,6 +46,9 @@ const (
 	// CapabilityAgentPreStep lets a plugin append sourced, durable context at
 	// the model-step boundary. Plugins own emission and cache policy.
 	CapabilityAgentPreStep = "agent.pre_step"
+	// CapabilityAgentStepPolicy decides whether the default loop admits another
+	// model round after durable input. Higher priority runs first; stop bails.
+	CapabilityAgentStepPolicy = "agent.step.policy"
 	// CapabilityAgentSystemPromptSection contributes a generation-stable section
 	// evaluated before that plugin generation can become active.
 	CapabilityAgentSystemPromptSection = "agent.system_prompt.section"
@@ -131,8 +135,8 @@ var HostOnlyCapabilities = map[string]struct{}{
 }
 
 // CapabilityNegotiationError marks an initialize response that cannot be
-// activated safely. Runtime generation builders treat this as a hard rejection
-// even when ordinary plugin startup failures are allowed in inventory.
+// activated safely. The process is rejected; generation builders can quarantine
+// an optional runtime while preserving required selection failures.
 type CapabilityNegotiationError struct{ Err error }
 
 func (e *CapabilityNegotiationError) Error() string { return e.Err.Error() }
@@ -202,22 +206,24 @@ const (
 	HostServiceStorageCompareExchange HostServiceMethod = "host.storage.compare_exchange"
 
 	// Settings
-	HostServiceSettingsGet  HostServiceMethod = "host.settings.get"
-	HostServiceSettingsList HostServiceMethod = "host.settings.list"
+	HostServiceSettingsGet        HostServiceMethod = "host.settings.get"
+	HostServiceSettingsList       HostServiceMethod = "host.settings.list"
+	HostServiceCredentialsRequest HostServiceMethod = "host.credentials.request"
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
-	HostServiceSessionCreate         HostServiceMethod = "host.session.create"
-	HostServiceSessionControl        HostServiceMethod = "host.session.control"
-	HostServiceSessionSend           HostServiceMethod = "host.session.send"
-	HostServiceSessionList           HostServiceMethod = "host.session.list"
-	HostServiceSessionCancel         HostServiceMethod = "host.session.cancel"
-	HostServiceSessionInspect        HostServiceMethod = "host.session.inspect"
-	HostServicePersonal              HostServiceMethod = "host.personal"
-	HostServiceSessionContext        HostServiceMethod = "host.session.context"
-	HostServiceSessionHistoryRead    HostServiceMethod = "host.session.history.read"
-	HostServiceSessionHistorySearch  HostServiceMethod = "host.session.history.search"
-	HostServiceSessionAttachmentRead HostServiceMethod = "host.session.attachment.read"
+	HostServiceSessionCreate          HostServiceMethod = "host.session.create"
+	HostServiceSessionControl         HostServiceMethod = "host.session.control"
+	HostServiceSessionSend            HostServiceMethod = "host.session.send"
+	HostServiceSessionList            HostServiceMethod = "host.session.list"
+	HostServiceSessionCancel          HostServiceMethod = "host.session.cancel"
+	HostServiceSessionInspect         HostServiceMethod = "host.session.inspect"
+	HostServiceExecutionAuthorization HostServiceMethod = "host.execution.authorization"
+	HostServicePersonal               HostServiceMethod = "host.personal"
+	HostServiceSessionContext         HostServiceMethod = "host.session.context"
+	HostServiceSessionHistoryRead     HostServiceMethod = "host.session.history.read"
+	HostServiceSessionHistorySearch   HostServiceMethod = "host.session.history.search"
+	HostServiceSessionAttachmentRead  HostServiceMethod = "host.session.attachment.read"
 
 	// Workspaces. These methods operate only on an isolated workspace owned by
 	// a plugin-created session; callers never supply filesystem paths.
@@ -262,29 +268,38 @@ type SessionToolPolicy struct {
 	Deny  []string `json:"deny,omitempty"`
 }
 
+// ExecutionAuthorizationReference identifies opaque selected-provider authority.
+// It is not an owner claim and is revalidated before every restored operation.
+type ExecutionAuthorizationReference struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+}
+
 type SessionCreateParams struct {
-	UserSpaceID     string               `json:"user_space_id,omitempty"`
-	ProductDomain   string               `json:"product_domain,omitempty"`
-	AgentID         string               `json:"agent_id,omitempty"`
-	Speed           string               `json:"speed,omitempty"`
-	RequestID       string               `json:"request_id"`
-	Name            string               `json:"name,omitempty"`
-	Visibility      string               `json:"visibility"`
-	ParentSessionID string               `json:"parent_session_id,omitempty"`
-	ContextSource   string               `json:"context_source"`
-	Workspace       string               `json:"workspace,omitempty"`
-	WorkspaceID     string               `json:"workspace_id,omitempty"`
-	WorkspaceRoot   string               `json:"workspace_root,omitempty"`
-	ModelAlias      string               `json:"model_alias,omitempty"`
-	Provider        string               `json:"provider,omitempty"`
-	Model           string               `json:"model,omitempty"`
-	Variant         string               `json:"variant,omitempty"`
-	Effort          string               `json:"effort,omitempty"`
-	PermissionMode  string               `json:"permission_mode,omitempty"`
-	Instructions    string               `json:"instructions,omitempty"`
-	ToolPolicy      *SessionToolPolicy   `json:"tool_policy,omitempty"`
-	Seed            *SessionContextSeed  `json:"seed,omitempty"`
-	Launch          *SessionLaunchParams `json:"launch,omitempty"`
+	AuthorizationTaskID    string                           `json:"authorization_task_id,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	UserSpaceID            string                           `json:"user_space_id,omitempty"`
+	ProductDomain          string                           `json:"product_domain,omitempty"`
+	AgentID                string                           `json:"agent_id,omitempty"`
+	Speed                  string                           `json:"speed,omitempty"`
+	RequestID              string                           `json:"request_id"`
+	Name                   string                           `json:"name,omitempty"`
+	Visibility             string                           `json:"visibility"`
+	ParentSessionID        string                           `json:"parent_session_id,omitempty"`
+	ContextSource          string                           `json:"context_source"`
+	Workspace              string                           `json:"workspace,omitempty"`
+	WorkspaceID            string                           `json:"workspace_id,omitempty"`
+	WorkspaceRoot          string                           `json:"workspace_root,omitempty"`
+	ModelAlias             string                           `json:"model_alias,omitempty"`
+	Provider               string                           `json:"provider,omitempty"`
+	Model                  string                           `json:"model,omitempty"`
+	Variant                string                           `json:"variant,omitempty"`
+	Effort                 string                           `json:"effort,omitempty"`
+	PermissionMode         string                           `json:"permission_mode,omitempty"`
+	Instructions           string                           `json:"instructions,omitempty"`
+	ToolPolicy             *SessionToolPolicy               `json:"tool_policy,omitempty"`
+	Seed                   *SessionContextSeed              `json:"seed,omitempty"`
+	Launch                 *SessionLaunchParams             `json:"launch,omitempty"`
 }
 
 type SessionContextSeed struct {
@@ -360,8 +375,9 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	ResumeReceiptID string `json:"resume_receipt_id,omitempty"`
-	ResumeAccepted  bool   `json:"resume_accepted,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ResumeReceiptID        string                           `json:"resume_receipt_id,omitempty"`
+	ResumeAccepted         bool                             `json:"resume_accepted,omitempty"`
 	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
 	DisableTools bool                       `json:"disable_tools,omitempty"`
 	Relation     *providers.MessageRelation `json:"relation,omitempty"`
@@ -388,7 +404,8 @@ type SessionSendResult struct {
 }
 
 type SessionListParams struct {
-	ParentSessionID string `json:"parent_session_id,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ParentSessionID        string                           `json:"parent_session_id,omitempty"`
 	// Scope defaults to owned for compatibility. shared exposes active,
 	// non-private session metadata without exposing conversation history.
 	Scope string `json:"scope,omitempty"`
@@ -413,8 +430,9 @@ type SessionListResult struct {
 }
 
 type SessionCancelParams struct {
-	ControlRevision int64  `json:"control_revision,omitempty"`
-	SessionID       string `json:"session_id"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ControlRevision        int64                            `json:"control_revision,omitempty"`
+	SessionID              string                           `json:"session_id"`
 	// TurnID narrows cancellation to one exact accepted turn. Empty preserves
 	// the legacy session-scoped operation for callers that intentionally own
 	// the whole session.
@@ -431,19 +449,21 @@ type SessionCancelResult struct {
 }
 
 type SessionInspectParams struct {
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
-	Wait      string `json:"wait,omitempty"`
-	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	TurnID                 string                           `json:"turn_id,omitempty"`
+	RequestID              string                           `json:"request_id,omitempty"`
+	Wait                   string                           `json:"wait,omitempty"`
+	TimeoutMS              int                              `json:"timeout_ms,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
 // or ParentID. Omit State to read; writes compare Revision with durable state.
 type SessionControlParams struct {
-	SessionID string `json:"session_id"`
-	State     string `json:"state,omitempty"`
-	Revision  int64  `json:"revision,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	State                  string                           `json:"state,omitempty"`
+	Revision               int64                            `json:"revision,omitempty"`
 }
 
 type SessionControlResult struct {
@@ -704,9 +724,18 @@ type SettingsGetResult struct {
 	Value json.RawMessage `json:"value"`
 }
 
-// SettingsListResult is the output of host.settings.list.
+// SettingsListParams optionally narrows a snapshot to one independently committed scope.
+type SettingsListParams struct {
+	Scope string `json:"scope,omitempty"`
+}
+
+// SettingsListResult is the output of host.settings.list. Revision is an opaque
+// content token, not a sequence number. Existing entries-only readers remain valid.
 type SettingsListResult struct {
-	Entries map[string]json.RawMessage `json:"entries"`
+	Entries         map[string]json.RawMessage `json:"entries"`
+	Revision        string                     `json:"revision"`
+	ScopeRevisions  map[string]string          `json:"scope_revisions"`
+	RestartRequired []string                   `json:"restart_required"`
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +747,10 @@ type SettingsListResult struct {
 // provide and which host services they require.
 type CapabilityInitializeResult struct {
 	InitializeResult
+
+	// RequiredHostFeatures names exact host semantics required by this provider.
+	// Providers must also check the initialize offer: older hosts ignore this field.
+	RequiredHostFeatures []string `json:"required_host_features,omitempty"`
 
 	// Capabilities lists the capabilities this plugin provides.
 	Capabilities []CapabilityDescriptor `json:"capabilities,omitempty"`
@@ -738,11 +771,11 @@ type CapabilityInitializeResult struct {
 	// diagnostic; there is no dependency solver.
 	RequiredServices []ServiceRequirement `json:"required_services,omitempty"`
 
-	// ProtocolVersion is the capability protocol version the plugin
-	// requests. The host may downgrade to v1 if v2 is unsupported.
+	// ProtocolVersion is the capability protocol version the plugin requests.
+	// Omission means v1; unsupported explicit versions fail, never downgrade.
 	ProtocolVersion int `json:"protocol_version,omitempty"`
 
-	// LifecycleVersion opts the runtime into prepare/activate semantics.
+	// LifecycleVersion opts the runtime into initialize/prepare/activate semantics.
 	LifecycleVersion int `json:"lifecycle_version,omitempty"`
 }
 
@@ -750,6 +783,10 @@ type CapabilityInitializeResult struct {
 // capability RPC support declaration.
 type CapabilityInitializeParams struct {
 	InitializeParams
+
+	// SupportedHostFeatures advertises versioned semantics, not service bindings.
+	// Absence means no features; unknown names grant no implied compatibility.
+	SupportedHostFeatures []string `json:"supported_host_features,omitempty"`
 
 	// CapabilityProtocolVersion offers the capability layer independently of
 	// the v1 transport version. Legacy plugins keep seeing protocol_version=1
@@ -760,7 +797,7 @@ type CapabilityInitializeParams struct {
 	// Plugins can use this to decide whether to enable optional features.
 	SupportedHostServices []HostServiceMethod `json:"supported_host_services,omitempty"`
 
-	// LifecycleVersion advertises the host's prepare/activate lifecycle.
+	// LifecycleVersion advertises the host's initialize/prepare/activate lifecycle.
 	LifecycleVersion int `json:"lifecycle_version,omitempty"`
 }
 
@@ -965,7 +1002,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamTransform
 	case CapabilityAgentSystemPromptSection:
 		requiredKind = SeamTransform
-	case CapabilityAgentCompaction:
+	case CapabilityAgentCompaction, CapabilityAgentStepPolicy:
 		requiredKind = SeamDecision
 	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve:
 		requiredKind = SeamObserve
@@ -1044,15 +1081,32 @@ func validateCapabilityRelations(c CapabilityDescriptor) error {
 	return nil
 }
 
+// HostFeatureDocumentAuthority recognizes the selected state.documents authority
+// method, including provider-owned durability without a host business journal.
+const HostFeatureDocumentAuthority = "state.documents.authority.v1"
+
+// SupportedHostFeatures returns only semantics actually implemented by this host.
+func SupportedHostFeatures() []string { return []string{HostFeatureDocumentAuthority} }
+
 // ValidateCapabilityNegotiation validates one initialize response against the
 // services actually implemented by the host process.
 func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported []HostServiceMethod) error {
+	seenFeatures := map[string]bool{}
+	for _, feature := range result.RequiredHostFeatures {
+		if seenFeatures[feature] {
+			return fmt.Errorf("duplicate required host feature %q", feature)
+		}
+		seenFeatures[feature] = true
+		if !slices.Contains(SupportedHostFeatures(), feature) {
+			return fmt.Errorf("required host feature %q is unavailable", feature)
+		}
+	}
 	version := result.ProtocolVersion
 	if version == 0 {
 		version = ProtocolVersion
 	}
 	if version < ProtocolVersion || version > CapabilityProtocolVersion {
-		return fmt.Errorf("unsupported negotiated protocol version %d", version)
+		return fmt.Errorf("unsupported negotiated protocol version %d (supported: %d-%d)", version, ProtocolVersion, CapabilityProtocolVersion)
 	}
 	if err := ValidateServiceNegotiation(result); err != nil {
 		return err
@@ -1070,7 +1124,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}

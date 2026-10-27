@@ -4,46 +4,41 @@ These examples build on the [desktop quickstart](desktop-plugin-quickstart.md). 
 
 ## Add a review prompt to the draft
 
-A composer presenter can read the public draft snapshot and invoke a host action. This wrapper keeps the native composer and lets the user review the new text before sending it.
+A composer contribution reads the public application snapshot and updates the owning draft. The native composer stays in place so the user can review the text before sending it.
 
 ```ts
-import type { ComposerSnapshotV1, PluginGenerationApi, PresenterProps } from "@wuu/plugin-sdk";
+import type { PluginGenerationApi, UISlotRenderProps } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Button = api.ui.Button as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
-  const action = "conversation.composer.set-draft";
-
-  function ReviewPrompt(input: Readonly<Record<string, unknown>>) {
-    const props = input.presenter as PresenterProps;
-    const snapshot = props.snapshot as ComposerSnapshotV1;
+  function ReviewPrompt({ application }: UISlotRenderProps) {
+    const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
     const [error, setError] = React.useState("");
-    const disabled = snapshot.readOnly || !props.host.actions.includes(action);
+    const draft = snapshot.drafts[snapshot.drafts.activePane];
+    const ownerTabId = draft.ownerTabId;
     async function append() {
+      if (!ownerTabId) return;
       try {
-        const draft = snapshot.draftText?.trimEnd() ?? "";
-        await props.host.invoke(action,
-          `${draft}${draft ? "\n\n" : ""}Review the current changes for concrete bugs.`);
+        const text = draft.text.trimEnd();
+        await application.invoke("composer.set-draft", {
+          ownerTabId, text: `${text}${text ? "\n\n" : ""}Review the current changes for concrete bugs.`,
+        });
         setError("");
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
     return React.createElement("div", null,
-      props.fallback,
-      React.createElement(Button, { disabled, onClick: append }, "Add review prompt"),
+      React.createElement("button", { disabled: !ownerTabId || snapshot.composer.readOnly, onClick: append }, "Add review prompt"),
       error ? React.createElement("p", { role: "alert" }, error) : null);
   }
-
-  api.registerPresenter({
-    id: "review-prompt", target: "conversation.composer", mode: "wrap",
-    render: props => React.createElement(ReviewPrompt, { presenter: props }),
+  api.registerUIContribution({
+    id: "review-prompt", target: "wuu.default-composer/composer.above", render: ReviewPrompt,
   });
 }
 ```
 
-The action accepts a string, not a DOM event or a reference to the textarea. The host still checks read-only state. For a selection-to-draft feature, obtain plain text with the browser Selection API, verify it belongs to a public message anchor, then pass the text through the same action. Remove selection listeners on unmount, preserve the user's selection while clicking, and account for scrolling and viewport edges.
+The application validates the draft owner and generation lifetime. Use the same operation for selection-to-draft features; remove selection listeners when the contribution unmounts.
 
 ## Add a workspace page
 
@@ -76,6 +71,43 @@ Merge this contribution into the package's `plugin.json`:
 ```
 
 `view` must match the registered ID in the same plugin. Use `settingsPages` for a settings page or `navigation` for a navigation entry. Add `registerViewPlacement` only when an initial open placement is useful, rather than forcing every optional tool onto the workbench.
+
+## Add a website page
+
+A website uses the existing View and navigation contracts. This optional Notion example opens only after the user chooses its navigation entry; change the URL to a Feishu or another HTTP(S) website for a different extension.
+
+```ts
+import type { PluginGenerationApi } from "@wuu/plugin-sdk";
+
+export function activate(api: PluginGenerationApi): void {
+  const WebPage = api.ui.WebPage as unknown as
+    (props: Readonly<Record<string, unknown>>) => unknown;
+  api.registerViewType({
+    id: "website",
+    title: "Notion",
+    defaultRegion: "primary",
+    persistence: "durable",
+    render: () => api.react.createElement(WebPage, {
+      url: "https://www.notion.so/",
+      title: "Notion",
+    }),
+  });
+}
+```
+
+Use the ordinary navigation contribution in the package's `plugin.json`:
+
+```json
+{
+  "contributes": {
+    "navigation": [
+      { "id": "website-entry", "view": "website", "title": "Notion" }
+    ]
+  }
+}
+```
+
+For a single local TypeScript file without a manifest, add `api.registerViewPlacement({ id: "website-entry", view: "website", region: "primary" })` during activation to open the same View. The host owns its ribbon entry, placement, browser session, and cleanup. The site uses the same imported browser cookies as other Wuu browser pages; sign in when the session does not already contain a valid login. Ordinary workbench view switches hide and retain the same live page. Explicitly closing the View, unmounting its WebPage component, disabling the plugin, or reloading its generation closes the page and popups. No site is installed by this recipe. Older hosts can be detected with `typeof api.ui.WebPage === "function"`. This component works only in the main desktop workbench window; popped-out conversation windows and remote web/mobile clients are unsupported. Non-desktop clients show the unavailable-browser state.
 
 ## Connect a page to its runtime
 

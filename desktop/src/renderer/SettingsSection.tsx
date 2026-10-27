@@ -84,8 +84,8 @@ export function SettingsSection({
   );
 }
 
-export function SettingsGroup({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="settings-group" data-wuu-component="settings-group">{children}</div>;
+export function SettingsGroup({ children, className }: { children: ReactNode; className?: string }): JSX.Element {
+  return <div className={className ? `settings-group ${className}` : "settings-group"} data-wuu-component="settings-group">{children}</div>;
 }
 
 export type SettingsStatusTone = "success" | "warning" | "danger" | "neutral";

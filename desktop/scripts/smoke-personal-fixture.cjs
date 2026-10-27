@@ -8,12 +8,20 @@ const errors = [], revoked = [], rendererLimitations = [];
 const console = new VirtualConsole();
 console.on("jsdomError", error => { if (String(error).includes("HTMLCanvasElement.prototype.getContext")) rendererLimitations.push(String(error)); else if (error.type !== "css parsing") errors.push(String(error)); });
 console.on("error", error => errors.push(String(error)));
-const dom = new JSDOM(fs.readFileSync(target, "utf8"), {
+// jsdom cannot render font bytes; omit embedded assets from CSS without changing runtime code.
+const html = fs.readFileSync(target, "utf8").replace(/<style>([\s\S]*?)<\/style>/g, (_match, css) => `<style>${css.replace(/url\([^)]*data:[^)]*\)/g, "url(data:,)")}</style>`);
+const dom = new JSDOM(html, {
   url: "https://synthetic-fixture.invalid/", runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: console,
   beforeParse(window) {
     window.matchMedia = query => ({ matches:false, media:query, addEventListener(){}, removeEventListener(){} });
     window.ResizeObserver = class { observe(){} unobserve(){} disconnect(){} };
     window.structuredClone = structuredClone;
+    window.AbortSignal.any ??= signals => {
+      const controller = new window.AbortController();
+      const abort = () => { const source = signals.find(signal => signal.aborted); if (source) { controller.abort(source.reason); for (const signal of signals) signal.removeEventListener("abort", abort); } };
+      for (const signal of signals) signal.addEventListener("abort", abort, {once:true}); abort(); return controller.signal;
+    };
+    window.Blob.prototype.text = function() { return new Promise((resolve, reject) => { const reader = new window.FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsText(this); }); };
     window.TextEncoder = TextEncoder; window.TextDecoder = TextDecoder;
     Object.defineProperty(window.crypto, "subtle", { value:{ digest:(algorithm, bytes) => webcrypto.subtle.digest(algorithm, new Uint8Array(bytes)) } });
     window.URL.createObjectURL = () => "blob:synthetic-dom-only";
@@ -30,17 +38,20 @@ function waitFor(predicate) {
   });
 }
 (async () => {
-  await waitFor(() => [...document.querySelectorAll(".primary-nav button")].some(button => button.textContent.trim() === "twin"));
-  const navigation = [...document.querySelectorAll(".primary-nav button")].map(button => button.textContent.trim());
-  const twin = [...document.querySelectorAll(".primary-nav button")].find(button => button.textContent.trim() === "twin");
+  await waitFor(() => [...document.querySelectorAll("[data-ribbon-id]")].some(button => button.textContent.trim() === "twin"));
+  const navigation = [...document.querySelectorAll("[data-ribbon-id]")].map(button => button.textContent.trim());
+  const twin = [...document.querySelectorAll("[data-ribbon-id]")].find(button => button.textContent.trim() === "twin");
   document.querySelector('[data-wuu-plugin="personal"]').click();
-  await waitFor(() => document.querySelector('[data-action="load-attachment"]'));
+  await waitFor(() => document.querySelector('[data-action="open-attachment"]'));
   if (document.body.textContent.includes("合成日程：周五午餐")) throw new Error("Default preview must not display a synthetic calendar confirmation notice");
   if (document.querySelector(".plugin-conversation-questions [role=alert]")) throw new Error("Conversation question fixture returned an invalid response");
   const mainName = document.querySelector(".plugin-conversation-titlebar h1").textContent;
-  document.querySelector('[data-action="load-attachment"]').click();
-  await waitFor(() => document.querySelector('a[download]'));
-  const fileDownload = document.querySelector('a[download]').getAttribute("href");
+  document.querySelector('[data-action="open-attachment"]').click();
+  await waitFor(() => document.querySelector('.conversation-attachment-preview pre')?.textContent === "hello");
+  const verifiedTextPreview = true;
+  if(document.querySelector('.conversation-attachment-preview iframe, .conversation-attachment-preview object')) throw new Error("Remote text became an embedded document");
+  document.querySelector('.plugin-view-attachment-panel').dispatchEvent(new dom.window.KeyboardEvent("keydown", {key:"Escape", bubbles:true}));
+  await waitFor(() => !document.querySelector('.plugin-view-attachment-panel'));
   const conversation = document.querySelector('.plugin-conversation');
   const conversationId = conversation.dataset.conversationId;
   const textarea = document.querySelector('.mosaic textarea');
@@ -62,9 +73,9 @@ function waitFor(predicate) {
   await waitFor(() => document.querySelector('.mosaic textarea')?.value === "保留这条草稿");
   if(document.querySelector('.plugin-conversation').dataset.conversationId !== conversationId) throw new Error("Route changed main identity");
   const sections = [...document.querySelectorAll('[data-panel-section]')].map(element => element.dataset.panelSection);
-  if(JSON.stringify(sections) !== JSON.stringify(['ongoing','recent','outputs'])) throw new Error("Unexpected continuous panel order");
-  const result = { kind:"synthetic DOM execution only", visualAcceptance:false, realHost:false, realCalendar:false, navigation, mainName, directEntry:true, restoredMainDraft:true, sameMainSession:true, continuousSections:sections, nativeComposer:!!document.querySelector('.mosaic .split-composer'), fileDownload, scopedBlobRevoked:revoked.includes(fileDownload), runtimeErrors:errors, rendererLimitations };
+  if(JSON.stringify(sections) !== JSON.stringify(['recent','outputs'])) throw new Error(`Unexpected continuous panel order: ${JSON.stringify(sections)}`);
+  const result = { kind:"synthetic DOM execution only", visualAcceptance:false, realHost:false, realCalendar:false, navigation, mainName, directEntry:true, restoredMainDraft:true, sameMainSession:true, continuousSections:sections, nativeComposer:!!document.querySelector('.mosaic .split-composer'), verifiedTextPreview, embeddedFontAssetsOmitted:true, runtimeErrors:errors, rendererLimitations };
   fs.writeFileSync(path.join(path.dirname(target), "dom-smoke.json"), JSON.stringify(result,null,2)+"\n");
-  if(errors.length || navigation.indexOf("twin") !== navigation.indexOf("Automations") + 1 || !result.scopedBlobRevoked) throw new Error(JSON.stringify(result));
+  if(errors.length || navigation.indexOf("twin") !== navigation.indexOf("Automations") + 1 || !result.verifiedTextPreview) throw new Error(JSON.stringify(result));
   process.stdout.write(JSON.stringify(result,null,2)+"\n");
 })().catch(error => { fs.writeFileSync(path.join(path.dirname(target), "dom-smoke.json"), JSON.stringify({kind:"synthetic DOM execution only", visualAcceptance:false, passed:false, error:String(error), runtimeErrors:errors},null,2)+"\n"); process.stderr.write(String(error.stack || error)+"\n");process.exitCode=1; }).finally(() => dom.window.close());

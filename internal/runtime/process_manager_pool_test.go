@@ -23,7 +23,7 @@ func processTestSession(t *testing.T) *Session {
 	return &Session{
 		ProviderName: "primary", Model: "gpt-test", RootDir: root,
 		WuuHome: home, SessionDir: statepath.SessionsDir(home), Toolkit: kit,
-		StreamRunner: &agent.StreamRunner{Client: &sessionRecordingClient{}, ProviderName: "primary", Model: "gpt-test"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: &sessionRecordingClient{}, ProviderName: "primary", Model: "gpt-test"},
 	}
 }
 

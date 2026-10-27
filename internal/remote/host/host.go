@@ -55,6 +55,8 @@ var ErrHostAlreadyRunning = errors.New("remote host already running for this Wuu
 
 // PairingConfig opens a pairing window when the host starts.
 type PairingConfig struct {
+	// DelegatedOnly enrolls a key without ambient owner authority.
+	DelegatedOnly bool
 	// Timeout closes the window after this long. Zero means 10 minutes.
 	Timeout time.Duration
 	// Once closes the window after the first successful pairing.
@@ -75,6 +77,10 @@ type Options struct {
 	// SubscribeUserAttention observes admitted attention for the host lifetime,
 	// including when no phone has opened a device app-server connection.
 	SubscribeUserAttention func(context.Context, func(appserver.UserAttentionNotification)) error
+	// AuthorizeUserAttention checks the selected resource policy for each verified
+	// recipient immediately before a host-lifetime push. Missing policy denies delivery.
+	AuthorizeUserAttention func(context.Context, appserver.UserAttentionNotification) error
+	AppServerOptions       []appserver.ServerOption
 	Workdir                string
 	Runtime                *runtime.Session
 	Store                  *Store
@@ -108,6 +114,8 @@ type Host struct {
 	appServer              func(context.Context, io.Reader, io.Writer) error
 	appServerForDevice     func(context.Context, io.Reader, io.Writer, appserver.PushRegistrar) error
 	subscribeUserAttention func(context.Context, func(appserver.UserAttentionNotification)) error
+	authorizeUserAttention func(context.Context, appserver.UserAttentionNotification) error
+	appServerOptions       []appserver.ServerOption
 	workdir                string
 	rt                     *runtime.Session
 	store                  *Store
@@ -129,6 +137,7 @@ type Host struct {
 
 	sessMu   sync.Mutex
 	sessions map[string]*deviceSession
+	appWG    sync.WaitGroup
 
 	pairMu  sync.Mutex
 	pairing *pairingState
@@ -171,6 +180,8 @@ func New(opts Options) (*Host, error) {
 		appServer:              opts.AppServer,
 		appServerForDevice:     opts.AppServerForDevice,
 		subscribeUserAttention: opts.SubscribeUserAttention,
+		authorizeUserAttention: opts.AuthorizeUserAttention,
+		appServerOptions:       append([]appserver.ServerOption(nil), opts.AppServerOptions...),
 		workdir:                opts.Workdir,
 		rt:                     opts.Runtime,
 		store:                  opts.Store,
@@ -518,7 +529,7 @@ func (h *Host) handlePairOffer(msg wire.RelayMsg) {
 	if name == "" {
 		name = "phone-" + secure.Fingerprint(offer.DevicePub)
 	}
-	if err := h.store.AddDevice(offer.DevicePub, name, time.Now()); err != nil {
+	if err := h.store.addDevice(offer.DevicePub, name, time.Now(), st.cfg.DelegatedOnly); err != nil {
 		h.logf("remote host: persist device: %v", err)
 		_ = h.writeRelay(wire.RelayMsg{Type: wire.TypePairErr, PairingID: msg.PairingID, Code: wire.CodeBadRequest})
 		return
@@ -600,6 +611,10 @@ func (h *Host) shutdownSessions() {
 	for _, s := range sessions {
 		s.shutdown()
 	}
+	// Closing pipes requests shutdown; the app-server still owns runtime
+	// resources until its deferred cleanup returns. Include replaced connections
+	// as well as the currently attached ones, and wait outside session locks.
+	h.appWG.Wait()
 }
 
 // sendFrame ships an opaque payload to a device through the relay.
@@ -622,7 +637,7 @@ func (h *Host) sendPush(devPub, hint, threadID string, location *wire.UserLocati
 	h.sendPushContext(ctx, devPub, hint, threadID, location, location != nil && h.store.Account() != nil)
 }
 
-func (h *Host) sendPushContext(ctx context.Context, devPub, hint, threadID string, location *wire.UserLocation, accountPersonal bool) {
+func (h *Host) sendPushContext(ctx context.Context, devPub, hint, threadID string, location *wire.UserLocation, accountPersonal bool, guards ...func(context.Context) error) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -631,6 +646,11 @@ func (h *Host) sendPushContext(ctx context.Context, devPub, hint, threadID strin
 			return
 		}
 		if !accountPersonal && !h.store.IsPaired(mustDecodeKey(devPub)) {
+			return
+		}
+	}
+	for _, guard := range guards {
+		if guard(ctx) != nil {
 			return
 		}
 	}
@@ -669,6 +689,11 @@ func (h *Host) sendPushContext(ctx context.Context, devPub, hint, threadID strin
 		}
 		ctx, cancel := context.WithTimeout(h.baseCtx, 15*time.Second)
 		defer cancel()
+		for _, guard := range guards {
+			if guard(ctx) != nil {
+				return
+			}
+		}
 		h.pusher.Push(ctx, ev)
 	}()
 }

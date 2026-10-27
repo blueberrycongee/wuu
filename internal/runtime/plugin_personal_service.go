@@ -9,14 +9,16 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 type PersonalHostCall struct {
-	Operation string          `json:"operation"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
+	ExecutionAuthorization *pluginhost.ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	Operation              string                                      `json:"operation"`
+	Input                  json.RawMessage                             `json:"input,omitempty"`
+	SessionID              string                                      `json:"session_id,omitempty"`
 }
 type PersonalHostHandler func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 
@@ -47,8 +49,15 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		return nil, err
 	}
 	verifiedSession := ""
-	if strings.HasPrefix(call.Operation, "calendar.read.") || call.Operation == "review.execution.status" || call.Operation == "connectors.call" || call.Operation == "connectors.poll" || strings.HasPrefix(call.Operation, "connectors.read.") {
-		metadata, found, err := session.Find(s.sessionDir, call.SessionID)
+	_, execution, known := personalhost.OperationAccess(call.Operation)
+	if !known {
+		return nil, errors.New("Personal host operation is unavailable")
+	}
+	if execution {
+		if s.sessions == nil {
+			return nil, errors.New("Personal session service is unavailable")
+		}
+		metadata, found, err := s.sessions.WithContext(ctx).Find(call.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -59,6 +68,10 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 			return nil, errors.New("review status requires the owning plugin session")
 		}
 		verifiedSession = metadata.ID
+	}
+	ctx, accessErr := s.authorizeSessionResource(ctx, verifiedSession, call.ExecutionAuthorization, "personal/"+call.Operation)
+	if accessErr != nil {
+		return nil, accessErr
 	}
 	if s.turnRouter == nil {
 		return nil, errors.New("Personal host is unavailable")

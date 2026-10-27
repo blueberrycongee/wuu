@@ -4,7 +4,7 @@ import {
   messageFlowFinalTextIndex,
   messageFlowStatusLabel,
 } from "./message-flow-display";
-import { streamFieldValue } from "./ThreadItemText";
+import { streamFieldValue, userMessageBodyText } from "./ThreadItemText";
 import { prefersReducedMotion } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
 import { conversationSearchPattern } from "./ConversationSearchDisplay";
@@ -216,7 +216,7 @@ export function firstUserMessageText(
     if (isInternalUserNotificationItem(item)) {
       continue;
     }
-    const trimmed = (item.text ?? "").trim();
+    const trimmed = userMessageBodyText(item.text ?? "", item.content_parts).trim();
     if (!trimmed) {
       continue;
     }

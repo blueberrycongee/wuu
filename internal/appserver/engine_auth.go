@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/externalengine"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 type EngineAuthParams struct {
@@ -56,17 +56,13 @@ func (s *Server) handleEngineAuth(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	id := strings.TrimSpace(params.EngineID)
+	if id == "" {
+		return s.writeResponse(req.ID, nil, errors.New("engine_id is required"))
+	}
 	if params.MethodID == "local-cli" && req.Method == MethodEngineAuthenticate {
 		if s.remoteDevice {
 			return s.writeResponse(req.ID, nil, errors.New("CLI sign-in must be started on the local desktop"))
 		}
-		if id != "grok" {
-			return s.writeResponse(req.ID, nil, errors.New("local CLI sign-in is not supported for this engine"))
-		}
-	}
-	entry, ok := enginecatalog.Lookup(id)
-	if !ok || entry.Protocol != "acp" {
-		return s.writeResponse(req.ID, nil, errors.New("engine does not support ACP authentication"))
 	}
 	if req.Method == MethodEngineAuthCancel {
 		s.cancelEngineAuth(id)
@@ -80,33 +76,25 @@ func (s *Server) handleEngineAuth(ctx context.Context, req Request) error {
 	} else if strings.TrimSpace(params.MethodID) == "" {
 		return s.writeResponse(req.ID, nil, errors.New("method_id is required"))
 	}
-	settings := s.engineSettingsFromConfig().Binary(id)
-	override := ""
-	if settings != nil {
-		override = settings.BinaryPath
-	}
-	binary, err := entry.Resolve(override)
+	binding, err := s.rt.RetainState()
 	if err != nil {
-		if params.MethodID == "local-cli" {
-			return s.writeResponse(req.ID, nil, errors.New("Grok CLI was not found; install it or check its configured executable path"))
-		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	authCtx, release, err := s.beginEngineAuth(ctx, id)
 	if err != nil {
+		binding.Close()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	engine := externalengine.New(entry, binary, s.rt.RootDir)
 	if !s.startBackground(func() {
-		result, err := engine.Authenticate(authCtx, params.MethodID)
+		defer binding.Close()
+		var result pluginprotocol.EngineAuthResult
+		err := binding.CallEngine(authCtx, agentengine.EngineID(id), "auth", pluginprotocol.EngineAuthRequest{MethodID: params.MethodID, Remote: s.remoteDevice}, &result)
 		release()
-		if err == nil && result.Authenticated {
-			s.invalidateACPEngineModelCatalog(id)
-		}
 		if writeErr := s.writeResponse(req.ID, result, err); writeErr != nil {
 			log.Printf("wuu: engine authentication response: %v", writeErr)
 		}
 	}) {
+		binding.Close()
 		release()
 		return s.writeResponse(req.ID, nil, errServerClosed)
 	}

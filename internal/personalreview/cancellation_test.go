@@ -103,3 +103,35 @@ func TestOwningExecutionCancellationIsScopedAndPreservesClaims(t *testing.T) {
 		t.Fatalf("cancellation rewrote claimed effect: %+v %v", current, err)
 	}
 }
+
+func TestCancellationExactScopeDoesNotRevokeAnotherRun(t *testing.T) {
+	f := newFixture(t)
+	f.authority.Scope.ContextDigest = "first-run"
+	first := f.propose("synthetic.save")
+	f.authority.Scope.ContextDigest = "second-run"
+	proposal := first.Action.Proposal
+	proposal.ID = "second-run-action"
+	proposal.Scope = f.authority.Scope
+	second, err := f.engine.Propose(context.Background(), proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.engine.CancelExecution(context.Background(), first.Action.Scope.SpaceID, first.Action.Scope.SessionID, first.Action.Scope); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.engine.GetExecution(context.Background(), first.Action.Key())
+	if err != nil || got.Status != Revoked {
+		t.Fatalf("exact action not cancelled: %+v %v", got, err)
+	}
+	got, err = f.engine.GetExecution(context.Background(), second.Action.Key())
+	if err != nil || got.Status != AwaitingConfirmation {
+		t.Fatalf("another execution was cancelled: %+v %v", got, err)
+	}
+	if err = f.engine.CancelExecution(context.Background(), second.Action.Scope.SpaceID, second.Action.Scope.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.engine.GetExecution(context.Background(), second.Action.Key())
+	if err != nil || got.Status != Revoked {
+		t.Fatalf("explicit broad owner cancellation changed: %+v %v", got, err)
+	}
+}

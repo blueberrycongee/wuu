@@ -1,12 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ThreadItem, Turn } from "../shared/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ArtifactSourceParams, ThreadItem, Turn } from "../shared/protocol";
 import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresentation";
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { TurnView } from "./TurnView";
-import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail } from "./TurnNotice";
 import { translateCurrent as t } from "./i18n";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -20,8 +20,25 @@ vi.mock("./FeatureFlags", async (importOriginal) => ({
   ENABLE_TURN_ARTIFACT_SUMMARY: true,
 }));
 
+beforeEach(() => {
+  service = createConversationTestApplication();
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
+
+let service = createConversationTestApplication();
+let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+
+function mockArtifactSources() {
+  const acquire = vi.fn(async ({requestId}: ArtifactSourceParams) => ({
+    url: `wuu-artifact://lease/${requestId}`, leaseId: requestId!,
+  }));
+  const release = vi.fn(async () => {});
+  vi.stubGlobal("wuu", {...window.wuu, acquireArtifactSource: acquire, releaseArtifactSource: release});
+  service = createConversationTestApplication();
+  return {acquire, release};
+}
 
 function makeTurn(
   status: Turn["status"],
@@ -80,20 +97,21 @@ function makeReasoning(text: string, id = "reasoning-1"): ThreadItem {
   };
 }
 
-function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatus): HTMLDivElement {
+function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatus, threadID = "thread-1"): HTMLDivElement {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
     root!.render(
-      <ImagePreviewProvider>
+      <ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider>
         <TurnView
+          threadID={threadID}
           turn={turn}
           onStreamFrame={() => {}}
           isLatestTurn={isLatestTurn}
           streamStatus={streamStatus}
         />
-      </ImagePreviewProvider>,
+      </ImagePreviewProvider></ConversationControlsTestProvider>,
     );
   });
   return container;
@@ -102,13 +120,13 @@ function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatu
 function rerender(turn: Turn, isLatestTurn = false): void {
   act(() => {
     root!.render(
-      <ImagePreviewProvider>
+      <ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider>
         <TurnView
           turn={turn}
           onStreamFrame={() => {}}
           isLatestTurn={isLatestTurn}
         />
-      </ImagePreviewProvider>,
+      </ImagePreviewProvider></ConversationControlsTestProvider>,
     );
   });
 }
@@ -121,7 +139,7 @@ afterEach(() => {
   });
   container?.remove();
   streamTextStore.clearItem("turn-1", "commentary-1");
-  desktopPluginHost.setActiveConversationThread(undefined);
+  composition = { Slot: ({ fallback }) => fallback };
   root = undefined;
   container = undefined;
 });
@@ -156,54 +174,21 @@ describe("TurnView", () => {
     },
   );
 
-  it("keeps the conversation timeline plugin surface on each real turn", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:turn-timeline",
-      generation: "one",
-      register(api) {
-        api.registerSurface("conversation.timeline", {
-          id: "turn-replacement",
-          mode: "replace",
-          render(context) {
-            const turns = context.turns as Turn[];
-            return <div data-testid="plugin-turn">{turns[0]?.id}</div>;
-          },
-        });
-      },
-    });
-
-    const view = render(makeTurn("completed"));
-    expect(view.querySelector('[data-testid="plugin-turn"]')?.textContent).toBe(
-      "turn-1",
-    );
-
-    await act(async () => desktopPluginHost.unload("test:turn-timeline"));
+  it("renders a nested public turn contribution with identity-only context", () => {
+    const slot = vi.fn(({ context }: { context?: Readonly<Record<string, unknown>> }) => <div data-testid="plugin-turn">{String(context?.turnId)}</div>);
+    composition = { Slot: slot };
+    const view = render(makeTurn("completed"), false, undefined, "owning-thread");
+    expect(view.querySelector('[data-testid="plugin-turn"]')?.textContent).toBe("turn-1");
+    expect(slot.mock.calls[0][0]).toMatchObject({ name: "wuu.default-conversation/conversation.turn", context: { threadId: "owning-thread", turnId: "turn-1" } });
+    expect(Object.keys(slot.mock.calls[0][0].context!)).toEqual(["threadId", "turnId"]);
   });
 
-  it("exposes the active thread id on the conversation timeline surface", async () => {
-    let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:turn-timeline",
-      generation: "thread-id",
-      register(api) {
-        api.registerSurface("conversation.timeline", {
-          id: "thread-aware-turn",
-          mode: "replace",
-          render(context) {
-            received = context;
-            return <div data-thread-aware-turn>{String(context.threadId)}</div>;
-          },
-        });
-      },
-    });
-
-    desktopPluginHost.setActiveConversationThread("thread-timeline-1");
-    const view = render(makeTurn("completed"));
-
-    expect(view.querySelector("[data-thread-aware-turn]")?.textContent).toBe("thread-timeline-1");
-    expect(received).toHaveProperty("threadId", "thread-timeline-1");
-    desktopPluginHost.setActiveConversationThread(undefined);
-    await act(async () => desktopPluginHost.unload("test:turn-timeline"));
+  it("does not infer a missing thread identity from the active application", () => {
+    let context: Readonly<Record<string, unknown>> | undefined;
+    composition = { Slot: props => { context = props.context; return null; } };
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><TurnView turn={makeTurn("completed")} onStreamFrame={() => {}} /></ConversationControlsTestProvider>));
+    expect(context).toEqual({ threadId: undefined, turnId: "turn-1" });
   });
 
   it("marks the turn root with the live status used by scroll-stable CSS", () => {
@@ -471,7 +456,7 @@ describe("TurnView", () => {
     const tools = Array.from({ length: count }, (_, index) => inspect(index));
     const turn = makeTurn("completed", [...tools, makeFinalAnswer("Checked.")]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
     expect(container.querySelectorAll('.turn-answer-body [data-wuu-component="turn-artifacts-inline"]')).toHaveLength(0);
     expect(container.querySelectorAll('img')).toHaveLength(0);
     await act(async () => { container!.querySelector<HTMLElement>('.turn-process-toggle')!.click(); });
@@ -489,28 +474,33 @@ describe("TurnView", () => {
       result_detail: { content: [{ type: "image", mime_type: "image/png", uri: "images/preview.png", name: "preview.png" }] },
     }]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
     const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
     await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
     const source = container.querySelector('img')?.getAttribute('src');
     expect(source).toBe(`wuu-file://local/${btoa('/workspace/owning-thread/images/preview.png').replace(/=+$/, '')}`);
   });
 
-  it("keeps explicit artifact previews separate from the unchanged file-diff summary", () => {
-    const uri = "wuu-artifact://workspace/thread/artifact/chart.svg?sha256=old";
+  it("keeps explicit artifact previews separate from the unchanged file-diff summary", async () => {
+    const {acquire} = mockArtifactSources();
+    const sha256 = "a".repeat(64);
+    const uri = `wuu-artifact://workspace/thread/artifact/chart.svg?sha256=${sha256}`;
     const turn = makeTurn("completed", [
       { id: "write-chart", type: "tool_call", name: "write_file", status: "completed",
         result: JSON.stringify({ path: "chart.svg", diff: { new_file: true, lines: 68 } }) },
       { id: "present-chart", type: "tool_call", name: "present_artifact", status: "completed",
         result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: "chart.svg", uri,
-          artifact: { ref: "artifact", sha256: "old", placement: "inline" } }] } },
+          artifact: { ref: "artifact", sha256, placement: "inline" } }] } },
       makeFinalAnswer("图已生成。"),
     ]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView threadID="thread-1" turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    await act(async () => {});
     const preview = container.querySelector('[data-wuu-component="turn-artifacts-inline"]')!;
     const diff = container.querySelector(".turn-edit-summary-card")!;
-    expect(preview.querySelector("img")?.getAttribute("src")).toBe(uri);
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(acquire).toHaveBeenCalledWith({uri, sha256, threadId: "thread-1", requestId: expect.any(String)});
+    expect(preview.querySelector("img")?.getAttribute("src")).toBe(`wuu-artifact://lease/${acquire.mock.calls[0][0].requestId}`);
     expect(diff.textContent).toContain("本轮修改 1 个文件");
     expect(diff.textContent).toContain("chart.svg");
     expect(diff.textContent).toContain("68");
@@ -547,25 +537,38 @@ describe("TurnView", () => {
     expect(card?.textContent).not.toContain("video/mp4");
   });
 
-  it("keeps text after published images in place through streaming, more output, and completion", () => {
+  it("keeps published images and streamed answers stable while folding commentary at handoff", async () => {
     vi.useFakeTimers();
+    const {acquire, release} = mockArtifactSources();
     const image = (id: string): ThreadItem => ({
       id, type: "tool_call", name: "present_artifact", status: "completed",
       result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: `${id}.svg`,
         uri: `wuu-artifact://workspace/thread/${id}/chart.svg`,
-        artifact: { ref: id, placement: "inline" } }] },
+        artifact: { ref: id, sha256: (id === "first" ? "a" : "b").repeat(64), placement: "inline" } }] },
     });
     const first = image("first"), second = image("second");
     const text: ThreadItem = { ...makeCommentary("Reading the chart"), status: "in_progress" };
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    const preview = createConversationTestApplication();
+    let currentTurn = makeTurn("in_progress", []);
+    const service = { ...preview,
+      getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { ...preview.getSnapshot().conversationWorkspace, activePane: "primary" as const, threads: [{ id: "thread-live", title: "Live", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [currentTurn] }] } }),
+      conversationText: { getSnapshot: (target: { turnId: string; itemId: string; field: "text" | "arguments" | "result" }) => { const key = streamTextKey(target.turnId, target.itemId, target.field); return streamTextStore.has(key) ? streamTextStore.get(key) : undefined; }, subscribe: (target: { turnId: string; itemId: string; field: "text" | "arguments" | "result" }, listener: () => void) => streamTextStore.subscribe(streamTextKey(target.turnId, target.itemId, target.field), listener) },
+    };
     const update = (turn: Turn): void => {
-      act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+      currentTurn = turn;
+      act(() => root!.render(<ConversationControlsTestProvider composition={composition} service={service}><ImagePreviewProvider><TurnView threadID="thread-live" turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
       act(() => vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS));
     };
     const before = (a: Element, b: Element): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     update(makeTurn("in_progress", [first]));
+    await act(async () => {});
+    expect(acquire).toHaveBeenCalledTimes(1);
     const firstImage = container.querySelector("img")!;
+    expect(firstImage).not.toBeNull();
     update(makeTurn("in_progress", [first, text]));
+    expect(container.querySelector("img")).toBe(firstImage);
+    expect(acquire).toHaveBeenCalledTimes(1);
     const message = container.querySelector(".agent-block")!;
     expect(before(firstImage, message)).toBe(true);
     expect(message.closest(".turn-process-fold")).toBeNull();
@@ -589,18 +592,26 @@ describe("TurnView", () => {
     // A second output must not gather both images after all the commentary.
     const final = { ...makeFinalAnswer("The comparison"), terminal: false, status: "in_progress" as const };
     update(makeTurn("in_progress", [first, settledText, second, final]));
+    expect(container.querySelector("img")).toBe(firstImage);
+    await act(async () => {});
+    expect(acquire).toHaveBeenCalledTimes(2);
     const secondImage = container.querySelectorAll("img")[1];
     const finalMessage = container.querySelectorAll(".agent-block")[1];
     expect(before(message, secondImage)).toBe(true);
     expect(before(secondImage, finalMessage)).toBe(true);
 
-    // Confirming terminal status must preserve both the image and text nodes.
+    // Handoff folds commentary while preserving published images and the answer.
     update(makeTurn("completed", [first, settledText, second, { ...final, terminal: true, status: "completed" }]));
     expect(container.querySelectorAll("img")[0]).toBe(firstImage);
     expect(container.querySelectorAll("img")[1]).toBe(secondImage);
-    expect(container.querySelectorAll(".agent-block")[0]).toBe(message);
-    expect(container.querySelectorAll(".agent-block")[1]).toBe(finalMessage);
+    expect(container.querySelector(".turn-process-fold")?.textContent).toContain("Reading the chart with streamed details");
+    expect(container.querySelectorAll(".turn-answer-body .agent-block")).toHaveLength(1);
+    expect(container.querySelector(".turn-answer-body .agent-block")).toBe(finalMessage);
     expect(before(secondImage, finalMessage)).toBe(true);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(release).not.toHaveBeenCalled();
+    act(() => root!.unmount()); root = undefined;
+    expect(release.mock.calls).toEqual(acquire.mock.calls.map(([params]) => [params.requestId]));
   });
 
   it("buffers structural process changes briefly while keeping the current text visible", () => {
@@ -641,14 +652,14 @@ describe("TurnView", () => {
     const turn = makeTurn("in_progress", [makeCommentary("checking the files")]);
     act(() => {
       root!.render(
-        <ConversationRenderActivityProvider active={false}>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active={false}>
           <TurnView turn={turn} onStreamFrame={() => {}} />
-        </ConversationRenderActivityProvider>,
+        </ConversationRenderActivityProvider>}</ConversationControlsTestProvider>,
       );
     });
     act(() => {
       root!.render(
-        <ConversationRenderActivityProvider active={false}>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active={false}>
           <TurnView
             turn={makeTurn("in_progress", [
               makeCommentary("checking the files"),
@@ -656,12 +667,12 @@ describe("TurnView", () => {
             ])}
             onStreamFrame={() => {}}
           />
-        </ConversationRenderActivityProvider>,
+        </ConversationRenderActivityProvider>}</ConversationControlsTestProvider>,
       );
     });
     act(() => {
       root!.render(
-        <ConversationRenderActivityProvider active>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active>
           <TurnView
             turn={makeTurn("in_progress", [
               makeCommentary("checking the files"),
@@ -669,7 +680,7 @@ describe("TurnView", () => {
             ])}
             onStreamFrame={() => {}}
           />
-        </ConversationRenderActivityProvider>,
+        </ConversationRenderActivityProvider>}</ConversationControlsTestProvider>,
       );
     });
 
@@ -879,11 +890,11 @@ describe("TurnView", () => {
     );
     act(() => {
       root!.render(
-        <TurnView
+        <ConversationControlsTestProvider service={service} composition={composition}>{<TurnView
           turn={turn}
           onStreamFrame={() => {}}
           isLatestTurn
-        />,
+        />}</ConversationControlsTestProvider>,
       );
     });
     act(() => {
@@ -905,10 +916,10 @@ it("removes the recovery card immediately on item removal without duplicating st
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />}</ConversationControlsTestProvider>); });
   expect(container.querySelectorAll(".turn-failure.is-retrying")).toHaveLength(1);
   expect(container.querySelector(".stream-status-notice")).toBeNull();
-  act(() => { root!.render(<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
@@ -918,10 +929,10 @@ it("keeps the retrying card's node when automatic recovery gives up", () => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   const card = container.querySelector(".turn-failure.is-retrying");
   expect(card).not.toBeNull();
-  act(() => { root!.render(<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   expect(container.querySelectorAll("aside.turn-failure")).toHaveLength(1);
   expect(container.querySelector("aside.turn-failure")).toBe(card);
   expect(card!.getAttribute("role")).toBe("alert");
@@ -943,13 +954,13 @@ it.each(["failed", "interrupted"] as const)("routes the retry of a turn that end
   document.body.appendChild(container);
   root = createRoot(container);
   const turn = makeTurn(status, [user, item]);
-  act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
   const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
     .find((button) => button.textContent === t("appState.retryAction"));
   await act(async () => { retryButton()?.click(); });
   expect(onSubmitEditMessage).toHaveBeenCalledWith(turn.id, user, user.input_text, user.images, user.files, user.content_parts);
   expect(onEditMessage).not.toHaveBeenCalled();
-  act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
   expect(retryButton()).toBeUndefined();
 });
 
@@ -960,25 +971,22 @@ it("continues a turn that already wrote part of its reply instead of resending i
   const partial: ThreadItem = { id: "partial", type: "agent_message", status: "completed", text: "First half of the report" };
   const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "failed", reason: "incomplete_stream" };
   const onSubmitEditMessage = vi.fn();
-  const continued = vi.fn((event: Event) => {
-    event.preventDefault();
-    (event as CustomEvent<ContinueTurnDetail>).detail.done(true);
-  });
-  window.addEventListener(CONTINUE_TURN_EVENT, continued);
+  const continued = vi.fn().mockResolvedValue({ accepted: true });
+  service = { ...service, invoke: continued };
   try {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     const turn = makeTurn("interrupted", [user, partial, item]);
-    act(() => { root!.render(<TurnView turn={turn} threadID="thread-1" isLatestTurn onEditMessage={vi.fn()} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} />); });
+    act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} threadID="thread-1" isLatestTurn onEditMessage={vi.fn()} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
     const labels = [...container.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")].map((button) => button.textContent);
     expect(labels).toEqual([t("turnFailure.continue")]);
     await act(async () => { container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button")!.click(); });
     expect(continued).toHaveBeenCalledOnce();
-    expect((continued.mock.calls[0][0] as CustomEvent<ContinueTurnDetail>).detail).toMatchObject({ threadID: "thread-1", text: t("turnFailure.continuePrompt") });
+    expect(continued).toHaveBeenCalledWith("conversation.continue", { threadId: "thread-1", turnId: "turn-1", text: t("turnFailure.continuePrompt") });
     expect(onSubmitEditMessage).not.toHaveBeenCalled();
   } finally {
-    window.removeEventListener(CONTINUE_TURN_EVENT, continued);
+    service = createConversationTestApplication();
   }
 });
 
@@ -990,20 +998,20 @@ it("sends a rejected credential to Model services from the latest turn only", ()
     recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" },
   };
   const turn: Turn = { ...makeTurn("failed", [{ id: "user", type: "user_message", status: "completed", text: "Check this" }]), error };
-  const opened = vi.fn();
-  window.addEventListener(OPEN_SETTINGS_EVENT, opened);
+  const opened = vi.fn().mockResolvedValue(undefined);
+  service = { ...service, invoke: opened };
   try {
     const view = render(turn, true);
     const settings = [...view.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
       .find((button) => button.textContent === t("turnFailure.openSettings"));
     act(() => settings?.click());
     expect(opened).toHaveBeenCalledOnce();
-    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ page: "providers" });
+    expect(opened).toHaveBeenCalledWith("settings.open", { pageId: "providers" });
     rerender(turn, false);
     expect(view.querySelector(".turn-failure")).not.toBeNull();
     expect(view.querySelectorAll(".turn-failure-recovery button")).toHaveLength(0);
   } finally {
-    window.removeEventListener(OPEN_SETTINGS_EVENT, opened);
+    service = createConversationTestApplication();
   }
 });
 

@@ -11,7 +11,6 @@ import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -21,12 +20,40 @@ await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state");
 await mkdir(home);
+await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
+const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
+if (!process.env.WUU_E2E_SESSION_FIXTURE) {
+  const build = spawnSync("go", ["build", "-o", fixtureBinary, "./scripts/session-fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(build.status, 0, build.stderr);
+}
+function fixture(input) {
+  const reply = spawnSync(fixtureBinary, [], { input: JSON.stringify({ home, workdir: scratch, ...input }),
+    encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(reply.status, 0, reply.stderr);
+  return reply.stdout;
+}
+function journal() {
+  const { documents } = JSON.parse(fixture({ op: "inspect",
+    domains: ["inference_operations", "inference_submissions", "inference_workflows"] }));
+  return {
+    operations: documents.inference_operations.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+    submissions: documents.inference_submissions.map(document => document.value).sort((a, b) => Date.parse(a.StartedAt) - Date.parse(b.StartedAt) || a.Ordinal - b.Ordinal),
+    workflows: documents.inference_workflows.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+  };
+}
+
 const events = new EventEmitter();
 const privateProviderMarker = "fixture-private-provider-body-sentinel";
 const transcript = [], requests = [], providerCalls = [], closed = [];
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed",
   limitations: ["Synthetic provider: wire equality and lifecycle evidence only; no real prompt-cache hit or cost saving is claimed."] };
-let child, stderr = "", sequence = 0;
+let child, stderr = "", sequence = 0, graphGeneration;
+
+// Background title generation shares this provider; attribute assertions to
+// the tagged journey while preserving every request in the evidence log.
+function providerCallsFor(tag) {
+  return providerCalls.filter(call => call.tag === tag);
+}
 
 function waitFor(event, history, predicate, label, timeout = 20_000) {
   const previous = history.find(predicate);
@@ -157,16 +184,19 @@ async function publish(source) {
   assert.equal(published.status, 0, published.stderr);
 }
 const fixtures = {};
+function adoptInventory(inventory) {
+  const generations = new Set(inventory.filter(item => item.graph_generation).map(item => item.graph_generation));
+  assert.equal(generations.size, 1, "inventory must identify one admitted service graph");
+  graphGeneration = [...generations][0];
+  for (const name of ["replay", "shadow"]) fixtures[name] = inventory.find(plugin => plugin.name === name);
+}
 async function client(name, method, input = {}) {
   const item = fixtures[name];
   return (await rpc("plugin/client/request", { id: item.id, fingerprint: item.fingerprint,
-    request_id: `${name}-${++sequence}`, method, input })).result;
+    graph_generation: graphGeneration, request_id: `${name}-${++sequence}`, method, input })).result;
 }
 function adapterSubmissions() {
-  const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
-  try {
-    return db.prepare("SELECT operation_id FROM inference_submissions WHERE protocol = ? ORDER BY started_at, rowid").all("plugin:fixture.shadow");
-  } finally { db.close(); }
+  return journal().submissions.filter(submission => submission.Protocol === "plugin:fixture.shadow");
 }
 async function terminalJob(name, jobID) {
   const deadline = Date.now() + 20_000;
@@ -190,7 +220,7 @@ async function fixtureState(name, predicate, label) {
 async function normalTurn(threadID, prompt) {
   const { turn } = await rpc("turn/start", { thread_id: threadID, prompt });
   const complete = await waitFor("message", transcript, message =>
-    message.method === "turn/completed" && message.params?.turn?.id === turn.id, `turn ${turn.id}`);
+    ["turn/completed", "turn/error"].includes(message.method) && message.params?.turn?.id === turn.id, `turn ${turn.id}`);
   assert.equal(complete.params.turn.status, "completed", JSON.stringify(complete));
   return turn;
 }
@@ -227,6 +257,7 @@ try {
     catch { stderr += `\nnon-JSON stdout: ${line}`; }
   });
   const initialized = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "model-pipeline-e2e" } });
+  adoptInventory(initialized.extension_inventory);
   for (const name of ["replay", "shadow"]) {
     const item = initialized.extension_inventory.find(plugin => plugin.name === name);
     assert(item, `${name} single-file fixture missing`);
@@ -238,7 +269,7 @@ try {
   // The remaining journeys use only public app-server and extension contracts.
   const registry = await rpc("plugin/registry/introspect");
   for (const service of ["host.model.invoke", "host.model.emit", "host.background"]) {
-    assert(registry.services.some(entry => entry.service === service && entry.version === "1.0.0" && entry.kernel), service);
+    assert(registry.services.some(entry => entry.service === service && entry.version === "1.0.0" && entry.provider === "kernel"), service);
   }
   result.checks.push("versioned invocation, streaming and background services registered");
   const { thread } = await rpc("thread/start", { model: "claude-fixture", provider: "fixture" });
@@ -309,20 +340,28 @@ try {
     if (threadID === thread.id) await turn(tag);
     const replayState = await client("replay", "state");
     const shadowState = await client("shadow", "state");
-    assertOrigin(replayState.snapshots.at(-1).origin, threadID);
-    assertOrigin(replayState.transformOrigins.at(-1).origin, threadID);
-    assertOrigin(shadowState.middlewareOrigins.at(-1).origin, threadID);
+    const foreground = replayState.snapshots.at(-1);
+    assert(foreground.request.messages.some(message => message.content === tag), "snapshot did not belong to the requested foreground turn");
+    assertOrigin(foreground.origin, threadID);
+    // Title/auxiliary preparation can finish after the foreground request.
+    // Correlate every seam to its operation, not whichever global event was last.
+    for (const records of [replayState.transformOrigins, shadowState.middlewareOrigins]) {
+      const matched = records.filter(record => record.origin.operation_id === foreground.origin.operation_id);
+      assert(matched.length > 0, "foreground operation was not observed by every seam");
+      for (const record of matched) assertOrigin(record.origin, threadID);
+    }
   }
   result.origin_threads = [thread.id, secondThread.id];
   result.checks.push("foreground transform, middleware and observer origins distinguish threads and preserve descendant attribution");
 
-  const beforeUncapped = providerCalls.length;
+  const beforeUncapped = providerCallsFor(native.tag).length;
   const unscoped = await client("replay", "start", { request: snapshot, stream: false, generation_scope: true, preserve_limits: true });
   const uncapped = await terminalJob("replay", unscoped.job_id);
   assert.equal(uncapped.state, "completed", JSON.stringify(uncapped));
-  assert.equal(providerCalls.length, beforeUncapped + 1);
-  assert.equal(providerCalls.at(-1).body.max_tokens, native.body.max_tokens);
-  assert.deepEqual(contextWire(providerCalls.at(-1).body), contextWire(native.body));
+  const uncappedCalls = providerCallsFor(native.tag);
+  assert.equal(uncappedCalls.length, beforeUncapped + 1);
+  assert.equal(uncappedCalls.at(-1).body.max_tokens, native.body.max_tokens);
+  assert.deepEqual(contextWire(uncappedCalls.at(-1).body), contextWire(native.body));
   result.checks.push("generation-scoped host starts background work without foreground execution authority",
     "general invocation preserves the original output limit when no override is requested");
 
@@ -353,9 +392,10 @@ try {
   assert.equal(overriddenAlias.provider_options.temperature, 0.19);
   assert.equal(overriddenAlias.provider_options.fixture_alias_default, "configured");
   assert.equal(overriddenAlias.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
-  assert.equal(providerCalls.at(-1).body.output_config.effort, "max");
+  const aliasOptionsWire = providerCallsFor("pipeline-alias").at(-1).body;
+  assert.equal(aliasOptionsWire.max_tokens, 31);
+  assert.equal(aliasOptionsWire.model, "claude-fixture-alias");
+  assert.equal(aliasOptionsWire.output_config.effort, "max");
   result.checks.push("explicit alias invocation options override configured defaults while keeping its output cap");
 
   const adapterCallsBeforeNative = (await client("shadow", "state")).adapterRequests.length;
@@ -365,10 +405,11 @@ try {
   const aliasNative = await terminalJob("replay", aliasNativeStart.job_id);
   assert.equal(aliasNative.state, "completed", JSON.stringify(aliasNative));
   assert.equal((await client("shadow", "state")).adapterRequests.length, adapterCallsBeforeNative);
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
-  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.temperature, 0.17);
-  assert.equal(providerCalls.at(-1).body.output_config.effort, "low");
+  const aliasNativeWire = providerCallsFor("pipeline-alias").at(-1).body;
+  assert.equal(aliasNativeWire.model, "claude-fixture-alias");
+  assert.equal(aliasNativeWire.max_tokens, 31);
+  assert.equal(aliasNativeWire.temperature, 0.17);
+  assert.equal(aliasNativeWire.output_config.effort, "low");
   result.alias = { inherited: inheritedAlias, overridden: overriddenAlias, native: aliasNative };
   result.checks.push("explicit native adapter selection overrides alias and request option adapter routing");
 
@@ -400,37 +441,37 @@ try {
   result.adapter_error = errorStatus;
   result.checks.push("custom adapter streaming error remains failure rather than successful finish");
 
-  const beforeLateError = adapterSubmissions().map(submission => submission.operation_id);
+  const beforeLateError = adapterSubmissions().map(submission => submission.OperationID);
   const lateError = await client("shadow", "start", { request: snapshot, mode: "late-error" });
   const lateStatus = await terminalJob("shadow", lateError.job_id);
   assert(lateStatus.result?.error || lateStatus.error, JSON.stringify(lateStatus));
   assert.equal(lateStatus.result.events.filter(event => event.type === "done").length, 0);
-  const lateErrorReceipts = adapterSubmissions().filter(submission => !beforeLateError.includes(submission.operation_id));
+  const lateErrorReceipts = adapterSubmissions().filter(submission => !beforeLateError.includes(submission.OperationID));
   assert.equal(lateErrorReceipts.length, 1);
   result.checks.push("adapter exception after emitted done cannot masquerade as success");
 
-  const beforeLateCancel = adapterSubmissions().map(submission => submission.operation_id);
+  const beforeLateCancel = adapterSubmissions().map(submission => submission.OperationID);
   const lateCancel = await client("shadow", "start", { request: snapshot, mode: "late-cancel" });
   await fixtureState("shadow", state => state.adapterFinalReceiptHeld === 1, "final adapter receipt acknowledged before cancellation");
-  const lateCancelReceipts = adapterSubmissions().filter(submission => !beforeLateCancel.includes(submission.operation_id));
+  const lateCancelReceipts = adapterSubmissions().filter(submission => !beforeLateCancel.includes(submission.OperationID));
   assert.equal(lateCancelReceipts.length, 1);
   await client("shadow", "cancel", { job_id: lateCancel.job_id });
   assert.equal((await terminalJob("shadow", lateCancel.job_id)).state, "cancelled");
 
-  const beforeMalformedStream = adapterSubmissions().map(submission => submission.operation_id);
+  const beforeMalformedStream = adapterSubmissions().map(submission => submission.OperationID);
   const malformedStream = await client("shadow", "start", { request: snapshot, mode: "malformed-response" });
   const malformedStreamStatus = await terminalJob("shadow", malformedStream.job_id);
   assert(malformedStreamStatus.result?.error || malformedStreamStatus.error, JSON.stringify(malformedStreamStatus));
   assert.equal(malformedStreamStatus.result.events.filter(event => event.type === "done").length, 0);
-  const malformedStreamReceipts = adapterSubmissions().filter(submission => !beforeMalformedStream.includes(submission.operation_id));
+  const malformedStreamReceipts = adapterSubmissions().filter(submission => !beforeMalformedStream.includes(submission.OperationID));
   assert.equal(malformedStreamReceipts.length, 1);
 
-  const beforeUnaryValidation = adapterSubmissions().map(submission => submission.operation_id);
+  const beforeUnaryValidation = adapterSubmissions().map(submission => submission.OperationID);
   await turn("pipeline-unary-validation");
   const unaryValidation = (await client("shadow", "state")).unaryValidation;
   assert.deepEqual(unaryValidation.map(call => call.failed), [true, true, false, true, false]);
   assert(unaryValidation.filter(call => !call.failed).every(call => call.usage.input_tokens === 3 && call.usage.output_tokens === 2));
-  const unaryReceipts = adapterSubmissions().filter(submission => !beforeUnaryValidation.includes(submission.operation_id));
+  const unaryReceipts = adapterSubmissions().filter(submission => !beforeUnaryValidation.includes(submission.OperationID));
   assert.equal(unaryReceipts.length, 5);
   assert(!providerCalls.some(call => call.tag === "pipeline-unary-validation"));
 
@@ -445,13 +486,13 @@ try {
   const cancellationsBeforeHold = (await client("shadow", "state")).adapterCancelled;
   const heldAdapter = await client("shadow", "start", { request: snapshot, mode: "hold" });
   await fixtureState("shadow", state => state.adapterRequests.some(request => request.provider_options?.fixture_mode === "hold"), "custom adapter started");
-  const liveDB = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
-  try {
-    result.adapter_admission = liveDB.prepare("SELECT s.operation_id, s.outcome, s.cost_state, s.completed_at FROM inference_submissions s JOIN inference_operations o ON s.operation_id = o.id WHERE o.owner_id = ? AND s.protocol = ? AND s.outcome = 'in_flight'").all(`plugin:${fixtures.shadow.id.split(":").at(-1)}`, "plugin:fixture.shadow");
-  } finally { liveDB.close(); }
+  const admission = journal();
+  const adapterOperations = admission.operations.filter(operation => operation.OwnerID === `plugin:${fixtures.shadow.id.split(":").at(-1)}`).map(operation => operation.ID);
+  result.adapter_admission = admission.submissions.filter(submission => adapterOperations.includes(submission.OperationID)
+    && submission.Protocol === "plugin:fixture.shadow" && submission.Outcome === "in_flight");
   assert.equal(result.adapter_admission.length, 1, "direct adapter callback ran without durable pre-admission");
-  assert.equal(result.adapter_admission[0].completed_at, 0);
-  assert.equal(result.adapter_admission[0].cost_state, "unknown_but_billable");
+  assert.equal(result.adapter_admission[0].CompletedAt, "0001-01-01T00:00:00Z");
+  assert.equal(result.adapter_admission[0].CostState, "unknown_but_billable");
   result.checks.push("direct custom adapter has a durable submission before its callback completes");
   await client("shadow", "cancel", { job_id: heldAdapter.job_id });
   const adapterCancellation = await terminalJob("shadow", heldAdapter.job_id);
@@ -469,20 +510,20 @@ try {
   assert.equal(noUsage.state, "completed", JSON.stringify(noUsage));
   assert.equal(noUsage.result.result.response.usage, undefined);
 
-  const beforeDelegate = providerCalls.length;
+  const beforeDelegate = providerCallsFor(native.tag).length;
   const delegated = await client("shadow", "start", { request: snapshot, mode: "native", stream: false });
   const delegation = await terminalJob("shadow", delegated.job_id);
   assert.equal(delegation.state, "completed", JSON.stringify(delegation));
   assert.equal(delegation.result.response.usage.input_tokens, 11);
-  assert.equal(providerCalls.length, beforeDelegate + 1);
+  assert.equal(providerCallsFor(native.tag).length, beforeDelegate + 1);
   result.native_delegation = delegation;
   result.checks.push("custom adapter can explicitly delegate to native transport");
 
-  const beforeMissing = providerCalls.length;
+  const beforeMissing = providerCallsFor(native.tag).length;
   const missing = await client("replay", "start", { request: { ...snapshot, adapter: "fixture.missing" }, stream: false });
   const missingStatus = await terminalJob("replay", missing.job_id);
   assert.equal(missingStatus.state, "failed", JSON.stringify(missingStatus));
-  assert.equal(providerCalls.length, beforeMissing, "missing custom adapter silently fell back to native");
+  assert.equal(providerCallsFor(native.tag).length, beforeMissing, "missing custom adapter silently fell back to native");
   result.checks.push("missing exact custom adapter fails closed before provider dispatch");
 
   await turn("pipeline-hold-break");
@@ -527,9 +568,9 @@ try {
 
   await turn("pipeline-middleware-first");
   const middlewareOperation = (await client("replay", "state")).snapshots.at(-1).origin.operation_id;
-  const beforeShortCircuit = providerCalls.length;
+  const beforeShortCircuit = providerCallsFor("pipeline-middleware-second").length;
   await turn("pipeline-middleware-second");
-  assert.equal(providerCalls.length, beforeShortCircuit, "middleware short circuit reached provider");
+  assert.equal(providerCallsFor("pipeline-middleware-second").length, beforeShortCircuit, "middleware short circuit reached provider");
   assert.equal((await client("shadow", "state")).middlewareHits, 1);
   result.checks.push("around-call middleware can inspect result, rewrite output and short circuit provider");
 
@@ -549,10 +590,11 @@ try {
   result.checks.push("isolated transform and observer failures do not break normal inference");
 
   await rpc("config/model/update", { thread_id: thread.id, provider: "fixture", model: "claude-fixture-next" });
+  adoptInventory((await rpc("config/read")).extension_inventory);
   const pinnedStart = await client("replay", "start", { request: snapshot, stream: false });
   const pinned = await terminalJob("replay", pinnedStart.job_id);
   assert.equal(pinned.state, "completed", JSON.stringify(pinned));
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture", "snapshot drifted to new default model");
+  assert.equal(providerCallsFor(native.tag).at(-1).body.model, "claude-fixture", "snapshot drifted to new default model");
   await turn("pipeline-model-changed");
   assert.equal(providerCalls.find(call => call.tag === "pipeline-model-changed").body.model, "claude-fixture-next");
   result.checks.push("saved request remains pinned while next foreground request uses changed model");
@@ -584,13 +626,14 @@ try {
       const source = join(scratch, "replay.ts");
       await writeFile(source, (await readFile(source, "utf8")) + "\n// Synthetic same-source reload acceptance.\n");
       const previous = fixtures.replay;
+      const previousGraph = graphGeneration;
       await publish(source);
       const refreshed = await rpc("extension/catalog/refresh");
-      fixtures.replay = refreshed.extension_inventory.find(plugin => plugin.name === "replay");
-      fixtures.shadow = refreshed.extension_inventory.find(plugin => plugin.name === "shadow");
+      adoptInventory(refreshed.extension_inventory);
       assert.equal(fixtures.replay.runtime_state, "active");
       assert.notEqual(fixtures.replay.fingerprint, previous.fingerprint);
-      const stale = await rpcRaw("plugin/client/request", { id: previous.id, fingerprint: previous.fingerprint, request_id: "stale-generation", method: "state", input: {} });
+      const stale = await rpcRaw("plugin/client/request", { id: previous.id, fingerprint: previous.fingerprint,
+        graph_generation: previousGraph, request_id: "stale-generation", method: "state", input: {} });
       assert(stale.error, "old generation client identity remained valid");
       assert.equal((await client("replay", "state")).jobs.length, 0);
     } else {
@@ -601,101 +644,94 @@ try {
   }
 
   const enabled = await rpc("extension/package/update", { id: fixtures.replay.id, fingerprint: fixtures.replay.fingerprint, action: "enable" });
-  fixtures.replay = enabled.extension_inventory.find(plugin => plugin.name === "replay");
-  fixtures.shadow = enabled.extension_inventory.find(plugin => plugin.name === "shadow");
+  adoptInventory(enabled.extension_inventory);
   await client("replay", "arm", { tag: "pipeline-hold-shutdown" });
   await turn("pipeline-hold-shutdown");
   const shutdownCall = await waitFor("provider", providerCalls, call => call.replay && call.tag === "pipeline-hold-shutdown", "shutdown provider started");
   await stopChild();
   await waitFor("closed", closed, call => call.index === shutdownCall.index, "shutdown provider disconnected");
-  const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
-  try {
-    result.accounting = {
-      operations: db.prepare("SELECT id, workflow_id, owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
-      submissions: db.prepare("SELECT operation_id, cost_state, reported_input_tokens, reported_output_tokens, has_reported_usage, outcome FROM inference_submissions ORDER BY started_at").all(),
-      workflows: db.prepare("SELECT owner_id, status FROM inference_workflows ORDER BY created_at").all(),
-      sessions: db.prepare("SELECT count(*) AS count FROM sessions").get().count,
-      messages: db.prepare("SELECT role, content, tool_calls_json, tool_result_json FROM session_messages ORDER BY seq").all(),
-    };
-  } finally { db.close(); }
+  const historyJSON = fixture({ op: "read" });
+  const persisted = JSON.parse(historyJSON).sessions;
+  result.accounting = { ...journal(), sessions: persisted.length,
+    messages: persisted.flatMap(thread => thread.history) };
   const accounting = result.accounting;
-  assert(accounting.operations.every(operation => operation.status !== "active"), "active inference accounting leaked");
-  assert(accounting.workflows.every(workflow => workflow.status !== "active"), "active inference workflow leaked on shutdown");
-  assert(accounting.submissions.every(submission => submission.outcome !== "in_flight"), "shutdown left an in-flight physical submission");
+  assert(accounting.operations.every(operation => operation.Status !== "active"), "active inference accounting leaked");
+  assert(accounting.workflows.every(workflow => workflow.Status !== "active"), "active inference workflow leaked on shutdown");
+  assert(accounting.submissions.every(submission => submission.Outcome !== "in_flight"), "shutdown left an in-flight physical submission");
   result.checks.push("process shutdown cancels live background transport and persists terminal accounting");
   const replayOwner = `plugin:${fixtures.replay.id.split(":").at(-1)}`;
   const shadowOwner = `plugin:${fixtures.shadow.id.split(":").at(-1)}`;
   for (const owner of [replayOwner, shadowOwner]) {
-    const ids = accounting.operations.filter(operation => operation.owner_id === owner).map(operation => operation.id);
+    const ids = accounting.operations.filter(operation => operation.OwnerID === owner).map(operation => operation.ID);
     assert(ids.length > 0, `${owner} usage ownership missing`);
-    assert(accounting.submissions.some(submission => ids.includes(submission.operation_id) && submission.has_reported_usage), `${owner} reported usage missing`);
+    assert(accounting.submissions.some(submission => ids.includes(submission.OperationID) && submission.ReportedUsage), `${owner} reported usage missing`);
   }
-  const shadowOperations = accounting.operations.filter(operation => operation.owner_id === shadowOwner).map(operation => operation.id);
-  const shadowUsage = accounting.submissions.filter(submission => shadowOperations.includes(submission.operation_id) && submission.has_reported_usage);
+  const shadowOperations = accounting.operations.filter(operation => operation.OwnerID === shadowOwner).map(operation => operation.ID);
+  const shadowUsage = accounting.submissions.filter(submission => shadowOperations.includes(submission.OperationID) && submission.ReportedUsage);
   assert.equal(shadowUsage.length, 6, "native delegation duplicated a charged submission");
-  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 41);
+  assert.equal(shadowUsage.reduce((total, submission) => total + submission.ReportedUsage.InputTokens + submission.ReportedUsage.OutputTokens, 0), 41);
   result.adapter_terminal_receipts = [];
   for (const [mode, receipts] of [["throw", lateErrorReceipts], ["cancel", lateCancelReceipts]]) {
-    const submitted = accounting.submissions.filter(submission => submission.operation_id === receipts[0].operation_id);
+    const submitted = accounting.submissions.filter(submission => submission.OperationID === receipts[0].OperationID);
     assert.equal(submitted.length, 1, `${mode} duplicated a direct adapter receipt`);
     result.adapter_terminal_receipts.push({ mode, ...submitted[0] });
-    assert.equal(submitted[0].outcome, "failed");
-    assert.equal(submitted[0].cost_state, "known");
-    assert.equal(submitted[0].reported_input_tokens, 3);
-    assert.equal(submitted[0].reported_output_tokens, 2);
+    assert.equal(submitted[0].Outcome, "failed");
+    assert.equal(submitted[0].CostState, "known");
+    assert.equal(submitted[0].ReportedUsage.InputTokens, 3);
+    assert.equal(submitted[0].ReportedUsage.OutputTokens, 2);
     result.checks.push(`direct adapter final usage remains known when its callback later ${mode === "throw" ? "throws" : "is cancelled"}`);
   }
-  const malformedStreamReceipt = accounting.submissions.find(submission => submission.operation_id === malformedStreamReceipts[0].operation_id);
-  assert.equal(malformedStreamReceipt.outcome, "failed");
-  assert.equal(malformedStreamReceipt.cost_state, "known");
-  assert.equal(malformedStreamReceipt.reported_input_tokens, 3);
-  assert.equal(malformedStreamReceipt.reported_output_tokens, 2);
+  const malformedStreamReceipt = accounting.submissions.find(submission => submission.OperationID === malformedStreamReceipts[0].OperationID);
+  assert.equal(malformedStreamReceipt.Outcome, "failed");
+  assert.equal(malformedStreamReceipt.CostState, "known");
+  assert.equal(malformedStreamReceipt.ReportedUsage.InputTokens, 3);
+  assert.equal(malformedStreamReceipt.ReportedUsage.OutputTokens, 2);
   result.malformed_stream_receipt = malformedStreamReceipt;
   result.checks.push("streaming adapter returned malformed response keeps its independently valid usage receipt");
-  const unarySubmissions = unaryReceipts.map(receipt => accounting.submissions.find(submission => submission.operation_id === receipt.operation_id));
+  const unarySubmissions = unaryReceipts.map(receipt => accounting.submissions.find(submission => submission.OperationID === receipt.OperationID));
   result.unary_validation = unarySubmissions;
-  assert.equal(new Set(unaryReceipts.map(receipt => accounting.operations.find(operation => operation.id === receipt.operation_id).workflow_id)).size, 1);
+  assert.equal(new Set(unaryReceipts.map(receipt => accounting.operations.find(operation => operation.ID === receipt.OperationID).WorkflowID)).size, 1);
   for (const [index, submission] of unarySubmissions.entries()) {
-    assert.equal(submission.outcome, unaryValidation[index].failed ? "failed" : "succeeded");
+    assert.equal(submission.Outcome, unaryValidation[index].failed ? "failed" : "succeeded");
     if (index < 2) {
-      assert.equal(submission.cost_state, "unknown_but_billable");
-      assert.equal(submission.has_reported_usage, 0);
-      assert.equal(submission.reported_input_tokens, 0);
-      assert.equal(submission.reported_output_tokens, 0);
+      assert.equal(submission.CostState, "unknown_but_billable");
+      assert.equal(submission.ReportedUsage, null);
     } else {
-      assert.equal(submission.cost_state, "known");
-      assert.equal(submission.reported_input_tokens, 3);
-      assert.equal(submission.reported_output_tokens, 2);
+      assert.equal(submission.CostState, "known");
+      assert.equal(submission.ReportedUsage.InputTokens, 3);
+      assert.equal(submission.ReportedUsage.OutputTokens, 2);
     }
   }
   result.checks.push("invalid unary usage remains unknown and subsequent valid calls share a healthy workflow",
     "valid unary usage survives unrelated malformed response metadata");
-  assert(!accounting.submissions.some(submission => submission.operation_id === delegation.result.origin.operation_id && submission.has_reported_usage), "adapter echoed native usage as a second charged result");
-  const unknownCost = accounting.submissions.filter(submission => submission.operation_id === noUsage.result.result.origin.operation_id);
+  assert(!accounting.submissions.some(submission => submission.OperationID === delegation.result.origin.operation_id && submission.ReportedUsage), "adapter echoed native usage as a second charged result");
+  const unknownCost = accounting.submissions.filter(submission => submission.OperationID === noUsage.result.result.origin.operation_id);
   assert.equal(unknownCost.length, 1);
-  assert.equal(unknownCost[0].cost_state, "unknown_but_billable");
-  assert.equal(unknownCost[0].has_reported_usage, 0);
-  const retried = accounting.submissions.filter(submission => submission.operation_id === retryOperation);
+  assert.equal(unknownCost[0].CostState, "unknown_but_billable");
+  assert.equal(unknownCost[0].ReportedUsage, null);
+  const retried = accounting.submissions.filter(submission => submission.OperationID === retryOperation);
   assert.equal(retried.length, 2);
-  assert.deepEqual(retried.map(submission => submission.outcome), ["failed", "succeeded"]);
-  const failedPhysicalUsage = accounting.submissions.filter(submission => submission.operation_id === failedUsageOperation);
+  assert.deepEqual(retried.map(submission => submission.Outcome), ["failed", "succeeded"]);
+  const failedPhysicalUsage = accounting.submissions.filter(submission => submission.OperationID === failedUsageOperation);
   result.failed_physical_usage = failedPhysicalUsage[0];
   assert.equal(failedPhysicalUsage.length, 1);
-  assert.equal(failedPhysicalUsage[0].outcome, "failed");
-  assert.equal(failedPhysicalUsage[0].reported_input_tokens, 11);
-  assert.equal(failedPhysicalUsage[0].reported_output_tokens, 5);
-  assert.equal(failedPhysicalUsage[0].cost_state, "known");
+  assert.equal(failedPhysicalUsage[0].Outcome, "failed");
+  assert.equal(failedPhysicalUsage[0].ReportedUsage.InputTokens, 11);
+  assert.equal(failedPhysicalUsage[0].ReportedUsage.OutputTokens, 5);
+  assert.equal(failedPhysicalUsage[0].CostState, "known");
   result.checks.push("middleware rewrite cannot corrupt physical native usage on a failed stream");
-  const originalUsage = accounting.submissions.filter(submission => submission.operation_id === middlewareOperation);
+  const originalUsage = accounting.submissions.filter(submission => submission.OperationID === middlewareOperation);
   assert.equal(originalUsage.length, 1);
-  assert.equal(originalUsage[0].reported_input_tokens, 11);
-  assert.equal(originalUsage[0].reported_output_tokens, 5);
+  assert.equal(originalUsage[0].ReportedUsage.InputTokens, 11);
+  assert.equal(originalUsage[0].ReportedUsage.OutputTokens, 5);
   result.checks.push("missing adapter usage stays unknown and native delegation is counted once",
     "middleware usage rewrite cannot replace native submission billing evidence");
-  assert(accounting.messages.some(message => /"score"\s*:\s*1\.0/.test(message.tool_result_json)), "raw 1.0 tool result was not exercised");
+  assert(accounting.messages.some(message => message.tool_result?.structured_content?.score === 1), "structured tool result was not persisted");
+  assert(/"score"\s*:\s*1\.0/.test(historyJSON), "raw 1.0 tool result was not retained in selected history");
+  await writeFile(join(output, "durable-history.json"), historyJSON);
   assert.equal(accounting.sessions, 2, "independent inference created a hidden session");
   assert.equal(accounting.messages.filter(message => message.role === "user").length, normalTurns);
-  assert(!accounting.messages.some(message => message.content.includes("fixture:shadow-result") || message.content.includes(":replay") || message.tool_calls_json.includes("fixture-unexecuted-tool")), "independent inference polluted user history");
+  assert(!accounting.messages.some(message => message.content.includes("fixture:shadow-result") || message.content.includes(":replay") || message.tool_calls?.some(call => call.id === "fixture-unexecuted-tool")), "independent inference polluted user history");
   assert(accounting.messages.some(message => message.content.includes("fixture:middleware-cache-hit")), "middleware short-circuit response was not delivered");
   assert(accounting.messages.some(message => message.content.startsWith("middleware:fixture:")), "middleware response rewrite was not delivered");
   result.checks.push("plugin-owned terminal accounting includes native and custom-adapter usage",

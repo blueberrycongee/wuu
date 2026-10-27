@@ -27,7 +27,7 @@ func TestClientInvalidationOwnershipAndLifecycle(t *testing.T) {
 		t.Fatal(conflicts)
 	}
 	registry.RegisterClients(&kernelConsumer{id: "demo", requirements: []pluginhost.ServiceRequirement{{Name: "host.client.invalidate", MajorVersion: 1, Required: true}}})
-	registry.Activate()
+	activateServiceTestHost(t, k, registry)
 	call := func(caller, raw string) *pluginhost.HostServiceError {
 		_, err := registry.Call(context.Background(), caller, pluginhost.ServiceCallParams{Service: "host.client.invalidate", Method: "call", Params: json.RawMessage(raw)})
 		return err

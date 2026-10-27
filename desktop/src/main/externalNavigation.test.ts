@@ -24,7 +24,7 @@ describe("external navigation", () => {
   });
 
   it("confines navigation to the renderer and denies child windows", async () => {
-    let windowOpenHandler: ((details: { url: string }) => { action: "deny" }) | undefined;
+    let windowOpenHandler: Parameters<ExternalNavigationWindow["webContents"]["setWindowOpenHandler"]>[0] | undefined;
     let navigateHandler:
       | ((event: { preventDefault: () => void }, url: string) => void)
       | undefined;
@@ -54,6 +54,22 @@ describe("external navigation", () => {
     expect(externalEvent.preventDefault).toHaveBeenCalledTimes(1);
     expect(openExternal).toHaveBeenCalledWith("https://example.com");
     expect(openExternal).toHaveBeenCalledWith("https://example.com/docs");
+  });
+
+  it("allows only an explicitly handled shell popup and keeps external links guarded", () => {
+    let handler: Parameters<ExternalNavigationWindow["webContents"]["setWindowOpenHandler"]>[0] | undefined;
+    const openExternal = vi.fn().mockResolvedValue(true);
+    wireExternalNavigationGuards({ webContents: {
+      setWindowOpenHandler: value => { handler = value; }, on: () => undefined,
+    } }, {
+      rendererURL: "file:///app/index.html", openExternal,
+      openWindow: details => details.url === "about:blank" && details.frameName === "wuu-browser-popover"
+        ? { action: "allow" } : undefined,
+    });
+    expect(handler?.({ url: "about:blank", frameName: "wuu-browser-popover" })).toEqual({ action: "allow" });
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(handler?.({ url: "https://example.com", frameName: "wuu-browser-popover" })).toEqual({ action: "deny" });
+    expect(handler?.({ url: "about:blank", frameName: "other" })).toEqual({ action: "deny" });
   });
 
   it("does not trust URLs that only share the renderer prefix", () => {

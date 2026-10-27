@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -51,8 +53,8 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
-	rt.PluginHost = pluginhost.New(policy)
-	host, err := NewUserHost(rt)
+	attachTestModelGeneration(t, rt, policy)
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,17 +62,25 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	in, writer := io.Pipe()
 	out := &lockedBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- host.Serve(context.Background(), in, out, nil) }()
-	defer func() { writer.Close(); <-done }()
+	go func() {
+		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, out, nil)
+	}()
+	connectionClosed := false
+	defer func() {
+		if !connectionClosed {
+			writer.Close()
+			<-done
+		}
+	}()
 	fmt.Fprintln(writer, `{"id":"init","method":"initialize"}`)
 	waitForResponseByID(t, out, "init")
-	main, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "attention-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
+	main, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "attention-main", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	send := func(id string) pluginhost.SessionSendResult {
 		t.Helper()
-		sent, err := rt.PluginSessionRouter.Send(context.Background(), "fixture", pluginhost.SessionSendParams{RequestID: id, SessionID: main.SessionID, Input: pluginhost.SessionInput{Prompt: "finish"}})
+		sent, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionSendParams{RequestID: id, SessionID: main.SessionID, Input: pluginhost.SessionInput{Prompt: "finish"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,6 +109,16 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 		t.Fatal("next policy was not admitted")
 	}
 	allowed.result <- true
+	// Delivery and every replay recheck the owning preference. Continue serving
+	// that selected policy after the explicitly controlled admission above.
+	rechecked := make(chan struct{})
+	go func() {
+		defer close(rechecked)
+		for range 2 {
+			call := <-policy.calls
+			call.result <- true
+		}
+	}()
 	messages := waitForMethod(t, out, NotificationUserAttention)
 	count := 0
 	for _, message := range messages {
@@ -118,13 +138,17 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	if count != 1 {
 		t.Fatalf("attention count: %d", count)
 	}
+	<-rechecked
+	writer.Close()
+	<-done
+	connectionClosed = true
 	// A host-lifetime subscriber starts after completion without any phone
 	// attached; its bounded replay must still expose the admitted locator.
 	subscribed := make(chan UserAttentionNotification, 1)
 	subscriptionCtx, cancelSubscription := context.WithCancel(context.Background())
 	subscriptionDone := make(chan error, 1)
 	go func() {
-		subscriptionDone <- host.SubscribeUserAttention(subscriptionCtx, func(event UserAttentionNotification) { subscribed <- event })
+		subscriptionDone <- host.SubscribeUserAttention(personalTestOwner(subscriptionCtx), func(event UserAttentionNotification) { subscribed <- event })
 	}()
 	var replay attentionCall
 	select {
@@ -141,7 +165,7 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	case <-time.After(2 * time.Second):
 		t.Fatal("host-lifetime attention lost before subscriber")
 	}
-	if err := host.SubscribeUserAttention(context.Background(), func(UserAttentionNotification) {}); err == nil {
+	if err := host.SubscribeUserAttention(personalTestOwner(context.Background()), func(UserAttentionNotification) {}); err == nil {
 		t.Fatal("competing attention subscriber accepted")
 	}
 	cancelSubscription()
@@ -155,7 +179,7 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	deniedReplayDone := make(chan error, 1)
 	replayed := make(chan UserAttentionNotification, 2)
 	go func() {
-		deniedReplayDone <- host.SubscribeUserAttention(deniedReplayCtx, func(event UserAttentionNotification) { replayed <- event })
+		deniedReplayDone <- host.SubscribeUserAttention(personalTestOwner(deniedReplayCtx), func(event UserAttentionNotification) { replayed <- event })
 	}()
 	var changed attentionCall
 	select {
@@ -181,7 +205,7 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	retiredCtx, cancelRetired := context.WithCancel(context.Background())
 	retiredDone := make(chan error, 1)
 	go func() {
-		retiredDone <- host.SubscribeUserAttention(retiredCtx, func(event UserAttentionNotification) { replayed <- event })
+		retiredDone <- host.SubscribeUserAttention(personalTestOwner(retiredCtx), func(event UserAttentionNotification) { replayed <- event })
 	}()
 	var retired attentionCall
 	select {
@@ -201,11 +225,7 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 		t.Fatalf("retired generation replayed: %+v", event)
 	default:
 	}
-	writer.Close()
-	<-done
 	// Close joins admitted policy work after revocation, without leaving a
 	// callback capable of publishing to a future connection.
 	host.Close()
-	// Prevent a second read from the already drained connection completion.
-	done <- nil
 }

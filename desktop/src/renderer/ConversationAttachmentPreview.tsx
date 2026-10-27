@@ -47,7 +47,7 @@ export function ConversationAttachmentPreview({ name, mediaType, size, read }: C
     {error && <div className="workspace-panel-empty" role="alert"><p>{error}</p><button type="button" className="settings-button" onClick={() => setAttempt(value => value + 1)}>{t("conversationAttachment.retry")}</button></div>}
     {result && text && size > 512 * 1024 && <p className="workspace-file-preview-notice" role="status">{t("workspace.files.previewTruncated")}</p>}
     {result && (raster ? <div className="workspace-file-image-preview"><img src={result.url} alt={name} /></div> : text ? (
-      markdown ? <div className="workspace-file-editor-scroll markdown-reading"><MarkdownDocumentReading text={result.text ?? ""} /></div> : <div className="workspace-file-code-scroll"><pre className="workspace-file-code">{result.text}</pre></div>
+      markdown ? <div className="workspace-file-editor-scroll markdown-reading"><MarkdownDocumentReading text={result.text ?? ""} linkPolicy="external-only" /></div> : <div className="workspace-file-code-scroll"><pre className="workspace-file-code">{result.text}</pre></div>
     ) : <div className="workspace-panel-empty" role="status"><span>{t("conversationAttachment.unsupported")}</span></div>)}
   </article>;
 }

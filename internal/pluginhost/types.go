@@ -208,11 +208,12 @@ type ToolExecuteInput struct {
 type State string
 
 const (
-	StateStarting State = "starting"
-	StatePrepared State = "prepared"
-	StateActive   State = "active"
-	StateFailed   State = "failed"
-	StateStopped  State = "stopped"
+	StateStarting    State = "starting"
+	StateInitialized State = "initialized"
+	StatePrepared    State = "prepared"
+	StateActive      State = "active"
+	StateFailed      State = "failed"
+	StateStopped     State = "stopped"
 )
 
 // Status is a user-safe snapshot of one plugin runtime.

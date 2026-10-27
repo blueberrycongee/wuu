@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -84,37 +86,47 @@ func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.P
 	return result, nil
 }
 
-func executeStorageTransfers(home, root string, binding userspace.Binding, transfers []pluginStorageTransfer, host *pluginhost.Host) error {
-	dataRoot := binding.State(home)
-	var result error
-	for _, transfer := range transfers {
-		if err := pluginsettings.MoveStatePrefix(dataRoot, root, transfer.transfer); err != nil {
-			failure := fmt.Errorf("plugin %q storage transfer %q: %w", transfer.targetID, transfer.transfer.ID, err)
-			result = errors.Join(result, failure)
-			if host != nil {
-				outcome, _ := host.RetirePlugin(context.Background(), transfer.targetID, failure)
-				result = errors.Join(result, outcome.Err)
-				host.Add(pluginhost.Failed(transfer.targetID, failure))
-			}
-		}
-	}
-	if host != nil {
-		host.BlockFailedPackageDependencies(context.Background())
-	}
-	return result
+// Storage ownership is transferred by a graph consumer after the selected
+// settings provider activates and before its target plugin can start. No
+// preparation callback may fence the still-published writer.
+type storageTransferConsumer struct {
+	*runtimeServiceConsumer
+	host     *pluginhost.Host
+	transfer pluginStorageTransfer
+	settings *pluginsettings.Client
 }
 
-func availableStorageTransfers(transfers []pluginStorageTransfer, host *pluginhost.Host) []pluginStorageTransfer {
-	ready := make(map[string]bool)
-	blocked := host.PackageDependencyFailures()
-	for _, status := range host.Statuses() {
-		ready[status.ID] = blocked[status.ID] == nil && (status.State == pluginhost.StatePrepared || status.State == pluginhost.StateActive)
+func newStorageTransferConsumer(host *pluginhost.Host, registry *pluginhost.ServiceRegistry, transfer pluginStorageTransfer) *storageTransferConsumer {
+	raw, _ := json.Marshal(transfer.transfer)
+	digest := sha256.Sum256(append([]byte(transfer.targetID+"\x00"), raw...))
+	consumer := &storageTransferConsumer{
+		runtimeServiceConsumer: &runtimeServiceConsumer{id: "wuu.storage-transfer." + hex.EncodeToString(digest[:16]), state: pluginhost.StatePrepared,
+			requirements: []pluginhost.ServiceRequirement{{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true}}},
+		host: host, transfer: transfer,
 	}
-	result := transfers[:0]
-	for _, transfer := range transfers {
-		if ready[transfer.targetID] {
-			result = append(result, transfer)
+	consumer.settings = pluginsettings.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		result, err := registry.Call(ctx, consumer.ID(), pluginhost.ServiceCallParams{Service: pluginsettings.ServiceName, Method: method, Params: params})
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	})
+	return consumer
+}
+
+func (c *storageTransferConsumer) Activate(ctx context.Context) error {
+	// Negotiation may have rejected the target after discovery. Its presence in
+	// an activation plan is not authority to fence the source.
+	ready := false
+	for _, status := range c.host.Statuses() {
+		if status.ID == c.transfer.targetID {
+			ready = status.State == pluginhost.StatePrepared
 		}
 	}
-	return result
+	if ready && c.host.DependencyFailures()[c.transfer.targetID] == nil {
+		if err := c.settings.MoveStatePrefix(ctx, c.transfer.transfer); err != nil {
+			return fmt.Errorf("plugin %q storage transfer %q: %w", c.transfer.targetID, c.transfer.transfer.ID, err)
+		}
+	}
+	return c.runtimeServiceConsumer.Activate(ctx)
 }

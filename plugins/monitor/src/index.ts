@@ -232,18 +232,10 @@ export function createMonitorPlugin(): RuntimePlugin {
   return {
     concurrentServices: [watchService],
     concurrentCapabilities: ["plugin.client.request"],
-    async initialize(_params, initialHost) {
+    initialize(_params, initialHost) {
       host = initialHost;
-      const saved = await host.call("host.storage.get", { scope: "workspace", key: stateKey });
-      const ids: string[] = saved.value ? JSON.parse(saved.value) : [];
-      tasks = await Promise.all(ids.map(async id => {
-        const record = await host.call("host.storage.get", { scope: "workspace", key: `${stateKey}.${id}` });
-        if (!record.value) throw new Error(`Missing monitor record: ${id}`);
-        persisted.set(id, record.value);
-        return JSON.parse(record.value) as Task;
-      }));
       return {
-        lifecycle_version: 1,
+        lifecycle_version: 2,
         required_services: [requireBackgroundService(), requireProcessService(), ...(["host.storage.get", "host.storage.set", "host.storage.delete"] as const).map(requireKernelService)],
         provided_services: [{ name: watchService, version: "1.0.0", methods: [{ name: "run", input_schema: "monitor.watch.input.v1", output_schema: "monitor.watch.output.v1" }] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
@@ -256,6 +248,16 @@ export function createMonitorPlugin(): RuntimePlugin {
             activity: { read_only: false, concurrency_safe: true } },
         ],
       };
+    },
+    async prepare() {
+      const saved = await host.call("host.storage.get", { scope: "workspace", key: stateKey });
+      const ids: string[] = saved.value ? JSON.parse(saved.value) : [];
+      tasks = await Promise.all(ids.map(async id => {
+        const record = await host.call("host.storage.get", { scope: "workspace", key: `${stateKey}.${id}` });
+        if (!record.value) throw new Error(`Missing monitor record: ${id}`);
+        persisted.set(id, record.value);
+        return JSON.parse(record.value) as Task;
+      }));
     },
     async activate(activeHost) {
       host = activeHost; active = true;

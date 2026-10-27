@@ -3,25 +3,28 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 type settingsCalendarFixture struct {
 	personalhost.Calendar
-	connected bool
-	reads     int
+	connected       bool
+	reads           int
+	expectedSession string
 }
 
 func (f *settingsCalendarFixture) Status(_ context.Context, a personalcalendar.Actor) (personalcalendar.Connection, error) {
@@ -35,7 +38,11 @@ func (f *settingsCalendarFixture) Authorize(ctx context.Context, a personalcalen
 	return f.Status(ctx, a)
 }
 func (f *settingsCalendarFixture) EventsPage(_ context.Context, a personalcalendar.Actor, id string, q personalcalendar.EventQuery) (json.RawMessage, error) {
-	if a.UserSpaceID != "local" || a.SessionID != "synthetic-main" || id != "synthetic-connection" || !f.connected {
+	expectedSession := f.expectedSession
+	if expectedSession == "" {
+		expectedSession = "synthetic-main"
+	}
+	if a.UserSpaceID != "local" || a.SessionID != expectedSession || id != "synthetic-connection" || !f.connected {
 		return nil, &personalcalendar.Failure{Code: "account_not_connected"}
 	}
 	f.reads++
@@ -48,7 +55,7 @@ func (f *settingsCalendarFixture) Disconnect(context.Context, personalcalendar.A
 func (f *settingsCalendarFixture) Close() error { return nil }
 
 // Real generated plugin processes, execution-context propagation, service
-// registry and SQLite storage. Only Calendar and the admission bootstrap are
+// registry and selected document storage. Only Calendar and the admission bootstrap are
 // synthetic. This never reads Keychain, calls Google, or configures a model.
 func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -56,10 +63,23 @@ func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
-	home, project, state := t.TempDir(), t.TempDir(), t.TempDir()
+	home := t.TempDir()
+	project := binding.Root(home)
+	state, err := userHostWorkspaceStateDir(home, project, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
 	router := NewPluginSessionRouter()
+	unbindAccess := router.BindSessionResourceAccess(func(ctx context.Context, _ string, id string, _ *pluginhost.ExecutionAuthorizationReference, _ string) (context.Context, error) {
+		caller, ok := principal.FromContext(ctx)
+		if !ok || !caller.IsOwner() || (id != "synthetic-main" && id != "") {
+			return ctx, errors.New("synthetic session policy denied")
+		}
+		return ctx, caller.Check(ctx)
+	})
+	defer unbindAccess()
 	calendar := &settingsCalendarFixture{connected: true}
-	personal := personalhost.New(binding, personalhost.Options{Calendar: calendar})
+	personal := personalhost.New(binding, personalhost.Options{Calendar: calendar, Authorize: func(context.Context, string, string) error { return nil }})
 	defer personal.Close()
 	unbind := router.BindPersonalHost(personal.Call)
 	defer unbind()
@@ -74,9 +94,11 @@ func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 		item.Runtime = &pluginpkg.RuntimeSpec{Command: node, Args: []string{"runtime.mjs"}, Timeout: 10}
 		items = append(items, item)
 	}
-	host, _, err := buildPluginHost(items, project, "", home, state, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+	selection := composition.DefaultConfig("headless", "personal", "personal-calendar")
+	selection.Services = []composition.Binding{{Service: "agent.prompt", Major: 1, Provider: "personal"}}
+	host, kernel, err := buildPluginHostForBinding(context.Background(), items, project, "", home, state, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return pluginhost.Start(ctx, cfg)
-	}, router, nil, binding)
+	}, router, nil, selection, false, "", binding, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +106,7 @@ func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		t.Fatal(err)
 	}
-	_, err = session.CreateInitialized(statepath.SessionsDir(binding.State(home)), session.Session{ID: "synthetic-main", UserSpaceID: "local", ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main"}, nil)
+	_, err = kernel.state.sessions.CreateInitialized(session.Session{ID: "synthetic-main", UserSpaceID: "local", ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,9 +116,10 @@ func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner = principal.WithContext(owner, principal.LocalOwner())
 	capability, ok := host.Capability("personal", pluginhost.CapabilityPluginClientRequest)
 	if !ok {
-		t.Fatal("Personal client capability missing")
+		t.Fatalf("Personal client capability missing: %+v", host.Statuses())
 	}
 	invoke := func(ctx context.Context, method string, input any) (json.RawMessage, error) {
 		raw, _ := json.Marshal(input)
@@ -116,21 +139,24 @@ func TestPersonalSettingsGeneratedRuntimeHostEndToEnd(t *testing.T) {
 		t.Fatalf("review=%s err=%v", review, err)
 	}
 	query := json.RawMessage(`{"session_id":"synthetic-main","calendar_id":"primary","time_min":"2026-10-24T00:00:00Z","time_max":"2026-10-25T00:00:00Z","timezone":"UTC"}`)
-	read := func() (json.RawMessage, error) {
-		value, err := host.ServiceRegistry().Call(context.Background(), "personal", pluginhost.ServiceCallParams{Service: "calendar.personal", Method: "refresh", Params: query})
+	read := func(ctx context.Context) (json.RawMessage, error) {
+		value, err := host.ServiceRegistry().Call(ctx, "personal", pluginhost.ServiceCallParams{Service: "calendar.personal", Method: "refresh", Params: query})
 		if err != nil {
 			return nil, err
 		}
 		return value, nil
 	}
-	agenda, err := read()
+	if _, err := read(context.Background()); err == nil {
+		t.Fatal("unverified calendar read reached session context")
+	}
+	agenda, err := read(principal.WithContext(owner, principal.LocalOwner()))
 	if err != nil || !strings.Contains(string(agenda), "Synthetic appointment") || calendar.reads != 1 {
 		t.Fatalf("agenda=%s err=%v reads=%d", agenda, err, calendar.reads)
 	}
 	if _, err := invoke(owner, "connections.disconnect", map[string]any{"connection_id": "synthetic-connection", "revoke": false}); err != nil {
 		t.Fatal(err)
 	}
-	agenda, err = read()
+	agenda, err = read(principal.WithContext(owner, principal.LocalOwner()))
 	if err != nil || strings.Contains(string(agenda), "Synthetic appointment") || calendar.connected {
 		t.Fatalf("disconnect retained data: %s %v", agenda, err)
 	}

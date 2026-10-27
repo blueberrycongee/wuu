@@ -7,6 +7,7 @@ const { createDreamPlugin } = await import(`data:text/javascript;base64,${Buffer
 
 function fixture(t, memoryAvailable = true) {
   const calls = [], values = new Map(), controller = new AbortController();
+  let background;
   const host = { async call(service, params) {
     calls.push({ service, params });
     switch (service) {
@@ -14,6 +15,11 @@ function fixture(t, memoryAvailable = true) {
       case "host.storage.set": assert.equal(params.scope, "user"); values.set(params.key, params.value); return {};
       case "host.session.context": return { session_id: params.session_id, product_domain: params.session_id === "coding" ? "coding" : "personal", user_space_id: "local", agent_id: "agent-a" };
       case "host.service.call":
+        if (params.service === "host.background") {
+          assert.equal(params.method, "start");
+          background = plugin.invokeService({ service: params.params.service, method: params.params.method, caller: "dream", params: {} }, host, { signal: controller.signal });
+          return {job_id:"dream-background",execution_id:"dream-background"};
+        }
         assert.equal(params.service, "memory.records"); assert.equal(params.method, "query"); assert.equal(params.params.session_id, "personal-main");
         if (!memoryAvailable) throw new Error("memory.records unavailable");
         return { version: 1, records: [{ id: "fixture", content: "Prefers tea", revision: 2, source_at: "2026-01-01T00:00:00Z" }] };
@@ -23,7 +29,7 @@ function fixture(t, memoryAvailable = true) {
     }
   } };
   const plugin = createDreamPlugin();
-  t.after(async () => { controller.abort(); await plugin.shutdown(host); });
+  t.after(async () => { controller.abort(); await background; await plugin.shutdown(host); });
   const client = async (method, input) => (await plugin.invokeCapability({ capability: "plugin.client.request", input: { method, input } }, host)).output.result;
   const complete = async thread_id => plugin.invokeCapability({ capability: "agent.turn.completed", input: { thread_id, turn_id: "turn", succeeded: true, completed_at: new Date().toISOString() } }, host);
   return { host, plugin, client, complete, calls, controller, values };
@@ -31,7 +37,9 @@ function fixture(t, memoryAvailable = true) {
 
 test("Personal Dream uses scoped records, rejects Coding candidates, and inherits responsible agent session", async t => {
   const f = fixture(t);
-  await f.plugin.initialize({ product_domain: "personal", user_space_id: "local" }, f.host);
+  await f.plugin.initialize({ plugin_id: "dream", product_domain: "personal", user_space_id: "local" }, f.host);
+  assert.equal(f.calls.length, 0, "initialize must only declare services");
+  await f.plugin.prepare(f.host, { signal: f.controller.signal });
   await f.plugin.activate(f.host, { signal: f.controller.signal });
   await f.client("dream.update", { enabled: true, interval_days: 1, min_sessions: 1 });
   await f.complete("coding");
@@ -54,7 +62,9 @@ test("Personal Dream uses scoped records, rejects Coding candidates, and inherit
 
 test("Personal Dream fails closed when records are unavailable, with no notebook or file fallback", async t => {
   const f = fixture(t, false);
-  await f.plugin.initialize({ product_domain: "personal", user_space_id: "local" }, f.host);
+  await f.plugin.initialize({ plugin_id: "dream", product_domain: "personal", user_space_id: "local" }, f.host);
+  assert.equal(f.calls.length, 0, "initialize must only declare services");
+  await f.plugin.prepare(f.host, { signal: f.controller.signal });
   await f.plugin.activate(f.host, { signal: f.controller.signal });
   await f.client("dream.update", { enabled: true, interval_days: 1, min_sessions: 1 });
   await f.complete("personal-main");
@@ -62,4 +72,14 @@ test("Personal Dream fails closed when records are unavailable, with no notebook
   assert.equal(state.last_status, "skipped");
   assert.match(state.last_error, /memory.records unavailable/);
   assert(!f.calls.some(call => call.service === "host.session.create"));
+});
+
+// Scheduler admission and cancellation are public lifecycle boundaries.
+test("Dream timer uses a host-admitted owner callback", async t => {
+  const f = fixture(t);
+  f.plugin.initialize({plugin_id:"dream",product_domain:"personal",user_space_id:"local"}, f.host);
+  await f.plugin.prepare(f.host, {signal:f.controller.signal});
+  await f.plugin.activate(f.host, {signal:f.controller.signal});
+  assert(f.calls.some(call => call.service === "host.service.call" && call.params.service === "host.background"));
+  await assert.rejects(f.plugin.invokeService({service:"dream.scheduler",method:"run",caller:"foreign",params:{}}, f.host, {signal:f.controller.signal}), /owner/);
 });

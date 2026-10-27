@@ -56,33 +56,39 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   };
   async function start(pluginID = "personal") {
     const child = spawn(process.execPath, [join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
-    let seq = 0, stderr = ""; const pending = new Map();
+    let seq = 0, stderr = ""; const pending = new Map(), background = [];
     child.stderr.on("data", buffer => { stderr += buffer; });
     const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };
     child.on("exit", () => { active.delete(child); for (const entry of pending.values()) entry.reject(new Error(stderr || "runtime closed")); pending.clear(); });
     createInterface({ input: child.stdout }).on("line", line => {
       const frame = JSON.parse(line); frames.push({ direction: "plugin", frame });
-      if (frame.method) host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture_error", message: error.message } }));
+      if (frame.method && frame.params?.service === "host.background") {
+        assert.equal(frame.params.method, "start");
+        const execution_id = `background-${seq}`, params = frame.params.params;
+        send({id:frame.id,result:{job_id:execution_id,execution_id}});
+        const done = call("service.invoke", {service:params.service,method:params.method,params:params.params ?? {},caller:pluginID,execution_id}, 0);
+        background.push(done); void done.catch(() => {});
+      } else if (frame.method) host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture_error", message: error.message } }));
       else {
         const entry = pending.get(frame.id); if (!entry) return; pending.delete(frame.id);
         if (frame.error) entry.reject(new Error(frame.error.message)); else entry.resolve(frame.result);
       }
     });
-    const call = (method, params) => new Promise((resolve, reject) => {
-      const id = `request-${++seq}`, timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}: ${stderr}`)); }, 10_000);
+    const call = (method, params, timeout = 10_000) => new Promise((resolve, reject) => {
+      const id = `request-${++seq}`, timer = timeout ? setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}: ${stderr}`)); }, timeout) : undefined;
       pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
       send({ id, method, params });
     });
-    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
     if (pluginID === "personal") assert.equal(definition.provided_services.filter(service => service.name === "memory.records").length, 1);
     else { assert.equal(definition.provided_services?.length ?? 0, 0); assert.equal(definition.tools?.length ?? 0, 0); assert.equal(definition.capabilities?.length ?? 0, 0); }
     assert(!definition.provided_services?.some(service => service.name === "memory.notebook"));
-    await call("activate");
+    await call("prepare"); await call("activate");
     return {
       call,
       tool: (tool_id, args, session_id = mainSession) => call("tool.execute", { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `tool-${seq}`, execution_id: `execution-${seq}` }).then(result => JSON.parse(result.result.content[0].text)),
       service: (method, params, session_id = mainSession) => call("service.invoke", { service: "memory.records", method, caller: "personal", params: { session_id, ...params }, execution_id: `service-${seq}` }),
-      async close() { await call("shutdown"); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); },
+      async close() { await call("shutdown"); await Promise.all(background); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); },
     };
   }
   t.after(async () => {
@@ -139,7 +145,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   await mkdir(output, { recursive: true });
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const storage = new Map(), frames = [], active = new Set(), locks = new Set();
-  const contexts = {}, turns = new Map();
+  const contexts = {}, turns = new Map(), grants = new Map();
   let loseFeedbackReply = false;
   let mainSession, mainAgent;
   let failReactionWrite = false;
@@ -156,6 +162,14 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
     const { service, method, params } = frame.params;
     const key = `${params?.scope}:${params?.key}`;
     switch (service) {
+      case "host.execution.authorization": {
+        if (params.operation === "describe") return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:["fixture"],scope_kinds:["exact-run"]};
+        assert.equal(params.operation,"issue");assert.equal(params.kind,"exact-run");assert.equal(params.session_id,mainSession);assert(params.request_id.startsWith("personal-feedback-"));assert.equal(params.task_id,params.request_id);
+        assert.deepEqual(params.requested_actions,["user/session/send","user/session/inspect","user/session/context","user/session/history.read"]);assert(!params.parent);assert(Number.isFinite(Date.parse(params.expires_at)));
+        const saved=[...storage.values()].map(raw=>JSON.parse(raw)).find(value=>value.request_id===params.request_id && value.reaction_revision);
+        assert.equal(saved.authorization_request.expires_at,params.expires_at,"feedback expiry intent precedes grant issue");
+        const grant=grants.get(params.request_id) ?? {reference:{provider:"fixture-grant-provider",id:params.request_id},expires_at:params.expires_at};grants.set(params.request_id,grant);return grant;
+      }
       case "host.session.create": {
         const session_id = `session-${params.request_id}`;
         const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
@@ -165,6 +179,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
       case "host.session.send": {
         assert.equal(params.cause, "personal.reaction.feedback"); assert.equal(params.if_running, "queue");
         assert.equal(params.disable_tools, true);
+        assert.deepEqual(params.execution_authorization,grants.get(params.request_id).reference,"cold feedback sends use their saved exact grant");
         const turn = turns.get(params.request_id) ?? { request_id: params.request_id, turn_id: `turn-${params.request_id}`, state: "running" };
         turns.set(params.request_id, turn);
         if (loseFeedbackReply) { loseFeedbackReply = false; throw new Error("lost feedback send reply"); }
@@ -189,33 +204,39 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   };
   async function start(pluginID = "personal") {
     const child = spawn(process.execPath, [join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
-    let seq = 0, stderr = ""; const pending = new Map();
+    let seq = 0, stderr = ""; const pending = new Map(), background = [];
     child.stderr.on("data", buffer => { stderr += buffer; });
     const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };
     child.on("exit", () => { active.delete(child); for (const entry of pending.values()) entry.reject(new Error(stderr || "runtime closed")); pending.clear(); });
     createInterface({ input: child.stdout }).on("line", line => {
       const frame = JSON.parse(line); frames.push({ direction: "plugin", frame });
-      if (frame.method) host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture_error", message: error.message } }));
+      if (frame.method && frame.params?.service === "host.background") {
+        assert.equal(frame.params.method, "start");
+        const execution_id = `background-${seq}`, params = frame.params.params;
+        send({id:frame.id,result:{job_id:execution_id,execution_id}});
+        const done = call("service.invoke", {service:params.service,method:params.method,params:params.params ?? {},caller:pluginID,execution_id}, 0);
+        background.push(done); void done.catch(() => {});
+      } else if (frame.method) host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture_error", message: error.message } }));
       else {
         const entry = pending.get(frame.id); if (!entry) return; pending.delete(frame.id);
         if (frame.error) entry.reject(new Error(frame.error.message)); else entry.resolve(frame.result);
       }
     });
-    const call = (method, params) => new Promise((resolve, reject) => {
-      const id = `request-${++seq}`, timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}: ${stderr}`)); }, 10_000);
+    const call = (method, params, timeout = 10_000) => new Promise((resolve, reject) => {
+      const id = `request-${++seq}`, timer = timeout ? setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}: ${stderr}`)); }, timeout) : undefined;
       pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
       send({ id, method, params });
     });
-    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
     if (pluginID === "personal") assert.equal(definition.provided_services.filter(service => service.name === "memory.records").length, 1);
     else { assert.equal(definition.provided_services?.length ?? 0, 0); assert.equal(definition.tools?.length ?? 0, 0); assert.equal(definition.capabilities?.length ?? 0, 0); }
     assert(!definition.provided_services?.some(service => service.name === "memory.notebook"));
-    await call("activate");
+    await call("prepare"); await call("activate");
     return {
       call,
       tool: (tool_id, args, session_id = mainSession) => call("tool.execute", { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `tool-${seq}`, execution_id: `execution-${seq}` }).then(result => JSON.parse(result.result.content[0].text)),
       service: (method, params, session_id = mainSession) => call("service.invoke", { service: "memory.records", method, caller: "personal", params: { session_id, ...params }, execution_id: `service-${seq}` }),
-      async close() { await call("shutdown"); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); },
+      async close() { await call("shutdown"); await Promise.all(background); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); },
     };
   }
   t.after(async () => {
@@ -321,6 +342,10 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   await down(200); assert.equal(turns.size, 1, "committed reaction survives a lost dispatch reply");
   const event = sends().at(-1).frame.params.params;
   assert.equal(event.session_id, mainSession); assert(!event.relation, "feedback is not a task reply or resumption");
+  const observed=await runtime.call("service.invoke",{service:"personal.agents",method:"resolve-lineage",caller:"host",execution_id:"feedback-observer",params:{kind:"exact-run",task_id:event.request_id,request_id:event.request_id,session_id:mainSession,reference:event.execution_authorization}});
+  assert.equal(observed.run_id,event.request_id);
+  await assert.rejects(runtime.call("service.invoke",{service:"personal.agents",method:"resolve-lineage",caller:"host",execution_id:"feedback-unrelated",params:{kind:"task-lineage",task_id:event.request_id,request_id:event.request_id,session_id:mainSession}}),/feedback lineage/);
+  await assert.rejects(runtime.call("service.invoke",{service:"personal.agents",method:"resolve-lineage",caller:"host",execution_id:"feedback-cross-session",params:{kind:"exact-run",task_id:event.request_id,request_id:event.request_id,session_id:"worker"}}),/feedback lineage/);
   await down(200); assert.equal(sends().length, 1, "retry consults the host receipt, never redispatches an accepted event");
   const feedbackStep = () => runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 1, messages: [] }, execution_id: "feedback-step" });
   let step = await feedbackStep();

@@ -123,6 +123,8 @@ func TestProtectedPathsRejectBackgroundAdmission(t *testing.T) {
 			kit.SetBoundary(UnconfinedBoundary())
 			kit.SetProtectedPaths([]string{t.TempDir()})
 			kit.SetSessionID("protected-background")
+			kit.SetAgentIdentity("actor", "root")
+			kit.SetAuthorizer(&processScopeAuthorizer{})
 			kit.SetSessionDir(t.TempDir())
 			// A configured provider must not make admission possible. Its empty
 			// argv also prevents execution if this rejection ever regresses.

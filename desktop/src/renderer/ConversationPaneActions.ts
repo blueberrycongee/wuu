@@ -3,15 +3,18 @@ import {
   createDraftSessionTab,
   ensureSessionTab,
   isThreadRunning,
+  persistComposerDrafts,
   threadSessionTabID,
   type AppState,
   type ConversationPaneID,
+  type ComposerDraftSnapshot,
 } from "./AppState";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
 export type ConversationPaneActionsDeps = {
   setAppState: SetAppState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   moveSplitDraftToGlobalComposer: (pane: ConversationPaneID) => void;
 };
 
@@ -42,10 +45,9 @@ export function createConversationPaneActions(
   }
 
   function closeConversationPane(pane: ConversationPaneID): void {
-    deps.moveSplitDraftToGlobalComposer(
-      pane === "secondary" ? "primary" : "secondary",
-    );
-    deps.setAppState((current) => {
+    const outgoingDraft = deps.getComposerDraftSnapshot();
+    deps.setAppState((state) => {
+      const current = persistComposerDrafts(state, outgoingDraft);
       if (pane === "secondary") {
         return {
           ...current,
@@ -86,6 +88,9 @@ export function createConversationPaneActions(
         status: "ready",
       };
     });
+    deps.moveSplitDraftToGlobalComposer(
+      pane === "secondary" ? "primary" : "secondary",
+    );
   }
 
   return { activateConversationPane, closeConversationPane };

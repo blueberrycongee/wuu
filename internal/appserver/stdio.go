@@ -23,7 +23,8 @@ func runStdioScanner(ctx context.Context, s *Server, in io.Reader) error {
 		if line == "" {
 			continue
 		}
-		if err := s.handleLine(ctx, []byte(line)); err != nil {
+		readAt := s.rpcTiming.now()
+		if err := s.handleLine(ctx, []byte(line), readAt); err != nil {
 			if errors.Is(err, errShutdown) {
 				return nil
 			}

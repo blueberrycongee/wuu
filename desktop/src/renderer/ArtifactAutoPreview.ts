@@ -1,3 +1,4 @@
+import { useArtifacts } from "./ArtifactsContext";
 import { useLayoutEffect, useRef } from "react";
 import type { Thread, Turn } from "../shared/protocol";
 import { collectTurnArtifacts, type TurnArtifact } from "./ArtifactOutputs";
@@ -14,7 +15,7 @@ export function automaticPreviewArtifact(turn: Turn): TurnArtifact | undefined {
     ? 2 * 1024 * 1024 : 20 * 1024 * 1024;
   // Automatic reads are restricted to immutable, host-managed deliveries.
   // References, external URLs and editable workspace paths need a user action.
-  if (!supported || !artifact.uri?.startsWith("wuu-artifact://") || !artifact.sha256
+  if (!supported || !artifact.uri || !artifact.ref || !artifact.sha256
     || artifact.sizeBytes === undefined || artifact.sizeBytes < 0 || artifact.sizeBytes > limit) return undefined;
   return artifact;
 }
@@ -35,13 +36,14 @@ export function useArtifactAutoPreview({
   activeTabID?: string;
   onOpen: (request: ArtifactPreviewRequest) => void;
 }): void {
+  const artifacts = useArtifacts();
   const observation = useRef<Observation | undefined>(undefined);
   const pending = useRef<AbortController | undefined>(undefined);
   const open = useRef(onOpen);
   useLayoutEffect(() => {
     open.current = onOpen;
     const turn = thread?.turns.at(-1);
-    const key = JSON.stringify([thread?.id, thread?.cwd, turn?.id]);
+    const key = JSON.stringify([thread?.session_locator, thread?.id, thread?.cwd, turn?.id]);
     const panel = JSON.stringify([panelOpen, activeTabID]);
     const previous = observation.current;
     const sameTurn = previous?.key === key;
@@ -56,14 +58,18 @@ export function useArtifactAutoPreview({
     // must not replay a completion or reopen a dismissed preview.
     if (!thread || !turn || !sameTurn || suppressed
       || previous.status !== "in_progress" || turn.status !== "completed") return;
-    const artifact = automaticPreviewArtifact(turn);
+    const candidate = automaticPreviewArtifact(turn);
+    const artifact = candidate && {...candidate,locator:thread.session_locator};
     if (!artifact) return;
     const controller = new AbortController();
     pending.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 5_000);
     void (async () => {
+      let lease: {leaseId?: string} | undefined;
       try {
-        const response = await fetch(artifact.uri!, {
+        const source = await artifacts.acquireSource({...artifact, threadId: thread.id, cwd: thread.cwd}, {signal: controller.signal});
+        lease = source;
+        const response = await fetch(source.url, {
           signal: controller.signal,
           headers: { Range: "bytes=0-0" },
           redirect: "error",
@@ -76,6 +82,7 @@ export function useArtifactAutoPreview({
       } catch {
         // An unavailable snapshot stays on its output card for manual opening.
       } finally {
+        if (lease?.leaseId) artifacts.releaseSource(lease.leaseId);
         window.clearTimeout(timeout);
         if (pending.current === controller) pending.current = undefined;
       }

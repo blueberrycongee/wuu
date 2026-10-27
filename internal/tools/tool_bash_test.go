@@ -236,7 +236,7 @@ func TestBashRunUsesCWD(t *testing.T) {
 		t.Fatalf("mkdir subdir: %v", err)
 	}
 	kit := newShellTestToolkit(t, root)
-	expectedRevision := workspaceRevision(context.Background(), kit.env.RootDir)
+	expectedRevision := workspaceRevision(context.Background(), kit.env.RootDir, kit.env.RuntimeHome)
 
 	tests := []struct {
 		name       string

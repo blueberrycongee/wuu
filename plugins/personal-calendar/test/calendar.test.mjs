@@ -37,8 +37,8 @@ async function fixture({ fetch = async () => page(), authorize = async () => aut
   const plugin = new PersonalCalendarPlugin({ reader, clock: current });
   const lifetime = new AbortController();
   const definition = plugin.initialize({ protocol_version: 3, plugin_id: 'personal-calendar', plugin_root: '/', project_root: '', wuu_home: '/synthetic', user_space_id: 'user-one', product_domain: domain, data_root: '/synthetic/personal' }, host, { signal: lifetime.signal });
-  await plugin.activate();
-  const call = (method, params = {}, caller = 'kernel') => plugin.invokeService({ service: 'calendar.personal', method, params, caller });
+  await plugin.activate(host);
+  const call = (method, params = {}, caller = 'kernel') => plugin.invokeService({ service: 'calendar.personal', method, params, caller }, host);
   return { plugin, host, call, definition, lifetime };
 }
 
@@ -46,8 +46,8 @@ test('unconnected runtime exposes honest read-only capability; Coding does no st
   const missing = await fixture({ authorize: undefined });
   // Constructor default is exercised separately from the fixture default authorization.
   const bare = new PersonalCalendarPlugin({ clock: current }); const host = new Host();
-  bare.initialize({ product_domain: 'personal', user_space_id: 'user-one' }, host, { signal: new AbortController().signal }); await bare.activate();
-  const status = await bare.invokeService({ service: 'calendar.personal', method: 'refresh', params: query, caller: 'kernel' });
+  bare.initialize({ product_domain: 'personal', user_space_id: 'user-one' }, host, { signal: new AbortController().signal }); await bare.activate(host);
+  const status = await bare.invokeService({ service: 'calendar.personal', method: 'refresh', params: query, caller: 'kernel' }, host);
   assert.equal(status.state, 'unconnected'); assert.equal(status.read_only, true); assert.equal(status.freshness, 'empty');
   const coding = await fixture({ domain: 'coding', fetch: () => assert.fail('Coding contacted Calendar') });
   assert.equal(coding.definition.provided_services.length, 0); assert.equal(coding.host.calls.length, 0);
@@ -131,8 +131,8 @@ test('cache window mismatches are empty and aged successful data is explicitly s
   const f = await fixture(); await f.call('refresh', query);
   const mismatch = await f.call('agenda', { ...query, calendar_id: 'other' }); assert.equal(mismatch.events.length, 0); assert.equal(mismatch.freshness, 'empty'); assert.equal(mismatch.source, undefined);
   const plugin = new PersonalCalendarPlugin({ reader: new GoogleCalendarReader({ authorize: async () => authorization, clock: current }), clock: () => new Date('2026-10-18T12:20:00Z') });
-  plugin.initialize({ product_domain: 'personal', user_space_id: 'user-one' }, f.host, { signal: new AbortController().signal }); await plugin.activate();
-  const aged = await plugin.invokeService({ service: 'calendar.personal', method: 'agenda', params: query, caller: 'kernel' }); assert.equal(aged.freshness, 'stale'); assert.equal(aged.events.length, 1);
+  plugin.initialize({ product_domain: 'personal', user_space_id: 'user-one' }, f.host, { signal: new AbortController().signal }); await plugin.activate(f.host);
+  const aged = await plugin.invokeService({ service: 'calendar.personal', method: 'agenda', params: query, caller: 'kernel' }, f.host); assert.equal(aged.freshness, 'stale'); assert.equal(aged.events.length, 1);
 });
 
 test('disconnect cancels current transport and prevents further pagination immediately', async () => {
@@ -167,4 +167,13 @@ test('cancelled service execution stops its refresh transport without marking ca
   const pending = f.plugin.invokeService({ service: 'calendar.personal', method: 'refresh', caller: 'personal', params: { ...query, session_id: 'personal-session' } }, f.host, { executionId: 'synthetic-execution', signal: execution.signal });
   await started.promise; execution.abort(); assert.equal(transportSignal.aborted, true); release.resolve();
   const result = await pending; assert.equal(result.state, 'error'); assert.equal(result.freshness, 'empty');
+});
+
+// Storage authority must follow each admitted callback, never initialize's host.
+test('Calendar uses the current callback for state reads and writes', async () => {
+  const f = await fixture();
+  let admitted = 0;
+  const scoped = { supports: () => true, call: (...args) => { admitted++; return f.host.call(...args); } };
+  await f.plugin.invokeService({service:'calendar.personal',method:'status',caller:'kernel',params:{}}, scoped);
+  assert(admitted > 0);
 });

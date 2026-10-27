@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -14,7 +16,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/externalengine"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 )
+
+// userHostContextCapability declares that an engine uses only explicit host
+// context, tools and bound history. It must not discover ambient workspace,
+// home-directory instructions, skills, memory or another product's sessions.
+// This is a trusted-provider contract, not an OS isolation attestation.
+const userHostContextCapability = "explicit-context"
 
 // WuuEngine is the built-in agent engine: the native StreamRunner loop that
 // has always driven Wuu conversations. It implements agentengine.Factory so
@@ -24,27 +33,42 @@ type WuuEngine struct {
 	session *Session
 }
 
+// NewWuuEngine constructs the native engine provider for explicit registration.
+func NewWuuEngine(session *Session) *WuuEngine {
+	return &WuuEngine{session: session}
+}
+
 // Descriptor describes the built-in engine.
 func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
+	requiresHostModel := true
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineWuu,
-		Version: "1",
+		ID:                agentengine.EngineWuu,
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
-			"native-tool-loop",
+			userHostContextCapability, "native-tool-loop",
 			"native-session-resume",
+			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection",
 		},
 	}, nil
 }
 
-// Open creates a fresh thread runtime for a new conversation and returns it
-// as an engine session. The wuu engine keeps running the existing
-// constructor path; only the entry point moves behind the seam.
+// Open creates a fresh thread runtime owned by the returned engine session.
+// Close drains its turn and workers before releasing the provider generation.
 func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, error) {
+	engine, _, err := e.OpenWithRuntime(ctx, req)
+	return engine, err
+}
+
+// OpenWithRuntime exposes the owned native runtime for host-side configuration
+// and observation. The returned engine alone owns its cleanup; callers must
+// finish using the runtime before Close and must not release its generation.
+func (e *WuuEngine) OpenWithRuntime(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, *ThreadRuntime, error) {
 	if e == nil || e.session == nil {
-		return nil, errors.New("wuu engine is not bound to a runtime session")
+		return nil, nil, errors.New("wuu engine is not bound to a runtime session")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	threadID := req.ThreadID
 	if threadID == "" {
@@ -56,15 +80,14 @@ func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agen
 	}
 	rt, err := e.session.NewThreadRuntimeForRoot(threadID, rootDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rt.EngineID = agentengine.EngineWuu
-	return &wuuEngineSession{runner: rt.StreamRunner}, nil
+	return &wuuEngineSession{runner: rt.StreamRunner, owner: e.session, ownedRuntime: rt}, rt, nil
 }
 
-// Resume reopens an existing conversation. The wuu engine restores context
-// from Wuu's canonical history, so resume is the same construction path;
-// external engines will use their native session references here.
+// Resume reopens an existing conversation with the same resource ownership
+// as Open. Wuu restores context from canonical history.
 func (e *WuuEngine) Resume(ctx context.Context, req agentengine.ResumeRequest) (agentengine.Session, error) {
 	return e.Open(ctx, req.OpenRequest)
 }
@@ -79,27 +102,19 @@ func (e *WuuEngine) SessionForThread(rt *ThreadRuntime) agentengine.Session {
 	return &wuuEngineSession{runner: rt.StreamRunner}
 }
 
-// SessionForRunner binds the built-in engine to a workspace-level runner
-// (the fallback used when a turn has no thread runtime).
-func (e *WuuEngine) SessionForRunner(runner *agent.StreamRunner) agentengine.Session {
-	if runner == nil {
-		return nil
-	}
-	return &wuuEngineSession{runner: runner}
-}
-
 // EngineAvailable reports whether an engine id resolves in the registry.
 // thread creation validates its engine binding against this; the static
 // agentengine.CheckEngine only knows the built-in wuu engine.
 func (s *Session) EngineAvailable(id agentengine.EngineID) bool {
-	if s != nil && s.UserBinding().IsUser() && id != agentengine.EngineWuu {
+	if s == nil || s.engines == nil {
 		return false
 	}
-	if s == nil || s.engines == nil {
-		return id == agentengine.EngineWuu
+	factory, ok := s.engines.Lookup(id)
+	if !ok || !s.UserBinding().IsUser() {
+		return ok
 	}
-	_, ok := s.engines.Lookup(id)
-	return ok
+	descriptor, err := factory.Descriptor(context.Background())
+	return err == nil && slices.Contains(descriptor.Capabilities, userHostContextCapability)
 }
 
 // Engines exposes the engine registry for settings-driven listing and
@@ -141,10 +156,34 @@ func (s *Session) RefreshEngineSettings() error {
 func (s *Session) UpdateEngineSettings(update config.EnginesSettingsUpdate) error {
 	s.engineSettingsMu.Lock()
 	defer s.engineSettingsMu.Unlock()
-	if err := config.UpdateEnginesSettings(s.ConfigPath, update); err != nil {
+	services, release, err := s.RetainStateServices()
+	if err != nil {
 		return err
 	}
-	return s.refreshEngineSettings()
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	source := view.Source
+	if len(source) == 0 {
+		source, err = json.Marshal(view.Config)
+		if err != nil {
+			return errors.New("selected configuration cannot be edited")
+		}
+	}
+	next, err := config.UpdateEnginesSettingsSource(source, update)
+	if err != nil {
+		return err
+	}
+	view, err = services.Config.CompareExchange(context.Background(), view.Revision, next)
+	if err != nil {
+		return err
+	}
+	if view.ActivationError != "" {
+		return errors.New("engine settings were saved, but the selected configuration could not be activated")
+	}
+	return s.applyEngineSettings(view.Config)
 }
 
 func (s *Session) refreshEngineSettings() error {
@@ -152,6 +191,22 @@ func (s *Session) refreshEngineSettings() error {
 	if err != nil {
 		return err
 	}
+	return s.applyEngineSettings(cfg)
+}
+
+func (s *Session) applyEngineSettings(cfg config.Config) error {
+	if s.engines != nil && s.engines.IsResolved() {
+		id := agentengine.EngineWuu
+		if cfg.Engines != nil {
+			id = agentengine.NormalizeEngineID(cfg.Engines.DefaultEngine)
+		}
+		s.defaultEngineMu.Lock()
+		s.defaultEngine = id
+		s.defaultEngineMu.Unlock()
+		// Native and external providers read their selected configuration on binding.
+		return nil
+	}
+
 	codexBinary, codexResolveErr := codexengine.ResolveBinary()
 	codexEnabled := codexResolveErr == nil
 	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
@@ -189,9 +244,6 @@ func (s *Session) refreshEngineSettings() error {
 	s.RebuildCodexEngine(codexEnabled, codexBinary)
 	s.RebuildClaudeEngine(claudeEnabled, claudeBinary)
 	s.RebuildProtocolEngines(cfg.Engines)
-	if !s.EngineAvailable(defaultEngine) {
-		defaultEngine = agentengine.EngineWuu
-	}
 	s.defaultEngineMu.Lock()
 	s.defaultEngine = defaultEngine
 	s.defaultEngineMu.Unlock()
@@ -270,18 +322,15 @@ func (s *Session) CodexHost() *codexengine.Host {
 	return engine.Host()
 }
 
-// WuuEngine returns the built-in engine factory. The built-in engine only
-// needs the native runner, so when the registry is absent (directly
-// constructed runtimes, e.g. in tests) a stateless adapter still works.
-func (s *Session) WuuEngine() *WuuEngine {
+// WuuEngine returns the registered native engine provider, or nil when it is
+// absent or replaced. Lookup never constructs a substitute implementation.
+func (s *Session) WuuEngine() agentengine.Factory {
 	if s != nil && s.engines != nil {
 		if f, ok := s.engines.Lookup(agentengine.EngineWuu); ok {
-			if w, ok := f.(*WuuEngine); ok {
-				return w
-			}
+			return f
 		}
 	}
-	return &WuuEngine{session: s}
+	return nil
 }
 
 // EngineSessionForThread returns the engine session bound to an existing
@@ -293,24 +342,31 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 		return nil
 	}
 	id := agentengine.NormalizeEngineID(string(rt.EngineID))
-	if id == agentengine.EngineWuu {
-		if rt.StreamRunner == nil {
-			return nil
-		}
-		if w := s.WuuEngine(); w != nil {
-			return w.SessionForThread(rt)
-		}
-		return &unavailableEngineSession{id: id}
-	}
-	if s != nil && s.UserBinding().IsUser() {
-		return agentengine.FailedSession(errors.New("external engines do not enforce the user-host product boundary"))
-	}
 	if s == nil || s.engines == nil {
 		return &unavailableEngineSession{id: id}
+	}
+	if s.engines.IsResolved() {
+		session, err := s.bindSelectedEngine(ctx, rt, binding, id)
+		if err != nil {
+			return agentengine.FailedSession(err)
+		}
+		return session
 	}
 	f, ok := s.engines.Lookup(id)
 	if !ok {
 		return &unavailableEngineSession{id: id}
+	}
+	if s.UserBinding().IsUser() {
+		descriptor, err := f.Descriptor(ctx)
+		if err != nil {
+			return agentengine.FailedSession(err)
+		}
+		if !slices.Contains(descriptor.Capabilities, userHostContextCapability) {
+			return agentengine.FailedSession(errors.New("engine does not enforce explicit user-host context"))
+		}
+	}
+	if native, ok := f.(*WuuEngine); ok {
+		return native.SessionForThread(rt)
 	}
 	tbf, ok := f.(agentengine.ThreadBoundFactory)
 	if !ok {
@@ -326,33 +382,51 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 	return sess
 }
 
-// wuuEngineSession adapts a StreamRunner to the engine Session contract.
-// RunTurn is exactly StreamRunner.RunWithCallback: the native loop, streamed
-// through the caller's event sink. Interrupt and Close are host-owned for the
-// built-in engine (the app-server cancels turn contexts and cleans up thread
-// runtimes itself), so they only guard the per-turn context this session
-// creates.
+// wuuEngineSession owns Open/Resume resources and borrows cached thread
+// runtimes. Both paths stop admission and drain their active turn on Close.
 type wuuEngineSession struct {
-	mu     sync.Mutex
-	runner *agent.StreamRunner
-	cancel context.CancelFunc
+	mu           sync.Mutex
+	runner       *agent.StreamRunner
+	owner        *Session
+	ownedRuntime *ThreadRuntime
+	cancel       context.CancelFunc
+	turnDone     chan struct{}
+	closeDone    chan struct{}
+	closeErr     error
 }
 
 func (w *wuuEngineSession) RunTurn(ctx context.Context, input agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
 	if w == nil || w.runner == nil {
 		return agentengine.TurnResult{}, errors.New("wuu engine session has no runner")
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	w.mu.Lock()
-	w.cancel = cancel
+	if w.closeDone != nil {
+		w.mu.Unlock()
+		return agentengine.TurnResult{}, errors.New("wuu engine session is closed")
+	}
+	if w.turnDone != nil {
+		w.mu.Unlock()
+		return agentengine.TurnResult{}, errors.New("wuu engine session already has an active turn")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	w.cancel, w.turnDone = cancel, done
 	w.mu.Unlock()
 	defer func() {
-		w.mu.Lock()
-		w.cancel = nil
-		w.mu.Unlock()
 		cancel()
+		w.mu.Lock()
+		w.cancel, w.turnDone = nil, nil
+		close(done)
+		w.mu.Unlock()
 	}()
 	res, err := w.runner.RunWithCallback(ctx, input.History, agent.StreamCallback(sink))
+	// Only a sole post-run cleanup failure can leave the reply successful.
+	// Do not use errors.As: a joined execution or workflow failure must retain
+	// its failed outcome even when receipt cleanup also failed.
+	if receiptErr, ok := err.(*agent.ModelReceiptCompletionError); ok && res.DriverStatus == string(loopdriver.TerminalSucceeded) {
+		res.ReceiptDiagnostic = receiptErr.Error()
+		err = nil
+	}
 	return agentengine.TurnResult{Result: res}, err
 }
 
@@ -370,17 +444,44 @@ func (w *wuuEngineSession) Interrupt(_ context.Context, _ string) error {
 	return nil
 }
 
-// Close releases per-turn state. The host owns the runner and thread runtime
-// lifecycle for the built-in engine, so there is nothing to shut down here.
-func (w *wuuEngineSession) Close(context.Context) error {
+// Close stops admission and cancels the active turn. Caller cancellation ends
+// the wait, while cleanup retains resources until all owned consumers finish.
+func (w *wuuEngineSession) Close(ctx context.Context) error {
 	w.mu.Lock()
-	cancel := w.cancel
-	w.cancel = nil
-	w.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if w.closeDone == nil {
+		w.closeDone = make(chan struct{})
+		cancel, turnDone := w.cancel, w.turnDone
+		go func() {
+			if cancel != nil {
+				cancel()
+			}
+			if turnDone != nil {
+				<-turnDone
+			}
+			if rt := w.ownedRuntime; rt != nil {
+				if control := rt.AgentControl; control != nil {
+					control.BeginShutdown()
+					control.StopAll()
+					control.YieldWorkerTerminalFinalizations()
+					// Physical execution cleanup outlives the Close caller's
+					// deadline; provider leases cannot expire underneath it.
+					_ = control.WaitOwnedWorkerExecutions(context.Background())
+					w.closeErr = shutdownAndCleanupAgentControl(control)
+				}
+				w.owner.ReleasePluginGeneration(rt.PluginGeneration)
+				rt.PluginGeneration = nil
+			}
+			close(w.closeDone)
+		}()
 	}
-	return nil
+	done := w.closeDone
+	w.mu.Unlock()
+	select {
+	case <-done:
+		return w.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // EngineUnavailableSession returns an engine session that fails every turn

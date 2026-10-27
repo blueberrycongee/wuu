@@ -151,6 +151,99 @@ async function panelDiagnostic() {
   console.log(JSON.stringify(result.diagnostic));
 }
 
+async function interruptedPanelMotion() {
+  phase = "interrupted panel motion";
+  await settle();
+  const reversal = await evaluate(async () => {
+    const panel = document.querySelector(".workspace-right-panel");
+    const toggle = document.querySelector(".workspace-panel-globalize");
+    if (!panel || !toggle || toggle.disabled) throw new Error("Dockable workspace panel missing");
+    const frame = () => new Promise(requestAnimationFrame);
+    const waitFor = async (predicate, label) => {
+      for (let count = 0; count < 180; count++) {
+        if (predicate()) return;
+        await frame();
+      }
+      throw new Error(`Timed out: ${label}`);
+    };
+    const x = () => panel.getBoundingClientRect().left;
+    const moving = () => panel.getAnimations().some(animation => animation.playState === "running");
+    const dockedX = x();
+    toggle.click();
+    await waitFor(() => toggle.getAttribute("aria-pressed") === "true" && x() < dockedX - 20, "sheet opens");
+    await waitFor(() => !moving(), "sheet opening finishes");
+    const openX = x();
+    const samples = [];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      toggle.click();
+      await waitFor(() => x() > openX + (dockedX - openX) * 0.15 && moving(), "sheet exit is in flight");
+      const before = x();
+      toggle.click();
+      const after = [];
+      for (let count = 0; count < 3; count++) { await frame(); after.push(x()); }
+      samples.push({ before, after });
+      await waitFor(() => toggle.getAttribute("aria-pressed") === "true" && !moving() && Math.abs(x() - openX) < 1, "reversed sheet reaches open endpoint");
+    }
+    toggle.click();
+    await waitFor(() => toggle.getAttribute("aria-pressed") === "false" && !moving() && Math.abs(x() - dockedX) < 1, "sheet returns to dock");
+    return { dockedX, openX, samples, finalX: x() };
+  });
+  result.panelContinuity = { reversal, resizes: [] };
+  save();
+  await settle();
+  for (const selector of [".sidebar-resizer", ".workspace-right-panel-resizer"]) {
+    const recovery = await evaluate(async selector => {
+      const handle = document.querySelector(selector);
+      if (!handle) throw new Error(`Missing ${selector}`);
+      const frame = () => new Promise(requestAnimationFrame);
+      const x = () => handle.getBoundingClientRect().left;
+      const initial = x();
+      const down = () => {
+        const bounds = handle.getBoundingClientRect();
+        const start = bounds.left + bounds.width / 2;
+        handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, buttons: 1, clientX: start, pointerId: 19 }));
+        return start;
+      };
+      const move = clientX => window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, button: 0, buttons: 1, clientX, pointerId: 19 }));
+      const start = down();
+      await frame();
+      move(start + 40);
+      await frame(); await frame();
+      const dragged = x();
+      // A native window deactivation can lose the eventual mouse-up outside
+      // this renderer. Its blur must commit the last position and end ownership.
+      window.dispatchEvent(new Event("blur"));
+      await frame(); await frame();
+      move(start + 120);
+      await frame(); await frame();
+      const afterBlur = x();
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 19 }));
+      await frame();
+      const restore = down();
+      await frame();
+      move(restore + initial - afterBlur);
+      await frame();
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 19 }));
+      await frame(); await frame();
+      return { selector, initial, dragged, afterBlur, restored: x() };
+    }, selector);
+    result.panelContinuity.resizes.push(recovery);
+    save();
+    await settle();
+  }
+  for (const sample of reversal.samples) {
+    assert.ok(Math.max(...sample.after) <= sample.before + 2, "Reopening an exiting sheet continues toward its open position without jumping back to the dock");
+  }
+  check("sheet reversal geometry", reversal);
+  for (const recovery of result.panelContinuity.resizes) {
+    const { selector } = recovery;
+    assert.ok(Math.abs(recovery.dragged - recovery.initial) > 20, `${selector}: drag moves the divider`);
+    assert.ok(Math.abs(recovery.afterBlur - recovery.dragged) < 1, `${selector}: pointer motion after blur cannot continue the old drag`);
+    assert.ok(Math.abs(recovery.restored - recovery.initial) < 1, `${selector}: a new drag works after interruption`);
+    check("interrupted resize recovery", recovery);
+  }
+}
+
 async function motion(name, action, requireDragging = true) {
   phase = name;
   await settle();
@@ -391,6 +484,8 @@ app.whenReady().then(async () => {
   ipcMain.on("test:browser-bounds", (_event, payload) => browserBounds.push(payload.rect));
   ipcMain.on("test:pip-host", () => {});
   await win.loadFile(renderer);
+  await until(() => document.querySelector(".thread-row-main"));
+  await evaluate(() => document.querySelector(".thread-row-main").click());
   await until(() => document.querySelector(".turn"));
   await settle();
   const resources = await evaluate(() => performance.getEntriesByType("resource").map(entry => entry.name).filter(name => name.startsWith("file:") && /\.(?:js|css)$/.test(name)));
@@ -438,6 +533,7 @@ app.whenReady().then(async () => {
   await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await settle();
+  await interruptedPanelMotion();
   await motion("right live reflow", () => drag(".workspace-right-panel-resizer", -140));
   await click('[data-wuu-tool="browser"]');
   await until(() => document.querySelector(".workspace-browser-host"), "browser host");

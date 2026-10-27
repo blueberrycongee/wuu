@@ -84,10 +84,7 @@ func TestOAuthSourceRefreshesStoredCredentials(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".wuu"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set(AuthProviderID, authstorage.Credentials{
 		Type:         "oauth",
 		AccessToken:  "old-access",
@@ -117,7 +114,7 @@ func TestOAuthSourceRefreshesStoredCredentials(t *testing.T) {
 	defer server.Close()
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 
-	source := NewOAuthSource(OAuthConfig{Home: home, HTTPClient: server.Client()})
+	source := NewOAuthSource(OAuthConfig{Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client()})
 	creds, err := source.Credentials(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Credentials: %v", err)
@@ -173,28 +170,28 @@ func TestLoginHubStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 
 	hub := NewLoginHub()
-	start, err := hub.Start(context.Background())
+	start, err := hub.Start(context.Background(), testSelectedCredentials(t, home), func() {})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if start.UserCode != "WXYZ-1234" || start.LoginID == "" {
 		t.Fatalf("start = %+v", start)
 	}
-	first, err := hub.Poll(context.Background(), start.LoginID, home, DefaultBaseURL)
+	first, err := hub.Poll(context.Background(), start.LoginID, DefaultBaseURL)
 	if err != nil {
 		t.Fatalf("first poll: %v", err)
 	}
 	if first.Status != LoginPending {
 		t.Fatalf("first status = %q", first.Status)
 	}
-	second, err := hub.Poll(context.Background(), start.LoginID, home, DefaultBaseURL)
+	second, err := hub.Poll(context.Background(), start.LoginID, DefaultBaseURL)
 	if err != nil {
 		t.Fatalf("second poll: %v", err)
 	}
 	if second.Status != LoginSuccess {
 		t.Fatalf("second status = %+v", second)
 	}
-	if _, err := LocalOAuthStatus(home); err != nil {
+	if _, err := OAuthStatus(context.Background(), testSelectedCredentials(t, home)); err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
 }
@@ -222,12 +219,12 @@ func TestOAuthSourceFollowsAuthStoreAfterSignInAndSignOut(t *testing.T) {
 	home := t.TempDir()
 	signIn := func(access string) {
 		t.Helper()
-		if err := PersistTokens(home, TokenResponse{AccessToken: access, RefreshToken: "refresh-" + access, ExpiresIn: time.Hour}, ""); err != nil {
+		if err := SaveTokens(context.Background(), testSelectedCredentials(t, home), TokenResponse{AccessToken: access, RefreshToken: "refresh-" + access, ExpiresIn: time.Hour}, ""); err != nil {
 			t.Fatalf("PersistTokens: %v", err)
 		}
 	}
 	signIn("old-access")
-	source := NewOAuthSource(OAuthConfig{Home: home})
+	source := NewOAuthSource(OAuthConfig{Credentials: testSelectedCredentials(t, home)})
 	token := func() (string, error) {
 		creds, err := source.Credentials(context.Background(), false)
 		return creds.accessToken, err
@@ -241,7 +238,7 @@ func TestOAuthSourceFollowsAuthStoreAfterSignInAndSignOut(t *testing.T) {
 		t.Fatalf("after signing in again the source sent %q (err %v), want the new token", got, err)
 	}
 
-	if err := DeleteTokens(home); err != nil {
+	if err := RemoveTokens(context.Background(), testSelectedCredentials(t, home)); err != nil {
 		t.Fatalf("DeleteTokens: %v", err)
 	}
 	if got, err := token(); err == nil {

@@ -21,6 +21,7 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 
 	defer srv.Close()
 	srv.threads["thread-1"] = newThreadState("thread-1", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	srv.threads["thread-1"].state = testRuntimeState(t, rt)
 	started, _, err := rt.ActivityRegistry.Start(activity.StartOptions{
 		ID:       "activity-1",
 		Kind:     activity.KindBrowser,
@@ -95,6 +96,7 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					client := newBlockingStreamClient("done")
 					rt := newTestRuntime(t, &fakeClient{})
 					rt.StreamRunner.Client = client
+					attachTestModelGeneration(t, rt)
 					rt.ActivityRegistry = activity.NewRegistry()
 					out := &lockedBuffer{}
 					srv := New(rt, out)
@@ -172,7 +174,7 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					}
 					close(client.release)
 					// A queued extension turn can run, but must not regain local UI input.
-					if _, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
+					if _, err := srv.startQueuedTurn(testRuntimeState(t, srv.rt), context.Background(), threadID, queuedTurn{
 						id: "background", msg: providers.ChatMessage{Role: "user", Content: "background update", Origin: "plugin"},
 					}); err != nil {
 						t.Fatal(err)

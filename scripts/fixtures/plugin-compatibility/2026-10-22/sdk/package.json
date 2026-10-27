@@ -1,0 +1,38 @@
+{
+  "name": "@wuu/plugin-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Wuu Plugin SDK \u2014 types and helpers for building Wuu plugins",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node dist/index.test.js && node dist/bundle-contract.test.js",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/theme-contract.generated.js",
+    "dist/theme-contract.generated.d.ts",
+    "dist/bundle-contract.js",
+    "dist/bundle-contract.d.ts",
+    "dist/model.js",
+    "dist/model.d.ts",
+    "dist/process.js",
+    "dist/process.d.ts"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

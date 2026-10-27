@@ -16,6 +16,7 @@ func TestThreadListSummaryPreservesMetadataAndFullHistory(t *testing.T) {
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			th := newThreadState("summary-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+			th.state = testRuntimeState(t, rt)
 			th.Turns = []Turn{{ID: "retained-turn"}}
 			th.Title = "Conversation title"
 			th.running = true
@@ -56,6 +57,7 @@ func TestResumeResponseOnlyRetainsHistoryWithoutBroadcast(t *testing.T) {
 		out := &lockedBuffer{}
 		srv := New(rt, out)
 		th := newThreadState("resume-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+		th.state = testRuntimeState(t, rt)
 		th.Turns = []Turn{{ID: "retained-turn"}}
 		srv.threads[th.ID] = th
 		raw, _ := json.Marshal(map[string]any{"id": "resume", "method": "thread/resume", "params": ThreadResumeParams{SessionID: th.ID, ResponseOnly: responseOnly}})

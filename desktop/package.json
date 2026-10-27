@@ -36,11 +36,17 @@
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
-    "test:e2e:desktop-update": "node scripts/desktop-update-e2e.cjs",
+    "test:e2e:conversation-restoration": "electron scripts/conversation-restoration-e2e.cjs",
     "test:e2e:draft-recovery": "electron scripts/draft-recovery-e2e.cjs",
     "test:e2e:workspace-preview": "node scripts/workspace-preview-e2e.cjs",
     "test:e2e:fast-mode": "npm run build:core && npm run build && electron scripts/fast-mode-e2e.cjs",
     "test:e2e:composer-worktree": "npm run build:core && npm run build && electron scripts/composer-worktree-e2e.cjs",
+    "test:e2e:first-send": "electron scripts/first-send-continuity-e2e.cjs",
+    "test:e2e:error-message-style": "electron scripts/error-message-style-e2e.cjs",
+    "test:e2e:confirmed-archive": "electron scripts/confirmed-archive-e2e.cjs",
+    "test:e2e:composer-footer": "electron scripts/composer-footer-e2e.cjs",
+    "test:e2e:terminal-handoff": "electron scripts/terminal-handoff-e2e.cjs",
+    "test:e2e:session-presentation": "node scripts/env-run.cjs WUU_SWITCH_PRESENTATION=1 WUU_SWITCH_STABLE_PRESENTATION=1 electron scripts/session-switch-e2e.cjs",
     "test:e2e:concurrent-send": "npm run build:core && npm run build && electron scripts/concurrent-send-e2e.mjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
@@ -149,7 +155,9 @@
       "sign": "scripts/sign-mac.cjs",
       "hardenedRuntime": false,
       "extendInfo": {
-        "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks."
+        "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks.",
+        "NSMicrophoneUsageDescription": "Wuu uses the microphone when you dictate text or allow a website to use it.",
+        "NSCameraUsageDescription": "Wuu uses the camera only when you allow a website to use it."
       },
       "extraResources": [
         {
@@ -267,7 +275,7 @@
     "@xterm/xterm": "^6.0.0",
     "blobatar": "file:vendor/blobatar",
     "cordis": "4.0.0-rc.8",
-    "electron": "^44.1.0",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "highlight.js": "^11.11.1",

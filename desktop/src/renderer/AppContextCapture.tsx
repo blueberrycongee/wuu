@@ -1,42 +1,49 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AppContextSnapshot, AppContextState } from "../shared/protocol";
-import type { ComposerFile, ComposerImage } from "./ComposerMessages";
+import { useEffect, useRef, useState } from "react";
+import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationAttachmentV1 } from "../../../packages/plugin-sdk/src/ui-composer";
+import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { composerFileFromFile } from "./ComposerMessages";
 import { Modal } from "./Modal";
 import { useI18n } from "./i18n";
 import "./styles/app-context.css";
 
-type DraftTarget = { add: (image: ComposerImage, context: ComposerFile) => void };
-let currentDraftTarget: DraftTarget | undefined;
+type AppContextState = Awaited<ReturnType<ApplicationSettingsControlsV1["getAppContextState"]>>;
+type AppContextSnapshot = NonNullable<AppContextState["snapshot"]>;
+type DraftTarget = { key: string; tabId: string; pane: "primary" | "secondary" };
 
-// The capture host lives beside App so route changes cannot unmount it.
-// App supplies the actual current draft owner through this private hook.
-export function useAppContextDraftTarget(identity: string | undefined, add: DraftTarget["add"]): void {
-  // Keep the owner stable across ordinary renders, but revoke it when the
-  // active conversation, pane, or workspace changes during attachment prep.
-  const target = useMemo<DraftTarget>(() => ({ add }), [identity]);
-  target.add = add;
-  useLayoutEffect(() => {
-    currentDraftTarget = identity === undefined ? undefined : target;
-    return () => { if (currentDraftTarget === target) currentDraftTarget = undefined; };
-  }, [identity, target]);
+function draftTarget(snapshot: ApplicationSnapshotV1): DraftTarget | undefined {
+  const navigation = snapshot.navigationWorkspace;
+  if (snapshot.phase !== "ready" || !snapshot.tabs.canSubmit || navigation.activeWebsiteId
+    || navigation.activePluginView || snapshot.navigation.section === "catalog") return undefined;
+  const { drafts } = snapshot;
+  const pane = drafts.split ? drafts.activePane : "primary";
+  const owner = drafts[pane].ownerTabId;
+  if (!owner) return undefined;
+  return { key: JSON.stringify([snapshot.workspaces.activeRoot, drafts.activeTabId, pane,
+    drafts.primary.ownerTabId, drafts.secondary.ownerTabId]), tabId: owner, pane };
 }
 
-export function AppContextCaptureHost(): JSX.Element | null {
+export function AppContextCaptureHost({ application }: { application: Pick<ApplicationServiceV1, "getSnapshot" | "subscribe" | "invoke" | "settingsControls"> }): JSX.Element | null {
   const { t } = useI18n();
   const [error, setError] = useState("");
   const refreshGeneration = useRef(0);
   const handledSnapshot = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (!window.wuu.getAppContextState) return;
+    const controls = application.settingsControls;
+    if (!controls.capabilities.appContext) return;
     let active = true;
+    let target = draftTarget(application.getSnapshot());
+    const stopTarget = application.subscribe(() => {
+      const next = draftTarget(application.getSnapshot());
+      if (next?.key !== target?.key) target = next;
+    });
     let captureTarget: { destination: DraftTarget | undefined } | undefined;
     const refresh = async (): Promise<void> => {
       const generation = ++refreshGeneration.current;
-      const readTarget = currentDraftTarget;
+      const readTarget = target;
       let next: AppContextState;
-      try { next = await window.wuu.getAppContextState!(); }
+      try { next = await controls.getAppContextState(); }
       catch { return; } // Reads can outlive the main-window owner.
       if (!active || generation !== refreshGeneration.current) return;
       if (next.phase === "capturing") {
@@ -59,28 +66,47 @@ export function AppContextCaptureHost(): JSX.Element | null {
         if (!destination) throw new Error("The conversation draft is unavailable. Reopen Wuu and capture again.");
         // Prepare both attachments before consuming the snapshot or changing
         // the draft. Consumption revalidates native ownership and cancellation.
-        const context = await composerFileFromFile(new File([snapshotContext(snapshot)], `${safeName(snapshot.app_name)}-context.txt`, { type: "text/plain" }));
+        const filename = `${safeName(snapshot.app_name)}-context.txt`;
+        const context = await composerFileFromFile(new File([snapshotContext(snapshot)], filename, { type: "text/plain" }));
         if (!active) return;
-        if (destination !== currentDraftTarget) throw new Error("The conversation window changed. Capture the app again.");
-        await window.wuu.discardAppContextSnapshot!(snapshot.id);
+        if (destination !== target) throw new Error("The conversation window changed. Capture the app again.");
+        await controls.discardAppContextSnapshot(snapshot.id);
         if (!active) return;
-        if (destination !== currentDraftTarget) throw new Error("The conversation window changed. Capture the app again.");
-        destination.add({ id: `app-snapshot-${snapshot.id}`, media_type: "image/png", data: snapshot.image_base64 }, context);
+        if (destination !== target) throw new Error("The conversation window changed. Capture the app again.");
+        const drafts = application.getSnapshot().drafts;
+        const imageId = `app-snapshot-${snapshot.id}`;
+        const attachments: ApplicationAttachmentV1[] = [
+          { id: imageId, kind: "image", name: `${safeName(snapshot.app_name)}.png`, status: "ready",
+            mediaType: "image/png", data: snapshot.image_base64, width: snapshot.width, height: snapshot.height },
+          { id: context.id, kind: "file", name: filename, mediaType: context.media_type,
+            status: "ready", data: context.data },
+        ];
+        const updated = { ...drafts[destination.pane], imageIds: [...drafts[destination.pane].imageIds, imageId],
+          fileIds: [...drafts[destination.pane].fileIds, context.id] };
+        await application.invoke("composer.checkpoint", { activeTabId: drafts.activeTabId, attachments,
+          primary: destination.pane === "primary" ? updated : drafts.primary,
+          secondary: drafts.split ? destination.pane === "secondary" ? updated : drafts.secondary : undefined });
+        if (!active || destination !== target) return;
+        await application.invoke("settings.close", {});
+        await application.invoke("navigation.show-account", { open: false });
+        await application.invoke("preview.show-conversation", {});
+        await application.invoke("navigation.focus-composer", { tabId: destination.tabId });
         refreshGeneration.current += 1;
       } catch (reason) {
         if (active && handledSnapshot.current === snapshot.id) setError((reason as Error).message);
       }
     };
-    const unsubscribe = window.wuu.onAppContextChanged?.(() => { void refresh(); });
+    const unsubscribe = controls.capabilities.appContextChanges
+      ? controls.onAppContextChanged(() => { void refresh(); }) : undefined;
     void refresh();
-    return () => { active = false; unsubscribe?.(); };
-  }, []);
+    return () => { active = false; stopTarget(); unsubscribe?.(); };
+  }, [application]);
 
   if (!error) return null;
   const close = (): void => {
     refreshGeneration.current += 1;
     setError("");
-    void window.wuu.discardAppContextSnapshot?.().catch(reason => setError((reason as Error).message));
+    void application.settingsControls.discardAppContextSnapshot().catch(reason => setError((reason as Error).message));
   };
   return (
     <Modal title={t("composer.appContext.title")} ariaLabel={t("composer.appContext.title")}

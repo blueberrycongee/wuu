@@ -69,11 +69,11 @@
 }
 
 .side-thread-panel__composer-host .composer-wrap {
-  /* Match the body's fluid gutter while keeping the shared dock height. */
-  padding-inline: var(--session-outer-padding-inline);
+  /* Extend the draft beyond the body's reading column by the shared outset. */
+  padding-inline: calc(var(--session-outer-padding-inline) - var(--session-composer-inline-outset));
 }
 
-.side-thread-panel__composer-host .composer-stack {
-  width: min(100%, var(--session-composer-width));
+.side-thread-panel__composer-host .composer-wrap .composer-stack {
+  width: min(100%, calc(var(--session-composer-width) + 2 * var(--session-composer-inline-outset)));
   transform: none;
 }

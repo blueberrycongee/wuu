@@ -1,4 +1,4 @@
-import type { RuntimeHost } from '@wuu/plugin-sdk';
+import type { ExecutionAuthorizationReference, RuntimeHost } from '@wuu/plugin-sdk';
 import type { CalendarConnection } from './connected-calendar.js';
 
 export function unwrapPersonalHost(value: unknown): unknown {
@@ -18,6 +18,6 @@ export function decodeCalendarConnection(value: unknown): CalendarConnection {
   if (v.authorization_diagnostics !== undefined && (!Array.isArray(v.authorization_diagnostics) || !v.authorization_diagnostics.every(item => item && typeof item === 'object' && typeof item.attempt_id === 'string' && item.attempt_id && typeof item.error_code === 'string' && item.error_code && (item.persistence_failed === undefined || typeof item.persistence_failed === 'boolean')))) throw new Error('Invalid Calendar authorization diagnostics');
   return structuredClone(v) as unknown as CalendarConnection;
 }
-export async function callPersonalHost(host: RuntimeHost, operation: string, input: unknown = {}, sessionID?: string, signal?: AbortSignal): Promise<unknown> {
-  return unwrapPersonalHost(await host.call('host.service.call', { service: 'host.personal', method: 'call', params: { operation, input, ...(sessionID ? { session_id: sessionID } : {}) } }, { signal }));
+export async function callPersonalHost(host: RuntimeHost, operation: string, input: unknown = {}, sessionID?: string, signal?: AbortSignal, executionAuthorization?: ExecutionAuthorizationReference): Promise<unknown> {
+  return unwrapPersonalHost(await host.call('host.service.call', { service: 'host.personal', method: 'call', params: { operation, input, ...(executionAuthorization ? {execution_authorization:executionAuthorization} : {}), ...(sessionID ? { session_id: sessionID } : {}) } }, { signal }));
 }

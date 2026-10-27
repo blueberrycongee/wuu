@@ -7,14 +7,15 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-func (s *Server) loadHeldUserTurns(threadID string) ([]queuedTurn, error) {
+func (s *Server) loadHeldUserTurns(binding *runtime.State, threadID string) ([]queuedTurn, error) {
 	if s == nil || s.rt == nil {
 		return nil, nil
 	}
-	rows, err := session.LoadHeldUserWork(s.rt.SessionDir, threadID)
+	rows, err := binding.Sessions.LoadHeldUserWork(threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,7 @@ func heldUserWorkRow(turn queuedTurn) (session.HeldUserWork, error) {
 	return session.HeldUserWork{ID: turn.id, Origin: origin, MessageJSON: messageJSON, RuntimeJSON: runtimeJSON}, nil
 }
 
-func (s *Server) persistAcceptedUserTurn(threadID string, turn queuedTurn) (bool, error) {
+func (s *Server) persistAcceptedUserTurn(binding *runtime.State, threadID string, turn queuedTurn) (bool, error) {
 	if s == nil || s.rt == nil {
 		return false, errors.New("accepted user work requires a session store")
 	}
@@ -63,10 +64,10 @@ func (s *Server) persistAcceptedUserTurn(threadID string, turn queuedTurn) (bool
 	if err != nil {
 		return false, err
 	}
-	return session.AcceptHeldUserWork(s.rt.SessionDir, threadID, row)
+	return binding.Sessions.AcceptHeldUserWork(threadID, row)
 }
 
-func (s *Server) persistUpdatedUserTurn(threadID string, previous, turn queuedTurn) error {
+func (s *Server) persistUpdatedUserTurn(binding *runtime.State, threadID string, previous, turn queuedTurn) error {
 	if turn.deliveryUnconfirmed {
 		return session.ErrHeldUserWorkUnconfirmed
 	}
@@ -78,7 +79,7 @@ func (s *Server) persistUpdatedUserTurn(threadID string, previous, turn queuedTu
 	if err != nil {
 		return err
 	}
-	updated, err := session.UpdateHeldUserWork(s.rt.SessionDir, threadID, row, expected)
+	updated, err := binding.Sessions.UpdateHeldUserWork(threadID, row, expected)
 	if err != nil {
 		return err
 	}
@@ -88,23 +89,23 @@ func (s *Server) persistUpdatedUserTurn(threadID string, previous, turn queuedTu
 	return nil
 }
 
-func (s *Server) appendHeldUserTurns(threadID string, turns []queuedTurn) ([]queuedTurn, error) {
+func (s *Server) appendHeldUserTurns(binding *runtime.State, threadID string, turns []queuedTurn) ([]queuedTurn, error) {
 	s.heldUserWorkMu.Lock()
 	defer s.heldUserWorkMu.Unlock()
 	for _, turn := range turns {
 		// Accepted work is already durable. Do not overwrite a newer edit or
 		// resurrect an input admitted before a launcher/notification failure.
-		if _, err := s.persistAcceptedUserTurn(threadID, turn); err != nil && !errors.Is(err, session.ErrHeldUserWorkSettled) && !errors.Is(err, session.ErrHeldUserWorkUnconfirmed) {
+		if _, err := s.persistAcceptedUserTurn(binding, threadID, turn); err != nil && !errors.Is(err, session.ErrHeldUserWorkSettled) && !errors.Is(err, session.ErrHeldUserWorkUnconfirmed) {
 			return nil, err
 		}
 	}
-	return s.loadHeldUserTurns(threadID)
+	return s.loadHeldUserTurns(binding, threadID)
 }
 
-func (s *Server) findHeldUserTurn(threadID, id string) (queuedTurn, bool, error) {
+func (s *Server) findHeldUserTurn(binding *runtime.State, threadID, id string) (queuedTurn, bool, error) {
 	s.heldUserWorkMu.Lock()
 	defer s.heldUserWorkMu.Unlock()
-	turns, err := s.loadHeldUserTurns(threadID)
+	turns, err := s.loadHeldUserTurns(binding, threadID)
 	if err != nil {
 		return queuedTurn{}, false, err
 	}
@@ -116,10 +117,10 @@ func (s *Server) findHeldUserTurn(threadID, id string) (queuedTurn, bool, error)
 	return queuedTurn{}, false, nil
 }
 
-func (s *Server) updateHeldUserTurn(threadID, id string, msg providers.ChatMessage) (queuedTurn, []queuedTurn, bool, error) {
+func (s *Server) updateHeldUserTurn(binding *runtime.State, threadID, id string, msg providers.ChatMessage) (queuedTurn, []queuedTurn, bool, error) {
 	s.heldUserWorkMu.Lock()
 	defer s.heldUserWorkMu.Unlock()
-	turns, err := s.loadHeldUserTurns(threadID)
+	turns, err := s.loadHeldUserTurns(binding, threadID)
 	if err != nil {
 		return queuedTurn{}, nil, false, err
 	}
@@ -131,7 +132,7 @@ func (s *Server) updateHeldUserTurn(threadID, id string, msg providers.ChatMessa
 		msg.ClientID = id
 		msg.Steered = turns[index].origin == session.HeldUserWorkOriginSteer
 		turns[index].msg = msg
-		if err := s.persistUpdatedUserTurn(threadID, previous, turns[index]); err != nil {
+		if err := s.persistUpdatedUserTurn(binding, threadID, previous, turns[index]); err != nil {
 			return queuedTurn{}, nil, false, err
 		}
 		return turns[index], turns, true, nil
@@ -238,9 +239,9 @@ func (s *Server) notifyHeldUserTurnsWithError(threadID string, turns []queuedTur
 // holdRejectedQueuedTurn keeps queued input whose admission failed after the
 // client was told it was queued. The client gets the reason and an editable
 // paused copy rather than a silent removal.
-func (s *Server) holdRejectedQueuedTurn(threadID string, entry queuedTurn, cause error) error {
+func (s *Server) holdRejectedQueuedTurn(binding *runtime.State, threadID string, entry queuedTurn, cause error) error {
 	entry.origin = session.HeldUserWorkOriginQueue
-	held, err := s.appendHeldUserTurns(threadID, []queuedTurn{entry})
+	held, err := s.appendHeldUserTurns(binding, threadID, []queuedTurn{entry})
 	if err != nil {
 		return err
 	}
@@ -248,8 +249,10 @@ func (s *Server) holdRejectedQueuedTurn(threadID string, entry queuedTurn, cause
 	return nil
 }
 
-func (s *Server) acceptQueuedUserTurn(threadID string, entry queuedTurn, hold bool) (queuedTurn, bool, error) {
+func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, entry queuedTurn, hold bool, timing *rpcRequestTiming) (queuedTurn, bool, error) {
+	started := timing.now()
 	s.queuedTurnMu.Lock()
+	timing.span("queue_mutex_wait", started)
 	defer s.queuedTurnMu.Unlock()
 	if s.closed.Load() {
 		return queuedTurn{}, false, errServerClosed
@@ -257,13 +260,16 @@ func (s *Server) acceptQueuedUserTurn(threadID string, entry queuedTurn, hold bo
 	if s.isCancelledPendingSubmissionLocked(threadID, entry.id, session.HeldUserWorkOriginQueue) {
 		return queuedTurn{}, false, errQueuedTurnCancelled
 	}
-	accepted, err := s.persistAcceptedUserTurn(threadID, entry)
+	started = timing.now()
+	timing.mark("queue_persist_begin")
+	accepted, err := s.persistAcceptedUserTurn(binding, threadID, entry)
+	timing.span("queue_persist", started)
 	if err != nil {
 		return queuedTurn{}, false, err
 	}
 	entry.durable = true
 	if !accepted {
-		turns, err := s.loadHeldUserTurns(threadID)
+		turns, err := s.loadHeldUserTurns(binding, threadID)
 		if err != nil {
 			return queuedTurn{}, false, err
 		}
@@ -283,7 +289,7 @@ func (s *Server) acceptQueuedUserTurn(threadID string, entry queuedTurn, hold bo
 	return entry, !hold, nil
 }
 
-func (s *Server) updateAcceptedQueuedTurn(threadID, id string, msg providers.ChatMessage) (queuedTurn, bool, error) {
+func (s *Server) updateAcceptedQueuedTurn(binding *runtime.State, threadID, id string, msg providers.ChatMessage) (queuedTurn, bool, error) {
 	s.queuedTurnMu.Lock()
 	defer s.queuedTurnMu.Unlock()
 	if claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, id)]; claim != nil && !claim.cancelled {
@@ -297,7 +303,7 @@ func (s *Server) updateAcceptedQueuedTurn(threadID, id string, msg providers.Cha
 		msg.ClientID, msg.Steered = id, false
 		entry.msg = msg
 		if entry.durable {
-			if err := s.persistUpdatedUserTurn(threadID, previous, entry); err != nil {
+			if err := s.persistUpdatedUserTurn(binding, threadID, previous, entry); err != nil {
 				return queuedTurn{}, false, err
 			}
 		}
@@ -307,7 +313,7 @@ func (s *Server) updateAcceptedQueuedTurn(threadID, id string, msg providers.Cha
 	return queuedTurn{}, false, nil
 }
 
-func (s *Server) cancelQueuedUserTurn(threadID, id string, persist bool) (queuedTurn, bool, error) {
+func (s *Server) cancelQueuedUserTurn(binding *runtime.State, threadID, id string, persist bool) (queuedTurn, bool, error) {
 	s.queuedTurnMu.Lock()
 	defer s.queuedTurnMu.Unlock()
 	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, id)]
@@ -327,7 +333,7 @@ func (s *Server) cancelQueuedUserTurn(threadID, id string, persist bool) (queued
 	removed := false
 	if persist && s.rt != nil && entry.snapshot.PluginTurn == nil {
 		var err error
-		removed, err = session.CancelHeldUserWork(s.rt.SessionDir, threadID, id, session.HeldUserWorkOriginQueue)
+		removed, err = binding.Sessions.CancelHeldUserWork(threadID, id, session.HeldUserWorkOriginQueue)
 		if err != nil {
 			return queuedTurn{}, false, err
 		}

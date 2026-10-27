@@ -11,12 +11,13 @@ import (
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 const processCompletionOutputBytes = 2 * 1024
 
-func (s *Server) forwardProcessNotifications(threadID string, control *agentcontrol.AgentControl, manager *process.Manager, ch <-chan process.Event, done <-chan struct{}) {
+func (s *Server) forwardProcessNotifications(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, manager *process.Manager, ch <-chan process.Event, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -29,14 +30,14 @@ func (s *Server) forwardProcessNotifications(threadID string, control *agentcont
 				// The channel is only a low-latency hint. Pull every persisted
 				// obligation so a terminal event dropped behind a full channel is
 				// recovered when any retained event is consumed.
-				s.replayPendingProcessCompletions(threadID, control, manager)
-				s.replayPendingProcessRechecks(threadID, control, manager)
+				s.replayPendingProcessCompletions(binding, threadID, control, manager)
+				s.replayPendingProcessRechecks(binding, threadID, control, manager)
 				continue
 			}
 			if event.Cause != process.EventCauseNaturalExit || !processEventBelongsToThread(threadID, control, event) {
 				continue
 			}
-			s.enqueueProcessCompletionTurn(threadID, event.Process.ID, processCompletionChatMessage(manager, event))
+			s.enqueueProcessCompletionTurn(binding, threadID, event.Process.ID, processCompletionChatMessage(manager, event))
 		}
 	}
 }
@@ -106,7 +107,7 @@ func processOutputTailLines(manager *process.Manager, id string) []string {
 	return lines
 }
 
-func (s *Server) replayPendingProcessRechecks(threadID string, control *agentcontrol.AgentControl, manager *process.Manager) {
+func (s *Server) replayPendingProcessRechecks(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, manager *process.Manager) {
 	if s == nil || manager == nil {
 		return
 	}
@@ -126,11 +127,11 @@ func (s *Server) replayPendingProcessRechecks(threadID string, control *agentcon
 			providers.DebugLogf("mark process recheck %q delivered for thread %q: %v", p.ID, threadID, markErr)
 			continue
 		}
-		s.enqueueProcessRecheckTurn(threadID, p.ID, processRecheckChatMessage(manager, p))
+		s.enqueueProcessRecheckTurn(binding, threadID, p.ID, processRecheckChatMessage(manager, p))
 	}
 }
 
-func (s *Server) replayPendingProcessCompletions(threadID string, control *agentcontrol.AgentControl, manager *process.Manager) {
+func (s *Server) replayPendingProcessCompletions(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, manager *process.Manager) {
 	if s == nil || manager == nil {
 		return
 	}
@@ -145,7 +146,7 @@ func (s *Server) replayPendingProcessCompletions(threadID string, control *agent
 			event.Type = process.EventFailed
 		}
 		if processEventBelongsToThread(threadID, control, event) {
-			s.enqueueProcessCompletionTurn(threadID, p.ID, processCompletionChatMessage(manager, event))
+			s.enqueueProcessCompletionTurn(binding, threadID, p.ID, processCompletionChatMessage(manager, event))
 		}
 	}
 }
@@ -183,7 +184,7 @@ func threadHasOutstandingProcessCompletion(th *threadState, control *agentcontro
 	return false
 }
 
-func (s *Server) restorePendingProcessCompletionsOnThreadResume(threadID string) {
+func (s *Server) restorePendingProcessCompletionsOnThreadResume(binding *runtime.State, threadID string) {
 	if s == nil || s.rt == nil || s.rt.ProcessManager == nil {
 		return
 	}
@@ -223,7 +224,7 @@ func (s *Server) restorePendingProcessCompletionsOnThreadResume(threadID string)
 	if !needsRuntime {
 		return
 	}
-	th := s.thread(threadID)
+	th := s.threadForState(binding, threadID)
 	if th == nil || !canResumeAgentCompletionThread(th) {
 		return
 	}
@@ -312,7 +313,7 @@ func processCompletionMarkerAnswered(history []providers.ChatMessage, processID 
 	return false
 }
 
-func (s *Server) enqueueProcessCompletionTurn(threadID, processID string, msg providers.ChatMessage) {
+func (s *Server) enqueueProcessCompletionTurn(binding *runtime.State, threadID, processID string, msg providers.ChatMessage) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -321,7 +322,7 @@ func (s *Server) enqueueProcessCompletionTurn(threadID, processID string, msg pr
 	if threadID == "" || processID == "" || !chatMessageHasUserPayload(msg) {
 		return
 	}
-	th := s.thread(threadID)
+	th := s.threadForState(binding, threadID)
 	if th == nil || !canResumeAgentCompletionThread(th) {
 		return
 	}
@@ -351,10 +352,10 @@ func (s *Server) enqueueProcessCompletionTurn(threadID, processID string, msg pr
 	})
 	s.agentCompletionMu.Unlock()
 
-	s.kickAgentCompletionDrain(threadID)
+	s.kickAgentCompletionDrain(binding, threadID)
 }
 
-func (s *Server) enqueueProcessRecheckTurn(threadID, processID string, msg providers.ChatMessage) {
+func (s *Server) enqueueProcessRecheckTurn(binding *runtime.State, threadID, processID string, msg providers.ChatMessage) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -363,7 +364,7 @@ func (s *Server) enqueueProcessRecheckTurn(threadID, processID string, msg provi
 	if threadID == "" || processID == "" || !chatMessageHasUserPayload(msg) {
 		return
 	}
-	th := s.thread(threadID)
+	th := s.threadForState(binding, threadID)
 	if th == nil || !canResumeAgentCompletionThread(th) {
 		return
 	}
@@ -388,5 +389,5 @@ func (s *Server) enqueueProcessRecheckTurn(threadID, processID string, msg provi
 	})
 	s.agentCompletionMu.Unlock()
 
-	s.kickAgentCompletionDrain(threadID)
+	s.kickAgentCompletionDrain(binding, threadID)
 }

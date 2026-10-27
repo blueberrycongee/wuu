@@ -17,7 +17,7 @@ import (
 
 func TestUnavailableHostRejectsForgedAuthorityAndNeverClaimsProtection(t *testing.T) {
 	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
-	host := New(binding, Options{})
+	host := New(binding, Options{Authorize: authorizeFixture})
 	defer host.Close()
 	for _, operation := range []string{"calendar.status", "calendar.start", "calendar.cancel", "calendar.select", "calendar.disconnect", "review.list", "review.resolve", "review.revoke"} {
 		if _, err := host.Call(context.Background(), operation, json.RawMessage(`{"owner":true}`), ""); err == nil {
@@ -70,7 +70,7 @@ func TestOpenerFailurePreservesCancellationOutcomeAndCloseError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h := New(binding, Options{Calendar: &cancellationFixture{failure: &personalcalendar.Failure{Code: code}}, OpenAuthorizationURL: func(context.Context, string) error { return errors.New("synthetic browser failure") }})
+			h := New(binding, Options{Authorize: authorizeFixture, Calendar: &cancellationFixture{failure: &personalcalendar.Failure{Code: code}}, OpenAuthorizationURL: func(context.Context, string) error { return errors.New("synthetic browser failure") }})
 			_, err = h.Call(owner, "calendar.start", nil, "")
 			var failure *personalcalendar.Failure
 			if !errors.As(err, &failure) || failure.Code != code {
@@ -151,7 +151,7 @@ func TestLateOwnerCancellationCannotOverwriteNewConnection(t *testing.T) {
 					next, nextCancel := owner()
 					defer nextCancel()
 					f := &lateCancellationFixture{release: make(chan struct{}), code: code}
-					h := New(binding, Options{Calendar: f, OpenAuthorizationURL: func(context.Context, string) error { return nil }})
+					h := New(binding, Options{Authorize: authorizeFixture, Calendar: f, OpenAuthorizationURL: func(context.Context, string) error { return nil }})
 					if _, err := h.Call(old, "calendar.start", nil, ""); err != nil {
 						t.Fatal(err)
 					}

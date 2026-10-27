@@ -1,0 +1,444 @@
+name: Workbench visual acceptance
+
+on:
+  push:
+    branches: [design/conversation-layout, experiment/workbench]
+    paths:
+      - 'desktop/src/**'
+      - 'desktop/scripts/workbench-acceptance-e2e.cjs'
+      - 'desktop/scripts/web-workspace-acceptance.cjs'
+      - 'desktop/scripts/web-workspace-lifecycle-e2e.cjs'
+      - 'desktop/scripts/browser-media-acceptance.cjs'
+      - 'desktop/scripts/browser-task-ownership-e2e*'
+      - 'desktop/scripts/browser-pip-e2e*'
+      - 'desktop/scripts/browser-session-recovery-e2e*'
+      - 'desktop/scripts/browser-media-permissions-e2e*'
+      - 'desktop/scripts/browser-download-recovery-e2e*'
+      - 'desktop/scripts/browser-extension-options-e2e*'
+      - 'desktop/scripts/browser-display-capture-e2e*'
+      - 'desktop/scripts/browser-library-edit-e2e*'
+      - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'desktop/scripts/browser-popover-stability-e2e*'
+      - 'desktop/scripts/browser-daily-use-e2e*'
+      - 'desktop/scripts/browser-workspace-switch-e2e*'
+      - 'packages/protocol/**'
+      - 'desktop/scripts/context-chat-capsule-e2e*'
+      - 'desktop/scripts/replaceable-architecture-shells-e2e.cjs'
+      - 'scripts/replaceable-architecture-author.mjs'
+      - 'packages/plugin-sdk/**'
+      - 'examples/plugins/research-workbench/**'
+      - 'examples/plugins/research-evidence/**'
+      - 'internal/**'
+      - 'scripts/plugin-credentials-e2e/**'
+      - 'plugins/feishu-workspace/**'
+      - 'plugins/notion-workspace/**'
+      - 'desktop/scripts/fixtures/conversation-corpus/**'
+      - 'desktop/electron.vite.config.ts'
+      - 'desktop/package*.json'
+      - '.github/workflows/workbench-acceptance.yml'
+  pull_request:
+    branches: [experiment/workbench]
+    paths:
+      - 'desktop/src/**'
+      - 'desktop/scripts/workbench-acceptance-e2e.cjs'
+      - 'desktop/scripts/web-workspace-acceptance.cjs'
+      - 'desktop/scripts/web-workspace-lifecycle-e2e.cjs'
+      - 'desktop/scripts/browser-media-acceptance.cjs'
+      - 'desktop/scripts/browser-task-ownership-e2e*'
+      - 'desktop/scripts/browser-pip-e2e*'
+      - 'desktop/scripts/browser-session-recovery-e2e*'
+      - 'desktop/scripts/browser-media-permissions-e2e*'
+      - 'desktop/scripts/browser-download-recovery-e2e*'
+      - 'desktop/scripts/browser-extension-options-e2e*'
+      - 'desktop/scripts/browser-display-capture-e2e*'
+      - 'desktop/scripts/browser-library-edit-e2e*'
+      - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'desktop/scripts/browser-popover-stability-e2e*'
+      - 'desktop/scripts/browser-daily-use-e2e*'
+      - 'desktop/scripts/browser-workspace-switch-e2e*'
+      - 'packages/protocol/**'
+      - 'desktop/scripts/context-chat-capsule-e2e*'
+      - 'desktop/scripts/replaceable-architecture-shells-e2e.cjs'
+      - 'scripts/replaceable-architecture-author.mjs'
+      - 'packages/plugin-sdk/**'
+      - 'examples/plugins/research-workbench/**'
+      - 'examples/plugins/research-evidence/**'
+      - 'internal/**'
+      - 'scripts/plugin-credentials-e2e/**'
+      - 'plugins/feishu-workspace/**'
+      - 'plugins/notion-workspace/**'
+      - 'desktop/scripts/fixtures/conversation-corpus/**'
+      - 'desktop/electron.vite.config.ts'
+      - 'desktop/package*.json'
+      - '.github/workflows/workbench-acceptance.yml'
+  workflow_dispatch:
+    inputs:
+      layout_matrix:
+        description: Repeated layout matrix (browser journeys always run)
+        type: choice
+        options: [smoke, full]
+        default: smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accept:
+    name: Real Electron clickthrough and video
+    # Match the package check: Chromium sandbox uses unprivileged namespaces.
+    # Stock Ubuntu24.04 restricts them; do not weaken the extension sandbox.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install isolated capture dependencies
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
+          node desktop/node_modules/electron/install.js
+          # Hosted images can select the slow Azure archive through a mirror list.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install -y xvfb dbus ffmpeg openbox xdotool x11-utils fonts-noto-cjk fonts-noto-color-emoji pulseaudio pulseaudio-utils
+          pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=wuu_e2e sink_properties=device.description=WuuE2E
+          pactl set-default-sink wuu_e2e
+      - name: Check acceptance syntax and test policy
+        run: |
+          node --check desktop/scripts/workbench-acceptance-e2e.cjs
+          node --check desktop/scripts/web-workspace-acceptance.cjs
+          node --check desktop/scripts/browser-media-acceptance.cjs
+          node --check desktop/scripts/browser-pip-e2e.cjs
+          node --check desktop/scripts/browser-daily-use-e2e.cjs
+          node --check desktop/scripts/browser-workspace-switch-e2e.cjs
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
+            node --check "desktop/scripts/browser-$journey-e2e.cjs"
+          done
+          node --check desktop/scripts/context-chat-capsule-e2e.cjs
+          node --check desktop/scripts/replaceable-architecture-shells-e2e.cjs
+          node --check scripts/replaceable-architecture-author.mjs
+          make test-policy-check
+      - name: Build shipping app serially
+        id: build
+        run: |
+          mkdir -p desktop/build/bin
+          go build -p 2 -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
+          cd desktop
+          node_modules/.bin/electron-vite build
+      - name: Build independent public SDK shell packages
+        id: shell-author
+        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_REPLACEABLE_AUTHOR_TEMP: ${{ runner.temp }}
+          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
+        run: |
+          mkdir -p "$WUU_SHELL_EVIDENCE/author"
+          git rev-parse HEAD > "$WUU_SHELL_EVIDENCE/source-commit.txt"
+          git status --porcelain > "$WUU_SHELL_EVIDENCE/source-status.txt"
+          git ls-files -z cmd internal pkg plugins packages desktop/src desktop/electron.vite.config.ts desktop/package.json desktop/package-lock.json desktop/scripts/replaceable-architecture-shells-e2e.cjs scripts/replaceable-architecture-author.mjs examples/plugins/research-workbench examples/plugins/research-evidence .github/workflows/workbench-acceptance.yml go.mod go.sum VERSION | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/source-sha256.txt"
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/build-sha256.txt"
+          sha256sum desktop/build/bin/wuu-core >> "$WUU_SHELL_EVIDENCE/build-sha256.txt"
+          npm ci --prefix packages/plugin-sdk --no-audit --no-fund
+          author_status=0
+          node scripts/replaceable-architecture-author.mjs || author_status=$?
+          for evidence_file in .tmp/replaceable-architecture/author/run-*/report.json .tmp/replaceable-architecture/author/run-*/verification.log; do
+            if [ -f "$evidence_file" ]; then cp "$evidence_file" "$WUU_SHELL_EVIDENCE/author/"; fi
+          done
+          if [ "$author_status" -ne 0 ]; then exit "$author_status"; fi
+          node - <<'NODE'
+          const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
+          const root = path.resolve('.tmp/replaceable-architecture/author');
+          const runs = fs.readdirSync(root).filter(name => name.startsWith('run-'));
+          assert.equal(runs.length, 1, 'Fresh checkout has exactly one independent author run');
+          const run = path.join(root, runs[0]), report = JSON.parse(fs.readFileSync(path.join(run, 'report.json')));
+          assert.equal(report.status, 'passed');
+          assert.equal(report.acceptanceCommit, process.env.GITHUB_SHA);
+          assert.deepEqual(report.packages.map(item => item.id).sort(), ['research-evidence', 'research-workbench']);
+          for (const item of report.packages) {
+            assert.equal(item.status, 'passed');
+            fs.copyFileSync(path.join(item.project, 'package-lock.json'), path.join(process.env.WUU_SHELL_EVIDENCE, 'author', `${item.id}-package-lock.json`));
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `packages=${path.join(run, 'packages')}\n`);
+          NODE
+      - name: Verify complete hot and cold public SDK shells
+        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.shell-author.outcome == 'success' }}
+        timeout-minutes: 7
+        env:
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+          WUU_REPLACEABLE_PACKAGES: ${{ steps.shell-author.outputs.packages }}
+          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
+        run: |
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' dbus-run-session -- bash <<'SHELLS' 2>&1 | tee "$WUU_SHELL_EVIDENCE/run.log"
+          set -uo pipefail
+          openbox --sm-disable > "$WUU_SHELL_EVIDENCE/window-manager.log" 2>&1 &
+          wm=$!
+          trap 'kill "$wm" 2>/dev/null || true' EXIT
+          timeout 5s bash -c 'until [[ "$(xprop -root _NET_SUPPORTING_WM_CHECK)" == *"window id # 0x"* ]]; do sleep 0.05; done' || exit 1
+          result=0
+          for scenario in hot-shell-replacement cold-research; do
+            if [ "$scenario" = hot-shell-replacement ]; then unset WUU_REPLACEABLE_SHELL_SCENARIO;
+            else export WUU_REPLACEABLE_SHELL_SCENARIO="$scenario"; fi
+            export WUU_REPLACEABLE_UI_OUTPUT="$WUU_SHELL_EVIDENCE/$scenario"
+            mkdir -p "$WUU_REPLACEABLE_UI_OUTPUT"
+            scenario_status=0
+            timeout --signal=TERM --kill-after=10s 180s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/replaceable-architecture-shells-e2e.cjs 2>&1 | tee "$WUU_REPLACEABLE_UI_OUTPUT/run.log" || scenario_status=$?
+            printf '%s\n' "$scenario_status" > "$WUU_REPLACEABLE_UI_OUTPUT/exit-code.txt"
+            if [ "$scenario_status" -ne 0 ]; then result=1; fi
+            node - <<'NODE' || result=1
+          const assert = require('node:assert/strict'), fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(`${process.env.WUU_REPLACEABLE_UI_OUTPUT}/report.json`));
+          assert.equal(report.status, 'passed');
+          assert.equal(report.source, process.env.WUU_E2E_SOURCE_COMMIT);
+          assert.equal(report.scenario, process.env.WUU_REPLACEABLE_SHELL_SCENARIO || 'hot-shell-replacement');
+          NODE
+          done
+          exit "$result"
+          SHELLS
+      - name: Upload independent shell evidence
+        if: ${{ always() && inputs.layout_matrix == 'full' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: replaceable-shells-${{ github.sha }}
+          path: ${{ runner.temp }}/wuu-replaceable-shells/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Diagnose sidebar divider motion interruption
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          WUU_E2E_INTERRUPT_RESIZE: 'true'
+          WUU_SIDEBAR_TOGGLE_OUTPUT: ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_SIDEBAR_TOGGLE_OUTPUT"
+          timeout --signal=TERM --kill-after=10s 90s xvfb-run --auto-servernum desktop/node_modules/.bin/electron desktop/scripts/main-sidebar-toggle-e2e.cjs 2>&1 | tee "$WUU_SIDEBAR_TOGGLE_OUTPUT/run.log"
+      - name: Verify real browser discard and activation lifecycle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_LIFECYCLE_OUTPUT: ${{ runner.temp }}/wuu-workbench-lifecycle
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_LIFECYCLE_OUTPUT"
+          git rev-parse HEAD > "$WUU_LIFECYCLE_OUTPUT/source-commit.txt"
+          cd desktop
+          timeout --signal=TERM --kill-after=10s 120s xvfb-run --auto-servernum node_modules/.bin/electron scripts/web-workspace-lifecycle-e2e.cjs 2>&1 | tee "$WUU_LIFECYCLE_OUTPUT/run.log"
+      - name: Upload browser lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-lifecycle-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wuu-workbench-lifecycle/report.json
+            ${{ runner.temp }}/wuu-workbench-lifecycle/failure.txt
+            ${{ runner.temp }}/wuu-workbench-lifecycle/lifecycle-trace.jsonl
+            ${{ runner.temp }}/wuu-workbench-lifecycle/timeout-state.json
+            ${{ runner.temp }}/wuu-workbench-lifecycle/run.log
+            ${{ runner.temp }}/wuu-workbench-lifecycle/source-commit.txt
+            ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption/*.json
+            ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption/run.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Record real-window acceptance
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        id: ui
+        timeout-minutes: 14
+        env:
+          WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
+          WUU_WORKBENCH_MATRIX: ${{ inputs.layout_matrix || 'smoke' }}
+        shell: bash
+        run: |
+          mkdir -p "$WUU_WORKBENCH_OUTPUT"
+          git rev-parse HEAD > "$WUU_WORKBENCH_OUTPUT/source-commit.txt"
+          git ls-files desktop/src desktop/electron.vite.config.ts desktop/scripts/workbench-acceptance-e2e.cjs desktop/scripts/web-workspace-acceptance.cjs desktop/scripts/browser-media-acceptance.cjs | sort | xargs sha256sum > "$WUU_WORKBENCH_OUTPUT/source-sha256.txt"
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > "$WUU_WORKBENCH_OUTPUT/build-sha256.txt"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'CAPTURE' 2>&1 | tee "$WUU_WORKBENCH_OUTPUT/run.log"
+          set -uo pipefail
+          openbox --sm-disable > "$WUU_WORKBENCH_OUTPUT/window-manager.log" 2>&1 &
+          wm=$!
+          ffmpeg -hide_banner -loglevel warning -f x11grab -draw_mouse 1 -framerate 20 -video_size 1600x1000 -i "$DISPLAY" -an -c:v libx264 -preset ultrafast -crf 22 -pix_fmt yuv420p -movflags +frag_keyframe+empty_moov+default_base_moof "$WUU_WORKBENCH_OUTPUT/workbench-clickthrough.mp4" > "$WUU_WORKBENCH_OUTPUT/ffmpeg.log" 2>&1 &
+          recorder=$!
+          cleanup() {
+            # TERM also works if launch failed before ffmpeg installed its
+            # interrupt handler; never let recorder cleanup hold the job open.
+            kill -TERM "$recorder" 2>/dev/null || true
+            for attempt in $(seq 1 50); do
+              kill -0 "$recorder" 2>/dev/null || break
+              sleep 0.1
+            done
+            kill -KILL "$recorder" 2>/dev/null || true
+            wait "$recorder" || true
+            kill "$wm" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          # A synchronous native modal can block the in-process JS watchdog.
+          # Allow the 12-minute suite budget plus shutdown and video finalization.
+          timeout --signal=TERM --kill-after=10s 750s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workbench-acceptance-e2e.cjs
+          result=$?
+          node -e 'const r=require(process.env.WUU_WORKBENCH_OUTPUT+"/report.json"); if(r.status!=="passed")process.exit(1)' || result=1
+          cleanup
+          trap - EXIT
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of json "$WUU_WORKBENCH_OUTPUT/workbench-clickthrough.mp4" > "$WUU_WORKBENCH_OUTPUT/video.json" || exit 1
+          exit "$result"
+          CAPTURE
+      - name: Upload immediate UI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-ui-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wuu-workbench-acceptance/report.json
+            ${{ runner.temp }}/wuu-workbench-acceptance/run.log
+            ${{ runner.temp }}/wuu-workbench-acceptance/source-commit.txt
+            ${{ runner.temp }}/wuu-workbench-acceptance/video.json
+            ${{ runner.temp }}/wuu-workbench-acceptance/*failure*.png
+            ${{ runner.temp }}/wuu-workbench-acceptance/native-dialog-*.png.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Verify browser ownership and adopted plugin views
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 7
+        env:
+          WUU_BROWSER_OWNERSHIP_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-ownership
+        run: |
+          mkdir -p "$WUU_BROWSER_OWNERSHIP_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 6m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' node desktop/scripts/browser-task-ownership-e2e.cjs 2>&1 | tee "$WUU_BROWSER_OWNERSHIP_OUTPUT/run.log"
+      - name: Verify synthetic browser extension lifecycle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_BROWSER_EXTENSION_E2E_ONLY: '1'
+          WUU_BROWSER_PIP_E2E_ARTIFACTS: ${{ runner.temp }}/wuu-workbench-acceptance/browser-extensions
+        working-directory: desktop
+        run: |
+          mkdir -p "$WUU_BROWSER_PIP_E2E_ARTIFACTS"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 2m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' node scripts/browser-pip-e2e.cjs 2>&1 | tee "$WUU_BROWSER_PIP_E2E_ARTIFACTS/run.log"
+      - name: Verify daily browser recovery, permissions and extension settings
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          WUU_BROWSER_SESSION_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-session-recovery
+          WUU_MEDIA_PERMISSIONS_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-media-permissions
+          WUU_DOWNLOAD_RECOVERY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-download-recovery
+          WUU_EXTENSION_OPTIONS_ARTIFACTS: ${{ runner.temp }}/wuu-workbench-acceptance/browser-extension-options
+          WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-display-capture
+          WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-library-edit
+          WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-ribbon
+          WUU_POPOVER_STABILITY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-popover-stability
+          WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
+        run: |
+          mkdir -p "$WUU_WORKBENCH_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 4m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS' 2>&1 | tee "$WUU_WORKBENCH_OUTPUT/browser-daily.log"
+          result=0
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
+            node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+          done
+          exit "$result"
+          JOURNEYS
+      - name: Repeat browser controls and switch between web, Chat and Settings
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 4
+        env:
+          WUU_BROWSER_STRESS: '1'
+          WUU_BROWSER_DAILY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-daily-use
+          WUU_BROWSER_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-workspace-switch
+        run: |
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS'
+          mkdir -p "$WUU_BROWSER_DAILY_OUTPUT"
+          openbox --sm-disable > "$WUU_BROWSER_DAILY_OUTPUT/window-manager.log" 2>&1 &
+          wm=$!
+          trap 'kill "$wm" 2>/dev/null || true' EXIT
+          timeout 5s bash -c 'until [[ "$(xprop -root _NET_SUPPORTING_WM_CHECK)" == *"window id # 0x"* ]]; do sleep 0.05; done' || exit 1
+          result=0
+          for journey in daily-use workspace-switch; do
+            desktop/node_modules/.bin/electron "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+          done
+          exit "$result"
+          JOURNEYS
+      - name: Verify context capsule with authored loopback provider
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_CAPSULE_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/context-capsule
+        run: |
+          mkdir -p "$WUU_CAPSULE_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 160s xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/context-chat-capsule-e2e.mjs 2>&1 | tee "$WUU_CAPSULE_OUTPUT/run.log"
+      - name: Verify synthetic credential host boundary
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
+          WUU_CREDENTIAL_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/plugin-credentials
+        run: |
+          mkdir -p "$WUU_WORKBENCH_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 2m go run ./scripts/plugin-credentials-e2e 2>&1 | tee "$WUU_WORKBENCH_OUTPUT/plugin-credentials.log"
+      - name: Verify Feishu synthetic API journeys
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          WUU_FEISHU_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/feishu
+        run: |
+          mkdir -p "$WUU_FEISHU_E2E_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 90s node plugins/feishu-workspace/scripts/api-acceptance.mjs 2>&1 | tee "$WUU_FEISHU_E2E_OUTPUT/run.log"
+      - name: Verify Notion synthetic API journeys
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          WUU_NOTION_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/notion
+        run: |
+          mkdir -p "$WUU_NOTION_E2E_OUTPUT"
+          set -o pipefail
+          result=0
+          timeout --signal=TERM --kill-after=10s 90s node plugins/notion-workspace/scripts/api-e2e.mjs 2>&1 | tee "$WUU_NOTION_E2E_OUTPUT/run.log" || result=$?
+          if [ -f .tmp/notion-workspace-e2e/report.json ]; then cp .tmp/notion-workspace-e2e/report.json "$WUU_NOTION_E2E_OUTPUT/report.json"; fi
+          exit "$result"
+      - name: Summarize checked journeys
+        if: always()
+        env:
+          WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = `${process.env.WUU_WORKBENCH_OUTPUT}/report.json`;
+          if (!fs.existsSync(path)) process.exit(0);
+          const r = JSON.parse(fs.readFileSync(path));
+          const rows = r.checks.map(c => `- ${c.status === 'passed' ? 'PASS' : 'FAIL'} ${c.name}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [`## Workbench: ${r.status}`, `Commit: ${r.commit}`, `Layout matrix: ${r.layoutMatrixScope || "full"}; all browser journeys run.`, `${r.screenshots.length} full-window PNGs plus real-time MP4 in the evidence artifact.`, ...rows, '', 'Not covered:', ...r.exclusions.map(s => `- ${s}`), ''].join('\n'));
+          NODE
+      - name: Upload full-window evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-acceptance-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/wuu-workbench-acceptance/
+          if-no-files-found: warn
+          retention-days: 14

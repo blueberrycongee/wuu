@@ -8,9 +8,6 @@
     "entry": "desktop.js"
   },
   "contributes": {
-    "surfaces": [
-      { "id": "frame-conversation.timeline", "target": "conversation.timeline", "mode": "wrap" }
-    ],
     "themes": [
       {
         "id": "violet-night",

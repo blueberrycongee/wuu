@@ -2,12 +2,12 @@ package runtime
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"path/filepath"
+	"errors"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -17,17 +17,19 @@ import (
 func TestHistoryServiceReadsVisibleSessionWithoutNotePlugin(t *testing.T) {
 	home := t.TempDir()
 	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "source", t.TempDir()); err != nil {
+	sessions := testSessionStore(t, sessDir)
+	if _, err := sessions.CreateWithMetadata("source", t.TempDir()); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, "source", session.HistoryRecord{Role: "user", Content: "keep this fact"}); err != nil {
+	if err := sessions.AppendHistoryRecord("source", session.HistoryRecord{Role: "user", Content: "keep this fact"}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, "source", session.HistoryRecord{Role: "user", Content: "durable plugin context", Hidden: true, ReadOnly: true, Origin: "plugin"}); err != nil {
+	if err := sessions.AppendHistoryRecord("source", session.HistoryRecord{Role: "user", Content: "durable plugin context", Hidden: true, ReadOnly: true, Origin: "plugin"}); err != nil {
 		t.Fatalf("append plugin context: %v", err)
 	}
 	item := serviceTestPlugin("demo", "plugin:user:demo", "generation")
 	handler := newPluginHostServices(item, t.TempDir(), home, nil)
+	handler.sessions = sessions
 	raw, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"source","start_seq":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -58,13 +60,15 @@ func TestHistoryServiceReadsVisibleSessionWithoutNotePlugin(t *testing.T) {
 func TestHistoryServiceHidesForeignPluginSessions(t *testing.T) {
 	home := t.TempDir()
 	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateManagedWithMetadata(sessDir, "hidden", t.TempDir(), session.ManagedMetadata{
+	sessions := testSessionStore(t, sessDir)
+	if _, err := sessions.CreateManagedWithMetadata("hidden", t.TempDir(), session.ManagedMetadata{
 		Owner: "plugin:other", Visibility: pluginhost.SessionVisibilityPlugin,
 	}); err != nil {
 		t.Fatalf("create hidden: %v", err)
 	}
 	item := serviceTestPlugin("demo", "plugin:user:demo", "generation")
 	handler := newPluginHostServices(item, t.TempDir(), home, nil)
+	handler.sessions = sessions
 	_, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"hidden","start_seq":1}`))
 	if err == nil {
 		t.Fatal("expected hidden session to be unavailable")
@@ -76,15 +80,16 @@ func TestHistoryServiceHidesForeignPluginSessions(t *testing.T) {
 func TestHistoryServicePreservesProviderAndEngineIdentities(t *testing.T) {
 	home := t.TempDir()
 	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "source", t.TempDir()); err != nil {
+	sessions := testSessionStore(t, sessDir)
+	if _, err := sessions.CreateWithMetadata("source", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	for _, record := range []session.HistoryRecord{{Role: "user", Content: "question"}, {Role: "assistant", Content: "answer", ProviderItemID: "provider-output", EngineTurnID: "native-turn"}} {
-		if err := session.AppendHistoryRecord(sessDir, "source", record); err != nil {
+		if err := sessions.AppendHistoryRecord("source", record); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err := readPluginSessionHistory(context.Background(), home, "demo", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "source", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "demo", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "source", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,24 +115,25 @@ func TestHistoryServicePreservesProviderAndEngineIdentities(t *testing.T) {
 func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 	home := t.TempDir()
 	dir := statepath.SessionsDir(home)
-	_, err := session.CreateInitialized(dir, session.Session{ID: "main", CWD: t.TempDir(), Owner: "plugin:personal", Visibility: "plugin", UserSpaceID: "alice", ProductDomain: "personal"}, nil)
+	sessions := testSessionStore(t, dir)
+	_, err := sessions.CreateInitialized(session.Session{ID: "main", CWD: t.TempDir(), Owner: "plugin:personal", Visibility: "plugin", UserSpaceID: "alice", ProductDomain: "personal"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"one", "two"} {
-		row, _, err := session.AcceptClientInput(dir, session.AcceptedClientInput{Receipt: providers.ClientInputReceipt{RequestID: id, HostRequestID: "host-" + id, ReceiptID: "receipt-" + id, ClientID: "client-" + id, QueueID: "queue-" + id, SessionID: "main", Owner: "plugin:personal", PluginID: "personal", UserSpaceID: "alice", ProductDomain: "personal"}, Fingerprint: "same-payload", MessageJSON: []byte(`{}`), RuntimeJSON: []byte(`{"ExecutionControlBaseline":{"session_id":"main"}}`), LiveOwner: "owner"}, nil, nil)
+		row, _, err := sessions.AcceptClientInput(session.AcceptedClientInput{Receipt: providers.ClientInputReceipt{RequestID: id, HostRequestID: "host-" + id, ReceiptID: "receipt-" + id, ClientID: "client-" + id, QueueID: "queue-" + id, SessionID: "main", Owner: "plugin:personal", PluginID: "personal", UserSpaceID: "alice", ProductDomain: "personal"}, Fingerprint: "same-payload", MessageJSON: []byte(`{}`), RuntimeJSON: []byte(`{"ExecutionControlBaseline":{"session_id":"main"}}`), LiveOwner: "owner"}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = session.AppendAcceptedClientHistoryRecord(dir, "main", session.HistoryRecord{Role: "user", Origin: "user", ClientID: row.Receipt.ClientID, Content: "identical text"}, row, "turn-"+id, nil, nil)
+		_, err = sessions.AppendAcceptedClientHistoryRecord("main", session.HistoryRecord{Role: "user", Origin: "user", ClientID: row.Receipt.ClientID, Content: "identical text"}, row, "turn-"+id, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := session.SettleClientInputExecution(dir, session.ClientInputScope{Binding: userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, SessionID: "main", PluginID: "personal"}, "host-"+id, "turn-"+id, "completed", ""); err != nil {
+		if err := sessions.SettleClientInputExecution(session.ClientInputScope{Binding: userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, SessionID: "main", PluginID: "personal"}, "host-"+id, "turn-"+id, "completed", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err := readPluginSessionHistory(context.Background(), home, "personal", userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, pluginhost.SessionHistoryReadParams{SessionID: "main", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, pluginhost.SessionHistoryReadParams{SessionID: "main", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +150,22 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 	// Exercise the host-service boundary: binding comes from the host generation.
 	handler := newPluginHostServices(serviceTestPlugin("personal", "plugin:user:personal", "generation"), t.TempDir(), home, nil)
 	defer handler.close()
+	handler.sessions = sessions
 	handler.binding = userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}
-	raw, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`))
+	handler.turnRouter = NewPluginSessionRouter()
+	unbind := handler.turnRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, id string, ref *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
+		caller, ok := principal.FromContext(ctx)
+		if !ok || !caller.IsOwner() || pluginID != "personal" || id != "main" || ref != nil || operation != "history.read" {
+			return ctx, errors.New("synthetic history policy denied")
+		}
+		return ctx, caller.Check(ctx)
+	})
+	defer unbind()
+	if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`)); err == nil {
+		t.Fatal("unverified receipt history read passed resource policy")
+	}
+	owner := principal.WithContext(context.Background(), principal.LocalOwner())
+	raw, err := handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +174,7 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 		t.Fatalf("host binding lost receipts: %s %v", raw, err)
 	}
 	handler.binding = userspace.Binding{UserSpaceID: "bob", ProductDomain: "personal"}
-	if _, err = handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`)); err == nil {
+	if _, err = handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`)); err == nil {
 		t.Fatal("foreign host read Personal receipt history")
 	}
 }
@@ -162,24 +182,25 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 func TestCodingHistoryDoesNotReadClientReceipts(t *testing.T) {
 	home := t.TempDir()
 	dir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(dir, "coding", t.TempDir()); err != nil {
+	sessions := testSessionStore(t, dir)
+	if _, err := sessions.CreateWithMetadata("coding", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(dir, "coding", session.HistoryRecord{Role: "user", Origin: "user", ClientID: "legacy", Content: "coding"}); err != nil {
+	if err := sessions.AppendHistoryRecord("coding", session.HistoryRecord{Role: "user", Origin: "user", ClientID: "legacy", Content: "coding"}); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "sessions.sqlite3"))
-	if err != nil {
+	provider := session.NewService("test.sessions", testSessionDocuments(t, dir))
+	if err := provider.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err = db.Exec(`ALTER TABLE client_input_receipts RENAME TO scope_receipts`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(`CREATE VIEW client_input_receipts AS SELECT 'coding' AS session_id,'fixture' AS plugin_id,json_extract('receipt-read','$') AS summary_json`); err != nil {
-		t.Fatal(err)
-	}
-	page, err := readPluginSessionHistory(context.Background(), home, "fixture", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "coding", StartSeq: 1})
+	defer provider.Close(context.Background())
+	sessions = session.NewClient(context.Background(), func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		if method == "ClientInputHistoryReceipts" {
+			return nil, errors.New("ordinary history must not request Personal receipts")
+		}
+		return provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "test", Method: method, Params: raw})
+	})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "fixture", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "coding", StartSeq: 1})
 	if err != nil || len(page.Records) != 1 || page.Records[0].Receipt != nil {
 		t.Fatalf("ordinary history changed: %+v %v", page, err)
 	}

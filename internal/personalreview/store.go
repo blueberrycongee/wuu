@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,7 +16,13 @@ import (
 
 // Store is an isolated host-owned ledger. Never put it in plugin/model-writable
 // storage. Each state transition and its audit event commit in one transaction.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db               *sql.DB
+	documents        persistence.Documents
+	closed           atomic.Bool
+	ownershipMu      sync.Mutex
+	ownershipClaimed bool
+}
 
 func Open(path string) (*Store, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
@@ -39,8 +48,17 @@ CREATE TABLE IF NOT EXISTS personal_review_settings_events (space TEXT NOT NULL,
 	}
 	return &Store{db: db}, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.documents != nil {
+		s.closed.Store(true)
+		return nil
+	}
+	return s.db.Close()
+}
 func (s *Store) get(ctx context.Context, key Key) (Record, error) {
+	if s.documents != nil {
+		return s.documentGet(ctx, key)
+	}
 	var raw []byte
 	err := s.db.QueryRowContext(ctx, `SELECT body FROM personal_review_actions WHERE space=? AND id=?`, key.SpaceID, key.ID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -59,6 +77,9 @@ func (s *Store) get(ctx context.Context, key Key) (Record, error) {
 	return r, nil
 }
 func (s *Store) save(ctx context.Context, r Record, expected int64, actor string, at time.Time) (Record, error) {
+	if s.documents != nil {
+		return s.documentSave(ctx, r, expected, actor, at)
+	}
 	r.Revision = expected + 1
 	raw, err := json.Marshal(r)
 	if err != nil {
@@ -99,6 +120,9 @@ func (s *Store) save(ctx context.Context, r Record, expected int64, actor string
 	return r, nil
 }
 func (s *Store) Events(ctx context.Context, key Key) ([]Event, error) {
+	if s.documents != nil {
+		return documentRows[Event](ctx, s, reviewEvents, reviewKey(key)+"/")
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT body FROM personal_review_events WHERE space=? AND id=? ORDER BY revision`, key.SpaceID, key.ID)
 	if err != nil {
 		return nil, err
@@ -119,6 +143,14 @@ func (s *Store) Events(ctx context.Context, key Key) ([]Event, error) {
 	return result, rows.Err()
 }
 func (s *Store) keys(ctx context.Context) ([]Key, error) {
+	if s.documents != nil {
+		records, err := documentRows[Record](ctx, s, reviewActions, "")
+		keys := make([]Key, 0, len(records))
+		for _, r := range records {
+			keys = append(keys, r.Action.Key())
+		}
+		return keys, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT space,id FROM personal_review_actions`)
 	if err != nil {
 		return nil, err

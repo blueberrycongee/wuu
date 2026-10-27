@@ -169,7 +169,7 @@ func TestLoadManifestNormalizesDesktopThemeAndSettingsContributions(t *testing.T
       "enabled": {"type":"boolean","title":"Enabled","default":true,"scope":"user","apply":"live"},
       "mode": {"type":"enum","title":"Mode","default":"quiet","enum":["quiet","active"],"scope":"workspace","apply":"restart"},
       "label": {"type":"string","title":"Label","default":"work","scope":"user","apply":"live"},
-      "limit": {"type":"number","title":"Limit","default":3,"scope":"workspace","apply":"live"}
+      "limit": {"type":"number","title":"Limit","default":3,"scope":"workspace","apply":"next-operation"}
     }
   }
 }`)
@@ -187,7 +187,7 @@ func TestLoadManifestNormalizesDesktopThemeAndSettingsContributions(t *testing.T
 	if got.Themes[0].Tokens["--wuu-font-family-ui"] != "system-ui" || got.Themes[0].Syntax["--wuu-syntax-string"] != "#86efac" {
 		t.Fatalf("modern theme contract = %+v", got.Themes[0])
 	}
-	if len(got.Settings) != 4 || got.Settings["productivity.mode"].Scope != SettingScopeWorkspace {
+	if len(got.Settings) != 4 || got.Settings["productivity.mode"].Scope != SettingScopeWorkspace || got.Settings["productivity.limit"].Apply != SettingApplyNextOperation {
 		t.Fatalf("settings = %+v", got.Settings)
 	}
 }
@@ -220,8 +220,6 @@ func TestLoadManifestNormalizesDeclarativeUIContributions(t *testing.T) {
 	writeFile(t, path, `{
   "id":"ui-demo",
   "contributes":{
-    "slots":[{"id":"toolbar","target":"composer.toolbar","order":4,"title":"Toolbar"}],
-    "surfaces":[{"id":"timeline-frame","target":"conversation.timeline","mode":"wrap","order":2}],
     "presenters":[{"id":"message","target":"conversation.item","mode":"replace","priority":8}],
     "navigation":[{"id":"dashboard-nav","view":"dashboard","title":"Dashboard","order":3}],
     "workspaceTools":[{"id":"inspector-tool","view":"inspector","title":"Inspector","description":"Workspace inspector"}],
@@ -231,12 +229,6 @@ func TestLoadManifestNormalizesDeclarativeUIContributions(t *testing.T) {
 	manifest, err := LoadManifest(path, "user")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(manifest.Slots) != 1 || manifest.Slots[0].Target != "composer.toolbar" || manifest.Slots[0].Order != 4 {
-		t.Fatalf("slots = %+v", manifest.Slots)
-	}
-	if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Mode != ContributionModeWrap {
-		t.Fatalf("surfaces = %+v", manifest.Surfaces)
 	}
 	if len(manifest.Presenters) != 1 || manifest.Presenters[0].Priority != 8 {
 		t.Fatalf("presenters = %+v", manifest.Presenters)
@@ -258,11 +250,11 @@ func TestLoadManifestRejectsInvalidDeclarativeUIContributions(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "unknown slot target", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"unknown"}]}}`, want: "unknown target"},
-		{name: "invalid surface mode", body: `{"id":"demo","contributes":{"surfaces":[{"id":"one","target":"conversation.timeline","mode":"append"}]}}`, want: "replace or wrap"},
+		{name: "removed slot declarations", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"composer.above"}]}}`, want: "unknown field"},
+		{name: "invalid presenter mode", body: `{"id":"demo","contributes":{"presenters":[{"id":"one","target":"conversation.item","mode":"append"}]}}`, want: "replace or wrap"},
 		{name: "unknown presenter target", body: `{"id":"demo","contributes":{"presenters":[{"id":"one","target":"custom","mode":"wrap"}]}}`, want: "unknown target"},
-		{name: "duplicate id across kinds", body: `{"id":"demo","contributes":{"slots":[{"id":"same","target":"composer.above"}],"surfaces":[{"id":"same","target":"conversation.timeline","mode":"wrap"}]}}`, want: "duplicate plugin-local id"},
-		{name: "unknown item field", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"composer.above","priority":1}]}}`, want: "unknown field"},
+		{name: "duplicate id across kinds", body: `{"id":"demo","contributes":{"navigation":[{"id":"same","view":"view","title":"View"}],"presenters":[{"id":"same","target":"conversation.item","mode":"wrap"}]}}`, want: "duplicate plugin-local id"},
+		{name: "unknown item field", body: `{"id":"demo","contributes":{"navigation":[{"id":"one","view":"view","title":"View","priority":1}]}}`, want: "unknown field"},
 		{name: "missing View entry title", body: `{"id":"demo","contributes":{"navigation":[{"id":"one","view":"dashboard"}]}}`, want: "requires title"},
 		{name: "duplicate entry id across locations", body: `{"id":"demo","contributes":{"navigation":[{"id":"same","view":"one","title":"One"}],"workspaceTools":[{"id":"same","view":"two","title":"Two"}]}}`, want: "duplicate plugin-local id"},
 	}
@@ -311,5 +303,23 @@ func TestDeepUIExampleManifestLoads(t *testing.T) {
 func TestMangaStudioExampleManifestLoads(t *testing.T) {
 	if _, err := LoadManifest(filepath.Join("..", "..", "examples", "plugins", "manga-studio", ManifestFilename), "user"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDesktopServicesAdmitPublicApplicationAndSurfaceProviders(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "desktop.js"), "export function activate() {}")
+	for _, name := range []string{"ui.application", "ui.shell", "ui.navigation", "ui.conversation", "ui.composer", "ui.settings", "ui.preview", "ui.custom-surface"} {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"entry":"desktop.js","services":[{"name":"` + name + `","version":"1.0.0","methods":[{"name":"describe","input_schema":"` + name + `.describe.input.v1","output_schema":"` + name + `.describe.output.v1"}]}]}`
+			if _, err := normalizeDesktop(root, []byte(raw)); err != nil {
+				t.Fatalf("public renderer descriptor rejected: %v", err)
+			}
+			for _, invalid := range []string{strings.Replace(raw, name, "agent.policy", 1), strings.Replace(raw, `"version":"1.0.0"`, `"version":"2.0.0"`, 1), strings.Replace(raw, `"name":"describe"`, `"name":"invoke"`, 1)} {
+				if _, err := normalizeDesktop(root, []byte(invalid)); err == nil {
+					t.Fatal("non-renderer contract accepted")
+				}
+			}
+		})
 	}
 }

@@ -7,7 +7,7 @@ import org.junit.Test
 import java.nio.file.Files
 
 class PersonalDraftTest {
-    private fun initialized() = json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "one", "runtime_state" to "active")))
+    private fun initialized() = json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "one", "graph_generation" to "graph-one", "runtime_state" to "active")))
     @Test fun coldRecoveryKeepsExactIdentityAndBytesAndCannotCrossScope() = runTest {
         val directory = Files.createTempDirectory("personal-draft").toFile()
         try {

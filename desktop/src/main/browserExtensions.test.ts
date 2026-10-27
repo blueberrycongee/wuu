@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -12,9 +13,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BrowserExtensionManager } from "./browserExtensions";
 
 const roots: string[] = [];
+const approve = async () => true;
 
 function tempRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "wuu-browser-extension-test-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "wuu-browser-extension-test-")));
   roots.push(root);
   return root;
 }
@@ -85,22 +87,22 @@ describe("browser extension manager", () => {
     const storePath = join(root, "browser-extensions.json");
     const first = new BrowserExtensionManager(new FakeSession(), storePath);
 
-    const added = await first.addFromDirectory(extensionPath);
+    const added = await first.addFromDirectory(extensionPath, approve);
     expect(added).toEqual([
-      {
-        id: "id-reader",
+      expect.objectContaining({
+        id: "id-active",
         name: "reader",
         version: "1.2.3",
         path: extensionPath,
         enabled: true,
         loaded: true,
-      },
+      }),
     ]);
 
     const secondSession = new FakeSession();
     const second = new BrowserExtensionManager(secondSession, storePath);
     await second.initialize();
-    expect(secondSession.loaded.has("id-reader")).toBe(true);
+    expect(secondSession.loaded.has("id-active")).toBe(true);
     expect(await second.list()).toEqual(added);
   });
 
@@ -110,16 +112,16 @@ describe("browser extension manager", () => {
     const storePath = join(root, "browser-extensions.json");
     const session = new FakeSession();
     const manager = new BrowserExtensionManager(session, storePath);
-    await manager.addFromDirectory(extensionPath);
+    await manager.addFromDirectory(extensionPath, approve);
 
-    const disabled = await manager.setEnabled("id-reader", false);
+    const disabled = await manager.setEnabled("id-active", false);
     expect(disabled[0]).toMatchObject({ enabled: false, loaded: false });
     expect(session.loaded.size).toBe(0);
 
-    const enabled = await manager.setEnabled("id-reader", true);
+    const enabled = await manager.setEnabled("id-active", true);
     expect(enabled[0]).toMatchObject({ enabled: true, loaded: true });
 
-    const removed = await manager.remove("id-reader");
+    const removed = await manager.remove("id-active");
     expect(removed).toEqual([]);
     expect(session.loaded.size).toBe(0);
     expect(existsSync(extensionPath)).toBe(true);
@@ -136,7 +138,7 @@ describe("browser extension manager", () => {
       join(root, "browser-extensions.json"),
     );
 
-    await expect(manager.addFromDirectory(extensionPath)).rejects.toThrow(
+    await expect(manager.addFromDirectory(extensionPath, approve)).rejects.toThrow(
       /no name/,
     );
   });
@@ -160,7 +162,7 @@ describe("browser extension manager", () => {
         path: missingPath,
         enabled: true,
         loaded: false,
-        error: expect.stringContaining("manifest.json"),
+        error: expect.stringContaining("Review"),
       }),
     ]);
   });

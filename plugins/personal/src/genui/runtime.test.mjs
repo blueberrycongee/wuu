@@ -55,20 +55,26 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   };
   async function start(domain = "personal") {
     const child = spawn(process.execPath, [join(root, "internal/plugin/bundled/personal/runtime.mjs")], { stdio: ["pipe", "pipe", "pipe"] }); processes.push(child);
-    let seq = 0, stderr = ""; const pending = new Map(); child.stderr.on("data", b => { stderr += b; });
+    let seq = 0, stderr = ""; const pending = new Map(), background = []; child.stderr.on("data", b => { stderr += b; });
     const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };
     createInterface({ input: child.stdout }).on("line", line => {
       const frame = JSON.parse(line); frames.push({ direction: "plugin", frame });
-      if (frame.method) void host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture", message: error.message } }));
+      if (frame.method && frame.params?.service === "host.background") {
+        assert.equal(frame.params.method, "start");
+        const execution_id = `background-${seq}`, params = frame.params.params;
+        send({ id: frame.id, result: { job_id: execution_id, execution_id } });
+        const done = call("service.invoke", { service: params.service, method: params.method, params: params.params ?? {}, caller: "personal", execution_id }, 0);
+        background.push({ execution_id, done }); void done.catch(() => {});
+      } else if (frame.method) void host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture", message: error.message } }));
       else { const p = pending.get(frame.id); if (p) { pending.delete(frame.id); frame.error ? p.reject(new Error(frame.error.message)) : p.resolve(frame.result); } }
     });
-    const call = (method, params) => new Promise((resolve, reject) => {
-      const id = `client-${++seq}`, timer = setTimeout(() => reject(new Error(`timeout ${method} ${stderr}`)), 5000);
+    const call = (method, params, timeout = 5000) => new Promise((resolve, reject) => {
+      const id = `client-${++seq}`, timer = timeout ? setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method} ${stderr}`)); }, timeout) : undefined;
       pending.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } }); send({ id, method, params });
     });
-    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: "personal", plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: scratch, user_state_dir: scratch, user_space_id: "fixture-space", product_domain: domain, supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
-    await call("activate");
-    return { call, definition, client: (method, input = {}) => call("capability.invoke", { capability: "plugin.client.request", input: { method, input: { agent_id: mainAgent, ...input } }, execution_id: `owner-${seq}` }).then(r => r.output.result), close: async () => { await call("shutdown"); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); } };
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: "personal", plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: scratch, user_state_dir: scratch, user_space_id: "fixture-space", product_domain: domain, supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    await call("prepare"); await call("activate");
+    return { call, definition, client: (method, input = {}) => call("capability.invoke", { capability: "plugin.client.request", input: { method, input: { agent_id: mainAgent, ...input } }, execution_id: `owner-${seq}` }).then(r => r.output.result), close: async () => { for (const job of background) send({ id: `cancel-${job.execution_id}`, method: "execution.cancel", params: { execution_id: job.execution_id } }); await Promise.all(background.map(job => job.done)); await call("shutdown"); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); } };
   }
   t.after(async () => {
     for (const child of processes) if (child.exitCode === null) child.kill();

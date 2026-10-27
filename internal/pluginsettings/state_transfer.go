@@ -1,6 +1,7 @@
 package pluginsettings
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,6 +43,10 @@ const (
 )
 
 func moveStatePrefix(wuuHome, workspaceRoot string, transfer StateTransfer, checkpoint func(stateTransferStage) error) error {
+	return moveStatePrefixContext(context.Background(), wuuHome, workspaceRoot, transfer, checkpoint)
+}
+
+func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, transfer StateTransfer, checkpoint func(stateTransferStage) error) error {
 	if err := validateStateTransfer(transfer); err != nil {
 		return err
 	}
@@ -57,11 +62,18 @@ func moveStatePrefix(wuuHome, workspaceRoot string, transfer StateTransfer, chec
 		return errors.New("plugin storage transfer subjects resolve to the same document")
 	}
 	// Ordinary writes use this same store-directory lock, including CAS.
-	lock, err := storelock.Acquire(storeDir)
+	lock, err := storelock.AcquireContext(ctx, storeDir)
 	if err != nil {
 		return fmt.Errorf("lock plugin storage transfer: %w", err)
 	}
 	defer lock.Release() //nolint:errcheck -- the commit result is authoritative
+	if err := checkStateInspection(storeDir, transfer.SourceSubjectID, transfer.TargetSubjectID); err != nil {
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	source, err := readStateRecord(sourcePath, transfer.SourceSubjectID)
 	if err != nil {

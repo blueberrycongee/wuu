@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -13,6 +14,7 @@ import (
 // extension surfaces. Revocation filters availability without rewriting the
 // immutable generation snapshots retained by running conversations.
 type ExtensionSnapshot struct {
+	GenerationID      string
 	Plugins           []pluginpkg.Plugin
 	ActivePlugins     []pluginpkg.Plugin
 	Skills            []skills.Skill
@@ -26,6 +28,24 @@ func (s *Session) ExtensionSnapshot() ExtensionSnapshot {
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
+	return s.extensionSnapshotLocked()
+}
+
+// RetainExtensionSnapshot keeps lazy package reads alive until release. Taking
+// the snapshot and its ownership reference is atomic with generation publication.
+func (s *Session) RetainExtensionSnapshot() (ExtensionSnapshot, func()) {
+	if s == nil {
+		return ExtensionSnapshot{}, func() {}
+	}
+	s.pluginGenerationMu.Lock()
+	generation := s.pluginGeneration
+	generation.retain()
+	snapshot := s.extensionSnapshotLocked()
+	s.pluginGenerationMu.Unlock()
+	return snapshot, sync.OnceFunc(func() { s.releasePluginGeneration(generation) })
+}
+
+func (s *Session) extensionSnapshotLocked() ExtensionSnapshot {
 	snapshot := ExtensionSnapshot{
 		Plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
 		ExtensionSettings: s.ExtensionSettings,
@@ -33,6 +53,7 @@ func (s *Session) ExtensionSnapshot() ExtensionSnapshot {
 	}
 	generation := s.pluginGeneration
 	if generation != nil {
+		snapshot.GenerationID = generation.id
 		generation.revokedMu.Lock()
 		defer generation.revokedMu.Unlock()
 	}

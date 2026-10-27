@@ -10,6 +10,151 @@ Release builds hide the phone access page until mobile release acceptance is com
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 
+## Select the desktop session connection
+
+The ordinary desktop session pool reads the optional `WUU_DESKTOP_SESSION_ROUTES`
+path. Without it, existing local stdio execution remains the default. A configured
+remote or disabled route never falls back to a local process, including when the
+configuration is invalid, a credential is missing, or the remote host is offline.
+
+```json
+{
+  "version": 1,
+  "default": { "kind": "local" },
+  "contexts": {
+    "/Users/example/remote-project-view": {
+      "kind": "remote",
+      "execution_host": "<paired host public key>",
+      "storage_host": "<storage host identifier>",
+      "display_host": "<this desktop identifier>",
+      "workdir": "/srv/project",
+      "connector": { "kind": "keychain", "service": "wuu.remote.my-host" }
+    }
+  }
+}
+```
+
+Start the desktop with `WUU_DESKTOP_SESSION_ROUTES=/absolute/routes.json` in its
+launch environment. Context keys identify existing local display workspaces.
+Use separate display workspaces for simultaneous hosts, even when their remote
+paths or session IDs match. The remote `workdir` is passed to the app-server
+without resolving it against the desktop filesystem. A top-level `cwd` parameter
+that equals the display workspace is mapped to that remote workdir.
+`storage_host` and `display_host` describe placement; they do not move data or
+establish authority. The selected host and its storage provider remain authoritative.
+This selects session RPC, not a replacement for every local file, terminal, or
+computer-control feature. The receiving host must expose the selected desktop UI
+providers (for example `composition: {version: 3, profile: "desktop"}`); a headless
+composition does not acquire a local GUI provider fallback.
+
+The pool populates `Thread.session_locator` on list/start/resume results and thread
+notifications, and `ServerEvent.session_locator` on routed events. Both use
+`SessionLocatorV1` (`version`, `execution_host`, `session_id?`, `storage_host?`,
+`display_host?`). Callers pass the thread locator as `RuntimeContext.session_locator`
+when binding attachment streams. A mismatched host, storage host or session ID is
+rejected before dispatch; locator metadata is not an authorization credential.
+
+The macOS connector reads an **existing** generic-password Keychain item by service.
+Its value is the paired RemoteClient credentials JSON (`v`, `device_seed`,
+`host_pub`, `relay_url`). Provision it through a trusted pairing/credential manager;
+do not put that JSON or a device seed in the route file. The connector verifies
+that `execution_host` equals the credential's pinned `host_pub` and reuses the
+existing encrypted RemoteClient transport. A relay URL is not authorization.
+Full-control user pairing must not be supplied to an agent that only has restricted
+`session/federation` delegation. Resource authorization and delegation limits belong
+to the receiving authenticated gateway, independently of desktop route selection.
+
+A trusted connector can instead use
+`"connector": { "kind": "module", "path": "/absolute/connector.mjs" }`.
+That file runs as trusted main-process code and exports
+`connectDesktopSession({ version: 1, route, hooks })`, returning a connection or a
+promise. It must authenticate the selected execution host and apply the intended
+user or delegated authority. Installing a connector is not a sandbox boundary.
+Import `ConnectDesktopSessionV1` and `DesktopSessionConnectionV1` from
+`@wuu/plugin-sdk`; the built-in RemoteClient adapter uses that same structural
+contract. The SDK also exports `DesktopSessionConnectionHooksV1`,
+`DesktopSessionRPCV1`, `DesktopSessionRouteConfigV1`, and
+`DesktopSessionContextV1` (the desktop context plus an optional public
+`SessionLocatorV1`). No private client, protocol, or desktop imports or copied
+interface definitions are needed. `isDesktopSessionConnectionV1` is only a shallow
+loading check, not authentication or a conformance check. This is the full
+app-server connection boundary, not the narrower `session.transport` federation
+dispatch service.
+
+- Connection: `start(): void`, `stop(): Promise<void>`,
+  `waitAttached(timeoutMs?): Promise<void>`, `rpc(): DesktopSessionRPCV1 | null`.
+- RPC: `call(method, params?, timeoutMs?, workdir?, onResult?): Promise<unknown>`
+  and `isClosed(): boolean`. Call `onResult` synchronously before delivering later
+  notifications and resolving the promise; a callback error rejects the call.
+  Explicit server refusals use `DesktopSessionResponseErrorV1`, carrying
+  `kind: "app-server-response"` and a string `message`; other post-admission
+  failures have an uncertain outcome.
+- Hooks: `onNotification(method, params, workdir?)`,
+  `onServerRequest({id, method, params?})` returning `{result? , error?}`,
+  `onAttach({session, resumed})`, `onDetach()`, and `onState({running})`.
+  State entries may carry `thread_id` and `workdir`.
+
+For a small local augmentation, wrap your existing trusted connector rather than
+replacing the entire GUI or provider stack. For example, this module adds a local
+running-count diagnostic and otherwise preserves the original hooks and connection:
+
+```ts
+import type { ConnectDesktopSessionV1 } from "@wuu/plugin-sdk";
+import { connectDesktopSession as connectBase } from "./existing-connector.js";
+
+export const connectDesktopSession: ConnectDesktopSessionV1 = options =>
+  connectBase({
+    ...options,
+    hooks: {
+      ...options.hooks,
+      onState(state) {
+        console.debug("Running remote sessions:", state.running.length);
+        options.hooks.onState(state);
+      },
+    },
+  });
+```
+
+`existing-connector.js` is your connector, not a private Wuu adapter. Point the
+existing module route at this wrapper. Local augmentation is optional; complete
+[provider replacement](../customize/replaceable-providers.md) remains a separate
+composition choice. The wrapper must preserve authentication, authority and
+lifecycle behavior; it does not create a new service or change data ownership.
+
+A connector returns an unstarted connection; the desktop calls `start`. Start and
+stop are idempotent. Honor the supplied attachment and RPC timeouts (currently
+10 seconds and 30 seconds); a timeout does not cancel remote work.
+A resumed attach retains the same RPC object and pending requests. A fresh attach
+replaces and closes that object, rejecting pending calls. `stop` only detaches the
+GUI; it must never send app-server `shutdown` or terminate remote tasks. The desktop
+blocks direct remote shutdown and automatically rejects remote browser, native
+computer control, and unknown reverse methods. Approval and user-input reverse
+requests reach the existing GUI response route; unsupported presentation requests
+remain explicit rejections.
+
+Run `node --test packages/plugin-sdk/test/desktop-session-package.test.mjs` from
+a checkout to compile a synthetic independent adapter against the packed public
+SDK, without private repository imports. This checks the author boundary, not a
+real network deployment or the trustworthiness of a connector.
+
+Configuration is reread when routing a request or event. Old responses and events
+cannot populate a newly selected route. Already sent calls are not replayed: a
+resumed connection can complete them, while a fresh connection, route change, or
+response timeout reports an unknown outcome. Inspect the session before retrying.
+`bindSessionRequest(context, sessionID)` captures the actual session owner's
+`bindRequest()` for attachment streams and related operations; it cannot silently
+migrate to another host or connection generation. Changes become active on the
+next routed operation; reinitialize the GUI after changing its selected host.
+
+For isolated Mac acceptance, build the core and desktop, bundle
+`desktop/scripts/fixtures/remoteSessionPeer.ts` with esbuild (Node/ESM) to
+`desktop/out/e2e/remote-session/connector.mjs`, then launch
+`desktop/scripts/remote-session-e2e.mjs` with Electron. It uses disposable profiles,
+synthetic identities, real sealed-channel crypto, the real Go app-server and a
+local synthetic model. Reports and screenshots live in
+`desktop/out/e2e/remote-session/`; it does not verify an Internet relay deployment,
+Keychain provisioning, or agent delegation authorization.
+
 ## Connect an SSH workspace
 
 The experimental headless host runs Wuu, its installed agent engines, files, Git,

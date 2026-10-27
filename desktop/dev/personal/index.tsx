@@ -4,8 +4,18 @@ import { createRoot } from "react-dom/client";
 import type { ClientInputReceipt, MessageRelation } from "../../../packages/plugin-sdk/src/index";
 import type { PluginHostOptions } from "../../src/renderer/plugins/PluginHost";
 import { PluginConversationMessage, PluginConversationView } from "../../src/renderer/plugins/PluginConversation";
-import { App } from "../../src/renderer/App";
-import { desktopPluginHost as host, desktopWorkbenchController as controller } from "../../src/renderer/plugins/DesktopPluginRuntime";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationWorkbenchV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { PluginConversationScope } from "../../src/renderer/plugins/PluginConversationScope";
+import { ApplicationShellOutlet } from "../../src/renderer/plugins/ApplicationShell";
+import { activate as activateApplication } from "../../src/renderer/plugins/DefaultApplicationProvider";
+import { activate as activateShell } from "../../src/renderer/plugins/DefaultApplicationShell";
+import { activate as activateNavigation } from "../../src/renderer/modules/DefaultNavigationSurface";
+import { activate as activateComposer } from "../../src/renderer/modules/DefaultComposerSurface";
+import { activate as activateConversation } from "../../src/renderer/modules/DefaultConversationSurface";
+import { activate as activatePreview } from "../../src/renderer/modules/DefaultPreviewSurface";
+import { activate as activateSettings } from "../../src/renderer/modules/DefaultSettingsSurface";
+import { desktopPluginHost as host } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { installFixtureBridge } from "./shell";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { applyThemePreference } from "../../src/renderer/Theme";
@@ -16,6 +26,10 @@ import "../../src/renderer/styles.css";
 import { activate } from "../../../internal/plugin/bundled/personal/desktop.js";
 // @ts-expect-error Bundled desktop contributions are runtime JavaScript.
 import { activate as activateCalendar } from "../../../internal/plugin/bundled/personal-calendar/desktop.js";
+let fixtureApplication: ApplicationServiceV1;
+let controller: ApplicationWorkbenchV1;
+const fixtureLifetime = new AbortController();
+const surfaceBindings = Object.fromEntries(["navigation", "composer", "conversation", "preview", "settings"].map(name => [`ui.${name}`, {pluginId: `wuu.default-${name}`, generation: "fixture", id: `ui.${name}`} ]));
 const now = "2026-10-18T10:00:00Z";
 // Explicit opt-in fixture for the registered Personal file action gate. All
 // changes below are in memory; this preview cannot access files or model APIs.
@@ -376,7 +390,7 @@ document.documentElement.style.setProperty("--conversation-message-font-size",`$
 document.documentElement.dataset.platform="linux";
 if (params.get("font")==="20") { document.documentElement.style.setProperty("--font-ui","20px");document.documentElement.style.fontSize="20px"; }
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label" style={{flexWrap:"wrap"}}><span>{reviewScenario !== "unavailable" ? "动作审批 · 当前实际桌面组件 · 合成数据 · 不执行文件写入或模型调用" : "twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览"}{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div hidden={reviewScenario !== "unavailable"}><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div>{reviewScenario !== "unavailable" && <div><button data-review-open-settings onClick={()=>window.dispatchEvent(new CustomEvent("wuu:open-settings",{detail:{page:"plugin-view:personal:personal-preferences"}}))}>Auto Review 设置</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><select aria-label="合成审批场景" value={reviewScenario} onChange={event=>{const url=new URL(location.href);url.searchParams.set("review",event.target.value);location.href=url.href;}}>{["ready","empty","expired","blocked","stale","denied","revoked","uncertain","succeeded","long","lost-ack","stale-response"].map(value=><option key={value} value={value}>{value}</option>)}</select></div>}</div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label" style={{flexWrap:"wrap"}}><span>{reviewScenario !== "unavailable" ? "动作审批 · 当前实际桌面组件 · 合成数据 · 不执行文件写入或模型调用" : "twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览"}{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div hidden={reviewScenario !== "unavailable"}><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div>{reviewScenario !== "unavailable" && <div><button data-review-open-settings onClick={()=>window.dispatchEvent(new CustomEvent("wuu:open-settings",{detail:{page:"plugin-view:personal:personal-preferences"}}))}>Auto Review 设置</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><select aria-label="合成审批场景" value={reviewScenario} onChange={event=>{const url=new URL(location.href);url.searchParams.set("review",event.target.value);location.href=url.href;}}>{["ready","empty","expired","blocked","stale","denied","revoked","uncertain","succeeded","long","lost-ack","stale-response"].map(value=><option key={value} value={value}>{value}</option>)}</select></div>}</div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationScope application={fixtureApplication} signal={fixtureLifetime.signal}><PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView></PluginConversationScope> : <ApplicationShellOutlet host={host} binding={{pluginId:"wuu.default-shell",generation:"fixture",id:"ui.shell"}} surfaceBindings={surfaceBindings} />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {
@@ -391,9 +405,19 @@ function setActivity(status: "idle" | "thinking" | "responding") {
   }
 }
 async function start(){
-  await host.activateGeneration({pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
-  await host.activateGeneration({pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
-  await host.activateGeneration({pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
+  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"wuu.default-application",generation:"fixture",register:activateApplication});
+  await host.selectApplicationBinding({pluginId:"wuu.default-application",generation:"fixture",id:"ui.application"});
+  for (const [pluginId, register] of [
+    ["wuu.default-navigation", activateNavigation], ["wuu.default-composer", activateComposer],
+    ["wuu.default-conversation", activateConversation], ["wuu.default-preview", activatePreview],
+    ["wuu.default-settings", activateSettings], ["wuu.default-shell", activateShell],
+  ] as const) await host.activateGeneration({graphGeneration:"fixture-graph",pluginId,generation:"fixture",register});
+  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"fixture-controls",generation:"fixture",register(api){fixtureApplication=api.application;}});
+  controller = fixtureApplication.workbench;
+  window.addEventListener("pagehide", () => { fixtureLifetime.abort(); void host.selectApplicationBinding(undefined).finally(() => { for (const id of ["personal", "personal-calendar", "automations", "fixture-controls", "wuu.default-shell", "wuu.default-navigation", "wuu.default-composer", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings", "wuu.default-application"]) host.unload(id); }); }, {once:true});
+  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
+  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
+  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
   if (params.get("presentation") !== "standard") await controller.openPluginView("personal", "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);
   (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};

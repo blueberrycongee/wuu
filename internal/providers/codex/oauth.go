@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 )
 
 const (
@@ -29,7 +30,7 @@ const (
 type OAuthConfig struct {
 	BaseURL               string
 	APIKey                string
-	Home                  string
+	Credentials           credentialstore.Store
 	HTTPClient            *http.Client
 	ReuseCodexCredentials bool
 }
@@ -40,14 +41,12 @@ type OAuthConfig struct {
 type OAuthSource struct {
 	baseURL               string
 	apiKey                string
-	home                  string
+	selected              credentialstore.Store
 	httpClient            *http.Client
 	reuseCodexCredentials bool
 	// mu also provides refresh singleflight: only one caller reloads or refreshes
-	// credentials while concurrent requests reuse the resulting memory cache.
-	mu        sync.Mutex
-	cached    credentials
-	hasCached bool
+	// credentials while concurrent requests observe the resulting saved token.
+	mu sync.Mutex
 }
 
 type credentials struct {
@@ -64,14 +63,10 @@ func NewOAuthSource(cfg OAuthConfig) *OAuthSource {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	return &OAuthSource{
 		baseURL:               baseURL,
 		apiKey:                strings.TrimSpace(cfg.APIKey),
-		home:                  home,
+		selected:              cfg.Credentials,
 		httpClient:            cfg.HTTPClient,
 		reuseCodexCredentials: cfg.ReuseCodexCredentials,
 	}
@@ -85,9 +80,6 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 			source:      "explicit",
 		}, nil
 	}
-	if strings.TrimSpace(s.home) == "" {
-		return credentials{}, errors.New("home directory is required for Codex OAuth")
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -99,7 +91,7 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 	// Read the selected local source for every request so account changes and
 	// login refreshes take effect without restarting Wuu. Never mutate it.
 	if s.reuseCodexCredentials {
-		cliState, cliErr := loadCodexCLIAuth(s.home)
+		cliState, cliErr := authstorage.ReadCLI(ctx, s.selected, "codex")
 		if cliErr != nil {
 			return credentials{}, fmt.Errorf("no Codex OAuth credentials found; run `codex` to sign in or import credentials into wuu: %w", cliErr)
 		}
@@ -115,17 +107,8 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 		}
 		return creds, nil
 	}
-	if !forceRefresh && s.hasCached && strings.TrimSpace(s.cached.accessToken) != "" &&
-		!tokenExpiring(s.cached.accessToken, refreshSkew) {
-		return s.cached, nil
-	}
-
-	// Reload durable state before refreshing. Another Wuu/Codex process may
-	// have rotated the token since this source populated its memory cache.
-	store, err := authstorage.ForHome(s.home)
-	if err != nil {
-		return credentials{}, err
-	}
+	// Read on every request so replacement and sign-out reach existing clients.
+	store := authstorage.NewBound(ctx, s.selected)
 	state, err := store.Get("openai-codex")
 	if err == nil {
 		creds := credentials{
@@ -157,11 +140,12 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 			creds.refreshToken = state.RefreshToken
 			creds.accountID = firstNonEmpty(state.AccountID, accountIDFromToken(state.AccessToken))
 		}
-		s.cached = creds
-		s.hasCached = true
 		return creds, nil
 	}
 
+	if !errors.Is(err, authstorage.ErrNotFound) {
+		return credentials{}, err
+	}
 	return credentials{}, errors.New("no wuu Codex OAuth credentials found; set reuse_codex_credentials to true on this openai-codex provider to read local Codex CLI credentials")
 }
 
@@ -225,7 +209,7 @@ func refresh(ctx context.Context, httpClient *http.Client, refreshToken string) 
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return refreshResult{}, fmt.Errorf("refresh Codex OAuth token: %s: %s", resp.Status, string(body))
+		return refreshResult{}, fmt.Errorf("refresh Codex OAuth token failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var payload struct {
@@ -360,4 +344,27 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// OAuthStatus checks only the selected source, without a network refresh.
+func OAuthStatus(ctx context.Context, selected credentialstore.Store, reuseCLI bool) (string, error) {
+	var state authstorage.Credentials
+	var err error
+	source := "wuu-auth-store"
+	if reuseCLI {
+		state, err = authstorage.ReadCLI(ctx, selected, "codex")
+		source = "codex-cli"
+	} else {
+		state, err = authstorage.NewBound(ctx, selected).Get("openai-codex")
+	}
+	if err != nil {
+		if reuseCLI && errors.Is(err, authstorage.ErrNotFound) {
+			return "", errors.New("Codex CLI OAuth credentials not found; sign in with Codex CLI first")
+		}
+		return "", err
+	}
+	if strings.TrimSpace(state.AccessToken) == "" || (tokenExpiring(state.AccessToken, 0) && (reuseCLI || strings.TrimSpace(state.RefreshToken) == "")) {
+		return "", errors.New("Codex OAuth credentials are missing or expired; sign in again")
+	}
+	return source, nil
 }

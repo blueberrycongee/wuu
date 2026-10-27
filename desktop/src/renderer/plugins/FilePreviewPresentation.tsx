@@ -1,16 +1,17 @@
 import { type ReactNode, useCallback, useMemo } from "react";
 
-import type { WorkspaceFileReadResult } from "../../shared/protocol";
+import type { PreviewFileV1 as WorkspaceFileReadResult } from "../../../../packages/plugin-sdk/src/ui-preview-content";
+import { useOptionalPreviewContent } from "../PreviewContentContext";
 import {
   FILE_PREVIEW_ACTIONS,
   type FilePreviewSnapshotV1,
   type FileSelectionDescriptorV1,
 } from "../../shared/workbench";
 import type { WorkspaceFileSelection } from "../LinkTargets";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
+import { useApplicationWorkbench } from "./ApplicationWorkbenchContext";
+import type { UIContributionRegistryV1 as PluginHost } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 interface FilePreviewCallbacks {
   open?: (path: string) => unknown | Promise<unknown>;
@@ -90,9 +91,26 @@ export function toFilePreviewSnapshot({
   });
 }
 
-export function FilePreviewPresentation({
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
+export function FilePreviewPresentation(props: FilePreviewPresentationProps): JSX.Element {
+  const context = useOptionalPreviewContent();
+  if (context) return <PublicFilePreviewPresentation {...props} />;
+  // Remove the legacy adapter when all standalone presentation callers migrate.
+  return <LegacyFilePreviewPresentation {...props} />;
+}
+
+function PublicFilePreviewPresentation(props: FilePreviewPresentationProps): JSX.Element {
+  const context = useOptionalPreviewContent()!;
+  const snapshot = useMemo(() => toFilePreviewSnapshot(props), [props.workspaceRoot,
+    props.workspaceRelativePath, props.file, props.text, props.selection, props.loading, props.error]);
+  const Slot = context.slots?.Slot;
+  return Slot ? <Slot name="wuu.default-preview/content.preview" context={{
+    snapshot, resource: Object.freeze({ root: props.workspaceRoot, path: props.workspaceRelativePath }),
+  }} fallback={props.fallback} /> : <>{props.fallback}</>;
+}
+
+function LegacyFilePreviewPresentation({
+  host: suppliedHost,
+  controller: suppliedController,
   fallback,
   open,
   reveal,
@@ -101,6 +119,8 @@ export function FilePreviewPresentation({
   reload,
   ...state
 }: FilePreviewPresentationProps): JSX.Element {
+  const controller = useApplicationWorkbench(suppliedController);
+  const host = suppliedHost ?? controller.registry;
   const snapshot = useMemo(() => toFilePreviewSnapshot(state), [
     state.error, state.file, state.loading, state.selection, state.text,
     state.workspaceRelativePath, state.workspaceRoot,

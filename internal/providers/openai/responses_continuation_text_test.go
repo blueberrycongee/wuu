@@ -73,7 +73,7 @@ func TestResponsesWebSocketCacheMissRecoversFullHistory(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				runner := agent.StreamRunner{Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
+				runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
 				history := []providers.ChatMessage{{Role: "user", Content: "first"}}
 				first, err := runner.RunWithCallback(ctx, history, nil)
 				if err != nil || first.Content != "First answer" {
@@ -183,7 +183,7 @@ func TestResponsesWebSocketContinuationUsesFinalMessage(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			runner := agent.StreamRunner{Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
+			runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
 			history := []providers.ChatMessage{{Role: "user", Content: "first"}}
 			first, err := runner.RunWithCallback(ctx, history, nil)
 			if err != nil {

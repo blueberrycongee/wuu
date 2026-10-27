@@ -9,20 +9,26 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const pluginObserverDeliveryTimeout = 5 * time.Second
 
-func (s *Server) notifyPluginTurnLifecycle(ctx context.Context, pluginID string, input pluginhost.AgentTurnLifecycleInput) error {
+func (s *Server) notifyPluginTurnLifecycle(binding *runtime.State, ctx context.Context, pluginID string, input pluginhost.AgentTurnLifecycleInput) error {
 	if s == nil || s.rt == nil {
 		return nil
 	}
-	terminal, err := s.persistPluginTurnLifecycle(pluginID, input)
+	terminal, err := s.persistPluginTurnLifecycle(binding, pluginID, input)
 	if err != nil {
 		return err
 	}
-	return s.deliverPluginTurnLifecycle(ctx, pluginID, input, terminal)
+	origin, err := s.retainPluginTurnOrigin(binding, pluginID, input.RequestID)
+	if err != nil {
+		return err
+	}
+	defer origin.Close()
+	return s.deliverPluginTurnLifecycle(origin, ctx, pluginID, input, terminal)
 }
 
 // notifyPluginTurnLifecycleAsync persists terminal observations before
@@ -31,19 +37,25 @@ func (s *Server) notifyPluginTurnLifecycle(ctx context.Context, pluginID string,
 // close_agent cancelling a queued child) can deadlock the host call that is
 // waiting for the callback's response. Durable outbox state lets the next
 // replay retry delivery when the helper becomes available again.
-func (s *Server) notifyPluginTurnLifecycleAsync(pluginID string, input pluginhost.AgentTurnLifecycleInput) {
+func (s *Server) notifyPluginTurnLifecycleAsync(binding *runtime.State, pluginID string, input pluginhost.AgentTurnLifecycleInput) {
 	if s == nil || s.rt == nil {
 		return
 	}
-	terminal, err := s.persistPluginTurnLifecycle(pluginID, input)
+	terminal, err := s.persistPluginTurnLifecycle(binding, pluginID, input)
 	if err != nil {
 		providers.DebugLogf("persist plugin turn lifecycle for %q: %v", input.RequestID, err)
 		return
 	}
-	if !s.startBackground(func() {
+	origin, err := s.retainPluginTurnOrigin(binding, pluginID, input.RequestID)
+	if err != nil {
+		providers.DebugLogf("retain plugin turn lifecycle origin for %q: %v", input.RequestID, err)
+		return
+	}
+	defer origin.Close()
+	if !s.startBackgroundWithState(origin, func(binding *runtime.State) {
 		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
 		defer cancel()
-		if err := s.deliverPluginTurnLifecycle(ctx, pluginID, input, terminal); err != nil {
+		if err := s.deliverPluginTurnLifecycle(binding, ctx, pluginID, input, terminal); err != nil {
 			providers.DebugLogf("deliver plugin turn lifecycle for %q: %v", input.RequestID, err)
 		}
 	}) {
@@ -57,21 +69,19 @@ func (s *Server) notifyPluginTurnLifecycleAsync(pluginID string, input pluginhos
 // path. The event is intentionally broadcast: the host does not know which
 // plugin-defined work is related to the turn, and each trusted plugin owns its
 // own propagation policy.
-func (s *Server) notifyPluginTurnInterruptedAsync(input pluginhost.AgentTurnInterruptedInput) {
+func (s *Server) notifyPluginTurnInterruptedAsync(binding *runtime.State, input pluginhost.AgentTurnInterruptedInput) {
 	if s == nil || s.rt == nil {
 		return
 	}
-	host, generation := s.rt.RetainPluginHost(pluginhost.CapabilityAgentTurnInterrupted)
+	host := binding.Host
 	if host == nil {
 		return
 	}
 	capabilities := host.Capabilities(pluginhost.CapabilityAgentTurnInterrupted)
 	if len(capabilities) == 0 {
-		s.rt.ReleasePluginGeneration(generation)
 		return
 	}
-	if !s.startBackground(func() {
-		defer s.rt.ReleasePluginGeneration(generation)
+	s.startBackgroundWithState(binding, func(binding *runtime.State) {
 		var pending sync.WaitGroup
 		for _, capability := range capabilities {
 			pending.Add(1)
@@ -88,14 +98,12 @@ func (s *Server) notifyPluginTurnInterruptedAsync(input pluginhost.AgentTurnInte
 			}()
 		}
 		pending.Wait()
-	}) {
-		s.rt.ReleasePluginGeneration(generation)
-	}
+	})
 }
 
-func (s *Server) persistPluginTurnLifecycle(pluginID string, input pluginhost.AgentTurnLifecycleInput) (bool, error) {
+func (s *Server) persistPluginTurnLifecycle(binding *runtime.State, pluginID string, input pluginhost.AgentTurnLifecycleInput) (bool, error) {
 	if s.clientInputReceiptsEnabled() {
-		if err := session.SettleClientInputExecution(s.rt.SessionDir, s.clientInputScope(input.ThreadID, pluginID), input.RequestID, input.TurnID, input.State, input.Error); err != nil {
+		if err := binding.Sessions.SettleClientInputExecution(s.clientInputScope(input.ThreadID, pluginID), input.RequestID, input.TurnID, input.State, input.Error); err != nil {
 			return false, err
 		}
 	}
@@ -107,7 +115,7 @@ func (s *Server) persistPluginTurnLifecycle(pluginID string, input pluginhost.Ag
 	if err != nil {
 		return true, fmt.Errorf("encode plugin turn lifecycle: %w", err)
 	}
-	if err := session.PutPluginTurnLifecycleOutbox(s.rt.SessionDir, pluginID, input.RequestID, payload); err != nil {
+	if err := binding.Sessions.PutPluginTurnLifecycleOutbox(pluginID, input.RequestID, payload); err != nil {
 		return true, err
 	}
 	// Wake inspect callers only after the terminal record is durable. They can
@@ -117,9 +125,8 @@ func (s *Server) persistPluginTurnLifecycle(pluginID string, input pluginhost.Ag
 	return true, nil
 }
 
-func (s *Server) deliverPluginTurnLifecycle(ctx context.Context, pluginID string, input pluginhost.AgentTurnLifecycleInput, terminal bool) error {
-	host, generation := s.rt.RetainPluginHost(pluginhost.CapabilityAgentTurnLifecycle)
-	defer s.rt.ReleasePluginGeneration(generation)
+func (s *Server) deliverPluginTurnLifecycle(binding *runtime.State, ctx context.Context, pluginID string, input pluginhost.AgentTurnLifecycleInput, terminal bool) error {
+	host := binding.Host
 	capability, ok := host.Capability(pluginID, pluginhost.CapabilityAgentTurnLifecycle)
 	if !ok {
 		// The owning plugin is no longer active (disabled, removed, or failed),
@@ -127,7 +134,7 @@ func (s *Server) deliverPluginTurnLifecycle(ctx context.Context, pluginID string
 		// of leaving them to replay forever; non-terminal events have no outbox
 		// row. This keeps plugin effects reversible when a plugin is disabled.
 		if terminal {
-			if err := session.DeletePluginTurnLifecycleOutbox(s.rt.SessionDir, pluginID, input.RequestID); err != nil {
+			if err := binding.Sessions.DeletePluginTurnLifecycleOutbox(pluginID, input.RequestID); err != nil {
 				providers.DebugLogf("drop plugin lifecycle outbox event for inactive plugin %q/%q: %v", pluginID, input.RequestID, err)
 			}
 		}
@@ -136,13 +143,13 @@ func (s *Server) deliverPluginTurnLifecycle(ctx context.Context, pluginID string
 	var output pluginhost.AgentTurnLifecycleOutput
 	if err := host.InvokeCapability(ctx, capability, input, &output); err != nil {
 		if terminal {
-			s.schedulePluginTurnLifecycleReplay()
+			s.schedulePluginTurnLifecycleReplay(binding)
 		}
 		return host.HandleCapabilityError(capability, err)
 	}
 	if terminal {
-		if err := session.DeletePluginTurnLifecycleOutbox(s.rt.SessionDir, pluginID, input.RequestID); err != nil {
-			s.schedulePluginTurnLifecycleReplay()
+		if err := binding.Sessions.DeletePluginTurnLifecycleOutbox(pluginID, input.RequestID); err != nil {
+			s.schedulePluginTurnLifecycleReplay(binding)
 			return err
 		}
 	}
@@ -151,21 +158,42 @@ func (s *Server) deliverPluginTurnLifecycle(ctx context.Context, pluginID string
 
 const pluginTurnLifecycleReplayDelay = time.Second
 
-func (s *Server) schedulePluginTurnLifecycleReplay() {
-	if s == nil || !s.pluginLifecycleReplayPending.CompareAndSwap(false, true) {
+// Replay admission is scoped to the captured authority. A retry from an old
+// generation must neither suppress nor read a replacement generation's outbox.
+type pluginLifecycleReplayState struct {
+	mu      sync.Mutex
+	pending map[*session.Store]bool
+}
+
+func (s *Server) schedulePluginTurnLifecycleReplay(binding *runtime.State) {
+	if s == nil {
 		return
 	}
-	started := s.startBackground(func() {
+	s.pluginLifecycleReplay.mu.Lock()
+	if s.pluginLifecycleReplay.pending == nil {
+		s.pluginLifecycleReplay.pending = make(map[*session.Store]bool)
+	}
+	if s.pluginLifecycleReplay.pending[binding.Sessions] {
+		s.pluginLifecycleReplay.mu.Unlock()
+		return
+	}
+	s.pluginLifecycleReplay.pending[binding.Sessions] = true
+	s.pluginLifecycleReplay.mu.Unlock()
+	clear := func() {
+		s.pluginLifecycleReplay.mu.Lock()
+		delete(s.pluginLifecycleReplay.pending, binding.Sessions)
+		s.pluginLifecycleReplay.mu.Unlock()
+	}
+	if !s.startBackgroundWithState(binding, func(held *runtime.State) {
 		timer := time.NewTimer(pluginTurnLifecycleReplayDelay)
 		defer timer.Stop()
 		<-timer.C
-		s.pluginLifecycleReplayPending.Store(false)
+		clear()
 		if !s.closed.Load() {
-			s.replayPendingPluginTurnLifecycles()
+			s.replayPendingPluginTurnLifecycles(held)
 		}
-	})
-	if !started {
-		s.pluginLifecycleReplayPending.Store(false)
+	}) {
+		clear()
 	}
 }
 
@@ -179,11 +207,11 @@ func pluginTurnLifecycleTerminal(state string) bool {
 	}
 }
 
-func (s *Server) replayPendingPluginTurnLifecycles() {
+func (s *Server) replayPendingPluginTurnLifecycles(binding *runtime.State) {
 	if s == nil || s.rt == nil {
 		return
 	}
-	entries, err := session.ListPluginTurnLifecycleOutbox(s.rt.SessionDir)
+	entries, err := binding.Sessions.ListPluginTurnLifecycleOutbox()
 	if err != nil {
 		providers.DebugLogf("list pending plugin turn lifecycle events: %v", err)
 		return
@@ -194,7 +222,7 @@ func (s *Server) replayPendingPluginTurnLifecycles() {
 			providers.DebugLogf("decode pending plugin turn lifecycle event %q/%q: %v", entry.PluginID, entry.RequestID, err)
 			continue
 		}
-		if err := s.notifyPluginTurnLifecycle(context.Background(), entry.PluginID, input); err != nil {
+		if err := s.notifyPluginTurnLifecycle(binding, context.Background(), entry.PluginID, input); err != nil {
 			providers.DebugLogf("replay pending plugin turn lifecycle event %q/%q: %v", entry.PluginID, entry.RequestID, err)
 		}
 	}
@@ -202,12 +230,11 @@ func (s *Server) replayPendingPluginTurnLifecycles() {
 
 // notifyPluginTurnCompleted delivers a settled-turn observation to every
 // active registration. Observers cannot change host scheduling or turn state.
-func (s *Server) notifyPluginTurnCompleted(ctx context.Context, input pluginhost.AgentTurnCompletedInput) error {
+func (s *Server) notifyPluginTurnCompleted(binding *runtime.State, ctx context.Context, input pluginhost.AgentTurnCompletedInput) error {
 	if s == nil || s.rt == nil {
 		return nil
 	}
-	host, generation := s.rt.RetainPluginHost(pluginhost.CapabilityAgentTurnCompleted)
-	defer s.rt.ReleasePluginGeneration(generation)
+	host := binding.Host
 	for _, capability := range host.Capabilities(pluginhost.CapabilityAgentTurnCompleted) {
 		var output pluginhost.AgentTurnCompletedOutput
 		if err := host.InvokeCapability(ctx, capability, input, &output); err != nil {

@@ -45,7 +45,7 @@ func TestOtherOAuthIdentityBindsWorkspaceAndUser(t *testing.T) {
 		{"feishu", `{"code":0,"data":{"tenant_key":"tenant-1","open_id":"ou_user"}}`, "tenant-1:ou_user", "tenant-1"},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
-			b := New(Options{HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+			b := newTestBroker(Options{HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 				if r.Header.Get("Authorization") != "Bearer synthetic" {
 					t.Fatal("no bearer")
 				}
@@ -70,7 +70,7 @@ func TestOtherOAuthNeverAcceptsBotOrMissingTenantAsUser(t *testing.T) {
 	if err != nil || refreshed.AccessToken != "user-refreshed" || refreshed.RefreshToken != "rotated" {
 		t.Fatalf("rotation response rejected %#v %v", refreshed, err)
 	}
-	b := New(Options{HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"open_id":"ou_user"}}`)), Header: http.Header{}}, nil
 	})}})
 	defer b.Close()
@@ -97,7 +97,7 @@ func TestSlackHTTPSCallbackExchangeIsSingleUseAndWorkspaceBound(t *testing.T) {
 			s := &memoryStore{values: map[string][]byte{}}
 			relay := &providerHTTPSFixture{}
 			exchanges := 0
-			b := New(Options{Store: s, HTTPSCallbacks: relay, StateDir: t.TempDir(), HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+			b := newTestBroker(Options{Store: s, HTTPSCallbacks: relay, StateDir: t.TempDir(), HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 				body := ""
 				switch r.URL.Path {
 				case "/api/oauth.v2.access":

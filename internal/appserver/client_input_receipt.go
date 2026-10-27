@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/access"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -28,7 +30,7 @@ func clientInputFingerprint(params pluginhost.SessionSendParams) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) ensureClientInputOwner() (string, error) {
+func (s *Server) ensureClientInputOwner(binding *runtime.State) (string, error) {
 	s.clientInputMu.Lock()
 	defer s.clientInputMu.Unlock()
 	if s.closed.Load() {
@@ -36,7 +38,7 @@ func (s *Server) ensureClientInputOwner() (string, error) {
 	}
 	if s.clientInputLease == nil {
 		owner := "client-input-owner-" + session.NewID()
-		lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, owner)
+		lease, acquired, err := binding.Sessions.TryAcquireThreadExecutionLease(s.rt.SessionDir, owner)
 		if err != nil {
 			return "", err
 		}
@@ -49,11 +51,11 @@ func (s *Server) ensureClientInputOwner() (string, error) {
 	return s.clientInputOwner, nil
 }
 
-func (s *Server) loadHeldClientInputs(threadID string) ([]queuedTurn, error) {
+func (s *Server) loadHeldClientInputs(binding *runtime.State, threadID string) ([]queuedTurn, error) {
 	if !s.clientInputReceiptsEnabled() {
 		return nil, nil
 	}
-	rows, err := session.ListUnsettledClientInputs(s.rt.SessionDir, s.clientInputScope(threadID, ""))
+	rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(threadID, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +92,7 @@ func clientInputSendResult(r providers.ClientInputReceipt) pluginhost.SessionSen
 }
 
 func (s *Server) acceptClientSessionInput(ctx context.Context, pluginID string, params pluginhost.SessionSendParams, metadata session.Session, th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot, selection []runtime.ClientInputAttachment) (pluginhost.SessionSendResult, error) {
-	owner, err := s.ensureClientInputOwner()
+	owner, err := s.ensureClientInputOwner(th.state)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -99,7 +101,7 @@ func (s *Server) acceptClientSessionInput(ctx context.Context, pluginID string, 
 	}
 	queueID := session.NewID()
 	snapshot.PluginTurn.QueueID = queueID
-	baseline, found, err := session.ReadControl(s.rt.SessionDir, th.ID)
+	baseline, found, err := th.state.Sessions.ReadControl(th.ID)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -120,31 +122,44 @@ func (s *Server) acceptClientSessionInput(ctx context.Context, pluginID string, 
 		return pluginhost.SessionSendResult{}, err
 	}
 	row := session.AcceptedClientInput{Receipt: providers.ClientInputReceipt{RequestID: params.UserInputRequestID, HostRequestID: params.RequestID, ReceiptID: session.NewID(), ClientID: msg.ClientID, QueueID: queueID, SessionID: th.ID, PluginID: pluginID, Owner: metadata.Owner, UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain, AgentID: metadata.AgentID}, Fingerprint: clientInputFingerprint(params), MessageJSON: messageJSON, RuntimeJSON: runtimeJSON, SelectionJSON: selectionJSON, LiveOwner: owner}
-	row, created, err := session.AcceptClientInput(s.rt.SessionDir, row, snapshot.Control, &baseline)
+	row, created, err := th.state.Sessions.AcceptClientInput(row, snapshot.Control, &baseline)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if created {
-		return s.enqueueAcceptedClientInput(th, row)
+		return s.enqueueAcceptedClientInput(ctx, th, row)
 	}
 	return clientInputSendResult(row.Receipt), nil
 }
 
-func (s *Server) enqueueAcceptedClientInput(th *threadState, row session.AcceptedClientInput) (pluginhost.SessionSendResult, error) {
+func (s *Server) enqueueAcceptedClientInput(ctx context.Context, th *threadState, row session.AcceptedClientInput) (pluginhost.SessionSendResult, error) {
 	entry, err := clientInputQueuedTurn(row)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
+	origin, err := s.retainPluginTurnOrigin(th.state, row.Receipt.PluginID, row.Receipt.HostRequestID)
+	if err != nil {
+		held, holdErr := th.state.Sessions.ChangeClientInput(row, "held", "", nil, nil, nil)
+		if holdErr != nil {
+			return pluginhost.SessionSendResult{}, errors.Join(err, holdErr)
+		}
+		return clientInputSendResult(held.Receipt), nil
+	}
+	entry.snapshot.PluginTurn.Origin = origin
+	entry.snapshot.AdmissionPrincipal, _ = principal.FromContext(ctx)
+	entry.snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
+	entry.snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
 	if !s.enqueueQueuedUserTurn(th.ID, entry) {
+		_ = origin.Close()
 		// Acceptance remains durable even when shutdown closes the local queue.
-		if held, holdErr := session.ChangeClientInput(s.rt.SessionDir, row, "held", "", nil, nil, nil); holdErr == nil {
+		if held, holdErr := th.state.Sessions.ChangeClientInput(row, "held", "", nil, nil, nil); holdErr == nil {
 			row = held
 		}
 		return clientInputSendResult(row.Receipt), nil
 	}
 	_ = s.writeNotification(NotificationTurnQueued, TurnQueuedNotification{Queued: queuedTurnSummary(th.ID, entry)})
-	s.tryDrainQueuedTurns(th.ID, true)
-	latest, found, err := session.ReadClientInput(s.rt.SessionDir, s.clientInputScope(th.ID, row.Receipt.PluginID), row.Receipt.HostRequestID)
+	s.tryDrainQueuedTurns(th.state, th.ID, true)
+	latest, found, err := th.state.Sessions.ReadClientInput(s.clientInputScope(th.ID, row.Receipt.PluginID), row.Receipt.HostRequestID)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -168,14 +183,14 @@ func (s *Server) resumeAcceptedClientInput(ctx context.Context, pluginID string,
 	if !active {
 		return pluginhost.SessionSendResult{}, errors.New("owning plugin is not active")
 	}
-	control, err := s.pluginSessionControl(pluginID, th.ID, params.ControlRevision)
+	control, err := s.pluginSessionControl(th.state, pluginID, th.ID, params.ControlRevision)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if control != nil && control.State != session.ControlActive {
 		return pluginhost.SessionSendResult{}, session.ErrControlChanged
 	}
-	baseline, found, err := session.ReadControl(s.rt.SessionDir, th.ID)
+	baseline, found, err := th.state.Sessions.ReadControl(th.ID)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -195,24 +210,24 @@ func (s *Server) resumeAcceptedClientInput(ctx context.Context, pluginID string,
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	owner, err := s.ensureClientInputOwner()
+	owner, err := s.ensureClientInputOwner(th.state)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	row, err = session.ChangeClientInput(s.rt.SessionDir, row, "queued", owner, snapshot, control, &baseline)
+	row, err = th.state.Sessions.ChangeClientInput(row, "queued", owner, snapshot, control, &baseline)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	return s.enqueueAcceptedClientInput(th, row)
+	return s.enqueueAcceptedClientInput(ctx, th, row)
 }
 
 // Recreate disposable working copies from the durable original selection only
 // during authorized execution, never while inspecting history or receipts.
-func (s *Server) materializeAcceptedClientInput(entry *queuedTurn) error {
-	metadata, found, err := session.Find(s.rt.SessionDir, entry.clientInput.Receipt.SessionID)
+func (s *Server) materializeAcceptedClientInput(binding *runtime.State, entry *queuedTurn) error {
+	metadata, found, err := binding.Sessions.Find(entry.clientInput.Receipt.SessionID)
 	if err != nil {
 		return err
 	}

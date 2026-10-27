@@ -8,13 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"path/filepath"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 type historyAttachment struct {
@@ -70,15 +69,15 @@ func HistoryAttachmentMetadata(record session.HistoryRecord) []pluginhost.Sessio
 	return result
 }
 
-func readPluginSessionAttachment(ctx context.Context, home, pluginID string, params pluginhost.SessionAttachmentReadParams) (pluginhost.SessionAttachmentReadResult, error) {
+func readPluginSessionAttachment(ctx context.Context, store *session.Store, artifacts *ArtifactClient, pluginID string, binding userspace.Binding, params pluginhost.SessionAttachmentReadParams) (pluginhost.SessionAttachmentReadResult, error) {
 	if params.Seq < 1 || params.Index < 0 || params.Offset < 0 || len(params.SHA256) != 64 {
 		return pluginhost.SessionAttachmentReadResult{}, errors.New("invalid attachment reference or offset")
 	}
-	dir, metadata, err := loadVisibleHistorySession(home, pluginID, params.SessionID)
+	metadata, err := loadVisibleHistorySession(ctx, store, pluginID, params.SessionID, binding)
 	if err != nil {
 		return pluginhost.SessionAttachmentReadResult{}, err
 	}
-	page, err := session.ReadHistoryQuery(ctx, dir, session.HistoryReadQuery{SessionID: metadata.ID, StartSeq: params.Seq, EndSeq: params.Seq, Limit: 1})
+	page, err := store.WithContext(ctx).ReadHistoryQuery(session.HistoryReadQuery{SessionID: metadata.ID, StartSeq: params.Seq, EndSeq: params.Seq, Limit: 1})
 	if err != nil {
 		return pluginhost.SessionAttachmentReadResult{}, err
 	}
@@ -95,11 +94,7 @@ func readPluginSessionAttachment(ctx context.Context, home, pluginID string, par
 		}
 		data := attachment.data
 		if attachment.uri != "" {
-			uri, err := url.Parse(attachment.uri)
-			if err != nil {
-				return pluginhost.SessionAttachmentReadResult{}, err
-			}
-			bytes, media, err := ReadManagedArtifact(home, filepath.Join(home, "workspaces", uri.Hostname()), metadata.ID, attachment.uri, MaxClientInputAttachmentBytes)
+			bytes, media, err := artifacts.Read(ctx, metadata.ID, attachment.uri, MaxClientInputAttachmentBytes)
 			if err != nil {
 				return pluginhost.SessionAttachmentReadResult{}, err
 			}

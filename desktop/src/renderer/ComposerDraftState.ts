@@ -1,43 +1,14 @@
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
-import {
-  cloneComposerDraft,
-  emptyComposerDraft,
-  initialSplitComposerDrafts,
-  type ComposerDraftState,
-  type ConversationPaneID,
-} from "./AppState";
-import {
-  composerFilePlaceholder,
-  composerImagePlaceholder,
-  isComposerImageFile,
-  isComposerDocumentFile,
-  revokeComposerImagePreview,
-  type ComposerAttachmentPreparation,
-  type ComposerFile,
-  type ComposerImage,
-} from "./ComposerMessages";
-import { translateCurrent } from "./i18n";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationAttachmentV1, ApplicationComposerActionMapV1, ApplicationComposerDraftV1, ApplicationDraftsSnapshotV1 } from "../../../packages/plugin-sdk/src/ui-composer";
+import { startTransition, useCallback, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { cloneComposerDraft, initialSplitComposerDrafts, type ComposerDraftState, type ConversationPaneID } from "./AppState";
+import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+import { createApplicationComposerAttachments } from "./modules/ApplicationComposerAttachments";
+import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
 
-// The textarea owns the input-critical value. Publishing its draft to App
-// after an idle window preserves tab/plugin state without making the entire
-// desktop shell render for every character. A normal pause between words must
-// not turn this back into a per-keystroke path.
 export const COMPOSER_PROMPT_IDLE_COMMIT_MS = 400;
-
-type PendingPromptCommit = {
-  value: string;
-};
-
 export type ComposerDraftStateController = {
   prompt: string;
   promptRevision: number;
@@ -68,287 +39,156 @@ export type ComposerDraftStateController = {
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
 };
 
-type ComposerAttachmentTargets = {
-  onImagePlaceholder: (placeholder: ComposerImage) => void;
-  onImageEncoded: (id: string, encoded?: ComposerImage) => void;
-  onFilePlaceholder: (placeholder: ComposerFile) => void;
-  onFileEncoded: (id: string, encoded?: ComposerFile) => void;
-};
+type DraftView = { primary: ComposerDraftState; split: Record<ConversationPaneID, ComposerDraftState> };
 
-async function prepareComposerAttachment<T extends { id: string }>(
-  placeholder: T & { preparation: ComposerAttachmentPreparation<T> },
-  settle: (id: string, encoded?: T) => void,
-): Promise<void> {
-  const preparation = placeholder.preparation;
-  async function settleAttempt(): Promise<void> {
-    try {
-      settle(placeholder.id, await preparation.promise);
-    } catch {
-      // Keep the source and failed state available to drafts restored after a
-      // send failure. A dismissed slot is still protected by settleAttachment.
-      settle(placeholder.id, { ...placeholder, encodePromise: undefined, previewSrc: undefined });
-    }
-  }
-  preparation.retry = async () => {
-    if (!preparation.error) return;
-    preparation.restart();
-    settle(placeholder.id, { ...placeholder, encodePromise: preparation.promise, previewSrc: undefined });
-    await settleAttempt();
+function draftStructure(drafts: ApplicationDraftsSnapshotV1): string {
+  return JSON.stringify([drafts.activeTabId, drafts.activePane, drafts.split,
+    drafts.primary.imageIds, drafts.primary.fileIds, drafts.primary.selections,
+    drafts.secondary.imageIds, drafts.secondary.fileIds, drafts.secondary.selections,
+    drafts.attachments.map(item => [item.id, item.status, item.error, item.remoteRef, item.data?.length])]);
+}
+
+/** UI drafts mirror application-owned resources; only input-critical rendering is delayed. */
+export function useComposerDraftState(application: Pick<ApplicationServiceV1, "getSnapshot" | "subscribe" | "invoke">): ComposerDraftStateController {
+  const syncRef = useRef<(force?: boolean) => void>(() => {});
+  const [attachments] = useState(() => createApplicationComposerAttachments(application, () => syncRef.current(true)));
+  const read = (draft: ApplicationComposerDraftV1): ComposerDraftState => {
+    const descriptors = new Map(application.getSnapshot().drafts.attachments.map(item => [item.id, item]));
+    return { prompt: draft.text,
+      images: draft.imageIds.map(id => attachments.read(descriptors.get(id)!) as ComposerImage),
+      files: draft.fileIds.map(id => attachments.read(descriptors.get(id)!) as ComposerFile),
+      ...(draft.selections.length ? { selections: draft.selections.map(item => ({ ...item, source: { ...item.source } })) } : {}),
+    };
   };
-  await settleAttempt();
-}
-
-export async function buildComposerAttachments(
-  files: File[],
-  targets: ComposerAttachmentTargets,
-): Promise<void> {
-  await Promise.all([
-    ...files.filter(isComposerImageFile).map(async (file) => {
-      const placeholder = composerImagePlaceholder(file);
-      targets.onImagePlaceholder(placeholder);
-      await prepareComposerAttachment<ComposerImage>(placeholder, targets.onImageEncoded);
-    }),
-    ...files.filter(isComposerDocumentFile).map(async (file) => {
-      const placeholder = composerFilePlaceholder(file);
-      targets.onFilePlaceholder(placeholder);
-      await prepareComposerAttachment<ComposerFile>(placeholder, targets.onFileEncoded);
-    }),
-  ]);
-}
-
-// Completion can replace or remove an existing slot, never recreate a draft
-// that the user has already sent, removed, or closed.
-function settleAttachment<T extends { id: string }>(items: T[], id: string, encoded?: T): T[] {
-  if (!items.some((item) => item.id === id)) return items;
-  return items.flatMap((item) => item.id === id ? encoded ? [encoded] : [] : [item]);
-}
-
-async function attachComposerAttachmentFilesToDraft(
-  files: File[],
-  targets: ComposerAttachmentTargets,
-): Promise<void> {
-  if (files.length === 0) {
-    return;
-  }
-  const imageFiles = files.filter(isComposerImageFile);
-  const documentFiles = files.filter(isComposerDocumentFile);
-  if (imageFiles.length === 0 && documentFiles.length === 0) {
-    showErrorToast(translateCurrent("composer.attachment.imagesAndPdfOnly"));
-    return;
-  }
-  try {
-    await buildComposerAttachments(files, targets);
-  } catch (error) {
-    showErrorToast(error, translateCurrent("composer.attachment.addFailed"));
-  }
-}
-
-export function useComposerDraftState(
-  updateStoredDrafts?: (update: (draft: ComposerDraftState) => ComposerDraftState) => void,
-): ComposerDraftStateController {
-  const [prompt, setPromptState] = useState("");
+  const [view, setView] = useState<DraftView>(() => {
+    const drafts = application.getSnapshot().drafts;
+    return { primary: read(drafts.primary), split: drafts.split
+      ? { primary: read(drafts.primary), secondary: read(drafts.secondary) } : initialSplitComposerDrafts() };
+  });
+  const current = useRef(view);
   const [promptRevision, setPromptRevision] = useState(0);
-  const promptRef = useRef("");
-  const promptCommitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-  const pendingPromptCommitRef = useRef<PendingPromptCommit | null>(null);
-  const cancelPromptCommit = useCallback(() => {
-    pendingPromptCommitRef.current = null;
-    if (promptCommitTimerRef.current !== undefined) {
-      clearTimeout(promptCommitTimerRef.current);
-      promptCommitTimerRef.current = undefined;
-    }
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastStructure = useRef<string | undefined>(undefined);
+  if (lastStructure.current === undefined) lastStructure.current = draftStructure(application.getSnapshot().drafts);
+  const cancelInputCommit = useCallback(() => {
+    if (timer.current !== undefined) clearTimeout(timer.current);
+    timer.current = undefined;
   }, []);
-  const setPrompt = useCallback<Dispatch<SetStateAction<string>>>((update) => {
-    const next = typeof update === "function" ? update(promptRef.current) : update;
-    promptRef.current = next;
-    cancelPromptCommit();
-    setPromptState((current) => (current === next ? current : next));
-    // Programmatic clears/restores must reach Composer even when App's delayed
-    // string snapshot already equals `next` (for example, send within 400ms).
-    setPromptRevision((current) => current + 1);
-  }, [cancelPromptCommit]);
-  const setPromptFromInput = useCallback((value: string) => {
-    promptRef.current = value;
-    cancelPromptCommit();
-    const pendingCommit = { value };
-    pendingPromptCommitRef.current = pendingCommit;
-    promptCommitTimerRef.current = setTimeout(() => {
-      promptCommitTimerRef.current = undefined;
-      if (pendingPromptCommitRef.current !== pendingCommit) {
-        return;
+  function render(next: DraftView, revisePrompt = false): void {
+    current.current = next;
+    setView(next);
+    if (revisePrompt) setPromptRevision(value => value + 1);
+  }
+  function sync(force = false): void {
+    const drafts = application.getSnapshot().drafts;
+    const structure = draftStructure(drafts);
+    const primaryText = drafts.primary.text;
+    const secondaryText = drafts.secondary.text;
+    if (!force && structure === lastStructure.current && primaryText === current.current.primary.prompt
+      && (!drafts.split || primaryText === current.current.split.primary.prompt && secondaryText === current.current.split.secondary.prompt)) return;
+    lastStructure.current = structure;
+    cancelInputCommit();
+    const primary = read(drafts.primary);
+    render({ primary, split: drafts.split ? { primary, secondary: read(drafts.secondary) } : current.current.split }, true);
+    attachments.retainVisible(drafts.attachments.map(item => item.id));
+  }
+  syncRef.current = sync;
+  useLayoutEffect(() => {
+    attachments.resume();
+    const unsubscribe = application.subscribe(() => syncRef.current());
+    syncRef.current();
+    return () => { unsubscribe(); cancelInputCommit(); attachments.dispose(); };
+  }, [application, attachments, cancelInputCommit]);
+
+  function checkpoint(next: DraftView): void {
+    const snapshot = application.getSnapshot().drafts;
+    if (!snapshot.activeTabId || !snapshot.primary.ownerTabId) return;
+    const primary = snapshot.split ? next.split.primary : next.primary;
+    const secondary = snapshot.split ? next.split.secondary : undefined;
+    const ready: ApplicationAttachmentV1[] = [];
+    const known = new Set(snapshot.attachments.map(item => item.id));
+    function project(draft: ComposerDraftState): ApplicationComposerDraftV1 {
+      for (const [kind, items] of [["image", draft.images], ["file", draft.files]] as const) {
+        for (const item of items) {
+          if (known.has(item.id)) continue;
+          const value = item.preparation?.result ?? item;
+          // Pending imports already belong to the service and retain their ID.
+          if (value.preparation || value.encodePromise) continue;
+          ready.push({ id: value.id, kind, name: attachments.nameFor(value.id) ?? ("filename" in value ? value.filename ?? "image" : "image"),
+            mediaType: value.media_type, status: "ready", data: value.data, remoteRef: value.remote_ref,
+            width: "width" in value ? value.width : undefined, height: "height" in value ? value.height : undefined });
+        }
       }
-      pendingPromptCommitRef.current = null;
-      startTransition(() => {
-        setPromptState((current) =>
-          promptRef.current === pendingCommit.value && current !== pendingCommit.value
-            ? pendingCommit.value
-            : current,
-        );
-      });
-    }, COMPOSER_PROMPT_IDLE_COMMIT_MS);
-  }, [cancelPromptCommit]);
-  useEffect(() => cancelPromptCommit, [cancelPromptCommit]);
-  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
-  const [composerFiles, setComposerFiles] = useState<ComposerFile[]>([]);
-  const [composerSelections, setComposerSelections] = useState<ResponseSelection[]>([]);
-  const [splitComposerDrafts, setSplitComposerDrafts] = useState<
-    Record<ConversationPaneID, ComposerDraftState>
-  >(initialSplitComposerDrafts);
-  function updateSavedAttachmentDrafts(update: (draft: ComposerDraftState) => ComposerDraftState): void {
-    setSplitComposerDrafts((current) => {
-      const primary = update(current.primary);
-      const secondary = update(current.secondary);
-      return primary === current.primary && secondary === current.secondary ? current : { primary, secondary };
-    });
-    updateStoredDrafts?.(update);
+      return { text: draft.prompt, imageIds: draft.images.map(item => item.id), fileIds: draft.files.map(item => item.id), selections: draft.selections ?? [] };
+    }
+    const input: ApplicationComposerActionMapV1["composer.checkpoint"]["input"] = { activeTabId: snapshot.activeTabId, primary: project(primary), secondary: secondary && project(secondary), attachments: ready };
+    void application.invoke("composer.checkpoint", input).catch(showErrorToast);
   }
-
-  function onImageEncoded(id: string, encoded?: ComposerImage): void {
-    setComposerImages((current) => settleAttachment(current, id, encoded));
-    updateSavedAttachmentDrafts((draft) => {
-      const images = settleAttachment(draft.images, id, encoded);
-      return images === draft.images ? draft : { ...draft, images };
-    });
+  function changePrimary(update: (draft: ComposerDraftState) => ComposerDraftState, revise = false): void {
+    const next = { ...current.current, primary: update(current.current.primary) };
+    render(next, revise);
+    if (!application.getSnapshot().drafts.split) checkpoint(next);
   }
-
-  function onFileEncoded(id: string, encoded?: ComposerFile): void {
-    setComposerFiles((current) => settleAttachment(current, id, encoded));
-    updateSavedAttachmentDrafts((draft) => {
-      const files = settleAttachment(draft.files, id, encoded);
-      return files === draft.files ? draft : { ...draft, files };
-    });
-  }
-
-  async function attachComposerAttachmentFiles(files: File[]): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, {
-      onImagePlaceholder: (placeholder) =>
-        setComposerImages((current) => [...current, placeholder]),
-      onImageEncoded,
-      onFilePlaceholder: (placeholder) => setComposerFiles((current) => [...current, placeholder]),
-      onFileEncoded,
-    });
-  }
-
-  function removeComposerImage(id: string): void {
-    setComposerImages((current) => {
-      const removed = current.find((image) => image.id === id);
-      revokeComposerImagePreview(removed);
-      return current.filter((image) => image.id !== id);
-    });
-  }
-
-  function removeComposerFile(id: string): void {
-    setComposerFiles((current) => current.filter((file) => file.id !== id));
-  }
-
-  function updateSplitComposerDraft(
-    pane: ConversationPaneID,
-    update: (draft: ComposerDraftState) => ComposerDraftState,
-  ): void {
-    setSplitComposerDrafts((current) => {
-      const draft = current[pane] ?? emptyComposerDraft();
-      return {
-        ...current,
-        [pane]: update(draft),
-      };
-    });
-  }
-
-  function setSplitComposerPrompt(
-    pane: ConversationPaneID,
-    value: string,
-  ): void {
-    updateSplitComposerDraft(pane, (draft) => ({ ...draft, prompt: value }));
-  }
-
-  async function attachSplitComposerAttachmentFiles(
-    pane: ConversationPaneID,
-    files: File[],
-  ): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, {
-      onImagePlaceholder: (placeholder) =>
-        updateSplitComposerDraft(pane, (draft) => ({
-          ...draft,
-          images: [...draft.images, placeholder],
-        })),
-      onImageEncoded,
-      onFilePlaceholder: (placeholder) =>
-        updateSplitComposerDraft(pane, (draft) => ({
-          ...draft,
-          files: [...draft.files, placeholder],
-        })),
-      onFileEncoded,
-    });
-  }
-
-  function removeSplitComposerImage(
-    pane: ConversationPaneID,
-    id: string,
-  ): void {
-    updateSplitComposerDraft(pane, (draft) => {
-      const removed = draft.images.find((image) => image.id === id);
-      revokeComposerImagePreview(removed);
-      return {
-        ...draft,
-        images: draft.images.filter((image) => image.id !== id),
-      };
-    });
-  }
-
-  function removeSplitComposerFile(pane: ConversationPaneID, id: string): void {
-    updateSplitComposerDraft(pane, (draft) => ({
-      ...draft,
-      files: draft.files.filter((file) => file.id !== id),
-    }));
-  }
-
-  function moveSplitDraftToGlobalComposer(pane: ConversationPaneID): void {
-    const draft = splitComposerDrafts[pane] ?? emptyComposerDraft();
-    restorePrimaryComposerDraft(draft);
-    setSplitComposerDrafts(initialSplitComposerDrafts());
-  }
-
-  function currentPrimaryComposerDraft(): ComposerDraftState {
-    return cloneComposerDraft({
-      prompt: promptRef.current,
-      images: composerImages,
-      files: composerFiles,
-      selections: composerSelections,
-    });
-  }
-
-  function restorePrimaryComposerDraft(draft: ComposerDraftState): void {
-    const nextDraft = cloneComposerDraft(draft);
-    setPrompt(nextDraft.prompt);
-    setComposerImages(nextDraft.images);
-    setComposerFiles(nextDraft.files);
-    setComposerSelections(nextDraft.selections ?? []);
-  }
-
-  return {
-    prompt,
-    promptRevision,
-    setPrompt,
-    setPromptFromInput,
-    composerImages,
-    setComposerImages,
-    composerFiles,
-    setComposerFiles,
-    composerSelections,
-    setComposerSelections,
-    splitComposerDrafts,
-    setSplitComposerDrafts,
-    attachComposerAttachmentFiles,
-    removeComposerImage,
-    removeComposerFile,
-    setSplitComposerPrompt,
-    attachSplitComposerAttachmentFiles,
-    removeSplitComposerImage,
-    removeSplitComposerFile,
-    moveSplitDraftToGlobalComposer,
-    currentPrimaryComposerDraft,
-    restorePrimaryComposerDraft,
+  const setPrompt: Dispatch<SetStateAction<string>> = update => {
+    cancelInputCommit();
+    changePrimary(draft => ({ ...draft, prompt: typeof update === "function" ? update(draft.prompt) : update }), true);
+    if (!application.getSnapshot().drafts.primary.ownerTabId) {
+      void application.invoke("composer.set-draft", { text: current.current.primary.prompt }).catch(showErrorToast);
+    }
   };
+  const setComposerImages: Dispatch<SetStateAction<ComposerImage[]>> = update => changePrimary(draft => ({ ...draft,
+    images: typeof update === "function" ? update(draft.images) : update }));
+  const setComposerFiles: Dispatch<SetStateAction<ComposerFile[]>> = update => changePrimary(draft => ({ ...draft,
+    files: typeof update === "function" ? update(draft.files) : update }));
+  const setComposerSelections: Dispatch<SetStateAction<ResponseSelection[]>> = update => changePrimary(draft => ({ ...draft,
+    selections: typeof update === "function" ? update(draft.selections ?? []) : update }));
+  const setSplitComposerDrafts: ComposerDraftStateController["setSplitComposerDrafts"] = update => {
+    const next = { ...current.current, split: typeof update === "function" ? update(current.current.split) : update };
+    render(next);
+    if (application.getSnapshot().drafts.split) checkpoint(next);
+  };
+  function setPromptFromInput(value: string): void {
+    cancelInputCommit();
+    current.current = { ...current.current, primary: { ...current.current.primary, prompt: value } };
+    void application.invoke("composer.set-draft", { text: value, ownerTabId: application.getSnapshot().drafts.primary.ownerTabId }).catch(showErrorToast);
+    timer.current = setTimeout(() => { timer.current = undefined; startTransition(() => setView(current.current)); }, COMPOSER_PROMPT_IDLE_COMMIT_MS);
+  }
+  function updatePane(pane: ConversationPaneID, update: (draft: ComposerDraftState) => ComposerDraftState): void {
+    setSplitComposerDrafts(previous => ({ ...previous, [pane]: update(previous[pane]) }));
+  }
+  async function attach(files: File[], pane: ConversationPaneID = "primary"): Promise<void> {
+    if (!files.length) return;
+    try {
+      const ownerTabId = application.getSnapshot().drafts[pane].ownerTabId;
+      if (!ownerTabId) throw new Error("Attachment draft owner is unavailable");
+      await Promise.all(files.map(file => application.invoke("composer.attach", { files: [file], ownerTabId })
+        .catch(error => { showErrorToast(error, translateCurrent("composer.attachment.addFailed")); })));
+    } catch (error) { showErrorToast(error, translateCurrent("composer.attachment.addFailed")); }
+  }
+  function restorePrimaryComposerDraft(draft: ComposerDraftState): void {
+    cancelInputCommit();
+    const next = { ...current.current, primary: cloneComposerDraft(draft) };
+    render(next, true);
+    if (!application.getSnapshot().drafts.split) checkpoint(next);
+  }
+  // Actions read the current draft ref; stable identities preserve caller effects and focus.
+  const actions = useMemo<Omit<ComposerDraftStateController, "prompt" | "promptRevision" | "composerImages" | "composerFiles" | "composerSelections" | "splitComposerDrafts">>(() => ({
+    setPrompt, setPromptFromInput, setComposerImages, setComposerFiles, setComposerSelections, setSplitComposerDrafts,
+    attachComposerAttachmentFiles: files => attach(files),
+    attachSplitComposerAttachmentFiles: (pane, files) => attach(files, pane),
+    removeComposerImage: id => setComposerImages(items => items.filter(item => item.id !== id)),
+    removeComposerFile: id => setComposerFiles(items => items.filter(item => item.id !== id)),
+    setSplitComposerPrompt: (pane, prompt) => updatePane(pane, draft => ({ ...draft, prompt })),
+    removeSplitComposerImage: (pane, id) => updatePane(pane, draft => ({ ...draft, images: draft.images.filter(item => item.id !== id) })),
+    removeSplitComposerFile: (pane, id) => updatePane(pane, draft => ({ ...draft, files: draft.files.filter(item => item.id !== id) })),
+    moveSplitDraftToGlobalComposer: pane => {
+      restorePrimaryComposerDraft(current.current.split[pane]);
+      setSplitComposerDrafts(initialSplitComposerDrafts());
+    },
+    currentPrimaryComposerDraft: () => cloneComposerDraft(current.current.primary),
+    restorePrimaryComposerDraft,
+  }), [application, cancelInputCommit]);
+  return { ...actions, prompt: view.primary.prompt, promptRevision,
+    composerImages: view.primary.images, composerFiles: view.primary.files, composerSelections: view.primary.selections ?? [],
+    splitComposerDrafts: view.split };
 }

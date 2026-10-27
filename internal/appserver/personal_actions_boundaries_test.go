@@ -4,18 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -33,6 +36,7 @@ type personalBoundaryFixture struct {
 	host        *UserHost
 	kit         *tools.Toolkit
 	client      *fakeClient
+	provider    *personalReceiptServiceClient
 	id          string
 	owner       context.Context
 	cancelOwner context.CancelFunc
@@ -50,24 +54,25 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient) *personalBound
 	rt.RootDir = rt.UserBinding().Root(rt.WuuHome)
 	rt.DataRoot = rt.UserBinding().State(rt.WuuHome)
 	rt.SessionDir = filepath.Join(rt.DataRoot, "sessions")
+	rebindPersonalTestDocuments(t, rt)
 	rt.StreamRunner.ProviderName = rt.ProviderName
 	if err := os.MkdirAll(rt.RootDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}, SubjectID: "plugin:bundled:personal"}}
-	rt.PluginHost = pluginhost.New(&pluginClientRequestTestRuntime{id: "personal"})
+	provider := attachPersonalBoundaryGeneration(t, rt)
 	var err error
 	rt.Toolkit, err = tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &personalBoundaryFixture{t: t, rt: rt, client: client, id: "boundary-main"}
-	_, err = session.CreateInitialized(rt.SessionDir, session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
+	f := &personalBoundaryFixture{t: t, rt: rt, client: client, provider: provider, id: "boundary-main"}
+	_, err = rt.Sessions.CreateInitialized(session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := session.ReadHistoryPage(context.Background(), rt.SessionDir, f.id, 1, 10)
+	page, err := rt.Sessions.ReadHistoryPage(f.id, 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +96,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient) *personalBound
 func (f *personalBoundaryFixture) openHost() {
 	f.t.Helper()
 	var err error
-	f.host, err = NewUserHost(f.rt)
+	f.host, err = NewUserHost(f.rt, personalhost.Options{})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -107,14 +112,14 @@ func (f *personalBoundaryFixture) reconnectOwner() {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.cancelOwner = cancel
 	bootstrap, _ := json.Marshal(map[string]any{"version": 1, "user_space_id": f.rt.UserSpaceID, "product_domain": "personal"})
-	owner, err := clientauthority.AdmitDesktop(ctx, f.rt.UserBinding(), strings.NewReader(string(bootstrap)))
+	owner, err := clientauthority.AdmitDesktop(personalTestOwner(ctx), f.rt.UserBinding(), strings.NewReader(string(bootstrap)))
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	f.owner = clientauthority.BindConnection(owner)
 }
 func (f *personalBoundaryFixture) sourceContext() context.Context {
-	return loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: f.id, ExecutionID: "synthetic-live-turn", SourceMessage: &providers.MessageRef{SessionID: f.id, Seq: f.sourceSeq}})
+	return loopdriver.WithExecutionContext(f.owner, loopdriver.ExecutionContext{SessionID: f.id, ExecutionID: "synthetic-live-turn", SourceMessage: &providers.MessageRef{SessionID: f.id, Seq: f.sourceSeq}})
 }
 func (f *personalBoundaryFixture) call() providers.ToolCall {
 	return providers.ToolCall{ID: "bounded-file-call", Name: "write_file", Arguments: `{"path":"note.txt","content":"saved once"}`}
@@ -187,7 +192,7 @@ func (f *personalBoundaryFixture) assertContents(path, want string) {
 
 func TestPersonalActionOwnerReconnectConcurrentClickAndReplay(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
-	r := f.pending(context.Background())
+	r := f.pending(f.owner)
 	command := f.command(r)
 	oldOwner := f.owner
 	f.cancelOwner()
@@ -233,7 +238,7 @@ func TestPersonalActionOwnerReconnectConcurrentClickAndReplay(t *testing.T) {
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", command, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.kit.Execute(context.Background(), f.call()); err != nil {
+	if _, err := f.kit.Execute(f.owner, f.call()); err != nil {
 		t.Fatal(err)
 	}
 	f.assertContents(path, "later user edit")
@@ -250,7 +255,7 @@ func TestPersonalActionChangedContentAndSymlinkCannotUseOldApproval(t *testing.T
 			if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			r := f.pending(context.Background())
+			r := f.pending(f.owner)
 			target := path
 			if change == "content" {
 				if err := os.WriteFile(path, []byte("intervening user edit"), 0600); err != nil {
@@ -288,7 +293,8 @@ func TestPersonalAutoReviewSettingsAreExplicitScopedAndDoNotChangeCoding(t *test
 		t.Fatal(err)
 	}
 	codingSessionDir := filepath.Join(codingBinding.State(f.rt.WuuHome), "sessions")
-	_, err := session.CreateInitialized(codingSessionDir, session.Session{ID: "coding-conversation", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "coding", CWD: codingRoot, Provider: "coding-provider", Model: "coding-model", ApproveForMe: true}, nil)
+	codingStore := newAppserverTestStore(t, codingSessionDir)
+	_, err := codingStore.CreateInitialized(session.Session{ID: "coding-conversation", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "coding", CWD: codingRoot, Provider: "coding-provider", Model: "coding-model", ApproveForMe: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +323,7 @@ func TestPersonalAutoReviewSettingsAreExplicitScopedAndDoNotChangeCoding(t *test
 	if !codingKit.ApproveForMe() {
 		t.Fatal("Personal opt-in changed Coding switch")
 	}
-	codingSession, found, err := session.Find(codingSessionDir, "coding-conversation")
+	codingSession, found, err := codingStore.Find("coding-conversation")
 	if err != nil || !found || !codingSession.ApproveForMe || codingSession.Provider != "coding-provider" || codingSession.Model != "coding-model" {
 		t.Fatalf("Personal settings changed persisted Coding selection: %+v %v", codingSession, err)
 	}
@@ -384,7 +390,7 @@ func TestPersonalAutoReviewMissingSourceAndOutageFallBackToManual(t *testing.T) 
 			}
 			f := newPersonalBoundaryFixture(t, client)
 			f.enableAuto()
-			ctx := context.Background()
+			ctx := personalTestOwner(context.Background())
 			if scenario == "model-outage" {
 				ctx = f.sourceContext()
 			}
@@ -414,7 +420,7 @@ func TestPersonalAutoReviewMissingSourceAndOutageFallBackToManual(t *testing.T) 
 
 func TestPersonalPendingActionSurvivesHostRestartAndOriginalOwnerReconnect(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
-	r := f.pending(context.Background())
+	r := f.pending(f.owner)
 	command := f.command(r)
 	f.cancelOwner()
 	if err := f.host.Close(); err != nil {
@@ -433,10 +439,16 @@ func TestPersonalPendingActionSurvivesHostRestartAndOriginalOwnerReconnect(t *te
 	if err := f.host.actions.drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	f.assertContents(filepath.Join(f.rt.RootDir, "note.txt"), "saved once")
 	if got := f.current(r.Action.Key()); got.Status != personalreview.Succeeded {
-		t.Fatalf("restart did not continue exact original action: %+v", got)
+		kit, kitErr := f.host.actions.toolkit(f.owner, got.Action)
+		var action tools.FileAction
+		_ = json.Unmarshal(got.Action.Arguments, &action)
+		if kitErr == nil {
+			kitErr = kit.ValidateFileAction(f.owner, action)
+		}
+		t.Fatalf("restart did not continue exact original action (%v): %+v", kitErr, got)
 	}
+	f.assertContents(filepath.Join(f.rt.RootDir, "note.txt"), "saved once")
 }
 
 func TestPersonalEditFileApprovalDispatchesFrozenEditOnce(t *testing.T) {
@@ -445,11 +457,11 @@ func TestPersonalEditFileApprovalDispatchesFrozenEditOnce(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original section\nunchanged section\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.kit.Execute(context.Background(), providers.ToolCall{Name: "read_file", Arguments: `{"path":"note.txt"}`}); err != nil {
+	if _, err := f.kit.Execute(f.owner, providers.ToolCall{Name: "read_file", Arguments: `{"path":"note.txt"}`}); err != nil {
 		t.Fatal(err)
 	}
 	call := providers.ToolCall{ID: "edit-call", Name: "edit_file", Arguments: `{"path":"note.txt","edits":[{"old_text":"original section","new_text":"approved section"}]}`}
-	if _, err := f.kit.Execute(context.Background(), call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
+	if _, err := f.kit.Execute(f.owner, call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
 		t.Fatalf("edit bypassed review: %v", err)
 	}
 	records, err := f.host.actions.engine.Records(context.Background(), f.rt.UserSpaceID)
@@ -464,7 +476,7 @@ func TestPersonalEditFileApprovalDispatchesFrozenEditOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.assertContents(path, "approved section\nunchanged section\n")
-	if _, err := f.kit.Execute(context.Background(), call); err != nil {
+	if _, err := f.kit.Execute(f.owner, call); err != nil {
 		t.Fatal("exact completed edit should return original receipt", err)
 	}
 	f.assertContents(path, "approved section\nunchanged section\n")
@@ -474,7 +486,7 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 	for _, mode := range []string{"safe-mode", "plugin-disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPersonalBoundaryFixture(t, nil)
-			r := f.pending(context.Background())
+			r := f.pending(f.owner)
 			// Hold the coordinator's dispatch drain while the real owner endpoint
 			// persists approval; then model a catalog transition before dispatch.
 			f.host.actions.drainMu.Lock()
@@ -491,7 +503,7 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 			if mode == "safe-mode" {
 				f.rt.SafeMode = true
 			} else {
-				f.rt.ActivePlugins = nil
+				f.rt.PluginHost.RetirePlugin(context.Background(), "personal", errors.New("synthetic user disable"))
 			}
 			f.host.actions.drainMu.Unlock()
 			if err := f.host.actions.drain(context.Background()); err != nil {
@@ -514,6 +526,126 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 			}
 			if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
 				t.Fatal("reenabling product revived the old approved action")
+			}
+		})
+	}
+}
+
+// A restarted coordinator may read terminal receipts, but must not resume the
+// provider using its shared server's owner when the admitting connection ended.
+func TestPersonalBackgroundRecoveryDoesNotBorrowOwner(t *testing.T) {
+	f := newPersonalBoundaryFixture(t, nil)
+	record := f.pending(f.owner)
+	_, err := f.host.actions.engine.Resolve(f.owner, record.Action.Key(), personalreview.Resolution{
+		Digest: record.Action.Digest, ExpectedRevision: record.Revision, Choice: personalreview.Reject,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cancelOwner()
+	if err := f.host.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.provider.calls.Store(0)
+	f.openHost()
+	// A new owner's connection is not authorization for the older action.
+	_ = f.host.actions.drain(context.Background())
+	if calls := f.provider.calls.Load(); calls != 0 {
+		t.Fatalf("recovery borrowed shared owner for %d provider calls", calls)
+	}
+	if got := f.current(record.Action.Key()); got.Status != personalreview.Denied {
+		t.Fatalf("recovery changed terminal receipt: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("background recovery caused an effect: %v", err)
+	}
+}
+
+// Selecting a new ledger must not silently forget older approvals, settings,
+// uncertain outcomes, or audit rows. Migration is an explicit operator action.
+func TestUserHostRequiresExplicitLegacyReviewMigration(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.UserSpaceID, rt.ProductDomain = "legacy-space", "personal"
+	rt.DataRoot = t.TempDir()
+	path := filepath.Join(rt.DataRoot, "personal-review.sqlite")
+	legacy, err := personalreview.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := legacy.GetSettings(context.Background(), rt.UserSpaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = legacy.SetSettings(context.Background(), rt.UserSpaceID, true, settings.Revision, "legacy-owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err = legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := NewUserHost(rt, personalhost.Options{})
+	if err == nil {
+		host.Close()
+		t.Fatal("legacy review ledger silently replaced by empty selected storage")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "migration") {
+		t.Fatalf("legacy migration requirement not reported: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("legacy ledger modified before explicit migration: %v", err)
+	}
+}
+
+// A receipt outlives its execution, but must not pin the implementation scope
+// after delivery or after the admitting principal is no longer valid.
+func TestPersonalActionReleasesExecutionAdmission(t *testing.T) {
+	for _, terminal := range []bool{true, false} {
+		t.Run(fmt.Sprint("terminal=", terminal), func(t *testing.T) {
+			f := newPersonalBoundaryFixture(t, nil)
+			var valid atomic.Bool
+			valid.Store(true)
+			caller, err := principal.OwnerConnection(principal.LocalOwner().Identity(), valid.Load)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.owner = principal.WithContext(f.owner, caller)
+			f.host.actions.drainMu.Lock()
+			locked := true
+			defer func() {
+				if locked {
+					f.host.actions.drainMu.Unlock()
+				}
+			}()
+			r := f.pending(f.owner)
+			if terminal {
+				if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(r), ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.host.actions.admissionsMu.Lock()
+			admitted := f.host.actions.admissions[r.Action.Key()]
+			f.host.actions.admissionsMu.Unlock()
+			if admitted.state == nil {
+				t.Fatal("pending execution did not retain its admitted implementation")
+			}
+			if !terminal {
+				valid.Store(false)
+			}
+			f.host.actions.drainMu.Unlock()
+			locked = false
+			if err := f.host.actions.drain(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if retained := admitted.state.Retain(); retained != nil {
+				_ = retained.Close()
+				t.Fatal("completed or revoked admission still retains its implementation scope")
+			}
+			if terminal {
+				f.assertContents(filepath.Join(f.rt.RootDir, "note.txt"), "saved once")
 			}
 		})
 	}

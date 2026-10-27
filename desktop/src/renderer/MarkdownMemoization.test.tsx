@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RichContent } from "./RichContent";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 import { streamTextKey, streamTextStore } from "./StreamText";
+import { PreviewContentProvider } from "./PreviewContentContext";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
 
 const markdownRender = vi.hoisted(() => ({ count: 0 }));
 
@@ -61,6 +63,26 @@ function render(element: JSX.Element): void {
 }
 
 describe("Markdown memoization", () => {
+  it("keeps cached message markdown parsed across navigation with the same preview service", () => {
+    const service = new ApplicationPreviewContent({
+      platform: "linux", listWorkspaceDirectory: vi.fn(), readWorkspaceFile: vi.fn(),
+      revealWorkspaceItem: vi.fn(), showWorkspaceItemMenu: vi.fn(), exportWorkspaceFile: vi.fn(),
+    });
+    function Harness({ active }: { active: number }): JSX.Element {
+      return <PreviewContentProvider service={service}>
+        {[0, 1].map(id => <div key={id} aria-hidden={id !== active}>
+          <RichContent text={longMarkdown} cwd="/tmp/project" />
+        </div>)}
+      </PreviewContentProvider>;
+    }
+    render(<Harness active={0} />);
+    const parsed = markdownRender.count;
+    expect(parsed).toBe(2);
+    render(<Harness active={1} />);
+    render(<Harness active={0} />);
+    expect(markdownRender.count).toBe(parsed);
+  });
+
   it("does not re-render user-message markdown when only parent draft state changes", () => {
     function Harness({ draft }: { draft: string }): JSX.Element {
       return (

@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -51,8 +52,8 @@ func newBatchAttentionHost(t *testing.T, seconds int64) (*UserHost, *runtime.Ses
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
-	rt.PluginHost = pluginhost.New(policy)
-	host, err := NewUserHost(rt)
+	attachTestModelGeneration(t, rt, policy)
+	host, err := NewUserHost(rt, personalhost.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +63,11 @@ func newBatchAttentionHost(t *testing.T, seconds int64) (*UserHost, *runtime.Ses
 
 func sendBatchAttentionTurn(t *testing.T, rt *runtime.Session, policy *batchAttentionPolicyClient, agent, request string) pluginhost.SessionAttentionInput {
 	t.Helper()
-	main, err := rt.PluginSessionRouter.Create(context.Background(), "fixture", pluginhost.SessionCreateParams{RequestID: "main-" + agent, Visibility: "plugin", ContextSource: "fresh", AgentID: agent})
+	main, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionCreateParams{RequestID: "main-" + agent, Visibility: "plugin", ContextSource: "fresh", AgentID: agent})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sent, err := rt.PluginSessionRouter.Send(context.Background(), "fixture", pluginhost.SessionSendParams{RequestID: request, SessionID: main.SessionID, Input: pluginhost.SessionInput{Prompt: "finish " + request}})
+	sent, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "fixture", pluginhost.SessionSendParams{RequestID: request, SessionID: main.SessionID, Input: pluginhost.SessionInput{Prompt: "finish " + request}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func TestUserHostAttentionBatchUsesFirstDeadlineAndPreservesResults(t *testing.T
 		if len(policy.calls) != 1 {
 			t.Fatalf("flush must freshly consult policy exactly once; calls = %d", len(policy.calls))
 		}
-		history, err := session.LoadHistoryRecords(rt.SessionDir, first.SessionID, false)
+		history, err := rt.Sessions.LoadHistoryRecords(first.SessionID, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +193,7 @@ func TestUserHostAttentionBatchRevokesPendingDelivery(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "session removed":
-					if _, err := session.Delete(rt.SessionDir, input.SessionID); err != nil {
+					if _, err := rt.Sessions.Delete(input.SessionID); err != nil {
 						t.Fatal(err)
 					}
 				case "host closed":
@@ -232,7 +233,7 @@ func TestUserHostAttentionBatchQueueIsBoundedWithoutBlockingCompletions(t *testi
 		// covers real turn completion and individual history preservation.
 		for index := range 129 {
 			id := fmt.Sprintf("bounded-session-%d", index)
-			_, err := session.CreateInitialized(rt.SessionDir, session.Session{
+			_, err := rt.Sessions.CreateInitialized(session.Session{
 				ID: id, CreatedAt: time.Now(), UserSpaceID: "local", ProductDomain: "personal",
 				Owner: "plugin:fixture", Visibility: "plugin", AgentID: fmt.Sprintf("agent-%d", index),
 			}, []session.HistoryRecord{{Role: "assistant", Content: "persisted result"}})

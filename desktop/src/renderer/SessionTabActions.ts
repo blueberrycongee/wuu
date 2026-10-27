@@ -35,6 +35,7 @@ type SetAppState = (update: SetStateAction<AppState>) => void;
 type ViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type SessionTabActionsDeps = {
+  onError?: (error: Error) => never;
   getAppState: () => AppState;
   getPendingViewSwitch: () => PendingViewSwitch | undefined;
   setAppState: SetAppState;
@@ -74,6 +75,7 @@ export function createSessionTabActions(
   const poppingOutThreadIDs = new Set<string>();
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 

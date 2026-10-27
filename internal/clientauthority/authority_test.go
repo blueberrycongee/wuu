@@ -31,10 +31,26 @@ func TestDesktopAdmissionRequiresSeparateMatchingBootstrap(t *testing.T) {
 		t.Fatal("cross-space owner admitted")
 	}
 	if err := RequireOwner(owner, userspace.Binding{}); err == nil {
-		t.Fatal("Coding admitted")
+		t.Fatal("unbound transport admitted")
 	}
 	cancel()
 	if err := RequireOwner(context.WithoutCancel(owner), binding); err == nil {
 		t.Fatal("detached callback retained closed connection authority")
+	}
+}
+
+// A host-minted owner proof identifies the exact user binding; it does not grant
+// product-specific action policy or authorize another domain.
+func TestDesktopOwnerProofHasNoProductPrivilege(t *testing.T) {
+	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "coding"}
+	owner, err := AdmitDesktop(context.Background(), binding, strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"coding"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireOwner(owner, binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireOwner(owner, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}); err == nil {
+		t.Fatal("proof crossed product binding")
 	}
 }

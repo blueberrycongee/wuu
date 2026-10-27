@@ -27,7 +27,8 @@ process.env.HOME = userHome;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_MODEL_SERVICES_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+// The local inference turn needs the bundled default loop driver.
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 
 const requests = [];
@@ -56,7 +57,9 @@ async function waitFor(win, fn, arg, timeout = 30000) {
 const settle = win => evaluate(win, async () => {
   await document.fonts.ready;
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  await Promise.all(document.getAnimations().filter(a => a.playState === 'running' && Number.isFinite(a.effect.getComputedTiming().endTime)).map(a => a.finished.catch(() => {})));
+  const animations = document.getAnimations().filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime));
+  // Theme changes can leave canceled transitions idle with an unresolved finished promise.
+  while (animations.some(animation => animation.playState === 'running')) await new Promise(requestAnimationFrame);
 });
 const shots = [];
 async function capture(win, name) {
@@ -337,13 +340,6 @@ async function run() {
   assert.deepEqual(cards.filter(card => card.isDefault).map(card => card.name), ['gateway']);
   await capture(main, '06-overview-after.png');
 
-  // General gathers how new conversations start; it shows the new default.
-  await openSettingsPage(main, 'general');
-  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
-  await capture(main, '06-general-new-conversations.png');
-  await openSettingsPage(main, 'providers');
-  await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
-
   // Every theme, text size, and width keeps controls inside the column.
   const layouts = [];
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {
@@ -387,6 +383,8 @@ async function run() {
       const viewport = panel.closest('.settings-scroll').getBoundingClientRect();
       const controls = [];
       for (const node of panel.querySelectorAll('button, input, select, summary')) {
+        // Closed details descendants can retain layout bounds without being visible.
+        if (!node.checkVisibility()) continue;
         const bounds = node.getBoundingClientRect();
         if (!bounds.width || !bounds.height) continue;
         const label = node.getAttribute('aria-label') || node.textContent.trim().slice(0, 40) || node.tagName;
@@ -427,9 +425,8 @@ async function run() {
   // Removal asks first and deletes the saved key with the service.
   await click(main, '[data-provider="deepseek"]');
   await waitFor(main, () => document.querySelector('.connection-page-title')?.textContent === 'DeepSeek');
-  await click(main, '.model-service-hero-actions [aria-haspopup="menu"]');
-  await waitFor(main, () => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent.includes('删除服务')));
-  await evaluate(main, () => [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent.includes('删除服务')).click());
+  await click(main, '.connection-engine-advanced > summary');
+  await click(main, '[data-testid="settings-provider-remove"]');
   await waitFor(main, () => document.querySelector('[data-testid="settings-provider-remove-confirm"]'));
   await capture(main, '08-remove-confirm.png');
   await click(main, '[data-testid="settings-provider-remove-confirm"]');
@@ -438,8 +435,8 @@ async function run() {
   assert.ok(!storedSecrets().includes('sk-e2e-deepseek'), 'Removing a service removes its saved key.');
 
   // Back in the app, a new conversation starts on the new default.
-  await click(main, '.settings-back-button');
-  await waitFor(main, () => document.querySelector('.composer textarea'));
+  await click(main, '[data-wuu-component="conversations-section"]');
+  await waitFor(main, () => !document.querySelector('.app-shell[data-settings-open]') && document.querySelector('.composer textarea'));
   await type(main, '.composer textarea', 'Which model answers this?');
   await click(main, '.composer-send-button');
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')].some(flow => flow.textContent.includes('Model services fixture answer.')), undefined, 60000);

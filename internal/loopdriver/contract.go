@@ -6,16 +6,27 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const ContractVersion = 1
 
 type Descriptor struct {
-	ID           string
-	Version      string
-	Capabilities []string
+	ID           string   `json:"id"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// Binding is the durable identity of a selected loop implementation. A new
+// default never changes an existing binding; switching requires an explicit
+// migration of its state and checkpoint.
+type Binding = pluginprotocol.DriverBinding
+
+// AcquireFunc retains the selected provider until release is called. A nil
+// expected binding selects the configured default; a saved binding must match
+// exactly. Success returns a non-nil driver and release function.
+type AcquireFunc func(ctx context.Context, expected *Binding) (driver Driver, binding Binding, release func(), err error)
 
 type ExecutionContext struct {
 	// SourceMessage is captured when the human input is admitted, not inferred from history.
@@ -29,13 +40,7 @@ type PersistedInput struct {
 	Messages []providers.ChatMessage
 }
 
-type LoopPolicy struct {
-	ModelRoundLimit   int
-	DisableTools      bool
-	DisableCompaction bool
-}
-
-type ModelLoopReceipt struct {
+type TurnReceipt struct {
 	ID string
 }
 
@@ -61,14 +66,13 @@ type TerminalOutcome struct {
 }
 
 type KernelGateway interface {
-	ExecuteModelLoop(context.Context, PersistedInput, LoopPolicy) (ModelLoopReceipt, error)
 	WriteCheckpoint(context.Context, Checkpoint) error
 }
 
 type Driver interface {
-	Descriptor() Descriptor
-	Create(ExecutionContext, PersistedInput) (Instance, error)
-	Resume(ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
+	Descriptor(context.Context) (Descriptor, error)
+	Create(context.Context, ExecutionContext, PersistedInput) (Instance, error)
+	Resume(context.Context, ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
 }
 
 type Instance interface {
@@ -76,6 +80,13 @@ type Instance interface {
 	Checkpoint() Checkpoint
 	Cancel(reason string)
 	Shutdown()
+}
+
+// BindingStore commits admission before a driver can create an instance.
+// Bind must compare an existing identity atomically and never replace it.
+type BindingStore interface {
+	LoadBinding(context.Context) (Binding, bool, error)
+	Bind(context.Context, Binding) error
 }
 
 type CheckpointStore interface {

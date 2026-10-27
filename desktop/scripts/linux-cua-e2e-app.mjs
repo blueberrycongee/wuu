@@ -158,7 +158,7 @@ async function setup() {
   }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Linux acceptance', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], {
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], {
     env: process.env, input: `${JSON.stringify({ id: 1, method: 'thread/start', params: { engine: 'wuu', provider: 'fixture', model: 'fixture', permission_mode: 'unconfined' } })}\n`, encoding: 'utf8', timeout: 30000,
   });
   assert.equal(boot.status, 0, boot.stderr);

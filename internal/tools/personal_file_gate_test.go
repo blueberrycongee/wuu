@@ -67,3 +67,66 @@ func TestPersonalFileActionRejectsHardlinkAlias(t *testing.T) {
 		t.Fatalf("outside file changed: %s %v", data, err)
 	}
 }
+
+type fencedFileAuthorizer struct {
+	mode  string
+	calls int
+}
+
+func (a *fencedFileAuthorizer) SupportsAtomicAuthorization() bool { return a.mode != "unsupported" }
+func (a *fencedFileAuthorizer) Authorize(context.Context, AuthorizationRequest) (AuthorizationDecision, error) {
+	return AuthorizationDecision{}, errors.New("snapshot policy must not replace effect fence")
+}
+func (a *fencedFileAuthorizer) WithAuthorization(ctx context.Context, r AuthorizationRequest, use func(context.Context) error) error {
+	a.calls++
+	if a.mode == "deny" {
+		return errors.New("selected policy denied")
+	}
+	if a.mode == "noop" {
+		return nil
+	}
+	if a.mode == "cancel" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		cancel()
+	}
+	return use(ctx)
+}
+func TestFileActionRequiresSelectedEffectFenceAndPreservesLocalBoundary(t *testing.T) {
+	for _, mode := range []string{"allow", "deny", "noop", "cancel", "read-only", "snapshot", "unsupported"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &fencedFileAuthorizer{mode: mode}
+			kit.SetAuthorizer(a)
+			if mode == "read-only" {
+				kit.SetBoundary(ReadOnlyBoundary())
+			}
+			if mode == "snapshot" {
+				kit.SetAuthorizer(&recordingAuthorizer{decision: AuthorizationDecision{Outcome: "allow"}})
+			}
+			frozen, err := kit.PrepareFileAction(context.Background(), providers.ToolCall{Name: "write_file", Arguments: `{"path":"file.txt","content":"exact"}`})
+			if mode == "snapshot" || mode == "unsupported" {
+				if err == nil {
+					t.Fatal("snapshot-only provider admitted reviewed effect")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = kit.ExecuteFileAction(context.Background(), frozen)
+			data, readErr := os.ReadFile(filepath.Join(root, "file.txt"))
+			if mode == "allow" {
+				if err != nil || readErr != nil || string(data) != "exact" || a.calls != 1 {
+					t.Fatalf("fenced write: %s %v %v calls=%d", data, err, readErr, a.calls)
+				}
+			} else if err == nil || !os.IsNotExist(readErr) {
+				t.Fatalf("unfenced write: %s %v %v", data, err, readErr)
+			}
+		})
+	}
+}

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func setupDiscoveredGrokProvider(t *testing.T) *runtime.Session {
@@ -29,6 +28,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 	for _, entry := range []string{"existing conversation", "new conversation"} {
 		t.Run(entry, func(t *testing.T) {
 			rt := setupDiscoveredGrokProvider(t)
+			bindConfigSourceForTest(t, rt)
 			before, _, err := rt.LoadEffectiveConfig()
 			if err != nil {
 				t.Fatal(err)
@@ -65,7 +65,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 			if built.StreamRunner.ProviderName != "grok-build" || built.StreamRunner.Model != "grok-4.6" || built.StreamRunner.Variant != "xhigh" {
 				t.Fatalf("selected runtime used a different model: %+v", built.Selection)
 			}
-			saved, ok, err := session.Find(rt.SessionDir, thread.ID)
+			saved, ok, err := rt.Sessions.Find(thread.ID)
 			if err != nil || !ok || saved.Provider != "grok-build" || saved.Model != "grok-4.6" {
 				t.Fatalf("selected session = %+v, found=%v, err=%v", saved, ok, err)
 			}
@@ -102,6 +102,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 func TestConversationRejectsUndiscoveredProvider(t *testing.T) {
 	rt := setupDiscoveredGrokProvider(t)
 	t.Setenv("GROK_HOME", t.TempDir())
+	bindConfigSourceForTest(t, rt)
 	before, err := os.ReadFile(rt.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
@@ -128,5 +129,59 @@ func TestConversationRejectsUndiscoveredProvider(t *testing.T) {
 	after, err := os.ReadFile(rt.ConfigPath)
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("unavailable provider changed configuration: %v", err)
+	}
+}
+
+// A next-step intent may choose only an already configured connection. Picker
+// discovery must not write config before the retained runtime rejects it.
+func TestNextStepSelectionDoesNotRegisterDiscoveredConnection(t *testing.T) {
+	rt := setupDiscoveredGrokProvider(t)
+	bindConfigSourceForTest(t, rt)
+	before, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "start")
+	threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+	th := srv.thread(threadID)
+	active, err := srv.ensureThreadRuntime(th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, _, err := rt.Sessions.Find(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	th.running = true
+	th.mu.Unlock()
+	defer func() { th.mu.Lock(); th.running = false; th.mu.Unlock() }()
+	params, _ := json.Marshal(ConfigModelUpdateParams{ThreadID: threadID, Provider: "grok-build", Model: "grok-4.6", ApplyAt: "next_step"})
+	if err := srv.handleConfigModelUpdate(Request{ID: json.RawMessage(`"select"`), Params: params}); err != nil {
+		t.Fatal(err)
+	}
+	response = responseByID(t, parseOutput(t, out.String()), "select")
+	if response["error"] == nil {
+		t.Error("next-step request accepted an unconfigured connection")
+	}
+	after, err := os.ReadFile(rt.ConfigPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("next-step selection registered a connection before rejecting: %v", err)
+	}
+	saved, _, err := rt.Sessions.Find(threadID)
+	if err != nil || saved.ModelSelectionRevision != previous.ModelSelectionRevision || saved.Provider != previous.Provider {
+		t.Fatalf("rejected connection changed durable selection: %+v %v", saved, err)
+	}
+	th.mu.Lock()
+	same := th.execRuntime == active
+	th.mu.Unlock()
+	if !same {
+		t.Fatal("rejected connection detached the active runtime")
 	}
 }

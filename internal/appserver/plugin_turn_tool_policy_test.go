@@ -12,7 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -30,16 +29,16 @@ func TestPluginTurnToolPolicyQueueAndRestore(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	rt.StreamRunner.Tools = newBlockingToolExecutor()
 	owner := &pluginTurnLifecycleClient{id: "observer", calls: make(chan pluginhost.AgentTurnLifecycleInput, 16)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { releaseFirst(); srv.Close() })
-	created, err := srv.createPluginSession(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	send := func(id string, disable bool) pluginhost.SessionSendResult {
 		t.Helper()
-		result, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: id, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: id}, DisableTools: disable})
+		result, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: id, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: id}, DisableTools: disable})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,25 +110,25 @@ func TestPluginTurnToolPolicyRejectsUnsupportedAdmission(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	created, err := srv.createPluginSession(context.Background(), "observer", pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	params := pluginhost.SessionSendParams{RequestID: "restricted", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "feedback"}, DisableTools: true, IfRunning: "steer"}
-	if _, err := srv.sendPluginSession(context.Background(), "observer", params); err == nil || !strings.Contains(err.Error(), "steer") {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || !strings.Contains(err.Error(), "steer") {
 		t.Fatalf("steer: %v", err)
 	}
 	params.IfRunning = "queue"
-	if _, err := session.SetEngine(rt.SessionDir, created.SessionID, "codex"); err != nil {
+	if _, err := rt.Sessions.SetEngine(created.SessionID, "codex"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.sendPluginSession(context.Background(), "observer", params); err == nil || !strings.Contains(err.Error(), "disable_tools") {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || !strings.Contains(err.Error(), "disable_tools") {
 		t.Fatalf("external: %v", err)
 	}
 	if srv.hasQueuedUserTurns(created.SessionID) {
 		t.Fatal("unsupported work queued")
 	}
-	records, err := session.LoadHistoryRecords(rt.SessionDir, created.SessionID, true)
+	records, err := rt.Sessions.LoadHistoryRecords(created.SessionID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,14 +146,14 @@ func TestPluginTurnToolPolicyRestoresAfterUnsuccessfulTurn(t *testing.T) {
 			rt.StreamRunner.Client = providers.AdaptStreamClient(client)
 			rt.StreamRunner.Tools = newBlockingToolExecutor()
 			owner := &pluginTurnLifecycleClient{id: "observer", calls: make(chan pluginhost.AgentTurnLifecycleInput, 16)}
-			rt.PluginHost = pluginhost.New(owner)
+			attachTestModelGeneration(t, rt, owner)
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			created, err := srv.createPluginSession(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
+			created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "restricted", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "feedback"}, DisableTools: true})
+			result, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "restricted", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "feedback"}, DisableTools: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +163,7 @@ func TestPluginTurnToolPolicyRestoresAfterUnsuccessfulTurn(t *testing.T) {
 				t.Fatal("restricted turn did not start")
 			}
 			if outcome == "cancel" {
-				if _, err := srv.cancelPluginSession(context.Background(), owner.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: result.TurnID}); err != nil {
+				if _, err := srv.cancelPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: result.TurnID}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -182,7 +181,7 @@ func TestPluginTurnToolPolicyRestoresAfterUnsuccessfulTurn(t *testing.T) {
 			client.mu.Lock()
 			client.outcome = ""
 			client.mu.Unlock()
-			if _, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "ordinary", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "ordinary"}}); err != nil {
+			if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "ordinary", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "ordinary"}}); err != nil {
 				t.Fatal(err)
 			}
 			for {
@@ -235,7 +234,7 @@ func TestPluginTurnToolPolicyRejectsChangedEngineBinding(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	created, err := srv.createPluginSession(context.Background(), "observer", pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", pluginhost.SessionCreateParams{RequestID: "create", Visibility: "user", ContextSource: "fresh"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +246,7 @@ func TestPluginTurnToolPolicyRejectsChangedEngineBinding(t *testing.T) {
 	th.mu.Lock()
 	th.EngineID = "codex"
 	th.mu.Unlock()
-	srv.runTurn(started.ctx, th, &runtime.ThreadRuntime{EngineID: "codex"}, started.turnID, started.runtime, started.history)
+	srv.runTurn(testRuntimeState(t, srv.rt), started.ctx, th, &runtime.ThreadRuntime{EngineID: "codex"}, started.turnID, started.runtime, started.history)
 	messages := parseOutput(t, out.String())
 	failed := remarshal[TurnErrorNotification](t, notificationByMethod(t, messages, NotificationTurnError)["params"])
 	if failed.Turn.Error == nil || !strings.Contains(failed.Turn.Error.Message, "disable_tools") {

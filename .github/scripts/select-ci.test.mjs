@@ -76,3 +76,21 @@ test('deleted UI sources and manual dispatch use full unit coverage', () => {
 test('documentation does not broaden a renderer-only change', () => {
   assert.deepEqual(JSON.parse(select(['docs/en/project/development.md', 'desktop/src/renderer/LanguagePreferenceSection.tsx']).desktop_related), ['src/renderer/LanguagePreferenceSection.tsx']);
 });
+
+test('architecture conformance covers desktop public boundaries without selecting unrelated Go suites', () => {
+  for (const path of ['desktop/src/main/trustedRemoteTransport.ts', 'desktop/src/shared/protocol.ts', 'desktop/scripts/trusted-desktop-e2e.mjs', 'desktop/src/renderer/plugins/PluginHost.ts', 'desktop/src/renderer/test/setup.ts', 'desktop/vitest.config.ts']) {
+    const result = select([path]);
+    assert.equal(result.architecture, 'true', path);
+    assert.equal(result.go, 'false', path);
+  }
+});
+
+test('architecture conformance follows shared changes and existing event policy, not renderer-only edits', () => {
+  for (const path of ['internal/runtime/session.go', 'packages/plugin-sdk/test/minimal-package.mjs', 'scripts/session-federation-e2e.mjs']) {
+    assert.equal(select([path]).architecture, 'true', path);
+  }
+  assert.equal(select(['desktop/src/renderer/LanguagePreferenceSection.tsx']).architecture, 'false');
+  assert.equal(select(['docs/en/project/development.md']).architecture, 'false');
+  assert.equal(select(['docs/en/project/development.md'], 'workflow_dispatch').architecture, 'true');
+  assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'false');
+});

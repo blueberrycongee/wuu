@@ -1,15 +1,15 @@
 import { workspacePdfRevision } from "./PdfSelection";
-import { useActiveContextMenu } from "./ActiveContextMenu";
-import { hostSupports } from "./HostCapabilities";
+import { ThreadContextMenu, copyToClipboard } from "./ThreadContextMenu";
+import { usePreviewContent } from "./PreviewContentContext";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
-  RuntimeContext,
-  WorkspaceDirectoryListResult,
-  WorkspaceFileReadResult,
-  WorkspaceFileTreeEntry
-} from "../shared/protocol";
+  PreviewDirectoryV1 as WorkspaceDirectoryListResult,
+  PreviewFileV1 as WorkspaceFileReadResult,
+  PreviewDirectoryEntryV1 as WorkspaceFileTreeEntry,
+} from "../../../packages/plugin-sdk/src/ui-preview-content";
+import type { ApplicationPreviewContextV1 as PreviewWorkspaceContext } from "../../../packages/plugin-sdk/src/ui-preview";
 import type { WorkspaceFileSelection } from "./LinkTargets";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
@@ -19,9 +19,7 @@ import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
-import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { VideoPreview } from "./VideoPreview";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
@@ -73,11 +71,16 @@ const WORKSPACE_TREE_CSS = `
     --trees-padding-inline-override: var(--workspace-row-inset);
     --trees-item-margin-x-override: 0px;
     --trees-item-padding-x-override: var(--workspace-row-pad-x);
+    --workspace-tree-content-inset-end: calc(var(--workspace-file-tree-rail-inset, 0px) + max(
+      var(--trees-padding-inline),
+      var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter))
+    ));
   }
 
   /* Document styles stop at the shadow boundary, so the tree restates the
      renderer's scrollbar policy (styles/scrollbars.css) for its scroller. */
   [data-file-tree-virtualized-scroll='true'] {
+    padding-inline-end: calc(var(--workspace-tree-content-inset-end) - var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter)));
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-ink) var(--scrollbar-track-bg);
     transition: --scrollbar-ink var(--motion-slower) var(--ease-out);
@@ -88,16 +91,12 @@ const WORKSPACE_TREE_CSS = `
     transition-duration: var(--motion-base);
   }
 
-  /* Rows end where the scroller's padding or its gutter does, whichever is
-     wider; the field ends there too. */
+  /* Search and rows share the rail inset; the scrollbar stays outside it. */
   [data-file-tree-search-container] {
     box-sizing: border-box;
     width: 100%;
     margin-inline: 0;
-    padding-inline-end: max(
-      var(--trees-padding-inline),
-      var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter))
-    );
+    padding-inline-end: var(--workspace-tree-content-inset-end);
   }
 
   /* The shared field box. The document's border-box sizing stops at the shadow
@@ -170,11 +169,12 @@ export function WorkspaceFileTree({
   selectedFilePath,
   onOpenFile,
 }: {
-  activeContext?: RuntimeContext;
+  activeContext?: PreviewWorkspaceContext;
   open: boolean;
   selectedFilePath?: string;
   onOpenFile: (path: string) => void;
 }): JSX.Element {
+  const { service } = usePreviewContent();
   const { locale, t } = useI18n();
   const [directories, setDirectories] = useState<Record<string, WorkspaceDirectoryListResult>>({});
   const [loading, setLoading] = useState(false);
@@ -201,7 +201,7 @@ export function WorkspaceFileTree({
     setDirectories({});
     setLoading(true);
     setError(undefined);
-    void window.wuu.listWorkspaceDirectory("", workspaceRoot).then((result) => {
+    void service.listDirectory({ path: "", root: workspaceRoot }).then((result) => {
       if (!cancelled) setDirectories({ "": result });
     }).catch((nextError) => {
       if (!cancelled) setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readFailed")));
@@ -212,7 +212,7 @@ export function WorkspaceFileTree({
       cancelled = true;
       directoryGenerationRef.current += 1;
     };
-  }, [open, workspaceRoot, locale, reloadGeneration]);
+  }, [service, open, workspaceRoot, locale, reloadGeneration]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -251,7 +251,7 @@ export function WorkspaceFileTree({
           const generation = directoryGenerationRef.current;
           const pending = loadingDirectoriesRef.current;
           pending.add(path);
-          void window.wuu.listWorkspaceDirectory(path, workspaceRoot).then((result) => {
+          void service.listDirectory({ path, root: workspaceRoot }).then((result) => {
             if (directoryGenerationRef.current === generation) {
               setDirectories((current) => ({ ...current, [path]: result }));
             }
@@ -273,6 +273,7 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
   onOpenFile: (path: string) => void;
   onLoadDirectory: (path: string) => void;
 }): JSX.Element {
+  const { service } = usePreviewContent();
   const { locale, t } = useI18n();
   const treeFrameRef = useRef<HTMLDivElement | null>(null);
   const paths = useMemo(() => Object.values(directories).flatMap((directory) => directory.entries.map((entry) => entry.path)), [directories]);
@@ -408,9 +409,10 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
       <FileTree
         model={model}
         style={WORKSPACE_FILE_TREE_STYLE}
-        renderContextMenu={(item, context) => desktopPlatform() === "darwin" && hostSupports("showWorkspaceItemMenu") ? (
+        renderContextMenu={(item, context) => service.capabilities.nativeItemMenu ? (
           <MacWorkspaceTreeContextMenu
-            absolutePath={absoluteWorkspacePath(workspaceRoot, item.path)}
+            path={item.path}
+            workspaceRoot={workspaceRoot}
             onClose={() => context.close()}
           />
         ) : (
@@ -428,27 +430,26 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
 });
 
 function MacWorkspaceTreeContextMenu({
-  absolutePath,
+  path,
+  workspaceRoot,
   onClose,
 }: {
-  absolutePath: string;
+  path: string;
+  workspaceRoot: string;
   onClose: () => void;
 }): null {
+  const { service } = usePreviewContent();
   const openedRef = useRef(false);
   useEffect(() => {
     if (openedRef.current) return;
     openedRef.current = true;
-    void window.wuu.showWorkspaceItemMenu(absolutePath).finally(onClose);
-  }, [absolutePath, onClose]);
+    void service.showItemMenu({ path, root: workspaceRoot }).then(onClose, onClose);
+  }, [service, path, workspaceRoot, onClose]);
   return null;
 }
 
 function WorkspaceTreeContextMenu({
-  entry,
-  workspaceRoot,
-  x,
-  y,
-  onClose
+  entry, workspaceRoot, x, y, onClose
 }: {
   entry: WorkspaceFileTreeEntry;
   workspaceRoot: string;
@@ -456,159 +457,21 @@ function WorkspaceTreeContextMenu({
   y: number;
   onClose: () => void;
 }): JSX.Element {
+  const { service } = usePreviewContent();
   const { t } = useI18n();
-  const ref = useRef<HTMLDivElement | null>(null);
-  useActiveContextMenu(onClose);
-  // The menu mounts at the cursor, but until React commits the first
-  // paint its own size isn't known — measure on the layout effect that
-  // runs just before paint, clamp to viewport so the user never sees
-  // it spilling off-screen.
-  const [position, setPosition] = useState({ x, y });
-  useLayoutEffect(() => {
-    const menuElement = ref.current;
-    if (!menuElement) {
-      return;
-    }
-    const rect = menuElement.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const margin = 8;
-    const clampedX = Math.max(
-      margin,
-      Math.min(viewportWidth - rect.width - margin, x),
-    );
-    const clampedY = Math.max(
-      margin,
-      Math.min(viewportHeight - rect.height - margin, y),
-    );
-    if (clampedX !== x || clampedY !== y) {
-      setPosition({ x: clampedX, y: clampedY });
-    }
-  }, [x, y]);
-
-  // Outside click + Escape dismiss. Listener attach is deferred to a
-  // setTimeout(0) so the original `contextmenu` event's pointerdown
-  // burst doesn't fire dismiss on the same gesture that opened us.
-  // Only left clicks dismiss — right clicks land on tree rows whose
-  // own `onContextMenu` handler re-opens / re-anchors the menu at the
-  // new cursor position; dismissing on right-click would race with
-  // that re-open and kill the menu instead of repositioning it.
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const menuElement = ref.current;
-      if (!menuElement) {
-        return;
-      }
-      if (event.target instanceof Node && menuElement.contains(event.target)) {
-        return;
-      }
-      onClose();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    let active = true;
-    const id = window.setTimeout(() => {
-      if (!active) {
-        return;
-      }
-      document.addEventListener("pointerdown", handlePointerDown);
-      document.addEventListener("keydown", handleKeyDown);
-    }, 0);
-    return () => {
-      active = false;
-      window.clearTimeout(id);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  // `entry.path` is absolute — it comes from the same main-process dir
-  // listing the tree itself renders against. Strip the workspace-root
-  // prefix so users get a repo-relative path for tools that take one
-  // (CLI flags, CI scripts, commit messages).
   const absolutePath = entry.path;
-  const relativePath = useMemo(() => {
-    const normalizedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/$/, "");
-    const normalizedPath = absolutePath.replace(/\\/g, "/");
-    return normalizedPath.startsWith(`${normalizedRoot}/`)
-      ? normalizedPath.slice(normalizedRoot.length + 1)
-      : absolutePath;
-  }, [absolutePath, workspaceRoot]);
-
-  // Silent failures only — the user already saw the menu close, and a
-  // notification toast for a clipboard / reveal failure would be louder
-  // than the action they tried. Both outcomes dismiss the menu.
-  const copyToClipboard = (value: string) => () => {
-    void navigator.clipboard.writeText(value).then(
-      () => onClose(),
-      () => onClose(),
-    );
-  };
-  const revealInFolder = () => {
-    void window.wuu.revealWorkspaceItem(absolutePath).then(
-      () => onClose(),
-      () => onClose(),
-    );
-  };
-
-  // Pierre Trees renders this component in a slot below its custom element.
-  // Portal to the host layer so the tree's strict containment, clipping, and
-  // compositor transform cannot change the fixed-position coordinate system
-  // or hide the menu outside the tree panel.
-  return (
-    <UILayerPortal layer="menu">
-      <div
-        ref={ref}
-        className="workspace-tree-context-menu"
-        data-wuu-component="menu"
-        data-wuu-layer="menu"
-        data-wuu-state="open"
-        role="menu"
-        style={{ left: position.x, top: position.y }}
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(absolutePath)}
-        >
-          {t("workspace.files.copyPath")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(relativePath)}
-        >
-          {t("workspace.files.copyRelativePath")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(entry.name)}
-        >
-          {t("workspace.files.copyFileName")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          disabled={!hostSupports("revealWorkspaceItem")}
-          onClick={revealInFolder}
-        >
-          {t("workspace.files.revealInFileManager")}
-        </button>
-      </div>
-    </UILayerPortal>
-  );
+  const normalizedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/$/, "");
+  const normalizedPath = absolutePath.replace(/\\/g, "/");
+  const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
+    ? normalizedPath.slice(normalizedRoot.length + 1) : absolutePath;
+  return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[
+    { label: t("workspace.files.copyPath"), onSelect: () => { void copyToClipboard(absolutePath); } },
+    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copyToClipboard(relativePath); } },
+    { label: t("workspace.files.copyFileName"), onSelect: () => { void copyToClipboard(entry.name); } },
+    { separator: true },
+    { label: t("workspace.files.revealInFileManager"), disabled: !service.capabilities.revealItem,
+      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(error => console.error("[desktop] reveal item failed", error)) },
+  ]} />;
 }
 
 function absoluteWorkspacePath(root: string, path: string): string {
@@ -680,7 +543,7 @@ export function WorkspaceFilePreview({
   onDirtyChange
 }: {
   active?: boolean;
-  activeContext?: RuntimeContext;
+  activeContext?: PreviewWorkspaceContext;
   editorResourceID?: string;
   selectedFilePath?: string;
   selection?: WorkspaceFileSelection;
@@ -689,6 +552,7 @@ export function WorkspaceFilePreview({
   onOpenFile?: (path: string) => void;
   onDirtyChange?: (state: WorkspaceFileDirtyState) => void;
 }): JSX.Element {
+  const { service } = usePreviewContent();
   const { locale, t } = useI18n();
   const [file, setFile] = useState<WorkspaceFileReadResult | undefined>(undefined);
   const [draftText, setDraftText] = useState("");
@@ -707,10 +571,19 @@ export function WorkspaceFilePreview({
 
   const selectedFileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath ?? ""}`;
   const selectedFileKeyRef = useRef(selectedFileKey);
-  useLayoutEffect(() => { selectedFileKeyRef.current = selectedFileKey; }, [selectedFileKey]);
+  const exportGenerationRef = useRef(0);
+  useLayoutEffect(() => {
+    selectedFileKeyRef.current = selectedFileKey;
+    exportGenerationRef.current += 1;
+    return () => { exportGenerationRef.current += 1; };
+  }, [selectedFileKey, service]);
+  useEffect(() => {
+    setExporting(false);
+    setExportError("");
+  }, [selectedFileKey, service]);
 
   useEffect(() => {
-    if (!selectedWorkspaceFilePath) {
+    if (!selectedWorkspaceFilePath || !activeContext?.cwd) {
       setFile(undefined);
       setDraftText("");
       setError(undefined);
@@ -728,8 +601,7 @@ export function WorkspaceFilePreview({
       setLoading(true);
     }
     setError(undefined);
-    void window.wuu
-      .readWorkspaceFile(selectedWorkspaceFilePath, activeContext?.cwd)
+    void service.readFile({ path: selectedWorkspaceFilePath, root: activeContext.cwd })
       .then((result) => {
         if (!cancelled) {
           loadedFileKeyRef.current = fileKey;
@@ -751,7 +623,7 @@ export function WorkspaceFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [activeContext?.cwd, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
+  }, [service, activeContext?.cwd, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
 
   const isMarkdown = Boolean(file && isMarkdownDocument(file.path));
   const isMarkdownReadingMode = isMarkdown && !selection;
@@ -818,7 +690,7 @@ export function WorkspaceFilePreview({
                 initialPage={anchor?.startsWith("pdf-page=") ? Number(new URLSearchParams(anchor).get("pdf-page")) : undefined}
                 pageRequest={anchor}
                 onRefresh={async (signal) => {
-                  const refreshed = await window.wuu.readWorkspaceFile(file.path, activeContext.cwd);
+                  const refreshed = await service.readFile({ path: file.path, root: activeContext.cwd }, { signal });
                   if (signal.aborted || selectedFileKeyRef.current !== selectedFileKey) return false;
                   setFile(refreshed);
                   return refreshed.renderable_kind === "pdf"
@@ -839,11 +711,11 @@ export function WorkspaceFilePreview({
       <WorkspacePanelEmpty
         title={t("workspace.files.cannotPreview")}
         description={t("workspace.files.binary")}
-        action={hostSupports("revealWorkspaceItem") ? (
+        action={service.capabilities.revealItem ? (
           <button
             className="settings-button"
             type="button"
-            onClick={() => void window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${file.path}`)}
+            onClick={() => void service.revealItem({ path: file.path, root: activeContext.cwd })}
           >
             {t("workspace.files.revealInFileManager")}
           </button>
@@ -860,6 +732,7 @@ export function WorkspaceFilePreview({
                   ref={markdownHostRef}
                   text={draftText}
                   cwd={activeContext.cwd}
+                  documentPath={file.path}
                   onOpenFile={onOpenFile}
                   allowRawHtml
                   sourceMapping
@@ -898,19 +771,26 @@ export function WorkspaceFilePreview({
       error={error}
       fallback={fallback}
       open={onOpenFile}
-      reveal={hostSupports("revealWorkspaceItem") ? (path) => window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${path}`) : undefined}
+      reveal={service.capabilities.revealItem ? (path) => service.revealItem({ path, root: activeContext.cwd }) : undefined}
       reload={() => setPresenterReloadKey((value) => value + 1)}
     />
   );
-  if (!window.wuu.exportWorkspaceFile) return presentation;
+  if (!service.capabilities.exportFile) return presentation;
   return <div className="workspace-file-with-export">
     <div className="workspace-file-export-actions">
       <button type="button" disabled={loading || exporting || !file} onClick={() => {
         if (!file || exporting) return;
+        const generation = exportGenerationRef.current;
         setExporting(true); setExportError("");
-        void window.wuu.exportWorkspaceFile!(file.path, activeContext.cwd)
-          .catch(error => setExportError(desktopApiErrorMessage(error, translateCurrent("workspace.files.openFailed"))))
-          .finally(() => setExporting(false));
+        void service.exportFile({ path: file.path, root: activeContext.cwd })
+          .catch(error => {
+            if (exportGenerationRef.current === generation) {
+              setExportError(desktopApiErrorMessage(error, translateCurrent("workspace.files.openFailed")));
+            }
+          })
+          .finally(() => {
+            if (exportGenerationRef.current === generation) setExporting(false);
+          });
       }}>{t("artifacts.downloadNamed", { name: file?.path ?? selectedWorkspaceFilePath })}</button>
       {exportError && <span role="alert">{exportError}</span>}
     </div>

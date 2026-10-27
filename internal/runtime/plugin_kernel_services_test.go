@@ -16,12 +16,37 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
+
+func activateServiceTestHost(t *testing.T, native *kernelHostServices, registry *pluginhost.ServiceRegistry, clients ...pluginhost.Client) {
+	t.Helper()
+	dependencies := testKernelStateProviders(t, t.TempDir())
+	if conflicts := registry.RegisterClients(dependencies...); len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host := pluginhost.New(append(append(dependencies, native), clients...)...)
+	host.AttachServiceRegistry(registry, nil)
+	for _, handler := range native.services {
+		handler.settingsClient = pluginsettings.NewClient(kernelServiceCall(host, registry, pluginsettings.ServiceName))
+		handler.credentials = credentialstore.NewClient(kernelServiceCall(host, registry, credentialstore.ServiceName))
+	}
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := host.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+		registry.Close(context.Background())
+	})
+}
 
 func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testing.T) {
 	if root := os.Getenv("WUU_FILE_LOCK_E2E_HELPER"); root != "" {
@@ -51,7 +76,6 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 			t.Fatalf("kernel service %q was not registered", descriptor.Name)
 		}
 	}
-	registry.AllowPreflight(item.ID, pluginhost.KernelPreflightRequirements())
 
 	if _, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelStorageSetService, Method: pluginhost.KernelServiceMethod,
@@ -63,7 +87,7 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelStorageGetService, pluginhost.KernelStorageSetService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 	if _, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelStorageSetService, Method: pluginhost.KernelServiceMethod,
 		Params: json.RawMessage(`{"scope":"workspace","key":"state","value":"active"}`),
@@ -193,13 +217,14 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 const send=x=>process.stdout.write(JSON.stringify(x)+'\n');let seq=0;const pending=new Map();
 const tool=(id)=>({id,description:id,input_schema:{type:'object',properties:{content:{type:'string'}},additionalProperties:false}});
 createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(!q.method){const f=pending.get(q.id);if(f){pending.delete(q.id);f(q)}return}if(q.method==='execution.cancel')return;
-if(q.method==='initialize'){send({id:q.id,result:{protocol_version:3,lifecycle_version:1,tools:['append','hold','crash'].map(tool),required_services:[{name:'memory.session',major_version:1,required:true},{name:'host.file-lock',major_version:1,required:true}]}});return}
-if(q.method==='activate'||q.method==='shutdown'||q.method==='service.changed'){send({id:q.id,result:null});return}
+if(q.method==='initialize'){send({id:q.id,result:{protocol_version:3,lifecycle_version:2,tools:['append','hold','crash'].map(tool),required_services:[{name:'memory.session',major_version:1,required:true},{name:'host.file-lock',major_version:1,required:true}]}});return}
+if(q.method==='prepare'||q.method==='activate'||q.method==='shutdown'||q.method==='service.changed'){send({id:q.id,result:null});return}
 if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}const id='fixture-'+(++seq);pending.set(id,r=>send(r.error?{id:q.id,error:r.error}:{id:q.id,result:{result:{content:[{type:'text',text:JSON.stringify(r.result)}]}}}));const hold=q.params.tool_id==='hold';send({id,method:'host.service.call',params:{service:hold?'host.file-lock':'memory.session',method:hold?'acquire':'append',execution_id:q.params.execution_id,params:hold?{root:'workspace_state',path:'held.lock'}:{thread_id:'shared',target:'notes',content:q.params.arguments.content,source:'nested'}}});}});`
 		if err := os.WriteFile(filepath.Join(fixtureRoot, "runtime.mjs"), []byte(fixture), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		stateDir, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+		project := t.TempDir()
+		userHome, stateDir := testWorkspaceState(t, project)
 		makeHost := func(withConsumer bool) (*pluginhost.Host, *kernelHostServices) {
 			memory := serviceTestPlugin("memory", "plugin:user:memory", "one")
 			memory.Root = memoryRoot
@@ -213,7 +238,7 @@ if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}con
 			}
 			host, services, err := buildPluginHost(items, project, "workspace", userHome, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				return pluginhost.Start(ctx, cfg)
-			}, nil, nil)
+			}, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +355,7 @@ func TestKernelRegistryIntrospectRoutesThroughRegistry(t *testing.T) {
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelRegistryIntrospectService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 
 	result, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelRegistryIntrospectService, Method: pluginhost.KernelServiceMethod,
@@ -347,14 +372,11 @@ func TestKernelRegistryIntrospectRoutesThroughRegistry(t *testing.T) {
 	}
 	foundStorage, foundIntrospect := false, false
 	for _, entry := range snapshot.Services {
-		if entry.Provider != "kernel" || !entry.Kernel {
-			t.Fatalf("unexpected non-kernel entry: %+v", entry)
-		}
 		switch entry.Service {
 		case pluginhost.KernelStorageGetService:
-			foundStorage = true
+			foundStorage = entry.Provider == kernel.ID()
 		case pluginhost.KernelRegistryIntrospectService:
-			foundIntrospect = true
+			foundIntrospect = entry.Provider == kernel.ID()
 		}
 	}
 	if !foundStorage || !foundIntrospect {
@@ -383,7 +405,7 @@ func TestKernelExecutionUpdateRoutesToExecutionTable(t *testing.T) {
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelExecutionUpdateService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 
 	result, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelExecutionUpdateService, Method: pluginhost.KernelServiceMethod,
@@ -447,7 +469,7 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 	defer cancel(nil)
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
 		ExecutionSnapshot: pluginhost.ExecutionSnapshot{
-			ID: "exec-trusted", PluginID: "ask-user", ThreadID: "thread-trusted",
+			ID: "exec-trusted", PluginID: "ask-user", Kind: "tool", ThreadID: "thread-trusted",
 			TurnID: "turn-trusted", ActorID: "actor-trusted", CallID: "call-trusted",
 		},
 		Context: executionCtx,
@@ -465,7 +487,7 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 	done := make(chan invokeResult, 1)
 	go func() {
 		result, err := (&userQuestionOfferInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-trusted",
+			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 			Params: json.RawMessage(`{"questions":[{"id":"choice","question":"Choose","options":[{"label":"A"}]}]}`),
 		})
 		done <- invokeResult{result: result, err: err}
@@ -497,13 +519,13 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 
 func TestKernelUserQuestionRejectsSpoofedOwnershipPayload(t *testing.T) {
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
-		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", ThreadID: "trusted", TurnID: "trusted", CallID: "trusted"},
+		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", Kind: "tool", ThreadID: "trusted", TurnID: "trusted", CallID: "trusted"},
 		Context:           context.Background(),
 	}}
 	kernel := newKernelHostServices(nil, recorder)
 	kernel.bindUserQuestions(pluginhost.NewUserQuestionBroker())
 	_, err := (&userQuestionAskInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-		Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-1",
+		Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 		Params: json.RawMessage(`{"thread_id":"spoofed","turn_id":"spoofed","questions":[{"id":"q","question":"Q","options":[{"label":"A"}]}]}`),
 	})
 	var serviceErr *pluginhost.HostServiceError
@@ -515,7 +537,7 @@ func TestKernelUserQuestionRejectsSpoofedOwnershipPayload(t *testing.T) {
 func TestKernelUserQuestionEndsWithOwningExecution(t *testing.T) {
 	executionCtx, cancelExecution := context.WithCancelCause(context.Background())
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
-		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", ThreadID: "thread-1", TurnID: "turn-1", CallID: "call-1"},
+		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", Kind: "tool", ThreadID: "thread-1", TurnID: "turn-1", CallID: "call-1"},
 		Context:           executionCtx,
 	}}
 	broker := pluginhost.NewUserQuestionBroker()
@@ -526,7 +548,7 @@ func TestKernelUserQuestionEndsWithOwningExecution(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := (&userQuestionAskInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-1",
+			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 			Params: json.RawMessage(`{"questions":[{"id":"q","question":"Q","options":[{"label":"A"}]}]}`),
 		})
 		done <- err
@@ -595,7 +617,12 @@ func TestKernelSessionContextRejectsCrossDomainAndSpoofedBindings(t *testing.T) 
 			home := t.TempDir()
 			dir := statepath.SessionsDir(home)
 			handler := newPluginHostServices(serviceTestPlugin("memory", "plugin:user:memory", "generation"), t.TempDir(), home, nil)
-			handler.binding, handler.sessionDir = hostBinding, dir
+			handler.binding, handler.sessions = hostBinding, testSessionStore(t, dir)
+			handler.turnRouter = NewPluginSessionRouter()
+			unbind := handler.turnRouter.BindSessionResourceAccess(func(ctx context.Context, _ string, _ string, _ *pluginhost.ExecutionAuthorizationReference, _ string) (context.Context, error) {
+				return ctx, nil
+			})
+			defer unbind()
 			defer handler.close()
 			for _, target := range []struct {
 				id      string
@@ -606,7 +633,7 @@ func TestKernelSessionContextRejectsCrossDomainAndSpoofedBindings(t *testing.T) 
 				{id: "user-coding", binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "coding"}},
 				{id: "legacy-coding"},
 			} {
-				_, err := session.CreateInitialized(dir, session.Session{ID: target.id, UserSpaceID: target.binding.UserSpaceID, ProductDomain: target.binding.ProductDomain, CWD: home, CreatedAt: time.Now().UTC()}, nil)
+				_, err := handler.sessions.CreateInitialized(session.Session{ID: target.id, UserSpaceID: target.binding.UserSpaceID, ProductDomain: target.binding.ProductDomain, CWD: home, CreatedAt: time.Now().UTC()}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

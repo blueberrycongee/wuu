@@ -1,7 +1,9 @@
 package insight
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"testing"
 	"time"
 
@@ -9,27 +11,27 @@ import (
 )
 
 func TestCollectUsageScanReturnsProviderAndModel(t *testing.T) {
-	dir := t.TempDir()
+	store := insightTestStore(t)
 	start := time.Date(2026, time.April, 17, 9, 0, 0, 0, time.UTC)
 
-	writeInsightSessionRecords(t, dir, "sess-anthropic", []memoryRecord{
+	writeInsightSessionRecords(t, store, "sess-anthropic", []memoryRecord{
 		{Role: "user", Content: "implement feature a", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
 		{Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6", InputTokens: 100, OutputTokens: 50, CacheCreationTokens: 80, CacheReadTokens: 20, At: start.Add(2 * time.Minute)},
 		{Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6", InputTokens: 200, OutputTokens: 80, CacheCreationTokens: 100, CacheReadTokens: 50, At: start.Add(3 * time.Minute)},
 	})
-	writeInsightSessionRecords(t, dir, "sess-openai", []memoryRecord{
+	writeInsightSessionRecords(t, store, "sess-openai", []memoryRecord{
 		{Role: "user", Content: "implement feature b", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
 		{Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o", InputTokens: 500, OutputTokens: 200, CacheReadTokens: 100, At: start.Add(2 * time.Minute)},
 	})
-	writeInsightSessionRecords(t, dir, "sess-mixed", []memoryRecord{
+	writeInsightSessionRecords(t, store, "sess-mixed", []memoryRecord{
 		{Role: "user", Content: "legacy session", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
 		{Role: "meta", Content: "token_usage", InputTokens: 50, OutputTokens: 10, At: start.Add(2 * time.Minute)},
 	})
 
-	scan, err := CollectUsageScan(dir)
+	scan, err := CollectUsageScan(store)
 	if err != nil {
 		t.Fatalf("CollectUsageScan: %v", err)
 	}
@@ -67,12 +69,12 @@ func TestCollectUsageScanReturnsProviderAndModel(t *testing.T) {
 }
 
 func TestCollectUsageScanCountsSkillCallsAcrossPersistedShapes(t *testing.T) {
-	dir := t.TempDir()
+	store := insightTestStore(t)
 	sessionID := "usage-skills"
-	if _, err := sessionstore.CreateWithMetadata(dir, sessionID, ""); err != nil {
+	if _, err := store.CreateWithMetadata(sessionID, ""); err != nil {
 		t.Fatal(err)
 	}
-	writeInsightSessionRecords(t, dir, sessionID, []memoryRecord{
+	writeInsightSessionRecords(t, store, sessionID, []memoryRecord{
 		{
 			Role: "assistant",
 			ToolCalls: []toolCallRec{
@@ -101,7 +103,7 @@ func TestCollectUsageScanCountsSkillCallsAcrossPersistedShapes(t *testing.T) {
 		},
 	})
 
-	scan, err := CollectUsageScan(dir)
+	scan, err := CollectUsageScan(store)
 	if err != nil {
 		t.Fatalf("CollectUsageScan: %v", err)
 	}
@@ -129,13 +131,13 @@ type memoryRecord struct {
 	Model               string        `json:"model,omitempty"`
 }
 
-func writeInsightSessionRecords(t *testing.T, sessDir, id string, records []memoryRecord) {
+func writeInsightSessionRecords(t *testing.T, store *sessionstore.Store, id string, records []memoryRecord) {
 	t.Helper()
 
-	if _, exists, err := sessionstore.Find(sessDir, id); err != nil {
+	if _, exists, err := store.Find(id); err != nil {
 		t.Fatalf("find session: %v", err)
 	} else if !exists {
-		if _, err := sessionstore.CreateWithMetadata(sessDir, id, ""); err != nil {
+		if _, err := store.CreateWithMetadata(id, ""); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 	}
@@ -143,7 +145,7 @@ func writeInsightSessionRecords(t *testing.T, sessDir, id string, records []memo
 	for _, rec := range records {
 		history = append(history, historyRecordFromMemoryRecord(t, rec))
 	}
-	if err := sessionstore.RewriteHistoryRecords(sessDir, id, history); err != nil {
+	if err := store.RewriteHistoryRecords(id, history); err != nil {
 		t.Fatalf("rewrite session records: %v", err)
 	}
 }
@@ -168,4 +170,14 @@ func historyRecordFromMemoryRecord(t *testing.T, rec memoryRecord) sessionstore.
 		Provider:            rec.Provider,
 		Model:               rec.Model,
 	}
+}
+
+func insightTestStore(t *testing.T) *sessionstore.Store {
+	t.Helper()
+	documents, err := persistence.Open(context.Background(), t.TempDir(), "jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = documents.Close() })
+	return sessionstore.NewStore(context.Background(), documents)
 }

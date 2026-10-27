@@ -8,10 +8,10 @@ export { Github } from "lucide-react";
 export type IconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 export type IconComponent = ReturnType<typeof createIcon>;
 
-function createIcon(name: IconName, defaultStrokeWidth = 1.75) {
+function createIcon(name: IconName) {
   const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
   const Icon = forwardRef<SVGSVGElement, IconProps>(function WuuIcon({
-    size = 24, color = "currentColor", strokeWidth = defaultStrokeWidth, className = "", children, ...props
+    size = 24, color = "currentColor", strokeWidth = "var(--icon-stroke)", className = "", children, ...props
   }, ref) {
     return (
       <svg ref={ref} xmlns="http://www.w3.org/2000/svg" width={size} height={size}
@@ -29,6 +29,8 @@ function createIcon(name: IconName, defaultStrokeWidth = 1.75) {
 }
 
 export const Activity = createIcon("Activity");
+export const Volume2 = createIcon("Volume2");
+export const VolumeX = createIcon("VolumeX");
 export const AlertCircle = createIcon("AlertCircle");
 export const AlertTriangle = createIcon("AlertTriangle");
 export const Archive = createIcon("Archive");
@@ -63,6 +65,7 @@ export const ClipboardList = createIcon("ClipboardList");
 export const Clock = createIcon("Clock");
 export const Clock3 = createIcon("Clock3");
 export const Code2 = createIcon("Code2");
+export const Cog = createIcon("Cog");
 export const Copy = createIcon("Copy");
 export const CornerDownRight = createIcon("CornerDownRight");
 export const CornerUpLeft = createIcon("CornerUpLeft");
@@ -143,7 +146,7 @@ export const Plug = createIcon("Plug");
 export const PlugZap = createIcon("PlugZap");
 export const Plus = createIcon("Plus");
 export const Quote = createIcon("Quote");
-export const Project = createIcon("Project", 1.9);
+export const Project = createIcon("Project");
 export const Presentation = createIcon("Presentation");
 export const Puzzle = createIcon("Puzzle");
 export const RefreshCw = createIcon("RefreshCw");

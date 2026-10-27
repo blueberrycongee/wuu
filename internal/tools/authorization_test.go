@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -45,11 +46,21 @@ func TestAuthorizerFailureAndInvalidOutcomeFailClosed(t *testing.T) {
 	}
 }
 
-func TestWorkspaceBoundaryDenialRunsBeforeAuthorizer(t *testing.T) {
+func TestAuthorizerCannotOverrideWorkspaceBoundary(t *testing.T) {
 	authorizer := &recordingAuthorizer{decision: AuthorizationDecision{Outcome: "allow"}}
 	kit := &Toolkit{env: &Env{}, boundary: ReadOnlyBoundary(), authorizer: authorizer}
 	err := kit.checkPermission(context.Background(), ToolInfo{Name: "write_file", Kind: ToolKindFile}, providers.ToolCall{Name: "write_file"})
-	if err == nil || len(authorizer.requests) != 0 {
+	if err == nil || len(authorizer.requests) != 1 {
 		t.Fatalf("error = %v requests = %+v", err, authorizer.requests)
+	}
+}
+
+func TestAuthorizerDenialPrecedesReviewer(t *testing.T) {
+	authorizer := &recordingAuthorizer{decision: AuthorizationDecision{Outcome: "deny", Reason: "selected policy"}}
+	reviewer := &recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeAllow}}
+	kit := &Toolkit{env: &Env{PermissionMode: "standard"}, boundary: StandardBoundary(), authorizer: authorizer, reviewer: reviewer, approveForMe: true}
+	err := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash", Arguments: `{"command":"rm build/output"}`})
+	if err == nil || !strings.Contains(err.Error(), "selected policy") || len(reviewer.requests) != 0 {
+		t.Fatalf("policy denial reached reviewer: err=%v reviews=%+v", err, reviewer.requests)
 	}
 }

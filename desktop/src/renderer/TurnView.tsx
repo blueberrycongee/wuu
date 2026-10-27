@@ -2,26 +2,24 @@
 
 import { useLayoutEffect, useRef } from "react";
 import type {
+  SessionLocatorV1,
   InputFile,
   InputImage,
   MessageContentPart,
   ThreadItem,
   Turn,
 } from "../shared/protocol";
+import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
-import { ArtifactThreadContext } from "./ArtifactPreviewContext";
+import { ArtifactThreadContext, ArtifactLocatorContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
-  CONTINUE_TURN_EVENT,
-  type ContinueTurnDetail,
-  OPEN_SETTINGS_EVENT,
-  type OpenSettingsDetail,
   StreamStatusNotice,
   TurnEventNotice,
   TurnFailureNotice,
@@ -38,15 +36,16 @@ import {
   turnEndedInFailure,
   turnLeftPartialWork,
 } from "./TurnViewHelpers";
+import { showErrorToast } from "./Toast";
 import { translateCurrent as t } from "./i18n";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { PluginSurface } from "./plugins";
+import { ConversationTurnIdentityProvider, useConversationControls } from "./ConversationControlsContext";
 
 export { latestAgentMessageItemID };
 
 export type TurnViewProps = {
   turn: Turn;
   threadID?: string;
+  sessionLocator?: SessionLocatorV1;
   engineID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
@@ -73,47 +72,24 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
+  const { slots, slotOwner } = useConversationControls();
   const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
-  const threadId = props.threadID ?? desktopPluginHost.getActiveConversationThreadId();
   return (
-    <ArtifactThreadContext.Provider value={threadId}>
-    <PluginSurface
-      host={desktopPluginHost}
-      id="conversation.timeline"
-      context={{
-        version: 1,
-        turns: [projectedTurn],
-        awaiting: false,
-        interrupted: projectedTurn.status === "interrupted",
-        ...(threadId === undefined ? {} : { threadId }),
-        cwd: props.cwd,
-        actions: {
-          openFile: props.onOpenFile,
-          openAgent: props.onOpenAgent,
-          forkMessage: props.onForkMessage,
-          editMessage: props.onEditMessage,
-        },
-      }}
-      fallback={<TurnContent {...props} threadID={threadId} turn={projectedTurn} />}
-    />
+    <ArtifactThreadContext.Provider value={props.threadID}>
+    <ArtifactLocatorContext.Provider value={props.sessionLocator}>
+    <ConversationTurnIdentityProvider threadId={props.threadID} turnId={projectedTurn.id}>
+      <slots.Slot
+        name={`${slotOwner}/conversation.turn`}
+        context={{ threadId: props.threadID, turnId: projectedTurn.id }}
+        fallback={<TurnContent {...props} turn={projectedTurn} />}
+      />
+    </ConversationTurnIdentityProvider>
+    </ArtifactLocatorContext.Provider>
     </ArtifactThreadContext.Provider>
   );
-}
-
-function openModelServices(): void {
-  window.dispatchEvent(new CustomEvent<OpenSettingsDetail>(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } }));
-}
-
-// Resolves once the app sent the follow-up, or at once when nothing claimed
-// the request.
-function continueTurn(threadID: string): Promise<void> {
-  return new Promise((resolve) => {
-    const detail: ContinueTurnDetail = { threadID, text: t("turnFailure.continuePrompt"), done: () => resolve() };
-    if (window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail, cancelable: true }))) resolve();
-  });
 }
 
 function workspaceTurnForPresentation(turn: Turn): Turn {
@@ -144,6 +120,7 @@ function TurnContent({
   streamStatus,
   isLatestTurn,
 }: TurnViewProps): JSX.Element {
+  const { application } = useConversationControls();
   const turnElementRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const node = turnElementRef.current;
@@ -272,9 +249,10 @@ function TurnContent({
   // continue their native session, just as we do when a turn left partial work.
   const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
   const canRewindHistory = !engineID || engineID === "wuu" || engineID === "codex";
-  const shouldContinue = !canRewindHistory || turnLeftPartialWork(turn);
+  const shouldContinue = !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
+    && ((Boolean(threadID) && (!engineID || engineID === "wuu")) || !canRewindHistory || turnLeftPartialWork(turn));
   const continueFailedTurn = recoverable && shouldContinue && threadID
-    ? () => continueTurn(threadID)
+    ? async () => { await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") }); }
     : undefined;
   const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(
@@ -287,7 +265,7 @@ function TurnContent({
     error: turn.error,
     onRetry: retryFailedTurn,
     onContinue: continueFailedTurn,
-    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? openModelServices : undefined,
+    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? () => { void application.invoke("settings.open", { pageId: "providers" }).catch(showErrorToast); } : undefined,
   };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (

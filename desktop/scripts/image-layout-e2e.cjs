@@ -58,7 +58,8 @@ function layoutMotionSettled() {
 }
 async function select(id) {
   await evaluate(id => {
-    const row = [...document.querySelectorAll(".thread-row")].find(row => row.textContent.includes(id));
+    const row = [...document.querySelectorAll(".project-thread-list .thread-row")]
+      .find(row => row.querySelector(".thread-row-title").textContent === id);
     if (!row) throw new Error(`Missing conversation ${id}`);
     row.querySelector(".thread-row-main").click();
   }, id);
@@ -92,7 +93,8 @@ function threads(url, kind, count) {
           { id: `${id}-user-${index}`, type: "user_message", status: "completed", text: `Question ${index + 1}` },
           ...(pictures && kind === "artifact" ? images.map((uri, image) => ({
             id: `artifact-${image}`, type: "tool_call", name: "present_artifact", status: "completed",
-            result_detail: { content: [{ type: "image", name: image === 0 ? "fixture.gif" : "fixture.png", mime_type: image === 0 ? "image/gif" : "image/png", uri, artifact: { placement: "inline", ref: `image-${image}` } }] },
+            // These tool images use gated HTTP sources, not managed snapshot identities.
+            result_detail: { content: [{ type: "image", name: image === 0 ? "fixture.gif" : "fixture.png", mime_type: image === 0 ? "image/gif" : "image/png", uri, artifact: { placement: "inline" } }] },
           })) : []),
           { id: `${id}-answer-${index}`, type: "agent_message", status: "completed", text:
             `Answer ${index + 1}.\n\n` +
@@ -136,7 +138,7 @@ app.whenReady().then(async () => {
         preload: path.join(__dirname, "image-layout-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
       } });
       await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-      await until(() => document.querySelectorAll(".thread-row").length === 2);
+      await until(() => document.querySelectorAll(".project-thread-list .thread-row").length === 2);
       await select("pictures");
       if (width === 420) {
         await evaluate(() => {

@@ -13,12 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 const maxUserHostConnections = 16
@@ -60,6 +62,7 @@ type userHostResponse struct {
 type userHostOutput struct {
 	data    []byte
 	barrier chan struct{}
+	guard   func() error
 }
 type userHostConnection struct {
 	id          string
@@ -71,7 +74,7 @@ type userHostConnection struct {
 	failure     error
 }
 
-func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHost, error) {
+func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serverOptions ...ServerOption) (*UserHost, error) {
 	if rt == nil || !rt.UserBinding().IsUser() {
 		return nil, errors.New("persistent user host requires an explicit user binding")
 	}
@@ -84,7 +87,7 @@ func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHos
 	h.attentionJobs = make(chan userAttentionJob, 32)
 	h.attentionEvents = make(chan userAttentionEvent, 128)
 	h.attentionLastTurn = make(map[string]string)
-	h.server = New(rt, h)
+	h.server = New(rt, h, serverOptions...)
 	if h.server.startupErr != nil {
 		err := h.server.startupErr
 		h.attentionCancel()
@@ -99,10 +102,6 @@ func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHos
 			h.server.storageMaintenanceCancel = nil
 		}
 	}
-	personalOptions := personalhost.Options{}
-	if len(options) > 0 {
-		personalOptions = options[0]
-	}
 
 	if rt.UserBinding().Domain() == "personal" {
 		var err error
@@ -115,11 +114,22 @@ func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHos
 		h.server.personalActions = h.actions
 		if broker, ok := personalOptions.Connectors.(*personalconnectors.Broker); ok {
 			broker.SetAuthorization(h.actions.connectorAuthority)
+			broker.SetAuthorizationBoundary(h.actions.withConnectorAuthorization)
 		}
 		personalOptions.Review = h.actions.Call
 		if rt.Toolkit != nil {
 			rt.Toolkit.SetFileActionGate(h.actions.gate)
 		}
+	}
+	additionalAuthorization := personalOptions.Authorize
+	personalOptions.Authorize = func(ctx context.Context, operation, verifiedSession string) error {
+		if err := h.authorizePersonalOperation(ctx, operation, verifiedSession); err != nil {
+			return err
+		}
+		if additionalAuthorization != nil {
+			return additionalAuthorization(ctx, operation, verifiedSession)
+		}
+		return nil
 	}
 	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
 	if rt.PluginSessionRouter != nil {
@@ -169,7 +179,22 @@ func (h *UserHost) Close() error {
 
 // Write accepts one JSONL frame from the single server. A slow or disconnected
 // client can lose its own transport, never stall task completion or its peers.
+// Internal notifications have no ambient transport identity. WriteAuthorized
+// checks every recipient and captures its current policy for queued replay.
+func (h *UserHost) writeRecipientNotification(notification Notification) error {
+	data, err := json.Marshal(notification)
+	if err != nil {
+		return err
+	}
+	_, err = h.WriteAuthorized(append(data, '\n'), nil)
+	return err
+}
+
 func (h *UserHost) Write(p []byte) (int, error) {
+	return h.WriteAuthorized(p, nil)
+}
+
+func (h *UserHost) WriteAuthorized(p []byte, guard func() error) (int, error) {
 	n := len(p)
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(p, &envelope); err != nil {
@@ -201,7 +226,7 @@ func (h *UserHost) Write(p []byte) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			route.connection.enqueue(append(data, '\n'))
+			route.connection.enqueueAuthorized(append(data, '\n'), guard)
 		}
 		return n, nil
 	}
@@ -211,7 +236,22 @@ func (h *UserHost) Write(p []byte) (int, error) {
 	}
 	h.mu.Unlock()
 	for _, c := range connections {
-		c.enqueue(p)
+		var params any
+		if err := json.Unmarshal(envelope["params"], &params); err != nil {
+			continue
+		}
+		_, recipientGuard, allowed := h.server.authorizeOutbound(c.ctx, Notification{Method: method, Params: params})
+		if !allowed {
+			continue
+		}
+		c.enqueueAuthorized(p, func() error {
+			if guard != nil {
+				if err := guard(); err != nil {
+					return err
+				}
+			}
+			return recipientGuard()
+		})
 	}
 	if attention != nil {
 		h.enqueueAttention(*attention)
@@ -247,7 +287,12 @@ func (h *UserHost) terminalLocation(method string, raw json.RawMessage) (json.Ra
 		data, err := json.Marshal(params)
 		return data, nil, err
 	}
-	metadata, found, err := session.Find(h.runtime.SessionDir, terminal.ThreadID)
+	state, stateErr := h.runtime.RetainState()
+	if stateErr != nil {
+		return nil, nil, stateErr
+	}
+	defer state.Close()
+	metadata, found, err := state.Sessions.Find(terminal.ThreadID)
 	if err != nil || !found || metadata.UserSpaceID != binding.UserSpaceID || metadata.ProductDomain != binding.ProductDomain || metadata.ParentID != "" || !strings.HasPrefix(metadata.Owner, "plugin:") || metadata.Visibility != "plugin" || metadata.AgentID == "" {
 		data, err := json.Marshal(params)
 		return data, nil, err
@@ -280,7 +325,18 @@ func (h *UserHost) terminalLocation(method string, raw json.RawMessage) (json.Ra
 	return data, job, err
 }
 
-func (c *userHostConnection) enqueue(data []byte) {
+func (c *userHostConnection) enqueue(data []byte) { c.enqueueAuthorized(data, nil) }
+
+func (c *userHostConnection) enqueueAuthorized(data []byte, guard func() error) {
+	if guard != nil {
+		authorization := guard
+		guard = func() error {
+			if err := c.ctx.Err(); err != nil {
+				return err
+			}
+			return authorization()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ctx.Err() != nil {
@@ -293,7 +349,7 @@ func (c *userHostConnection) enqueue(data []byte) {
 	}
 	copy := append([]byte(nil), data...)
 	select {
-	case c.output <- userHostOutput{data: copy}:
+	case c.output <- userHostOutput{data: copy, guard: guard}:
 		c.queuedBytes += len(copy)
 	default:
 		c.failure = ErrUserHostClientOverflow
@@ -308,6 +364,13 @@ func (c *userHostConnection) enqueue(data []byte) {
 func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, registrar PushRegistrar) error {
 	if ctx == nil || in == nil || out == nil {
 		return errors.New("user host connection requires context, input and output")
+	}
+	caller, authenticated := principal.FromContext(ctx)
+	if !authenticated || !caller.Valid() {
+		return errors.New("authenticated user host principal is required")
+	}
+	if err := caller.Check(ctx); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -345,7 +408,23 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 					close(frame.barrier)
 					continue
 				}
-				_, err := out.Write(frame.data)
+				var err error
+				if frame.guard != nil {
+					err = frame.guard()
+				}
+				if err == nil {
+					if guarded, ok := out.(GuardedWriter); ok && frame.guard != nil {
+						_, err = guarded.WriteAuthorized(frame.data, frame.guard)
+					} else {
+						_, err = out.Write(frame.data)
+					}
+				} else {
+					// Revocation discards protected queued data without leaking it.
+					c.mu.Lock()
+					c.queuedBytes -= len(frame.data)
+					c.mu.Unlock()
+					continue
+				}
 				c.mu.Lock()
 				c.queuedBytes -= len(frame.data)
 				if err != nil {
@@ -405,22 +484,63 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 		}
 		switch req.Method {
 		case MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel,
+			MethodStateInspectionsList, MethodStateInspectionsReconcile,
 			MethodDevicePushRegister, MethodDevicePushUnregister, MethodShutdown,
 			MethodUserQuestionList, MethodUserQuestionRespond, MethodUserQuestionCancel, MethodUserQuestionHold:
 		default:
 			// A user host exposes product-owned operations, never a generic
 			// thread editor, storage mutator, workspace shell, or Coding export.
-			direct := &Server{out: userHostConnectionWriter{c}}
+			direct := &Server{out: userHostConnectionWriter{c}, access: connectionAccess{principal: caller, policy: h.server.access.policy}}
 			_ = direct.writeResponse(req.ID, nil, errors.New("user host client method is unavailable; use the active plugin client contract"))
 			continue
 		}
+		var requestedBinding struct {
+			UserSpaceID   string `json:"user_space_id,omitempty"`
+			ProductDomain string `json:"product_domain,omitempty"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &requestedBinding); err != nil {
+				return err
+			}
+		}
+		requested := userspace.Binding{UserSpaceID: requestedBinding.UserSpaceID, ProductDomain: requestedBinding.ProductDomain}
+		if requested.UserSpaceID != "" || requested.ProductDomain != "" {
+			if requested.Validate() != nil || !h.runtime.UserBinding().Matches(requested) {
+				direct := &Server{out: userHostConnectionWriter{c}, access: connectionAccess{principal: caller, policy: h.server.access.policy}}
+				_ = direct.writeResponse(req.ID, nil, errors.New("request belongs to another user space or product domain"))
+				continue
+			}
+		}
+		// Scope is a transport routing envelope. Canonical host methods retain
+		// their own DTOs after the immutable user-host binding has been checked.
+		if req.Method != MethodPluginClientRequest && (requested.UserSpaceID != "" || requested.ProductDomain != "") {
+			var params map[string]json.RawMessage
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return err
+			}
+			delete(params, "user_space_id")
+			delete(params, "product_domain")
+			req.Params, _ = json.Marshal(params)
+		}
 		if req.Method == MethodShutdown {
+			if err := h.server.authorizeRequest(ctx, req); err != nil {
+				direct := &Server{out: userHostConnectionWriter{c}, access: connectionAccess{principal: caller, policy: h.server.access.policy}}
+				_ = direct.writeResponse(req.ID, nil, err)
+				continue
+			}
 			data, _ := json.Marshal(Response{ID: req.ID, Result: OKResult{OK: true}})
 			c.enqueue(append(data, '\n'))
 			return nil
 		}
 		if req.Method == MethodDevicePushRegister || req.Method == MethodDevicePushUnregister {
-			direct := &Server{out: userHostConnectionWriter{c}, pushRegistrar: registrar}
+			direct := &Server{rt: h.runtime, out: userHostConnectionWriter{c}, pushRegistrar: registrar, access: connectionAccess{principal: caller, policy: h.server.access.policy}}
+			if err := direct.authorizeRequest(ctx, req); err != nil {
+				_ = direct.writeResponse(req.ID, nil, err)
+				continue
+			}
+			if err := direct.trackAuthorizedRequest(ctx, req); err != nil {
+				return err
+			}
 			if req.Method == MethodDevicePushRegister {
 				_ = direct.handleDevicePushRegister(req)
 			} else {
@@ -514,4 +634,38 @@ func (w userHostConnectionWriter) Write(p []byte) (int, error) {
 // Do not classify proven client text using legacy synthetic-message envelopes.
 func (s *Server) isUserHostClientInput(entry queuedTurn) bool {
 	return s.rt != nil && s.rt.UserBinding().IsUser() && entry.snapshot.PluginTurn != nil && entry.msg.Origin == "user" && entry.msg.Role == "user" && !entry.msg.Hidden && !entry.msg.ReadOnly
+}
+
+func (w userHostConnectionWriter) WriteAuthorized(p []byte, guard func() error) (int, error) {
+	w.connection.enqueueAuthorized(p, guard)
+	return len(p), nil
+}
+
+// Personal domain services never borrow the shared execution server's ambient
+// owner identity. Only the transport/admitted execution can carry its principal.
+func (h *UserHost) authorizePersonalOperation(ctx context.Context, operation, verifiedSession string) error {
+	return h.server.authorizePersonalOperation(ctx, operation, verifiedSession)
+}
+
+func (s *Server) authorizePersonalOperation(ctx context.Context, operation, verifiedSession string) error {
+	_, execution, known := personalhost.OperationAccess(operation)
+	if !known {
+		return errors.New("Personal operation is unavailable")
+	}
+	caller, authenticated := principal.FromContext(ctx)
+	if !authenticated || !caller.Valid() {
+		return errors.New("authenticated Personal principal is required")
+	}
+	resources := []access.Resource{{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}}
+	if execution {
+		if verifiedSession == "" {
+			return errors.New("host-resolved execution resource is required")
+		}
+		resources = append(resources, access.Resource{Kind: "session", ID: verifiedSession})
+	}
+	if err := s.AuthorizeResource(ctx, "personal/"+operation, resources...); err != nil {
+		return err
+	}
+	s.appendContextResponseScope(ctx, "personal/"+operation, resources...)
+	return nil
 }

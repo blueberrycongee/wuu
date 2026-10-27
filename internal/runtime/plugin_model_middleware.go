@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -110,7 +111,7 @@ func (c *modelMiddlewareClient) StreamChat(ctx context.Context, request provider
 }
 
 func (c *modelMiddlewareClient) invocation(ctx context.Context, request providers.ChatRequest, stream bool) (context.Context, pluginhost.ModelMiddlewareInput, error) {
-	logical := logicalModelRequest(request)
+	logical := modelwire.RequestToWire(request)
 	wire, err := canonicalModelContinuationRequest(logical)
 	if err != nil {
 		return ctx, pluginhost.ModelMiddlewareInput{}, fmt.Errorf("encode model middleware request: %w", err)

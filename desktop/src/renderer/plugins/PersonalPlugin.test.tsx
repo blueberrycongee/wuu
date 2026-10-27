@@ -1,3 +1,4 @@
+import { selectPersonalTestApplication } from "./PersonalApplication.test-support";
 import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,7 +19,7 @@ const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/p
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 const main = { agent_id: "a-main", user_space_id: "local", name: "Mosaic", kind: "main", main_session_id: "s-private", status: "active", revision: 2 };
 const cleanups: Array<() => void> = [];
-beforeEach(() => { window.localStorage.clear(); });
+beforeEach(() => { window.localStorage.clear(); Object.assign(window, { wuu: { ...window.wuu, reportPluginDesktopActivation: vi.fn(async () => {}) } }); });
 afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); });
 async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean } = {}) {
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
@@ -44,13 +45,13 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
   });
   // Personal hides search; search-contract fixtures opt into the shared surface without changing product defaults.
   const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: PluginConversationMessage, View: fixtures.historySearch ? props => <PluginConversationView {...props} showHistorySearch /> : PluginConversationView, Attachment: PluginConversationAttachment } });
-  await host.activateGeneration({ pluginId: "personal", generation: "one", register: activate });
-  if (fixtures.calendarView) await host.activateGeneration({ pluginId: "personal-calendar", generation: "one", register: api => { api.registerViewType({ id: "personal-calendar.confirmation", title: "Calendar confirmation", defaultRegion: "overlay", persistence: "session", render: () => null }); } });
-  const controller = new WorkbenchController(host);
+  const controller = await selectPersonalTestApplication(host);
+  await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal", generation: "one", register: activate });
+  if (fixtures.calendarView) await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal-calendar", generation: "one", register: api => { api.registerViewType({ id: "personal-calendar.confirmation", title: "Calendar confirmation", defaultRegion: "overlay", persistence: "session", render: () => null }); } });
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   let disposed = false;
-  const dispose = () => { if (disposed) return; disposed = true; act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("personal-calendar"); container.remove(); };
+  const dispose = () => { if (disposed) return; disposed = true; act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("test.application"); host.unload("personal-calendar"); container.remove(); };
   cleanups.push(dispose);
   await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />));
   const click = async (selector: string, scope: ParentNode = container) => { const button = (scope === container && selector.startsWith(".composer-") ? container.querySelector(".mosaic-replies") ?? scope : scope).querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); await act(async () => button!.click()); };
@@ -256,6 +257,7 @@ async function chooseFiles(container: HTMLElement, files: File[]) {
   await act(async () => { Object.defineProperty(input!, "files", { configurable: true, value: files }); input!.dispatchEvent(new Event("change", { bubbles: true })); });
 }
 function attachmentBrowser() {
+  if (!Blob.prototype.text) Object.defineProperty(Blob.prototype, "text", { configurable: true, value: function(this: Blob) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsText(this); }); } });
   Object.defineProperty(crypto, "subtle", { configurable: true, value: webcrypto.subtle });
   const create = vi.fn(() => "blob:verified-scoped-file"), revoke = vi.fn();
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create });
@@ -300,14 +302,15 @@ it.each(["corrupt", "closed"])("never exposes an unverified or late inline reply
   if (mode === "corrupt") await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).not.toBeNull());
   expect(browser.create).not.toHaveBeenCalled(); expect(ui.container.querySelector('.mosaic-replies img')).toBeNull();
 });
-it("opens artifacts only through agent-scoped verified chunks and revokes the Blob on navigation", async () => {
+it("opens SVG artifacts only through agent-scoped verified chunks as inert text", async () => {
   const browser = attachmentBrowser();
   const ui = await mount(async (method, input) => method === "agents.attachments.read" ? { data: input.offset === 0 ? "aGVs" : "bG8=", offset: input.offset, total: 8, content_type: "image/svg+xml", name: "diagram.svg", sha256: fileDigest } : {}, main,
     [{ seq: 7, role: "assistant", content: "Result", attachments: [{ kind: "artifact", index: 0, name: "diagram.svg", mime_type: "image/svg+xml", size: 5, sha256: fileDigest }] }]);
   await ui.click('[data-action="open-attachment"]');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.attachments.read", input: { agent_id: "a-main", seq: 7, kind: "artifact", index: 0, sha256: fileDigest, offset: 4 } }));
-  await vi.waitFor(async () => { await act(async () => {}); expect(browser.create).toHaveBeenCalledWith(expect.any(Blob)); }); expect(ui.container.querySelector("img")).toBeNull();
-  await ui.remount(); expect(browser.revoke).toHaveBeenCalledWith("blob:verified-scoped-file");
+  await vi.waitFor(async () => { await act(async () => {}); expect(ui.container.querySelector(".conversation-attachment-preview pre")?.textContent).toBe("hello"); });
+  expect(browser.create).not.toHaveBeenCalled(); expect(ui.container.querySelector("img, iframe, object, embed")).toBeNull();
+  await ui.remount(); expect(ui.container.querySelector(".conversation-attachment-preview")).toBeNull();
 });
 it("does not expose a Blob URL for corrupt attachment chunks", async () => {
   const browser = attachmentBrowser();
@@ -395,9 +398,9 @@ it("does not pass off a different history record as the searched original", asyn
 
 it("uses native controls without exposing personal messages or drafts to Coding extension providers", async () => {
   const message = vi.fn(() => <span>Coding replacement</span>), completion = vi.fn(() => null), surface = vi.fn((_context, fallback) => fallback);
-  await desktopPluginHost.activateGeneration({ pluginId: "test:coding-observers", generation: "one", register(api) {
+  await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId: "test:coding-observers", generation: "one", register(api) {
     api.registerRenderer({ id: "messages", category: "message", match: "text/markdown", render: message });
-    api.registerSurface("conversation.message", { id: "surface", mode: "replace", render: surface });
+    api.registerUIContribution({ target: "wuu.default-conversation/conversation.message", id: "surface", mode: "wrap", render: surface });
     api.registerComposerInlineCompletionProvider({ id: "drafts", provideCompletion: completion });
   } });
   cleanups.push(() => act(() => desktopPluginHost.unload("test:coding-observers")));
@@ -571,8 +574,8 @@ it("keeps one main conversation and its draft while right-panel task and output 
 });
 it("keeps task history in one native process fold without detail action rows or hidden context", async () => {
   const surface = vi.fn((_context, fallback) => fallback);
-  await desktopPluginHost.activateGeneration({ pluginId: "test:task-detail-observer", generation: "one", register(api) {
-    api.registerSurface("conversation.message", { id: "surface", mode: "replace", render: surface });
+  await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId: "test:task-detail-observer", generation: "one", register(api) {
+    api.registerUIContribution({ target: "wuu.default-conversation/conversation.message", id: "surface", mode: "wrap", render: surface });
   } });
   cleanups.push(() => act(() => desktopPluginHost.unload("test:task-detail-observer")));
   const result = "A **verified result** with [a local file](file:///private/result.txt)";
@@ -789,7 +792,7 @@ it("shows decisions in the main conversation and answers through the Personal ho
   Object.defineProperty(window, "wuu", { configurable: true, value: { ...prior, listUserQuestions: list, answerUserQuestion: answer, onServerEvent: vi.fn(handler => { onEvent = handler; return () => {}; }) } });
   cleanups.push(() => Object.defineProperty(window, "wuu", { configurable: true, value: prior }));
   const ui = await mount();
-  const context = { kind: "user", user_space_id: "local", product_domain: "personal", cwd: "" };
+  const context = { kind: "user", user_space_id: "local", product_domain: "personal", composition_profile: "personal", cwd: "" };
   expect(list).toHaveBeenCalledWith(undefined, context);
   expect(ui.container.querySelectorAll('.plugin-conversation .user-question-card')).toHaveLength(2);
   expect(ui.container.querySelector('.mosaic-sidebar .user-question-card')).toBeNull();
@@ -910,7 +913,7 @@ it.each([true, false])("holds and submits a custom Personal offer (reply_to_tool
   await ui.edit("Preserve unrelated draft"); await chooseFiles(ui.container, [new File(["hello"], "draft.txt", { type: "text/plain" })]);
   await vi.waitFor(() => expect(ui.container.querySelector('.composer-attachment-tray')?.textContent).toContain("draft.txt"));
   await ui.click('.user-question-offer-custom');
-  const context = { kind: "user", user_space_id: "local", product_domain: "personal", cwd: "" };
+  const context = { kind: "user", user_space_id: "local", product_domain: "personal", composition_profile: "personal", cwd: "" };
   expect(hold).toHaveBeenCalledWith("offer-one", context);
   expect(ui.container.querySelector('.user-question-card')).not.toBeNull();
   const input = ui.container.querySelector<HTMLInputElement>('.user-question-offer-input')!;
@@ -1326,7 +1329,7 @@ it("renders Personal interactive parts with automatic sync, preserves prose, and
   const spec = genuiFixtures.checklist;
   let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "fixture-surface", messageId: "fixture-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
   const observer = vi.fn(() => <p>Coding observer</p>);
-  await desktopPluginHost.activateGeneration({ pluginId: "test:genui-observer", generation: "one", register(api) { api.registerRenderer({ id: "observer", category: "message", match: "text/markdown", render: observer }); } });
+  await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId: "test:genui-observer", generation: "one", register(api) { api.registerRenderer({ id: "observer", category: "message", match: "text/markdown", render: observer }); } });
   cleanups.push(() => act(() => desktopPluginHost.unload("test:genui-observer")));
   const ui = await mount(async (method, input) => {
     if (method === "genui.sync") {

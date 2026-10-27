@@ -3,14 +3,20 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestBundledAutomationResolvesRuntimeHelper(t *testing.T) {
+	currentVersion, err := os.ReadFile(filepath.Join("..", "..", "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	plugins := discoverBundled(t.TempDir(), DiscoverOptions{
-		GOOS:      "darwin",
-		LookPath:  func(command string) (string, error) { return command, nil },
-		LookupEnv: func(string) (string, bool) { return "", false },
+		GOOS:       "darwin",
+		WuuVersion: strings.TrimSpace(string(currentVersion)),
+		LookPath:   func(command string) (string, error) { return command, nil },
+		LookupEnv:  func(string) (string, bool) { return "", false },
 	})
 	for _, item := range plugins {
 		if item.ID != "automation" {

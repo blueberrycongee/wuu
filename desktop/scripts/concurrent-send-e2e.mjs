@@ -46,7 +46,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_CONCURRENT_SEND_CORE || path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
 
@@ -68,7 +68,7 @@ const server = http.createServer((req, res) => {
     const messages = body.messages || [];
     const user = messages.findLast(message => message.role === 'user'
       && !String(message.content).trimStart().startsWith('<system-reminder>'));
-    const text = typeof user?.content === 'string' ? user.content : JSON.stringify(user?.content);
+    const text = typeof user?.content === 'string' ? user.content : (user?.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
     if (!body.stream) return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Concurrent send' } }] }));
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -96,7 +96,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// Keep the busy response in flight until a second send or Stop has been issued.
+// Keep the busy response in flight while the retained draft or Stop is inspected.
 const register = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => register(channel, async (...args) => {
   if (channel === 'wuu:turn-start') {
@@ -165,7 +165,7 @@ async function send(text, attachment = false) {
   await until(() => rpc.some(row => row.method === 'turn/start' && row.prompt === text)
     || evaluate(() => document.querySelector('.composer textarea')?.value === ''), `submitted ${text}`);
 }
-const idle = () => until(() => evaluate(() => Boolean(document.querySelector('.composer-send-button[data-wuu-state="send"]'))), 'idle composer');
+const idle = () => until(() => evaluate(() => Boolean(document.querySelector('.composer-send-button[data-wuu-state="send"], .composer-send-button[data-wuu-state="continue"]'))), 'idle composer');
 const snapshot = id => evaluate(id => window.wuu.resumeThread(id), id);
 function arm(prompt, options = {}) {
   collision = { prompt, background: `Competing background turn ${prompt}`, release: deferred(), ...options };
@@ -212,22 +212,44 @@ async function run() {
   const first = arm('Retain this first message');
   await send(first.prompt, true);
   await until(() => first.rejection, 'first busy rejection');
-  await send('Retain this second message');
-  assert.equal(rpc.filter(row => row.method === 'turn/queue').length, 0, 'later input waits for the first admission');
+  await evaluate(() => {
+    window.sendWaitFrames = [];
+    window.recordSendWait = true;
+    const sample = () => {
+      if (!window.recordSendWait) return;
+      const input = document.querySelector('.composer textarea');
+      window.sendWaitFrames.push({ text: input?.value, queue: Boolean(document.querySelector('[data-wuu-component="composer-pending"]')), state: document.querySelector('[data-wuu-component="composer-send"]')?.dataset.wuuState, top: input?.getBoundingClientRect().top });
+      requestAnimationFrame(sample);
+    };
+    sample();
+  });
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+  assert.equal(rpc.filter(row => row.method === 'turn/queue').length, 0, 'duplicate Enter does not enqueue the retained draft');
+  assert.equal(rpc.filter(row => row.method === 'turn/start' && row.prompt === first.prompt).length, 1);
   first.release.resolve();
-  await until(() => rpc.filter(row => row.method === 'turn/queue').length === 2, 'both messages queued');
+  await until(() => rpc.filter(row => row.method === 'turn/queue').length === 1, 'first message queued');
   const queued = rpc.filter(row => row.method === 'turn/queue');
-  assert.deepEqual(queued.map(row => row.prompt), [first.prompt, 'Retain this second message']);
+  assert.deepEqual(queued.map(row => row.prompt), [first.prompt]);
   assert.equal(queued[0].client, first.input[8], 'fallback retains the original client ID');
   assert.deepEqual(queued[0].files, first.input[3], 'fallback retains encoded attachments');
   assert.equal(queued[0].files.length, 1);
   await until(() => blockers.has(first.background), 'background provider blocked');
   const retained = await snapshot(id);
-  assert.equal(retained.pending_user_messages.length, 2, 'core snapshot includes both accepted messages');
-  assert.equal(await evaluate(() => Boolean(document.querySelector('[data-wuu-component="composer-pending"]'))), true);
+  assert.equal(retained.pending_user_messages.length, 1, 'core retains the waiting message');
+  const frames = await evaluate(() => { window.recordSendWait = false; return window.sendWaitFrames; });
+  assert.ok(frames.length > 0);
+  assert.ok(frames.every(frame => frame.text === first.prompt && !frame.queue && frame.state === 'submitting'), 'waiting never flashes a queue row or clears the input');
+  assert.ok(Math.max(...frames.map(frame => frame.top)) - Math.min(...frames.map(frame => frame.top)) < 1, 'waiting input stays in place');
+  fs.writeFileSync(path.join(output, 'waiting-frames.json'), JSON.stringify(frames, null, 2));
+  fs.writeFileSync(path.join(output, 'waiting.png'), (await main.webContents.capturePage()).toPNG());
   assert.equal(await evaluate(() => Boolean(document.querySelector('[data-wuu-component="notice"][data-wuu-variant="error"]'))), false);
   blockers.get(first.background)();
+  await completed(id, first.prompt);
+  await idle();
+  await send('Retain this second message');
   await completed(id, 'Retain this second message');
+  fs.writeFileSync(path.join(output, 'delivered.png'), (await main.webContents.capturePage()).toPNG());
   const delivered = await snapshot(id);
   for (const prompt of [first.prompt, 'Retain this second message']) {
     assert.equal(delivered.thread.turns.flatMap(turn => turn.items).filter(item => item.type === 'user_message' && item.text === prompt).length, 1);
@@ -235,13 +257,16 @@ async function run() {
   const attachmentRequest = requests.find(row => row.text?.startsWith(`${first.prompt}\n`));
   const attachmentPath = attachmentRequest.text.match(/"context\.txt"[^\n]*: (.+)/)[1];
   assert.equal(fs.readFileSync(attachmentPath, 'utf8'), 'ATTACHMENT_SURVIVES_ADMISSION_RACE');
-  checks.push('Real busy rejection queues once, preserves attachment and identity, and drains in send order');
+  checks.push('Busy admission retains one stable draft and spinner, suppresses duplicate Enter, and delivers once with its attachment');
   await idle();
 
   const stopped = arm('Keep this message after Stop');
   await send(stopped.prompt);
   await until(() => stopped.rejection, 'stop scenario busy rejection');
-  await evaluate(() => document.querySelector('.composer-stop-button, .composer-send-button[data-wuu-state="submitting"], .composer-send-button[data-wuu-state="stop"]').click());
+  await evaluate(() => document.querySelector('.composer textarea').focus());
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-component="composer-send"][data-wuu-state="pending"]'))), 'stop requested');
   stopped.release.resolve();
   await until(() => rpc.some(row => row.method === 'turn/queue' && row.prompt === stopped.prompt), 'stopped send held');
   assert.equal(rpc.find(row => row.method === 'turn/queue' && row.prompt === stopped.prompt).hold, true);
@@ -262,7 +287,9 @@ async function run() {
   await send(failed.prompt);
   await until(() => failed.rejection, 'queue failure busy rejection');
   failed.release.resolve();
-  await until(() => evaluate(text => document.querySelector('.composer textarea')?.value === text, failed.prompt), 'queue failure restores draft');
+  await until(() => rpc.some(row => row.method === 'turn/queue' && row.prompt === failed.prompt), 'queue failure attempted');
+  await idle();
+  assert.equal(await evaluate(() => document.querySelector('.composer textarea')?.value), failed.prompt, 'failed draft remains in place');
   queueFailure = false;
   await until(() => blockers.has(failed.background), 'failure scenario blocker');
   blockers.get(failed.background)();
@@ -283,7 +310,8 @@ async function run() {
   const before = rpc.filter(row => row.method === 'turn/queue').length;
   arm('Do not replay ambiguous timeout', { timeout: true });
   await send('Do not replay ambiguous timeout');
-  await until(() => evaluate(() => document.querySelector('.composer textarea')?.value === 'Do not replay ambiguous timeout'), 'timeout draft restored');
+  await idle();
+  assert.equal(await evaluate(() => document.querySelector('.composer textarea')?.value), 'Do not replay ambiguous timeout');
   assert.equal(rpc.filter(row => row.method === 'turn/queue').length, before);
   checks.push('Ambiguous timeout is not automatically resubmitted');
   save('passed');

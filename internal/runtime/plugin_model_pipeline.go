@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -11,10 +12,11 @@ import (
 type modelRequestOriginKey struct{}
 
 type modelPipelineClient struct {
-	host   *pluginhost.Host
-	native providers.StreamClient
-	inner  providers.StreamClient
-	origin pluginhost.ModelInvocationOriginV1
+	host               *pluginhost.Host
+	adapter            *modelAdapterClient
+	inner              providers.StreamClient
+	origin             pluginhost.ModelInvocationOriginV1
+	enforceOutputLimit bool
 }
 
 func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(providers.StreamClient) providers.StreamClient {
@@ -22,19 +24,20 @@ func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(provi
 		return nil
 	}
 	return func(client providers.StreamClient) providers.StreamClient {
-		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent", SessionID: threadID, ThreadID: threadID})
+		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent", SessionID: threadID, ThreadID: threadID}, false)
 	}
 }
 
-func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamClient, origin pluginhost.ModelInvocationOriginV1) providers.StreamClient {
+func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamClient, origin pluginhost.ModelInvocationOriginV1, enforceOutputLimit bool) providers.StreamClient {
 	if host == nil {
 		return native
 	}
-	inner := pluginModelAdapterClient(host, native)
+	adapter := &modelAdapterClient{host: host, inner: native}
+	var inner providers.StreamClient = adapter
 	if origin.Kind != "plugin" {
 		inner = pluginModelMiddlewareClient(host, inner, origin)
 	}
-	return &modelPipelineClient{host: host, native: native, inner: inner, origin: origin}
+	return &modelPipelineClient{host: host, adapter: adapter, inner: inner, origin: origin, enforceOutputLimit: enforceOutputLimit}
 }
 
 // The adapter boundary records physical evidence before middleware and
@@ -42,7 +45,7 @@ func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamCli
 func (c *modelPipelineClient) OwnsStreamAccounting() bool { return true }
 
 func (c *modelPipelineClient) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
-	return providers.ResolveMediaInput(c.native, policy, options)
+	return c.adapter.ResolveMediaInput(policy, options)
 }
 func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req providers.ChatRequest) (providers.ChatRequest, error) {
 	var err error
@@ -53,7 +56,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 			return req, err
 		}
 	}
-	if c.origin.Kind == "plugin" && requestedLimit > 0 && (req.MaxTokens <= 0 || req.MaxTokens > requestedLimit) {
+	if c.enforceOutputLimit && requestedLimit > 0 && (req.MaxTokens <= 0 || req.MaxTokens > requestedLimit) {
 		return req, serviceError("unsupported_limit", "configured provider cannot preserve the requested output limit")
 	}
 	if c.origin.Kind == "plugin" || req.Attempt.Valid() {
@@ -64,7 +67,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 	ctx = context.WithValue(ctx, modelRequestOriginKey{}, origin)
 	for _, capability := range c.host.Capabilities(pluginhost.CapabilityModelRequestTransform) {
 		var output pluginhost.ModelRequestMiddlewareOutput
-		if err := c.host.InvokeCapability(ctx, capability, pluginhost.ModelRequestMiddlewareInput{Request: logicalModelRequest(req), Origin: origin}, &output); err != nil {
+		if err := c.host.InvokeCapability(ctx, capability, pluginhost.ModelRequestMiddlewareInput{Request: modelwire.RequestToWire(req), Origin: origin}, &output); err != nil {
 			if handled := c.host.HandleCapabilityError(capability, err); handled != nil {
 				return req, handled
 			}
@@ -73,7 +76,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 		if output.Request == nil {
 			continue
 		}
-		replacement, err := applyLogicalModelRequest(req, *output.Request)
+		replacement, err := modelwire.ApplyRequest(req, *output.Request)
 		if err == nil && (replacement.Provider != req.Provider || replacement.Model != req.Model) {
 			err = errors.New("request transforms cannot change the configured model route; use independent inference")
 		}
@@ -112,7 +115,7 @@ func (c *modelPipelineClient) observe(ctx context.Context, req providers.ChatReq
 		return nil
 	}
 	origin := c.requestOrigin(req)
-	input := pluginhost.ModelResponseObserveInput{Phase: phase, Request: logicalModelRequest(req), Origin: origin, Error: modelErrorView(cause)}
+	input := pluginhost.ModelResponseObserveInput{Phase: phase, Request: modelwire.RequestToWire(req), Origin: origin, Error: modelErrorView(cause)}
 	if result != nil {
 		input.Result = &pluginhost.ModelInvokeResult{Response: logicalModelResponse(*result), Origin: origin}
 	}
@@ -180,31 +183,20 @@ func (c *modelPipelineClient) StreamChat(ctx context.Context, req providers.Chat
 	}()
 	return out, nil
 }
+func (c *modelPipelineClient) ApplyInferenceRequestRecovery(ctx context.Context, req providers.ChatRequest, plan providers.RecoveryPlan) error {
+	return c.adapter.ApplyInferenceRequestRecovery(ctx, req, plan)
+}
 func (c *modelPipelineClient) ApplyInferenceRecovery(ctx context.Context, plan providers.RecoveryPlan) error {
-	if recovery, ok := c.native.(providers.InferenceRecoveryApplier); ok {
-		return recovery.ApplyInferenceRecovery(ctx, plan)
-	}
-	return errors.New("configured model does not support authentication recovery")
+	return c.adapter.ApplyInferenceRecovery(ctx, plan)
 }
 func (c *modelPipelineClient) NativeCompactionAvailable() bool {
-	native, ok := c.native.(providers.NativeCompactor)
-	return ok && native.NativeCompactionAvailable()
+	return c.adapter.NativeCompactionAvailable()
 }
 func (c *modelPipelineClient) NativeCompact(ctx context.Context, req providers.ChatRequest) (providers.NativeCompactionResult, error) {
-	selected, err := selectedModelAdapter(req)
-	if err != nil || (selected.Adapter != "" && selected.Adapter != "native") {
-		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
-	}
-	if native, ok := c.native.(providers.NativeCompactor); ok {
-		return native.NativeCompact(ctx, req)
-	}
-	return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
+	return c.adapter.NativeCompact(ctx, req)
 }
 func (c *modelPipelineClient) PrewarmSession(ctx context.Context, id string) error {
-	if native, ok := c.native.(providers.SessionPrewarmer); ok {
-		return native.PrewarmSession(ctx, id)
-	}
-	return nil
+	return c.adapter.PrewarmSession(ctx, id)
 }
 
 // This accumulator is shared by observer summaries and isolated model streams.

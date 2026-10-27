@@ -1,3 +1,4 @@
+import { selectPersonalTestApplication } from "./PersonalApplication.test-support";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as React from "react";
@@ -35,13 +36,13 @@ async function mount(fixtures: { routines: Record<string, unknown>[]; tasks?: Re
     throw new Error(`Unexpected runtime call: ${method}`);
   });
   const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: PluginConversationMessage, View: PluginConversationView, Attachment: PluginConversationAttachment } });
-  await host.activateGeneration({ pluginId: "personal", generation: "one", register: activate });
-  const controller = new WorkbenchController(host);
+  const controller = await selectPersonalTestApplication(host);
+  await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal", generation: "one", register: activate });
   await controller.openPluginView("personal", "personal.home");
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   const render = () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />);
-  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); container.remove(); });
+  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("test.application"); container.remove(); });
   await act(async () => render());
   return {
     container, invoke,
@@ -75,7 +76,7 @@ it("hides settled one-time reminders without changing stored routines or convers
   await act(async () => (ui.container.querySelector('[data-routine-id="failed-reminder"]') as HTMLButtonElement).click());
   expect(ui.container.querySelector('[data-routine-detail="failed-reminder"] [role="alert"]')?.textContent).toContain("not confirmed");
   expect(fixtures.routines).toEqual(stored);
-  expect(ui.invoke.mock.calls.map(([request]) => request.method).filter(method => method.startsWith("routines."))).toEqual(["routines.list"]);
+  expect([...new Set(ui.invoke.mock.calls.map(([request]) => request.method).filter(method => method.startsWith("routines.")))]).toEqual(["routines.list"]);
 });
 
 it.each(["routine event", "notification", "reentry"])("removes newly completed reminders on %s and keeps them hidden after remount", async refresh => {

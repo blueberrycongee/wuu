@@ -4,11 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -39,11 +40,9 @@ func TestBuildClientAnthropicCredentialIsolation(t *testing.T) {
 			t.Setenv("GATEWAY_KEY", "env-key")
 			t.Setenv("GATEWAY_TOKEN", "env-token")
 			t.Setenv("UNSET_GATEWAY_KEY", "")
+			selected := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json"))
 			if tc.stored.Type != "" {
-				store, err := authstorage.ForHome(os.Getenv("HOME"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				store := authstorage.NewBound(context.Background(), selected)
 				if err := store.Set("gateway", tc.stored); err != nil {
 					t.Fatal(err)
 				}
@@ -57,7 +56,7 @@ func TestBuildClientAnthropicCredentialIsolation(t *testing.T) {
 			defer endpoint.Close()
 			provider := tc.provider
 			provider.Type, provider.BaseURL, provider.Model = "anthropic", endpoint.URL, "synthetic-model"
-			client, err := BuildClient(provider, "gateway")
+			client, err := BuildClient(provider, "gateway", Bindings{Credentials: selected})
 			if err != nil {
 				t.Fatal(err)
 			}

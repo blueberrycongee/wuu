@@ -24,9 +24,8 @@ func TestResolveSubagentModelAliasBuildsCompleteRuntime(t *testing.T) {
       "model": "main-model"
     },
     "ui": {
-      "type": "openai-compatible",
+      "type": "external-fixture",
       "base_url": "https://ui.example.test/v1",
-      "api_key": "test-key",
       "model": "ui-default",
       "models": {
         "frontend-model": {
@@ -49,9 +48,20 @@ func TestResolveSubagentModelAliasBuildsCompleteRuntime(t *testing.T) {
 }`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 
-	result := srv.resolveSubagentModelAlias("frontend")
+	binding := testRuntimeState(t, rt)
+	services, err := binding.Services()
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := binding.Models()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := srv.resolveSubagentModelAliasWithServices(services, models, "frontend")
 	if result.Err != nil {
 		t.Fatalf("resolve alias: %v", result.Err)
 	}
@@ -99,7 +109,9 @@ func TestResolveSubagentModelAliasUnknownFallsBackWithSortedNames(t *testing.T) 
 }`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 
 	result := srv.resolveSubagentModelAlias("missing")
 	if result.Err != nil || result.Found || !result.Unknown {
@@ -136,13 +148,27 @@ func TestResolveSubagentModelAliasUsesVerificationCapabilityRole(t *testing.T) {
 		t.Fatalf("resolve roles: %v", err)
 	}
 	rt.ModelRoles = roles
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 
-	result := srv.resolveSubagentModelAlias("@verification")
+	binding := testRuntimeState(t, rt)
+	services, err := binding.Services()
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := binding.Models()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := rt.ModelRoles.Verification
+	rt.ModelRoles.Verification.Model = "successor-verification"
+	rt.StreamRunner.Temperature = 0.9
+	result := srv.resolveSubagentModelAliasWithServices(services, models, "@verification")
 	if result.Err != nil || !result.Found || result.Unknown {
 		t.Fatalf("unexpected verification resolution: %+v", result)
 	}
-	if result.Runtime.Provider != rt.ModelRoles.Verification.Provider || result.Runtime.Model != rt.ModelRoles.Verification.Model {
-		t.Fatalf("verification runtime = %+v, role = %+v", result.Runtime, rt.ModelRoles.Verification)
+	if result.Runtime.Provider != want.Provider || result.Runtime.Model != want.Model || result.Runtime.Temperature != models.Temperature {
+		t.Fatalf("verification runtime = %+v, captured role = %+v", result.Runtime, want)
 	}
 }

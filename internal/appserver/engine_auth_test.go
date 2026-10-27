@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/externalengine"
 )
 
@@ -30,7 +31,7 @@ printf '{"https://accounts.x.ai/sign-in":{"access_token":"synthetic-secret-token
 	}
 	t.Setenv("WUU_GROK_BINARY", binary)
 	out := &lockedBuffer{}
-	s := New(newTestRuntime(t, &fakeClient{}), out)
+	s := New(newEngineAdminRuntime(t, config.Config{}), out)
 	defer s.Close()
 	if err := s.handleLine(context.Background(), []byte(`{"id":"login","method":"engine/authenticate","params":{"engine_id":"grok","method_id":"local-cli"}}`)); err != nil {
 		t.Fatal(err)

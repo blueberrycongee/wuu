@@ -19,7 +19,7 @@ private actor PersonalTransportProbe {
 
 final class PersonalClientTests: XCTestCase {
     private var initialized: JSONValue {
-        ["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-one", "runtime_state": "active"]]]
+        ["user_space_id": "local", "product_domain": "personal", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-one", "graph_generation": "graph-one", "runtime_state": "active"]]]
     }
 
     func testDiscoveryFailsClosedAndNeverUsesWorkspaceOrThreadRouting() async throws {
@@ -33,6 +33,7 @@ final class PersonalClientTests: XCTestCase {
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(calls[0]["id"].string, "plugin:bundled:personal")
         XCTAssertEqual(calls[0]["fingerprint"].string, "generation-one")
+        XCTAssertEqual(calls[0]["graph_generation"].string, "graph-one")
         XCTAssertEqual(calls[0]["user_space_id"].string, "local")
         XCTAssertEqual(calls[0]["product_domain"].string, "personal")
         XCTAssertEqual(calls[0]["input"], ["agent_id": "travel"])
@@ -75,6 +76,24 @@ final class PersonalClientTests: XCTestCase {
         catch let error as PersonalClientError { XCTAssertEqual(error, .isolationRequired) }
         let calls = await probe.calls
         XCTAssertEqual(calls.count, 1)
+    }
+
+    func testCancelledSendDoesNotDispatchOrReplayDraft() async throws {
+        let probe = PersonalTransportProbe()
+        let client = PersonalClient { try await probe.request($0, $1) }
+        try await client.configure(initialized); _ = try await client.selectAgent("main")
+        let draft = try await client.prepareMessage("Keep this request")
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.send(draft)
+        }
+        do { _ = try await cancelled.value; XCTFail("Cancelled send was dispatched") }
+        catch is CancellationError {}
+        let calls = await probe.calls
+        XCTAssertEqual(calls.count, 1)
+        _ = try await client.send(draft)
+        let retry = await probe.calls
+        XCTAssertEqual(retry.last?["input"]["request_id"].string, draft.requestID)
     }
 
     func testTaskOwnershipAndSameAgentRecoveryNeverCreateAThread() async throws {
@@ -129,15 +148,61 @@ final class PersonalClientTests: XCTestCase {
     func testInventoryRefreshUsesOnlyPreviouslyVerifiedLiveScope() async throws {
         let probe = PersonalTransportProbe()
         let client = PersonalClient { try await probe.request($0, $1) }
-        let inventory: JSONValue = ["extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-two", "runtime_state": "active"]]]
-        do { try await client.configure(inventory); XCTFail("Missing immutable scope accepted") } catch {}
+        let inventory: JSONValue = ["user_space_id": "foreign", "product_domain": "coding", "extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-two", "graph_generation": "graph-two", "runtime_state": "active"]]]
+        do { try await client.configure(inventory); XCTFail("Foreign immutable scope accepted") } catch {}
         try await client.configure(initialized)
         try await client.refreshInventory(inventory)
         _ = try await client.selectAgent("main")
         let calls = await probe.calls
         XCTAssertEqual(calls.last?["fingerprint"].string, "generation-two")
+        XCTAssertEqual(calls.last?["graph_generation"].string, "graph-two")
+        XCTAssertEqual(calls.last?["user_space_id"].string, "local")
+        XCTAssertEqual(calls.last?["product_domain"].string, "personal")
         await client.invalidate()
         do { try await client.refreshInventory(inventory); XCTFail("Inventory notification restored disconnected authority") } catch {}
+    }
+
+    func testMissingOrMalformedGraphFailsClosedWithoutUsingFingerprint() async throws {
+        let probe = PersonalTransportProbe()
+        let client = PersonalClient { try await probe.request($0, $1) }
+        let invalidGraphs: [JSONValue] = [.null, "", "  ", 7]
+        for graph in invalidGraphs {
+            try await client.configure(initialized)
+            _ = try await client.selectAgent("main")
+            let inventory: JSONValue = ["extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-one", "graph_generation": graph, "runtime_state": "active"]]]
+            do { try await client.refreshInventory(inventory); XCTFail("Invalid graph admitted") }
+            catch let error as PersonalClientError { XCTAssertEqual(error, .unavailable) }
+            do { _ = try await client.listAgents(); XCTFail("Previous graph remained callable") }
+            catch let error as PersonalClientError { XCTAssertEqual(error, .unavailable) }
+        }
+        let calls = await probe.calls
+        XCTAssertEqual(calls.count, 4)
+    }
+
+    func testGraphOnlyRefreshFencesPendingSendAndPreservesExplicitRetryIdentity() async throws {
+        let gate = PersonalAttachmentGate()
+        let client = PersonalClient { try await gate.request($0, $1) }
+        try await client.configure(initialized); _ = try await client.selectAgent("main")
+        let draft = try await client.prepareMessage("Keep this request")
+        let pending = Task { try await client.send(draft) }
+        await gate.waitForRequest()
+        try await client.refreshInventory(["extension_inventory": [["id": "plugin:bundled:personal", "fingerprint": "generation-one", "graph_generation": "graph-two", "runtime_state": "active"]]])
+        _ = try await client.selectAgent("main")
+        await gate.release()
+        do { _ = try await pending.value; XCTFail("Late send crossed graph generation") }
+        catch let error as PersonalClientError { XCTAssertEqual(error, .selectionChanged) }
+        let beforeRetry = await gate.calls
+        XCTAssertEqual(beforeRetry.map { $0["method"].string ?? "" }, ["agents.open", "agents.send", "agents.open"])
+        XCTAssertEqual(beforeRetry[1]["graph_generation"].string, "graph-one")
+        let retry = Task { try await client.send(draft) }
+        await gate.waitForRequest(); await gate.release(); _ = try await retry.value
+        let calls = await gate.calls
+        XCTAssertEqual(calls.last?["graph_generation"].string, "graph-two")
+        XCTAssertEqual(calls.last?["input"]["request_id"].string, draft.requestID)
+        _ = try await client.stopReply()
+        let stopped = await gate.calls
+        XCTAssertEqual(stopped.last?["method"].string, "agents.stop_reply")
+        XCTAssertEqual(stopped.last?["graph_generation"].string, "graph-two")
     }
 
     func testHeldAttachmentSurvivesSameAgentRefreshButNotAgentSwitch() async throws {
@@ -196,15 +261,21 @@ private actor PersonalResponseGate {
 }
 
 private actor PersonalAttachmentGate {
+    var calls: [JSONValue] = []
     private var response: CheckedContinuation<JSONValue, Never>?
     private var started: CheckedContinuation<Void, Never>?
+    private var pendingMethod: String?
     func request(_ method: String, _ params: JSONValue) async throws -> JSONValue {
+        calls.append(params)
         if params["method"].string == "agents.open" { return ["result": ["agent": ["agent_id": params["input"]["agent_id"], "user_space_id": "local"]]] }
+        if params["method"].string == "agents.stop_reply" { return ["result": [:]] }
+        pendingMethod = params["method"].string
         return await withCheckedContinuation { response = $0; started?.resume(); started = nil }
     }
     func waitForRequest() async { if response == nil { await withCheckedContinuation { started = $0 } } }
     func release() {
         let data = Data("%PDF-test".utf8).base64EncodedString()
-        response?.resume(returning: ["result": ["data": .string(data), "offset": 0, "total": .number(Double(data.utf8.count)), "content_type": "application/pdf"]]); response = nil
+        let result: JSONValue = pendingMethod == "agents.send" ? ["state": "accepted"] : ["data": .string(data), "offset": 0, "total": .number(Double(data.utf8.count)), "content_type": "application/pdf"]
+        response?.resume(returning: ["result": result]); response = nil; pendingMethod = nil
     }
 }

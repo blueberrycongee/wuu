@@ -1,15 +1,16 @@
+import { toConversationItemSnapshot } from "./ApplicationSnapshots";
+export { toConversationItemSnapshot } from "./ApplicationSnapshots";
 import { useMemo, type ReactNode } from "react";
 
 import type { ThreadItem } from "../../shared/protocol";
 import {
   CONVERSATION_ITEM_ACTIONS,
-  type AttachmentDescriptorV1,
   type ConversationItemSnapshotV1,
 } from "../../shared/workbench";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
+import { useApplicationWorkbench } from "./ApplicationWorkbenchContext";
+import type { UIContributionRegistryV1 as PluginHost } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 type ConversationItemKindV1 = ConversationItemSnapshotV1["kind"];
 
@@ -31,9 +32,11 @@ export function ConversationItemPresentation({
   fallback,
   text,
   onEdit,
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
+  host: suppliedHost,
+  controller: suppliedController,
 }: ConversationItemPresentationProps): JSX.Element {
+  const controller = useApplicationWorkbench(suppliedController);
+  const host = suppliedHost ?? controller.registry;
   const kind = conversationItemKind(item);
   const snapshot = useMemo(
     () => kind === undefined ? undefined : toConversationItemSnapshot(item, kind, text),
@@ -80,58 +83,4 @@ function conversationItemKind(item: ThreadItem): ConversationItemKindV1 | undefi
     case "tool_call":
     default: return undefined;
   }
-}
-
-export function toConversationItemSnapshot(
-  item: ThreadItem,
-  kind: ConversationItemKindV1,
-  displayText = item.text,
-): ConversationItemSnapshotV1 {
-  const contentType = kind === "notice" ? "plain-text" as const : "markdown" as const;
-  const attachments = attachmentDescriptors(item);
-  const content = displayText === undefined
-    ? undefined
-    : Object.freeze([Object.freeze({ type: contentType, text: displayText })]);
-
-  return Object.freeze({
-    contractVersion: 1 as const,
-    id: item.id,
-    kind,
-    status: publicStatus(item.status),
-    phase:
-      item.type === "agent_message"
-        ? item.terminal
-          ? "final_answer"
-          : "commentary"
-        : undefined,
-    text: displayText,
-    contentType,
-    content,
-    attachments,
-    // Context-compaction notices carry the replacement-context body so
-    // notice presenters can show what the model now runs on.
-    summary: item.summary,
-    // Plugin-generated wake messages can hide the real delivered prompt
-    // behind a generic query bubble; expose that raw input to presenters.
-    inputText: item.input_text,
-  });
-}
-
-function publicStatus(status: ThreadItem["status"]): ConversationItemSnapshotV1["status"] {
-  if (status === "in_progress") return "streaming";
-  return status;
-}
-
-function attachmentDescriptors(item: ThreadItem): readonly AttachmentDescriptorV1[] | undefined {
-  const images = (item.images ?? []).map((image, index) => Object.freeze({
-    id: `${item.id}:image:${index}`,
-    name: `image-${index + 1}`,
-    mimeType: image.media_type,
-  }));
-  const files = (item.files ?? []).map((file, index) => Object.freeze({
-    id: `${item.id}:file:${index}`,
-    name: file.filename ?? `attachment-${index + 1}`,
-    mimeType: file.media_type,
-  }));
-  return images.length + files.length === 0 ? undefined : Object.freeze([...images, ...files]);
 }

@@ -1,5 +1,8 @@
+import { Tooltip } from "./Tooltip";
+import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { ConnectionTitle } from "./ConnectionTitle";
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { GrokLogin } from "./GrokLogin";
 import {
   type FormEvent as ReactFormEvent,
@@ -46,7 +49,6 @@ import { CatalogSearchField } from "./CatalogSearchField";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
-import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { Modal } from "./Modal";
 import { ConnectionPage } from "./ConnectionPage";
@@ -57,10 +59,8 @@ import {
   isChatGPTProvider,
   normalizedVariantForProviderModel,
   providerModelDisplayName,
-  providerModelVariantOptions,
-  variantLabel,
 } from "./RuntimeHelpers";
-import { SelectMenu, type SelectMenuGroup } from "./SelectMenu";
+import { SelectMenu } from "./SelectMenu";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { ThreadContextMenu } from "./ThreadContextMenu";
@@ -292,21 +292,22 @@ function AccountMethods({ selected, disabled, onSelect }: { selected: AccountMet
 type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
 
 export function useCatalogProviders(version: number, snapshot?: CatalogProviderSummary[]): CatalogState {
+  const controls = useSettingsControls();
   const [state, setState] = useState<CatalogState>({ failed: false });
   useEffect(() => {
     if (snapshot) return;
     // Older hosts do not include the directory in initialization.
-    if (!hostSupports("listCatalogProviders") || typeof window.wuu?.listCatalogProviders !== "function") {
+    if (!controls.capabilities.catalog) {
       setState({ failed: true });
       return;
     }
     let active = true;
-    void window.wuu.listCatalogProviders().then(
+    void controls.listCatalogProviders().then(
       (result) => { if (active) setState({ providers: result.providers, failed: false }); },
-      () => { if (active) setState({ failed: true }); },
+      cause => { if (active && !isPluginLifecycleCancellation(cause)) setState({ failed: true }); },
     );
     return () => { active = false; };
-  }, [version, snapshot]);
+  }, [controls, version, snapshot]);
   return snapshot ? { providers: snapshot, failed: false } : state;
 }
 
@@ -323,11 +324,13 @@ export function ModelServicesPage({
   onProvidersChanged,
   onProviderModelsChanged,
 }: ModelServicesPageProps): JSX.Element {
+  const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
   const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult>();
   const [quotaLoading, setQuotaLoading] = useState(false);
@@ -339,15 +342,15 @@ export function ModelServicesPage({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (!ENABLE_SUBSCRIPTIONS || !hostSupports("listEngines")) return;
+    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) { setQuotaLoading(false); return; }
     let active = true;
     setQuotaLoading(true);
-    void window.wuu.listEngines({ include_quota: true }).then(snapshot => {
+    void controls.listEngines({ include_quota: true }).then(snapshot => {
       if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
-    }, () => { if (active) setQuotaFailed(true); })
+    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setQuotaFailed(true); })
       .finally(() => { if (active) setQuotaLoading(false); });
     return () => { active = false; };
-  }, [quotaVersion]);
+  }, [controls, quotaVersion]);
   const observedQuota = (quota: SubscriptionQuota | undefined): SubscriptionQuota | undefined =>
     quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   const overviewProviders = providers.map(provider => {
@@ -412,10 +415,10 @@ export function ModelServicesPage({
   return (
     <div className="model-services" data-testid="settings-providers" ref={rootRef}>
       <SettingsPageHeader title={t("settings.providers")} actions={!adding && !detailProvider && !selectedEngine ?
-        <button type="button" className="settings-button settings-button-ghost settings-icon-button"
+        <button type="button" className="settings-button settings-button-ghost"
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
-          aria-label={t("provider.addConnection")} title={t("provider.addConnection")}
-          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" /></button> : undefined} />
+          aria-label={t("provider.addConnection")}
+          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
       {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
         onOpenService={setOpenService} /> : null}
       {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
@@ -423,7 +426,7 @@ export function ModelServicesPage({
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
-        <ServiceConnector key={methodOrigin?.name ?? "catalog"} providers={providers} running={running} catalog={catalog}
+        <ServiceConnector key={methodOrigin?.name ?? "catalog"} workspaceRoot={initialized?.workspace_root} providers={providers} running={running} catalog={catalog}
           defaultOn={!defaultUsable} onSave={onSave} onProvidersChanged={onProvidersChanged} catalogDialog inline
           initialTarget={methodOrigin?.target}
           onCloseConfiguration={methodOrigin ? () => { setOpenService(methodOrigin.name); setAdding(false); setMethodOrigin(undefined); } : undefined}
@@ -433,14 +436,14 @@ export function ModelServicesPage({
             const engines = inventory?.engines.filter(engine => engine.id !== "wuu" && `${engine.id} ${engineLabel(engine.id, engine)}`.toLowerCase().includes(query.trim().toLowerCase()));
             return onUpdateEngines && (!inventory || engines?.length) ? <SettingsSection title={t("provider.engineConnections")}>
             <SettingsGroup>
-              {engines?.map(engine =>
-                <button key={engine.id} type="button" className="connection-catalog-row" data-testid={`settings-connection-catalog-engine-${engine.id}`}
-                  onClick={() => setSelectedEngine(engine.id)}>
-                  <EngineIcon engine={engine.id} /><span>{engineLabel(engine.id, engine)}</span>
-                  <ChevronRight className="icon" aria-hidden="true" />
-                </button>)}
-              {!inventory ? <p role="status">{inventoryError || t("settings.engineDetecting")}</p> : null}
-            </SettingsGroup>
+                {engines?.map(engine =>
+                  <button key={engine.id} type="button" className="connection-catalog-row" data-testid={`settings-connection-catalog-engine-${engine.id}`}
+                    onClick={() => setSelectedEngine(engine.id)}>
+                    <EngineIcon engine={engine.id} /><span>{engineLabel(engine.id, engine)}</span>
+                    <ChevronRight className="icon" aria-hidden="true" />
+                  </button>)}
+                {!inventory ? <p role="status">{inventoryError || t("settings.engineDetecting")}</p> : null}
+              </SettingsGroup>
           </SettingsSection> : null; }} />
       </div> : null}
       {detailProvider ? <ServiceDetail key={detailProvider.name} provider={detailProvider}
@@ -451,7 +454,9 @@ export function ModelServicesPage({
           setOpenService(""); setAdding(true);
         }}
         onRefreshConnection={async () => {
-          const result = await window.wuu.refreshModelCatalog();
+          const signal = lifetime.current.signal;
+          const result = await controls.refreshModelCatalog();
+          signal.throwIfAborted();
           const refreshed = result.providers.find(item => item.name === detailProvider.name
             && item.type === detailProvider.type && item.base_url === detailProvider.base_url);
           if (!refreshed?.api_key_configured) throw new Error("Login is not available to this connection");
@@ -466,7 +471,12 @@ export function ModelServicesPage({
         onProvidersChanged={onProvidersChanged} onProviderModelsChanged={onProviderModelsChanged}
         label={labels.get(detailProvider.name) ?? detailProvider.name} initialized={initialized} running={running}
         inUse={runningProviderNames.has(detailProvider.name)} onBack={closeService} onSave={onSave}
-        onRemove={async options => { await onRemoveProvider(detailProvider.name, options); closeService(); }} /> : null}
+        onRemove={async options => {
+          const signal = lifetime.current.signal;
+          await onRemoveProvider(detailProvider.name, options);
+          signal.throwIfAborted();
+          closeService();
+        }} /> : null}
     </div>
   );
 }
@@ -477,6 +487,7 @@ export function ModelServicesPage({
  * the same choices, so a connection is made the same way in both places.
  */
 export function ServiceConnector({
+  workspaceRoot,
   providers,
   running,
   catalog,
@@ -492,6 +503,7 @@ export function ServiceConnector({
   initialTarget,
   onCloseConfiguration,
 }: {
+  workspaceRoot?: string;
   providers: readonly ProviderSummary[];
   running: boolean;
   catalog: CatalogState;
@@ -585,7 +597,7 @@ export function ServiceConnector({
             {t("settings.loading")}
           </p>
         }>
-          <ChatGPTConnectionDialog renderAuthMethods={disabled => <AccountMethods selected="login" disabled={disabled} onSelect={method => { if (method === "local") startConnect({ kind: "subscription", type: "openai-codex" }); }} />} inline={inline} onProvidersChanged={onProvidersChanged} providers={providers} running={running} defaultOn={defaultOn}
+          <ChatGPTConnectionDialog workspaceRoot={workspaceRoot} renderAuthMethods={disabled => <AccountMethods selected="login" disabled={disabled} onSelect={method => { if (method === "local") startConnect({ kind: "subscription", type: "openai-codex" }); }} />} inline={inline} onProvidersChanged={onProvidersChanged} providers={providers} running={running} defaultOn={defaultOn}
             onSave={onSave} onClose={closeConfiguration} onConnected={(name) => { setConnectTarget(null); onConnected(name); }} />
         </Suspense>
       ) : connectTarget ? (
@@ -627,174 +639,56 @@ function ServicesOverview({
 }): JSX.Element {
   const { t } = useI18n();
   const summaryID = useId();
+  const display = useSettingsConnectionDisplay();
 
   return (
     <>
 
       {providers.length > 0 ? (
         <SettingsSection title={t("provider.connectionModels")}>
-          <div className="model-service-grid" role="list" aria-label={t("provider.connectionModels")}>
-            {providers.map((provider) => {
-              const identity = serviceIdentity(provider, t);
-              const label = identity.label;
-              const isDefault = provider.name === initialized?.provider;
-              const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
-              const status = attention ?? t("settings.engineReady");
-              const plan = provider.quota?.plan?.trim() || (identity.subscription ? t("settings.subscriptionKindSubscription") : "API");
-              return (
-                <div role="listitem" key={provider.name}>
-                  <button
-                    type="button"
-                    className="model-service-card connection-summary-row"
-                    data-testid="settings-provider-card"
-                    data-provider={provider.name}
-                    data-default={isDefault ? "" : undefined}
-                    aria-label={label}
-                    aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
-                    onClick={() => onOpenService(provider.name)}
-                  >
-                    <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
-                    <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="model-service-card-copy connection-summary-copy">
-                      <span className="model-service-card-title">{label}</span>
-                      <span className="connection-summary-meta"><span>{plan}</span><span aria-hidden="true"> · </span>
-                        <span className="connection-summary-status" data-attention={attention ? "" : undefined}>{status}</span>
+          <SettingsGroup>
+            <div className="connection-summary-list" role="list" aria-label={t("provider.connectionModels")}>
+              {providers.map((provider) => {
+                const identity = serviceIdentity(provider, t);
+                const label = display.label(`provider:${provider.name}`, identity.label);
+                const isDefault = provider.name === initialized?.provider;
+                const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
+                const status = attention ?? t("settings.engineReady");
+                const plan = provider.quota?.plan?.trim();
+                return (
+                  <div role="listitem" key={provider.name}>
+                    <button
+                      type="button"
+                      className="connection-summary-row"
+                      data-testid="settings-provider-card"
+                      data-provider={provider.name}
+                      data-default={isDefault ? "" : undefined}
+                      aria-label={label}
+                      aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
+                      onClick={() => onOpenService(provider.name)}
+                    >
+                      <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
+                      <span className="connection-summary-copy">
+                        <span className="connection-summary-heading">
+                          <span className="model-service-card-title connection-summary-name">{label}</span>
+                          <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
+                        </span>
+                        <span className="connection-summary-secondary">
+                          <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className={attention ? "connection-summary-status" : "sr-only"} data-attention={attention ? "" : undefined}>{status}</span>
+                          {!attention ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading && identity.subscription} now={now}
+                            fallback={<span className="connection-summary-status" data-ready>{status}</span>} /> : null}
+                        </span>
                       </span>
-                    </span>
-                    {!attention ? <ConnectionUsageSummary id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading} now={now} /> : null}
-                    <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                      <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </SettingsGroup>
         </SettingsSection>
-      ) : <SettingsSection title={t("provider.connectionModels")}><p className="settings-muted-line">{t("provider.noService")}</p></SettingsSection>}
+      ) : <SettingsSection title={t("provider.connectionModels")}><SettingsGroup><p className="settings-group-empty">{t("provider.noService")}</p></SettingsGroup></SettingsSection>}
 
-    </>
-  );
-}
-
-// The one choice most people make here: what a new conversation uses. Model
-// and effort are ordinary labeled rows; the service the model comes from is
-// the model row's description, since one model name can come from several.
-/**
- * The built-in agent's default model and reasoning effort as settings rows,
- * for the group that sets how new conversations start. Without a connected
- * service the model row points to where one is added.
- */
-export function DefaultModelRows({
-  initialized,
-  running,
-  onSave,
-  onAddService,
-}: {
-  initialized?: InitializeResult;
-  running: boolean;
-  onSave: SaveProvider;
-  onAddService: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
-  const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState<{ provider: string; model: string; variant: string } | null>(null);
-  const providerName = pending?.provider ?? initialized?.provider ?? "";
-  const modelID = pending?.model ?? initialized?.model ?? "";
-  const variant = pending?.variant ?? initialized?.variant ?? initialized?.effort ?? "";
-  const provider = providers.find((item) => item.name === providerName);
-  const identity = provider ? serviceIdentity(provider, t) : undefined;
-  const effortOptions = providerModelVariantOptions(provider, modelID, variant);
-  const groups: SelectMenuGroup[] = providers.map((item) => {
-    const itemIdentity = serviceIdentity(item, t);
-    const label = labels.get(item.name) ?? itemIdentity.label;
-    return {
-      label,
-      options: displayPreferences.visibleModels(`provider:${item.name}`, providerModels(item), item.name === initialized?.provider ? [initialized.model] : [item.model]).map((model) => ({
-        value: `${item.name}\n${model.id}`,
-        label: providerModelDisplayName(model),
-        keywords: [label, item.name, model.id],
-      })),
-    };
-  });
-  const optionCount = groups.reduce((sum, group) => sum + group.options.length, 0);
-
-  async function commit(next: { provider: string; model: string; variant: string }): Promise<void> {
-    setError("");
-    setPending(next);
-    try {
-      await onSave(next.provider, next.model, undefined, undefined, next.variant);
-    } catch (saveError) {
-      setError(errorMessage(saveError, t));
-    } finally {
-      setPending(null);
-    }
-  }
-
-  if (providers.length === 0) {
-    return (
-      <SettingsRow title={t("provider.modelLabel")} description={t("provider.noService")}>
-        <button type="button" className="settings-button" data-testid="settings-providers-empty" onClick={onAddService}>
-          {t("provider.addSection")}
-        </button>
-      </SettingsRow>
-    );
-  }
-
-  return (
-    <>
-      <SettingsRow
-        title={t("provider.modelLabel")}
-        error={error || undefined}
-        description={identity ? (
-          <span className="model-default-service">
-            {labels.get(providerName) ?? identity.label}
-            {identity.attention ? (
-              <span className="model-default-attention">
-                <AlertTriangle className="icon-sm" aria-hidden="true" />
-                {identity.attention}
-              </span>
-            ) : null}
-          </span>
-        ) : undefined}
-      >
-        <SelectMenu
-          triggerClassName="settings-select-trigger"
-          ariaLabel={t("provider.chooseDefaultModel")}
-          dataTestid="settings-default-model-select"
-          value={`${providerName}\n${modelID}`}
-          placeholder={modelID || t("provider.chooseDefaultModel")}
-          groups={groups}
-          searchable={optionCount > MODEL_SEARCH_THRESHOLD}
-          searchPlaceholder={t("provider.searchModels")}
-          emptyMessage={t("provider.noModelMatches")}
-          disabled={running || pending !== null || optionCount === 0}
-          align="right"
-          flip
-          onChange={(value) => {
-            const [nextProvider = "", nextModel = ""] = value.split("\n");
-            const target = providers.find((item) => item.name === nextProvider);
-            void commit({
-              provider: nextProvider,
-              model: nextModel,
-              variant: normalizedVariantForProviderModel(variant, target, nextModel),
-            });
-          }}
-        />
-      </SettingsRow>
-      {effortOptions.length > 1 ? (
-        <SettingsRow title={t("provider.reasoningEffort")}>
-          <SelectMenu
-            triggerClassName="settings-select-trigger"
-            ariaLabel={t("provider.reasoningEffort")}
-            value={variant}
-            align="right"
-            disabled={running || pending !== null}
-            options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
-            onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
-          />
-        </SettingsRow>
-      ) : null}
     </>
   );
 }
@@ -832,6 +726,8 @@ function ServiceDetail({
   onSave: SaveProvider;
   onRemove: (options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   const [liveModels, setLiveModels] = useState<ProviderModelSummary[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -863,17 +759,20 @@ function ServiceDetail({
   const disabled = running || busy || authBusy;
   const canMakeDefault = !isDefault && !attention && (!direct || liveModels.some(model => model.id === provider.model));
 
+  useEffect(() => { setBusy(false); setError(""); }, [controls]);
+
   async function run(action: () => Promise<void>): Promise<boolean> {
+    const signal = lifetime.current.signal;
     setError("");
     setBusy(true);
     try {
       await action();
-      return true;
+      return !signal.aborted;
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t));
       return false;
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
@@ -884,14 +783,14 @@ function ServiceDetail({
     setModelsLoading(false);
     if (configuredProvider.auth_status !== "connected") return;
     setModelsLoading(true);
-    void window.wuu.listChatGPTModels(configuredProvider.chatgpt_account_id).then(result => {
+    void controls.listChatGPTModels(configuredProvider.chatgpt_account_id).then(result => {
       if (!active) return;
       const models = result.providers?.find(item => item.name === configuredProvider.name)?.models ?? result.models.map(item => ({ id: item.id, display_name: item.name, account_descriptor: item.account_descriptor, capabilities: item.capabilities, behavior: item.behavior }));
       setLiveModels(models);
       onProviderModelsChanged?.(configuredProvider.name, configuredProvider.chatgpt_account_id!, models);
-    }, cause => { if (active) setError(errorMessage(cause, t)); }).finally(() => { if (active) setModelsLoading(false); });
+    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setError(errorMessage(cause, t)); }).finally(() => { if (active) setModelsLoading(false); });
     return () => { active = false; };
-  }, [direct, configuredProvider.chatgpt_account_id, configuredProvider.auth_status, catalogRevision]);
+  }, [controls, direct, configuredProvider.chatgpt_account_id, configuredProvider.auth_status, catalogRevision]);
 
   // Edits keep the default where it is unless they are the default's model.
   const saveConnection = (connection: RuntimeConnectionUpdate): Promise<boolean> =>
@@ -930,15 +829,18 @@ function ServiceDetail({
           onSelect={method => {
             if (method === "local" && isCodexType(provider.type)) {
               void run(async () => {
-                const reused = await window.wuu.useCodexCredentials(provider.name);
+                const signal = lifetime.current.signal;
+                const reused = await controls.useCodexCredentials(provider.name);
+                signal.throwIfAborted();
                 onProvidersChanged?.(reused.providers);
-                const checked = await window.wuu.loadCodexModels(provider.name);
+                const checked = await controls.loadCodexModels(provider.name);
+                signal.throwIfAborted();
                 onProvidersChanged?.(checked.providers);
               });
             } else onChooseMethod(method);
           }} />
         {direct || usingLocalCodex || provider.codex_credential_source ? <small className="connection-auth-source" data-auth-source={authSource}>{t(authSourceLabel[authSource])}</small> : null}
-        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await window.wuu.loadCodexModels(provider.name); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
+        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const signal = lifetime.current.signal; const result = await controls.loadCodexModels(provider.name); signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
       </> : null}
         {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : null}
       {!isGrokBuildType(provider.type) ? <SettingsSection title={t("provider.connectionSection")}>
@@ -1039,6 +941,8 @@ function ConnectionRows({
   onSave: (connection: RuntimeConnectionUpdate) => Promise<boolean>;
   onRun: (action: () => Promise<void>) => Promise<boolean>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   if (isXAISubscriptionType(provider.type)) {
     return (
@@ -1069,7 +973,9 @@ function ConnectionRows({
         </SettingsRow> : null}
         {!ENABLE_SUBSCRIPTIONS ? <SettingsRow title={t("settings.codexUseLocal")}>
           <button type="button" className="settings-button" disabled={disabled} onClick={() => void onRun(async () => {
-            await window.wuu.useCodexCredentials(provider.name);
+            const signal = lifetime.current.signal;
+            await controls.useCodexCredentials(provider.name);
+            signal.throwIfAborted();
             await onSave({});
           })}>{t("settings.codexUseLocal")}</button>
         </SettingsRow> : null}
@@ -1229,8 +1135,11 @@ function XAILoginRow({
   onRun: (action: () => Promise<void>) => Promise<boolean>;
   onSignedIn: () => Promise<boolean>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const [code, setCode] = useState("");
+  useEffect(() => { setCode(""); }, [controls]);
   return (
     <SettingsRow
       title={t("provider.xaiSubscription")}
@@ -1241,12 +1150,15 @@ function XAILoginRow({
         type="button"
         className="settings-button"
         disabled={disabled || Boolean(code)}
+        data-testid="settings-xai-login"
         onClick={() => void onRun(async () => {
+          const signal = authorization.current.signal;
           try {
-            await runXAILogin(setCode, t);
+            await runXAILogin(controls, setCode, t, signal);
           } finally {
-            setCode("");
+            if (!signal.aborted) setCode("");
           }
+          signal.throwIfAborted();
           await onSignedIn();
         })}
       >
@@ -1256,24 +1168,58 @@ function XAILoginRow({
   );
 }
 
-async function runXAILogin(onCode: (code: string) => void, t: Translate): Promise<void> {
-  const start = await window.wuu.startXAILogin();
-  onCode(start.user_code);
-  const url = start.verification_uri_complete || start.verification_uri;
-  if (url) await window.wuu.openExternal(url);
-  const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
-  let interval = Math.max(1000, start.interval_ms || 5000);
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
-    const poll = await window.wuu.pollXAILogin(start.login_id);
-    if (poll.status === "pending") {
-      interval = Math.max(1000, poll.interval_ms || interval);
-      continue;
+function useAuthorizationLifetime(): React.MutableRefObject<AbortController> {
+  const controls = useSettingsControls();
+  // Retained callbacks own this generation's ref, never the successor's signal.
+  const lifetime = useMemo(() => ({ current: new AbortController() }), [controls]);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, [lifetime]);
+  return lifetime;
+}
+
+async function runXAILogin(controls: import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, onCode: (code: string) => void, t: Translate, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const start = await controls.startXAILogin();
+  let cancellation: Promise<{ error?: unknown }> | undefined;
+  const cancel = () => {
+    cancellation ??= controls.cancelXAILogin(start.login_id).then(() => ({}), error => ({ error }));
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) cancel();
+    signal.throwIfAborted();
+    onCode(start.user_code);
+    const url = start.verification_uri_complete || start.verification_uri;
+    if (url) await controls.openExternal(url);
+    signal.throwIfAborted();
+    const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
+    let interval = Math.max(1000, start.interval_ms || 5000);
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => { clearTimeout(timer); signal.removeEventListener("abort", aborted); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, interval);
+        signal.addEventListener("abort", aborted, { once: true });
+        if (signal.aborted) aborted();
+      });
+      signal.throwIfAborted();
+      const poll = await controls.pollXAILogin(start.login_id);
+      signal.throwIfAborted();
+      if (poll.status === "pending") {
+        interval = Math.max(1000, poll.interval_ms || interval);
+        continue;
+      }
+      if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
+      return;
     }
-    if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
-    return;
+    throw new Error(t("error.oauthFailed"));
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    const cancelled = await cancellation;
+    if (cancelled && "error" in cancelled) throw cancelled.error;
   }
-  throw new Error(t("error.oauthFailed"));
 }
 
 function ModelChoices({
@@ -1301,7 +1247,7 @@ function ModelChoices({
   const [modelMenu, setModelMenu] = useState<{ model: ProviderModelSummary; x: number; y: number } | null>(null);
   const [replacement, setReplacement] = useState("");
   const [removeError, setRemoveError] = useState("");
-  const preferences = useConnectionDisplayPreferences();
+  const preferences = useSettingsConnectionDisplay();
   const preferenceKey = `provider:${provider.name}`;
   const models = preferences.orderModels(preferenceKey, providerModels(provider));
   const [preferenceError, setPreferenceError] = useState("");
@@ -1326,7 +1272,6 @@ function ModelChoices({
           type="button"
           className="settings-button settings-button-ghost"
           aria-label={t("provider.addModel")}
-          title={t("provider.addModel")}
           data-testid="settings-provider-add-model-open"
           disabled={disabled || adding}
           onClick={() => setAdding(true)}
@@ -1341,8 +1286,8 @@ function ModelChoices({
         onSelect: () => { setRemoving(modelMenu.model); setReplacement(""); setRemoveError(""); },
       }]} /> : null}
       {preferenceError ? <p role="alert" className="settings-error">{preferenceError}</p> : null}
-      <div className="connection-model-table-heading"><span>{t("connection.modelName")}</span><span>{t("connection.modelID")}</span><span>{t("connection.enabled")}</span><span /></div>
       <div className="settings-group model-choice-list connection-model-table" role="group" aria-label={t("provider.modelsSection")}>
+        <div className="connection-model-table-heading"><span>{t("connection.modelName")}</span><span>{t("connection.modelID")}</span><span>{t("connection.enabled")}</span><span /><span /></div>
         {visible.map((model) => {
           const name = providerModelDisplayName(model);
           const selected = model.id === serviceModel;
@@ -1368,13 +1313,12 @@ function ModelChoices({
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveUp", { name })} disabled={disabled || models[0]?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveDown", { name })} disabled={disabled || models.at(-1)?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, 1))}><ArrowDown className="icon" /></button>
               </span>
-              {!managedCatalog ? <button
+              {!managedCatalog ? <Tooltip asChild content={t("provider.moreActions", { name })}><button
                 type="button"
                 className="icon-button model-choice-action"
                 data-testid="settings-provider-model-actions"
                 data-model={model.id}
                 aria-label={t("provider.moreActions", { name })}
-                title={t("provider.moreActions", { name })}
                 aria-haspopup="menu"
                 aria-expanded={modelMenu?.model.id === model.id}
                 disabled={disabled}
@@ -1384,7 +1328,7 @@ function ModelChoices({
                 }}
               >
                 <Trash2 className="icon" aria-hidden="true" />
-              </button> : null}
+              </button></Tooltip> : null}
             </div>
           );
         })}
@@ -1439,16 +1383,15 @@ function ModelChoices({
                 <span className="model-choice-main is-static">
                   <span className="model-choice-name">{model}</span>
                 </span>
-                <button
+                <Tooltip asChild content={t("provider.restoreModel", { model })}><button
                   type="button"
                   className="icon-button model-choice-action"
                   aria-label={t("provider.restoreModel", { model })}
-                  title={t("provider.restoreModel", { model })}
                   disabled={disabled}
                   onClick={() => void onAdd(model)}
                 >
                   <RotateCcw className="icon" aria-hidden="true" />
-                </button>
+                </button></Tooltip>
               </div>
             ))}
           </div>
@@ -1555,10 +1498,10 @@ function CatalogServiceGroups({
     if (!connected.length) return null;
     const ready = connected.some((provider) => !serviceIdentity(provider, t).attention);
     const label = ready ? t("provider.connectedSection") : serviceIdentity(connected[0], t).attention;
-    return <span className="model-catalog-state" data-ready={ready ? "" : undefined} role="img" aria-label={label} title={label}>
+    return <Tooltip asChild content={label}><span className="model-catalog-state" data-ready={ready ? "" : undefined} role="img" aria-label={label}>
       <span className="model-catalog-state-dot" />
       {connected.length > 1 ? <span>{connected.length}</span> : null}
-    </span>;
+    </span></Tooltip>;
   }
 
   const directTile = !isTouchWebShell() && (!normalized || `chatgpt openai codex ${t("provider.authUseLocal")}`.toLocaleLowerCase().includes(normalized)) ? <button type="button" className="model-service-tile" data-connection="chatgpt" disabled={disabled} onClick={() => onConnect({ kind: "chatgpt" })}><ProviderMark id="openai" label="ChatGPT" /><span className="model-browse-copy"><span className="model-service-tile-name">ChatGPT</span><small>{t("provider.methodChatGPT")}</small></span></button> : null;
@@ -1643,6 +1586,7 @@ function BrowseServicesDialog({
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const Surface = inline ? ConnectionPage : Modal;
+  const services = <CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} grouped={!inline} disabled={disabled} onConnect={onConnect} />;
   return (
     <Surface
       ariaLabel={t("provider.browseTitle")}
@@ -1659,7 +1603,9 @@ function BrowseServicesDialog({
       {catalogExtras?.(query)}
       <div className="model-browse-list" data-scroll-fade="">
         {catalog.failed ? <p className="settings-section-note">{t("provider.catalogUnavailable")}</p> : null}
-      <SettingsSection title={inline ? t("provider.providerConnections") : undefined}><CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} grouped={!inline} disabled={disabled} onConnect={onConnect} /></SettingsSection>
+        <SettingsSection title={inline ? t("provider.providerConnections") : undefined}>
+          {inline ? <SettingsGroup>{services}</SettingsGroup> : services}
+        </SettingsSection>
       </div>
     </Surface>
   );
@@ -1686,6 +1632,8 @@ function ConnectServiceDialog({
   onSave: SaveProvider;
   onConnected: (name: string) => void;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const fieldID = useId();
   const catalogProvider = target.kind === "catalog" ? target.provider : undefined;
@@ -1709,16 +1657,17 @@ function ConnectServiceDialog({
   const [pending, setPending] = useState(false);
   const [loginCode, setLoginCode] = useState("");
   const [error, setError] = useState("");
+  useEffect(() => { setPending(false); setLoginCode(""); setError(""); }, [controls]);
 
   useEffect(() => {
     if (!catalogProvider) return;
     let active = true;
-    void window.wuu.listCatalogProviders(catalogProvider.id).then(
+    void controls.listCatalogProviders(catalogProvider.id).then(
       (result) => { if (active) setModels(result.providers[0]?.models ?? []); },
-      () => { if (active) setModels([]); },
+      cause => { if (active && !isPluginLifecycleCancellation(cause)) setModels([]); },
     );
     return () => { active = false; };
-  }, [catalogProvider]);
+  }, [controls, catalogProvider]);
 
   const nameTaken = providers.some((provider) => provider.name === name.trim() && provider.name !== existingCodex?.name);
   const needsKey = !subscriptionType;
@@ -1734,10 +1683,12 @@ function ConnectServiceDialog({
 
   async function submit(): Promise<void> {
     if (!canSubmit) return;
+    const signal = authorization.current.signal;
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(setLoginCode, t);
+      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t, signal);
+      signal.throwIfAborted();
       const connection: RuntimeConnectionUpdate = {
         ...(existingCodex ? {} : { type: subscriptionType ?? protocol, create_provider: true }),
         keep_selection: !makeDefault,
@@ -1745,14 +1696,14 @@ function ConnectServiceDialog({
         ...(needsKey ? { api_key: apiKey.trim() } : {}),
         ...(subscriptionType === "openai-codex" ? { reuse_codex_credentials: true } : {}),
       };
-      if (existingCodex) await window.wuu.useCodexCredentials(existingCodex.name);
+      if (existingCodex) await controls.useCodexCredentials(existingCodex.name);
+      signal.throwIfAborted();
       await onSave(name.trim(), model.trim(), undefined, connection);
-      onConnected(name.trim());
+      if (!signal.aborted) onConnected(name.trim());
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t));
     } finally {
-      setLoginCode("");
-      setPending(false);
+      if (!signal.aborted) { setLoginCode(""); setPending(false); }
     }
   }
 

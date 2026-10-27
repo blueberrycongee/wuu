@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  SessionLocatorV1,
   Agent,
   InputFile,
   InputImage,
@@ -33,8 +34,7 @@ import { UserQuestionCard } from "./UserQuestionCard";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { latestAgentMessageLocation } from "./TurnViewHelpers";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { PluginConversationCards } from "./plugins/PluginConversationCards";
+import { useConversationControls } from "./ConversationControlsContext";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import {
   markSessionSwitch,
@@ -349,11 +349,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                 <>
                   {entriesAfterMissingTurn.map(renderContextEntry)}
                   {threadInstructionCards}
-                  <PluginConversationCards
-                    host={desktopPluginHost}
-                    threadId={thread.id}
-                    onStreamFrame={onStreamFrame}
-                  />
+                  <ConversationCards threadId={thread.id} onStreamFrame={onStreamFrame} />
                   {pendingQuestion && !turnIDs.has(pendingQuestion.request.turn_id)
                     ? renderPendingQuestionCard(false)
                     : null}
@@ -377,6 +373,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
               renderTurn={(turn) => (
                 <PaneTurnView
                   threadID={thread.id}
+                  sessionLocator={thread.session_locator}
                   engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
@@ -463,6 +460,7 @@ function reuseCachedConversationPane(
 
 type PaneTurnViewProps = {
   threadID: string;
+  sessionLocator?: SessionLocatorV1;
   engineID?: string;
   turn: Turn;
   cwd?: string;
@@ -499,6 +497,7 @@ type PaneTurnViewProps = {
 // is a useCallback reading through threadRef for exactly that reason.
 const PaneTurnView = memo(function PaneTurnView({
   threadID,
+  sessionLocator,
   engineID,
   turn,
   cwd,
@@ -521,6 +520,7 @@ const PaneTurnView = memo(function PaneTurnView({
   return (
     <TurnView
       threadID={threadID}
+      sessionLocator={sessionLocator}
       engineID={engineID}
       turn={turn}
       cwd={cwd}
@@ -541,3 +541,17 @@ const PaneTurnView = memo(function PaneTurnView({
     />
   );
 });
+
+
+function ConversationCards({ threadId, onStreamFrame }: { threadId: string; onStreamFrame: () => void }): JSX.Element {
+  const { slots, slotOwner } = useConversationControls();
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = element.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (node.childElementCount > 0) onStreamFrame(); });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [onStreamFrame]);
+  return <div ref={element}><slots.Slot name={`${slotOwner}/conversation.cards`} context={{ threadId }} /></div>;
+}

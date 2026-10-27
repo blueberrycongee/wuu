@@ -12,12 +12,13 @@ import (
 )
 
 type Engine struct {
-	store         *Store
-	operations    map[string]Operation
-	clock         func() time.Time
-	withAuthority func(context.Context, Scope, func(Authority) error) error
-	authenticate  func(context.Context) (Identity, error)
-	review        func(context.Context, ReviewInput) (approvefor.Decision, error)
+	store                  *Store
+	operations             map[string]Operation
+	clock                  func() time.Time
+	withAuthority          func(context.Context, Scope, func(Authority) error) error
+	withExecutionAuthority func(context.Context, Scope, func(context.Context, Authority) error) error
+	authenticate           func(context.Context) (Identity, error)
+	review                 func(context.Context, ReviewInput) (approvefor.Decision, error)
 }
 
 func New(options Options) (*Engine, error) {
@@ -34,7 +35,7 @@ func New(options Options) (*Engine, error) {
 		}
 		operations[name] = operation
 	}
-	return &Engine{store: options.Store, operations: operations, clock: options.Clock, withAuthority: options.WithAuthority, authenticate: options.Authenticate, review: options.Review}, nil
+	return &Engine{store: options.Store, operations: operations, clock: options.Clock, withAuthority: options.WithAuthority, withExecutionAuthority: options.WithExecutionAuthority, authenticate: options.Authenticate, review: options.Review}, nil
 }
 
 func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error) {
@@ -237,10 +238,18 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 			return e.store.save(ctx, r, r.Revision, "reviewer", e.clock())
 		}
 	}
+	if e.withExecutionAuthority == nil {
+		return Record{}, ErrExecutionAuthorityUnavailable
+	}
 	var claimed Record
 	var result json.RawMessage
 	var executionErr error
-	err = e.withAuthority(ctx, r.Action.Scope, func(current Authority) error {
+	entered := false
+	err = e.withExecutionAuthority(ctx, r.Action.Scope, func(ctx context.Context, current Authority) error {
+		if entered {
+			return ErrExecutionAuthorityUnavailable
+		}
+		entered = true
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -269,6 +278,17 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 		result, executionErr = e.operations[r.Action.Operation].Execute(ctx, cloneAction(r.Action))
 		return nil
 	})
+	if err == nil && !entered {
+		return Record{}, ErrExecutionAuthorityUnavailable
+	}
+
+	// A boundary cleanup failure after the durable claim is not a safe retry.
+	// Finalize an uncertain receipt now rather than leaving an executing record
+	// indefinitely until another host restart happens to recover it.
+	if err != nil && claimed.Status == Executing {
+		executionErr = errors.Join(executionErr, err)
+		err = nil
+	}
 	if errors.Is(err, ErrConflict) {
 		return e.store.get(ctx, key)
 	}
@@ -314,8 +334,8 @@ func (e *Engine) Revoke(ctx context.Context, key Key, binding ActionBinding) (Re
 		case Proposed, Ready, AwaitingConfirmation, Approved, Blocked:
 			var saved Record
 			err = e.withAuthority(ctx, r.Action.Scope, func(Authority) error {
-				// Revocation and dispatch share the host authority boundary. An
-				// owner transport that expired while waiting cannot change state.
+				// Ledger CAS decides revocation versus dispatch. An owner
+				// transport that expired while inspecting cannot change state.
 				if _, err := e.owner(ctx, r); err != nil {
 					return err
 				}
@@ -340,8 +360,12 @@ func (e *Engine) Revoke(ctx context.Context, key Key, binding ActionBinding) (Re
 // CancelExecution invalidates unclaimed actions of one already verified owning
 // execution. It is an internal host lifecycle operation, not a client endpoint
 // or owner confirmation. The caller must verify cancellation ownership first.
+// An optional exact scope restricts cancellation to one admitted execution.
 // Started and uncertain effects are retained for reconciliation, never revoked.
-func (e *Engine) CancelExecution(ctx context.Context, spaceID, sessionID string) error {
+func (e *Engine) CancelExecution(ctx context.Context, spaceID, sessionID string, exact ...Scope) error {
+	if len(exact) > 1 || len(exact) == 1 && (exact[0].SpaceID != spaceID || exact[0].SessionID != sessionID || exact[0].TaskID == "" || exact[0].RequirementsRevision < 1 || exact[0].ContextDigest == "") {
+		return errors.New("exact cancellation requires one complete matching action scope")
+	}
 	if strings.TrimSpace(sessionID) == "" {
 		return errors.New("Personal action cancellation requires an execution session")
 	}
@@ -350,7 +374,7 @@ func (e *Engine) CancelExecution(ctx context.Context, spaceID, sessionID string)
 		return err
 	}
 	for _, record := range records {
-		if record.Action.Scope.SessionID != sessionID {
+		if record.Action.Scope.SessionID != sessionID || len(exact) == 1 && record.Action.Scope != exact[0] {
 			continue
 		}
 		switch record.Status {

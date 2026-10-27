@@ -6,11 +6,11 @@
 
 | 目标 | API |
 | --- | --- |
-| 在现有位置添加小控件 | `registerSlot` |
+| 在声明的位置添加小控件 | `registerUIContribution` |
 | 改变某个产品概念的展示 | `registerPresenter` |
-| 包装或替换消息、时间线区域 | `registerSurface` |
+| 包装或替换已声明的消息、时间线区域 | `registerUIContribution` |
 | 添加页面、编辑器或仪表盘 | `registerViewType`，配合 placement 或 manifest 入口 |
-| 添加紧凑的检查器区块 | `registerInspectorSection` |
+| 添加紧凑的检查器区块 | `registerUIContribution`，目标为 `wuu.default-shell/inspector.sections` |
 | 渲染特定内容类型 | `registerRenderer` |
 | 在会话底部显示临时交互 | `showConversationCard` |
 | 发布简短的输入框状态 | `registerComposerStatusSource` |
@@ -21,18 +21,39 @@
 
 ## Slot 和 Surface
 
-Slot 在原生界面旁添加内容，多个注册项按 `order` 组合。
+Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内容注册项按 `order` 组合。
+
+主区域的插件页面激活时，其侧栏会在导航入口下方渲染该插件自己的 `sidebar.primary` 贡献。其 `context` 包含 `ownerPluginId`、`viewTypeId` 和 `viewContext`，后者与页面收到的是同一个不可变 context 对象。可据此展示当前页面的摘要，并隔离不同页面实例的状态。会话侧栏不提供这些字段。
 
 | Slot | 位置 |
 | --- | --- |
-| `sidebar.primary`、`sidebar.footer` | 侧栏内容和底部 |
-| `workspace.header`、`conversation.header` | 对应的标题区域 |
-| `conversation.message.before`、`conversation.message.after` | 每条消息前后 |
-| `composer.above`、`composer.toolbar` | 输入框上方或工具栏中 |
+| `wuu.default-navigation/sidebar.primary`、`wuu.default-navigation/sidebar.footer` | 侧栏内容和底部 |
+| `wuu.default-shell/workspace.header`、`wuu.default-shell/conversation.header` | 对应的标题区域 |
+| `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
+| `wuu.default-composer/composer.above`、`wuu.default-composer/composer.toolbar` | 输入框上方或工具栏中 |
 
-Surface 有 `conversation.timeline` 和 `conversation.message` 两种，接收 context 和 fallback，模式为 `wrap` 或 `replace`。时间线边界是一轮对话的时间线与编排组，不代表插件接管整个会话滚动容器。
+通过带所有者前缀的 Slot 目标组合区域。默认会话 provider 声明 `wuu.default-conversation/conversation.turn` 和 `wuu.default-conversation/conversation.message`；预览 provider 在 `wuu.default-preview` 下声明自己的消息 Slot。轮次边界包含该轮的消息与过程组，不是整个滚动容器。
 
-manifest 的 `contributes.slots`、`surfaces`、`presenters` 描述贡献，桌面模块仍需注册实际渲染。提供声明列表后，注册的 ID、目标、模式和顺序必须与声明一致，且声明的贡献必须在激活期间注册。
+```js
+api.registerUIContribution({
+  id: "timeline-frame",
+  target: "wuu.default-conversation/conversation.turn",
+  mode: "wrap",
+  render: ({ children }) => api.react.createElement("section", null, children),
+});
+```
+
+省略 `mode`（或使用 `content`）可提供内容，替换调用方的 fallback。单内容 Slot 在准备阶段拒绝冲突注册，并保留当前 generation。包装按 `order`、插件 ID、贡献 ID 升序组合，后面的包装位于外层。包装渲染失败会报告诊断并保留内层内容。卸载 Slot 所有者会移除该区域；卸载贡献者只移除其贡献。provider 清理会等待已挂载视图释放 effect。由服务图选择的区域继续使用精确的 provider 绑定，并拒绝包装。本地 SDK 预览采用相同的内容／包装顺序与冲突规则；包装渲染失败会记录到浏览器控制台。
+
+这条路径取代了已删除的 `registerSlot`、`registerSurface`、`contributes.slots` 和 `contributes.surfaces`。将 `render(context)` 改为 `render({ context, locale, translate })`，指定完整目标名称，并移除旧 manifest 字段。`registerUIContribution` 不需要重复的 manifest 声明。`contributes.presenters` 声明仍要求 ID、目标、模式、优先级与激活期间的注册一致。
+
+检查器使用同一个公开 Slot 契约。`wuu.default-shell/inspector.sections` 接受多个贡献，通过 `context.snapshot` 传入 `InspectorSnapshotV1`。组件自行渲染区块和标题，没有内容时返回 `null`，通过 `order` 排序。Application 动作绑定到贡献者的 generation。原 `registerInspectorSection`、`when` 和检查器专用 host API 已删除；将显示条件移到组件内，动作改用公开 application 或捕获的插件 API。内置 TODO 模块提供了完整示例。默认信息面板目前由功能开关关闭，仅声明 Slot 不会让它显示。替代 shell 需要声明并渲染自己的 Slot，贡献明确指向该所有者。
+
+贡献除 `context`、`application`、`slots` 外，还接收 `locale` 和 `translate(key, values?)`。使用 `registerLocale` 注册翻译。查找顺序为完整 locale、语言、`en-US`、`en`；缺失时返回 key。打包后的 SDK 预览采用相同契约。
+
+Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接收排序后的 `items`（`key`、`pluginId`、`id`、`title`、`node`）及 `context`；使用各项的 `key` 渲染选中的 `node`。贡献可选的 `title` 默认使用 ID。布局可以分组或过滤内容，无需另一套注册表。包装位于布局结果外层，空 Slot 使用 `fallback`。服务图选择的 Slot 直接渲染选中的 provider，忽略自定义布局。
+
+默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal、Monitor 已改用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
 
 ## Presenter 和动作
 
@@ -46,19 +67,25 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 贡献渲染失败时，使用其未经修改的传入快照回退到下一个 Presenter。插件的其余部分保持加载；重新激活后，失败的贡献可再次运行。
 
-当前内置目标为 `conversation.item`、`conversation.process`、`conversation.tool-activity`、`conversation.composer`、`header.conversation`、`header.workspace`、`navigation.primary`、`app.status`、`content.preview` 和 `settings`。TypeScript 类型允许更多字符串，不代表宿主会渲染任意新目标。
+尚未迁移的 Presenter 目标为 `header.conversation`、`header.workspace`、`app.status`、`content.preview` 和 `settings`。TypeScript 类型允许更多字符串，不代表宿主会渲染任意新目标。
 
 通过 `host.actions` 查看本次渲染公布的动作，再用 `host.invoke(action, input)` 调用。宿主检查 generation 是否仍然有效，并验证动作输入和当前状态。动作即使已公布，也可能因输入框只读或禁止发送而拒绝执行。
 
-例如，`conversation.composer.set-draft` 接受字符串，移除附件接受附件 ID，发送和停止不接受输入。不要把 SDK 常量当作已实现动作：当前输入框并不公布 `conversation.composer.set-submission-mode`。
+输入框和导航定制使用公开 UI contribution。在 `wuu.default-composer/composer.above` 或 `composer.toolbar` 添加控件，在 `wuu.default-navigation/sidebar.primary` 或 `sidebar.footer` 添加导航内容。通过 `application.getSnapshot()` 读取当前状态，并使用 `application.subscribe` 订阅；修改草稿调用 `application.invoke("composer.set-draft", { text, ownerTabId })`。完整替换界面时选择 `ui.composer` 或 `ui.navigation` provider。已移除的 `conversation.composer` 和 `navigation.primary` Presenter 目标会在注册时报错；同时删除对应的 manifest presenter 声明。
 
-工具活动 Presenter 定制执行摘要和控件。富结果正文由宿主单独放置：`inline` 输出位于回答之前，`turn_end` 输出位于回答之后。应使用 `tool-result` renderer 定制这些正文，而不是在工具活动 Presenter 中重复渲染 `structuredResult.content`。
+消息和过程组使用 `wuu.default-conversation` 或 `wuu.default-preview` 下的完整 `conversation.message`、`conversation.process` slot。实际渲染组件直接提供不可变的 `context.snapshot`（`ConversationItemSnapshotV1` 或 `ConversationProcessSnapshotV1`），同时提供 `threadId`、`turnId` 及 `itemId` 或 `itemIds`。消息快照包含流式正文，过程快照反映该组真实的 `active` 和 `streaming` 状态；消息动作也接收同样的语义快照，不再按 ID 查找另一份会话数据。设置 `mode: "wrap"`，不处理的消息类型返回 `children`。编辑消息使用 `application.invoke("history.begin-edit", { threadId, turnId, itemId })`，由应用验证当前状态和 generation 寿命。将 `conversation.item` 和 `conversation.process` Presenter 注册迁移到这些 slot，并删除对应 manifest 声明。过程快照尚不描述压缩通知，因此包含压缩通知的组保留原生渲染。
+
+工具活动使用 `registerUIContribution`，设置 `mode: "wrap"`，完整目标为 `wuu.default-conversation/conversation.tool-activity` 和 `wuu.default-preview/conversation.tool-activity`。叶组件提供 `context.threadId`、`turnId`、`itemId` 及不可变的 `context.snapshot: ToolActivitySnapshot`，其中包含尚未完成的参数和结构化结果。用 `snapshot.capability ?? snapshot.toolName` 选择需要处理的调用，其余调用返回 `children`。多个插件可按贡献顺序包装同一工具活动；包装渲染失败时保留其 children，禁用 generation 后移除包装。旧 `registerToolActivityPresenter` API 和 `conversation.tool-activity` Presenter 目标已删除，应迁移注册并删除对应的 manifest Presenter 声明。参见 [Tool Card Skin](../../../examples/plugins/tool-card-skin/desktop.js)。
+
+富结果正文由宿主单独放置：`inline` 输出位于回答之前，`turn_end` 输出位于回答之后。应使用 `tool-result` renderer 定制这些正文，而不是在工具活动贡献中重复渲染 `structuredResult.content`。
 
 ## View、卡片和状态
 
 View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。
 
 `persistence=durable` 用于恢复视图布局状态，不会持久化任意组件状态。卸载后仍需保留的数据应放入命名空间存储。View props 包含访问存储、设置、命令和视图导航的 host API。
+
+网站页面可以在同一个已注册 View 内，将 `api.ui.WebPage({ url, title? })` 作为组件渲染。此组件仅支持 Wuu 桌面主工作台窗口，不支持弹出的会话窗口或远程 Web／移动客户端。它复用桌面 Chromium 页面和共享浏览器登录会话，包括通过现有浏览器设置导入的 Cookie；不会自动读取其他浏览器的 Cookie 库。初始 `url` 必须使用 HTTP(S)，修改后会导航到新地址。宿主提供导航控件，并将原生页面限制在可见区域内。切换到其他工作台视图只会隐藏网页，同一个页面及其内部状态会保留。显式关闭 View、卸载 WebPage 组件、禁用扩展或重新加载其 generation 时，会关闭页面及其弹窗，Cookie 保留在 Wuu 浏览器会话中。恢复 durable View 时打开配置的网址，不恢复之前的网页内部状态。不需要网站专用插件注册表或 manifest。参见[网站页面配方](plugin-recipes.md#添加网站页面)。
 
 会话和插件主视图使用侧栏导航，包括通过 API 打开、没有声明导航入口的视图。它们的标题栏不提供 `tabs`、`activeTabId` 或 tab 操作。插件主视图提供 `canNavigateBack` 和 `header.navigate-back`。只有关闭会把页面从侧栏移除时，宿主才另外提供关闭控件，即通过 API 打开的视图和额外实例；已声明导航入口的页面通过返回或侧栏离开。紧凑工作区标题栏同样提供返回，并为当前标签提供关闭控件。这些仍是 contract version 1 的可选字段和动作，应检查快照和 `host.actions`，不要从已保存视图重建顶部标签栏。辅助面板和插件内容内部仍可使用各自的标签页。
 
@@ -124,6 +151,12 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 监听 `api.onHostEvent` 的连接相关逻辑应在 `kind: "connection-reset"` 时清除待处理临时任务。远程通知标记 `replayed: true` 时，表示事件到达时有序恢复屏障尚未完成，不能用来触发新的实时任务。普通桌面与实时事件省略该标记。连接重置不表示内核失败，也不会丢弃用户草稿。
 
+## 诊断
+
+插件详情通过 `plugin/diagnostics/list` 查询内置界面模块和已安装插件。请求中的 `id` 和 `fingerprint` 根据本次请求保留的运行代次校验；未知、已禁用和过期的身份仍返回错误。
+
+返回结果包含运行时贡献失败，以及界面上报的注册、渲染和清理失败。界面诊断的 `contribution` 标明窗口连接和阶段，`message` 保留上报的错误。健康插件返回空诊断列表。
+
 ## 外观和清理
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
@@ -132,7 +165,7 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 
-注册项属于插件 generation，卸载时一起移除。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。
+注册项属于插件 generation，卸载时一起移除。原生桌面退出时，Wuu 先卸载 React 消费者、取消待完成的激活、按依赖反序清理插件并发送完激活报告，然后断开 renderer 并停止后端进程。renderer 若在十秒内无法确认清理完成，会被关闭，失败会记录到日志。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。
 
 ### 运行时导航显示名称
 

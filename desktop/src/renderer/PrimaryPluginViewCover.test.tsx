@@ -1,3 +1,4 @@
+import "./test-support/AbortSignal";
 import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -31,8 +32,27 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div data-testid="mock-monaco-editor" />,
 }));
 
-import { App } from "./App";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
+import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { activate as activateApplication } from "./plugins/DefaultApplicationProvider";
+import { activate as activateShell } from "./plugins/DefaultApplicationShell";
+import { activate as activateNavigation } from "./modules/DefaultNavigationSurface";
+import { activate as activateComposer } from "./modules/DefaultComposerSurface";
+import { activate as activateConversation } from "./modules/DefaultConversationSurface";
+import { activate as activatePreview } from "./modules/DefaultPreviewSurface";
+import { activate as activateSettings } from "./modules/DefaultSettingsSurface";
+let desktopWorkbenchController: import("../../../packages/plugin-sdk/src/ui-contributions").ApplicationWorkbenchV1;
+let selectedView: JSX.Element | undefined;
+const providers = [["wuu.default-navigation", activateNavigation], ["wuu.default-composer", activateComposer], ["wuu.default-conversation", activateConversation], ["wuu.default-preview", activatePreview], ["wuu.default-settings", activateSettings], ["wuu.default-shell", activateShell]] as const;
+async function createDefaultApplicationTestView(): Promise<JSX.Element> {
+  if (selectedView) return selectedView;
+  await desktopPluginHost.activateGeneration({ pluginId: "wuu.default-application", generation: "fixture", graphGeneration: "test-graph", register: activateApplication });
+  await desktopPluginHost.selectApplicationBinding({ pluginId: "wuu.default-application", generation: "fixture", id: "ui.application" });
+  for (const [id, register] of providers) await desktopPluginHost.activateGeneration({ pluginId: id, generation: "fixture", graphGeneration: "test-graph", register });
+  await desktopPluginHost.activateGeneration({ pluginId: "test-controls", generation: "fixture", graphGeneration: "test-graph", register(api) { desktopWorkbenchController = api.application.workbench; } });
+  const surfaceBindings = Object.fromEntries(["navigation", "composer", "conversation", "preview", "settings"].map(name => [`ui.${name}`, { pluginId: `wuu.default-${name}`, generation: "fixture", id: `ui.${name}` }]));
+  return selectedView = <ApplicationShellOutlet host={desktopPluginHost} binding={{ pluginId: "wuu.default-shell", generation: "fixture", id: "ui.shell" }} surfaceBindings={surfaceBindings} />;
+}
 
 const pluginId = "test:primary-cover";
 let container: HTMLDivElement;
@@ -80,6 +100,7 @@ function installWuuApi(): void {
     turns: [],
   };
   const initialized = (): InitializeResult => ({
+    extension_inventory: [{ id: pluginId, kind: "plugin", name: "Test view", enabled: true, state: "active", approval_state: "official", fingerprint: "fixture", provenance: { kind: "plugin", source: "fixture", scope: "user", plugin_id: pluginId } }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -96,6 +117,7 @@ function installWuuApi(): void {
     },
   });
   const api = {
+    reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
@@ -143,14 +165,17 @@ describe("primary plugin view covers the conversation", () => {
     document.body.appendChild(container);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     act(() => {
-      for (const view of desktopWorkbenchController.getSnapshot().views) {
+      for (const view of desktopWorkbenchController?.getSnapshot().views ?? []) {
         void desktopWorkbenchController.closeView(view.id);
       }
       desktopPluginHost.unload(pluginId);
       root?.unmount();
     });
+    await desktopPluginHost.selectApplicationBinding(undefined);
+    for (const id of [...providers.map(([id]) => id), "test-controls", "wuu.default-application"]) await desktopPluginHost.unloadAndWait(id);
+    selectedView = undefined;
     root = null;
     container.remove();
     window.localStorage.clear();
@@ -161,15 +186,15 @@ describe("primary plugin view covers the conversation", () => {
   it("drops the empty-session greeting and dock composer while Automations is open", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
     expect(container.querySelector(".empty-home")).not.toBeNull();
-    expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
+    expect(container.querySelector(".conversation-pane .dock-composer-wrap")).not.toBeNull();
 
     await act(async () => {
-      await desktopPluginHost.activateGeneration({
+      await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
         pluginId,
         generation: "one",
         register(api) {
@@ -205,18 +230,18 @@ describe("primary plugin view covers the conversation", () => {
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => {
-      await desktopPluginHost.activateGeneration({ pluginId, generation: "gated", register: activate });
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId, generation: "gated", register: activate });
       await desktopWorkbenchController.openPluginView(pluginId, "personal.home");
     });
     await flushAsync();
-    expect(container.querySelector('.mosaic [role="alert"]')?.textContent).toContain("main_session_recovery_required");
+    await vi.waitFor(async () => { await flushAsync(); expect(container.textContent).toContain("main_session_recovery_required"); });
     expect(container.querySelector(".mosaic textarea")).toBeNull();
     expect(request.mock.calls.every(([params]) => params.user_space_id === "local" && params.product_domain === "personal")).toBe(true);
     await act(async () => desktopWorkbenchController.deactivateRegion("primary"));
-    expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
+    expect(container.querySelector(".conversation-pane .dock-composer-wrap")).not.toBeNull();
     expect(container.querySelector(".conversation-pane")?.hasAttribute("data-primary-plugin-view")).toBe(false);
     expect(window.wuu.listProjects).toHaveBeenCalled();
   });
@@ -232,9 +257,9 @@ describe("primary plugin view covers the conversation", () => {
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await act(async () => {
-      await desktopPluginHost.activateGeneration({ pluginId, generation: "proof", register: activate });
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId, generation: "proof", register: activate });
       await desktopWorkbenchController.openPluginView(pluginId, "personal.home");
     });
     await flushAsync();
@@ -275,13 +300,13 @@ describe("primary plugin view covers the conversation", () => {
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
-    await act(async () => desktopPluginHost.activateGeneration({ pluginId, generation: "navigation-history", contributions: { navigation: [{ id: "twin", title: "twin", view: "personal.home" }] }, register: activate }));
+    await act(async () => desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId, generation: "navigation-history", contributions: { navigation: [{ id: "twin", title: "twin", view: "personal.home" }] }, register: activate }));
     const clickTwin = async () => act(async () => container.querySelector<HTMLButtonElement>(`[data-wuu-component="plugin-navigation-item"][data-wuu-plugin="${pluginId}"]`)!.click());
-    const clickCoding = async () => act(async () => container.querySelector<HTMLButtonElement>(".primary-nav > button")!.click());
+    const clickCoding = async () => act(async () => container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click());
     await clickTwin();
-    expect(container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("personal-main");
+    await vi.waitFor(async () => { await flushAsync(); expect(container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("personal-main"); });
     expect(container.querySelector('.plugin-conversation [role="log"]')?.getAttribute("aria-busy")).toBe("true");
     await clickCoding();
     expect(container.querySelector(".mosaic")).toBeNull();
@@ -300,7 +325,7 @@ describe("primary plugin view covers the conversation", () => {
     expect(container.querySelector(".mosaic-main")?.textContent).toContain(content);
     expect(request.mock.calls.filter(([params]) => params.method === "agents.history").every(([params]) => params.input.agent_id === main.agent_id && params.user_space_id === "local" && params.product_domain === "personal")).toBe(true);
     expect(window.wuu.resumeThread).not.toHaveBeenCalledWith(main.main_session_id);
-    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     expect(container.querySelector(".mosaic-main")?.textContent).toContain(content);
     expect(container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("personal-main");
@@ -308,13 +333,13 @@ describe("primary plugin view covers the conversation", () => {
 
   it("keeps existing Wuu navigation in a user-space view and restores the saved Coding panel", async () => {
     window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const panelToggle = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]');
     expect(panelToggle?.getAttribute("aria-pressed")).toBe("true");
     expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
     await act(async () => {
-      await desktopPluginHost.activateGeneration({ pluginId, generation: "user-layout", register(api) {
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId, generation: "user-layout", register(api) {
         api.registerViewType({ id: "generic.user", title: "User dashboard", layout: "user-space", render: () => <article>Independent user view</article> });
       } });
       await desktopWorkbenchController.openPluginView(pluginId, "generic.user");
@@ -324,11 +349,12 @@ describe("primary plugin view covers the conversation", () => {
     expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')).toBeNull();
     expect(container.querySelector(".workspace-right-panel-resizer")).toBeNull();
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, bubbles: true })));
-    expect(container.querySelector(".conversation-search-dialog")).toBeNull();
+    expect(container.querySelector(".conversation-search-dialog")).not.toBeNull();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelOpen")).toBe("true");
     const search = container.querySelector<HTMLButtonElement>(".conversation-search-trigger");
     expect(search).not.toBeNull();
-    await act(async () => search!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click());
     expect(container.querySelector('[data-workbench-layout="user-space"]')).toBeNull();
     expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
     expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute("aria-pressed")).toBe("true");
@@ -337,10 +363,10 @@ describe("primary plugin view covers the conversation", () => {
 
   it("places the collapsed sidebar toggle after a user-space view so native drag regions cannot cover it", async () => {
     window.localStorage.setItem("wuu.desktop.sidebarCollapsed", "true");
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => {
-      await desktopPluginHost.activateGeneration({ pluginId, generation: "user-sidebar-toggle", register(api) {
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId, generation: "user-sidebar-toggle", register(api) {
         api.registerViewType({ id: "generic.user", title: "User dashboard", layout: "user-space", render: () => <article>Independent user view</article> });
       } });
       await desktopWorkbenchController.openPluginView(pluginId, "generic.user");

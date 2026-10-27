@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -31,6 +33,12 @@ func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
 			if err := os.WriteFile(rt.ConfigPath, []byte(initial), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			rt = newConfigRefreshRuntime(t, rt)
+			configured, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial = string(configured)
 			kit, err := tools.New(rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
@@ -58,6 +66,7 @@ func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
 			if result, err := call("read_file", map[string]any{"path": rt.ConfigPath}); err != nil || !strings.Contains(result, "fake-model") {
 				t.Fatalf("read user config: result=%q err=%v", result, err)
 			}
+			bindConfigSourceForTest(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -178,6 +187,13 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		}
 	}
 	write(valid)
+	rt = newConfigRefreshRuntime(t, rt)
+	configured, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid = string(configured)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -191,7 +207,8 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 
 	// A newer build can add a field unknown to this reader.
 	write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
-	if err := srv.refreshConfigIfChanged(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+	var configErr *pluginhost.HostServiceError
+	if err := srv.refreshConfigIfChanged(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
 		t.Fatalf("expected strict config error, got %v", err)
 	}
 	messages := parseOutput(t, out.String())
@@ -213,7 +230,7 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		t.Fatal(err)
 	}
 	rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
-	if !strings.Contains(rejection.Message, "unknown field") {
+	if rejection.Code == "" {
 		t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
 	}
 
@@ -231,5 +248,62 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 	}
 	if got := srv.providerSummaries(); len(got) != 1 || got[0].Model != "repaired-model" {
 		t.Fatalf("inventory did not recover: %+v", got)
+	}
+}
+
+// Model publication and catalog reload share one lock order. Read-only config
+// checks do not fence admission; failed mutation admission releases both locks.
+func TestModelConfigurationPublicationAdmission(t *testing.T) {
+	srv := &Server{}
+	admit, release := srv.lockModelConfiguration()
+	if srv.pluginGenerationMutation.Load() {
+		t.Fatal("read-only config inspection fenced admission")
+	}
+	if err := admit(); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.pluginGenerationMutation.Load() {
+		t.Fatal("publication did not fence admission")
+	}
+	started, acquired := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(started)
+		nextAdmit, nextRelease := srv.lockModelConfiguration()
+		defer nextRelease()
+		if err := nextAdmit(); err != nil {
+			t.Error(err)
+		}
+		close(acquired)
+	}()
+	<-started
+	select {
+	case <-acquired:
+		t.Fatal("concurrent publication crossed held generation lock")
+	default:
+	}
+	release()
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model publication locks did not release")
+	}
+	// Wait for the second transaction's release by reacquiring the same locks.
+	admit, release = srv.lockModelConfiguration()
+	srv.pluginGenerationMutation.Store(true) // Another publisher already reserved admission.
+	if err := admit(); err == nil {
+		t.Fatal("overlapping publication reservation was accepted")
+	}
+	release()
+	if !srv.pluginGenerationMutation.Load() {
+		t.Fatal("failed admission cleared another publisher's fence")
+	}
+	srv.pluginGenerationMutation.Store(false)
+	admit, release = srv.lockModelConfiguration()
+	if err := admit(); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if srv.pluginGenerationMutation.Load() {
+		t.Fatal("publication leaked admission fence")
 	}
 }

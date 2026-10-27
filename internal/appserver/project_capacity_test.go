@@ -50,7 +50,7 @@ func setProjectWorkerLimit(t *testing.T, s *Server, limit int) {
 }
 func capacityWorker(t *testing.T, s *Server, lead, id, role string) *threadState {
 	t.Helper()
-	metadata, found, err := session.Find(s.rt.SessionDir, lead)
+	metadata, found, err := s.rt.Sessions.Find(lead)
 	if err != nil || !found {
 		t.Fatalf("lead: %v", err)
 	}
@@ -59,10 +59,10 @@ func capacityWorker(t *testing.T, s *Server, lead, id, role string) *threadState
 	metadata.ParentID = lead
 	metadata.ProjectRole = role
 	metadata.Title = id
-	if _, err = session.CreateInitialized(s.rt.SessionDir, metadata, nil); err != nil {
+	if _, err = s.rt.Sessions.CreateInitialized(metadata, nil); err != nil {
 		t.Fatal(err)
 	}
-	th, err := s.ensureThreadLoaded(id)
+	th, err := s.ensureThreadLoaded(testRuntimeState(t, s.rt), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func capacityWorker(t *testing.T, s *Server, lead, id, role string) *threadState
 }
 func queueCapacityInput(t *testing.T, s *Server, id, client string) {
 	t.Helper()
-	if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{SessionID: id, ClientID: client, Content: client, Wake: true, Cause: "capacity-test"}); err != nil {
+	if err := s.rt.Sessions.EnqueueInbox(session.InboxMessage{SessionID: id, ClientID: client, Content: client, Wake: true, Cause: "capacity-test"}); err != nil {
 		t.Fatal(err)
 	}
 	s.drainSessionInbox(id)
@@ -82,13 +82,13 @@ func TestProjectCapacityRemoteMutationReleaseProgress(t *testing.T) {
 	lead := startProject(t, client, "Admission")
 	a := capacityWorker(t, srv, lead.ID, "capacity-a", "worker")
 	b := capacityWorker(t, srv, lead.ID, "capacity-b", "")
-	lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
+	lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
 	if err != nil || !ok {
 		t.Fatalf("lease %v %v", ok, err)
 	}
 	defer lease.Release()
 	queueCapacityInput(t, srv, b.ID, "capacity-dispatch")
-	pending, err := session.PendingInbox(rt.SessionDir, b.ID)
+	pending, err := rt.Sessions.PendingInbox(b.ID)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%v err=%v", pending, err)
 	}
@@ -99,7 +99,7 @@ func TestProjectCapacityRemoteMutationReleaseProgress(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "capacity-dispatch").response <- providersResponse("done")
+	calls.next(t, b.ID, "capacity-dispatch").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, b.ID, "capacity-dispatch"); len(ids) != 1 {
 		t.Fatalf("deliveries: %v", ids)
@@ -114,7 +114,7 @@ func TestProjectCapacityManualAdmissionAndCoordination(t *testing.T) {
 	b := capacityWorker(t, srv, lead.ID, "capacity-b", "worker")
 	side := capacityWorker(t, srv, lead.ID, "capacity-side", "side")
 	queueCapacityInput(t, srv, a.ID, "occupy-capacity")
-	held := calls.next(t, "occupy-capacity")
+	held := calls.next(t, a.ID, "occupy-capacity")
 	_, _, err := srv.startThreadUserTurn(context.Background(), b, providers.ChatMessage{Role: "user", Content: "manual blocked", ClientID: "manual-blocked"}, turnRuntimeSnapshot{}, true, turnReadOnlyFail)
 	if !errors.Is(err, session.ErrProjectWorkerCapacity) {
 		t.Fatalf("manual err=%v", err)
@@ -123,7 +123,7 @@ func TestProjectCapacityManualAdmissionAndCoordination(t *testing.T) {
 		t.Fatalf("manual input appended: %v", ids)
 	}
 	queueCapacityInput(t, srv, side.ID, "side-coordination")
-	calls.next(t, "side-coordination").response <- providersResponse("side done")
+	calls.next(t, side.ID, "side-coordination").response <- providersResponse("side done")
 	held.response <- providersResponse("worker done")
 	waitForThread(t, srv, a.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 }
@@ -132,13 +132,13 @@ func TestProjectInboxRetryStopsWithOnlyInformationalInput(t *testing.T) {
 	srv, client, _, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Informational")
 	target := capacityWorker(t, srv, lead.ID, "info-only", "worker")
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{SessionID: target.ID, ClientID: "info", Content: "info", Wake: false, CreatedAt: time.Now()}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{SessionID: target.ID, ClientID: "info", Content: "info", Wake: false, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(target.ID)
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
+	n := len(projectFixtureProvider(srv).lifetime.projectInboxDrains)
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("informational inbox retained %d retries", n)
 	}
@@ -150,7 +150,7 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 	lead := startProject(t, client, "Retry lifecycle")
 	a := capacityWorker(t, srv, lead.ID, "retry-holder", "worker")
 	b := capacityWorker(t, srv, lead.ID, "retry-pending", "worker")
-	lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
+	lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
 	if err != nil || !ok {
 		t.Fatalf("lease %v %v", ok, err)
 	}
@@ -161,7 +161,7 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		stopped *atomic.Bool
 	}
 	timers := make(chan timer, 10)
-	srv.projectInboxAfterFunc = func(d time.Duration, f func()) func() {
+	projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(d time.Duration, f func()) func() {
 		stopped := &atomic.Bool{}
 		timers <- timer{d, f, stopped}
 		return func() { stopped.Store(true) }
@@ -190,7 +190,9 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		t.Fatalf("backoff=%v", next.delay)
 	}
 	calls.assertIdle(t)
-	srv.Close()
+	if err := projectFixtureProvider(srv).Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if !next.stopped.Load() {
 		t.Fatal("Close did not stop pending timer")
 	}
@@ -200,9 +202,9 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		t.Fatalf("closed scheduler rearmed: %v", extra.delay)
 	default:
 	}
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
+	n := len(projectFixtureProvider(srv).lifetime.projectInboxDrains)
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("Close retained %d drains", n)
 	}
@@ -214,7 +216,7 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	lead := startProject(t, client, "Queued capacity")
 	a := capacityWorker(t, srv, lead.ID, "queued-holder", "worker")
 	b := capacityWorker(t, srv, lead.ID, "queued-target", "worker")
-	lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
+	lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, a.ID)
 	if err != nil || !ok {
 		t.Fatalf("lease %v %v", ok, err)
 	}
@@ -222,13 +224,13 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	if !srv.enqueueQueuedUserTurn(b.ID, queuedTurn{id: "queued-capacity", msg: providers.ChatMessage{Role: "user", Content: "queued-capacity", ClientID: "queued-capacity"}}) {
 		t.Fatal("enqueue")
 	}
-	srv.tryDrainQueuedTurns(b.ID, true)
+	srv.tryDrainQueuedTurns(testRuntimeState(t, srv.rt), b.ID, true)
 	if !srv.hasQueuedUserTurns(b.ID) {
 		t.Fatal("capacity discarded queue")
 	}
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectCapacityRetries[lead.ID])
-	srv.projectInboxMu.Unlock()
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
+	n := len(projectFixtureProvider(srv).lifetime.projectCapacityRetries[lead.ID])
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
 	if n != 1 {
 		t.Fatalf("capacity retries=%d", n)
 	}
@@ -236,7 +238,7 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "queued-capacity").response <- providersResponse("done")
+	calls.next(t, b.ID, "queued-capacity").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, b.ID, "queued-capacity"); len(ids) != 1 {
 		t.Fatalf("deliveries=%v", ids)
@@ -244,15 +246,15 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 }
 
 func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
-	srv, client, calls, rt := newProjectFixture(t)
-	setProjectWorkerLimit(t, srv, 1)
-	lead := startProject(t, client, "Prelaunch capacity")
-	a := capacityWorker(t, srv, lead.ID, "hook-holder", "worker")
-	b := capacityWorker(t, srv, lead.ID, "hook-pending", "worker")
+	var enabled atomic.Bool
 	entered, released := make(chan struct{}, 1), make(chan struct{})
 	var once sync.Once
 	release := func() { once.Do(func() { close(released) }) }
 	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !enabled.Load() {
+			_, _ = w.Write([]byte("0"))
+			return
+		}
 		select {
 		case entered <- struct{}{}:
 		default:
@@ -265,9 +267,13 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 	}))
 	defer gate.Close()
 	defer release()
-	rt.HookDispatcher.Replace(hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-		hooks.UserPromptSubmit: {{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.exit(Number(t)))"`, gate.URL)}},
-	})))
+	hook := hooks.HookConfig{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.exit(Number(t)))"`, gate.URL)}
+	srv, client, calls, rt := newProjectFixture(t, hook)
+	setProjectWorkerLimit(t, srv, 1)
+	lead := startProject(t, client, "Prelaunch capacity")
+	a := capacityWorker(t, srv, lead.ID, "hook-holder", "worker")
+	b := capacityWorker(t, srv, lead.ID, "hook-pending", "worker")
+	enabled.Store(true)
 	rejected := make(chan *ResponseError, 1)
 	go func() {
 		rejected <- client.call(t, MethodTurnStart, TurnStartParams{ThreadID: a.ID, Prompt: "rejected reservation"}, nil)
@@ -282,12 +288,12 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 	if ids := deliveredClientIDs(t, rt, b.ID, "after-hook-rollback"); len(ids) != 0 {
 		t.Fatal("pending worker appended early")
 	}
-	rt.HookDispatcher.Replace(hooks.NewDispatcher(nil))
+	enabled.Store(false)
 	release()
 	if failure := <-rejected; failure == nil {
 		t.Fatal("hook rejection not reported")
 	}
-	history, err := loadChatMessages(rt.SessionDir, a.ID)
+	history, err := loadChatMessages(rt.Sessions, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +302,7 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 			t.Fatal("rejected hook appended user history")
 		}
 	}
-	calls.next(t, "after-hook-rollback").response <- providersResponse("done")
+	calls.next(t, b.ID, "after-hook-rollback").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }
 
@@ -308,9 +314,9 @@ func TestProjectCapacityReductionPreservesRunningWorkers(t *testing.T) {
 	b := capacityWorker(t, srv, lead.ID, "reduce-b", "worker")
 	c := capacityWorker(t, srv, lead.ID, "reduce-c", "worker")
 	queueCapacityInput(t, srv, a.ID, "first-running")
-	first := calls.next(t, "first-running")
+	first := calls.next(t, a.ID, "first-running")
 	queueCapacityInput(t, srv, b.ID, "second-running")
-	second := calls.next(t, "second-running")
+	second := calls.next(t, b.ID, "second-running")
 	setProjectWorkerLimit(t, srv, 1)
 	queueCapacityInput(t, srv, c.ID, "after-reduction")
 	if !threadIsRunning(a) || !threadIsRunning(b) {
@@ -320,11 +326,11 @@ func TestProjectCapacityReductionPreservesRunningWorkers(t *testing.T) {
 	first.response <- providersResponse("first done")
 	waitForThread(t, srv, a.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	// At the lowered bound one surviving worker still occupies all capacity.
-	if _, ok, err := session.TryAcquireThreadExecutionLeaseWithProjectLimit(rt.SessionDir, c.ID, 1); ok || !errors.Is(err, session.ErrProjectWorkerCapacity) {
+	if _, ok, err := rt.Sessions.TryAcquireThreadExecutionLeaseWithProjectLimit(rt.SessionDir, c.ID, 1); ok || !errors.Is(err, session.ErrProjectWorkerCapacity) {
 		t.Fatalf("decreased bound not applied: %v %v", ok, err)
 	}
 	second.response <- providersResponse("second done")
-	calls.next(t, "after-reduction").response <- providersResponse("third done")
+	calls.next(t, c.ID, "after-reduction").response <- providersResponse("third done")
 	waitForThread(t, srv, c.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }
 
@@ -333,12 +339,12 @@ func TestProjectCapacityBacklogReplayStopAndFailure(t *testing.T) {
 	setProjectWorkerLimit(t, srv, 1)
 	lead := startProject(t, client, "Backlog")
 	holder := capacityWorker(t, srv, lead.ID, "backlog-holder", "worker")
-	lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+	lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 	if err != nil || !ok {
 		t.Fatalf("holder: %v %v", ok, err)
 	}
 	defer lease.Release()
-	peer := New(rt, &lockedBuffer{})
+	peer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(peer.Close)
 	var ids []string
 	for i := 0; i < 3; i++ {
@@ -350,19 +356,19 @@ func TestProjectCapacityBacklogReplayStopAndFailure(t *testing.T) {
 		queueCapacityInput(t, peer, id, id+"-input")
 	}
 	stopped := capacityWorker(t, srv, lead.ID, "backlog-stopped", "worker")
-	control, err := session.ChangeControl(rt.SessionDir, stopped.ID, lead.ID, session.ControlActive, 0)
+	control, err := rt.Sessions.ChangeControl(stopped.ID, lead.ID, session.ControlActive, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{SessionID: stopped.ID, ClientID: "stopped-input", Content: "never run", Wake: true, Controls: []session.Control{control}}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{SessionID: stopped.ID, ClientID: "stopped-input", Content: "never run", Wake: true, Controls: []session.Control{control}}); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(stopped.ID)
-	if _, err := session.ChangeControl(rt.SessionDir, stopped.ID, lead.ID, session.ControlPaused, control.Revision); err != nil {
+	if _, err := rt.Sessions.ChangeControl(stopped.ID, lead.ID, session.ControlPaused, control.Revision); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(stopped.ID)
-	if messages, err := session.PendingInbox(rt.SessionDir, stopped.ID); err != nil || len(messages) != 0 {
+	if messages, err := rt.Sessions.PendingInbox(stopped.ID); err != nil || len(messages) != 0 {
 		t.Fatalf("stale work not settled: %v %v", messages, err)
 	}
 	calls.assertIdle(t)
@@ -404,8 +410,8 @@ func TestProjectCapacityBacklogReplayStopAndFailure(t *testing.T) {
 			t.Fatalf("%s deliveries=%v", id, delivered)
 		}
 	}
-	srv.recoverProjectInbox()
-	peer.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
+	peer.projectTestRecoverInbox()
 	calls.assertIdle(t)
 	if delivered := deliveredClientIDs(t, rt, stopped.ID, "stopped-input"); len(delivered) != 0 {
 		t.Fatal("stopped backlog ran")
@@ -419,14 +425,14 @@ func TestProjectCapacityAdoptsAlreadyRunningConversation(t *testing.T) {
 	a := capacityWorker(t, srv, lead.ID, "adopt-running-a", "worker")
 	b := capacityWorker(t, srv, lead.ID, "adopt-running-b", "worker")
 	c := capacityWorker(t, srv, lead.ID, "adopt-running-c", "worker")
-	if _, err := session.SetProjectMembership(rt.SessionDir, b.ID, "", "", ""); err != nil {
+	if _, err := rt.Sessions.SetProjectMembership(b.ID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	queueCapacityInput(t, srv, a.ID, "already-managed")
-	first := calls.next(t, "already-managed")
+	first := calls.next(t, a.ID, "already-managed")
 	queueCapacityInput(t, srv, b.ID, "ordinary-running")
-	ordinary := calls.next(t, "ordinary-running")
-	if _, err := session.SetProjectMembership(rt.SessionDir, b.ID, projectSessionSource, lead.ID, ""); err != nil {
+	ordinary := calls.next(t, b.ID, "ordinary-running")
+	if _, err := rt.Sessions.SetProjectMembership(b.ID, projectSessionSource, lead.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	queueCapacityInput(t, srv, c.ID, "after-running-adoption")
@@ -436,10 +442,10 @@ func TestProjectCapacityAdoptsAlreadyRunningConversation(t *testing.T) {
 	calls.assertIdle(t)
 	first.response <- providersResponse("first done")
 	waitForThread(t, srv, a.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
-	if _, ok, err := session.TryAcquireThreadExecutionLeaseWithProjectLimit(rt.SessionDir, c.ID, 1); ok || !errors.Is(err, session.ErrProjectWorkerCapacity) {
+	if _, ok, err := rt.Sessions.TryAcquireThreadExecutionLeaseWithProjectLimit(rt.SessionDir, c.ID, 1); ok || !errors.Is(err, session.ErrProjectWorkerCapacity) {
 		t.Fatalf("adopted execution not counted: %v %v", ok, err)
 	}
 	ordinary.response <- providersResponse("ordinary done")
-	calls.next(t, "after-running-adoption").response <- providersResponse("last done")
+	calls.next(t, c.ID, "after-running-adoption").response <- providersResponse("last done")
 	waitForThread(t, srv, c.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }

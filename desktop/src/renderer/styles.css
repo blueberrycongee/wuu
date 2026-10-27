@@ -13,6 +13,7 @@
 @import "./styles/environment.css";
 @import "./styles/workspace.css";
 @import "./styles/plugins-catalog.css";
+@import "./styles/mcp-services.css";
 @import "./styles/turns.css";
 @import "./styles/projects.css";
 @import "./styles/message-reading.css";
@@ -33,5 +34,6 @@
 @import "./styles/appearance.css";
 @import "./styles/background.css";
 
+@import "./styles/navigation-ribbon.css";
 @import "./styles/icon-controls.css";
 @import "./styles/focus.css";

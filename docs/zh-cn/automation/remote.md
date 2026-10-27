@@ -9,6 +9,123 @@ Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控�
 [原生客户端项目](../../../clients/native/README.md)构建，尚未提供公开 App Store 分发。
 桌面账号登录仍仅在开发模式开放。CLI 构建方法见[开发指南](../project/development.md)。
 
+## 选择桌面会话连接
+
+默认桌面的真实会话池读取可选环境变量 `WUU_DESKTOP_SESSION_ROUTES` 指定的文件。
+未配置时保留本地 stdio 路径；明确选择远端或禁用后，配置错误、凭据缺失和远端离线
+都不会退回本机进程。
+
+```json
+{
+  "version": 1,
+  "default": { "kind": "local" },
+  "contexts": {
+    "/Users/example/remote-project-view": {
+      "kind": "remote",
+      "execution_host": "<已配对主机公钥>",
+      "storage_host": "<存储主机标识>",
+      "display_host": "<当前桌面标识>",
+      "workdir": "/srv/project",
+      "connector": { "kind": "keychain", "service": "wuu.remote.my-host" }
+    }
+  }
+}
+```
+
+在桌面启动环境中设置 `WUU_DESKTOP_SESSION_ROUTES=/absolute/routes.json`。
+`contexts` 的键是已注册的本机展示工作区。需要同时使用多台主机时，为其分配不同的
+展示工作区，即使远端路径或会话 ID 相同。远端 `workdir` 原样发送给 app-server，
+不会按本机文件系统解析；请求顶层 `cwd` 等于展示工作区时会映射为远端路径。
+`storage_host` 和 `display_host` 只描述位置，不迁移数据或授予权限，存储权威仍由
+所选主机及其存储提供者决定。这是会话 RPC 连接，不会替换所有本机文件、终端或电脑控制功能。接收主机需提供所选桌面
+UI 提供者，例如配置 `composition: {version: 3, profile: "desktop"}`；headless 组合
+不会自动回退为本机 GUI 提供者。
+
+会话池在 list/start/resume 返回和 thread 通知中填充 `Thread.session_locator`，
+并在路由事件中填充 `ServerEvent.session_locator`，统一使用 `SessionLocatorV1`
+（`version`、`execution_host`、`session_id?`、`storage_host?`、`display_host?`）。
+附件流将 thread locator 放入 `RuntimeContext.session_locator` 后绑定。主机、存储主机
+或会话 ID 不匹配时，在发送前拒绝；定位元数据不是授权凭据。
+
+macOS 内置连接器按 service 读取**现有**通用密码 Keychain 条目，内容为已配对
+RemoteClient 凭据 JSON（`v`、`device_seed`、`host_pub`、`relay_url`）。应由受信任
+配对或凭据管理器提供，禁止把凭据 JSON 或设备私钥放入路由文件。连接器校验
+`execution_host` 与凭据固定的 `host_pub` 一致，并复用现有加密 RemoteClient。
+Relay URL 本身不是授权。用户完整配对控制凭据不能交给仅获受限 `session/federation`
+委派的 agent；接收端认证网关独立检查资源授权和委派上限。
+
+外部受信任连接器可以配置为
+`"connector": { "kind": "module", "path": "/absolute/connector.mjs" }`。
+此模块以受信任的主进程代码运行，导出
+`connectDesktopSession({ version: 1, route, hooks })`，返回连接对象或 Promise。
+连接器负责验证所选执行主机，并应用相应用户或委派权限。安装连接器不构成沙箱边界。
+从 `@wuu/plugin-sdk` 导入 `ConnectDesktopSessionV1` 和
+`DesktopSessionConnectionV1`；内置 RemoteClient 适配器也使用同一结构化契约。
+SDK 同时导出 `DesktopSessionConnectionHooksV1`、`DesktopSessionRPCV1`、
+`DesktopSessionRouteConfigV1` 和 `DesktopSessionContextV1`（桌面上下文加可选的公开
+`SessionLocatorV1`）。不需要导入私有 client、protocol 或 desktop 模块，也无需复制接口
+定义。`isDesktopSessionConnectionV1` 只做浅层加载检查，不负责认证或验证契约行为。
+这是完整 app-server 连接边界，不是范围更窄的 `session.transport` 联邦派发服务。
+
+- 连接对象：`start(): void`、`stop(): Promise<void>`、
+  `waitAttached(timeoutMs?): Promise<void>`、`rpc(): DesktopSessionRPCV1 | null`。
+- RPC：`call(method, params?, timeoutMs?, workdir?, onResult?): Promise<unknown>`
+  和 `isClosed(): boolean`。必须在后续通知及 Promise 完成前同步调用 `onResult`；
+  回调抛错时拒绝本次调用。明确的服务端拒绝使用 `DesktopSessionResponseErrorV1`，
+  包含 `kind: "app-server-response"` 和字符串 `message`；接纳后的其他连接错误属于结果未知。
+- 回调：`onNotification(method, params, workdir?)`、
+  `onServerRequest({id, method, params?})`（返回 `{result?, error?}`）、
+  `onAttach({session, resumed})`、`onDetach()`、`onState({running})`。
+  running 条目可带 `thread_id` 和 `workdir`。
+
+小幅本地增强可以包装已有的受信任连接器，不必替换整个 GUI 或提供者栈。例如，以下模块
+只增加本地运行会话计数日志，其余回调和连接对象保持不变：
+
+```ts
+import type { ConnectDesktopSessionV1 } from "@wuu/plugin-sdk";
+import { connectDesktopSession as connectBase } from "./existing-connector.js";
+
+export const connectDesktopSession: ConnectDesktopSessionV1 = options =>
+  connectBase({
+    ...options,
+    hooks: {
+      ...options.hooks,
+      onState(state) {
+        console.debug("Running remote sessions:", state.running.length);
+        options.hooks.onState(state);
+      },
+    },
+  });
+```
+
+`existing-connector.js` 是你自己的连接器，不是 Wuu 私有适配器。将现有 module 路由
+指向该包装模块即可。本地增强是可选项；[完整替换提供者](../customize/replaceable-providers.md)
+仍是独立的组合选择。包装模块必须保留认证、权限和生命周期行为，不创建新服务，也不改变数据归属。
+
+连接器返回尚未启动的连接，由桌面调用 `start`。start 和 stop 必须幂等；遵守传入的附着和
+RPC 超时时间（目前分别为 10 秒与 30 秒），超时不代表取消远端工作。
+续接必须保留同一 RPC 对象及待响应请求；全新连接必须替换并关闭旧 RPC，拒绝其待响应请求。
+`stop` 只断开 GUI，不发送 app-server `shutdown`，也不终止远端任务。桌面阻止直接远端
+shutdown，并默认拒绝远端浏览器、本机电脑控制和未知反向请求。审批和用户输入反向请求
+通过现有 GUI 应答路由传递；界面不支持的展示请求仍明确拒绝。
+
+在源码中运行 `node --test packages/plugin-sdk/test/desktop-session-package.test.mjs`，
+可仅用打包后的公开 SDK 编译合成独立适配器，不依赖仓库私有模块。此检查验证作者边界，
+不验证真实网络部署或连接器的可信程度。
+
+每次请求或事件路由都会重读配置，旧响应和通知不能写入新路由。已发送调用不会自动重放：
+续接可完成原请求；全新连接、路由变化或响应超时则报告结果未知，应先检查会话再决定重试。
+`bindSessionRequest(context, sessionID)` 捕获实际会话 owner 的 `bindRequest()`，供
+附件流等关联操作使用，不会偷偷迁移到其他主机或连接代次。配置变更在下一次路由操作生效；
+更换所选主机后应重新初始化 GUI。
+
+Mac 隔离验收：构建 core 与桌面，用 esbuild（Node/ESM）将
+`desktop/scripts/fixtures/remoteSessionPeer.ts` 打包为
+`desktop/out/e2e/remote-session/connector.mjs`，再用 Electron 启动
+`desktop/scripts/remote-session-e2e.mjs`。该脚本使用临时 profile、合成身份、真实加密通道、
+真实 Go app-server 和本机合成模型。报告与截图保存在 `desktop/out/e2e/remote-session/`；
+不验证互联网 Relay 部署、Keychain 配置或 agent 委派授权。
+
 ## 连接 SSH 工作区
 
 实验性的无桌面宿主在远端 macOS 或 Linux 电脑上运行 Wuu、已安装的 Agent 引擎、

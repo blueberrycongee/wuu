@@ -242,3 +242,73 @@ func TestSettingsRejectUnrecognizedPersistedPolicy(t *testing.T) {
 		t.Fatal("old opt-in silently applied to a different policy version")
 	}
 }
+
+// Authority inspection can keep durable requests readable without a provider
+// capable of fencing execution. A snapshot must never silently become a lease.
+func TestInspectionWithoutExecutionAuthorityPreservesPendingDecision(t *testing.T) {
+	f := newFixture(t)
+	r := f.approve(f.propose("synthetic.send"))
+	f.engine.withExecutionAuthority = nil
+	if _, err := f.engine.Execute(context.Background(), r.Action.Key()); !errors.Is(err, ErrExecutionAuthorityUnavailable) {
+		t.Fatalf("snapshot substituted execution lease: %v", err)
+	}
+	current, err := f.engine.Get(context.Background(), r.Action.Key())
+	if err != nil || current.Status != Approved || current.Revision != r.Revision || f.calls != 0 {
+		t.Fatalf("unsupported dispatch changed durable action: %+v %v calls=%d", current, err, f.calls)
+	}
+	if _, err = f.engine.Revoke(context.Background(), r.Action.Key(), ActionBinding{Digest: r.Action.Digest, ExpectedRevision: r.Revision}); err != nil {
+		t.Fatal("unsupported dispatch blocked safe revocation", err)
+	}
+}
+
+func TestExecutionAuthorityMustActuallyEnterBoundary(t *testing.T) {
+	f := newFixture(t)
+	r := f.approve(f.propose("synthetic.send"))
+	f.engine.withExecutionAuthority = func(context.Context, Scope, func(context.Context, Authority) error) error { return nil }
+	if _, err := f.engine.Execute(context.Background(), r.Action.Key()); !errors.Is(err, ErrExecutionAuthorityUnavailable) {
+		t.Fatalf("empty authority implementation claimed success: %v", err)
+	}
+	current, err := f.store.get(context.Background(), r.Action.Key())
+	if err != nil || current.Status != Approved || f.calls != 0 {
+		t.Fatalf("noop boundary changed action: %+v %v", current, err)
+	}
+}
+
+func TestExecutionUsesBoundaryCancellationContextBeforeClaim(t *testing.T) {
+	f := newFixture(t)
+	r := f.approve(f.propose("synthetic.send"))
+	f.engine.withExecutionAuthority = func(ctx context.Context, _ Scope, use func(context.Context, Authority) error) error {
+		scoped, cancel := context.WithCancel(ctx)
+		cancel()
+		return use(scoped, f.authority)
+	}
+	if _, err := f.engine.Execute(context.Background(), r.Action.Key()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("retired boundary reached claim: %v", err)
+	}
+	saved, err := f.store.get(context.Background(), r.Action.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != Approved || f.calls != 0 {
+		t.Fatalf("canceled boundary changed action: %s calls=%d", saved.Status, f.calls)
+	}
+}
+
+func TestExecutionBoundaryCleanupFailurePersistsUncertainWithoutReplay(t *testing.T) {
+	f := newFixture(t)
+	r := f.approve(f.propose("synthetic.send"))
+	f.engine.withExecutionAuthority = func(ctx context.Context, _ Scope, use func(context.Context, Authority) error) error {
+		if err := use(ctx, f.authority); err != nil {
+			return err
+		}
+		return errors.New("selected cleanup outcome unknown")
+	}
+	got, err := f.engine.Execute(context.Background(), r.Action.Key())
+	if err != nil || got.Status != Uncertain || f.calls != 1 {
+		t.Fatalf("cleanup uncertainty lost: %+v %v calls=%d", got, err, f.calls)
+	}
+	got, err = f.engine.Execute(context.Background(), r.Action.Key())
+	if err != nil || got.Status != Uncertain || f.calls != 1 {
+		t.Fatalf("uncertain effect replayed: %+v %v", got, err)
+	}
+}

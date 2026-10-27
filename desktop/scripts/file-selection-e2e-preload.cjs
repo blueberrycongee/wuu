@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge } = require("electron");
 const path = require("node:path");
 
@@ -51,7 +52,7 @@ contextBridge.exposeInMainWorld("selectionE2E", {
   },
 });
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   initialLanguagePreference: "en-US", initialSystemLocale: "en-US", initialMessageFlowFontSize: 14,
   listProjects: async () => projects(), selectNoProject: async () => projects(),
   initialize: async () => ({
@@ -65,6 +66,7 @@ contextBridge.exposeInMainWorld("wuu", {
     }],
   }),
   updateRuntimeSettings: async () => ({ provider: "e2e", model: "mock-selection", providers }),
+  listEngines: async () => ({ engines: [] }),
   loadCodexModels: async () => ({ provider: "e2e", models: [{ id: "mock-selection", name: "mock-selection" }] }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
   gitStatus: async () => ({ is_repo: true, branch: "selection-e2e", branches: ["selection-e2e"], dirty_count: 0,
@@ -84,6 +86,8 @@ contextBridge.exposeInMainWorld("wuu", {
   startThread: async () => ({ thread: clone(thread) }),
   resumeThread: async () => ({ thread: clone(thread) }),
   listThreads: async () => ({ threads: [clone(thread)] }),
+  listAllThreads: async () => ({ threads: [clone(thread)] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   startTurn: async (threadId, prompt, images = [], inputFiles = [], permissionMode, activeDocument, contentParts) => {
     if (threadId !== thread.id) throw new Error(`Unexpected thread: ${threadId}`);
@@ -111,4 +115,4 @@ contextBridge.exposeInMainWorld("wuu", {
   respondToServerRequest: async () => undefined, rejectServerRequest: async () => undefined,
   onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },
   onWindowResizeState: () => () => undefined,
-});
+}));

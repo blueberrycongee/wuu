@@ -71,17 +71,17 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	owner := &relationPreStepClient{pluginTurnLifecycleClient: pluginTurnLifecycleClient{id: "fixture"}, inputs: make(chan pluginhost.AgentPreStepInput, 8)}
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: owner.id}}}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	created, err := srv.createPluginSession(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Seed a real visible quote target and a hidden target that must be rejected.
 	for _, msg := range []session.HistoryRecord{{Role: "assistant", Content: "quote"}, {Role: "user", Content: "hidden", Hidden: true}} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, created.SessionID, msg); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(created.SessionID, msg); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,15 +89,15 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	for _, ref := range []providers.MessageRef{{SessionID: "other", Seq: 1}, {SessionID: created.SessionID, Seq: 2}, {SessionID: created.SessionID, Seq: 999}} {
 		bad := providers.CloneMessageRelation(relation)
 		bad.ReplyTo = &ref
-		if err := srv.validateMessageRelation(owner.id, created.SessionID, bad); err == nil {
+		if err := srv.validateMessageRelation(testRuntimeState(t, srv.rt), owner.id, created.SessionID, bad); err == nil {
 			t.Fatalf("accepted invalid target %+v", ref)
 		}
 	}
 	// A visible file produced by a tool is quotable, but raw tool logs are not.
-	if err := session.AppendHistoryRecord(rt.SessionDir, created.SessionID, session.HistoryRecord{Role: "tool", Content: "raw tool log"}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord(created.SessionID, session.HistoryRecord{Role: "tool", Content: "raw tool log"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, created.SessionID, session.HistoryRecord{Role: "tool", Content: "file", ToolResult: json.RawMessage(`{"content":[{"type":"image","mime_type":"image/png","data":"aGk="}]}`)}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord(created.SessionID, session.HistoryRecord{Role: "tool", Content: "file", ToolResult: json.RawMessage(`{"content":[{"type":"image","mime_type":"image/png","data":"aGk="}]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -106,7 +106,7 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	}{{3, false}, {4, true}} {
 		ref := providers.CloneMessageRelation(relation)
 		ref.ReplyTo.Seq = tc.seq
-		err := srv.validateMessageRelation(owner.id, created.SessionID, ref)
+		err := srv.validateMessageRelation(testRuntimeState(t, srv.rt), owner.id, created.SessionID, ref)
 		if (err == nil) != tc.allowed {
 			t.Fatalf("tool quote %d: %v", tc.seq, err)
 		}
@@ -114,11 +114,11 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	proof := runtime.ClientUserInput{RequestID: "client", Prompt: " literal quote reply ", Relation: relation}
 	ctx := runtime.WithClientUserInput(context.Background(), owner.id, proof)
 	params := pluginhost.SessionSendParams{RequestID: "send", SessionID: created.SessionID, UserInputRequestID: proof.RequestID, Input: pluginhost.SessionInput{Prompt: proof.Prompt}}
-	if _, err := srv.sendPluginSession(ctx, owner.id, params); err == nil {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params); err == nil {
 		t.Fatal("omitted admitted relation accepted")
 	}
 	params.Relation = relation
-	result, err := srv.sendPluginSession(ctx, owner.id, params)
+	result, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("missing pre-step")
 	}
-	records, err := session.LoadHistoryRecords(rt.SessionDir, created.SessionID, false)
+	records, err := rt.Sessions.LoadHistoryRecords(created.SessionID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestPluginRelationAdmissionDeliveryAndReload(t *testing.T) {
 	if !found {
 		t.Fatal("missing output")
 	}
-	loaded, err := loadChatMessages(rt.SessionDir, created.SessionID)
+	loaded, err := loadChatMessages(rt.Sessions, created.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,11 +173,11 @@ func TestPluginRelationQueuedTurnsKeepTheirOwnSource(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	owner := &relationPreStepClient{pluginTurnLifecycleClient: pluginTurnLifecycleClient{id: "fixture"}, inputs: make(chan pluginhost.AgentPreStepInput, 8)}
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: owner.id}}}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() { once.Do(func() { close(release) }); srv.Close() })
-	created, err := srv.createPluginSession(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestPluginRelationQueuedTurnsKeepTheirOwnSource(t *testing.T) {
 	for i, id := range []string{"A", "B"} {
 		proof := runtime.ClientUserInput{RequestID: id, Prompt: id, Relation: relations[i]}
 		ctx := runtime.WithClientUserInput(context.Background(), owner.id, proof)
-		result, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{RequestID: id, UserInputRequestID: id, SessionID: created.SessionID, Relation: relations[i], Input: pluginhost.SessionInput{Prompt: id}})
+		result, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, pluginhost.SessionSendParams{RequestID: id, UserInputRequestID: id, SessionID: created.SessionID, Relation: relations[i], Input: pluginhost.SessionInput{Prompt: id}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +214,7 @@ func TestPluginRelationQueuedTurnsKeepTheirOwnSource(t *testing.T) {
 		if input.SourceMessage == nil || input.SourceMessage.SessionID != created.SessionID || !reflect.DeepEqual(input.MessageRelation, relations[i]) {
 			t.Fatalf("turn %d has wrong context: %+v", i, input)
 		}
-		records, err := session.LoadHistoryRecords(rt.SessionDir, created.SessionID, false)
+		records, err := rt.Sessions.LoadHistoryRecords(created.SessionID, false)
 		if err != nil {
 			t.Fatal(err)
 		}

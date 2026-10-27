@@ -7,15 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/clientauthority"
-	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
-	"github.com/blueberrycongee/wuu/internal/mcp"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
-	"github.com/blueberrycongee/wuu/internal/personalhost"
-	"github.com/blueberrycongee/wuu/internal/providers"
-	runtimepkg "github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"io"
 	"net/http"
 	"os"
@@ -26,6 +17,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/mcp"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	runtimepkg "github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 type connectorChainModel struct {
@@ -111,16 +113,30 @@ func connectorChain(t *testing.T, scenario string) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	newRuntime := func() (*runtimepkg.Session, *UserHost, *personalconnectors.Broker, *connectorChainModel) {
-		rt, e := runtimepkg.NewSession(runtimepkg.Options{RootDir: filepath.Join(home, "unused"), HomeDir: home, ConfigPath: cfgPath, ConfigLoadMode: runtimepkg.ConfigLoadFile, Config: cfg, UserSpaceID: "local", ProductDomain: "personal", NonInteractive: true, MCPOAuth: mcp.NewOAuthManager(credentialstore.NewFileStore(filepath.Join(home, "mcp-fixture.json")), nil)})
+		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background"}
+		endpoint := newTestOpenAIEndpoint(t, "connector-fake", "connector-fixture-title", model.Chat)
+		provider := cfg.Providers["connector-fake"]
+		provider.BaseURL = endpoint.URL + "/v1"
+		cfg.Providers["connector-fake"] = provider
+		cfg.Agent.ModelRoles.Title = config.ModelRoleConfig{Provider: "connector-fake", Model: "connector-fixture-title"}
+		encoded, e := json.Marshal(cfg)
 		if e != nil {
 			t.Fatal(e)
 		}
-		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background"}
-		rt.StreamRunner.Client = providers.AdaptStreamClient(model)
-		rt.WorkerClient = providers.AdaptStreamClient(model)
-		rt.TitleClient = &fakeClient{response: providersResponse("Connector test")}
+		if e = os.WriteFile(cfgPath, encoded, 0600); e != nil {
+			t.Fatal(e)
+		}
+		bindings := NewRuntimeBindings()
+		credentials := runtimepkg.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtimepkg.NativeProviderContext) (pluginhost.Client, error) {
+			return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) { return store, nil }), nil
+		}}
+		factories := append(bindings.NativeProviders(), credentials)
+		rt, e := runtimepkg.NewSession(runtimepkg.Options{RootDir: filepath.Join(home, "unused"), HomeDir: home, ConfigPath: cfgPath, ConfigLoadMode: runtimepkg.ConfigLoadFile, Config: cfg, Overrides: runtimepkg.ConfigOverrides{CompositionProfile: "personal"}, UserSpaceID: "local", ProductDomain: "personal", NonInteractive: true, NativeProviders: factories, MCPOAuth: mcp.NewOAuthManager(credentialstore.NewFileStore(filepath.Join(home, "mcp-fixture.json")), nil)})
+		if e != nil {
+			t.Fatal(e)
+		}
 		broker := personalconnectors.New(personalconnectors.Options{Store: store, HTTPClient: transport})
-		host, e := NewUserHost(rt, personalhost.Options{Connectors: broker})
+		host, e := NewUserHost(rt, personalhost.Options{Connectors: broker}, WithRuntimeBindings(bindings))
 		if e != nil {
 			rt.Cleanup()
 			t.Fatal(e)
@@ -132,7 +148,7 @@ func connectorChain(t *testing.T, scenario string) {
 	if err := broker.RegisterVerified(context.Background(), personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: "local", SessionID: "trusted-test-setup"}, personalconnectors.Grant{Connection: personalconnectors.Connection{ID: "chain-gmail", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "synthetic-connector-secret", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	owner, err := clientauthority.AdmitDesktop(context.Background(), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+	owner, err := clientauthority.AdmitDesktop(personalTestOwner(context.Background()), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +177,7 @@ func connectorChain(t *testing.T, scenario string) {
 		number++
 		id := fmt.Sprintf("connector-chain-%d", number)
 		raw, _ := json.Marshal(input)
-		params := PluginClientRequestParams{ID: subject, Fingerprint: fingerprint, Method: method, Input: raw, UserSpaceID: "local", ProductDomain: "personal"}
+		params := PluginClientRequestParams{GraphGeneration: rt.ExtensionSnapshot().GenerationID, ID: subject, Fingerprint: fingerprint, Method: method, Input: raw, UserSpaceID: "local", ProductDomain: "personal"}
 		if method == "agents.send" {
 			var in struct {
 				RequestID string `json:"request_id"`
@@ -215,7 +231,7 @@ func connectorChain(t *testing.T, scenario string) {
 		actor.SessionID = "owner-ui:fixture-inspection"
 	}
 	for time.Now().Before(deadline) {
-		rows, e := broker.Actions(context.Background(), actor)
+		rows, e := broker.Actions(personalTestOwner(context.Background()), actor)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -240,7 +256,7 @@ func connectorChain(t *testing.T, scenario string) {
 		host.Close()
 		rt.Cleanup()
 		rt, host, broker, model = newRuntime()
-		owner, err = clientauthority.AdmitDesktop(context.Background(), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+		owner, err = clientauthority.AdmitDesktop(personalTestOwner(context.Background()), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +270,7 @@ func connectorChain(t *testing.T, scenario string) {
 		served = make(chan error, 1)
 		wireOpen = true
 		go func() { served <- host.Serve(owner, incoming, output, nil) }()
-		rows, e := broker.Actions(context.Background(), actor)
+		rows, e := broker.Actions(personalTestOwner(context.Background()), actor)
 		if e != nil || len(rows) != 1 || rows[0].State != "awaiting_confirmation" || rows[0].ActionID != pending.ActionID || rows[0].Digest != pending.Digest {
 			t.Fatalf("cold pending lost identity: %+v error=%v", rows, e)
 		}
@@ -267,7 +283,12 @@ func connectorChain(t *testing.T, scenario string) {
 			Tasks []struct {
 				ID        string `json:"task_id"`
 				Execution struct {
-					SessionID string `json:"session_id"`
+					SessionID     string `json:"session_id"`
+					RequestID     string `json:"request_id"`
+					TurnID        string `json:"turn_id"`
+					Authorization struct {
+						Reference pluginhost.ExecutionAuthorizationReference `json:"reference"`
+					} `json:"authorization"`
 				} `json:"execution"`
 			} `json:"tasks"`
 		}
@@ -276,6 +297,39 @@ func connectorChain(t *testing.T, scenario string) {
 		}
 		taskID = listed.Tasks[0].ID
 		actor.SessionID = listed.Tasks[0].Execution.SessionID
+		// Real producer-issued grants cannot be reused for another run, even in
+		// the same worker session after the original transport has detached.
+		execution := listed.Tasks[0].Execution
+		binding, bindErr := rt.RetainState()
+		if bindErr != nil {
+			t.Fatal(bindErr)
+		}
+		admitted := runtimepkg.WithInvocationState(context.Background(), binding)
+		for _, invalid := range []pluginhost.SessionSendParams{
+			{SessionID: execution.SessionID, RequestID: "foreign-run", Input: pluginhost.SessionInput{Prompt: "must not dispatch"}},
+			{SessionID: execution.SessionID, RequestID: execution.RequestID, IfRunning: " steer ", Input: pluginhost.SessionInput{Prompt: "must not retarget"}},
+		} {
+			invalid.ExecutionAuthorization = &execution.Authorization.Reference
+			if _, err := host.server.sendPluginSession(admitted, "personal", invalid); err == nil {
+				binding.Close()
+				t.Fatal("exact grant admitted a foreign request or whitespace steer")
+			}
+		}
+		if _, err := host.server.inspectPluginSession(admitted, "personal", pluginhost.SessionInspectParams{SessionID: execution.SessionID, RequestID: "foreign-run", ExecutionAuthorization: &execution.Authorization.Reference}); err == nil {
+			binding.Close()
+			t.Fatal("exact grant inspected a different run")
+		}
+		// Keep the non-owner restoration path for this deliberate delegated cancel.
+		delegated, restoreErr := rt.RestoreExecutionAuthorization(admitted, "personal", execution.Authorization.Reference, execution.SessionID, "user/session/cancel", access.Resource{Kind: "user-space", ID: "local"}, access.Resource{Kind: "session", ID: execution.SessionID})
+		if restoreErr != nil {
+			binding.Close()
+			t.Fatal(restoreErr)
+		}
+		if _, err := host.server.cancelPluginSession(delegated, "personal", pluginhost.SessionCancelParams{SessionID: execution.SessionID, TurnID: "foreign-turn"}); err == nil {
+			binding.Close()
+			t.Fatal("exact grant cancelled another turn")
+		}
+		binding.Close()
 	}
 	decision := map[string]any{"action_id": pending.ActionID, "digest": pending.Digest, "approve": scenario != "reject"}
 	bad, _ := json.Marshal(decision)
@@ -284,9 +338,16 @@ func connectorChain(t *testing.T, scenario string) {
 	}
 	if scenario == "cancel" {
 		must("agents.pause", map[string]any{"agent_id": main.Agent.ID, "expected_revision": main.Agent.Revision})
-		result := must("connectors.decide", decision)
-		if !strings.Contains(string(result), `"ok":false`) {
+		result, decisionErr := invoke("connectors.decide", decision)
+		if decisionErr == nil && !strings.Contains(string(result), `"ok":false`) {
 			t.Fatalf("cancelled authority unexpectedly accepted: %s", result)
+		}
+		if decisionErr != nil && !strings.Contains(decisionErr.Error(), "authority changed") {
+			t.Fatalf("unexpected cancellation failure: %v", decisionErr)
+		}
+		rows, readErr := broker.Actions(personalTestOwner(context.Background()), actor)
+		if readErr != nil || len(rows) != 1 || rows[0].ActionID != pending.ActionID || rows[0].State != "awaiting_confirmation" {
+			t.Fatalf("denied authority claimed or lost pending action: %+v, %v", rows, readErr)
 		}
 		if effects.Load() != 0 {
 			t.Fatal("cancelled pending action mutated provider")
@@ -344,7 +405,7 @@ func connectorChain(t *testing.T, scenario string) {
 		if !completed {
 			t.Fatalf("background result did not close with exact connector evidence: %s", final)
 		}
-		history, e := session.ReadHistoryPage(context.Background(), rt.SessionDir, main.Agent.Session, 1, 100)
+		history, e := rt.Sessions.ReadHistoryPage(main.Agent.Session, 1, 100)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -374,12 +435,12 @@ func connectorChain(t *testing.T, scenario string) {
 	host.Close()
 	rt.Cleanup()
 	rt, host, broker, _ = newRuntime()
-	rows, e := broker.Actions(context.Background(), actor)
+	rows, e := broker.Actions(personalTestOwner(context.Background()), actor)
 	if e != nil || len(rows) != 1 || rows[0].State != pendingState(scenario) {
 		t.Fatalf("restart receipt=%+v error=%v", rows, e)
 	}
 	original := personalconnectors.Request{ConnectionID: "chain-gmail", Operation: "gmail.send", RequestID: "same-exact-write", Arguments: json.RawMessage(`{"to":["synthetic@example.invalid"],"subject":"Synthetic chain","body":"No actual email is sent."}`)}
-	again, e := broker.Call(context.Background(), actor, original)
+	again, e := broker.Call(personalTestOwner(context.Background()), actor, original)
 	if scenario == "background" {
 		if e == nil || effects.Load() != expectedEffects {
 			t.Fatalf("terminal task replay was not fenced: %v effects=%d", e, effects.Load())

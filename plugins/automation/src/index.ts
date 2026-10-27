@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
-import { requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type ToolExecuteParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
+import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
 import { createUserAutomationPlugin } from "./user-routines.js";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
@@ -72,24 +72,17 @@ function restoreRun(raw: unknown): Run {
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
 }
 
-const cronSchema = {
-  type: "object" as const,
-  properties: {
-    action: { type: "string", enum: ["list", "add", "remove"] }, cron: { type: "string" }, prompt: { type: "string" }, title: { type: "string" }, timezone: { type: "string" },
-    mode: { type: "string", enum: ["new_thread", "thread_heartbeat"] }, heartbeat_thread_id: { type: "string" }, workspace: { type: "string", enum: ["shared", "worktree"] },
-    recurring: { type: "boolean" }, durable: { type: "boolean" }, id: { type: "string" },
-  }, required: ["action"],
-};
 
 function createWorkspaceAutomationPlugin(): RuntimePlugin {
   let host: RuntimeHost;
-  let workspaceID = "", workspaceRoot = "";
+  let pluginID = "", workspaceID = "", workspaceRoot = "";
   let tasks = new Map<string, Task>(), runs: Run[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
   let dispatch: Promise<void> = Promise.resolve(), stateQueue: Promise<unknown> = Promise.resolve();
-  let stopped = false;
+  let stopped = false, schedulingStopped = false;
   const abort = new AbortController();
-  function stop(): void { stopped = true; clearInterval(timer); abort.abort(); }
+  function stopScheduling(): void { schedulingStopped = true; clearInterval(timer); }
+  function stop(): void { stopped = true; stopScheduling(); abort.abort(); }
 
   // State writes and mutations have the same atomic boundary as the Go mutex;
   // dispatch releases it while calling the session service so lifecycle events
@@ -170,6 +163,7 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
     });
   }
   async function clientRequest(host: RuntimeHost, method: string, input: Mutation = {}): Promise<unknown> {
+    if (stopped) throw new Error("automation provider is stopped");
     switch (method.trim()) {
       case "automation.list": return locked(() => ({ tasks: snapshotTasks(), workspace: { id: workspaceID, root: workspaceRoot } }));
       case "automation.run.list": return locked(() => ({ runs: structuredClone(runs) }));
@@ -181,6 +175,7 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
   }
   async function consume(task: Task, now: Date): Promise<void> {
     await locked(async () => {
+      if (schedulingStopped) return;
       const existing = tasks.get(task.id);
       if (!existing || existing.paused || Date.parse(existing.next_run_at) !== Date.parse(task.next_run_at)) return;
       if (existing.recurring) {
@@ -197,15 +192,26 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
     const runID = `run-${task.id}-${Math.floor(scheduledAt / 1000)}`, requestID = `automation-${runID}`;
     const settled = await locked(async () => {
       const existing = runs.find(run => run.id === runID);
-      if (existing && terminal.has(existing.status)) return true;
+      if (existing) {
+        // A recovered intent may already have reached a remote session. Preserve
+        // its request identity for inspection; activation never repeats effects.
+        if (existing.status === "starting") {
+          existing.status = "uncertain";
+          existing.error = "Dispatch outcome is unknown; inspect the session before scheduling replacement work";
+          await save(host);
+        }
+        return true;
+      }
       if (!existing) {
         runs.push({ id: runID, task_id: task.id, task: structuredClone(task), request_id: requestID, status: "starting", triggered_at: now.toISOString() });
         if (runs.length > 500) runs = runs.slice(-500);
       }
-      await saveBestEffort(host);
+      // The durable intent must precede every externally visible action.
+      await save(host);
       return false;
     });
     if (settled) return true;
+    if (schedulingStopped) return false;
     let sessionID = task.heartbeat_thread_id || "", executionRoot = "", error: unknown;
     const workspaceMode = task.workspace_mode || "shared";
     let sent: Awaited<ReturnType<typeof send>> | undefined;
@@ -223,24 +229,19 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";
       }
+      if (schedulingStopped) return false;
       sent = await send();
     } catch (cause) { error = cause; }
     return locked(async () => {
-      if (stopped) return false;
+      if (schedulingStopped) return false;
       const index = runs.findIndex(run => run.id === runID), run = runs[index];
       if (!run) return true;
       if (terminal.has(run.status)) return true;
       const message = error instanceof Error ? error.message : String(error);
-      if (error && message.includes("session service is unavailable")) {
-        if (run.status !== "starting") return true;
-        runs.splice(index, 1);
-        await saveBestEffort(host);
-        return false;
-      }
       run.session_id = sessionID || undefined;
       run.workspace_root = executionRoot || undefined;
       if (error) {
-        run.status = "failed"; run.completed_at = new Date().toISOString(); run.error = message;
+        run.status = "uncertain"; run.error = message;
       } else if (run.status === "running" && sent!.state !== "running") {
         run.queue_id ||= sent!.queue_id;
       } else {
@@ -252,18 +253,19 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
   }
   function fireDue(): void {
     dispatch = dispatch.then(async () => {
-      if (stopped) return;
+      if (schedulingStopped) return;
       const now = new Date();
       const due = await locked(() => [...tasks.values()].filter(task => !task.paused && Date.parse(task.next_run_at || zeroTime) <= now.getTime()).map(task => ({ ...task })));
       for (const task of due) {
-        if (stopped) break;
-        if (await fire(task, now) && !stopped) await consume(task, now);
+        if (schedulingStopped) break;
+        if (await fire(task, now) && !schedulingStopped) await consume(task, now);
       }
     }).catch(error => { console.error("automation dispatch failed:", error); });
   }
   async function settle(host: RuntimeHost, input: TurnLifecycleInput): Promise<void> {
-    if (input.state !== "running" && !terminal.has(input.state)) return;
+    if (stopped || (input.state !== "running" && !terminal.has(input.state))) return;
     await locked(async () => {
+      if (stopped) return;
       const run = runs.find(value => value.request_id === input.request_id);
       if (!run) return;
       if (input.state === "running") {
@@ -280,9 +282,18 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
     });
   }
   return {
-    async initialize(params: RuntimeInitializeParams, runtimeHost: RuntimeHost) {
-      host = runtimeHost; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
-      tasks = new Map(); runs = []; stopped = false;
+    concurrentServices: ["automation.scheduler"],
+    initialize(params: RuntimeInitializeParams, runtimeHost: RuntimeHost) {
+      host = runtimeHost; pluginID = params.plugin_id; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
+      tasks = new Map(); runs = []; stopped = false; schedulingStopped = false;
+      return {
+
+        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
+        capabilities: [{ id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
+        required_services: [requireBackgroundService(), ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService)],
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value != null) {
         try {
@@ -296,34 +307,32 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
           runs = ((state.runs || []) as unknown[]).map(restoreRun);
         } catch (error) { throw new Error(`decode automation plugin state: ${String(error)}`); }
       }
-      return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
-        required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
-      };
     },
-    activate(_runtimeHost, lifecycle) {
+    async activate(activeHost, lifecycle) {
       if (lifecycle.signal.aborted) { stop(); return; }
       lifecycle.signal.addEventListener("abort", stop, { once: true });
-      fireDue(); timer = setInterval(fireDue, 15_000);
+      await startBackground(activeHost, { key: "scheduler", service: "automation.scheduler", method: "run" });
     },
     async shutdown() { stop(); await dispatch; await stateQueue; },
-    async executeTool(call: ToolExecuteParams, host: RuntimeHost) {
-      const input = mutationInput(call.arguments);
-      let value: unknown;
-      switch (input.action?.trim()) {
-        case "list": value = await locked(snapshotTasks); break;
-        case "add": input.heartbeat_thread_id ||= call.session_id || call.thread_id; value = { action: "cron", task: await add(host, input) }; break;
-        case "remove": await remove(host, input.id); value = { action: "cron", removed: input.id?.trim() }; break;
-        default: throw new Error("cron requires action=list, add, or remove");
+    async invokeService(call, scoped, execution) {
+      if (call.service !== "automation.scheduler") throw new Error("unknown automation service");
+      if (call.method === "run") {
+        if (call.caller !== pluginID) throw new Error("automation scheduler must be started by its owner");
+        if (!execution) throw new Error("automation scheduler execution is unavailable");
+        if (stopped || schedulingStopped || execution.signal.aborted) { stopScheduling(); return {}; }
+        host = scoped;
+        const signal = AbortSignal.any([execution.signal, abort.signal]);
+        const cancelled = new Promise<void>(resolve => signal.addEventListener("abort", () => { stopScheduling(); resolve(); }, { once: true }));
+        fireDue(); timer = setInterval(fireDue, 15_000);
+        await cancelled;
+        await dispatch;
+        return {};
       }
-      return { result: { content: [{ type: "text" as const, text: JSON.stringify(value) }] } };
+      if (call.method !== "request") throw new Error("unknown automation service method");
+      const request = call.params as { method: string; input?: Mutation };
+      return clientRequest(scoped, request.method, request.input);
     },
     async invokeCapability(call, host) {
-      if (call.capability === "plugin.client.request") {
-        const request = call.input as { method: string; input?: Mutation };
-        return { output: { result: await clientRequest(host, request.method, request.input) } };
-      }
       if (call.capability === "agent.turn.lifecycle") { await settle(host, call.input as TurnLifecycleInput); return { output: {} }; }
       throw new Error(`unknown capability ${JSON.stringify(call.capability)}`);
     },
@@ -333,11 +342,12 @@ function createWorkspaceAutomationPlugin(): RuntimePlugin {
 export function createAutomationPlugin(): RuntimePlugin {
   let delegate: RuntimePlugin;
   return {
-    concurrentServices: ["automation.routines"],
+    concurrentServices: ["automation.routines", "automation.scheduler"],
     initialize(params, host, lifecycle) {
       delegate = params.user_space_id && params.product_domain === "personal" ? createUserAutomationPlugin() : createWorkspaceAutomationPlugin();
       return delegate.initialize(params, host, lifecycle);
     },
+    prepare(host, lifecycle) { return delegate.prepare?.(host, lifecycle); },
     activate(host, lifecycle) { return delegate.activate?.(host, lifecycle); },
     shutdown() { return delegate.shutdown?.(); },
     executeTool(call, host, execution) { if (!delegate.executeTool) throw new Error("user routines are managed through the public service"); return delegate.executeTool(call, host, execution); },

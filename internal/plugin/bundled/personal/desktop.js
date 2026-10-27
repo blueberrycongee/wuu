@@ -1167,7 +1167,7 @@ ${personalReviewStyles}
   async function activate(api) {
     const React = api.react, h = React.createElement;
     const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
-    const route = { userSpaceId: "local", productDomain: "personal" };
+    const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
     const call = async (method, input) => {
       if (method !== "capture.send") return api.invokeRuntime(method, input, route);
       if (!input || typeof input.request_id !== "string" || typeof input.prompt !== "string" || input.attachments !== void 0) throw new Error("Invalid shared input");
@@ -2037,7 +2037,7 @@ ${personalReviewStyles}
       identityListeners.forEach((listener) => listener(value));
       return value;
     };
-    const routineStatus = (status, locale, t) => status === "active" ? locale.startsWith("zh") ? "\u5DF2\u542F\u7528" : "Enabled" : t(status);
+    const routineStatus = (status, locale, t) => status === "needs_authorization" ? locale.startsWith("zh") ? "\u9700\u8981\u91CD\u65B0\u6388\u6743" : "Authorization required" : status === "active" ? locale.startsWith("zh") ? "\u5DF2\u542F\u7528" : "Enabled" : t(status);
     const routineSchedule = (routine, locale) => {
       const zh = locale.startsWith("zh"), fields = routine.cron?.trim().split(/\s+/), zone = routine.timezone || "UTC";
       if (!fields) {
@@ -2205,6 +2205,13 @@ ${personalReviewStyles}
             h("div", { className: "mosaic-routine-card mosaic-routine-active" }, h(Checkbox, { label: routineStatus(routine.status, locale, t), role: "switch", "aria-checked": routine.status === "active", checked: routine.status === "active", "aria-label": label("Enabled", "\u5DF2\u542F\u7528"), "data-action": "toggle-routine", disabled: busy || routine.cancellation_pending || !["active", "paused"].includes(routine.status), onChange: () => mutateRoutine(routine.status === "active" ? "routines.pause" : "routines.resume", { expected_revision: routine.revision }) })),
             routine.cancellation_pending && h("p", { role: "status" }, t("applyingChanges")),
             routine.last_error && h("p", { role: "alert" }, routine.last_error),
+            routine.authorization?.expires_at && h("p", { role: "status" }, label("Unattended authorization expires: ", "\u65E0\u4EBA\u503C\u5B88\u6388\u6743\u5230\u671F\uFF1A"), stamp(routine.authorization.expires_at)),
+            routine.status === "needs_authorization" && h(
+              React.Fragment,
+              null,
+              h("p", null, label("This schedule is paused. Renewing starts from the next scheduled time; missed runs are not replayed.", "\u6B64\u5B89\u6392\u5DF2\u6682\u505C\u3002\u91CD\u65B0\u6388\u6743\u540E\u4ECE\u4E0B\u4E00\u6B21\u8BA1\u5212\u65F6\u95F4\u5F00\u59CB\uFF0C\u4E0D\u4F1A\u8865\u6267\u884C\u8FC7\u671F\u671F\u95F4\u9519\u8FC7\u7684\u4EFB\u52A1\u3002")),
+              h(Button, { "data-action": "authorize-routine", disabled: busy || routine.cancellation_pending, onClick: () => mutateRoutine("routines.authorize", { expected_revision: routine.revision }) }, label("Renew authorization", "\u91CD\u65B0\u6388\u6743"))
+            ),
             h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Instruction", "\u5B8C\u6574\u6307\u4EE4")), h("div", { className: "mosaic-routine-card mosaic-routine-instruction" }, routine.prompt)),
             h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "\u6267\u884C\u8BA1\u5212")), h(
               "dl",
@@ -2738,11 +2745,15 @@ ${personalReviewStyles}
           }
         };
         const timer = setInterval(check, 5e3);
+        let homeActive = false;
+        const stopWorkbench = api.application.workbench.subscribe(() => {
+          const snapshot2 = api.application.workbench.getSnapshot();
+          const active = new Set(Object.values(snapshot2.activeViewByRegion));
+          const next = snapshot2.views.some((view) => active.has(view.id) && view.pluginId === api.pluginId && view.viewTypeId === "personal.home");
+          if (next && !homeActive) void check();
+          homeActive = next;
+        });
         const subscription = api.onHostEvent((event) => {
-          if (event.type === "workbench.view.activated" && event.pluginId === api.pluginId && event.viewTypeId === "personal.home") {
-            void check();
-            return;
-          }
           const invalidation = event.message?.params;
           if (event.kind === "notification" && event.message?.method === "plugin/client/invalidated") {
             if (invalidation?.plugin_id === api.pluginId && invalidation?.fingerprint === api.generation && invalidation?.user_space_id === route.userSpaceId && invalidation?.product_domain === route.productDomain && invalidation?.topic === "reactions") void refreshReactions(currentAgent.current).catch(report);
@@ -2755,6 +2766,7 @@ ${personalReviewStyles}
         });
         return () => {
           clearInterval(timer);
+          stopWorkbench();
           subscription.dispose();
         };
       }, []);

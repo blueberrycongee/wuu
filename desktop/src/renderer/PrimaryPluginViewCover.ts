@@ -1,23 +1,15 @@
 import { useSyncExternalStore } from "react";
+import { useApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
+import type { ApplicationWorkbenchV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { visibleWorkbenchView } from "./plugins/Workbench";
 
-import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import { visibleWorkbenchView, type WorkbenchController } from "./plugins/Workbench";
-import type { RegisteredViewType } from "./plugins/PluginHost";
-
-export function usePrimaryPluginViewCover(
-  controller: WorkbenchController = desktopWorkbenchController,
-): boolean {
+export function usePrimaryPluginViewCover(controller?: ApplicationWorkbenchV1): boolean {
   return usePrimaryPluginViewDefinition(controller) !== undefined;
 }
 
-/** The visible primary plugin page owns its presentation metadata, never runtime authority. */
-export function usePrimaryPluginViewDefinition(
-  controller: WorkbenchController = desktopWorkbenchController,
-): RegisteredViewType | undefined {
-  const snapshot = useSyncExternalStore(
-    controller.subscribe,
-    controller.getSnapshot,
-    controller.getSnapshot,
-  );
+/** Presentation metadata belongs to the selected workbench, never runtime authority. */
+export function usePrimaryPluginViewDefinition(suppliedController?: ApplicationWorkbenchV1) {
+  const controller = useApplicationWorkbench(suppliedController);
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   return visibleWorkbenchView(snapshot, "primary")?.definition;
 }

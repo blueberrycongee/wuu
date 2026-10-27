@@ -49,12 +49,16 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func (f *fixture) makeEngine() *Engine {
+	authority := func(ctx context.Context, scope Scope, use func(Authority) error) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return use(f.authority)
+	}
 	e, err := New(Options{
 		Store: f.store, Clock: func() time.Time { return f.now },
-		WithAuthority: func(ctx context.Context, scope Scope, use func(Authority) error) error {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			return use(f.authority)
+		WithAuthority: authority,
+		WithExecutionAuthority: func(ctx context.Context, scope Scope, use func(context.Context, Authority) error) error {
+			return authority(ctx, scope, func(a Authority) error { return use(ctx, a) })
 		},
 		Authenticate: func(context.Context) (Identity, error) { return f.identity, nil },
 		Review: func(ctx context.Context, input ReviewInput) (approvefor.Decision, error) {

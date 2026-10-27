@@ -4,8 +4,9 @@ import { useI18n } from "./i18n";
 import "./AccountConnectionOnboarding.css";
 
 /** Optional device-linking onboarding, separate from account forms and management. */
-export function AccountConnectionOnboarding({ onContinue, error, onError }: {
+export function AccountConnectionOnboarding({ onContinue, error, onError, openExternal }: {
   onContinue: () => void;
+  openExternal?: (url: string) => Promise<void>;
   error: string;
   onError: (message: string) => void;
 }): React.JSX.Element {
@@ -60,9 +61,9 @@ export function AccountConnectionOnboarding({ onContinue, error, onError }: {
       <summary>{t("account.linkDeploy")}</summary>
       <p>{t("account.linkDeployDetail")}</p>
       <a href="https://github.com/blueberrycongee/wuu/blob/main/deploy/remote/README.md" target="_blank" rel="noreferrer" onClick={event => {
-        if (window.wuu?.openExternal) {
+        if (openExternal) {
           event.preventDefault();
-          void window.wuu.openExternal(event.currentTarget.href).catch(cause => onError(String(cause)));
+          void openExternal(event.currentTarget.href).catch(cause => onError(String(cause)));
         }
       }}>{t("account.linkGuide")}</a>
     </details>

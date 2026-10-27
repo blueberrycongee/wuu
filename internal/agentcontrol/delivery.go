@@ -444,7 +444,7 @@ func (c *AgentControl) pendingAgentCompletions() ([]PendingRootAgentCompletion, 
 			}
 		}
 		if !found && strings.TrimSpace(c.historyDir) != "" {
-			run, err := subagent.LoadPersistedRun(filepath.Join(c.historyDir, delivery.AgentID+".json"))
+			run, err := c.loadWorkerSnapshot(filepath.Join(c.historyDir, delivery.AgentID+".json"))
 			if err == nil {
 				snap = snapshotFromPersistedRun(run)
 				found = true
@@ -502,7 +502,7 @@ func (c *AgentControl) parentPersistedRunContainsResult(parentID, resultID strin
 	if c == nil || strings.TrimSpace(c.historyDir) == "" {
 		return false, nil
 	}
-	run, err := subagent.LoadPersistedRun(filepath.Join(c.historyDir, strings.TrimSpace(parentID)+".json"))
+	run, err := c.loadWorkerSnapshot(filepath.Join(c.historyDir, strings.TrimSpace(parentID)+".json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil

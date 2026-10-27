@@ -9,7 +9,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 type toolLabelTestClient struct {
@@ -45,7 +44,7 @@ func TestPluginToolLabelsSurvivePersistenceAndRestoreLegacyCalls(t *testing.T) {
 	saved.LabelTranslations["zh-CN"] = "历史名称"
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.PluginHost = host
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "localized-tool-history", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("localized-tool-history", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +58,14 @@ func TestPluginToolLabelsSurvivePersistenceAndRestoreLegacyCalls(t *testing.T) {
 		{Role: "tool", ToolCallID: "saved", Content: "[]"},
 		{Role: "assistant", Content: "done"},
 	} {
-		if _, err := appendChatMessage(rt.SessionDir, sess.ID, message); err != nil {
+		if _, err := appendChatMessage(rt.Sessions, sess.ID, message); err != nil {
 			t.Fatal(err)
 		}
 	}
 	srv := New(rt, &lockedBuffer{})
-	th, err := srv.loadPersistedThreadState(sess.ID, time.Now())
+	t.Cleanup(srv.Close)
+	binding := testRuntimeState(t, rt)
+	th, err := srv.loadPersistedThreadState(binding, sess.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +93,15 @@ func TestPluginToolLabelsSurvivePersistenceAndRestoreLegacyCalls(t *testing.T) {
 		t.Fatal("legacy call missing from history")
 	}
 	assertLegacyUnchanged(th.History)
-	history, err := loadChatMessages(rt.SessionDir, sess.ID)
+	history, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertLegacyUnchanged(history)
-	rt.PluginHost = nil
-	th, err = srv.loadPersistedThreadState(sess.ID, time.Now())
+	if outcome, retired := host.RetirePlugin(context.Background(), client.ID(), nil); !retired || outcome.Err != nil {
+		t.Fatalf("retire plugin: %v %v", retired, outcome.Err)
+	}
+	th, err = srv.loadPersistedThreadState(binding, sess.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

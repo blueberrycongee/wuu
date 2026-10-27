@@ -39,6 +39,14 @@ Use `make version-sync` to synchronize metadata from `VERSION`, and `make versio
 
 CalVer describes release recency, not Extension API, service, remote protocol, or storage compatibility. Review those contracts and migration requirements separately. Calendar tags are also not Go module major versions: the supported source installation command for the CLI is `make install` from a checkout, not a release-tagged `go install ...@latest` promise.
 
+For extension changes, run `make test-plugin-compatibility` against the retained
+historical package without rebuilding it, and review the
+[compatibility and migration contract](../customize/plugin-compatibility.md).
+Release notes must identify any removed contract, its replacement, the last
+compatible host/SDK revision and recovery limits. Keep backups of history,
+bindings and checkpoints together; a successful upgrade test is not a claim that
+an older executable can safely write newer data.
+
 ## Build and verification
 
 The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go tests. It installs locked desktop and shared Web dependencies, explicitly installs and verifies the Electron binary, and runs desktop and release-signing tests. Build scripts consume the committed module manifests rather than repairing them during release.

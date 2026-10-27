@@ -57,7 +57,7 @@ async function run() {
       assert.ok(full.scrollHeight > full.inputHeight, `${label}: full input must scroll`);
       assert.ok(full.top >= 0 && full.bottom <= height, `${label}: input must stay in viewport: ${JSON.stringify(full)}`);
       near(full.bottom, empty.bottom, `${label}: capped input keeps bottom anchored`);
-      if (variant === "populated") await checkEndClearance(win, `${label}: expanded input`);
+      if (variant === "populated") await checkEndClearance(win, `${label}: capped input`);
       await evaluate(win, () => {
         const input = document.querySelector('[data-main-conversation-composer] textarea');
         input.setSelectionRange(input.value.length, input.value.length);
@@ -78,13 +78,6 @@ async function run() {
       // and padding. Those may remain below the viewport without hiding text.
       assert.ok(caret.scrollHeight - caret.height - caret.scrollTop <= caret.trailingSpace + 2,
         `${label}: native typing keeps the caret visible at the cap: ${JSON.stringify(caret)}`);
-      await toggle(win);
-      const manualFull = await geometry(win);
-      near(manualFull.inputHeight, full.inputHeight, `${label}: auto and manual use the same cap`);
-      await setDraft(win, "short");
-      near((await geometry(win)).inputHeight, full.inputHeight, `${label}: manual mode stays expanded`);
-      await toggle(win);
-      near((await geometry(win)).inputHeight, empty.inputHeight, `${label}: toggle returns to auto sizing`);
       await setDraft(win, Array(5).fill("内容").join("\n"));
       await setDraft(win, "");
       near((await geometry(win)).inputHeight, empty.inputHeight, `${label}: clearing shrinks input`);
@@ -133,10 +126,38 @@ async function run() {
       await setDraft(win, "");
     }
   }
+  // A retained draft can change wrapping while a different workspace covers it.
+  // Revealing it must remeasure even when visibility itself does not resize it.
+  phase = "covered workspace draft recovery";
+  win.setContentSize(1200, 820);
+  await evaluate(win, () => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
+  const retainedDraft = "Retain the draft and recompute soft wrapping after returning from settings. ".repeat(6);
+  await setDraft(win, retainedDraft);
+  await geometry(win);
+  await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
+  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-page="providers"]'));
+  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector(".settings-embedded"));
+  win.setContentSize(600, 820);
+  await evaluate(win, () => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
+  await evaluate(win, () => document.querySelector('[data-wuu-component="conversations-section"]').click());
+  await waitFor(win, () => !document.querySelector(".settings-embedded"));
+  const revealed = await geometry(win);
+  assert.equal(await evaluate(win, () => document.querySelector('[data-main-conversation-composer] textarea').value), retainedDraft);
+  // Compare with the same visible draft measured through ordinary editing.
+  await setDraft(win, "");
+  await geometry(win);
+  await setDraft(win, retainedDraft);
+  const edited = await geometry(win);
+  near(revealed.inputHeight, edited.inputHeight, "Revealed draft uses the current width and font without another keystroke");
+  const evidence = path.join(desktopRoot, "out/e2e/composer-height");
+  fs.mkdirSync(evidence, { recursive: true });
+  fs.writeFileSync(path.join(evidence, "covered-draft.json"), JSON.stringify({ revealed, edited, draftRetained: true }, null, 2));
+  fs.writeFileSync(path.join(evidence, "covered-draft.png"), (await win.webContents.capturePage()).toPNG());
   assert.deepEqual(errors, [], "Resizing must settle without ResizeObserver loops");
   console.log("Composer height verified with actual Chromium layout.");
   if (process.env.WUU_E2E_KEEP_OPEN === "true") {
-    await setDraft(win, "输入框会随内容自动长高。\n手动展开后保持高度。\n再次点击恢复自动调整。\n达到上限后，内容在框内滚动。");
+    await setDraft(win, "输入框会随内容自动长高。\n达到上限后，内容在框内滚动。");
     win.showInactive();
     return;
   }
@@ -196,9 +217,6 @@ async function setDraft(win, value) {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, value);
-}
-async function toggle(win) {
-  await evaluate(win, () => document.querySelector('[data-main-conversation-composer] .composer-expand-button').click());
 }
 async function waitFor(win, predicate) {
   const deadline = Date.now() + 10000;

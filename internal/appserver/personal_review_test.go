@@ -92,6 +92,9 @@ func TestPersonalReviewNativeRuntimeFlow(t *testing.T) {
 		defer mu.Unlock()
 		return use(authority)
 	}, Authenticate: func(context.Context) (personalreview.Identity, error) { return identity, nil }, Review: reviewer.Review}
+	options.WithExecutionAuthority = func(ctx context.Context, scope personalreview.Scope, use func(context.Context, personalreview.Authority) error) error {
+		return options.WithAuthority(ctx, scope, func(authority personalreview.Authority) error { return use(ctx, authority) })
+	} // Synthetic authority and effects share the fixture mutex.
 	engine, err := personalreview.New(options)
 	if err != nil {
 		t.Fatal(err)

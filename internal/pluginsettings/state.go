@@ -63,6 +63,9 @@ func UpdateState(wuuHome, workspaceRoot, pluginID string, scope Scope, update fu
 		return StateDocument{}, fmt.Errorf("lock plugin storage: %w", err)
 	}
 	defer lock.Release() //nolint:errcheck -- the write result is authoritative
+	if err := checkStateInspection(storeDir, pluginID); err != nil {
+		return StateDocument{}, err
+	}
 	record, err := readStateRecord(path, pluginID)
 	if err != nil {
 		return StateDocument{}, err
@@ -71,23 +74,9 @@ func UpdateState(wuuHome, workspaceRoot, pluginID string, scope Scope, update fu
 	if err := update(values); err != nil {
 		return StateDocument{}, err
 	}
-	for key := range values {
-		if stateKeyFenced(record, key) {
-			return StateDocument{}, fmt.Errorf("plugin storage prefix for key %q has transferred ownership", key)
-		}
+	if err := replaceVisibleStateValues(&record, values); err != nil {
+		return StateDocument{}, err
 	}
-	// Callbacks never see backups. Preserve them after applying unrelated
-	// writes, together with the fences and receipts that make retry safe.
-	merged := make(map[string]string, len(values)+len(record.Values))
-	for key, value := range values {
-		merged[key] = value
-	}
-	for key, value := range record.Values {
-		if stateKeyFenced(record, key) {
-			merged[key] = value
-		}
-	}
-	record.Values = merged
 	data, err := encodeStateRecord(record, pluginID)
 	if err != nil {
 		return StateDocument{}, err
@@ -96,6 +85,27 @@ func UpdateState(wuuHome, workspaceRoot, pluginID string, scope Scope, update fu
 		return StateDocument{}, err
 	}
 	return visibleStateDocument(record), nil
+}
+
+// Both direct and service CAS writes preserve private ownership journals and
+// backups; accepting a write to a fenced prefix would create a second owner.
+func replaceVisibleStateValues(record *stateRecord, values map[string]string) error {
+	for key := range values {
+		if stateKeyFenced(*record, key) {
+			return fmt.Errorf("plugin storage prefix for key %q has transferred ownership", key)
+		}
+	}
+	merged := make(map[string]string, len(values)+len(record.Values))
+	for key, value := range values {
+		merged[key] = value
+	}
+	for key, value := range record.Values {
+		if stateKeyFenced(*record, key) {
+			merged[key] = value
+		}
+	}
+	record.Values = merged
+	return nil
 }
 
 func stateDocumentPath(wuuHome, workspaceRoot, pluginID string, scope Scope) (string, string, error) {

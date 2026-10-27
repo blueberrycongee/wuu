@@ -22,6 +22,7 @@ import type { QueuedComposerMessage } from "./ComposerMessages";
 import { heldComposerMessagesFromResumeResult } from "./ComposerPendingState";
 import { applyDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { translateCurrent } from "./i18n";
+import { streamTextStore } from "./StreamText";
 
 export type LoadedRuntimeState = Partial<AppState> & {
   heldComposerMessages?: QueuedComposerMessage[];
@@ -65,6 +66,22 @@ export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
   return sortThreads([...listed.threads, ...archived.threads]);
 }
 
+/** A complete recovery read can include a missed replacement, not just appended text. */
+export async function resumeThreadForRefresh(previous: Thread): Promise<Thread> {
+  const revisions = new Map(previous.turns.map(turn => [turn.id, streamTextStore.getTurnRevision(turn.id)]));
+  const resumed = (await window.wuu.resumeThread(previous.id)).thread;
+  // A missing recovery snapshot is not newer state. Replaying the captured
+  // thread would overwrite notifications received while recovery was pending.
+  if (!resumed) throw new Error("thread/resume did not return a recovery snapshot");
+  for (const turn of resumed.turns) {
+    if (turn.status !== "in_progress" && turn.items_view === "full"
+      && revisions.get(turn.id) === streamTextStore.getTurnRevision(turn.id)) {
+      streamTextStore.clearTurn(turn.id);
+    }
+  }
+  return resumed;
+}
+
 export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> {
   const listed = await window.wuu.listThreads(state.activeContext?.cwd);
   const runningHistoryIDs = new Set(
@@ -79,7 +96,8 @@ export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> 
     // An idle summary cannot settle cached turns or recover terminal items and
     // errors. Fetch only histories that need repair, not the whole catalog.
     try {
-      return (await window.wuu.resumeThread(thread.id)).thread ?? thread;
+      const previous = [state.thread, state.secondaryThread, ...state.threads].find(row => row?.id === thread.id);
+      return previous ? await resumeThreadForRefresh(previous) : thread;
     } catch {
       // Keep the cached history; the next refresh retries this thread without
       // blocking discovery or successful repairs for other conversations.
@@ -116,14 +134,23 @@ export async function loadRuntime(
     ? (liveThreads.find((candidate) => candidate.id === options.resumeThreadID) ??
       liveThreads.find((candidate) => !candidate.pinned) ?? liveThreads[0])
     : undefined;
-  const resumed: ThreadResumeResult | undefined = defaultThread
-    ? await window.wuu.resumeThread(defaultThread.id)
-    : undefined;
+  let resumed: ThreadResumeResult | undefined;
+  let restoreFailure: string | undefined;
+  if (defaultThread) {
+    try {
+      resumed = await window.wuu.resumeThread(defaultThread.id);
+      requireThread(resumed, translateCurrent("thread.resumeMissing"));
+    } catch (error) {
+      resumed = undefined;
+      restoreFailure = translateCurrent("runtime.historyRestoreSkipped", { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const thread = resumed
     ? requireThread(resumed, translateCurrent("thread.resumeMissing"))
     : undefined;
   return {
     ...runtimeConfiguration(workspaceState, initialized),
+    ...(restoreFailure ? { status: restoreFailure } : {}),
     initialized: thread ? initialized : applyDraftRuntimeMemory(initialized),
     thread,
     secondaryThread: undefined,

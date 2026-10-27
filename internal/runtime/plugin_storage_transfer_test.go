@@ -56,7 +56,7 @@ func TestStorageTransferRunsAfterCommitBeforeActivation(t *testing.T) {
 	for _, failure := range []string{"", "commit", "collision"} {
 		t.Run(failure, func(t *testing.T) {
 			old := testPluginGeneration("old", &generationClient{id: "old"})
-			s := testGenerationSession(old)
+			s := testGenerationSession(t, old)
 			s.WuuHome = t.TempDir()
 			s.RootDir = t.TempDir()
 			s.UserSpaceID = "alice"
@@ -88,7 +88,17 @@ func TestStorageTransferRunsAfterCommitBeforeActivation(t *testing.T) {
 			healthy := &preparedGenerationClient{generationClient: &generationClient{id: "healthy"}}
 			candidate.host.Add(healthy)
 			candidate.active = append(candidate.active, pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "healthy", Runtime: &pluginpkg.RuntimeSpec{Command: "fixture"}}})
-			candidate.storageTransfers = []pluginStorageTransfer{{targetID: "target", transfer: move}}
+			transfer := pluginStorageTransfer{targetID: "target", transfer: move}
+			settings := pluginsettings.NewServiceWithStateRoot(pluginsettings.Module, s.WuuHome, home, s.RootDir)
+			registry := pluginhost.NewServiceRegistry()
+			migration := newStorageTransferConsumer(candidate.host, registry, transfer)
+			candidate.host.Add(settings)
+			candidate.host.Add(migration)
+			candidate.host.SetPackageRequirements(map[string][]string{"target": {migration.ID()}})
+			if failures := registry.RegisterClients(settings, migration); len(failures) != 0 {
+				t.Fatal(failures)
+			}
+			candidate.host.AttachServiceRegistry(registry, nil)
 			err := s.ActivatePluginGeneration(candidate, func() error {
 				if failure == "commit" {
 					return errors.New("commit rejected")
@@ -127,7 +137,11 @@ func TestInitialStorageTransferDoesNotFenceFailedRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "target", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: "/nonexistent/storage-transfer-runtime"}}, SubjectID: move.TargetSubjectID}
-	host, _ := startPluginHostWithTransfers([]pluginpkg.Plugin{target}, t.TempDir(), "workspace", home, t.TempDir(), nil, nil, binding, []pluginStorageTransfer{{targetID: "target", transfer: move}})
+	host, _, buildErr := buildPluginHostForBinding(context.Background(), []pluginpkg.Plugin{target}, t.TempDir(), "workspace", home, t.TempDir(), nil, startPluginClient, nil, nil, nil, false, "", binding, []pluginStorageTransfer{{targetID: "target", transfer: move}})
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+	_ = host.Activate(context.Background())
 	defer host.Close(context.Background())
 	source, err := pluginsettings.ReadState(binding.State(home), "", move.SourceSubjectID, move.Scope)
 	if err != nil || source.Values["records.one"] != "original" {

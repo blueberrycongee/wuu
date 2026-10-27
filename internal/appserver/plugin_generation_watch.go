@@ -144,6 +144,32 @@ func (s *Server) pollPluginGeneration() {
 	}
 }
 
+// A contended observation needs no transition locks when the published
+// generation is unchanged and healthy. Actual transitions still fence admission.
+func (s *Server) pluginGenerationObservationError() error {
+	if s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load() {
+		return errPluginGenerationRefreshBusy
+	}
+	epoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+	if err != nil {
+		return err
+	}
+	if pending := s.pluginAdditivePreparation.Load(); pending != nil {
+		if s.pluginAdditiveAdmissionMatches(epoch) && s.configSourceFingerprint() == pending.configSources {
+			return nil
+		}
+		pending.cancel()
+		return errPluginGenerationRefreshBusy
+	}
+	// Recheck phase fences after sampling health, which can look healthy
+	// while failed dependencies are being retired.
+	if epoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery() &&
+		!s.pluginGenerationMutation.Load() && !s.pluginGenerationRefreshing.Load() {
+		return nil
+	}
+	return errPluginGenerationRefreshBusy
+}
+
 func (s *Server) refreshPluginGenerationIfChanged() error {
 	if s == nil || s.rt == nil || s.rt.WuuHome == "" || s.closed.Load() {
 		return nil
@@ -155,27 +181,45 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Activation can synchronously submit input through host services. Such
 	// admission must queue rather than wait for the activation that called it.
 	if !s.pluginGenerationRefreshMu.TryLock() {
-		return errPluginGenerationRefreshBusy
+		return s.pluginGenerationObservationError()
+	}
+	// Admission can hold a thread lock, while config updates retire thread
+	// runtimes. Defer this observation rather than wait in the reverse order.
+	if !s.configRefreshMu.TryLock() {
+		s.pluginGenerationRefreshMu.Unlock()
+		return s.pluginGenerationObservationError()
 	}
 	refreshed := false
 	invalidated := false
-	defer func() {
+	handedOff := false
+	finish := func() {
 		if invalidated && !refreshed {
 			inventory, skills := s.currentExtensionState()
+			shell, surfaces := s.rt.ApplicationBindings()
 			if err := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+				ApplicationShell: shell, ApplicationSurfaces: surfaces,
 				Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
 			}); err != nil {
 				providers.DebugLogf("notify invalidated plugin dependencies: %v", err)
 			}
 		}
+		s.pluginGenerationRefreshing.Store(false)
+		s.configRefreshMu.Unlock()
 		s.pluginGenerationRefreshMu.Unlock()
 		if refreshed || (invalidated && s.rt.UserBinding().IsUser()) {
 			s.retireIdlePluginRuntimes()
 		}
+	}
+	defer func() {
+		if !handedOff {
+			finish()
+		}
 	}()
 	// Revoke failed dependencies before an epoch/recovery early return. A pinned
 	// older generation may fail while the current generation remains healthy.
-	invalidated = s.rt.RevokeFailedPluginDependencies()
+	invalidated = s.rt.RevokeFailedPluginDependencies(func() {
+		s.pluginGenerationRefreshing.Store(true)
+	})
 	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
 	if err != nil {
 		return err
@@ -184,6 +228,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		s.pluginRefreshFailure = pluginGenerationRefreshFailure{}
 		return nil
 	}
+	s.pluginGenerationRefreshing.Store(true)
 	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
 	if err != nil {
 		return err
@@ -215,12 +260,16 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Keep this observed epoch with the prepared candidate. Publication can
 	// advance again during activation; recording that newer epoch here would
 	// hide a change this candidate never loaded. The next refresh adopts it.
-	cfg := s.currentExtensionConfig()
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return err
+	}
+	configSources := s.configSourceFingerprint()
 	inputs, err := json.Marshal(struct {
 		Epoch         uint64
 		ConfigSources string
 		Config        config.Config
-	}{epoch, s.configSourceFingerprint(), cfg})
+	}{epoch, configSources, cfg})
 	if err != nil {
 		return err
 	}
@@ -260,10 +309,34 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		failure.err = err
 		return err
 	}
+	// Revocation above has completed. Newly masked optional diagnostics must
+	// not fence an otherwise healthy additive observation; the retained base
+	// still proves required-provider health and excludes active crash recovery.
+	if s.refreshExtensionsForTest == nil && !needsRecovery {
+		if base := s.rt.RetainAdditivePluginBase(cfg, discovered); base != nil {
+			prepared, prepareErr := s.rt.PrepareObservedPluginCatalog(cfg, discovered)
+			releaseErr := errors.Join(catalog.Release(), lease.Release())
+			if prepareErr != nil || releaseErr != nil {
+				if prepared != nil {
+					prepared.Close()
+				}
+				s.rt.ReleasePluginGeneration(base)
+				return recordFailure(errors.Join(prepareErr, releaseErr))
+			}
+			handedOff = true
+			if !s.startPluginAdditivePreparation(epoch, base, cfg, configSources, discovered, prepared, func() { refreshed = true }, finish, recordFailure) {
+				handedOff = false
+				prepared.Close()
+				s.rt.ReleasePluginGeneration(base)
+				return errPluginGenerationRefreshBusy
+			}
+			return nil
+		}
+	}
 
 	var candidate *runtime.PluginGeneration
 	if s.refreshExtensionsForTest == nil {
-		candidate, err = s.rt.PreflightDiscoveredExtensions(cfg, discovered)
+		candidate, err = s.rt.PreflightObservedExtensions(cfg, discovered)
 	}
 	releaseErr := catalog.Release()
 	if err != nil {
@@ -275,33 +348,21 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		}
 		return releaseErr
 	}
-	if candidate != nil {
-		err = s.rt.ActivatePluginGeneration(candidate, nil)
-	} else {
-		err = s.refreshExtensions(cfg)
+	refreshed, err = s.publishObservedPluginGeneration(candidate, cfg, epoch, needsRecovery, lease.Release)
+	if err != nil && !refreshed {
+		return recordFailure(err)
 	}
+	return err
+}
+
+// Publication is a new admission boundary. Existing events retain their own
+// state; replay of the newly selected graph captures only that graph here.
+func (s *Server) scheduleCurrentPluginTurnLifecycleReplay() {
+	binding, err := s.rt.RetainState()
 	if err != nil {
-		if !runtime.PluginGenerationWasCommitted(err) {
-			return recordFailure(err)
-		}
-		providers.DebugLogf("refresh plugin generation: %v", err)
+		providers.DebugLogf("capture plugin lifecycle replay state: %v", err)
+		return
 	}
-	*failure = pluginGenerationRefreshFailure{}
-	s.schedulePluginTurnLifecycleReplay()
-	inventory, skills := s.currentExtensionState()
-	refreshed = true
-	// The refresh mutex still serializes local mutations while the shared lease
-	// is dropped and the observed epoch is published.
-	if err := lease.Release(); err != nil {
-		return err
-	}
-	s.pluginGenerationEpoch.Store(epoch)
-	if needsRecovery {
-		s.pluginRuntimeRevision.Add(1)
-	}
-	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-		Epoch:              epoch,
-		ExtensionInventory: inventory,
-		Skills:             skills,
-	})
+	defer binding.Close()
+	s.schedulePluginTurnLifecycleReplay(binding)
 }

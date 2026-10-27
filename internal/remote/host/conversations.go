@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/conversations"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
@@ -135,7 +136,7 @@ func (h *Host) publishConversationPass(parent context.Context, c account.Credent
 func (h *Host) conversationRPC(ctx context.Context) (func(string, string, any, any) error, func()) {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(principal.WithContext(ctx, principal.LocalOwner()))
 	cleanup := func() { cancel(); _ = inR.Close(); _ = inW.Close(); _ = outR.Close(); _ = outW.Close() }
 	go func() { <-ctx.Done(); _ = inR.Close(); _ = inW.Close(); _ = outR.Close(); _ = outW.Close() }()
 	go func() {
@@ -144,7 +145,7 @@ func (h *Host) conversationRPC(ctx context.Context) (func(string, string, any, a
 		} else if h.appServer != nil {
 			_ = h.appServer(ctx, inR, outW)
 		} else {
-			_ = appserver.RunStdio(ctx, h.rt, inR, outW)
+			_ = appserver.RunStdio(ctx, h.rt, inR, outW, h.appServerOptions...)
 		}
 		_ = outW.Close()
 	}()

@@ -1,4 +1,4 @@
-import type { HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
+import type { DisplayMediaRequestHandlerHandlerRequest, Streams, DownloadItem, FilesystemPermissionRequest, MediaAccessPermissionRequest, OpenExternalPermissionRequest, PermissionRequest, HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
 import type { ActivitySession, BrowserListedTab, BrowserSurfaceSnapshot, BrowserTabStatus, BrowserTurnEndedResult, JsonValue, ServerEvent } from "../shared/protocol";
 import { activityTimestamp } from "../shared/activityTimestamp";
 import {
@@ -9,12 +9,29 @@ import {
 } from "./agentCursor";
 import { writeBufferFileAtomicSync, writeTextFileAtomicSync } from "./atomicFile";
 import type { WindowRegistry } from "./windowRegistry";
+import { ownsBrowserExtensionOptions } from "./browserExtensionWindows";
 
 // One partition for every embedded browser tab. A login performed while the
 // agent drives a tab is still there when the user drives that same tab.
 // Permission decisions stay per webContents so a deny for these tabs does
 // not blanket every other contents on the partition.
 export const BROWSER_PARTITION = "persist:wuu-browser";
+export const BROWSER_WORKSPACE_TAB_PREFIX = "workspace:";
+
+/** A borrowed native page. The website host keeps navigation and popup ownership. */
+export type BrowserWorkspaceAttachment = {
+  view: BrowserViewHandle;
+  parent: BrowserParentWindowHandle;
+  visible(): boolean;
+  setExternalPresentation(external: boolean): void;
+  restore(): void;
+  reveal(): void;
+  release(): void;
+};
+export type BrowserWorkspaceSource = {
+  list(): BrowserListedTab[];
+  attach(tabID: string, reclaim: () => void, layout: () => void, agentInput: () => boolean): BrowserWorkspaceAttachment;
+};
 
 // Conservative overflow gate. The core stdin scanner enforces a 4MB line
 // limit; a DOM snapshot on a large page is 5-50MB before trimming. We project
@@ -84,6 +101,7 @@ export interface BrowserWebContentsHandle {
   enableDeviceEmulation: WebContents["enableDeviceEmulation"];
   disableDeviceEmulation(): void;
   on(event: string, listener: (...args: unknown[]) => void): void;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): void;
   loadURL(url: string, options?: LoadURLOptions): Promise<unknown>;
   getURL(): string;
   getTitle(): string;
@@ -145,6 +163,8 @@ type BrowserTurn = { turnID: string; executionID: string; ended: boolean };
 type BrowserRequest = { cancelled: boolean; workdir: string; threadID: string; turn?: BrowserTurn };
 
 type TabEntry = {
+  workspace?: BrowserWorkspaceAttachment;
+  removeListeners?: () => void;
   view: BrowserViewHandle;
   // The view getter clears before a native self-close emits destroyed. Keep
   // identity and liveness independent from that disposable view property.
@@ -198,7 +218,7 @@ type TabEntry = {
 
 type BrowserRendererSink = {
   surface: (snapshot: BrowserSurfaceSnapshot) => void;
-  userInput: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void;
+  userInput: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number; workspace?: boolean; activityID?: string; executionID?: string }) => void;
   adopted: (payload: { workdir: string; openerTabID: string; tabID: string; url: string }) => void;
   presented: () => void;
 };
@@ -241,7 +261,7 @@ export class BrowserHostCoordinator {
   // sends its next request (proof the core is back).
   private readonly downWorkdirs = new Set<string>();
   private hostWindow: BrowserHostWindowHandle | undefined;
-  private readonly threadControls = new Map<string, { controller: string; allowed: boolean; updatedAt: string; grantAt?: string; localTakeover?: number }>();
+  private readonly threadControls = new Map<string, { controller: string; allowed: boolean; updatedAt: string; grantAt?: string; localTakeover?: number; activityID?: string; executionID?: string }>();
   private readonly pendingRequests = new Map<string, BrowserRequest>();
   private readonly threadTurns = new Map<string, BrowserTurn>();
   // Preview-surface listeners. Interaction hints flow main-side only (never
@@ -256,6 +276,7 @@ export class BrowserHostCoordinator {
   // the tab it is presenting.
   private readonly navigateListeners = new Set<(workdir: string, tabID: string, url: string) => void>();
   private rendererSink: BrowserRendererSink | undefined;
+  private workspaceSource: BrowserWorkspaceSource | undefined;
   private popupSerial = 0;
   private localTakeoverSerial = 0;
   private readonly tabReparentedListeners = new Set<
@@ -318,6 +339,7 @@ export class BrowserHostCoordinator {
       }
       for (const entry of this.tabs.values()) {
         if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
+        if (entry.workspace) { this.destroyEntry(entry); continue; }
         entry.inputGeneration += 1;
         entry.controlledTurn = undefined;
         entry.agentInputAllowed = this.threadControls.get(key)?.allowed !== false;
@@ -427,7 +449,9 @@ export class BrowserHostCoordinator {
   ): Rectangle | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.contents.isDestroyed()) return undefined;
+    if (entry.workspace?.visible()) return undefined;
     const previous = entry.view.getBounds();
+    entry.workspace?.setExternalPresentation(true);
     this.reparent(entry, parent);
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
@@ -495,6 +519,10 @@ export class BrowserHostCoordinator {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.contents.isDestroyed()) return;
     if (entry.currentParent !== owner) return;
+    if (entry.workspace) {
+      this.restoreWorkspace(entry);
+      return;
+    }
     this.reparent(entry, this.ensureHostWindow());
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
@@ -566,6 +594,7 @@ export class BrowserHostCoordinator {
     const target = this.windowForBounds(window);
     if (!target) return;
     const key = tabKey(workdir, tabID);
+    if (this.tabs.get(key)?.workspace) return; // Website chrome owns its geometry.
     // A missing or empty rectangle means the panel is not showing this tab.
     // Drop the cached rect so a later show cannot reuse a stale conversation-
     // covering position. Do not clear blockPresent here: the hide that set it
@@ -593,6 +622,29 @@ export class BrowserHostCoordinator {
     this.presentInPanel(entry, target, rect);
   }
 
+  setWorkspaceSource(source: BrowserWorkspaceSource): void {
+    this.workspaceSource = source;
+  }
+
+  /** User-origin PiP Expand returns to the original website, never duplicate chrome. */
+  revealWorkspaceTab(workdir: string, tabID: string): boolean {
+    const workspace = this.tabs.get(tabKey(workdir, tabID))?.workspace;
+    if (!workspace) return false;
+    workspace.reveal();
+    return true;
+  }
+
+  private restoreWorkspace(entry: TabEntry): void {
+    const workspace = entry.workspace!;
+    this.reparent(entry, workspace.parent);
+    entry.inPanel = workspace.visible();
+    entry.presented = entry.inPanel;
+    workspace.setExternalPresentation(false);
+    workspace.restore();
+    this.applyEntryActivity(entry);
+    this.rendererSink?.presented();
+  }
+
   setRendererSink(sink: BrowserRendererSink): void {
     this.rendererSink = sink;
   }
@@ -615,7 +667,7 @@ export class BrowserHostCoordinator {
     const localTakeover = previous?.localTakeover;
     const grantAt = controlled && eventMethod === "activity/control_changed" ? updatedAt : previous?.grantAt;
     const allowed = controlled && localTakeover === undefined && (!previous || previous.allowed || eventMethod === "activity/control_changed");
-    this.threadControls.set(key, { controller: activity.controller, allowed, updatedAt, grantAt, localTakeover });
+    this.threadControls.set(key, { controller: activity.controller, allowed, updatedAt, grantAt, localTakeover, activityID: activity.id, executionID: activity.execution_id });
     if (activity.controller === "user" && eventMethod === "activity/control_changed") {
       // An explicit takeover hands the task's live browsing context to the user,
       // including popups that have not yet appeared in the core's tab store.
@@ -648,7 +700,10 @@ export class BrowserHostCoordinator {
       if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
       if (entry.agentInputAllowed !== allowed || !allowed) entry.inputGeneration += 1;
       entry.agentInputAllowed = allowed;
-      if (!allowed) this.clearCursor(entry);
+      if (!allowed) {
+        if (entry.workspace) this.destroyEntry(entry);
+        else this.clearCursor(entry);
+      }
     }
   }
 
@@ -774,6 +829,43 @@ export class BrowserHostCoordinator {
     const tabID = String(params.tab_id ?? "");
     if (!tabID) throw new Error("open_tab requires tab_id");
     const key = tabKey(workdir, tabID);
+    const workspaceTabID = typeof params.workspace_tab_id === "string" ? params.workspace_tab_id : "";
+    if (tabID.startsWith(BROWSER_WORKSPACE_TAB_PREFIX) && !workspaceTabID) {
+      throw new Error("Workspace tab requires explicit attach; it cannot be recreated by navigation");
+    }
+    if (workspaceTabID) {
+      if (!request?.turn || workspaceTabID !== tabID || !tabID.startsWith(BROWSER_WORKSPACE_TAB_PREFIX) || params.initial_url) {
+        throw new Error("Workspace attachment requires a live turn and the exact listed tab_id, without a URL");
+      }
+      const existing = this.tabs.get(key);
+      if (existing?.workspace) return { ok: true, tab_id: tabID };
+      if (existing || !this.workspaceSource) throw new Error("Workspace tab attachment is unavailable");
+      const workspace = this.workspaceSource.attach(tabID,
+        () => { const owned = this.tabs.get(key); if (owned) this.noteWorkspaceReclaim(owned); },
+        () => {
+          const owned = this.tabs.get(key);
+          if (!owned?.workspace) return;
+          const visible = workspace.visible();
+          if (visible && owned.currentParent !== workspace.parent.contentView) this.restoreWorkspace(owned);
+          else if (owned.currentParent === workspace.parent.contentView && owned.inPanel !== visible) {
+            // Geometry belongs to the website host. Only an actual presentation
+            // transition needs activity/renderer updates; ordinary resize must
+            // not re-add the same native view and lay it out a second time.
+            owned.inPanel = visible;
+            owned.presented = visible;
+            this.applyEntryActivity(owned);
+            this.rendererSink?.presented();
+          }
+        }, () => {
+          const owned = this.tabs.get(key);
+          return Boolean(owned && (owned.agentInputDepth > 0 || Date.now() < owned.ignoreUserInputUntil));
+        });
+      try {
+        this.registerTab(workdir, tabID, workspace.view, request.threadID, { turn, status: "persistent", workspace });
+      } catch (error) { workspace.release(); throw error; }
+      this.rendererSink?.presented();
+      return { ok: true, tab_id: tabID };
+    }
     let entry = this.tabs.get(key);
     if (!entry) {
       entry = this.registerTab(workdir, tabID, this.deps.createView(),
@@ -794,19 +886,20 @@ export class BrowserHostCoordinator {
     return { ok: true, tab_id: tabID };
   }
 
-  private registerTab(workdir: string, tabID: string, view: BrowserViewHandle, threadID?: string, ownership: { opener?: TabEntry; turn?: BrowserTurn; status?: BrowserTabStatus } = {}): TabEntry {
+  private registerTab(workdir: string, tabID: string, view: BrowserViewHandle, threadID?: string, ownership: { opener?: TabEntry; turn?: BrowserTurn; status?: BrowserTabStatus; workspace?: BrowserWorkspaceAttachment } = {}): TabEntry {
     // Set a usable layout before the first navigation or script-written popup.
-    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
-    const parent = this.ensureHostWindow().contentView;
-    parent.addChildView(view);
+    if (!ownership.workspace) view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const parent = ownership.workspace?.parent.contentView ?? this.ensureHostWindow().contentView;
+    if (!ownership.workspace) parent.addChildView(view);
     if (!view.webContents.debugger.isAttached()) view.webContents.debugger.attach("1.3");
     const entry: TabEntry = {
       view, contents: view.webContents, contentsID: view.webContents.id, workdir, tabID, threadID, openerTabID: ownership.opener?.tabID,
+      workspace: ownership.workspace,
       creationTurn: ownership.turn, controlledTurn: ownership.turn, status: ownership.status ?? "temporary",
       inputGeneration: 0, pageGeneration: 0,
       agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
       debuggerAttached: true, nodeMap: new Map(), currentParent: parent,
-      suppressed: false, presented: false, inPanel: false, blockPresent: false,
+      suppressed: false, presented: ownership.workspace?.visible() ?? false, inPanel: ownership.workspace?.visible() ?? false, blockPresent: false,
       agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false,
       activeOperations: 0, spectatorScrollbarEpoch: 0,
     };
@@ -831,6 +924,7 @@ export class BrowserHostCoordinator {
   private listTabs(workdir: string, threadID: string): {
     tab_ids: string[];
     tabs: BrowserListedTab[];
+    workspace_tabs?: BrowserListedTab[];
   } {
     const ids: string[] = [];
     const tabs: BrowserListedTab[] = [];
@@ -844,13 +938,18 @@ export class BrowserHostCoordinator {
         title: entry.contents.getTitle(),
       });
     }
-    return { tab_ids: ids, tabs };
+    return { tab_ids: ids, tabs, ...(this.workspaceSource ? { workspace_tabs: this.workspaceSource.list() } : {}) };
   }
 
   private setVisibility(workdir: string, params: Record<string, JsonValue>): { ok: true } {
     const tabID = String(params.tab_id ?? "");
     const entry = this.requireTab(workdir, tabID);
     const visible = params.visible === true;
+    if (entry.workspace) {
+      // A tool may not steal the user's ribbon selection or move its visible page.
+      if (visible) this.restoreWorkspace(entry);
+      return { ok: true };
+    }
     if (visible) {
       // Take the view off any mirror immediately so that mirror cannot keep
       // a shrunk zoom, but do not paint it until a panel rectangle arrives.
@@ -1088,11 +1187,9 @@ export class BrowserHostCoordinator {
       for (const stroke of chord) {
         const event = keyDispatch(stroke);
         assertCurrent();
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...event });
-        if (event.text) {
-          assertCurrent();
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: event.text, key: event.key });
-        }
+        // A text-bearing keyDown already generates the char event in Chromium.
+        // rawKeyDown keeps non-text keys from acquiring layout-dependent text.
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: event.text ? "keyDown" : "rawKeyDown", ...event });
         assertCurrent();
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...event });
       }
@@ -1117,6 +1214,14 @@ export class BrowserHostCoordinator {
 
   private wireEntry(entry: TabEntry): void {
     const contents = entry.contents;
+    const listeners: [string, (...args: unknown[]) => void][] = [];
+    const listen = (event: string, listener: (...args: unknown[]) => void): void => {
+      listeners.push([event, listener]);
+      contents.on(event, listener);
+    };
+    entry.removeListeners = () => {
+      for (const [event, listener] of listeners) contents.removeListener?.(event, listener);
+    };
     const publish = (): void => this.publishSurface(entry);
     const onNavigate = (...args: unknown[]): void => {
       entry.pageGeneration += 1;
@@ -1126,24 +1231,27 @@ export class BrowserHostCoordinator {
       this.emitNavigate(entry.workdir, entry.tabID, url);
       publish();
     };
-    contents.on("did-start-navigation", (...args: unknown[]) => {
+    listen("did-start-navigation", (...args: unknown[]) => {
       if (args[3] === false) return;
       entry.pageGeneration += 1;
       entry.nodeMap.clear();
     });
-    contents.on("did-navigate", onNavigate);
-    contents.on("did-navigate-in-page", onNavigate);
-    contents.on("did-start-loading", () => {
+    listen("did-navigate", onNavigate);
+    listen("did-navigate-in-page", (...args: unknown[]) => {
+      if (args[2] === false) return;
+      onNavigate(...args);
+    });
+    listen("did-start-loading", () => {
       entry.loading = true;
       entry.loadError = undefined;
       publish();
     });
-    contents.on("did-stop-loading", () => {
+    listen("did-stop-loading", () => {
       entry.loading = false;
       publish();
     });
-    contents.on("page-title-updated", publish);
-    contents.on("did-fail-load", (...args: unknown[]) => {
+    listen("page-title-updated", publish);
+    listen("did-fail-load", (...args: unknown[]) => {
       const errorCode = typeof args[1] === "number" ? args[1] : 0;
       const isMainFrame = args[4] !== false;
       if (!isMainFrame || errorCode === -3) return;
@@ -1154,16 +1262,17 @@ export class BrowserHostCoordinator {
     // Moving onto the page, or scrolling to watch it, is not using it.
     // Opening the panel under the pointer synthesizes an enter event.
     // A press or a context menu is the user taking the page.
-    contents.on("before-mouse-event", (...args: unknown[]) => {
+    listen("before-mouse-event", (...args: unknown[]) => {
       const mouse = args[1] as { type?: string } | undefined;
       if (mouse?.type !== "mouseDown" && mouse?.type !== "contextMenu") return;
       this.noteUserInput(entry);
     });
-    contents.on("before-input-event", (...args: unknown[]) => {
+    listen("before-input-event", (...args: unknown[]) => {
       const input = args[1] as { type?: string } | undefined;
       if (input?.type === "keyDown") this.noteUserInput(entry);
     });
-    contents.on("destroyed", () => this.destroyEntry(entry, true));
+    listen("destroyed", () => this.destroyEntry(entry, true));
+    if (entry.workspace) return; // Preserve Chromium opener and the website host popup policy.
     contents.setWindowOpenHandler((details) => {
       if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(entry.workdir)) {
         return { action: "deny" };
@@ -1199,14 +1308,6 @@ export class BrowserHostCoordinator {
           if (!child.agentInputAllowed) this.releaseDebugger(child);
           // The supplied child retains Chromium's opener, WindowProxy, and POST
           // navigation. Calling loadURL here would destroy that original context.
-          const childOptions = options as WebContentsViewConstructorOptions;
-          if (!childOptions.webContents) {
-            const post = details.postBody;
-            const headers = post ? `Content-Type: ${post.contentType}${post.boundary ? `; boundary=${post.boundary}` : ""}` : undefined;
-            void this.withActiveEntry(child, () => view.webContents.loadURL(target, {
-              httpReferrer: details.referrer, postData: post?.data, extraHeaders: headers,
-            })).catch(() => undefined); // did-fail-load publishes the navigation failure.
-          }
           this.rendererSink?.adopted({ workdir: entry.workdir, openerTabID: entry.tabID, tabID, url: target });
           return view.webContents as WebContents;
         },
@@ -1215,13 +1316,21 @@ export class BrowserHostCoordinator {
   }
 
   private presentInPanel(entry: TabEntry, window: BrowserParentWindowHandle, rect: Rectangle): void {
-    this.reparent(entry, window);
-    entry.presented = true;
-    entry.inPanel = true;
-    this.resetPreviewScale(entry);
-    entry.view.setBounds(rect);
-    this.applyEntryActivity(entry);
-    this.rendererSink?.presented();
+    const alreadyPresented = entry.inPanel && entry.currentParent === window.contentView;
+    if (!alreadyPresented) {
+      this.reparent(entry, window);
+      entry.presented = true;
+      entry.inPanel = true;
+      this.resetPreviewScale(entry);
+    }
+    const current = entry.view.getBounds();
+    if (current.x !== rect.x || current.y !== rect.y || current.width !== rect.width || current.height !== rect.height) {
+      entry.view.setBounds(rect);
+    }
+    if (!alreadyPresented) {
+      this.applyEntryActivity(entry);
+      this.rendererSink?.presented();
+    }
   }
 
   private presentIfCached(entry: TabEntry): void {
@@ -1266,11 +1375,22 @@ export class BrowserHostCoordinator {
     }
   }
 
+  private noteWorkspaceReclaim(entry: TabEntry): void {
+    // Native website chrome reclaims immediately, before a queued core event.
+    const key = tabKey(entry.workdir, entry.threadID ?? "");
+    const control = this.threadControls.get(key);
+    const inputGeneration = ++this.localTakeoverSerial;
+    this.threadControls.set(key, { controller: "user", updatedAt: control?.updatedAt ?? "", ...control, allowed: false, localTakeover: inputGeneration });
+    this.applyThreadAuthority(entry.workdir, entry.threadID ?? "", false);
+    this.rendererSink?.userInput({ workdir: entry.workdir, tabID: entry.tabID, threadID: entry.threadID, inputGeneration, workspace: true, activityID: control?.activityID, executionID: control?.executionID });
+  }
+
   private noteUserInput(entry: TabEntry): void {
     if (!entry.inPanel || entry.suppressed) return;
     if (entry.agentInputDepth > 0) return;
     if (Date.now() < entry.ignoreUserInputUntil) return;
     entry.ignoreUserInputUntil = Date.now() + 300;
+    if (entry.workspace) { this.noteWorkspaceReclaim(entry); return; }
     entry.status = "persistent";
     entry.controlledTurn = undefined;
     const key = tabKey(entry.workdir, entry.threadID ?? "");
@@ -1346,6 +1466,11 @@ export class BrowserHostCoordinator {
   // -------------------------------------------------------------------------
   private applyEntryActivity(entry: TabEntry): void {
     if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || entry.contents.isDestroyed()) return;
+    if (entry.workspace && entry.currentParent === entry.workspace.parent.contentView) {
+      // Never make a hidden website cover the shell during capture or CDP work.
+      entry.contents.setBackgroundThrottling(entry.activeOperations === 0 && !entry.workspace.visible());
+      return;
+    }
     const active = entry.presented || entry.activeOperations > 0;
     if (active) {
       // Settle view visibility before waking the hidden renderer to paint.
@@ -1431,7 +1556,7 @@ export class BrowserHostCoordinator {
   private requireTab(workdir: string, tabID: string): TabEntry {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     // Exact sentinel the Go tool matches on to rebuild the tab from its store.
-    if (!entry) throw new Error("tab_not_found");
+    if (!entry) throw new Error(tabID.startsWith(BROWSER_WORKSPACE_TAB_PREFIX) ? "Workspace tab is detached; call tabs and explicitly attach it again" : "tab_not_found");
     return entry;
   }
 
@@ -1477,7 +1602,9 @@ export class BrowserHostCoordinator {
       entry.view.setBounds(entry.preview.restoreBounds);
       entry.preview = undefined;
     }
-    entry.contents.setZoomFactor(1);
+    // Borrowed pages keep the website host's zoom. Resetting a hidden sibling
+    // also changes its visible opener because Chromium shares origin zoom.
+    if (!entry.workspace) entry.contents.setZoomFactor(1);
   }
 
   private applySpectatorScrollbars(entry: TabEntry): void {
@@ -1601,6 +1728,11 @@ export class BrowserHostCoordinator {
     const closed: string[] = [];
     const kept: string[] = [];
     for (const entry of entries) {
+      if (entry.workspace) {
+        closed.push(entry.tabID); // Closed automation binding; the user's page stays open.
+        this.destroyEntry(entry);
+        continue;
+      }
       const status = retained.get(entry.tabID);
       if (!status) {
         closed.push(entry.tabID);
@@ -1626,6 +1758,18 @@ export class BrowserHostCoordinator {
     this.agentWebContentsIds.delete(entry.contentsID);
     this.emitTabClosed(entry);
     this.releaseDebugger(entry, contentsDestroyed);
+    entry.removeListeners?.();
+    if (entry.workspace) {
+      if (!contentsDestroyed && !entry.contents.isDestroyed()) {
+        // Window close can destroy the original parent before its page cleanup.
+        if (!entry.workspace.parent.isDestroyed()) this.reparent(entry, entry.workspace.parent);
+        this.resetPreviewScale(entry);
+        this.clearSpectatorScrollbars(entry);
+      }
+      entry.workspace.release();
+      this.rendererSink?.presented();
+      return;
+    }
     if (entry.currentParent) {
       try {
         entry.currentParent.removeChildView(entry.view);
@@ -2334,22 +2478,70 @@ export function browserPermissionDecision(isAgentOwned: boolean, permission: str
   return !BROWSER_AGENT_DENIED_PERMISSIONS.has(permission);
 }
 
-// Wire the persist:wuu-browser session handlers. Called once from
-// app.whenReady with the real partition session. Contents this coordinator
-// does not own keep the default permission and download path.
-export function installBrowserSessionHandlers(session: Session, coordinator: BrowserHostCoordinator): void {
-  session.setPermissionRequestHandler((webContents, permission, callback) => {
+export type BrowserPermissionRequestDetails = PermissionRequest | FilesystemPermissionRequest
+  | MediaAccessPermissionRequest | OpenExternalPermissionRequest;
+
+export interface BrowserSessionPermissionDelegate {
+  ownsWebContents(id: number): boolean;
+  requestDisplayMedia?(request: DisplayMediaRequestHandlerHandlerRequest, callback: (streams: Streams | null) => void): void;
+  handleDownload?(contents: WebContents, item: DownloadItem): void;
+  requestPermission(
+    contents: WebContents,
+    permission: string,
+    callback: (allowed: boolean) => void,
+    details: BrowserPermissionRequestDetails,
+  ): void;
+  checkPermission(contents: WebContents, permission: string, requestingOrigin: string, mediaType?: string): boolean;
+}
+
+// Keep the existing agent policy and legacy user-browser path. Full-page website
+// destinations share this profile but ask users about their own permissions.
+export function installBrowserSessionHandlers(
+  session: Session,
+  coordinator: BrowserHostCoordinator,
+  websites?: BrowserSessionPermissionDelegate,
+): void {
+  // The macOS system picker bypasses this handler, including our ownership
+  // checks. Keep source selection inside the user-tab delegate on both platforms.
+  session.setDisplayMediaRequestHandler((request, callback) => {
+    if (websites?.requestDisplayMedia) websites.requestDisplayMedia(request, callback);
+    else callback(null);
+  }, { useSystemPicker: false });
+  session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    // Settings share extension storage, not the legacy user-surface grant.
+    // This also covers remote frames embedded by an extension options page.
+    if (webContents && ownsBrowserExtensionOptions(webContents)) { callback(false); return; }
+    if (webContents && coordinator.ownsWebContents(webContents.id)) {
+      callback(browserPermissionDecision(true, permission));
+      return;
+    }
+    if (webContents && websites?.ownsWebContents(webContents.id)) {
+      websites.requestPermission(webContents, permission, callback, details);
+      return;
+    }
     const owned = webContents ? coordinator.ownsWebContents(webContents.id) : false;
     callback(browserPermissionDecision(owned, permission));
   });
-  session.setPermissionCheckHandler((webContents, permission) => {
+  session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (webContents && ownsBrowserExtensionOptions(webContents)) return false;
+    // Background contexts without a tab cannot borrow the legacy user-surface
+    // grant and bypass the website host's explicit permission decision.
+    if (!webContents && websites) return false;
+    if (webContents && coordinator.ownsWebContents(webContents.id)) return browserPermissionDecision(true, permission);
+    if (webContents && websites?.ownsWebContents(webContents.id)) {
+      return websites.checkPermission(webContents, permission, requestingOrigin, details.mediaType);
+    }
     const owned = webContents ? coordinator.ownsWebContents(webContents.id) : false;
     return browserPermissionDecision(owned, permission);
   });
-  session.on("will-download", (event, _item, webContents) => {
+  session.on("will-download", (event, item, webContents) => {
     // Owned tabs do not write silent downloads to disk.
     if (webContents && coordinator.ownsWebContents(webContents.id)) {
       event.preventDefault();
+      return;
+    }
+    if (webContents && websites?.ownsWebContents(webContents.id)) {
+      websites.handleDownload?.(webContents, item);
     }
   });
 }

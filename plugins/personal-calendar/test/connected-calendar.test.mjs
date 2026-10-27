@@ -60,13 +60,13 @@ test('host auth failure and calendar deselection immediately clear existing CAS 
    throw new Error('unexpected fixture call');
   } };
   const plugin = new PersonalCalendarPlugin({ reader: new IntegratedReader(bridge) });
-  plugin.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: signal() }); await plugin.activate();
-  const refresh = () => plugin.invokeService({ service: 'calendar.personal', method: 'refresh', params: { ...query, session_id: 's' }, caller: 'personal' });
+  plugin.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: signal() }); await plugin.activate(host);
+  const refresh = () => plugin.invokeService({ service: 'calendar.personal', method: 'refresh', params: { ...query, session_id: 's' }, caller: 'personal' }, host);
   assert.equal((await refresh()).events.length, 1);
   if (mode === 'revoked-during-read') error = true;
   if (mode === 'deselected') state = { ...connection, selected_calendars: [] };
   if (mode === 'changed-account') state = { ...connection, account_id: 'different-subject', connection_id: 'different-connection' };
-  const result = await (mode === 'changed-account' ? plugin.invokeService({ service: 'calendar.personal', method: 'refresh', params: { ...query, account_id: 'subject', session_id: 's' }, caller: 'personal' }) : refresh());
+  const result = await (mode === 'changed-account' ? plugin.invokeService({ service: 'calendar.personal', method: 'refresh', params: { ...query, account_id: 'subject', session_id: 's' }, caller: 'personal' }, host) : refresh());
   assert.equal(result.events.length, 0, mode); assert.equal(result.freshness, 'empty', mode);
   assert.equal(JSON.stringify([...values.values()]).includes(event.summary), false, mode);
   plugin.shutdown();
@@ -85,9 +85,9 @@ test('typed authorization denial clears every cached window even when secure sta
    if (method === 'host.session.context') return { product_domain: 'personal', user_space_id: 'space', session_id: 's' };
    throw new Error('unexpected fixture call');
   } };
-  const create = async () => { const p = new PersonalCalendarPlugin({ reader: new IntegratedReader(bridge) }); p.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: signal() }); await p.activate(); return p; };
+  const create = async () => { const p = new PersonalCalendarPlugin({ reader: new IntegratedReader(bridge) }); p.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: signal() }); await p.activate(host); return p; };
   let plugin = await create();
-  const request = (method, q) => plugin.invokeService({ service: 'calendar.personal', method, params: { ...q, session_id: 's' }, caller: 'personal' });
+  const request = (method, q) => plugin.invokeService({ service: 'calendar.personal', method, params: { ...q, session_id: 's' }, caller: 'personal' }, host);
   const next = { ...query, time_min: '2026-11-02T05:00:00Z', time_max: '2026-11-03T05:00:00Z' };
   assert.equal((await request('refresh', query)).events.length, 1); assert.equal((await request('refresh', next)).events.length, 1);
   denied = true;

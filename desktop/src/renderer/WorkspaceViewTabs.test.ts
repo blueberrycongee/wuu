@@ -11,7 +11,6 @@ import {
   reorderViewTabs,
   workspaceDiffViewTab,
   workspaceArtifactViewTab,
-  workspaceConversationAttachmentTab,
   workspaceDiffViewTabID,
   workspaceFileViewTab,
   workspaceFileViewTabID,
@@ -71,6 +70,8 @@ it("keeps delivered snapshots separate from editable files, deduplicates repeats
   const input = { threadID: "thread", cwd: projectContext.cwd, artifact };
   const editable = workspaceFileViewTab({ context: projectContext, path: "report.html" });
   const first = workspaceArtifactViewTab(input);
+  const hosted = (execution_host:string) => workspaceArtifactViewTab({...input,artifact:{...artifact,locator:{version:1,execution_host,session_id:"thread"}}});
+  expect(hosted("host-a").id).not.toBe(hosted("host-b").id);
   let state = openViewTab(openViewTab(initialWorkspaceViewTabsState, editable), first);
   state = openViewTab(state, workspaceArtifactViewTab({ ...input, artifact: { ...artifact, id: "repeat" } }));
   expect(state.tabs).toHaveLength(2);
@@ -326,7 +327,7 @@ describe("openViewTab", () => {
 });
 
 describe("closeViewTab", () => {
-  it("restores the Files browser after closing the final file tab", () => {
+  it("removes the final file tab without opening another tool", () => {
     const file = workspaceFileViewTab({ context: projectContext, path: "src/App.tsx" });
     let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
     state = openViewTab(state, file);
@@ -334,8 +335,8 @@ describe("closeViewTab", () => {
     expect(state.tabs.map((tab) => tab.id)).toEqual([file.id]);
     state = closeViewTab(state, file.id);
 
-    expect(state.tabs.map((tab) => tab.id)).toEqual(["files"]);
-    expect(state.activeTabID).toBe("files");
+    expect(state.tabs).toEqual([]);
+    expect(state.activeTabID).toBeUndefined();
     expect(state.activeFileTabID).toBeUndefined();
   });
 
@@ -449,17 +450,4 @@ describe("reorderViewTabs", () => {
     const next = reorderViewTabs(state, "files", "does-not-exist");
     expect(next).toBe(state);
   });
-});
-
-// Remote attachments must not alias a workspace path or an artifact snapshot.
-it("deduplicates conversation attachment tabs and closes back to the conversation", () => {
-  const request = { resourceId: "agent:1:file:0:digest", name: "notes.txt", mediaType: "text/plain", size: 5, read: async () => new Blob(["hello"]) };
-  const tab = workspaceConversationAttachmentTab(request);
-  let state = openViewTab(initialWorkspaceViewTabsState, tab);
-  state = openViewTab(state, workspaceConversationAttachmentTab(request));
-  expect(state.tabs).toHaveLength(1);
-  expect(state.tabs[0]).toMatchObject({ kind: "conversation-attachment", title: "notes.txt" });
-  expect(closeViewTab(state, tab.id).activeTabID).toBeUndefined();
-  state = openViewTab(state, workspaceConversationAttachmentTab({ ...request, resourceId: "other-agent:1:file:0:digest" }));
-  expect(state.tabs).toHaveLength(2);
 });

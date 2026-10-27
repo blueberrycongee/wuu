@@ -118,7 +118,7 @@ func TestCalendarBrokerCreateVerificationAndCancelEndToEnd(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(data)), Header: http.Header{}}, nil
 			})}
-			b := New(Options{Store: &memoryStore{values: map[string][]byte{}}, HTTPClient: client, Authorization: func(context.Context, Actor) (string, error) { return "user-turn", nil }})
+			b := newTestBroker(Options{Store: &memoryStore{values: map[string][]byte{}}, HTTPClient: client, Authorization: func(context.Context, Actor) (string, error) { return "user-turn", nil }})
 			defer b.Close()
 			err := b.RegisterVerified(ctx, a, Grant{Connection: Connection{ID: "calendar", Provider: "google-calendar", AccountID: "owner", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/calendar.events"}, Resources: []string{"primary"}}, AccessToken: "fixture-secret-123", ExpiresAt: time.Now().Add(time.Hour)})
 			if err != nil {

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as React from "react";
+import { createRoot } from "react-dom/client";
+import { JSDOM } from "jsdom";
 import { readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(await readFile(new URL("../plugin.json", import.meta.url), "utf8"));
@@ -18,7 +21,7 @@ const createElement = (type, props, ...children) => ({ type, props: props ?? {},
 const api = {
   pluginId: manifest.id,
   generation: "acceptance-generation",
-  react: { Fragment: Symbol("Fragment"), createElement },
+  react: { Fragment: Symbol("Fragment"), createElement, useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot() },
   ui: {
     Page: "section",
     Panel: "section",
@@ -38,24 +41,23 @@ const api = {
   registerCommand: register("commands"),
   registerStatusItem: register("status"),
   registerLocale: register("locales"),
-  registerSlot: (_slot, contribution) => register("slots")(contribution),
+  registerUIContribution: register("uiContributions"),
   registerPresenter: register("presenters"),
-  registerToolActivityPresenter: register("toolActivityPresenters"),
 };
 
 renderer.activate(api);
-const presenter = registrations.get("toolActivityPresenters")[0];
+const presenter = registrations.get("uiContributions").find(item => item.target === "wuu.default-conversation/conversation.tool-activity");
 const presented = presenter.render({
-  activity: {
+  context: { snapshot: {
     id: "call-1",
     toolName: "developer-loop-echo",
-    capability: presenter.key,
+    capability: "developer-loop.tool.echo",
     status: "completed",
     argumentsText: "{}",
     resultText: "developer-loop tool ok",
   },
-  host: {},
-  fallback: createElement("span", null, "native"),
+  },
+  children: createElement("span", null, "native"),
 });
 assert.equal(presented.type, "section");
 assert.equal(presented.props["data-developer-loop-tool"], "completed");
@@ -66,7 +68,7 @@ const presenterByTarget = new Map(registrations.get("presenters").map((definitio
 
 const invokedActions = [];
 const presentationHost = {
-  actions: ["conversation.composer.submit", "navigation.activate-node", "status.activate-item"],
+  actions: ["status.activate-item"],
   invoke: async (action, input) => {
     invokedActions.push([action, input]);
     return { accepted: true };
@@ -79,34 +81,28 @@ const renderPresenter = (target, snapshot, key) => {
   return definition.render({ contractVersion: 1, target, key, snapshot, host: presentationHost, fallback });
 };
 
-const itemOutput = renderPresenter("conversation.item", {
+const messageContribution = registrations.get("uiContributions").find(item => item.target === "wuu.default-conversation/conversation.message");
+const itemOutput = messageContribution.render({ children: fallback, context: { snapshot: {
   contractVersion: 1,
   id: "message-1",
   kind: "assistant-message",
   status: "completed",
   text: "Accepted answer",
-}, "assistant-message");
+} } });
 assert.equal(itemOutput.children[0], fallback);
 assert.equal(itemOutput.children[1].props["data-item-id"], "message-1");
 assert.equal(itemOutput.children[1].props["data-item-status"], "completed");
 
-const composerOutput = renderPresenter("conversation.composer", {
-  contractVersion: 1,
-  threadId: "thread-1",
-  draftText: "Ship it",
-  activeSubmissionMode: "send",
-  running: false,
-});
-assert.equal(composerOutput.children[0], fallback);
-assert.equal(composerOutput.children[1].props["data-thread-id"], "thread-1");
-
-const navigationOutput = renderPresenter("navigation.primary", {
-  contractVersion: 1,
-  activeNodeId: "thread-1",
-  nodes: [{ id: "thread-1", kind: "thread", label: "Acceptance thread", active: true }],
-});
-assert.equal(navigationOutput.children[0], fallback);
-assert.equal(navigationOutput.children[1].props["data-node-count"], "1");
+const application = { subscribe: () => () => {}, getSnapshot: () => ({
+  composer: { threadId: "thread-1", activeSubmissionMode: "send" },
+  navigation: { activeNodeId: "thread-1", nodes: [{ id: "thread-1" }] },
+}) };
+const composerContribution = registrations.get("uiContributions").find(item => item.target === "wuu.default-composer/composer.above");
+const composerOutput = composerContribution.render({ application });
+assert.equal(composerOutput.props["data-thread-id"], "thread-1");
+const navigationContribution = registrations.get("uiContributions").find(item => item.target === "wuu.default-navigation/sidebar.footer");
+const navigationOutput = navigationContribution.render({ application });
+assert.equal(navigationOutput.props["data-node-count"], "1");
 
 const previewOutput = renderPresenter("content.preview", {
   contractVersion: 1,
@@ -134,52 +130,42 @@ const headerOutput = renderPresenter("header.conversation", {
 });
 assert.equal(headerOutput.children[0], fallback);
 assert.equal(headerOutput.children[1].props["data-active-tab"], "tab-1");
-await renderer.invokePresentationAction(presentationHost, "conversation.composer.submit");
-await renderer.invokePresentationAction(presentationHost, "navigation.activate-node", { id: "thread-1" });
 await renderer.invokePresentationAction(presentationHost, "status.activate-item", { id: "ready" });
 assert.deepEqual(invokedActions, [
-  ["conversation.composer.submit", undefined],
-  ["navigation.activate-node", { id: "thread-1" }],
   ["status.activate-item", { id: "ready" }],
 ]);
 assert.equal(await renderer.invokePresentationAction(presentationHost, "unsupported.action"), undefined);
 
+const dom = new JSDOM('<div id="root"></div>');
+Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+const realViews = [];
+renderer.activate({ ...api, react: React, ui: { ...api.ui, Section: ({ title, children }) => React.createElement("section", null, title, children) }, registerViewType: value => { realViews.push(value); return { dispose() {} }; } });
+let stored = "4";
+let releaseRestore;
+const restoreReady = new Promise(resolve => { releaseRestore = resolve; });
 const storedWrites = [];
 const host = {
-  getStorage: async (key) => {
-    assert.equal(key, "counter");
-    return "4";
-  },
-  setStorage: async (key, value) => storedWrites.push([key, value]),
-  getSetting: async (key) => ({ enabled: true, label: "Verified", step: 3, density: "compact" })[key],
+  getStorage: async () => { await restoreReady; return stored; },
+  setStorage: async (key, value) => { storedWrites.push([key, value]); stored = value; },
+  getSetting: async key => ({ enabled: true, label: "Verified", step: 3, density: "compact" })[key],
   executeCommand: async () => undefined,
   openView: async () => undefined,
 };
-const nodes = new Map([
-  ["[data-counter-value]", { textContent: "" }],
-  ["[data-counter-label]", { textContent: "" }],
-  ["[data-counter-button]", { textContent: "", disabled: false }],
-]);
-const root = { dataset: {}, querySelector: (selector) => nodes.get(selector) ?? null };
-const view = registrations.get("views")[0].render({ host });
-view.props.ref(root);
-await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(nodes.get("[data-counter-value]").textContent, "4");
-assert.equal(nodes.get("[data-counter-label]").textContent, "Verified");
-assert.equal(root.dataset.wuuDensity, "compact");
-const findElement = (node, predicate) => {
-  if (!node || typeof node !== "object") return undefined;
-  if (predicate(node)) return node;
-  for (const child of node.children ?? []) {
-    const found = findElement(child, predicate);
-    if (found) return found;
-  }
-  return undefined;
-};
-const button = findElement(view, (node) => node.props?.["data-counter-button"] === "");
-assert.ok(button);
-await button.props.onClick();
+const root = createRoot(document.getElementById("root"));
+const View = realViews[0].render;
+await React.act(async () => root.render(React.createElement(View, { host })));
+assert.equal(document.querySelector("[data-counter-button]").disabled, true, "cannot overwrite storage before restoration completes");
+await React.act(async () => releaseRestore());
+assert.equal(document.querySelector("[data-counter-value]").textContent, "4");
+assert.equal(document.querySelector("[data-counter-label]").textContent, "Verified");
+await React.act(async () => document.querySelector("[data-counter-button]").click());
 assert.deepEqual(storedWrites, [["counter", "7"]]);
-assert.equal(nodes.get("[data-counter-value]").textContent, "7");
-
+assert.equal(document.querySelector("[data-counter-value]").textContent, "7");
+await React.act(async () => root.render(React.createElement(View, { host, context: { refreshed: true } })));
+assert.equal(document.querySelector("[data-counter-value]").textContent, "7", "ordinary renders retain the saved counter");
+await React.act(async () => root.render(null));
+await React.act(async () => root.render(React.createElement(View, { host })));
+assert.equal(document.querySelector("[data-counter-value]").textContent, "7", "new view restores public storage");
+await React.act(async () => root.unmount());
+dom.window.close();
 console.log("developer-loop public SDK contract ok");

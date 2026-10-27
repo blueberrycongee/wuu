@@ -61,7 +61,7 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 			var expectedMessage []byte
 			if th.PersistHistory {
 				var found bool
-				entry, found, dispatchErr = s.findHeldUserTurn(th.ID, message.ClientID)
+				entry, found, dispatchErr = s.findHeldUserTurn(th.state, th.ID, message.ClientID)
 				if dispatchErr == nil && (!found || !reflect.DeepEqual(entry.msg, message)) {
 					dispatchErr = errors.New("accepted steering input changed before native dispatch; review the held message")
 				}
@@ -69,7 +69,7 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 					var row session.HeldUserWork
 					row, dispatchErr = heldUserWorkRow(entry)
 					if dispatchErr == nil {
-						dispatchErr = session.ClaimHeldUserWork(s.rt.SessionDir, th.ID, row)
+						dispatchErr = th.state.Sessions.ClaimHeldUserWork(th.ID, row)
 						expectedMessage = row.MessageJSON
 					}
 				}
@@ -88,7 +88,7 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 				cancel()
 				unsupported = errors.Is(dispatchErr, agentengine.ErrSteerUnsupported)
 				if th.PersistHistory && (unsupported || errors.Is(dispatchErr, agentengine.ErrSteerRejected)) {
-					releaseErr := session.ReleaseHeldUserWork(s.rt.SessionDir, th.ID, message.ClientID)
+					releaseErr := th.state.Sessions.ReleaseHeldUserWork(th.ID, message.ClientID)
 					if releaseErr != nil {
 						unsupported = false
 					}
@@ -106,7 +106,7 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 			if dispatchErr == nil && th.PersistHistory {
 				record := historyRecordFromPersistedMessage(persistedMessageFromChatMessage(message))
 				record.ExpectedHeldMessage = expectedMessage
-				message.Seq, dispatchErr = session.AppendHistoryRecordReturningSeq(s.rt.SessionDir, th.ID, record)
+				message.Seq, dispatchErr = th.state.Sessions.AppendHistoryRecordReturningSeq(th.ID, record)
 				if dispatchErr != nil {
 					dispatchErr = fmt.Errorf("native input was accepted but could not be saved; delivery must not be retried: %w", dispatchErr)
 				}
@@ -120,9 +120,9 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 				th.removeSteerDocumentOverrideLocked(message.ClientID)
 			}
 			th.mu.Unlock()
-			s.notifyOutboundBatch(batch)
+			s.notifyOutboundBatch(th.state, batch)
 			if dispatchErr != nil {
-				if held, err := s.appendHeldUserTurns(th.ID, []queuedTurn{entry}); err == nil {
+				if held, err := s.appendHeldUserTurns(th.state, th.ID, []queuedTurn{entry}); err == nil {
 					s.notifyHeldUserTurnsWithError(th.ID, held, dispatchErr.Error())
 				} else {
 					providers.DebugLogf("retain native steering input %q: %v", message.ClientID, err)
@@ -134,14 +134,14 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 }
 
 func (s *Server) steerDeliveryModeLocked(th *threadState) string {
-	if agentengine.NormalizeEngineID(th.EngineID) == agentengine.EngineWuu {
-		return "active_turn"
-	}
-	if !th.PersistHistory || th.nativeSteerUnsupported || s.rt.Engines() == nil {
-		return "queued"
-	}
-	if factory, ok := s.rt.Engines().Lookup(agentengine.NormalizeEngineID(th.EngineID)); ok {
-		if descriptor, err := factory.Descriptor(context.Background()); err == nil && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	descriptor, err := s.engineDescriptorForState(ctx, th.state, agentengine.NormalizeEngineID(th.EngineID))
+	if err == nil {
+		if slices.Contains(descriptor.Capabilities, "host-managed-steering") {
+			return "active_turn"
+		}
+		if th.PersistHistory && !th.nativeSteerUnsupported && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
 			return "active_turn"
 		}
 	}

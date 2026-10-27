@@ -29,18 +29,45 @@ test('stable upsert rejects conflicting stale writers and recovers identical ret
   await assert.rejects(scheduler.upsert(create({ request_id: 'different' })), /revision_conflict/);
   await assert.rejects(scheduler.upsert(create({ run_at: '2026-10-18T13:00:00Z' })), /request_id_conflict/);
 });
-test('simultaneous schedulers use one durable due event and stable callback identity', async () => {
+test('simultaneous schedulers expose one producer-owned event and owner-scoped claims', async () => {
   const host = new Host(); let current = new Date('2026-10-18T11:00:00Z'); const clock = () => current;
   const first = new UserRoutineScheduler(host, 'local', clock), second = new UserRoutineScheduler(host, 'local', clock);
-  await first.upsert(create()); current = new Date('2026-10-18T12:01:00Z');
-  await Promise.all([first.tick(), second.tick()]); assert.equal(host.deliveries.size, 1);
-  await first.tick(); assert.equal(host.attempts, 1); assert.equal((await first.read('routine-one')).status, 'completed');
+  await first.upsert(create(), 'consumer'); current = new Date('2026-10-18T12:01:00Z');
+  await Promise.all([first.tick(), second.tick()]);
+  const [binding] = await first.pending('consumer'); assert(binding.pending_event);
+  const input = {binding_id:binding.binding_id,event_id:binding.pending_event.event_id,binding_revision:binding.revision};
+  await assert.rejects(first.claim({...input,claim_id:'foreign'},'other'), /consumer/);
+  const claims = await Promise.all([first.claim({...input,claim_id:'one'},'consumer'),second.claim({...input,claim_id:'two'},'consumer')]);
+  assert.equal(claims.filter(value => value.claimed).length,1);
+  const claim_id = claims[0].claimed?'one':'two';
+  await first.acknowledge({...input,claim_id,accepted:true},'consumer');
+  await first.acknowledge({...input,claim_id,accepted:true},'consumer');
+  assert.equal((await first.pending('consumer')).length,0);
+  assert.equal((await first.read(binding.binding_id)).status,'completed');
+  assert.equal(host.attempts,0,'scheduler must not invoke a reverse consumer service');
 });
-test('callback reply loss remains durable and retries the same event after restart', async () => {
+test('lost acknowledgment and restart preserve event identity without redoing an effect', async () => {
   const host = new Host(); let current = new Date('2026-10-18T11:00:00Z'); const clock = () => current;
-  let scheduler = new UserRoutineScheduler(host, 'local', clock); await scheduler.upsert(create()); current = new Date('2026-10-18T12:01:00Z'); host.failReply = true; await scheduler.tick();
-  assert.equal((await scheduler.read('routine-one')).pending_event.status, 'pending'); scheduler = new UserRoutineScheduler(host, 'local', clock); await scheduler.tick();
-  assert.equal(host.deliveries.size, 1); assert.equal((await scheduler.read('routine-one')).status, 'completed');
+  let scheduler = new UserRoutineScheduler(host, 'local', clock); await scheduler.upsert(create()); current = new Date('2026-10-18T12:01:00Z'); await scheduler.tick();
+  const [binding] = await scheduler.pending('fixture'), event = binding.pending_event;
+  const input={binding_id:binding.binding_id,event_id:event.event_id,binding_revision:event.binding_revision,claim_id:'consumer-execution'};
+  assert.equal((await scheduler.claim(input,'fixture')).claimed,true);
+  await scheduler.acknowledge({...input,accepted:true},'fixture'); // Response deliberately lost.
+  scheduler = new UserRoutineScheduler(host, 'local', clock);
+  await scheduler.acknowledge({...input,accepted:true},'fixture');
+  assert.equal((await scheduler.read(binding.binding_id)).last_event_id,event.event_id);
+  assert.equal((await scheduler.pending('fixture')).length,0);
+});
+test('deferral preserves outbox identity and pause fences stale acknowledgments', async () => {
+  const host = new Host(); let current = new Date('2026-10-18T11:00:00Z'); const clock=()=>current;
+  const scheduler=new UserRoutineScheduler(host,'local',clock); const original=await scheduler.upsert(create());
+  current=new Date('2026-10-18T12:00:00Z'); await scheduler.tick(); const [binding]=await scheduler.pending('fixture');
+  const input={binding_id:binding.binding_id,event_id:binding.pending_event.event_id,binding_revision:binding.revision,claim_id:'one'};
+  await scheduler.claim(input,'fixture'); await scheduler.acknowledge({...input,defer_until:'2026-10-18T12:01:00Z'},'fixture');
+  assert.equal((await scheduler.pending('fixture')).length,0); current=new Date('2026-10-18T12:01:00Z');
+  assert.equal((await scheduler.pending('fixture'))[0].pending_event.event_id,input.event_id);
+  await scheduler.pause({binding_id:binding.binding_id,expected_revision:original.revision,request_id:'pause'});
+  await assert.rejects(scheduler.acknowledge({...input,accepted:true},'fixture'),/stale|revision/);
 });
 test('pause revision removes due intent and resume never replays missed ticks', async () => {
   const host = new Host(); let current = new Date('2026-10-18T11:00:00Z'); const clock = () => current;
@@ -69,4 +96,32 @@ test('schedule validation is read-only and uses the same schedule contract as up
   const result = await plugin.invokeService({ service: 'automation.routines', method: 'validate', caller: 'personal', params: { run_at: '2026-10-18T12:00:00Z', timezone: 'UTC' } });
   assert.equal(result.schedule.next_run_at, '2026-10-18T12:00:00.000Z');
   assert.deepEqual(host.values, before); assert.equal(host.attempts, 0);
+});
+
+// Admission failures: lifecycle authority leaks into background/foreground work,
+// a foreign caller starts the scheduler, or cancellation leaves an active timer.
+test('routine scheduling uses admitted background authority and drains on cancellation', async t => {
+  const state = new Host(), plugin = createUserAutomationPlugin();
+  const lifetime = new AbortController(), background = new AbortController();
+  let run, fire, cleared = false, reads = 0;
+  t.mock.method(globalThis, 'setInterval', callback => { fire = callback; return 1; });
+  t.mock.method(globalThis, 'clearInterval', () => { cleared = true; });
+  const scoped = { supports: () => true, async call(method, params) { reads++; return state.call(method, params); } };
+  const lifecycle = { supports: () => true, async call(method, input) {
+    assert.equal(method, 'host.service.call'); assert.equal(input.service, 'host.background');
+    run = plugin.invokeService({ service: input.params.service, method: input.params.method, caller: 'scheduler-owner', params: {} }, scoped, { signal: background.signal });
+    return { job_id: 'job', execution_id: 'background' };
+  } };
+  plugin.initialize({ plugin_id: 'scheduler-owner', user_space_id: 'local' }, lifecycle);
+  await assert.rejects(plugin.invokeService({ service: 'automation.routines', method: 'run', caller: 'foreign', params: {} }, scoped, { signal: background.signal }), /owner/);
+  await plugin.activate(lifecycle, { signal: lifetime.signal });
+  await new Promise(setImmediate);
+  assert(reads > 0, 'recovery reads use the background callback');
+  background.abort(); await run;
+  const count = reads; fire(); await new Promise(setImmediate);
+  assert.equal(reads, count); assert.equal(cleared, true);
+  // A canceled background does not revoke an independently admitted foreground call.
+  await plugin.invokeService({service:'automation.routines',method:'list',caller:'personal',params:{}}, scoped, {signal:new AbortController().signal});
+  assert(reads > count);
+  lifetime.abort(); await plugin.shutdown();
 });

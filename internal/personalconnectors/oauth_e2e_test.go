@@ -41,7 +41,7 @@ func TestGoogleOAuthCallbackRefreshAndDisconnectE2E(t *testing.T) {
 	if _, e := ImportClient(ctx, s, strings.NewReader(`{"provider":"gmail","client_id":"client"}`)); e != nil {
 		t.Fatal(e)
 	}
-	b := New(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
+	b := newTestBroker(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
 	defer b.Close()
 	a := Actor{"personal", "space", "owner-ui:live"}
 	v, e := b.Start(ctx, a, ConnectRequest{Provider: "gmail", ConnectionID: "gmail", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}})
@@ -94,7 +94,7 @@ func TestOAuthDisconnectBeforeFirstCallbackCannotResurrect(t *testing.T) {
 	ctx := context.Background()
 	s := &memoryStore{values: map[string][]byte{}}
 	_, _ = ImportClient(ctx, s, strings.NewReader(`{"provider":"gmail","client_id":"client"}`))
-	b := New(Options{StateDir: t.TempDir(), Store: s})
+	b := newTestBroker(Options{StateDir: t.TempDir(), Store: s})
 	defer b.Close()
 	a := Actor{"personal", "space", "owner-ui:live"}
 	v, e := b.Start(ctx, a, ConnectRequest{Provider: "gmail", ConnectionID: "new", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}})
@@ -119,7 +119,7 @@ func TestWorkReadRequiresExactOwnerConsentUnlessSelectedResourcesPolicy(t *testi
 	ctx := context.Background()
 	s := &memoryStore{values: map[string][]byte{}}
 	calls := 0
-	b := New(Options{StateDir: t.TempDir(), Store: s, Authorization: func(context.Context, Actor) (string, error) { return "turn", nil }, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{StateDir: t.TempDir(), Store: s, Authorization: func(context.Context, Actor) (string, error) { return "turn", nil }, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"messages":[]}`))}, nil
 	})}})
@@ -160,9 +160,9 @@ func TestOAuthCrossBrokerDisconnectTombstoneRejectsLateCallback(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	b1 := New(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
+	b1 := newTestBroker(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
 	defer b1.Close()
-	b2 := New(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
+	b2 := newTestBroker(Options{StateDir: t.TempDir(), Store: s, HTTPClient: client})
 	defer b2.Close()
 	a := Actor{"personal", "space", "owner-ui:live"}
 	v, e := b1.Start(ctx, a, ConnectRequest{Provider: "gmail", ConnectionID: "new", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}})
@@ -214,7 +214,7 @@ func TestCancelledOAuthCredentialCommitCannotActivateAfterRestart(t *testing.T) 
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	dir := t.TempDir()
-	b1 := New(Options{StateDir: dir, Store: s, HTTPClient: client})
+	b1 := newTestBroker(Options{StateDir: dir, Store: s, HTTPClient: client})
 	defer b1.Close()
 	a := Actor{"personal", "space", "owner-ui:live"}
 	v, e := b1.Start(ctx, a, ConnectRequest{Provider: "gmail", ConnectionID: "new", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}, Resources: []string{"me"}})
@@ -228,7 +228,7 @@ func TestCancelledOAuthCredentialCommitCannotActivateAfterRestart(t *testing.T) 
 	if w.Code == 200 {
 		t.Fatal("cancelled commit reported success")
 	}
-	b2 := New(Options{StateDir: dir, Store: s, HTTPClient: client})
+	b2 := newTestBroker(Options{StateDir: dir, Store: s, HTTPClient: client})
 	defer b2.Close()
 	connections, e := b2.List(ctx, a)
 	if e != nil {

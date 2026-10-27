@@ -48,7 +48,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = waitForMethod(t, out, NotificationTurnCompleted)
-			loaded, err := loadChatMessages(rt.SessionDir, id)
+			loaded, err := loadChatMessages(rt.Sessions, id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 			if result, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
 				t.Fatalf("agent cannot save the attachment with file tools: %v (%s)", err, result)
 			}
-			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+			if _, err := loadChatMessages(rt.Sessions, id); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -123,7 +123,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 			if data, err := os.ReadFile(kept); err != nil || !bytes.Equal(data, raw) {
 				t.Fatal("cleanup changed saved file")
 			}
-			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+			if _, err := loadChatMessages(rt.Sessions, id); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -275,7 +275,7 @@ func TestPastedTextAttachmentSubmissionRecoveryAndExpiry(t *testing.T) {
 	if item.InputText != "" || item.ContentParts[0].Text != text || strings.Contains(item.Text, paths[0]) {
 		t.Fatalf("public input lost its snapshot or exposed a working path: %+v", item)
 	}
-	loaded, err := loadChatMessages(rt.SessionDir, threadID)
+	loaded, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,19 +390,23 @@ func TestInputImagePathsStayOutOfInputText(t *testing.T) {
 			client.mu.Lock()
 			sent := client.requests[0].Messages[1]
 			client.mu.Unlock()
-			if len(sent.Images) != 1 || sent.Images[0].LocalPath == "" || !strings.Contains(sent.Content, sent.Images[0].LocalPath) {
-				t.Fatalf("model prompt lost image path: %+v", sent)
-			}
-			if strings.Contains(item.InputText, sent.Images[0].LocalPath) {
-				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
-			}
-
-			loaded, err := loadChatMessages(rt.SessionDir, threadID)
+			loaded, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			visible := visibleMessagesForTest(loaded)
-			if len(visible) == 0 || strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, sent.Images[0].LocalPath) {
+			if len(visible) == 0 || len(visible[0].Images) != 1 {
+				t.Fatalf("persisted image missing: %+v", visible)
+			}
+			path := visible[0].Images[0].LocalPath
+			if path == "" || len(sent.Images) != 1 || sent.Images[0].Data != base64.StdEncoding.EncodeToString(image) || !strings.Contains(sent.Content, path) {
+				t.Fatalf("model prompt lost image data or working-copy path: %+v", sent)
+			}
+			if strings.Contains(item.InputText, path) {
+				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
+			}
+
+			if strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, path) {
 				t.Fatalf("reloaded item exposed the server-added image path: %+v", visible)
 			}
 		})

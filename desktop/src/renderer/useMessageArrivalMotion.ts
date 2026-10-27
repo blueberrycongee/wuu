@@ -24,10 +24,8 @@ export function useMessageArrivalMotion() {
     const next = new Map<string, Arrival>();
     const freshArrivals: MessageArrival[] = [];
     const startTime = messageMotionTime();
-    const arriveDuration = motionDurationMs("--motion-base", 180);
-    const settleDuration = motionDurationMs("--motion-slow", 280);
-    const easing = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
-    const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && arriveDuration > 0;
+    let timing: { arriveDuration: number; settleDuration: number; easing: string } | undefined;
+    const canAnimate = !reset && !document.hidden && !prefersReducedMotion();
     for (const { id, element, own, fresh, settle } of messages) {
       const old = reset ? undefined : rows.current.get(id);
       if (old?.element === element) { next.set(id, old); continue; }
@@ -41,10 +39,17 @@ export function useMessageArrivalMotion() {
       // A remount/acknowledgement continues a live entrance, never a finished
       // or cancelled one. An acknowledgement before the first paint is fresh.
       if (!canAnimate || !element.animate || (source ? elapsed === undefined : !fresh)) continue;
+      // Restored history has no entrance; avoid forcing style resolution for it.
+      timing ??= {
+        arriveDuration: motionDurationMs("--motion-base", 180),
+        settleDuration: motionDurationMs("--motion-slow", 280),
+        easing: motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)"),
+      };
+      if (timing.arriveDuration <= 0) continue;
       const entrance = element.animate([
         { opacity: settle ? 0 : 0.85 },
         { opacity: 1 },
-      ], { duration: settle ? settleDuration : arriveDuration, easing });
+      ], { duration: settle ? timing.settleDuration : timing.arriveDuration, easing: timing.easing });
       if (elapsed !== undefined) entrance.currentTime = elapsed;
       else if (startTime !== undefined) entrance.startTime = startTime;
       arrival.animation = entrance;

@@ -23,6 +23,7 @@ import (
 type genuiRefusalBridge struct {
 	server   *Server
 	registry *pluginhost.ServiceRegistry
+	host     *pluginhost.Host
 	t        *testing.T
 	mu       sync.Mutex
 	storage  map[string]*string
@@ -37,7 +38,7 @@ func (b *genuiRefusalBridge) Status() pluginhost.Status {
 }
 func (b *genuiRefusalBridge) Close(context.Context) error { return nil }
 func (b *genuiRefusalBridge) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return pluginhost.KernelServiceDescriptors()
+	return append(pluginhost.KernelServiceDescriptors(), pluginhost.KernelBackgroundDescriptor())
 }
 func (b *genuiRefusalBridge) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (b *genuiRefusalBridge) RouteServiceCall(ctx context.Context, id string, p pluginhost.ServiceCallParams) (json.RawMessage, *pluginhost.HostServiceError) {
@@ -48,6 +49,43 @@ func (b *genuiRefusalBridge) RouteServiceCall(ctx context.Context, id string, p 
 	return raw, err
 }
 func (b *genuiRefusalBridge) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	ctx = pluginInvocationContext(b.t, b.server.rt, ctx)
+	if p.Service == pluginhost.KernelBackgroundService {
+		var result any
+		switch p.Method {
+		case "start":
+			var input pluginhost.BackgroundStartParams
+			if err := json.Unmarshal(p.Params, &input); err != nil {
+				return nil, err
+			}
+			value, err := b.host.StartBackground(ctx, p.Caller, input)
+			if err != nil {
+				return nil, err
+			}
+			result = value
+		case "inspect", "cancel":
+			var input pluginhost.BackgroundJobParams
+			if err := json.Unmarshal(p.Params, &input); err != nil {
+				return nil, err
+			}
+			if p.Method == "inspect" {
+				value, err := b.host.InspectBackground(p.Caller, input.JobID)
+				if err != nil {
+					return nil, err
+				}
+				result = value
+			} else {
+				value, err := b.host.CancelBackground(p.Caller, input.JobID)
+				if err != nil {
+					return nil, err
+				}
+				result = map[string]bool{"cancelled": value}
+			}
+		default:
+			return nil, errors.New("unknown background fixture method")
+		}
+		return json.Marshal(result)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var result any
@@ -98,7 +136,7 @@ func (b *genuiRefusalBridge) InvokeService(ctx context.Context, p pluginhost.Ser
 		if err := json.Unmarshal(p.Params, &q); err != nil {
 			return nil, err
 		}
-		metadata, found, err := session.Find(b.server.rt.SessionDir, q.SessionID)
+		metadata, found, err := b.server.rt.Sessions.Find(q.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +183,7 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 	rt := newTestRuntime(t, provider)
 	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}}}
-	rt.PluginHost = pluginhost.New()
+	attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "personal"})
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	bridge := &genuiRefusalBridge{server: srv, t: t, storage: make(map[string]*string)}
@@ -163,23 +201,27 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.Close(context.Background()); bridge.registry.Close(context.Background()) })
+	bridge.host = pluginhost.New(bridge, client)
+	bridge.host.AttachServiceRegistry(bridge.registry, nil)
+	t.Cleanup(func() { _ = bridge.host.Close(context.Background()) })
 	if conflicts := bridge.registry.RegisterClients(client); len(conflicts) != 0 {
 		t.Fatal(conflicts)
+	}
+	if err := client.Prepare(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if err := client.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	invoke := func(method string, input map[string]any) (map[string]any, error) {
-		raw, _ := json.Marshal(map[string]any{"method": method, "input": input})
-		output, err := client.InvokeCapability(context.Background(), pluginhost.CapabilityInvokeParams{Capability: "plugin.client.request", Input: raw, ExecutionID: "test-owner-client"})
-		if err != nil {
-			return nil, err
+		capability, ok := bridge.host.Capability("personal", "plugin.client.request")
+		if !ok {
+			return nil, errors.New("Personal client capability unavailable")
 		}
 		var envelope struct {
 			Result map[string]any `json:"result"`
 		}
-		if err := json.Unmarshal(output.Output, &envelope); err != nil {
+		if err := bridge.host.InvokeCapability(personalTestOwner(context.Background()), capability, map[string]any{"method": method, "input": input}, &envelope); err != nil {
 			return nil, err
 		}
 		return envelope.Result, nil
@@ -200,19 +242,29 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 	t.Cleanup(func() { th.mu.Lock(); th.running = false; th.mu.Unlock() })
 	setEngine := func(engine string) {
 		t.Helper()
-		if _, err := session.SetEngine(rt.SessionDir, sessionID, engine); err != nil {
+		if _, err := rt.Sessions.SetEngine(sessionID, engine); err != nil {
 			t.Fatal(err)
 		}
 	}
+	publicTool := ""
+	for _, definition := range bridge.host.ToolDefinitions() {
+		tool, ok := bridge.host.Tool(definition.Name)
+		if ok && tool.PluginID == "personal" && tool.Registration.ID == "present_interactive_answer" {
+			publicTool = definition.Name
+		}
+	}
+	if publicTool == "" {
+		t.Fatal("GenUI tool unavailable")
+	}
 	publish := func(id string) string {
-		result, err := client.ExecuteTool(context.Background(), pluginhost.ToolExecuteParams{ToolID: "present_interactive_answer", ToolExecuteInput: pluginhost.ToolExecuteInput{SessionID: sessionID, ThreadID: sessionID, CallID: id, TurnID: "test-turn", Tool: "test-genui-tool", Arguments: json.RawMessage(`{"spec":{"schemaVersion":1,"title":"Synthetic","fallbackText":"Synthetic choices","fields":{"count":{"type":"number","scope":"persistent","initial":4,"min":1,"max":20}},"actions":[{"id":"submit","kind":"submit","label":"Explain"}],"tree":{"id":"submit","type":"button","label":"Explain","action":"submit"}}}`)}})
+		result, err := bridge.host.ExecuteTool(personalTestOwner(context.Background()), publicTool, pluginhost.ToolExecuteInput{SessionID: sessionID, ThreadID: sessionID, CallID: id, TurnID: "test-turn", Tool: "test-genui-tool", Arguments: json.RawMessage(`{"spec":{"schemaVersion":1,"title":"Synthetic","fallbackText":"Synthetic choices","fields":{"count":{"type":"number","scope":"persistent","initial":4,"min":1,"max":20}},"actions":[{"id":"submit","kind":"submit","label":"Explain"}],"tree":{"id":"submit","type":"button","label":"Explain","action":"submit"}}}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var reference struct {
 			SurfaceID string `json:"surfaceId"`
 		}
-		if err := json.Unmarshal(result.Result.StructuredContent, &reference); err != nil {
+		if err := json.Unmarshal(result.StructuredContent, &reference); err != nil {
 			t.Fatal(err)
 		}
 		if reference.SurfaceID == "" {

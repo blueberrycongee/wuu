@@ -157,9 +157,9 @@ export async function activate(api) {
       ) : null,
     );
   }
-  api.registerSlot("composer.above", {
+  api.registerUIContribution({ target: "wuu.default-composer/composer.above",
     id: "goal-controls", title: "目标", order: 20,
-    render: ({ threadId, mainConversation, readOnly, translate, locale }) => threadId && mainConversation
+    render: ({ context: { threadId, mainConversation, readOnly }, translate, locale }) => threadId && mainConversation
       ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,
   });
   api.registerStyle({ id: "goal-controls", css: `

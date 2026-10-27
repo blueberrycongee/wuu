@@ -1,0 +1,173 @@
+name: Workbench macOS smoke
+
+on:
+  push:
+    branches: [experiment/workbench]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'prompts/**'
+      - 'desktop/**'
+      - 'clients/core/**'
+      - 'clients/mobile-web/**'
+      - 'packages/plugin-sdk/**'
+      - 'packages/protocol/**'
+      - 'plugins/**'
+      - 'scripts/build-bundled-plugins.mjs'
+      - 'go.mod'
+      - 'go.sum'
+      - '.node-version'
+      - 'VERSION'
+      - 'Makefile'
+      - '.github/workflows/workbench-platforms.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    # Linux product journeys and shared API contracts run once in
+    # workbench-acceptance.yml; this job owns the native macOS boundary.
+    name: macOS native build and smoke
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOFLAGS: '-p=2'
+      GOMAXPROCS: '2'
+      NODE_OPTIONS: --max-old-space-size=4096
+      VITE_ENABLE_ACCOUNT: 'false'
+      VITE_ENABLE_REMOTE_CONTROL: 'false'
+      # Reuse local packaging without release identities or notarization.
+      WUU_RELEASE: '0'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+      - uses: actions/setup-go@v5
+        timeout-minutes: 5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        timeout-minutes: 3
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
+            plugins/package-lock.json
+      - name: Record platform and source
+        timeout-minutes: 1
+        run: |
+          output="$RUNNER_TEMP/wuu-platform-smoke"
+          echo "WUU_PLATFORM_OUTPUT=$output" >> "$GITHUB_ENV"
+          echo "WUU_BROWSER_OWNERSHIP_OUTPUT=$output/browser-ownership" >> "$GITHUB_ENV"
+          mkdir -p "$output"
+          git rev-parse HEAD > "$output/source-commit.txt"
+          node -e 'console.log(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version }))' > "$output/platform.json"
+      - name: Install locked build dependencies serially
+        timeout-minutes: 10
+        run: |
+          for workspace in desktop clients/core clients/mobile-web plugins; do
+            npm ci --prefix "$workspace"
+          done
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
+          echo "WUU_E2E_ELECTRON=$(node -p 'require("./desktop/node_modules/electron")')" >> "$GITHUB_ENV"
+      - name: Build native core and desktop
+        id: build
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          {
+            # Existing local directory-package path compiles Swift helpers,
+            # the Node native bridge, Go core and production Web/Electron UI.
+            make build-macos
+            desktop/build/bin/wuu-core --version
+          } 2>&1 | tee "$WUU_PLATFORM_OUTPUT/build.log"
+      - name: Exercise browser adoption and ownership
+        id: browser
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          set -o pipefail
+          node desktop/scripts/browser-task-ownership-e2e.cjs 2>&1 | tee "$WUU_PLATFORM_OUTPUT/browser.log"
+      - name: Exercise daily browser recovery, permissions and extension settings
+        id: daily
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          WUU_BROWSER_SESSION_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-session-recovery
+          WUU_MEDIA_PERMISSIONS_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-media-permissions
+          WUU_DOWNLOAD_RECOVERY_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-download-recovery
+          WUU_EXTENSION_OPTIONS_ARTIFACTS: ${{ runner.temp }}/wuu-platform-smoke/browser-extension-options
+          WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-display-capture
+          WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-library-edit
+          WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-ribbon
+          WUU_POPOVER_STABILITY_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-popover-stability
+        run: |
+          set -o pipefail
+          export WUU_DOWNLOAD_RECOVERY_ELECTRON="$WUU_E2E_ELECTRON"
+          export WUU_LIBRARY_EDIT_ELECTRON="$WUU_E2E_ELECTRON"
+          {
+            result=0
+            for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
+              node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+            done
+            exit "$result"
+          } 2>&1 | tee "$WUU_PLATFORM_OUTPUT/browser-daily.log"
+      - name: Exercise native shell zoom shortcuts
+        id: zoom
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/desktop-zoom-e2e.cjs 2>&1 | tee "$WUU_PLATFORM_OUTPUT/zoom.log"
+      - name: Summarize evidence boundaries
+        if: always()
+        timeout-minutes: 1
+        env:
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          BROWSER_RESULT: ${{ steps.browser.outcome }}
+          DAILY_RESULT: ${{ steps.daily.outcome }}
+          ZOOM_RESULT: ${{ steps.zoom.outcome }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const e = process.env;
+          fs.appendFileSync(e.GITHUB_STEP_SUMMARY, [
+            '## macOS workbench smoke',
+            `Source: ${e.GITHUB_SHA}`,
+            `- Native core/desktop build: ${e.BUILD_RESULT}`,
+            `- Local-page browser adoption/ownership: ${e.BROWSER_RESULT}`,
+            `- Browser recovery, library edits, tab controls, synthetic media permissions, sharing chooser and extension settings: ${e.DAILY_RESULT}`,
+            `- Native shell zoom shortcuts: ${e.ZOOM_RESULT}`,
+            '',
+            'Browser fixtures use local pages and disposable data.',
+            'Not verified: real Keychain/Secret Service permissions, website sign-in, camera/microphone/screen capture permissions, installed packages or updates. No release signing or notarization.',
+            'Linux clickthrough/video, ownership and shared credential/API journeys run in the separate Workbench visual acceptance workflow.',
+            '',
+          ].join('\n'));
+          NODE
+      - name: Preserve platform smoke evidence
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-platform-macos-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wuu-platform-smoke/
+            desktop/out/e2e/desktop-zoom/*.png
+            desktop/out/e2e/desktop-zoom/results.json
+          if-no-files-found: warn
+          retention-days: 14

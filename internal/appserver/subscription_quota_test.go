@@ -1,9 +1,10 @@
 package appserver
 
 import (
-	"database/sql"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
+	configpkg "github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -25,8 +27,24 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GROK_HOME", t.TempDir())
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.WuuHome = t.TempDir()
+	root, home := t.TempDir(), t.TempDir()
+	rt := &runtime.Session{RootDir: root, WuuHome: home, ConfigPath: filepath.Join(root, "config.json")}
+	openRuntime := func() *runtime.Session {
+		raw, err := os.ReadFile(rt.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg configpkg.Config
+		if err = json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		current, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: home, ConfigPath: rt.ConfigPath, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg, NoTools: true, NonInteractive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = current.Cleanup() })
+		return current
+	}
 	var requests atomic.Int32
 	var status atomic.Int32
 	status.Store(http.StatusOK)
@@ -59,10 +77,25 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		if rt.PluginHost != nil {
+			var selected configpkg.Config
+			if err := json.Unmarshal(data, &selected); err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := rt.PreflightExtensions(selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = rt.ActivatePluginGeneration(candidate, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	writeConfig(firstToken)
+	rt = openRuntime()
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	list := func(id string, include bool) EngineListResult {
 		t.Helper()
 		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t}`, include))}); err != nil {
@@ -93,6 +126,15 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	if requests.Load() != 0 {
 		t.Fatal("navigation requested account allowances")
 	}
+	state, stateErr := rt.RetainState()
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
+	_, quotaErr := state.ReadModelQuota(context.Background(), "first")
+	_ = state.Close()
+	if quotaErr != nil {
+		t.Fatalf("selected quota route: %v", quotaErr)
+	}
 	fresh := list("fresh", true)
 	first, second := quota(fresh, "first"), quota(fresh, "second")
 	if first.Status != "available" || first.Account == nil || first.Account.Label != "first@example.test" || first.ObservedAt == "" || first.ExpiresAt == "" || len(first.Windows) != 2 || first.Windows[0].UsedPercent == nil || *first.Windows[0].UsedPercent != 37 || *first.Windows[1].UsedPercent != 125 {
@@ -109,9 +151,14 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	if stale.Status != "stale" || stale.ObservedAt != first.ObservedAt || stale.ExpiresAt != first.ExpiresAt || *stale.Windows[0].UsedPercent != 37 || stale.ErrorCode == "" {
 		t.Fatalf("last-known observation was refilled or relabelled: %+v", stale)
 	}
-	// A fresh server must use the same credential-scoped durable observation.
+	// Restart with a new runtime after the old server's owned watchers stop.
+	// Only persisted configuration and credential-scoped observations survive.
+	srv.Close()
+	_, _ = rt.Cleanup()
+	rt = openRuntime()
 	out = &lockedBuffer{}
 	srv = New(rt, out)
+	t.Cleanup(srv.Close)
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
 		t.Fatalf("restart lost observation: %+v", restarted)
 	}
@@ -138,13 +185,17 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"grok","providers":{"grok":{"type":"grok-build","model":"grok-4.5"},"codex":{"type":"openai-codex","model":"gpt-5","reuse_codex_credentials":true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
+	documents := &subscriptionHistoryDocuments{Documents: rt.Documents}
+	rt.Documents = documents
+	rt.Sessions = session.NewStore(context.Background(), documents)
 	for _, source := range []string{"grok", "codex", "external"} {
-		sess, err := session.CreateWithMetadata(rt.SessionDir, source, t.TempDir())
+		sess, err := rt.Sessions.CreateWithMetadata(source, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
 		if source == "external" {
-			if _, err := session.SetEngine(rt.SessionDir, sess.ID, "codex"); err != nil {
+			if _, err := rt.Sessions.SetEngine(sess.ID, "codex"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -152,7 +203,7 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 			{Role: "meta", Content: "token_usage", Provider: source, InputTokens: 12},
 			{Role: "meta", Content: "turn_terminal", Provider: source, StopReason: "completed", InputTokens: 12},
 		} {
-			if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, record); err != nil {
+			if err := rt.Sessions.AppendHistoryRecord(sess.ID, record); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -168,7 +219,11 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 		if response["error"] != nil {
 			t.Fatalf("initialize: %+v", response)
 		}
-		for _, raw := range response["result"].(map[string]any)["providers"].([]any) {
+		providers, ok := response["result"].(map[string]any)["providers"].([]any)
+		if !ok || len(providers) != 2 {
+			t.Fatalf("initialize inventory: %+v", response)
+		}
+		for _, raw := range providers {
 			provider := raw.(map[string]any)
 			if provider["latest_request"] != nil || provider["local_usage"] != nil {
 				t.Fatalf("navigation loaded historical statistics: %+v", provider)
@@ -216,14 +271,7 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	}
 	// A dashboard snapshot must not contaminate the cached config summaries.
 	initialize("after")
-	db, err := sql.Open("sqlite", filepath.Join(rt.SessionDir, "sessions.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`UPDATE session_messages SET input_tokens = 'invalid'`); err != nil {
-		t.Fatal(err)
-	}
+	documents.fail = true
 	failed := list("failed-history", true)
 	if len(failed.SubscriptionProviders) != 2 {
 		t.Fatal("failed history scan removed service inventory")
@@ -236,44 +284,19 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	initialize("failed-history-navigation")
 }
 
-func TestSubscriptionQuotaPreservesExhaustionAndRejectsMissingPercent(t *testing.T) {
-	var response codexengine.RateLimitsResponse
-	if err := json.Unmarshal([]byte(`{"rateLimits":{"primary":{"usedPercent":0,"windowDurationMins":300},"secondary":{"windowDurationMins":10080}},"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":105,"windowDurationMins":300,"resetsAt":1800000000},"secondary":{"usedPercent":0,"windowDurationMins":10080}}}}`), &response); err != nil {
-		t.Fatal(err)
-	}
-	got := subscriptionQuotaWindows(response)
-	if len(got) != 2 || got[0].UsedPercent == nil || *got[0].UsedPercent != 105 || got[1].UsedPercent == nil || *got[1].UsedPercent != 0 || got[0].ResetsAt == "" {
-		t.Fatalf("quota windows = %+v", got)
-	}
-	// The map is authoritative; the legacy mirror must not be counted twice.
-	response.ByLimitID = nil
-	got = subscriptionQuotaWindows(response)
-	if len(got) != 2 || got[0].UsedPercent == nil || *got[0].UsedPercent != 0 || got[0].WindowMinutes != 300 || got[1].UsedPercent != nil {
-		t.Fatalf("legacy windows = %+v", got)
-	}
-	response.RateLimits.Primary.UsedPercent = nil
-	if got := subscriptionQuotaWindows(response); len(got) != 2 || got[0].UsedPercent != nil || got[1].UsedPercent != nil {
-		t.Fatalf("missing allowance became quota: %+v", got)
-	}
-}
-
-// Subscription clients reserve allowance space from engine/list capabilities
-// before the slower include_quota read, so every engine that receives quota
-// must advertise it.
 func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
 	// A binary the host cannot start fails the allowance read, which still
 	// attaches an unavailable quota without running an app-server.
 	binary := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(binary, nil, 0o600); err != nil {
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	config := fmt.Sprintf(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}},"engines":{"codex":{"binary_path":%q}}}`, binary)
-	if err := os.WriteFile(rt.ConfigPath, []byte(config), 0o600); err != nil {
+	var cfg configpkg.Config
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, cfg)
 	srv := &Server{rt: rt}
 
 	engines := srv.engineInventory()
@@ -289,6 +312,19 @@ func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
 		}
 	}
 	if quoted == 0 {
-		t.Fatal("no engine received quota")
+		t.Fatalf("no engine received quota: %+v", engines)
 	}
+}
+
+// Fault injection stays at the selected document boundary used by history.
+type subscriptionHistoryDocuments struct {
+	persistence.Documents
+	fail bool
+}
+
+func (d *subscriptionHistoryDocuments) Read(ctx context.Context, query persistence.Query) (persistence.View, error) {
+	if d.fail {
+		return persistence.View{}, errors.New("history provider unavailable")
+	}
+	return d.Documents.Read(ctx, query)
 }

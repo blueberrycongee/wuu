@@ -1,15 +1,16 @@
+import { useSettingsOperationScope } from "./SettingsOperationScope";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
 import { ChatGPTLogin } from "./ChatGPTLogin";
 import { ConnectionPage } from "./ConnectionPage";
-import { hostSupports } from "./HostCapabilities";
 import { Modal } from "./Modal";
 import { ProviderMark } from "./ProviderMarks";
 import { SelectMenu } from "./SelectMenu";
 import type { SaveProvider } from "./ModelServicesPage";
 import { useI18n } from "./i18n";
 
-export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave, onClose, onConnected, onProvidersChanged, inline = false, renderAuthMethods }: {
+export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave, onClose, onConnected, onProvidersChanged, inline = false, renderAuthMethods, workspaceRoot }: {
   providers: readonly ProviderSummary[];
   running: boolean;
   defaultOn: boolean;
@@ -18,10 +19,13 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
   onConnected: (name: string) => void;
   onProvidersChanged?: (providers: ProviderSummary[]) => void;
   inline?: boolean;
+  workspaceRoot?: string;
   renderAuthMethods?: (disabled: boolean) => ReactNode;
 }): JSX.Element {
+  const scope = useSettingsOperationScope(workspaceRoot);
+  const settingsControls = scope.controls;
   const { t } = useI18n();
-  const [accounts, setAccounts] = useState<Awaited<ReturnType<typeof window.wuu.listChatGPTAccounts>>["accounts"]>([]);
+  const [accounts, setAccounts] = useState<Awaited<ReturnType<typeof settingsControls.listChatGPTAccounts>>["accounts"]>([]);
   const [accountId, setAccountId] = useState("");
   const [revision, setRevision] = useState(0);
   const [models, setModels] = useState<{ id: string; name: string }[]>([]);
@@ -29,48 +33,56 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
   const [catalogAccount, setCatalogAccount] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const saving = useRef(false);
+  const saving = useRef<object | undefined>(undefined);
+  const [accountsScope, setAccountsScope] = useState<typeof scope>();
   const [signingIn, setSigningIn] = useState(false);
   const [makeDefault, setMakeDefault] = useState(defaultOn);
   const [error, setError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
-  const [name, setName] = useState(() => {
-    let candidate = "chatgpt";
-    for (let n = 2; providers.some(provider => provider.name === candidate); n++) candidate = `chatgpt-${n}`;
-    return candidate;
-  });
-  const account = accounts.find(item => item.id === accountId);
+  const [name, setName] = useState(() => availableName(providers));
+  const account = accountsScope === scope ? accounts.find(item => item.id === accountId) : undefined;
+  useEffect(() => {
+    setAccounts([]); setAccountsScope(undefined);
+    setBusy(false); setSigningIn(false); setAuthNotice("");
+    saving.current = undefined;
+  }, [scope]);
+  useEffect(() => {
+    setAccountId(""); setModel("");
+    setMakeDefault(defaultOn); setName(availableName(providers));
+  }, [workspaceRoot]);
   useEffect(() => {
     let active = true;
-    void window.wuu.listChatGPTAccounts().then(result => {
-      if (!active) return;
+    void settingsControls.listChatGPTAccounts().then(result => {
+      if (!active || !scope.active) return;
       setAccounts(result.accounts);
-      setAccountId(current => current || result.accounts.find(item => item.status === "connected")?.id || "");
-    }, cause => { if (active) setError(String(cause)); });
+      setAccountsScope(scope);
+      setAccountId(current => result.accounts.some(item => item.id === current) ? current : result.accounts.find(item => item.status === "connected")?.id || "");
+    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); });
     return () => { active = false; };
-  }, [revision]);
+  }, [scope, revision]);
   useEffect(() => {
     let active = true;
-    setModels([]); setModel(""); setCatalogAccount(""); setError("");
+    setModels([]); setCatalogAccount(""); setError("");
     if (!accountId || account?.status !== "connected") { setLoading(false); return; }
     setLoading(true);
-    void window.wuu.listChatGPTModels(accountId).then(result => {
-      if (!active) return;
-      setModels(result.models); setModel(result.models[0]?.id ?? ""); setCatalogAccount(accountId);
-    }, cause => { if (active) setError(String(cause)); }).finally(() => { if (active) setLoading(false); });
+    void settingsControls.listChatGPTModels(accountId).then(result => {
+      if (!active || !scope.active) return;
+      setModels(result.models); setModel(current => result.models.some(item => item.id === current) ? current : result.models[0]?.id ?? ""); setCatalogAccount(accountId);
+    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); }).finally(() => { if (active && scope.active) setLoading(false); });
     return () => { active = false; };
-  }, [accountId, account?.status, revision]);
+  }, [scope, accountId, account?.status, revision]);
   const canSave = !running && !busy && !signingIn && !loading && account?.status === "connected" && catalogAccount === accountId &&
     models.some(item => item.id === model) && !!name.trim() && !providers.some(item => item.name === name.trim());
   async function save(): Promise<void> {
-    if (!canSave || saving.current) return;
-    saving.current = true;
+    if (!scope.active || !canSave || saving.current) return;
+    const operation = {};
+    saving.current = operation;
     setBusy(true); setError("");
     try {
       await onSave(name.trim(), model, undefined, { type: "chatgpt", create_provider: true, chatgpt_account_id: accountId, keep_selection: !makeDefault });
-      onConnected(name.trim());
-    } catch (cause) { setError(String(cause)); }
-    finally { saving.current = false; setBusy(false); }
+      if (scope.active && saving.current === operation) onConnected(name.trim());
+    } catch (cause) { if (scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); }
+    finally { if (scope.active && saving.current === operation) { saving.current = undefined; setBusy(false); } }
   }
   function authenticated(id: string): void { setAccountId(id); setRevision(value => value + 1); }
   const Surface = inline ? ConnectionPage : Modal;
@@ -87,7 +99,7 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
       <ChatGPTLogin key={account?.status === "connected" ? "new-account" : accountId} accountId={account?.status !== "connected" ? accountId || undefined : undefined}
         onAdvisory={setAuthNotice} onProvidersChanged={onProvidersChanged} enablePlanUsage={account?.status === "permission_required"}
         disabled={busy || running} onBusyChange={setSigningIn} onAuthenticated={authenticated} />
-      {account?.status === "connected" && hostSupports("startChatGPTLogin") ? <p className="settings-muted-line">{t("provider.chatgptAddAccountHint")}</p> : null}
+      {account?.status === "connected" && settingsControls.capabilities.chatGPTLogin ? <p className="settings-muted-line">{t("provider.chatgptAddAccountHint")}</p> : null}
       <div className="model-connect-field"><span>{t("provider.modelLabel")}</span><SelectMenu value={model} disabled={!models.length || loading || busy || signingIn}
         ariaLabel={t("provider.modelLabel")} dataTestid="settings-provider-connect-model" options={models.map(item => ({ value: item.id, label: item.name || item.id }))} onChange={setModel}
         placeholder={t(loading ? "settings.loading" : "provider.chatgptNoModels")} /></div>
@@ -97,4 +109,10 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
       {error ? <p className="settings-error" role="alert">{error}</p> : null}
     </div>
   </Surface>;
+}
+
+function availableName(providers: readonly ProviderSummary[]): string {
+  let candidate = "chatgpt";
+  for (let n = 2; providers.some(provider => provider.name === candidate); n++) candidate = `chatgpt-${n}`;
+  return candidate;
 }

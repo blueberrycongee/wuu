@@ -5,51 +5,22 @@ import (
 	"strings"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const requestContextUpdateMarker = "[CONTEXT_UPDATE]"
 
-// ContextSegmentLifecycle describes how long a context segment lives.
-type ContextSegmentLifecycle string
+type ContextSegmentLifecycle = loopdriver.ContextSegmentLifecycle
+type ContextSegmentPlacement = loopdriver.ContextSegmentPlacement
+type ContextSegmentCachePolicy = loopdriver.ContextSegmentCachePolicy
+type ContextSegment = loopdriver.ContextSegment
 
 const (
-	// ContextSegmentRequestOnly is visible to the model for the current
-	// provider request but is never appended to live or durable history.
-	ContextSegmentRequestOnly ContextSegmentLifecycle = "request_only"
+	ContextSegmentRequestOnly  = loopdriver.ContextSegmentRequestOnly
+	ContextSegmentAfterHistory = loopdriver.ContextSegmentAfterHistory
+	ContextSegmentVolatile     = loopdriver.ContextSegmentVolatile
 )
-
-// ContextSegmentPlacement describes where a segment is placed in the provider
-// request. The first supported placement keeps dynamic context after the live
-// conversation so it cannot become part of the stable prompt prefix.
-type ContextSegmentPlacement string
-
-const (
-	ContextSegmentAfterHistory ContextSegmentPlacement = "after_history"
-)
-
-// ContextSegmentCachePolicy records the cache intent of a segment. The
-// provider adapters still receive plain ChatMessages; this metadata exists so
-// request assembly, telemetry, and future provider-specific cache handling have
-// one owner instead of inferring intent from ChatMessage.Hidden.
-type ContextSegmentCachePolicy string
-
-const (
-	ContextSegmentVolatile ContextSegmentCachePolicy = "volatile"
-)
-
-// ContextSegment is model-visible context assembled for a provider request.
-// It makes the request lifecycle explicit instead of overloading
-// providers.ChatMessage.Hidden with durability, UI visibility, and cache intent.
-type ContextSegment struct {
-	Messages    []providers.ChatMessage
-	Blocks      []wuucontext.Block
-	Lifecycle   ContextSegmentLifecycle
-	Placement   ContextSegmentPlacement
-	CachePolicy ContextSegmentCachePolicy
-	Durable     bool
-	VisibleInUI bool
-}
 
 // RequestOnlyContextMessages wraps messages as volatile request-only context.
 func RequestOnlyContextMessages(messages []providers.ChatMessage) []ContextSegment {

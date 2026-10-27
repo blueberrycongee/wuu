@@ -1,6 +1,7 @@
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 
 export interface AppearancePreferences {
+  messageStyle: "bubble" | "im";
   codeSize: number;
   uiFont: string;
   contentFont: string;
@@ -10,6 +11,7 @@ export interface AppearancePreferences {
 }
 
 export const appearanceDefaults: AppearancePreferences = {
+  messageStyle: "bubble",
   codeSize: 13,
   uiFont: "", contentFont: "", codeFont: "", fontSmoothing: "system", motion: "system",
 };
@@ -25,6 +27,7 @@ export function normalizeAppearance(value: unknown): AppearancePreferences {
   };
   const font = (key: string) => typeof input[key] === "string" ? input[key].trim().slice(0, 120) : "";
   return {
+    messageStyle: input.messageStyle === "im" ? "im" : "bubble",
     codeSize: size("codeSize", 9, 24), uiFont: font("uiFont"),
     contentFont: font("contentFont"), codeFont: font("codeFont"),
     fontSmoothing: input.fontSmoothing === "grayscale" ? "grayscale" : "system",
@@ -65,8 +68,12 @@ export function applyAppearance(value: AppearancePreferences): void {
   root.style.setProperty("--appearance-scale", String(uiSize / 14));
   root.style.setProperty("--appearance-code-size", `${preferences.codeSize}px`);
   root.style.setProperty("--appearance-code-line-height", `${codeLineHeight(preferences.codeSize)}px`);
-  const uiFont = fontFamily(preferences.uiFont, "system-ui, sans-serif");
-  root.style.setProperty("--appearance-ui-font", uiFont);
+  if (preferences.uiFont) {
+    root.style.setProperty("--appearance-ui-font", fontFamily(preferences.uiFont, "system-ui, sans-serif"));
+  } else {
+    root.style.removeProperty("--appearance-ui-font");
+  }
+  const uiFont = getComputedStyle(root).getPropertyValue("--appearance-ui-font").trim();
   // Center control labels on the rendered capital band, not the font's
   // asymmetric ascent/descent box. H keeps the baseline stable across labels;
   // measuring at a large size avoids whole-pixel rounding at small UI sizes.
@@ -84,6 +91,7 @@ export function applyAppearance(value: AppearancePreferences): void {
   root.style.setProperty("--appearance-ui-text-offset", String(textOffset));
   root.style.setProperty("--appearance-content-font", fontFamily(preferences.contentFont, "var(--appearance-ui-font)"));
   root.style.setProperty("--appearance-code-font", fontFamily(preferences.codeFont, 'ui-monospace, "SFMono-Regular", Consolas, monospace'));
+  root.dataset.messageStyle = preferences.messageStyle;
   root.dataset.appearanceMotion = preferences.motion;
   root.dataset.fontSmoothing = preferences.fontSmoothing;
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	wuuRuntime "github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -65,7 +66,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 	}
 	write(filepath.Join(home, "config.json"), string(data))
 	rt, err := wuuRuntime.NewSession(wuuRuntime.Options{
-		RootDir: repo, HomeDir: home, ConfigPath: filepath.Join(home, "config.json"), SafeMode: true,
+		RootDir: repo, HomeDir: home, ConfigPath: filepath.Join(home, "config.json"),
 		Config: cfg,
 	})
 	if err != nil {
@@ -184,7 +185,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 			Images:       []TurnStartImage{{MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(encodeTestJPEG(t, 2, 2, 90))}},
 			ContentParts: []providers.MessageContentPart{{Type: "text", Text: explicit}},
 		})
-		held, found, err := srv.findHeldUserTurn(started.Thread.ID, queueID)
+		held, found, err := srv.findHeldUserTurn(testRuntimeState(t, srv.rt), started.Thread.ID, queueID)
 		if err != nil || !found {
 			t.Fatalf("explicit skill queue failed: %v", err)
 		}
@@ -208,7 +209,8 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loaded, err := side.Tools.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"release-check"}`})
+		sideContext := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "side-" + tc.name, ExecutionID: "side-guidance"})
+		loaded, err := side.Tools.Execute(sideContext, providers.ToolCall{ID: "load-checkout-skill", Name: "load_skill", Arguments: `{"name":"release-check"}`})
 		if err != nil || !strings.Contains(loaded, skill) {
 			t.Errorf("side thread has wrong skill: %s %v", loaded, err)
 		}

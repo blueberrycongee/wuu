@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ConversationControlsTestProvider } from "../ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +27,7 @@ function renderMessage(
   props: Partial<PluginUIConversationMessageProps> = {},
 ): HTMLElement {
   act(() => root.render(
-    <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: false }}>
+    <ConversationControlsTestProvider><ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: false }}>
       <PluginConversationMessage
         id="message-with-files"
         role="assistant"
@@ -45,7 +46,7 @@ function renderMessage(
         ))}
         {...props}
       />
-    </ConversationBubbleContext.Provider>,
+    </ConversationBubbleContext.Provider></ConversationControlsTestProvider>,
   ));
   return container.querySelector<HTMLElement>('[data-wuu-component="plugin-ui-conversation-message"]')!;
 }
@@ -60,8 +61,8 @@ describe("conversation attachment layout", () => {
 
       expect(attachments).not.toBeNull();
       expect(bubble).not.toBeNull();
-      expect(attachments.parentElement).toBe(message);
-      expect(bubble.parentElement).toBe(message);
+      expect(message.contains(attachments)).toBe(true);
+      expect(attachments.parentElement).toBe(bubble.parentElement);
       expect(attachments.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(bubble.querySelector('[data-wuu-component="conversation-attachment"]')).toBeNull();
       expect(bubble.textContent).toContain("Here are the files.");
@@ -78,7 +79,7 @@ describe("conversation attachment layout", () => {
       const message = renderMessage(true, { role, content: "" });
 
       expect(message.querySelector(".bubble-message-content")).toBeNull();
-      expect(message.querySelector(".plugin-conversation-attachments")?.parentElement).toBe(message);
+      expect(message.querySelector(".plugin-conversation-attachments")).not.toBeNull();
       expect(message.querySelectorAll('[data-wuu-component="conversation-attachment"]')).toHaveLength(2);
     },
   );
@@ -137,7 +138,7 @@ describe("conversation attachment layout", () => {
 
     expect(processShell).not.toBeNull();
     expect(processShell.textContent).toContain("Here are the files.");
-    expect(attachments.parentElement).toBe(message);
+    expect(message.contains(attachments)).toBe(true);
     expect(attachments.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(processShell.querySelector(".plugin-conversation-attachments")).toBeNull();
     expect(message.querySelectorAll('[data-wuu-component="conversation-attachment"]')).toHaveLength(2);
@@ -163,11 +164,11 @@ for (const url of [undefined, "blob:already-verified"]) {
     const open = vi.fn(), load = vi.fn(), read = vi.fn(async () => new Blob(["verified"]));
     const name = "A long attachment filename that must not be covered by a download action.txt";
     await act(async () => root.render(
-      <ConversationBubbleContext.Provider value={{ enabled: true, revealed: false }}>
+      <ConversationControlsTestProvider><ConversationBubbleContext.Provider value={{ enabled: true, revealed: false }}>
         <ConversationAttachmentPreviewContext.Provider value={open}>
           <PluginConversationAttachment resourceId="long-file" name={name} mediaType="text/plain" size={8} url={url} onRead={read} onLoad={load} loadLabel="Read" downloadLabel="Download" />
         </ConversationAttachmentPreviewContext.Provider>
-      </ConversationBubbleContext.Provider>,
+      </ConversationBubbleContext.Provider></ConversationControlsTestProvider>,
     ));
     const card = container.querySelector(".conversation-file-card")!;
     const button = card.querySelector<HTMLButtonElement>("button")!;

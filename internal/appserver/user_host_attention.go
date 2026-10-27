@@ -6,9 +6,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const maxPendingAttentionAgents = 128
@@ -189,6 +190,8 @@ func (h *UserHost) admitAttention(job userAttentionJob) (userAttentionEvent, tim
 }
 
 func (h *UserHost) publishAttention(event userAttentionEvent) {
+	provenance := event
+	event.notification.authorization = &provenance
 	// Attention is best effort. A bounded content-free queue covers the interval
 	// between host startup and authenticated relay subscription; it is not an
 	// external provider delivery receipt or a durable push outbox.
@@ -217,7 +220,18 @@ func (h *UserHost) publishAttention(event userAttentionEvent) {
 		Params  UserAttentionNotification `json:"params"`
 	}{"2.0", NotificationUserAttention, event.notification})
 	if err == nil {
-		_, _ = h.Write(append(data, '\n'))
+		h.mu.Lock()
+		connections := make([]*userHostConnection, 0, len(h.connections))
+		for _, connection := range h.connections {
+			connections = append(connections, connection)
+		}
+		h.mu.Unlock()
+		for _, connection := range connections {
+			guard := func() error { return h.AuthorizeUserAttention(connection.ctx, event.notification) }
+			if guard() == nil {
+				connection.enqueueAuthorized(append(data, '\n'), guard)
+			}
+		}
 	}
 }
 
@@ -229,7 +243,12 @@ func (h *UserHost) attentionOwnerCurrent(event userAttentionEvent) bool {
 	if input.UserSpaceID != binding.UserSpaceID || input.ProductDomain != binding.ProductDomain {
 		return false
 	}
-	metadata, found, err := session.Find(h.runtime.SessionDir, input.SessionID)
+	state, err := h.runtime.RetainState()
+	if err != nil {
+		return false
+	}
+	defer state.Close()
+	metadata, found, err := state.Sessions.Find(input.SessionID)
 	return err == nil && found && metadata.UserSpaceID == input.UserSpaceID && metadata.ProductDomain == input.ProductDomain &&
 		metadata.Owner == "plugin:"+event.owner && metadata.ParentID == "" && metadata.Visibility == "plugin" &&
 		metadata.AgentID != "" && metadata.AgentID == input.AgentID
@@ -243,6 +262,14 @@ func (h *UserHost) attentionOwnerCurrent(event userAttentionEvent) bool {
 func (h *UserHost) SubscribeUserAttention(ctx context.Context, receive func(UserAttentionNotification)) error {
 	if h == nil || ctx == nil || receive == nil {
 		return errors.New("attention subscription requires host, context and receiver")
+	}
+	caller, ok := principal.FromContext(ctx)
+	if !ok || !caller.Valid() {
+		return errors.New("authenticated attention subscriber required")
+	}
+	resource := access.Resource{Kind: "user-space", ID: h.runtime.UserBinding().UserSpaceID}
+	if err := h.server.AuthorizeResource(ctx, "user/attention/subscribe", resource); err != nil {
+		return err
 	}
 	h.mu.Lock()
 	if h.closed {
@@ -266,7 +293,7 @@ func (h *UserHost) SubscribeUserAttention(ctx context.Context, receive func(User
 			if ctx.Err() != nil || h.attentionCtx.Err() != nil {
 				return ctx.Err()
 			}
-			if h.revalidateAttention(ctx, event) {
+			if h.AuthorizeUserAttention(ctx, event.notification) == nil {
 				receive(event.notification)
 			}
 		}
@@ -302,4 +329,31 @@ func (h *UserHost) revalidateAttention(parent context.Context, event userAttenti
 	}
 	_, ok = host.Capability(event.owner, pluginhost.CapabilitySessionAttention)
 	return ok
+}
+
+// AuthorizeUserAttention gates each recipient independently of the host's
+// subscription. Only a live, host-emitted notification carries its provenance;
+// a deserialized locator cannot authorize access or recreate a revoked event.
+func (h *UserHost) AuthorizeUserAttention(ctx context.Context, notification UserAttentionNotification) error {
+	if h == nil || ctx == nil || notification.authorization == nil {
+		return errors.New("host-admitted attention is required")
+	}
+	caller, ok := principal.FromContext(ctx)
+	if !ok || !caller.Valid() {
+		return errors.New("authenticated attention recipient required")
+	}
+	event := *notification.authorization
+	notification.authorization = nil
+	if notification != event.notification {
+		return errors.New("attention delivery binding changed")
+	}
+	if err := h.server.AuthorizeResource(ctx, "event:"+NotificationUserAttention,
+		access.Resource{Kind: "user-space", ID: event.input.UserSpaceID},
+		access.Resource{Kind: "session", ID: event.input.SessionID}); err != nil {
+		return err
+	}
+	if !h.revalidateAttention(ctx, event) {
+		return errors.New("attention authority is no longer current")
+	}
+	return nil
 }

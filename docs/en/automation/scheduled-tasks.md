@@ -39,6 +39,8 @@ A one-shot task leaves the schedule when dispatched, even if execution later fai
 
 ## Manage tasks and results
 
+The sidebar follows the workspace selected on the page. **Running now** shows starting, running, and queued executions; **Up next** lists enabled schedules by trigger time, with each task's timezone. Select a row to open its details, including a one-shot task that has already left the schedule. The lists refresh about every 15 seconds while the window is visible, when returning to it, and after edits. A refresh failure is shown alongside the last available data.
+
 Scheduled tasks are listed by next run. The switch on a task's row, or **Enabled** in its editor, pauses and resumes future triggers; a paused task keeps its place. Delete removes the schedule, not conversations it already created, and does not stop work already running. Stop that work from its conversation. Closing the editor or selecting another task discards unsaved edits.
 
 The detail panel shows recent runs and their errors, and a task whose last run failed is marked in the list. The **Completed** section after the scheduled tasks shows retained snapshots of successful one-shot tasks; a successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.

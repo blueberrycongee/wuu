@@ -17,8 +17,8 @@ function occupancyLayer(inside: (x: number, y: number) => boolean): SVGGElement 
   } as unknown as SVGGElement;
 }
 
-function pathPoints(d: string): Array<[number, number]> {
-  return [...d.matchAll(/[ML](-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((match) => [Number(match[1]), Number(match[2])]);
+function circleInside(x: number, y: number): boolean {
+  return x * x + y * y <= 32 * 32;
 }
 
 function triangleInside(x: number, y: number): boolean {
@@ -29,23 +29,16 @@ function triangleInside(x: number, y: number): boolean {
   return Math.abs(x) <= 32 * t;
 }
 
-describe("measureAccessoryFit headset band", () => {
-  it("keeps a circular body on the authored band instead of shrinking it through the crown", () => {
-    const fit = measureAccessoryFit(occupancyLayer((x, y) => x * x + y * y <= 32 * 32), BODY);
-    const points = pathPoints(fit.headsetBand);
-    expect(points.length).toBeGreaterThan(8);
-    const first = points[0]!;
-    const last = points[points.length - 1]!;
-    expect(Math.hypot(first[0] + 30, first[1] + 8)).toBeLessThan(2);
-    expect(Math.hypot(last[0] - 32, last[1] - 1)).toBeLessThan(2);
-    expect(Math.hypot(fit.headsetEarX, fit.headsetEarY)).toBeLessThan(2);
+describe("measureAccessoryFit headset ear", () => {
+  it("anchors the earpiece at eye level on a circular body", () => {
+    const fit = measureAccessoryFit(occupancyLayer(circleInside), BODY);
+    expect(circleInside(fit.earX - 0.5, 0)).toBe(true);
+    expect(circleInside(fit.earX + 1, 0)).toBe(false);
   });
 
-  it("walks a tapered crown instead of letting the rear silhouette hide a circular chord", () => {
+  it("follows a tapered body instead of placing the cup at its widest point", () => {
     const fit = measureAccessoryFit(occupancyLayer(triangleInside), BODY);
-    const points = pathPoints(fit.headsetBand);
-    expect(points.length).toBeGreaterThan(8);
-    expect(points.some(([x, y]) => Math.abs(x) < 8 && y < -28)).toBe(true);
-    expect(points.every(([x, y]) => !(triangleInside(x, y) && y < -6 && y > -26 && Math.abs(x) < 8))).toBe(true);
+    expect(triangleInside(fit.earX - 0.5, 0)).toBe(true);
+    expect(triangleInside(fit.earX + 1, 0)).toBe(false);
   });
 });

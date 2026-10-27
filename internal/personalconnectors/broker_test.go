@@ -59,7 +59,7 @@ func TestWriteConfirmationPersistenceAndUnknownOutcome(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(`{"token":"must not leak"}`)), Header: http.Header{}}, nil
 	})}
-	b := New(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s, HTTPClient: client})
+	b := newTestBroker(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s, HTTPClient: client})
 	defer b.Close()
 	// Trusted composition supplies a grant already verified by its OAuth callback.
 	if e := b.RegisterVerified(ctx, actor, Grant{Connection: Connection{ID: "gmail", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour)}); e != nil {
@@ -77,7 +77,7 @@ func TestWriteConfirmationPersistenceAndUnknownOutcome(t *testing.T) {
 	if e != nil || result.State != "uncertain" || calls != 1 {
 		t.Fatalf("uncertain %#v %v", result, e)
 	}
-	b2 := New(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s, HTTPClient: client})
+	b2 := newTestBroker(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s, HTTPClient: client})
 	defer b2.Close()
 	again, e := b2.Call(ctx, actor, req)
 	if e != nil || again.State != "uncertain" || calls != 1 {
@@ -103,7 +103,7 @@ func TestDisconnectInvalidatesPendingEffect(t *testing.T) {
 	ctx := context.Background()
 	s := &memoryStore{values: map[string][]byte{}}
 	a := Actor{"personal", "space", "s"}
-	b := New(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s})
+	b := newTestBroker(Options{Authorization: func(context.Context, Actor) (string, error) { return "trusted-turn", nil }, Store: s})
 	defer b.Close()
 	e := b.RegisterVerified(ctx, a, Grant{Connection: Connection{ID: "g", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "x", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
@@ -125,7 +125,7 @@ func TestReadResponseCannotExposeCredentialOrForeignActions(t *testing.T) {
 	ctx := context.Background()
 	s := &memoryStore{values: map[string][]byte{}}
 	a := Actor{"personal", "space", "s"}
-	b := New(Options{Store: s, Authorization: func(context.Context, Actor) (string, error) { return "turn", nil }, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{Store: s, Authorization: func(context.Context, Actor) (string, error) { return "turn", nil }, HTTPClient: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"access_token":"secret","nested":{"note":"secret"},"threads":[]}`)), Header: http.Header{}}, nil
 	})}})
 	defer b.Close()
@@ -151,7 +151,7 @@ func TestTaskRevisionChangeBlocksConfirmation(t *testing.T) {
 	s := &memoryStore{values: map[string][]byte{}}
 	a := Actor{"personal", "space", "s"}
 	revision := "turn1"
-	b := New(Options{Store: s, Authorization: func(context.Context, Actor) (string, error) { return revision, nil }})
+	b := newTestBroker(Options{Store: s, Authorization: func(context.Context, Actor) (string, error) { return revision, nil }})
 	defer b.Close()
 	e := b.RegisterVerified(ctx, a, Grant{Connection: Connection{ID: "g", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
@@ -171,7 +171,7 @@ func TestDisconnectCancelsInFlightRead(t *testing.T) {
 	s := &memoryStore{values: map[string][]byte{}}
 	a := Actor{"personal", "space", "s"}
 	entered := make(chan struct{})
-	b := New(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+	b := newTestBroker(Options{Store: s, HTTPClient: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		close(entered)
 		<-r.Context().Done()
 		return nil, r.Context().Err()

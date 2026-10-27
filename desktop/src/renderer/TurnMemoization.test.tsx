@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 /**
  * Render-bailout guarantees for the conversation turn tree.
  *
@@ -129,9 +130,9 @@ function mountPanes(thread: Thread): {
   const root = createRoot(container);
   roots.push(root);
   const renderWith = (current: Thread): JSX.Element => (
-    <ImagePreviewProvider>
+    <ConversationControlsTestProvider><ImagePreviewProvider>
       <CachedConversationPanes {...paneProps(current)} />
-    </ImagePreviewProvider>
+    </ImagePreviewProvider></ConversationControlsTestProvider>
   );
   act(() => {
     root.render(renderWith(thread));

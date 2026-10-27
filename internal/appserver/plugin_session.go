@@ -8,10 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/personalreview"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -23,6 +26,7 @@ type pluginTurnReference struct {
 	PluginID  string
 	RequestID string
 	QueueID   string
+	Origin    *runtime.State `json:"-"`
 }
 
 const maxPluginSessionInspectTimeout = 15 * time.Minute
@@ -35,17 +39,20 @@ func clonePluginTurnReference(reference *pluginTurnReference) *pluginTurnReferen
 	return &cloned
 }
 
-func (s *Server) notifyPluginTurnDiscarded(threadID string, entry queuedTurn, reason string) {
-	s.notifyPluginTurnDiscardedWithRetry(threadID, entry, reason, false)
+func (s *Server) notifyPluginTurnDiscarded(binding *runtime.State, threadID string, entry queuedTurn, reason string) {
+	s.notifyPluginTurnDiscardedWithRetry(binding, threadID, entry, reason, false)
 }
 
-func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queuedTurn, reason string, retryable bool) {
+func (s *Server) notifyPluginTurnDiscardedWithRetry(binding *runtime.State, threadID string, entry queuedTurn, reason string, retryable bool) {
 	if entry.clientInput != nil {
+		if reference := entry.snapshot.PluginTurn; reference != nil && reference.Origin != nil {
+			defer reference.Origin.Close()
+		}
 		state := "cancelled"
 		if retryable {
 			state = "held"
 		}
-		_, err := session.ChangeClientInput(s.rt.SessionDir, *entry.clientInput, state, "", nil, nil, nil)
+		_, err := binding.Sessions.ChangeClientInput(*entry.clientInput, state, "", nil, nil, nil)
 		if err != nil && !errors.Is(err, session.ErrClientInputSettled) {
 			providers.DebugLogf("settle accepted client queue: %v", err)
 		}
@@ -55,7 +62,7 @@ func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queue
 	if reference == nil {
 		return
 	}
-	s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+	s.notifyPluginReferenceLifecycle(binding, reference, pluginhost.AgentTurnLifecycleInput{
 		RequestID: reference.RequestID, State: pluginhost.TurnLifecycleDiscarded,
 		Retryable: retryable,
 		ThreadID:  strings.TrimSpace(threadID), QueueID: reference.QueueID,
@@ -64,31 +71,52 @@ func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queue
 }
 
 func (s *Server) createPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateResult, error) {
+	if params.ExecutionAuthorization != nil {
+		var err error
+		ctx, err = s.rt.RestoreExecutionCreation(ctx, pluginID, params)
+		if err != nil {
+			return pluginhost.SessionCreateResult{}, err
+		}
+		resources, verified := runtime.ExecutionCreationResources(ctx)
+		if !verified {
+			return pluginhost.SessionCreateResult{}, errors.New("verified execution creation intent is required")
+		}
+		if err := s.authorizeUserHostResources(ctx, "user/session/create", resources...); err != nil {
+			return pluginhost.SessionCreateResult{}, err
+		}
+	} else if err := s.authorizeUserSessionOperation(ctx, "create", params.ParentSessionID); err != nil {
+		return pluginhost.SessionCreateResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionCreateResult{}, err
+	}
+	defer binding.Close()
 	if s == nil || s.closed.Load() {
 		return pluginhost.SessionCreateResult{}, errServerClosed
 	}
-	binding := s.rt.UserBinding()
+	userBinding := s.rt.UserBinding()
 	if params.UserSpaceID != "" || params.ProductDomain != "" {
 		requested := userspace.Binding{UserSpaceID: strings.TrimSpace(params.UserSpaceID), ProductDomain: strings.TrimSpace(params.ProductDomain)}
 		if err := requested.Validate(); err != nil {
 			return pluginhost.SessionCreateResult{}, err
 		}
-		if !binding.Matches(requested) {
+		if !userBinding.Matches(requested) {
 			return pluginhost.SessionCreateResult{}, errors.New("session creation cannot change the trusted user space or product domain")
 		}
 	}
-	if binding.IsUser() && (params.WorkspaceID != "" || params.WorkspaceRoot != "" || params.Workspace == "worktree") {
+	if userBinding.IsUser() && (params.WorkspaceID != "" || params.WorkspaceRoot != "" || params.Workspace == "worktree") {
 		return pluginhost.SessionCreateResult{}, errors.New("user-space sessions cannot bind a project or worktree")
 	}
 	if params.ParentSessionID != "" {
-		parent, found, err := session.Find(s.rt.SessionDir, params.ParentSessionID)
+		parent, found, err := binding.Sessions.Find(params.ParentSessionID)
 		if err != nil {
 			return pluginhost.SessionCreateResult{}, err
 		}
 		if !found {
 			return pluginhost.SessionCreateResult{}, session.ErrSessionNotFound
 		}
-		if !binding.Matches(userspace.Binding{UserSpaceID: parent.UserSpaceID, ProductDomain: parent.ProductDomain}) {
+		if !userBinding.Matches(userspace.Binding{UserSpaceID: parent.UserSpaceID, ProductDomain: parent.ProductDomain}) {
 			return pluginhost.SessionCreateResult{}, errors.New("cross-domain parent session is unavailable")
 		}
 		if params.AgentID != "" && params.AgentID != parent.AgentID {
@@ -96,8 +124,8 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		}
 		params.AgentID = parent.AgentID
 	}
-	params.UserSpaceID = binding.UserSpaceID
-	params.ProductDomain = binding.ProductDomain
+	params.UserSpaceID = userBinding.UserSpaceID
+	params.ProductDomain = userBinding.ProductDomain
 	pluginID = strings.TrimSpace(pluginID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
 	params.Name = strings.TrimSpace(params.Name)
@@ -166,21 +194,21 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		return pluginhost.SessionCreateResult{}, err
 	}
 	owner := pluginSessionOwner(pluginID, params)
-	if existing, ok, err := session.FindManagedByRequest(s.rt.SessionDir, owner, params.RequestID); err != nil {
+	if existing, ok, err := binding.Sessions.FindManagedByRequest(owner, params.RequestID); err != nil {
 		return pluginhost.SessionCreateResult{}, err
 	} else if ok {
-		if th, loadErr := s.ensureThreadLoaded(existing.ID); loadErr == nil && params.ContextSource == pluginhost.SessionContextSourceSeed {
+		if th, loadErr := s.ensureThreadLoaded(binding, existing.ID); loadErr == nil && params.ContextSource == pluginhost.SessionContextSourceSeed {
 			if err := s.dispatchHandoffLaunchTurn(th, hostSessionCreateParamsFromPlugin(params)); err != nil {
 				providers.DebugLogf("dispatch existing handoff first turn for %q: %v", existing.ID, err)
 			}
 		}
 		return pluginhost.SessionCreateResult{SessionID: existing.ID, Created: false, WorkspaceRoot: existing.CWD}, nil
 	}
-	if launch, ok, err := session.LoadSessionLaunch(s.rt.SessionDir, params.RequestID); err != nil {
+	if launch, ok, err := binding.Sessions.LoadSessionLaunch(params.RequestID); err != nil {
 		return pluginhost.SessionCreateResult{}, err
 	} else if ok && launch.TargetSession != "" {
 		workspaceRoot := ""
-		if th, loadErr := s.ensureThreadLoaded(launch.TargetSession); loadErr == nil {
+		if th, loadErr := s.ensureThreadLoaded(binding, launch.TargetSession); loadErr == nil {
 			workspaceRoot = th.CWD
 			if params.ContextSource == pluginhost.SessionContextSourceSeed {
 				if err := s.dispatchHandoffLaunchTurn(th, hostSessionCreateParamsFromPlugin(params)); err != nil {
@@ -190,14 +218,14 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		}
 		return pluginhost.SessionCreateResult{SessionID: launch.TargetSession, Created: false, WorkspaceRoot: workspaceRoot}, nil
 	}
-	prepared, err := s.prepareHandoffSeed(ctx, params)
+	prepared, err := s.prepareHandoffSeed(binding, ctx, params)
 	if err != nil {
 		return pluginhost.SessionCreateResult{}, err
 	}
 	params = prepared
-	th, err := s.createPluginSessionThread(owner, params)
+	th, err := s.createPluginSessionThread(binding, owner, params)
 	if err != nil {
-		if existing, ok, findErr := session.FindManagedByRequest(s.rt.SessionDir, owner, params.RequestID); findErr == nil && ok {
+		if existing, ok, findErr := binding.Sessions.FindManagedByRequest(owner, params.RequestID); findErr == nil && ok {
 			return pluginhost.SessionCreateResult{SessionID: existing.ID, Created: false, WorkspaceRoot: existing.CWD}, nil
 		}
 		return pluginhost.SessionCreateResult{}, err
@@ -205,7 +233,20 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	return pluginhost.SessionCreateResult{SessionID: th.ID, Created: true, WorkspaceRoot: th.CWD}, nil
 }
 
-func (s *Server) listPluginSessions(_ context.Context, pluginID string, params pluginhost.SessionListParams) (pluginhost.SessionListResult, error) {
+func (s *Server) listPluginSessions(ctx context.Context, pluginID string, params pluginhost.SessionListParams) (pluginhost.SessionListResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, params.ExecutionAuthorization, "list", params.ParentSessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionListResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "list", params.ParentSessionID); err != nil {
+		return pluginhost.SessionListResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionListResult{}, err
+	}
+	defer binding.Close()
 	pluginID = strings.TrimSpace(pluginID)
 	parentID := strings.TrimSpace(params.ParentSessionID)
 	scope := strings.TrimSpace(params.Scope)
@@ -218,13 +259,16 @@ func (s *Server) listPluginSessions(_ context.Context, pluginID string, params p
 	if scope != pluginhost.SessionListScopeOwned && scope != pluginhost.SessionListScopeShared {
 		return pluginhost.SessionListResult{}, errors.New("session list scope must be owned or shared")
 	}
-	items, err := session.List(s.rt.SessionDir, 0)
+	items, err := binding.Sessions.List(0)
 	if err != nil {
 		return pluginhost.SessionListResult{}, err
 	}
 	owner := "plugin:" + pluginID
 	result := pluginhost.SessionListResult{Sessions: make([]pluginhost.SessionSummary, 0)}
 	for _, item := range items {
+		if !s.rt.UserBinding().Matches(userspace.Binding{UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain}) && s.rt.UserBinding().IsUser() {
+			continue
+		}
 		if parentID != "" && item.ParentID != parentID {
 			continue
 		}
@@ -234,8 +278,11 @@ func (s *Server) listPluginSessions(_ context.Context, pluginID string, params p
 		if scope == pluginhost.SessionListScopeShared && (item.Visibility == pluginhost.SessionVisibilityPlugin || item.ArchivedAt != nil) {
 			continue
 		}
+		if err := s.authorizeUserSessionOperation(ctx, "inspect", item.ID); err != nil {
+			continue
+		}
 		state := pluginhost.TurnLifecycleCompleted
-		if th := s.thread(item.ID); th != nil {
+		if th := s.threadForState(binding, item.ID); th != nil {
 			th.mu.Lock()
 			if th.running {
 				state = pluginhost.TurnLifecycleRunning
@@ -253,9 +300,32 @@ func (s *Server) listPluginSessions(_ context.Context, pluginID string, params p
 }
 
 func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, params.ExecutionAuthorization, "inspect", params.SessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionInspectResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "inspect", params.SessionID); err != nil {
+		return pluginhost.SessionInspectResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionInspectResult{}, err
+	}
+	defer binding.Close()
 	params.SessionID = strings.TrimSpace(params.SessionID)
 	params.TurnID = strings.TrimSpace(params.TurnID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
+	delegatedScope, delegated, err := executionRunScope(ctx, pluginID, params.SessionID)
+	if err != nil {
+		return pluginhost.SessionInspectResult{}, err
+	}
+	if delegated {
+		params.RequestID, err = boundExecutionRequest(delegatedScope, params.RequestID, true)
+		if err != nil {
+			return pluginhost.SessionInspectResult{}, err
+		}
+	}
 	params.Wait = strings.TrimSpace(params.Wait)
 	if params.Wait == "" {
 		params.Wait = pluginhost.SessionInspectWaitNone
@@ -271,7 +341,20 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 		return pluginhost.SessionInspectResult{}, fmt.Errorf("timeout_ms must be between 0 and %d", maxTimeoutMS)
 	}
 	inspect := func() (pluginhost.SessionInspectResult, bool, error) {
-		return s.inspectPluginSessionOnce(pluginID, params)
+		if err := s.authorizeUserSessionOperation(ctx, "inspect", params.SessionID); err != nil {
+			return pluginhost.SessionInspectResult{}, false, err
+		}
+		result, terminal, err := s.inspectPluginSessionOnce(binding, pluginID, params)
+		if err != nil {
+			return result, terminal, err
+		}
+		if delegated && params.TurnID != "" && (result.Turn == nil || result.Turn.RequestID != delegatedScope.RunID || result.Turn.TurnID != params.TurnID) {
+			return pluginhost.SessionInspectResult{}, false, errors.New("execution authorization does not cover this turn")
+		}
+		if err := s.authorizeUserSessionOperation(ctx, "inspect", params.SessionID); err != nil {
+			return pluginhost.SessionInspectResult{}, false, err
+		}
+		return result, terminal, nil
 	}
 	result, terminal, err := inspect()
 	if err != nil || params.Wait == pluginhost.SessionInspectWaitNone || result.Turn == nil || terminal {
@@ -327,18 +410,21 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 // inspectPluginSessionOnce reports whether a terminal wait is satisfied. Owned
 // turns require a durable lifecycle, since live completion can precede it.
 // Consumed steers have no separate lifecycle and settle with their enclosing turn.
-func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, bool, error) {
-	metadata, ok, err := session.Find(s.rt.SessionDir, params.SessionID)
+func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID string, params pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, bool, error) {
+	metadata, ok, err := binding.Sessions.Find(params.SessionID)
 	if err != nil {
 		return pluginhost.SessionInspectResult{}, false, err
 	}
 	if !ok {
 		return pluginhost.SessionInspectResult{}, false, session.ErrSessionNotFound
 	}
+	if err := s.requireUserSessionBinding(metadata); err != nil {
+		return pluginhost.SessionInspectResult{}, false, err
+	}
 	if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
 		// Shared-session senders may inspect their own correlated request. Goal
 		// continuations and automation heartbeats both need recovery here.
-		control, managed, controlErr := session.ReadControl(s.rt.SessionDir, params.SessionID)
+		control, managed, controlErr := binding.Sessions.ReadControl(params.SessionID)
 		if controlErr != nil {
 			return pluginhost.SessionInspectResult{}, false, controlErr
 		}
@@ -346,7 +432,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 			return pluginhost.SessionInspectResult{}, false, errors.New("shared session inspection requires a plugin request_id")
 		}
 	}
-	th, err := s.ensureThreadLoaded(params.SessionID)
+	th, err := s.ensureThreadLoaded(binding, params.SessionID)
 	if err != nil {
 		return pluginhost.SessionInspectResult{}, false, err
 	}
@@ -376,11 +462,11 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return result, false, err
 		}
-		if err := session.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID)); err != nil {
+		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID)); err != nil {
 			return result, false, err
 		}
 		if params.RequestID != "" {
-			row, found, err := session.ReadClientInput(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID), params.RequestID)
+			row, found, err := binding.Sessions.ReadClientInput(s.clientInputScope(params.SessionID, pluginID), params.RequestID)
 			if err != nil {
 				return result, false, err
 			}
@@ -397,7 +483,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 				return result, terminalPluginTurnState(row.Receipt.ExecutionState) || row.Receipt.ExecutionState == "cancelled", nil
 			}
 		} else if metadata.Owner == "plugin:"+pluginID {
-			rows, err := session.ListUnsettledClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID))
+			rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(params.SessionID, pluginID))
 			if err != nil {
 				return result, false, err
 			}
@@ -427,7 +513,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	} else {
 		result.Workspace = &pluginhost.SessionWorkspaceSummary{Kind: "shared"}
 	}
-	entry, found, err := session.FindPluginTurnLifecycle(s.rt.SessionDir, pluginID, requestID, params.SessionID, params.TurnID)
+	entry, found, err := binding.Sessions.FindPluginTurnLifecycle(pluginID, requestID, params.SessionID, params.TurnID)
 	if err != nil {
 		return pluginhost.SessionInspectResult{}, false, err
 	}
@@ -507,8 +593,16 @@ func terminalPluginTurnState(state string) bool {
 	}
 }
 
-func (s *Server) statusPluginWorkspace(_ context.Context, pluginID string, params pluginhost.WorkspaceStatusParams) (pluginhost.WorkspaceStatusResult, error) {
-	metadata, manager, target, err := s.pluginWorkspaceTarget(pluginID, params.SessionID)
+func (s *Server) statusPluginWorkspace(ctx context.Context, pluginID string, params pluginhost.WorkspaceStatusParams) (pluginhost.WorkspaceStatusResult, error) {
+	if err := s.authorizeUserSessionOperation(ctx, "workspace.status", params.SessionID); err != nil {
+		return pluginhost.WorkspaceStatusResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.WorkspaceStatusResult{}, err
+	}
+	defer binding.Close()
+	metadata, manager, target, err := s.pluginWorkspaceTarget(binding, pluginID, params.SessionID)
 	if err != nil {
 		return pluginhost.WorkspaceStatusResult{}, err
 	}
@@ -528,12 +622,20 @@ func (s *Server) statusPluginWorkspace(_ context.Context, pluginID string, param
 	}, nil
 }
 
-func (s *Server) applyPluginWorkspace(_ context.Context, pluginID string, params pluginhost.WorkspaceApplyParams) (pluginhost.WorkspaceApplyResult, error) {
-	metadata, manager, target, err := s.pluginWorkspaceTarget(pluginID, params.SessionID)
+func (s *Server) applyPluginWorkspace(ctx context.Context, pluginID string, params pluginhost.WorkspaceApplyParams) (pluginhost.WorkspaceApplyResult, error) {
+	if err := s.authorizeUserSessionOperation(ctx, "workspace.apply", params.SessionID); err != nil {
+		return pluginhost.WorkspaceApplyResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
 	if err != nil {
 		return pluginhost.WorkspaceApplyResult{}, err
 	}
-	if err := s.requirePluginWorkspaceIdle(metadata.ID); err != nil {
+	defer binding.Close()
+	metadata, manager, target, err := s.pluginWorkspaceTarget(binding, pluginID, params.SessionID)
+	if err != nil {
+		return pluginhost.WorkspaceApplyResult{}, err
+	}
+	if err := s.requirePluginWorkspaceIdle(binding, metadata.ID); err != nil {
 		return pluginhost.WorkspaceApplyResult{}, err
 	}
 	applied, err := manager.ApplyToTarget(target, metadata.WorktreeBaseRepo)
@@ -543,36 +645,44 @@ func (s *Server) applyPluginWorkspace(_ context.Context, pluginID string, params
 	if err := manager.Cleanup(target); err != nil {
 		return pluginhost.WorkspaceApplyResult{}, err
 	}
-	if err := s.rebindThreadWorkspace(metadata.ID, metadata.WorktreeBaseRepo); err != nil {
+	if err := s.rebindThreadWorkspace(binding, metadata.ID, metadata.WorktreeBaseRepo); err != nil {
 		return pluginhost.WorkspaceApplyResult{}, err
 	}
 	return pluginhost.WorkspaceApplyResult{SessionID: metadata.ID, Applied: applied.Applied, ChangedFiles: applied.ChangedFiles, Discarded: true}, nil
 }
 
-func (s *Server) discardPluginWorkspace(_ context.Context, pluginID string, params pluginhost.WorkspaceDiscardParams) (pluginhost.WorkspaceDiscardResult, error) {
-	metadata, manager, target, err := s.pluginWorkspaceTarget(pluginID, params.SessionID)
+func (s *Server) discardPluginWorkspace(ctx context.Context, pluginID string, params pluginhost.WorkspaceDiscardParams) (pluginhost.WorkspaceDiscardResult, error) {
+	if err := s.authorizeUserSessionOperation(ctx, "workspace.discard", params.SessionID); err != nil {
+		return pluginhost.WorkspaceDiscardResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
 	if err != nil {
 		return pluginhost.WorkspaceDiscardResult{}, err
 	}
-	if err := s.requirePluginWorkspaceIdle(metadata.ID); err != nil {
+	defer binding.Close()
+	metadata, manager, target, err := s.pluginWorkspaceTarget(binding, pluginID, params.SessionID)
+	if err != nil {
+		return pluginhost.WorkspaceDiscardResult{}, err
+	}
+	if err := s.requirePluginWorkspaceIdle(binding, metadata.ID); err != nil {
 		return pluginhost.WorkspaceDiscardResult{}, err
 	}
 	if err := manager.Cleanup(target); err != nil {
 		return pluginhost.WorkspaceDiscardResult{}, err
 	}
-	if err := s.rebindThreadWorkspace(metadata.ID, metadata.WorktreeBaseRepo); err != nil {
+	if err := s.rebindThreadWorkspace(binding, metadata.ID, metadata.WorktreeBaseRepo); err != nil {
 		return pluginhost.WorkspaceDiscardResult{}, err
 	}
 	return pluginhost.WorkspaceDiscardResult{SessionID: metadata.ID, Discarded: true}, nil
 }
 
-func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Session, *worktreepkg.Manager, *worktreepkg.Worktree, error) {
+func (s *Server) pluginWorkspaceTarget(binding *runtime.State, pluginID, sessionID string) (session.Session, *worktreepkg.Manager, *worktreepkg.Worktree, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	sessionID = strings.TrimSpace(sessionID)
 	if pluginID == "" || sessionID == "" {
 		return session.Session{}, nil, nil, errors.New("plugin owner and session_id are required")
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, sessionID)
+	metadata, ok, err := binding.Sessions.Find(sessionID)
 	if err != nil {
 		return session.Session{}, nil, nil, err
 	}
@@ -596,8 +706,8 @@ func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Sess
 	return metadata, manager, target, nil
 }
 
-func (s *Server) requirePluginWorkspaceIdle(sessionID string) error {
-	th := s.thread(sessionID)
+func (s *Server) requirePluginWorkspaceIdle(binding *runtime.State, sessionID string) error {
+	th := s.threadForState(binding, sessionID)
 	if th == nil {
 		return nil
 	}
@@ -610,6 +720,19 @@ func (s *Server) requirePluginWorkspaceIdle(sessionID string) error {
 }
 
 func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionCancelParams) (pluginhost.SessionCancelResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, params.ExecutionAuthorization, "cancel", params.SessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionCancelResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "cancel", params.SessionID); err != nil {
+		return pluginhost.SessionCancelResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionCancelResult{}, err
+	}
+	defer binding.Close()
 	pluginID = strings.TrimSpace(pluginID)
 	sessionID := strings.TrimSpace(params.SessionID)
 	turnID := strings.TrimSpace(params.TurnID)
@@ -620,14 +743,41 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 	if turnID != "" && queueID != "" {
 		return pluginhost.SessionCancelResult{}, errors.New("turn_id and queue_id are mutually exclusive")
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, sessionID)
+	metadata, ok, err := binding.Sessions.Find(sessionID)
 	if err != nil {
 		return pluginhost.SessionCancelResult{}, err
 	}
 	if !ok {
 		return pluginhost.SessionCancelResult{}, session.ErrSessionNotFound
 	}
-	control, err := s.pluginSessionControl(pluginID, sessionID, params.ControlRevision)
+	if err := s.requireUserSessionBinding(metadata); err != nil {
+		return pluginhost.SessionCancelResult{}, err
+	}
+	var reviewScopes []personalreview.Scope
+	cancelReviews := true
+	if scope, delegated, scopeErr := executionRunScope(ctx, pluginID, sessionID); scopeErr != nil {
+		return pluginhost.SessionCancelResult{}, scopeErr
+	} else if delegated {
+		cancelReviews = false
+		inspected, _, inspectErr := s.inspectPluginSessionOnce(binding, pluginID, pluginhost.SessionInspectParams{SessionID: sessionID, RequestID: scope.RunID})
+		if inspectErr != nil {
+			return pluginhost.SessionCancelResult{}, inspectErr
+		}
+		params.TurnID, params.QueueID = turnID, queueID
+		params, err = boundExecutionCancellation(scope, params, inspected.Turn)
+		if err != nil {
+			return pluginhost.SessionCancelResult{}, err
+		}
+		turnID, queueID = params.TurnID, params.QueueID
+		if s.personalActions != nil {
+			reviewScope, scopeErr := s.personalActions.scope(ctx, sessionID)
+			if scopeErr == nil && reviewScope.TaskID == scope.TaskID && reviewScope.RequirementsRevision == scope.Revision {
+				cancelReviews = true
+				reviewScopes = []personalreview.Scope{reviewScope}
+			}
+		}
+	}
+	control, err := s.pluginSessionControl(binding, pluginID, sessionID, params.ControlRevision)
 	if err != nil {
 		return pluginhost.SessionCancelResult{}, err
 	}
@@ -636,7 +786,7 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			return pluginhost.SessionCancelResult{}, errors.New("shared session cancellation requires an owned turn_id or queue_id")
 		}
 		if turnID != "" {
-			th, err := s.ensureThreadLoaded(sessionID)
+			th, err := s.ensureThreadLoaded(binding, sessionID)
 			if err != nil {
 				return pluginhost.SessionCancelResult{}, err
 			}
@@ -647,8 +797,8 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			}
 		}
 	}
-	if s.personalActions != nil && metadata.Owner == "plugin:"+pluginID {
-		if err := s.personalActions.engine.CancelExecution(ctx, s.rt.UserBinding().UserSpaceID, sessionID); err != nil {
+	if cancelReviews && s.personalActions != nil && metadata.Owner == "plugin:"+pluginID {
+		if err := s.personalActions.engine.CancelExecution(ctx, s.rt.UserBinding().UserSpaceID, sessionID, reviewScopes...); err != nil {
 			return pluginhost.SessionCancelResult{}, err
 		}
 		s.personalActions.signal()
@@ -658,7 +808,7 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 				return pluginhost.SessionCancelResult{}, err
 			}
-			rows, err := session.ListUnsettledClientInputs(s.rt.SessionDir, s.clientInputScope(sessionID, pluginID))
+			rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(sessionID, pluginID))
 			if err != nil {
 				return pluginhost.SessionCancelResult{}, err
 			}
@@ -672,34 +822,38 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 					return pluginhost.SessionCancelResult{}, err
 				}
-				if _, err := session.ChangeClientInput(s.rt.SessionDir, row, "cancelled", "", nil, nil, nil); err != nil {
+				if _, err := binding.Sessions.ChangeClientInput(row, "cancelled", "", nil, nil, nil); err != nil {
 					return pluginhost.SessionCancelResult{}, err
 				}
-				s.removePluginQueuedTurn(sessionID, pluginID, queueID)
+				if entry, removed := s.removePluginQueuedTurn(binding, sessionID, pluginID, queueID); removed {
+					if reference := entry.snapshot.PluginTurn; reference != nil && reference.Origin != nil {
+						_ = reference.Origin.Close()
+					}
+				}
 				s.notifyQueuedTurnsDequeued(sessionID, []string{queueID})
 				return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID, Cancelled: true}, nil
 			}
 		}
-		entry, ok := s.removePluginQueuedTurn(sessionID, pluginID, queueID)
+		entry, ok := s.removePluginQueuedTurn(binding, sessionID, pluginID, queueID)
 		if !ok {
 			return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID, Cancelled: false}, nil
 		}
-		s.notifyPluginTurnDiscarded(sessionID, entry, "queued plugin turn was cancelled")
+		s.notifyPluginTurnDiscarded(binding, sessionID, entry, "queued plugin turn was cancelled")
 		s.notifyQueuedTurnsDequeued(sessionID, []string{queueID})
 		return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID, Cancelled: true}, nil
 	}
-	if _, err := s.ensureThreadLoaded(sessionID); err != nil {
+	if _, err := s.ensureThreadLoaded(binding, sessionID); err != nil {
 		return pluginhost.SessionCancelResult{}, err
 	}
-	cancelled, err := s.interruptThreadExecution(sessionID, "", turnID)
+	cancelled, err := s.interruptThreadExecution(binding, sessionID, "", turnID)
 	if err != nil {
 		return pluginhost.SessionCancelResult{}, err
 	}
 	return pluginhost.SessionCancelResult{SessionID: sessionID, TurnID: turnID, Cancelled: cancelled}, nil
 }
 
-func (s *Server) removePluginQueuedTurn(threadID, pluginID, queueID string) (queuedTurn, bool) {
-	if s == nil {
+func (s *Server) removePluginQueuedTurn(binding *runtime.State, threadID, pluginID, queueID string) (queuedTurn, bool) {
+	if s == nil || s.threadForState(binding, threadID) == nil {
 		return queuedTurn{}, false
 	}
 	s.queuedTurnMu.Lock()
@@ -721,6 +875,19 @@ func (s *Server) removePluginQueuedTurn(threadID, pluginID, queueID string) (que
 }
 
 func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionSendParams) (pluginhost.SessionSendResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, params.ExecutionAuthorization, "send", params.SessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionSendResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "send", params.SessionID); err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	binding, err := runtime.RetainProductInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	defer binding.Close()
 	if s == nil || s.closed.Load() {
 		return pluginhost.SessionSendResult{}, errServerClosed
 	}
@@ -730,15 +897,25 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.UserInputRequestID == "" {
 		params.Input.Prompt = strings.TrimSpace(params.Input.Prompt)
 	}
-	params.Cause = strings.TrimSpace(params.Cause)
 	params.IfRunning = strings.TrimSpace(params.IfRunning)
+	if scope, delegated, scopeErr := executionRunScope(ctx, pluginID, params.SessionID); scopeErr != nil {
+		return pluginhost.SessionSendResult{}, scopeErr
+	} else if delegated {
+		if _, err := boundExecutionRequest(scope, params.RequestID, false); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if params.IfRunning == pluginhost.SessionIfRunningSteer || params.ReplyToTurnID != "" {
+			return pluginhost.SessionSendResult{}, errors.New("delegated send cannot steer or retarget another turn")
+		}
+	}
+	params.Cause = strings.TrimSpace(params.Cause)
 	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
 	if len(params.Input.Attachments) > 0 && params.UserInputRequestID == "" {
 		return pluginhost.SessionSendResult{}, errors.New("attachments require an explicit client user input")
 	}
-	if err := s.validateMessageRelation(pluginID, params.SessionID, params.Relation); err != nil {
+	if err := s.validateMessageRelation(binding, pluginID, params.SessionID, params.Relation); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if params.ResumeAccepted != (params.ResumeReceiptID != "") {
@@ -780,12 +957,15 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if len([]byte(params.RequestID)) > pluginhost.MaxSessionSendRequestIDBytes {
 		return pluginhost.SessionSendResult{}, fmt.Errorf("request_id exceeds %d bytes", pluginhost.MaxSessionSendRequestIDBytes)
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, params.SessionID)
+	metadata, ok, err := binding.Sessions.Find(params.SessionID)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if !ok {
 		return pluginhost.SessionSendResult{}, session.ErrSessionNotFound
+	}
+	if err := s.requireUserSessionBinding(metadata); err != nil {
+		return pluginhost.SessionSendResult{}, err
 	}
 	if params.DisableTools && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
 		return pluginhost.SessionSendResult{}, errors.New("the selected agent engine cannot enforce disable_tools")
@@ -799,8 +979,18 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	th, err := s.ensureThreadLoaded(params.SessionID)
+	th, err := s.ensureThreadLoaded(binding, params.SessionID)
 	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	invocation, err := runtime.RetainInvocationState(ctx)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	defer invocation.Close()
+	if err := recordPluginTurnOrigin(ctx, binding, pluginID, params.RequestID, pluginTurnOrigin{
+		Composition: invocation.ExecutionCompositionID(), Session: params.SessionID,
+	}); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
@@ -809,10 +999,10 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
-		if err := session.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID)); err != nil {
+		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID)); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
-		row, found, err := session.ReadClientInput(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID), params.RequestID)
+		row, found, err := binding.Sessions.ReadClientInput(s.clientInputScope(th.ID, pluginID), params.RequestID)
 		if err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
@@ -837,7 +1027,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	// A removed queued input has no history item. Retained terminal receipts
 	// still fence retries, especially after an acknowledgement was lost. Only
 	// host-shutdown discards authorize admission again with the same identity.
-	terminalEntry, found, err := session.FindPluginTurnLifecycle(s.rt.SessionDir, pluginID, params.RequestID, params.SessionID, "")
+	terminalEntry, found, err := binding.Sessions.FindPluginTurnLifecycle(pluginID, params.RequestID, params.SessionID, "")
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -855,7 +1045,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		// A captured process reports observations to its own conversation,
 		// including one managed by a different plugin or Project Agent. Keep
 		// the current control fence so pause/takeover still revokes delivery.
-		current, managed, err := session.ReadControl(s.rt.SessionDir, params.SessionID)
+		current, managed, err := binding.Sessions.ReadControl(params.SessionID)
 		if err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
@@ -863,7 +1053,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			control = &current
 		}
 	} else {
-		control, err = s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
+		control, err = s.pluginSessionControl(binding, pluginID, params.SessionID, params.ControlRevision)
 		if err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
@@ -928,7 +1118,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			}
 		}
 		if msg.RelatedSessionID != "" {
-			related, exists, findErr := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
+			related, exists, findErr := binding.Sessions.Find(msg.RelatedSessionID)
 			if findErr != nil {
 				return pluginhost.SessionSendResult{}, findErr
 			}
@@ -955,29 +1145,45 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
+	snapshot.AdmissionPrincipal, _ = principal.FromContext(ctx)
+	snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
+	snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
 	snapshot.DisableTools = params.DisableTools
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
-	snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: params.RequestID}
+	origin, err := invocation.RetainExecution()
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	owned := true
+	defer func() {
+		if owned {
+			_ = origin.Close()
+		}
+	}()
+	snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: params.RequestID, Origin: origin}
 	if durableClient {
-		return s.acceptClientSessionInput(ctx, pluginID, params, metadata, th, msg, snapshot, clientAttachments)
+		result, err := s.acceptClientSessionInput(ctx, pluginID, params, metadata, th, msg, snapshot, clientAttachments)
+		return result, err
 	}
 
-	result, ok, err := s.trySubmitSessionInput(ctx, th, msg, params.IfRunning, snapshot)
+	result, ok, transferred, err := s.trySubmitSessionInput(ctx, th, msg, params.IfRunning, snapshot)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if ok {
+		owned = !transferred
 		return pluginhost.SessionSendResult(result), nil
 	}
 
+	owned = false
 	queueID := session.NewID()
 	snapshot.PluginTurn.QueueID = queueID
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: snapshot}
 	s.enqueueQueuedUserTurn(th.ID, entry)
 	queued := queuedTurnSummary(th.ID, entry)
 	_ = s.writeNotification(NotificationTurnQueued, TurnQueuedNotification{Queued: queued})
-	s.kickQueuedTurnDrain(th.ID)
+	s.kickQueuedTurnDrain(binding, th.ID)
 	return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: th.ID, QueueID: queueID}, nil
 }
 
@@ -997,8 +1203,8 @@ func pluginSessionRequestFromClientID(clientID string) (string, string, bool) {
 	return pluginID, requestID, ok && pluginID != "" && requestID != ""
 }
 
-func (s *Server) createPluginSessionThread(owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThread(owner, pluginSessionSource(owner, params), "", hostSessionCreateParamsFromPlugin(params))
+func (s *Server) createPluginSessionThread(binding *runtime.State, owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
+	return s.createHostSessionThread(binding, owner, pluginSessionSource(owner, params), "", hostSessionCreateParamsFromPlugin(params))
 }
 
 // hostSessionCreateParamsFromPlugin converts the extension contract at the host boundary.
@@ -1131,4 +1337,58 @@ func contextSeedFromParams(params pluginhost.SessionContextSeed) session.Context
 		seed.Artifacts = append(seed.Artifacts, session.ContextSeedArtifact{ID: strings.TrimSpace(artifact.ID), Label: strings.TrimSpace(artifact.Label)})
 	}
 	return seed
+}
+
+func (s *Server) authorizeUserSessionOperation(ctx context.Context, operation string, sessionIDs ...string) error {
+	if s == nil || s.rt == nil || !s.rt.UserBinding().IsUser() {
+		return nil
+	}
+	resources := []access.Resource{{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}}
+	for _, id := range sessionIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			resources = append(resources, access.Resource{Kind: "session", ID: id})
+		}
+	}
+	return s.authorizeUserHostResources(ctx, "user/session/"+operation, resources...)
+}
+func (s *Server) authorizeUserHostResources(ctx context.Context, action string, resources ...access.Resource) error {
+	caller, ok := principal.FromContext(ctx)
+	if !ok || !caller.Valid() {
+		return errors.New("authenticated user-host principal is required")
+	}
+	if err := s.AuthorizeResource(ctx, action, resources...); err != nil {
+		return err
+	}
+	s.appendContextResponseScope(ctx, action, resources...)
+	return nil
+}
+
+func (s *Server) requireUserSessionBinding(metadata session.Session) error {
+	binding := s.rt.UserBinding()
+	if binding.IsUser() && !binding.Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) {
+		return session.ErrSessionNotFound
+	}
+	return nil
+}
+
+func (s *Server) restoreUserSessionAuthorization(ctx context.Context, pluginID string, reference *pluginhost.ExecutionAuthorizationReference, operation, sessionID string) (context.Context, error) {
+	if reference == nil {
+		return ctx, nil
+	}
+	if s == nil || s.rt == nil || !s.rt.UserBinding().IsUser() {
+		return ctx, errors.New("execution authorization requires an explicit user host")
+	}
+	// A live operator can reauthorize inspection or stopping independently of
+	// the task's stale grant. Detached/delegated calls and effect admission must
+	// still validate their exact stored reference; normal resource policy follows.
+	if (operation == "inspect" || operation == "cancel") && access.DelegationFromContext(ctx) == nil {
+		if caller, ok := principal.FromContext(ctx); ok && caller.Check(ctx) == nil {
+			return ctx, nil
+		}
+	}
+	resources := []access.Resource{{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}}
+	if strings.TrimSpace(sessionID) != "" {
+		resources = append(resources, access.Resource{Kind: "session", ID: strings.TrimSpace(sessionID)})
+	}
+	return s.rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, strings.TrimSpace(sessionID), "user/session/"+operation, resources...)
 }

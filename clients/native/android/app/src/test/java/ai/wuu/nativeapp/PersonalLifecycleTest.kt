@@ -12,7 +12,7 @@ class PersonalLifecycleTest {
         val root = Files.createTempDirectory("personal-lifecycle").toFile()
         try {
             val adapter = PersonalClient { _, p -> json("result" to json("agent" to json("agent_id" to p.getJSONObject("input").getString("agent_id"), "user_space_id" to "local"))) }
-            adapter.configure(json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "one", "runtime_state" to "active"))))
+            adapter.configure(json("user_space_id" to "local", "product_domain" to "personal", "extension_inventory" to JSONArray().put(json("id" to "plugin:bundled:personal", "fingerprint" to "one", "graph_generation" to "graph-one", "runtime_state" to "active"))))
             adapter.selectAgent("main")
             val drafts = File(root, "drafts"); val identity = listOf("account", "login", "host")
             PersonalDraftStore(drafts, identity).save(adapter.prepareMessage("Uncertain request"))

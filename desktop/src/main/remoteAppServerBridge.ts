@@ -2,7 +2,9 @@ import { createServer, type Server, type Socket } from "node:net";
 import { projectRemoteHistory } from "./remoteHistory";
 import { RemoteAttachments, attachmentReadTarget, threadContentParams } from "./remoteAttachments";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { AppServerResponse, ServerEvent } from "../shared/protocol";
+import type { AppServerResponse, ExtensionInventoryRecord, PluginDesktopActivationParams, ServerEvent } from "../shared/protocol";
+import { isScopedRemoteResponse, trustedRemotePeer, type TrustedRemotePeer, type RemoteReceipt, type ScopedRemoteResponse } from "./trustedRemoteTransport";
+import { PluginDesktopActivations } from "./pluginDesktopActivations";
 
 export type RemoteAppServerEndpoint = { address: string; token: string };
 type Request = { id: string | number; method: string; params?: unknown; workdir?: string };
@@ -17,12 +19,18 @@ export class RemoteAppServerBridge {
   private sockets = new Set<Socket>();
   private peerSockets = new Map<number,Socket>();
   private nextPeerID = 1;
+  private readonly activationOwners = new Map<number, PluginDesktopActivations>();
   private subscribers = new Set<Socket>();
   private readonly compactSubscribers = new Set<Socket>();
-  private readonly attachments = new RemoteAttachments();
-  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void, peerID: number) => Promise<unknown>, private readonly onPeerClose?: (peerID:number)=>void) {}
+  private readonly attachments = new Map<Socket, RemoteAttachments>();
+  private readonly releases = new Map<Socket, Map<string, () => Promise<void>>>();
+  private readonly peers = new Map<Socket, TrustedRemotePeer>();
+  private readonly receipts = new Map<Socket, Map<string, RemoteReceipt>>();
+  private readonly deliveryBudget = new Map<Socket, { count: number; bytes: number }>();
+  private readonly deliveries = new Map<Socket, Promise<void>>();
+  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void, peerID: number, activations: PluginDesktopActivations, peer: TrustedRemotePeer) => Promise<unknown>, private readonly onPeerClose?: (peerID:number, peer?: TrustedRemotePeer)=>void, private readonly authorizeEvent?: (event: ServerEvent, peer: TrustedRemotePeer) => () => Promise<RemoteReceipt>) {}
 
-  notifyPeer(peerID:number,method:string,params:unknown):void {const socket=this.peerSockets.get(peerID);if(socket)this.send(socket,{method,params});}
+  notifyPeer(peerID:number,method:string,params:unknown):void { const socket=this.peerSockets.get(peerID); if(socket && this.peers.get(socket)?.owner) this.send(socket,{method,params}); }
 
   currentEndpoint(): RemoteAppServerEndpoint | undefined { return this.endpoint; }
 
@@ -49,7 +57,13 @@ export class RemoteAppServerBridge {
       for (const socket of this.subscribers) socket.destroy();
     }
     if (event.kind !== "notification") return;
-    for (const socket of this.subscribers) this.send(socket, { ...event.message, workdir: event.workdir });
+    if (event.message.method === "plugin/inventory/changed") {
+      const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
+      if (params?.extension_inventory) {
+        for (const owner of this.activationOwners.values()) owner.observeInventory(event.workdir, params.extension_inventory);
+      }
+    }
+    for (const socket of this.subscribers) this.publishTo(socket, event);
   }
 
   stop(): void {
@@ -62,26 +76,81 @@ export class RemoteAppServerBridge {
     this.server = undefined;
   }
 
-  private send(socket: Socket, message: unknown): void {
+  private publishTo(socket: Socket, event: Extract<ServerEvent, { kind: "notification" }>): void {
+    const peer = this.peers.get(socket);
+    if (!peer) return;
+    const { workdir, message: { method, params } } = event;
+    // Without a scoped backend, only explicitly owner-bound legacy clients may
+    // receive legacy events. Production always supplies authorizeEvent.
+    if (!this.authorizeEvent) { if(peer.owner) this.send(socket, { method, params, workdir }); return; }
+    let authorize: () => Promise<RemoteReceipt>;
+    try { authorize = this.authorizeEvent(event, peer); } catch { return; }
+    this.queue(socket, async () => {
+      const receipt = await authorize();
+      if (socket.destroyed) { await receipt.release?.(); return; }
+      if (receipt.generation && receipt.release) this.releases.get(socket)?.set(receipt.generation, receipt.release);
+      await receipt.check();
+      this.send(socket, { method, params, workdir }, receipt);
+    }, Buffer.byteLength(JSON.stringify({method,params,workdir})));
+  }
+
+  private queue(socket: Socket, deliver: () => Promise<void>, bytes = 0): void {
+    const budget = this.deliveryBudget.get(socket) ?? { count: 0, bytes: 0 };
+    if (budget.count >= 256 || budget.bytes + bytes > MAX_LINE_BYTES) { socket.destroy(); return; }
+    budget.count++; budget.bytes += bytes; this.deliveryBudget.set(socket, budget);
+    const previous = this.deliveries.get(socket) ?? Promise.resolve();
+    const next = previous.then(async () => { if (!socket.destroyed) await deliver(); }).catch(() => {}).finally(() => { budget.count--; budget.bytes -= bytes; });
+    this.deliveries.set(socket, next);
+  }
+
+  private send(socket: Socket, message: unknown, receipt?: RemoteReceipt): void {
     if (socket.destroyed) return;
     if (socket.writableLength > MAX_LINE_BYTES) { socket.destroy(); return; }
-    const projected = this.compactSubscribers.has(socket) ? this.attachments.project(projectRemoteHistory(message)) : message;
-    socket.write(JSON.stringify(projected) + "\n");
+    const projected = this.compactSubscribers.has(socket) ? this.attachments.get(socket)!.project(projectRemoteHistory(message)) : message;
+    if (receipt) {
+      const receipts = this.receipts.get(socket)!;
+      receipts.set(receipt.token, receipt);
+      if (receipt.generation && receipt.release) this.releases.get(socket)?.set(receipt.generation, receipt.release);
+      if (receipts.size > 65536) receipts.delete(receipts.keys().next().value!);
+      socket.write(JSON.stringify({ transport_frame: 1, receipt: receipt.token, message: projected }) + "\n");
+    } else socket.write(JSON.stringify(projected) + "\n");
   }
 
   private accept(socket: Socket, token: string, defaultWorkdir: string): void {
     const peerID=this.nextPeerID++;
     this.peerSockets.set(peerID,socket);
-    const request=(cwd:string,method:string,params:unknown,reply:(response:Pick<AppServerResponse,"result"|"error">)=>void)=>this.request(cwd,method,params,reply,peerID);
+    const activations = new PluginDesktopActivations(`remote:${peerID}`);
+    const request = async (cwd: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void) => {
+      if (socket.destroyed) throw new Error("Remote connection closed");
+      // ACK ownership comes from this authenticated socket, never browser fields
+      // or a fresh lookup of the currently selected workspace/process.
+      if (method === "plugin/desktop-activation") {
+        await activations.report(params as PluginDesktopActivationParams);
+        return { ok: true };
+      }
+      const peer = this.peers.get(socket)!;
+      if (method.startsWith("transport/")) throw new Error("Remote transport methods are forbidden");
+      return this.request(cwd, method, params, reply, peerID, activations, peer);
+    };
+    const attachments = new RemoteAttachments();
+    this.attachments.set(socket, attachments);
     this.sockets.add(socket);
     socket.on("error", () => socket.destroy());
-    socket.once("close", () => { this.peerSockets.delete(peerID);this.onPeerClose?.(peerID);this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); });
+    socket.once("close", () => {
+      this.activationOwners.delete(peerID);
+      const peer = this.peers.get(socket);
+      for (const release of this.releases.get(socket)?.values() ?? []) void release().catch(() => {});
+      this.releases.delete(socket);
+      this.peers.delete(socket); this.receipts.delete(socket); this.deliveries.delete(socket); this.deliveryBudget.delete(socket); this.attachments.delete(socket);
+      void activations.disconnect().catch(error => console.error("Remote renderer disconnect failed", error));
+      this.peerSockets.delete(peerID);this.onPeerClose?.(peerID, peer);this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket);
+    });
     socket.setTimeout(5000, () => socket.destroy());
     socket.setEncoding("utf8");
     let buffer = "", authenticated = false;
     // Duplicate ids on a live attachment share the original execution/result.
     const completed: string[] = [];
-    const requests = new Map<string, { signature: string; reply?: unknown; waiting: number }>();
+    const requests = new Map<string, { signature: string; reply?: unknown; receipt?: RemoteReceipt; waiting: number }>();
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       if (Buffer.byteLength(buffer) > MAX_LINE_BYTES) { socket.destroy(); return; }
@@ -89,17 +158,32 @@ export class RemoteAppServerBridge {
         const end = buffer.indexOf("\n");
         if (end < 0) break;
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
-        let input: Request & { token?: string };
+        let input: Request & { token?: string; transport?: unknown; transport_check?: { id: string; receipt: string } };
         try { input = JSON.parse(line); } catch { socket.destroy(); return; }
         if (!input || typeof input !== "object") { socket.destroy(); return; }
         if (!authenticated) {
           const provided = Buffer.from(typeof input.token === "string" ? input.token : "");
           const expected = Buffer.from(token);
           if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) { socket.destroy(); return; }
+          if (!trustedRemotePeer(input.transport)) { socket.destroy(); return; }
+          this.peers.set(socket, Object.freeze({ ...input.transport, validation: Object.freeze({ ...input.transport.validation }), principal: Object.freeze({ ...input.transport.principal }) }));
+          this.receipts.set(socket, new Map());
+          this.releases.set(socket, new Map());
           authenticated = true;
+          this.activationOwners.set(peerID, activations);
           socket.setTimeout(0);
           this.subscribers.add(socket);
-          this.send(socket, { ready: true });
+          this.send(socket, { ready: true, transport_version: 1 });
+          continue;
+        }
+        if (input.transport_check) {
+          const check = input.transport_check;
+          const receipt = this.receipts.get(socket)?.get(check.receipt);
+          void Promise.resolve().then(async () => {
+            if (!receipt) throw new Error("Receipt expired");
+            await receipt.check();
+          }).then(() => this.send(socket, { transport_checked: check.id, allowed: true }),
+            () => this.send(socket, { transport_checked: check.id, allowed: false }));
           continue;
         }
         if ((typeof input.id !== "string" && typeof input.id !== "number") || typeof input.method !== "string") {
@@ -114,7 +198,7 @@ export class RemoteAppServerBridge {
         let entry = requests.get(key);
         if (entry && entry.signature !== signature) { socket.destroy(); return; }
         if (entry) {
-          if (entry.reply !== undefined) this.send(socket, entry.reply);
+          if (entry.reply !== undefined) { const replay = entry; this.queue(socket, async () => { try { await replay.receipt?.check(); this.send(socket, replay.reply, replay.receipt); } catch { this.send(socket, { id, error: { code: "access_denied", message: "Cached response authorization expired" } }); } }); }
           else entry.waiting++;
           continue;
         }
@@ -122,15 +206,24 @@ export class RemoteAppServerBridge {
         entry = { signature, waiting: 1 };
         requests.set(key, entry);
         const pending = entry;
-        const finish = (response: Pick<AppServerResponse, "result" | "error">) => {
+        const finish = (response: ScopedRemoteResponse) => {
           if (pending.reply !== undefined) return;
-          pending.reply = { ...response, id };
-          for (let n = 0; n < pending.waiting; n++) this.send(socket, pending.reply);
+          const { receipt, ...body } = response;
+          if (socket.destroyed) { void receipt?.release?.().catch(() => {}); return; }
+          if (receipt?.generation && receipt.release) this.releases.get(socket)?.set(receipt.generation, receipt.release);
+          pending.reply = { ...body, id }; pending.receipt = receipt;
+          if (!receipt && !this.peers.get(socket)!.owner && !response.error) {
+            pending.reply = { id, error: { code: "access_denied", message: "Scoped backend required" } };
+          }
+          if (receipt) this.queue(socket, async () => { try { await receipt.check(); for (let n = 0; n < pending.waiting; n++) this.send(socket, pending.reply, receipt); } catch { this.send(socket, { id, error: { code: "access_denied", message: "Response authorization expired" } }); } });
+          else for (let n = 0; n < pending.waiting; n++) this.send(socket, pending.reply);
           completed.push(key);
           if (completed.length > 256) requests.delete(completed.shift()!);
         };
         void Promise.resolve().then(async () => {
           if(socket.destroyed)throw new Error("Remote connection closed");
+          if (method.startsWith("transport/")) throw new Error("Remote transport methods are forbidden");
+          if (!this.peers.get(socket)!.owner && (method.startsWith("desktop/") || method.startsWith("plugin/") || method.startsWith("remote/attachment/"))) throw new Error("This operation requires a scoped provider");
           if (method.startsWith("auth/chatgpt/login/")) {
             throw new Error("ChatGPT sign-in must be started on the local desktop");
           }
@@ -148,14 +241,23 @@ export class RemoteAppServerBridge {
             const source = typeof input?.ref === "string" ? attachmentReadTarget(input.ref) : undefined;
             if (source) return request(cwd, source.method, { ...source.params, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
             if (method.endsWith("preview")) throw new Error("Preview is unavailable for this attachment");
-            return this.attachments.read(params);
+            return attachments.read(params);
           }
-          const hydrated = await this.attachments.hydrateRemote(params, async ref => {
+          if (!this.peers.get(socket)!.owner) {
+            const assertScoped = (value: unknown): void => {
+              if (!value || typeof value !== "object") return;
+              if ("remote_ref" in value && typeof value.remote_ref === "string" && !value.remote_ref.startsWith("thread:")) throw new Error("Scoped attachment reference required");
+              for (const child of Object.values(value)) assertScoped(child);
+            };
+            assertScoped(params);
+          }
+          const hydrated = await attachments.hydrateRemote(params, async ref => {
             const source = attachmentReadTarget(ref)!;
             const chunks: string[] = [];
             let offset = 0, total = 1;
             while (offset < total) {
-              const chunk = await request(cwd, source.method, { ...source.params, offset }, () => {}) as { data: string; total: number; offset: number };
+              const response = await request(cwd, source.method, { ...source.params, offset }, () => {});
+              const chunk = (isScopedRemoteResponse(response) ? response.result : response) as { data: string; total: number; offset: number };
               if (!chunk.data || chunk.offset !== offset || chunk.total > 64 * 1024 * 1024) throw new Error("Invalid attachment response");
               chunks.push(chunk.data); offset += chunk.data.length; total = chunk.total;
             }
@@ -163,7 +265,7 @@ export class RemoteAppServerBridge {
           });
           return request(cwd, method, method === "thread/resume" ? { ...(hydrated as object), history_page: true } : hydrated, finish);
         }).then(
-          result => finish({ result }),
+          result => finish(isScopedRemoteResponse(result) ? result : { result }),
           error => finish({ error: { code: "error", message: error instanceof Error ? error.message : String(error) } }),
         );
       }

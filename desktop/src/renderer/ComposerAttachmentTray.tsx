@@ -1,3 +1,5 @@
+import { TruncatedText } from "./TruncatedText";
+import { Tooltip } from "./Tooltip";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AttachmentImage } from "./AttachmentImage";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
@@ -27,7 +29,7 @@ type TrayCard =
 
 type ExitingCard = { card: TrayCard; index: number };
 type Point = { left: number; top: number };
-type Lift = { stack: Animation; frame: Animation; closing: boolean };
+type Lift = { stack: Animation; frame: Animation; footer?: Animation; closing: boolean };
 
 function trayCards(
   images: ComposerImage[],
@@ -61,9 +63,9 @@ function translateOffset(element: HTMLElement, axis: 0 | 1): number {
  * Every animation runs on the compositor (opacity, scale, translate): a paste
  * is exactly when the main thread is busy encoding, and layout-driven motion
  * would stall with it. Opening the tray changes layout once; the stack is
- * translated back by the new height and the frame counter-translated, so the
- * content above rises smoothly while the input stays put. Cards removed
- * through the tray leave in place while their neighbours glide over (FLIP);
+ * translated back by the new height and the frame and footer counter-translated,
+ * so the content above rises smoothly while the input and controls stay put.
+ * Cards removed through the tray leave in place while their neighbours glide over (FLIP);
  * anything else — sending, a draft swap — disappears at once.
  *
  * The tray must render immediately before `.composer-frame` in its
@@ -156,25 +158,21 @@ export function ComposerAttachmentTray({
     for (const key of dismissed.current) {
       if (!cards.some((card) => card.key === key)) dismissed.current.delete(key);
     }
-    const slow = motionDurationMs("--motion-slow", 280);
-    const base = motionDurationMs("--motion-base", 180);
-    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
-    const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
     const tray = trayRef.current;
     const list = listRef.current;
-    const animate = !reset && !document.hidden && !prefersReducedMotion() && slow > 0 &&
-      typeof tray?.animate === "function";
 
     const settleLift = (): void => {
       lift.current?.stack.cancel();
       lift.current?.frame.cancel();
+      lift.current?.footer?.cancel();
       lift.current = null;
     };
-    // Moves everything above the frame by `to` while the frame holds still.
+    // Move the accessories while keeping both the input and its footer fixed.
     const liftTo = (to: number, closing: boolean, duration: number, easing: string): void => {
       const stack = tray?.closest<HTMLElement>(".composer-stack");
       const frame = tray?.nextElementSibling;
       if (!stack || !(frame instanceof HTMLElement)) return;
+      const footer = stack.querySelector<HTMLElement>(":scope > .composer-shell > .composer-footer-shell");
       const from = lift.current ? translateOffset(stack, 1) : closing ? 0 : to;
       settleLift();
       const target = closing ? to : 0;
@@ -182,6 +180,7 @@ export function ComposerAttachmentTray({
       lift.current = {
         stack: stack.animate([{ translate: `0 ${from}px` }, { translate: `0 ${target}px` }], timing),
         frame: frame.animate([{ translate: `0 ${-from}px` }, { translate: `0 ${-target}px` }], timing),
+        footer: footer?.animate([{ translate: `0 ${-from}px` }, { translate: `0 ${-target}px` }], timing),
         closing,
       };
     };
@@ -191,6 +190,13 @@ export function ComposerAttachmentTray({
       offsets.current = new Map();
       return;
     }
+    // Empty trays need no computed motion styles during conversation switches.
+    const slow = motionDurationMs("--motion-slow", 280);
+    const base = motionDurationMs("--motion-base", 180);
+    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
+    const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
+    const animate = !reset && !document.hidden && !prefersReducedMotion() && slow > 0 &&
+      typeof tray.animate === "function";
     const trayHeight = tray.offsetHeight + Number.parseFloat(getComputedStyle(tray).marginBottom || "0");
     const presentCount = rendered.filter((entry) => !entry.exiting).length;
     if (!animate) {
@@ -290,6 +296,7 @@ export function ComposerAttachmentTray({
   useEffect(() => () => {
     lift.current?.stack.cancel();
     lift.current?.frame.cancel();
+    lift.current?.footer?.cancel();
   }, []);
 
   useEffect(() => {
@@ -391,10 +398,10 @@ function ComposerPreparationCard({ preparation, onRemove, removeLabel }: {
     <ComposerDocumentCard
       className={`composer-file-card ${failed ? "composer-attachment-failed" : "composer-attachment-preparing"}`}
       icon={<FileText className="icon" />}
-      title={<strong className="composer-document-card-title" title={preparation.filename}>{preparation.filename}</strong>}
-      meta={<span role={failed ? "alert" : "status"} title={preparation.error}>
+      title={<TruncatedText as="strong" className="composer-document-card-title" text={preparation.filename} />}
+      meta={<Tooltip asChild content={preparation.error}><span role={failed ? "alert" : "status"}>
         {t(failed ? "composer.attachment.retryRead" : "composer.attachment.preparing")}
-      </span>}
+      </span></Tooltip>}
       openLabel={failed ? t("composer.attachment.retryFile", { name: preparation.filename, reason: preparation.error ?? "" }) : undefined}
       onOpen={failed ? () => { void preparation.retry?.(); } : undefined}
       removeLabel={removeLabel}
@@ -459,7 +466,6 @@ function ComposerVideoCard({
       <button
         className="composer-video-card-main"
         type="button"
-        title={filename}
         aria-label={t("composer.attachment.playVideo", { name: filename })}
         aria-pressed={playing}
         disabled={!src}
@@ -516,8 +522,8 @@ function ComposerFileCard({
       className="composer-file-card"
       icon={<FileText className="icon" />}
       title={
-        <strong className="composer-document-card-title composer-file-card-name" title={filename}>
-          <span className="composer-file-card-stem">{stem}</span>
+        <strong className="composer-document-card-title composer-file-card-name">
+          <TruncatedText className="composer-file-card-stem" text={stem} />
           {extension ? <span className="composer-file-card-extension">{extension}</span> : null}
         </strong>
       }

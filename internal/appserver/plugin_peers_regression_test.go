@@ -7,13 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // stuckPeersLifecycleClient simulates a peers helper whose single ordered
@@ -56,17 +54,22 @@ func (c *stuckPeersLifecycleClient) InvokeCapability(ctx context.Context, _ plug
 func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{providersResponse("peer-done"), providersResponse("user-done")}}
 	rt := newTestRuntime(t, client)
-	kit, err := tools.New(rt.RootDir)
+	rt = newReloadBehaviorRuntime(t, rt, client)
+	cfg, _, err := rt.LoadEffectiveConfig()
 	if err != nil {
-		t.Fatalf("tools.New: %v", err)
+		t.Fatal(err)
 	}
-	rt.Toolkit = kit
 	peers := &stuckPeersLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
-	rt.PluginHost = pluginhost.New(peers)
+	// Replace the bundled observer so the queued turn reaches this blocked fixture.
+	if outcome, _ := rt.PluginHost.RetirePlugin(context.Background(), peers.ID(), nil); outcome.Err != nil {
+		t.Fatal(outcome.Err)
+	}
+	rt.PluginHost.Add(peers)
 	rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: peers.ID()}, SubjectID: "plugin:peers", Official: true}}
 	rt.ActivePlugins = rt.Plugins
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	binding := testRuntimeState(t, rt)
 	t.Cleanup(func() {
 		close(peers.release)
 		srv.Close()
@@ -91,7 +94,7 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 
 	drained := make(chan struct{})
 	go func() {
-		srv.drainQueuedTurns(threadID)
+		srv.drainQueuedTurns(binding, threadID)
 		close(drained)
 	}()
 
@@ -112,7 +115,8 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	// active. Retained callback leases must not delay explicit revocation.
 	settings := &extensions.Settings{}
 	settings.SetEnabled("plugin:peers", false)
-	candidate, err := rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	cfg.Extensions = settings
+	candidate, err := rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +127,7 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	// The peers-owned turn itself still completes; its terminal lifecycle
 	// event is undeliverable and must be dropped instead of replayed forever.
 	waitForTurnCompletionContent(t, out, threadID, "peer-done")
-	waitForEmptyLifecycleOutbox(t, rt.SessionDir)
+	waitForEmptyLifecycleOutbox(t, binding.Sessions)
 
 	// Ordinary send on the existing session must complete.
 	raw, err := json.Marshal(map[string]any{
@@ -158,13 +162,13 @@ func waitForTurnCompletionContent(t *testing.T, out *lockedBuffer, threadID, con
 	t.Fatalf("timed out waiting for turn completion %q on thread %q; output:\n%s", content, threadID, out.String())
 }
 
-func waitForEmptyLifecycleOutbox(t *testing.T, sessionDir string) {
+func waitForEmptyLifecycleOutbox(t *testing.T, store *session.Store) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	var entries []session.PluginTurnLifecycleOutboxEntry
 	for time.Now().Before(deadline) {
 		var err error
-		entries, err = session.ListPluginTurnLifecycleOutbox(sessionDir)
+		entries, err = store.ListPluginTurnLifecycleOutbox()
 		if err != nil {
 			t.Fatalf("list plugin turn lifecycle outbox: %v", err)
 		}

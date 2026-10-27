@@ -1,78 +1,43 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { BrowserCookieImportResult, BrowserProfile } from "../shared/protocol";
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useI18n } from "./i18n";
 import { PREVIEW_BROWSER_PROFILES } from "./onboardingPreview";
 import { SettingsGroup } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { LoaderCircle, RefreshCw } from "./WuuIcons";
 
-export function OnboardingBrowserImport({ preview, onBusyChange, onImported }: {
+export function OnboardingBrowserImport({ preview, busy, importError, results, onImport }: {
   preview: boolean;
-  onBusyChange: (busy: boolean) => void;
-  onImported: () => void;
+  busy: string;
+  importError: string;
+  results: Record<string, BrowserCookieImportResult>;
+  onImport: (profile: BrowserProfile) => Promise<void>;
 }): JSX.Element {
   const { t, locale } = useI18n();
+  const controls = useSettingsControls();
   const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const [results, setResults] = useState<Record<string, BrowserCookieImportResult>>({});
-  const importing = useRef(false);
-  const mounted = useRef(false);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
+  const [discoveryError, setDiscoveryError] = useState("");
+  const error = importError || discoveryError;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError("");
+    setDiscoveryError("");
     void (async () => {
       try {
-        const found = preview ? PREVIEW_BROWSER_PROFILES : await window.wuu.listBrowserProfiles!();
+        const found = preview ? PREVIEW_BROWSER_PROFILES : await controls.listBrowserProfiles();
         if (!cancelled) setProfiles(found);
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+        if (!cancelled) setDiscoveryError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [preview, attempt]);
-
-  async function importCookies(profile: BrowserProfile): Promise<void> {
-    if (importing.current) return;
-    importing.current = true;
-    setBusy(profile.profilePath);
-    onBusyChange(true);
-    setError("");
-    setResults((current) => {
-      const next = { ...current };
-      delete next[profile.profilePath];
-      return next;
-    });
-    try {
-      // Preview never reads a local profile or invokes the production importer.
-      const result: BrowserCookieImportResult = preview
-        ? { ...profile, discovered: 24, imported: 22, skippedExpired: 2, skippedInvalid: 0, failed: 0 }
-        : await window.wuu.importBrowserCookies!(profile.profilePath);
-      if (mounted.current) {
-        setResults((current) => ({ ...current, [profile.profilePath]: result }));
-        if (result.imported > 0) onImported();
-      }
-    } catch (reason) {
-      if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      importing.current = false;
-      if (mounted.current) {
-        setBusy("");
-        onBusyChange(false);
-      }
-    }
-  }
+  }, [preview, attempt, controls]);
 
   const mostRecent = profiles.find((profile) => profile.hasCookies && profile.lastUsedAt);
   return (
@@ -95,7 +60,7 @@ export function OnboardingBrowserImport({ preview, onBusyChange, onImported }: {
               })}</span> : profile.userName}
               hint={!profile.hasCookies ? t("settings.browserNoCookies") : profile === mostRecent ? t("onboarding.browserMostRecent", { date: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(profile.lastUsedAt) }) : undefined}
             >
-              <button className="settings-button" type="button" disabled={Boolean(busy) || !profile.hasCookies} aria-label={`${t("settings.browserImportAction")} · ${label}`} onClick={() => void importCookies(profile)}>
+              <button className="settings-button" type="button" disabled={Boolean(busy) || !profile.hasCookies} aria-label={`${t("settings.browserImportAction")} · ${label}`} onClick={() => void onImport(profile)}>
                 {busy === profile.profilePath ? t("settings.browserImporting") : t("settings.browserImportAction")}
               </button>
             </SettingsRow>;

@@ -218,15 +218,17 @@ function gitStatusResult(
   const branchName = gitOutput(root, ["branch", "--show-current"]);
   const head = gitOutput(root, ["rev-parse", "--short", "HEAD"]);
   const branch = branchName || head;
-  const branches = gitOutput(root, [
+  // NUL-delimited fields preserve worktree paths containing tabs or newlines.
+  const branchRecords = gitRawOutput(root, [
     "for-each-ref",
     "--sort=-committerdate",
-    "--format=%(refname:short)",
+    "--format=%(refname:short)%00%(worktreepath)%00",
     "refs/heads",
-  ])
-    ?.split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  ])?.split("\0\n").filter(Boolean).map((record) => record.split("\0"));
+  const branches = branchRecords?.map(([name]) => name);
+  const branchWorktrees = branchRecords
+    ?.filter(([, path]) => Boolean(path))
+    .map(([name, path]) => ({ branch: name, path }));
   const porcelain = gitOutput(root, ["status", "--porcelain"]);
   const dirtyCount = porcelain
     ? porcelain.split("\n").filter((line) => line.trim()).length
@@ -256,6 +258,7 @@ function gitStatusResult(
     is_repo: true,
     branch,
     branches,
+    branch_worktrees: branchWorktrees,
     dirty_count: dirtyCount,
     detached: !branchName,
     diff: gitDiffStats(root, true),
@@ -410,14 +413,7 @@ function checkoutGitBranch(
   if (!target || !current.branches?.includes(target)) {
     throw new Error("branch not found");
   }
-  const result = spawnSync("git", ["-C", context.cwd, "checkout", target], {
-    cwd: context.cwd,
-    encoding: "utf8",
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `failed to checkout ${target}`);
-  }
+  gitRun(context.cwd, ["checkout", target]);
   return gitStatusResult(context);
 }
 
@@ -623,7 +619,7 @@ function validateGitBranchName(cwd: string, branch: string): void {
     {
       cwd,
       encoding: "utf8",
-      env: process.env,
+      env: { ...process.env, LC_ALL: "C" },
     },
   );
   if (result.status !== 0) {
@@ -635,7 +631,8 @@ function gitRun(cwd: string, args: string[]): string {
   const result = spawnSync("git", ["-C", cwd, ...args], {
     cwd,
     encoding: "utf8",
-    env: process.env,
+    // Renderer error classification must not depend on the host's locale.
+    env: { ...process.env, LC_ALL: "C" },
   });
   if (result.status !== 0) {
     throw new Error(

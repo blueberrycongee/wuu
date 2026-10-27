@@ -2,13 +2,13 @@ package appserver
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/worktree"
@@ -55,8 +55,8 @@ type projectRoleUsage struct {
 	CacheCreationTokens int    `json:"cache_creation_tokens"`
 }
 
-func (s *Server) workForMember(projectID, memberID string) (session.ProjectWork, bool, error) {
-	works, err := session.ListProjectWork(s.rt.SessionDir, projectID)
+func (s *ProjectCoordinationProvider) workForMember(projectID, memberID string) (session.ProjectWork, bool, error) {
+	works, err := s.store.ListProjectWork(projectID)
 	if err != nil {
 		return session.ProjectWork{}, false, err
 	}
@@ -68,7 +68,7 @@ func (s *Server) workForMember(projectID, memberID string) (session.ProjectWork,
 	return session.ProjectWork{}, false, nil
 }
 
-func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tools.ProjectWorkRequest) (any, error) {
+func (s *ProjectCoordinationProvider) projectWork(ctx context.Context, actorID, callID string, r tools.ProjectWorkRequest) (any, error) {
 	project, actor, _, err := s.projectActor(actorID)
 	if err != nil {
 		return nil, err
@@ -82,15 +82,15 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 		return s.listProjectWork(project.ID, false)
 	}
 	if r.Operation != "get" {
-		if prior, ok, err := session.ProjectWorkOperation(s.rt.SessionDir, operationID); err != nil {
+		if prior, ok, err := s.store.ProjectWorkOperation(operationID); err != nil {
 			return nil, err
 		} else if ok {
 			// Drain the current outbox, never the stale receipt's earlier instruction.
-			current, err := session.ReadProjectWork(s.rt.SessionDir, prior.ID)
+			current, err := s.store.ReadProjectWork(prior.ID)
 			if err != nil {
 				return nil, err
 			}
-			if err = s.reconcileProjectWork(current); err != nil {
+			if err = s.reconcileProjectWork(ctx, current); err != nil {
 				return nil, err
 			}
 			return s.projectWorkView(current, true)
@@ -123,7 +123,7 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 		w = session.ProjectWork{ID: session.NewID(), ProjectID: project.ID, LeadID: session.NewID(), Revision: 1, Title: firstNonEmpty(strings.TrimSpace(r.Title), excerpt(r.Brief, 60)), Brief: r.Brief, Acceptance: r.Acceptance, Authority: r.Authority, SourceRefs: r.SourceRefs, Phase: "planning", Workspace: workspace, LeadModel: leadModel, ExecutorModel: executorModel}
 		w.LeadInput = s.workInput(w, operationID, project.ID, workContract(w))
 	} else {
-		w, err = session.ReadProjectWork(s.rt.SessionDir, r.WorkID)
+		w, err = s.store.ReadProjectWork(r.WorkID)
 		if err != nil {
 			return nil, err
 		}
@@ -283,28 +283,28 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 			return nil, errors.New("unknown work operation")
 		}
 	}
-	w, err = session.SaveProjectWork(s.rt.SessionDir, w, w.Version, operationID)
+	w, err = s.store.SaveProjectWork(w, w.Version, operationID)
 	if err != nil {
 		return nil, err
 	}
-	s.startBackground(func() { s.kickProjectInboxDrain(w.ProjectID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.kickProjectInboxDrain(w.ProjectID) })
 
 	// Requirement corrections fence writes immediately and interrupt stale execution.
 	// Execution leases remain held until the owning processes really exit.
 	if r.Operation == "update" || r.Operation == "resume" {
-		if err = s.interruptWorkMember(w.ExecutorID); err != nil {
+		if err = s.interruptWorkMember(ctx, w.ExecutorID); err != nil {
 			return nil, err
 		}
 	}
-	if err = s.reconcileProjectWork(w); err != nil {
+	if err = s.reconcileProjectWork(ctx, w); err != nil {
 		return nil, err
 	}
 	s.publishProjectWork(w)
 	return s.projectWorkView(w, true)
 }
 
-func (s *Server) listProjectWork(projectID string, details bool) (any, error) {
-	works, err := session.ListProjectWork(s.rt.SessionDir, projectID)
+func (s *ProjectCoordinationProvider) listProjectWork(projectID string, details bool) (any, error) {
+	works, err := s.store.ListProjectWork(projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -338,33 +338,33 @@ func (s *Server) listProjectWork(projectID string, details bool) (any, error) {
 	return map[string]any{"project_id": projectID, "works": views, "usage": usage}, err
 }
 
-func (s *Server) workInput(w session.ProjectWork, id, sender, brief string) *session.ProjectWorkInput {
+func (s *ProjectCoordinationProvider) workInput(w session.ProjectWork, id, sender, brief string) *session.ProjectWorkInput {
 	return &session.ProjectWorkInput{ClientID: id, SenderID: sender, Brief: fmt.Sprintf("Work %s; requirement revision %d.\n%s", w.ID, w.Revision, brief), Revision: w.Revision}
 }
 func workContract(w session.ProjectWork) string {
 	return fmt.Sprintf("Outcome: %s\nUser requirements:\n%s\nAcceptance:\n%s\nUser authority and limits:\n%s\nSource references and dependencies:\n%s", w.Title, w.Brief, w.Acceptance, w.Authority, w.SourceRefs)
 }
-func (s *Server) requireWorkEvidence(r tools.ProjectWorkRequest) error {
+func (s *ProjectCoordinationProvider) requireWorkEvidence(r tools.ProjectWorkRequest) error {
 	if strings.TrimSpace(r.Summary) == "" || strings.TrimSpace(r.Evidence) == "" || strings.TrimSpace(r.CodeRef) == "" {
 		return errors.New("summary, verification/review evidence and exact code_ref are required")
 	}
 	return nil
 }
-func (s *Server) workMemberActive(id string) (bool, error) {
+func (s *ProjectCoordinationProvider) workMemberActive(id string) (bool, error) {
 	if id == "" {
 		return false, nil
 	}
 	return session.ThreadExecutionActive(s.rt.SessionDir, id)
 }
-func (s *Server) interruptWorkMember(id string) error {
+func (s *ProjectCoordinationProvider) interruptWorkMember(ctx context.Context, id string) error {
 	if id == "" {
 		return nil
 	}
-	s.revokeSessionInputs(id)
-	return s.interruptOwnedThreadExecution(id)
+	s.revokeSessionInputs(s.binding, id)
+	return s.interruptManagedSession(ctx, id)
 }
-func (s *Server) currentProjectWorkTurn(id string) (string, error) {
-	th, err := s.ensureThreadLoaded(id)
+func (s *ProjectCoordinationProvider) currentProjectWorkTurn(id string) (string, error) {
+	th, err := s.ensureThreadLoaded(s.binding, id)
 	if err != nil {
 		return "", err
 	}
@@ -375,7 +375,7 @@ func (s *Server) currentProjectWorkTurn(id string) (string, error) {
 	}
 	return th.Turns[len(th.Turns)-1].ID, nil
 }
-func (s *Server) currentWorkAssignmentTurn(id, clientID string) (string, error) {
+func (s *ProjectCoordinationProvider) currentWorkAssignmentTurn(id, clientID string) (string, error) {
 	turnID, err := s.currentProjectWorkTurn(id)
 	if err != nil {
 		return "", err
@@ -385,7 +385,7 @@ func (s *Server) currentWorkAssignmentTurn(id, clientID string) (string, error) 
 
 // An unchanged assignment covers its automatic continuation turns. A newer
 // assignment must be consumed first; a late result before it cannot satisfy it.
-func (s *Server) requireWorkAssignmentTurn(id, clientID, turnID string) error {
+func (s *ProjectCoordinationProvider) requireWorkAssignmentTurn(id, clientID, turnID string) error {
 	turns, err := s.loadDurableProjectTurns(id)
 	if err != nil {
 		return err
@@ -411,7 +411,7 @@ func (s *Server) requireWorkAssignmentTurn(id, clientID, turnID string) error {
 	return errWorkInputNotConsumed
 }
 
-func (s *Server) projectWorkModel(project session.Session, selection config.ModelRoleConfig, alias string) (session.RuntimeSelection, error) {
+func (s *ProjectCoordinationProvider) projectWorkModel(project session.Session, selection config.ModelRoleConfig, alias string) (session.RuntimeSelection, error) {
 	model := runtimeSelectionFromSession(project)
 	if selection.Provider != "" {
 		model.Provider, model.Model, model.Variant, model.Effort = selection.Provider, selection.Model, selection.Variant, selection.Effort
@@ -429,18 +429,18 @@ func (s *Server) projectWorkModel(project session.Session, selection config.Mode
 	return model, nil
 }
 
-func (s *Server) reconcileProjectWork(w session.ProjectWork) (resultErr error) {
-	current, err := session.ReadProjectWork(s.rt.SessionDir, w.ID)
+func (s *ProjectCoordinationProvider) reconcileProjectWork(ctx context.Context, w session.ProjectWork) (resultErr error) {
+	current, err := s.store.ReadProjectWork(w.ID)
 	if err != nil {
 		return err
 	}
 	if current.Phase == "stopped" {
-		if err := errors.Join(s.interruptWorkMember(current.ExecutorID), s.interruptWorkMember(current.LeadID)); err != nil {
+		if err := errors.Join(s.interruptWorkMember(ctx, current.ExecutorID), s.interruptWorkMember(ctx, current.LeadID)); err != nil {
 			return err
 		}
-		return session.ReconcileProjectWork(s.rt.SessionDir, current.ID, current.Version)
+		return s.store.ReconcileProjectWork(current.ID, current.Version)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, "project-work-reconcile:"+w.ID)
+	lease, acquired, err := s.store.TryAcquireThreadExecutionLease(s.rt.SessionDir, "project-work-reconcile:"+w.ID)
 	if err != nil {
 		return err
 	}
@@ -448,33 +448,33 @@ func (s *Server) reconcileProjectWork(w session.ProjectWork) (resultErr error) {
 		return nil
 	}
 	defer lease.Release()
-	w, err = session.ReadProjectWork(s.rt.SessionDir, w.ID)
+	w, err = s.store.ReadProjectWork(w.ID)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if resultErr == nil {
-			resultErr = session.ReconcileProjectWork(s.rt.SessionDir, w.ID, w.Version)
+			resultErr = s.store.ReconcileProjectWork(w.ID, w.Version)
 		}
 	}()
 
 	if w.Phase == "stopped" {
-		return errors.Join(s.interruptWorkMember(w.ExecutorID), s.interruptWorkMember(w.LeadID))
+		return errors.Join(s.interruptWorkMember(ctx, w.ExecutorID), s.interruptWorkMember(ctx, w.LeadID))
 	}
 	if _, live := s.projectCoordinator(w.ProjectID); !live {
 		return nil
 	}
-	if err := s.ensureWorkMember(w, w.LeadID, "technical_lead", w.LeadModel, ""); err != nil {
+	if err := s.ensureWorkMember(ctx, w, w.LeadID, "technical_lead", w.LeadModel, ""); err != nil {
 		return err
 	}
 	if w.ExecutorID != "" {
-		if err := s.ensureWorkMember(w, w.ExecutorID, "executor", w.ExecutorModel, w.LeadID); err != nil {
+		if err := s.ensureWorkMember(ctx, w, w.ExecutorID, "executor", w.ExecutorModel, w.LeadID); err != nil {
 			return err
 		}
 	}
 	// Old assignments are retained as evidence but never restarted after acceptance.
 	if w.Phase == "planning" && w.ExecutorInput == nil {
-		if err := s.interruptWorkMember(w.ExecutorID); err != nil {
+		if err := s.interruptWorkMember(ctx, w.ExecutorID); err != nil {
 			return err
 		}
 	}
@@ -490,18 +490,18 @@ func (s *Server) reconcileProjectWork(w session.ProjectWork) (resultErr error) {
 	}
 	if w.Phase == "accepted" || w.Phase == "blocked" || (w.Phase == "delivered" && w.DeliveryBy == w.LeadID) {
 		message := fmt.Sprintf("Work %q (%s), requirement revision %d: %s.\n%s\nTechnical review: %s\nCode/content version: %s\nBlocker: %s\nDelivery: %s", w.Title, w.ID, w.Revision, w.Phase, w.Summary, w.Review, w.CodeRef, w.Blocker, w.Delivery)
-		if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{ClientID: fmt.Sprintf("project-work-result:%s:%d", w.ID, w.Version), SessionID: w.ProjectID, RelatedSessionID: w.LeadID, Cause: projectCauseResult, Content: message, Wake: true, WorkID: w.ID, WorkRevision: w.Revision, WorkVersion: w.Version}); err != nil {
+		if err := s.store.EnqueueInbox(session.InboxMessage{ClientID: fmt.Sprintf("project-work-result:%s:%d", w.ID, w.Version), SessionID: w.ProjectID, RelatedSessionID: w.LeadID, Cause: projectCauseResult, Content: message, Wake: true, WorkID: w.ID, WorkRevision: w.Revision, WorkVersion: w.Version}); err != nil {
 			return err
 		}
-		s.startBackground(func() { s.drainSessionInbox(w.ProjectID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(w.ProjectID) })
 	}
 	return nil
 }
 
-func (s *Server) ensureWorkMember(w session.ProjectWork, id, role string, model session.RuntimeSelection, sharedWith string) error {
-	s.projectCreateMu.Lock()
-	defer s.projectCreateMu.Unlock()
-	if metadata, found, err := session.Find(s.rt.SessionDir, id); err != nil {
+func (s *ProjectCoordinationProvider) ensureWorkMember(ctx context.Context, w session.ProjectWork, id, role string, model session.RuntimeSelection, sharedWith string) error {
+	s.lifetime.projectCreateMu.Lock()
+	defer s.lifetime.projectCreateMu.Unlock()
+	if metadata, found, err := s.store.Find(id); err != nil {
 		return err
 	} else if found {
 		if metadata.Source != projectSessionSource || metadata.ParentID != w.ProjectID || metadata.ArchivedAt != nil {
@@ -525,7 +525,7 @@ func (s *Server) ensureWorkMember(w session.ProjectWork, id, role string, model 
 	if sharedWith != "" {
 		workspace = "shared"
 	}
-	_, err := s.createHostSessionThread(projectSessionOwner, projectSessionSource, id, hostSessionCreateParams{
+	_, err := s.createManagedSession(ctx, projectSessionOwner, projectSessionSource, id, hostSessionCreateParams{
 		RequestID: "project-work-member:" + id, Name: w.Title + " · " + role, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		ParentSessionID: w.ProjectID, Workspace: workspace, WorkspaceID: project.WorkspaceID, SharedWorkspaceSessionID: sharedWith,
 		Provider: model.Provider, Model: model.Model, Variant: model.Variant, Effort: model.Effort, PermissionMode: project.PermissionMode, ProjectRole: role, InitialInput: &initial,
@@ -533,11 +533,11 @@ func (s *Server) ensureWorkMember(w session.ProjectWork, id, role string, model 
 	return err
 }
 
-func (s *Server) enqueueWorkBrief(w session.ProjectWork, target string, input *session.ProjectWorkInput) error {
+func (s *ProjectCoordinationProvider) enqueueWorkBrief(w session.ProjectWork, target string, input *session.ProjectWorkInput) error {
 	if input == nil || target == "" {
 		return nil
 	}
-	control, ok, err := session.ReadControl(s.rt.SessionDir, target)
+	control, ok, err := s.store.ReadControl(target)
 	if err != nil {
 		return err
 	}
@@ -545,14 +545,14 @@ func (s *Server) enqueueWorkBrief(w session.ProjectWork, target string, input *s
 		return session.ErrControlChanged
 	}
 	message := session.InboxMessage{ClientID: input.ClientID, SessionID: target, RelatedSessionID: input.SenderID, Cause: "project", Content: input.Brief, Wake: true, Controls: []session.Control{control}, WorkID: w.ID, WorkRevision: input.Revision}
-	if err := session.EnqueueInbox(s.rt.SessionDir, message); err != nil {
+	if err := s.store.EnqueueInbox(message); err != nil {
 		return err
 	}
-	s.startBackground(func() { s.drainSessionInbox(target) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(target) })
 	return nil
 }
 
-func (s *Server) projectWorkView(w session.ProjectWork, includeUsage bool) (projectWorkView, error) {
+func (s *ProjectCoordinationProvider) projectWorkView(w session.ProjectWork, includeUsage bool) (projectWorkView, error) {
 	view := projectWorkView{ID: w.ID, ProjectID: w.ProjectID, Version: w.Version, Revision: w.Revision, Title: w.Title, Phase: w.Phase, LeadID: w.LeadID, ExecutorID: w.ExecutorID, Workspace: w.Workspace,
 		Brief: w.Brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs, Summary: w.Summary, Evidence: w.Evidence, CodeRef: w.CodeRef, Review: w.Review, ReviewTurnID: w.ReviewTurnID, SubmissionTurnID: w.SubmissionTurnID, Delivery: w.Delivery, Blocker: w.Blocker}
 	for _, entry := range []struct {
@@ -563,7 +563,7 @@ func (s *Server) projectWorkView(w session.ProjectWork, includeUsage bool) (proj
 		if entry.input == nil {
 			continue
 		}
-		metadata, found, err := session.Find(s.rt.SessionDir, entry.id)
+		metadata, found, err := s.store.Find(entry.id)
 		if err != nil {
 			return view, err
 		}
@@ -583,8 +583,8 @@ func (s *Server) projectWorkView(w session.ProjectWork, includeUsage bool) (proj
 	return view, err
 }
 
-func (s *Server) projectWorkUsage(roles map[string]string) ([]projectRoleUsage, error) {
-	rows, err := session.ListTokenUsage(s.rt.SessionDir)
+func (s *ProjectCoordinationProvider) projectWorkUsage(roles map[string]string) ([]projectRoleUsage, error) {
+	rows, err := s.store.ListTokenUsage()
 	if err != nil {
 		return nil, err
 	}
@@ -611,7 +611,7 @@ func (s *Server) projectWorkUsage(roles map[string]string) ([]projectRoleUsage, 
 	return usage, nil
 }
 
-func (s *Server) publishProjectWork(w session.ProjectWork) {
+func (s *ProjectCoordinationProvider) publishProjectWork(w session.ProjectWork) {
 	if err := s.writeNotification("project/work/updated", map[string]any{"project_id": w.ProjectID, "work_id": w.ID}); err != nil {
 		providers.DebugLogf("publish project work: %v", err)
 	}
@@ -619,7 +619,7 @@ func (s *Server) publishProjectWork(w session.ProjectWork) {
 
 // recordWorkTurn suppresses member-level reports to the coordinator. Only the
 // owning technical lead receives executor detail; turn completion is not review.
-func (s *Server) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
+func (s *ProjectCoordinationProvider) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
 	w, found, err := s.workForMember(th.ProjectID, th.ID)
 	if err != nil || !found {
 		return found, err
@@ -671,7 +671,7 @@ func (s *Server) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
 			message := fmt.Sprintf("Work %s revision %d requires technical review. Executor turn %s: %s.\n%s\nEvidence: %s\nCode/content: %s\n%s", w.ID, w.Revision, turn.ID, turn.Status, finalAnswerText(turn), w.Evidence, w.CodeRef, w.Blocker)
 			w.LeadInput = s.workInput(w, projectResultClientID(th.ID, turn.ID), th.ID, message)
 		}
-		saved, err := session.SaveProjectWork(s.rt.SessionDir, w, w.Version, projectResultClientID(th.ID, turn.ID)+":work")
+		saved, err := s.store.SaveProjectWork(w, w.Version, projectResultClientID(th.ID, turn.ID)+":work")
 		if err != nil {
 			return true, err
 		}
@@ -688,18 +688,18 @@ func (s *Server) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
 			w.Revision++
 			w.LeadInput, w.ExecutorInput = nil, nil
 		}
-		saved, err := session.SaveProjectWork(s.rt.SessionDir, w, w.Version, projectResultClientID(th.ID, turn.ID)+":work")
+		saved, err := s.store.SaveProjectWork(w, w.Version, projectResultClientID(th.ID, turn.ID)+":work")
 		if err != nil {
 			return true, err
 		}
 		s.publishProjectWork(saved)
-		return true, s.reconcileProjectWork(saved)
+		return true, s.reconcileProjectWork(s.ctx, saved)
 	}
 	return true, nil
 }
 
-func (s *Server) recoverProjectWork(projectID string) error {
-	works, err := session.ListProjectWork(s.rt.SessionDir, projectID)
+func (s *ProjectCoordinationProvider) recoverProjectWork(projectID string) error {
+	works, err := s.store.ListProjectWork(projectID)
 	if err != nil {
 		return err
 	}
@@ -721,13 +721,13 @@ func (s *Server) recoverProjectWork(projectID string) error {
 			}
 			if len(turns) > 0 && turns[len(turns)-1].Status == TurnStatusInProgress {
 				w.Phase, w.Blocker = "blocked", "Execution ended without durable terminal evidence; inspect and explicitly resume"
-				w, err = session.SaveProjectWork(s.rt.SessionDir, w, w.Version, fmt.Sprintf("work-recovery:%s:%d", w.ID, w.Version))
+				w, err = s.store.SaveProjectWork(w, w.Version, fmt.Sprintf("work-recovery:%s:%d", w.ID, w.Version))
 				if err != nil {
 					return err
 				}
 			}
 		}
-		if err := s.reconcileProjectWork(w); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err := s.reconcileProjectWork(s.ctx, w); err != nil && !errors.Is(err, session.ErrProjectWorkNotFound) {
 			return err
 		}
 	}
@@ -736,7 +736,7 @@ func (s *Server) recoverProjectWork(projectID string) error {
 
 // The desktop exposes only user status and explicit control actions. Technical
 // lifecycle transitions remain attributed to the responsible model session.
-func (s *Server) handleProjectWork(req Request) error {
+func (s *Server) handleProjectWork(binding *runtime.State, req Request) error {
 	var p struct {
 		ProjectID string `json:"project_id"`
 		RequestID string `json:"request_id"`
@@ -755,13 +755,10 @@ func (s *Server) handleProjectWork(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("desktop work control supports list, get, stop and resume"))
 	}
 	if p.Operation == "list" {
-		if _, _, _, err := s.projectActor(p.ProjectID); err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		result, err := s.listProjectWork(p.ProjectID, true)
+		result, err := s.listProjectWork(binding, p.ProjectID, true)
 		return s.writeResponse(req.ID, result, err)
 	}
 
-	result, err := s.projectWork(context.Background(), p.ProjectID, "desktop:"+p.RequestID, p.ProjectWorkRequest)
+	result, err := s.projectWork(binding, context.Background(), p.ProjectID, "desktop:"+p.RequestID, p.ProjectWorkRequest)
 	return s.writeResponse(req.ID, result, err)
 }

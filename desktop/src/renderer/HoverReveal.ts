@@ -5,12 +5,13 @@
  * the two kinds of layer cannot drift apart:
  *
  * - Opening waits HOVER_REVEAL_OPEN_DELAY_MS. A layer hovered within
- *   SKIP_DELAY_MS of any other layer closing opens immediately, so sweeping
- *   across a row of controls or a list doesn't pay the delay per anchor.
- * - Anchor presses, Escape, external scroll, and blur dismiss. Interactive
- *   cards also dismiss on outside presses. After a dismiss on press or
- *   Escape the layer stays suppressed until the pointer leaves the
- *   anchor, so a clicked control doesn't immediately re-arm its layer.
+ *   SKIP_DELAY_MS of a peer layer closing opens immediately. Only siblings
+ *   of the same interaction kind share this grace period, so a toolbar hint
+ *   cannot cause an unrelated preview card to open during pointer travel.
+ * - Anchor presses, outside presses, Escape, external scroll, and blur dismiss.
+ *   After a dismiss on press or Escape the layer stays suppressed until the
+ *   pointer leaves the anchor, so a clicked control doesn't immediately
+ *   re-arm its layer.
  * - No layer opens while a context menu is open, and opening one dismisses
  *   the current layer.
  *
@@ -37,8 +38,9 @@ export const HOVER_REVEAL_OPEN_DELAY_MS = 400;
 const SKIP_DELAY_MS = 300;
 const INTERACTIVE_CLOSE_DELAY_MS = 200;
 
-// Timestamp of the most recent close, shared across all instances.
 let lastRevealClosedAt = -Infinity;
+let lastRevealParent: HTMLElement | null = null;
+let lastRevealInteractive = false;
 let focusedHoverLayer: RefObject<HTMLDivElement | null> | null = null;
 
 export type HoverRevealAnchorHandlers = {
@@ -91,14 +93,16 @@ export function useHoverReveal<K>({
   revealed: HoverRevealTarget<K> | null;
   anchorHandlers: (key: K) => HoverRevealAnchorHandlers;
   layerProps: HoverRevealLayerProps;
+  dismiss: () => void;
 } {
   const scope = useContext(HoverRevealScopeContext);
   const disabled = locallyDisabled || Boolean(scope?.disabled);
   const [revealed, setRevealed] = useState<HoverRevealTarget<K> | null>(null);
+  const [pending, setPending] = useState(false);
   // Mirrors for event handlers and effects, so dismissing never depends on
   // a stale closure capture.
   const revealedRef = useRef<HoverRevealTarget<K> | null>(null);
-  const pendingKeyRef = useRef<{ key: K } | null>(null);
+  const pendingKeyRef = useRef<HoverRevealTarget<K> | null>(null);
   const openTimerRef = useRef<number | null>(null);
   const suppressUntilLeaveRef = useRef(false);
   const layerRef = useRef<HTMLDivElement>(null);
@@ -113,7 +117,7 @@ export function useHoverReveal<K>({
 
   function containsTarget(target: EventTarget | null): boolean {
     return target instanceof Node && Boolean(
-      revealedRef.current?.anchor.contains(target) || layerRef.current?.contains(target),
+      (revealedRef.current ?? pendingKeyRef.current)?.anchor.contains(target) || layerRef.current?.contains(target),
     );
   }
 
@@ -123,6 +127,7 @@ export function useHoverReveal<K>({
       openTimerRef.current = null;
     }
     pendingKeyRef.current = null;
+    setPending(false);
   }
 
   function reveal(next: HoverRevealTarget<K> | null): void {
@@ -131,6 +136,8 @@ export function useHoverReveal<K>({
     }
     if (!next) {
       lastRevealClosedAt = Date.now();
+      lastRevealParent = revealedRef.current?.anchor.parentElement ?? null;
+      lastRevealInteractive = interactive;
     }
     revealedRef.current = next;
     setRevealed(next);
@@ -170,13 +177,16 @@ export function useHoverReveal<K>({
     }
     clearOpenTimer();
     const delay =
-      current || Date.now() - lastRevealClosedAt < SKIP_DELAY_MS
+      current || (lastRevealParent === anchor.parentElement && lastRevealInteractive === interactive
+        && Date.now() - lastRevealClosedAt < SKIP_DELAY_MS)
         ? 0
         : HOVER_REVEAL_OPEN_DELAY_MS;
-    pendingKeyRef.current = { key };
+    pendingKeyRef.current = { key, anchor };
+    setPending(true);
     openTimerRef.current = window.setTimeout(() => {
       openTimerRef.current = null;
       pendingKeyRef.current = null;
+      setPending(false);
       if (!hasActiveContextMenu()) {
         reveal({ key, anchor });
       }
@@ -234,13 +244,16 @@ export function useHoverReveal<K>({
   // A scroll outside the card invalidates its anchor geometry; a context
   // menu retires the card too. Scrolls within an editor do neither.
   const open = revealed !== null && !disabled;
+  // Dismissal must also cancel the intent delay: a keyboard-focused anchor
+  // may keep focus after an outside press that prevents the default action.
+  const watching = (pending || revealed !== null) && !disabled;
   useEffect(() => {
-    if (!open) {
+    if (!watching) {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        if (!propagateEscape) event.stopPropagation();
+        if (!propagateEscape && revealedRef.current) event.stopPropagation();
         suppressUntilLeaveRef.current = true;
         const anchorHovered = revealedRef.current?.anchor.matches(":hover");
         if (interactive && layerRef.current?.contains(document.activeElement)) {
@@ -285,8 +298,8 @@ export function useHoverReveal<K>({
     // dismissal so they do not race a surface-level handler.
     window.addEventListener("keydown", handleKeyDown, !interactive);
     window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("pointerdown", handlePointerDown, true);
     if (interactive) {
-      window.addEventListener("pointerdown", handlePointerDown, true);
       window.addEventListener("pointermove", handlePointerMove, true);
     }
     window.addEventListener("blur", handleWindowBlur);
@@ -300,7 +313,7 @@ export function useHoverReveal<K>({
       stopContextMenuWatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, interactive, propagateEscape]);
+  }, [watching, interactive, propagateEscape]);
 
   // External state can retire a layer mid-hover (content cleared, or the
   // anchor became disabled). Clear timers before the owner finishes closing.
@@ -320,6 +333,7 @@ export function useHoverReveal<K>({
   return {
     revealed: open ? revealed : null,
     anchorHandlers,
+    dismiss: close,
     layerProps: {
       ref: layerRef,
       onPointerEnter: clearCloseTimer,

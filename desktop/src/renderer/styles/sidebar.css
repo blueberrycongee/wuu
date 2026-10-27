@@ -1,9 +1,8 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* An opaque neutral rail keeps navigation separate from the reading canvas
-   * without depending on wallpaper or browser backing colors. */
-  --sidebar-material-fill: var(--surface-2);
+  /* A quiet opaque rail separates navigation without outweighing the canvas. */
+  --sidebar-material-fill: #f7f7f7;
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -19,19 +18,16 @@
    * on the opaque rail. */
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* A quiet tone step identifies the current row without lifting it into a
-   * separate card. Derive it from ink so the same treatment works in both themes. */
+  /* A neutral filled row carries location; regular-weight labels stay stable. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    color-mix(in srgb, var(--ink) 8%, transparent)
+    var(--selection-surface)
   );
-  --sidebar-row-selected-shadow: none;
+  --sidebar-row-selected-shadow: var(--shadow-soft);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
-  --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
-  --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
   --sidebar-settings-button-hover-ring: transparent;
   /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
@@ -42,6 +38,7 @@
 }
 
 .app-shell {
+  --shell-right-control-inset: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
   display: grid;
   position: relative;
   isolation: isolate;
@@ -77,7 +74,7 @@
 .shell-right-sidebar-toggle {
   position: absolute;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  right: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
+  right: var(--shell-right-control-inset);
   z-index: 151;
   -webkit-app-region: no-drag;
 }
@@ -280,7 +277,7 @@
   flex-direction: column;
   border-right: var(--wuu-border-subtle, 1px solid var(--sidebar-material-edge));
   background: var(--sidebar-material-fill);
-  background: var(--wuu-color-surface-muted, var(--sidebar-material-fill));
+  background: var(--theme-override-color-surface-muted, var(--sidebar-material-fill));
   box-shadow:
     inset -1px 0 0 var(--sidebar-material-inner-edge),
     var(--sidebar-edge-shadow);
@@ -316,6 +313,7 @@
 /* While the rail column animates (or sits collapsed) the fixed-width
  * `.sidebar-content` inside must be clipped, not squished — both shells. */
 .sidebar-animating :is(.sidebar, .settings-sidebar),
+.resizing-sidebar :is(.sidebar, .settings-sidebar),
 .sidebar-collapsed :is(.sidebar, .settings-sidebar) {
   overflow: hidden;
 }
@@ -345,13 +343,12 @@
   --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
-  --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
-  /* Dense rows, clear groups: rows sit two label heights tall, and the
-   * separation between functional groups carries the structure. */
-  --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
-  /* Regular labels recede from the current location; selected labels retain
-   * full ink. Keep group headings on their separate tertiary-text role. */
-  --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
+  --sidebar-heading-size: var(--sidebar-label-size);
+  /* Comfortable rows remain distinct from the larger gaps between groups. */
+  --sidebar-row-height: max(28px, round(up, calc(var(--sidebar-label-size) * 1.8), 4px));
+  /* Labels keep readable ink; the filled row identifies the current location.
+   * Group headings use their separate tertiary-text role. */
+  --sidebar-label-ink: var(--ink);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
@@ -364,7 +361,9 @@
   --sidebar-accessory-gap: var(--space-2);
   --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
   --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
-  --sidebar-action-gap: var(--space-1);
+  /* Match the bell/search center spacing: pin is on the bell axis while
+   * archive stays on the search axis, even as UI font sizes change. */
+  --sidebar-action-gap: calc(var(--control-size-toolbar) + var(--control-toolbar-gap) - var(--sidebar-row-action-size));
   --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
   --sidebar-row-control-pad-x: var(--space-2);
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
@@ -372,7 +371,7 @@
    * Include each row's own leading when judging the visible whitespace. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-2);
-  --sidebar-functional-group-gap: var(--space-4);
+  --sidebar-functional-group-gap: var(--space-6);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -382,8 +381,7 @@
   --sidebar-session-status-scale: 0.75;
   --sidebar-session-status-unread-bg: var(--info);
   --sidebar-session-status-unread-scale: 1;
-  --sidebar-session-spinner-size: 9px;
-  --sidebar-session-spinner-border-width: 1.5px;
+  --sidebar-activity-size: 12px;
   display: flex;
   width: var(--sidebar-open-width, 296px);
   min-width: var(--sidebar-open-width, 296px);
@@ -398,10 +396,6 @@
     opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease),
     transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   will-change: opacity, transform;
-}
-
-.sidebar > .sidebar-content {
-  padding-bottom: calc(var(--conversation-pane-inset) + var(--composer-dock-bottom-space));
 }
 
 .sidebar-collapsed .sidebar-content {
@@ -543,7 +537,7 @@
 .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) {
   border-right-color: var(--sidebar-material-edge);
   background: var(--sidebar-material-fill);
-  background: var(--wuu-color-surface-muted, var(--sidebar-material-fill));
+  background: var(--theme-override-color-surface-muted, var(--sidebar-material-fill));
   box-shadow:
     inset -1px 0 0 var(--sidebar-material-inner-edge),
     var(--sidebar-edge-shadow);
@@ -622,11 +616,17 @@
 
 .sidebar-resizer {
   left: calc(var(--sidebar-width, 296px) - 5px);
-  z-index: 10;
+  /* The centered hit strip overlaps the sidebar's edge, including fractional
+     animated widths. Keep both halves above the sidebar surface (120). */
+  z-index: 121;
 }
 
 :is(.app-shell, .settings-shell) > .sidebar-resizer {
-  left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
+  /* Absolute grid placement follows the animated first track, rather than
+     jumping its hit target to the destination width before the pane arrives. */
+  grid-column: 1 / 2;
+  left: auto;
+  right: calc(-5px - var(--conversation-pane-inset));
   /* Container height lets the light clamp its transform to this rail without
    * measuring layout on pointermove or changing its top every frame. */
   container-type: size;
@@ -658,12 +658,15 @@
 
 /* Keep pointer feedback local to the grab point. Pressing gathers the hover
  * light into a soft bead; releasing lets it stretch back along the edge. */
-:is(.app-shell, .settings-shell) > .sidebar-resizer::before {
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before {
   --sidebar-resizer-light-height: 96px;
   --sidebar-resizer-light-inset: calc(
     var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
     var(--sidebar-resizer-light-height) / 2 + 4px
   );
+  position: absolute;
+  left: 50%;
+  content: "";
   top: 0;
   translate: 0 clamp(
     var(--sidebar-resizer-light-inset),
@@ -699,12 +702,12 @@
     transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
-:is(.app-shell, .settings-shell) > .sidebar-resizer:hover::before {
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):hover::before {
   opacity: 1;
 }
 
 /* Keyboard focus identifies the entire adjustable boundary. */
-:is(.app-shell, .settings-shell) > .sidebar-resizer::after {
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after {
   position: absolute;
   top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
   bottom: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
@@ -720,21 +723,21 @@
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::before {
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::before {
   opacity: 0;
 }
 
-:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::after {
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::after {
   opacity: 1;
 }
 
-:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::before {
+:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::before {
   opacity: 1;
   background: color-mix(in srgb, var(--ink) 40%, transparent);
   transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
 }
 
-:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::after {
+:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::after {
   opacity: 0;
 }
 
@@ -862,17 +865,28 @@
 }
 
 .sidebar-brand {
-  /* Two tracks so the wordmark stays put when the bell mounts or unmounts.
-   * Column 2 is reserved even when the button is absent. */
+  /* Reserve the attention control even in read-only brand previews. */
   display: grid;
   flex-shrink: 0;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) var(--control-size-toolbar);
   align-items: center;
-  column-gap: 8px;
-  min-height: 36px;
-  margin-top: calc(-1 * var(--space-2));
+  column-gap: var(--control-toolbar-gap);
+  min-height: max(36px, var(--control-size-toolbar));
+  margin-top: 0;
   padding: 0 var(--sidebar-row-pad-x) var(--space-1);
   color: var(--sidebar-brand-wordmark-color);
+}
+
+.sidebar-brand:has(.conversation-search-trigger) {
+  grid-template-columns: minmax(0, 1fr) repeat(2, var(--control-size-toolbar));
+}
+
+.sidebar-brand .conversation-search-trigger {
+  grid-column: 3;
+  justify-self: end;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  margin-right: calc((var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
 }
 
 .sidebar-brand-wordmark {
@@ -886,14 +900,14 @@
 
 .sidebar-notifications-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   position: relative;
   grid-column: 2;
   justify-self: end;
   place-items: center;
   /* Share the trailing-action axis with the toggle and sidebar rows. */
-  margin-right: calc((var(--sidebar-row-action-size) - 32px) / 2);
+  margin-right: calc((var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
   border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
@@ -934,9 +948,6 @@
 .sidebar-notifications-button svg {
   position: relative;
   z-index: 1;
-  width: var(--sidebar-primary-icon-size);
-  height: var(--sidebar-primary-icon-size);
-  stroke-width: var(--icon-stroke);
   transform-origin: 50% 15%;
 }
 
@@ -1041,6 +1052,12 @@
   }
 }
 
+/* Scrollports reach the pane edge; content keeps the shared row inset. */
+.sidebar-content :is(.sidebar-main, .sidebar-unread-view, .sidebar-section-scroll, .settings-nav) {
+  margin-inline: calc(-1 * var(--sidebar-content-pad-x));
+  padding-inline: var(--sidebar-content-pad-x);
+}
+
 .sidebar-main {
   display: flex;
   min-width: 0;
@@ -1119,10 +1136,23 @@
   color: var(--sidebar-heading-ink);
 }
 
-.primary-nav {
+.primary-nav,
+.sidebar-app-navigation {
   display: flex;
   flex-direction: column;
   gap: var(--sidebar-functional-row-gap);
+}
+
+/* Keep installed app destinations reachable without displacing the session
+ * list. A large extension collection scrolls within its own footer region. */
+.sidebar-app-navigation {
+  max-height: 25vh;
+  overflow-y: auto;
+  flex-shrink: 1;
+}
+
+.sidebar-app-navigation > .nav-item {
+  flex-shrink: 0;
 }
 
 .primary-nav {
@@ -1292,15 +1322,10 @@ html[data-focus-modality="keyboard"] :is(
   margin-top: var(--sidebar-functional-heading-gap);
 }
 
-.sidebar-functional-group + .sidebar-functional-group {
+.sidebar-functional-group + .sidebar-functional-group,
+.sidebar-functional-group + .sidebar-conversation-activity {
   margin-top: var(--sidebar-functional-group-gap);
   transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
-}
-
-/* An empty folder group still exposes creation and drop targets, but does
- * not need the full separation of two populated lists. */
-.sidebar-functional-group:has(> .sidebar-folder-heading[data-empty="true"]:not([data-folder-remove-drop])) + .sidebar-functional-group {
-  margin-top: var(--sidebar-functional-heading-gap);
 }
 
 .sidebar-functional-group-body {
@@ -1322,14 +1347,52 @@ html[data-focus-modality="keyboard"] :is(
   padding: 0 var(--sidebar-row-pad-x);
 }
 
+/* Recent uses the shared section fold control; keep its compose action on the
+ * same trailing axis as the other group actions. */
+.sidebar-recents-heading {
+  justify-content: space-between;
+}
+
+/* Match the half-em label/count spacing in attention headings and let it
+ * follow the heading size when the user enlarges UI text. */
+.sidebar-recents-heading .sidebar-functional-heading-toggle {
+  gap: 0.5em;
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+}
+
+.sidebar-recents-count {
+  flex: none;
+  color: var(--sidebar-heading-ink);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-ui);
+}
+
+/* Match the new-conversation button inside a workspace row: a row-sized hit
+ * target, the shared action icon size, and no hover box. */
+.sidebar-recents-heading .sidebar-recents-new-thread {
+  --sidebar-row-icon-hover-bg: transparent;
+  --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .sidebar-recents-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-recents-new-thread {
+    opacity: 0;
+  }
+}
+
 .sidebar-functional-heading-label,
 .sidebar-unread-heading-label {
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
   font-size: var(--sidebar-heading-size, var(--font-sm));
-  /* Size and ink already set the label below the rows; weight would make
-   * the structure louder than the conversations it groups. */
+  /* Ink distinguishes group headings from rows at the same UI size. */
   font-weight: var(--weight-regular);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
@@ -1386,8 +1449,8 @@ html[data-focus-modality="keyboard"] :is(
  * keeps its button. Empty groups retain their action as the entry point.
  * Touch keeps both visible: no hover. */
 @media (hover: hover) {
-  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
-  .sidebar-functional-heading:not(:hover, :focus-within, [data-empty="true"]) .sidebar-functional-action:not([aria-expanded="true"]) {
+  .sidebar-functional-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
+  .sidebar-functional-heading:not(:hover, [data-empty="true"]):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-action:not([aria-expanded="true"]) {
     opacity: 0;
   }
 }
@@ -1572,7 +1635,7 @@ html[data-focus-modality="keyboard"] :is(
 
 /* The open append target owns the group break. Restore the following margin
  * during the fold, not when retained rows (and the target) are unmounted. */
-.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + .sidebar-functional-group {
+.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + :is(.sidebar-functional-group, .sidebar-conversation-activity) {
   margin-top: 0;
 }
 
@@ -1659,17 +1722,15 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .project-add-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  left: 0;
-  z-index: 30;
   display: grid;
-  width: auto;
+  width: var(--floating-menu-available-width);
+  max-height: var(--floating-menu-available-height);
+  overflow-y: auto;
   gap: 1px;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
   transform-origin: top left;
@@ -1772,7 +1833,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .project-group:hover > .project-row .project-row-chevron,
-.project-group:focus-within > .project-row .project-row-chevron {
+html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row .project-row-chevron {
   opacity: 1;
 }
 
@@ -1855,30 +1916,16 @@ html[data-focus-modality="keyboard"] :is(
 .project-row .project-row-loading {
   grid-column: 3;
   justify-self: center;
-  width: var(--sidebar-session-spinner-size);
-  height: var(--sidebar-session-spinner-size);
-  flex: 0 0 auto;
-  /*
-   * Container and session running states share one size and stroke weight so
-   * peers in the sidebar do not imply different levels of activity.
-   */
-  border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--ink-strong) 65%, transparent);
-  border-top-color: var(--sidebar-project-loading-notch);
-  border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
   transition:
     opacity var(--motion-fast) var(--ease-out),
     scale var(--motion-fast) var(--ease-out);
 }
 
 /* A workspace list or switch usually settles within a few frames. Hold its
- * spinner back so a quick load shows nothing and a slow one still reports
+ * indicator back so a quick load shows nothing and a slow one still reports
  * progress. The delay also applies under reduced motion. */
 .project-row .project-row-loading.deferred {
-  animation:
-    wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards,
-    wuu-spin var(--session-loading-spin-duration) linear infinite;
+  animation: wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards;
 }
 
 .project-row-unread {
@@ -1953,26 +2000,26 @@ html[data-focus-modality="keyboard"] :is(
  * stopped matching and the button never appeared (regression fixed per
  * sidebar-groups-andy-workspaces.md §1.2). */
 .project-group:hover .project-row-new-thread,
-.project-group:focus-within .project-row-new-thread {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row-new-thread {
   opacity: 1;
   pointer-events: auto;
   transform: translate3d(0, 0, 0);
 }
 
 .project-group:hover .project-row .project-row-unread,
-.project-group:focus-within .project-row .project-row-unread,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread,
 .project-group:hover .project-row .project-row-loading,
-.project-group:focus-within .project-row .project-row-loading {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
   opacity: 0;
 }
 
 .project-group:hover .project-row .project-row-unread,
-.project-group:focus-within .project-row .project-row-unread {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread {
   transform: scale(0.72);
 }
 
 .project-group:hover .project-row .project-row-loading,
-.project-group:focus-within .project-row .project-row-loading {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
   scale: 0.72;
 }
 
@@ -2175,28 +2222,12 @@ html[data-focus-modality="keyboard"] :is(
 
 .thread-row-spinner {
   position: absolute;
-  top: calc(50% - var(--sidebar-session-spinner-size) / 2);
+  top: calc(50% - var(--sidebar-activity-size) / 2);
   right: calc(
     var(--sidebar-row-pad-x) +
-      (var(--sidebar-row-action-size) - var(--sidebar-session-spinner-size)) / 2
+      (var(--sidebar-row-action-size) - var(--sidebar-activity-size)) / 2
   );
   z-index: 1;
-  width: var(--sidebar-session-spinner-size);
-  height: var(--sidebar-session-spinner-size);
-  flex: 0 0 auto;
-  /*
-   * Session-row running-state spinner. Same inverted "light notch on a
-   * dark ring" treatment as `.session-tab.running .session-tab-status`
-   * and `.project-row .project-row-loading` — heavy dark mass anchors
-   * the rotation at this 9px size. 65% of `--ink-strong` for the ring
-   * keeps it from going inky against the sidebar surface.
-   */
-  border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--ink-strong) 65%, transparent);
-  border-top-color: var(--sidebar-thread-spinner-notch);
-  border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
-  pointer-events: none;
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
@@ -2209,8 +2240,8 @@ html[data-focus-modality="keyboard"] :is(
  * indicator while those controls are present rather than letting them overlap. */
 .thread-row:hover::before,
 .thread-row:hover .thread-row-spinner,
-.thread-row:focus-within::before,
-.thread-row:focus-within .thread-row-spinner {
+html[data-focus-modality="keyboard"] .thread-row:focus-within::before,
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-spinner {
   opacity: 0;
 }
 
@@ -2331,12 +2362,12 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 }
 
 .thread-row:hover .thread-row-main > .thread-row-title,
-.thread-row:focus-within .thread-row-main > .thread-row-title {
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
-.thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2363,7 +2394,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-.thread-row:is(:hover, :focus-within):has(.thread-row-fork-icon) .thread-row-fork-icon {
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
@@ -2410,6 +2442,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
     visibility 0s linear 120ms;
 }
 
+/* Pointer clicks retain DOM focus. Only keyboard focus reveals row actions
+ * after the pointer leaves; title spacing and status slots follow that rule. */
 /* When the row is hovered the action icons must read as clearly
  * clickable, not as faint decoration. Idle --ink-soft still washes out
  * on the hover background; bumping to --ink makes pin / archive
@@ -2427,7 +2461,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   transition-delay: 120ms;
 }
 
-.thread-row:focus-within .thread-row-actions {
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-actions {
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
@@ -2473,13 +2507,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 .sidebar-functional-heading .sidebar-add-workspace {
   width: auto;
   flex: 0 0 auto;
-}
-
-.sidebar-functional-heading .project-add-menu {
-  right: calc(-1 * var(--sidebar-row-pad-x));
-  left: auto;
-  min-width: 208px;
-  box-shadow: var(--shadow-card);
 }
 
 .sidebar-settings-button {
@@ -2538,6 +2565,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
 }
@@ -2676,7 +2704,11 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 
 /* Only the overlaid project add button needs a reserved grid slot. Other
  * actions occupy their own space beside the toggle. */
-.sidebar-section-header-group:not(:has(.project-row-new-thread)) .sidebar-section-row {
+/* Idle headers can use the space of their hidden new-thread action. Keep the
+ * trailing track whenever an action or a status indicator is visible. */
+.sidebar-section-header-group:not(:has(.project-row-new-thread)) .sidebar-section-row,
+.project-group:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) > .sidebar-section-header-group >
+  .sidebar-section-row:not(:has(.project-row-loading, .project-row-unread)) {
   grid-template-columns:
     var(--sidebar-nav-icon-col)
     minmax(0, 1fr);
@@ -2736,6 +2768,7 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   border: 1px solid var(--menu-border);
   border-radius: var(--radius-sm);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   color: var(--ink-soft);
   font-size: var(--font-sm);

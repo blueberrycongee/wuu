@@ -32,6 +32,49 @@ type StreamReplayGuard func(StreamRetryContext) error
 // replay guard before the provider goroutine can start another attempt.
 type StreamEventObserver func(context.Context, StreamEvent) error
 
+// StreamRecoveryInput is a completed attempt's immutable evidence. The
+// operation's admission budget remains authoritative even when policy changes.
+type StreamRecoveryInput struct {
+	Failure            NormalizedFailure
+	Attempt            int
+	MaxAttempts        int
+	Submissions        int
+	ForwardedEvents    int
+	FinalizedToolCalls []ToolCall
+	Config             RetryConfig
+}
+type StreamRecoveryPlanner func(context.Context, StreamRecoveryInput) (RecoveryPlan, time.Duration, error)
+
+type recoveryPlannerContextKey struct{}
+
+// WithRecoveryPlanner captures one selected strategy across unary, streaming,
+// compaction and nested model calls. It does not change receipt ownership.
+func WithRecoveryPlanner(ctx context.Context, planner StreamRecoveryPlanner) context.Context {
+	return context.WithValue(ctx, recoveryPlannerContextKey{}, planner)
+}
+func recoveryPlannerFromContext(ctx context.Context) StreamRecoveryPlanner {
+	planner, _ := ctx.Value(recoveryPlannerContextKey{}).(StreamRecoveryPlanner)
+	return planner
+}
+
+// WithStreamRecoveryPlanner replaces planning and backoff, not safety fences or
+// receipt accounting. A selected planner error terminates recovery without a
+// native fallback. Cancellation propagates before another attempt is admitted.
+func WithStreamRecoveryPlanner(planner StreamRecoveryPlanner) ReliableStreamOption {
+	return func(client *ReliableStreamClient) { client.recoveryPlanner = planner }
+}
+
+// DefaultStreamRecoveryPlan is the native provider's pure planning algorithm.
+// A selected external provider need not call it.
+func DefaultStreamRecoveryPlan(in StreamRecoveryInput) (RecoveryPlan, time.Duration) {
+	plan := PlanRecovery(in.Failure)
+	delay := time.Duration(0)
+	if plan.Action != RecoveryRefreshAuth {
+		delay = backoffDelay(in.Attempt-1, in.Config.InitialDelay, in.Config.MaxDelay, in.Failure.Cause)
+	}
+	return plan, delay
+}
+
 // ReliableStreamOption configures behavior that is orthogonal to retry count.
 type ReliableStreamOption func(*ReliableStreamClient)
 
@@ -64,11 +107,12 @@ func WithStreamRetryWait(wait func(context.Context, time.Duration) error) Reliab
 // streams. Callers receive a single output channel; reconnectable inner errors
 // are consumed internally and only the final unrecoverable error is forwarded.
 type ReliableStreamClient struct {
-	inner         StreamClient
-	onRetry       StreamRetryHook
-	replayGuard   StreamReplayGuard
-	eventObserver StreamEventObserver
-	wait          func(context.Context, time.Duration) error
+	recoveryPlanner StreamRecoveryPlanner
+	inner           StreamClient
+	onRetry         StreamRetryHook
+	replayGuard     StreamReplayGuard
+	eventObserver   StreamEventObserver
+	wait            func(context.Context, time.Duration) error
 }
 
 // ReplayBlockedError reports a retryable transport failure that Wuu chose not
@@ -117,8 +161,15 @@ func (r *ReliableStreamClient) StreamChat(ctx context.Context, req ChatRequest) 
 	if r == nil || r.inner == nil {
 		return nil, errors.New("stream client is required")
 	}
+	ctx, endReceipt, err := BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(chan StreamEvent)
-	go r.run(ctx, req, out)
+	go func() {
+		defer endReceipt(nil)
+		r.run(ctx, req, out)
+	}()
 	return out, nil
 }
 
@@ -140,6 +191,10 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 		return
 	}
 	operation := req.Operation
+	planner := r.recoveryPlanner
+	if planner == nil {
+		planner = recoveryPlannerFromContext(ctx)
+	}
 	cfg := NormalizeRetryConfig(RetryConfigForProfile(operation.WorkloadProfile))
 	startedAt := time.Now()
 	maxAttempts := operation.AttemptLimit
@@ -186,7 +241,9 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			// either the drain or its own ctx select, finishes, and releases
 			// its lease through its defers.
 			cancelAttempt()
-			drainStream(ch)
+			if drainErr := drainStream(ctx, ch); drainErr != nil {
+				err = errors.Join(err, drainErr)
+			}
 			if ctx.Err() != nil {
 				failure := NormalizeFailure(ctx.Err())
 				_ = attempt.Complete(InferenceOutcomeCanceled, failure)
@@ -210,8 +267,22 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			}
 		}
 		failure := NormalizeFailure(err)
-		plan := PlanRecovery(failure)
-		canRetry := ctx.Err() == nil && attempt.Ordinal < maxAttempts && streamRecoverySupported(r.inner, plan)
+		evidence := StreamRecoveryInput{Failure: failure, Attempt: attempt.Ordinal, MaxAttempts: maxAttempts, Submissions: len(req.Execution.Snapshot().Submissions), ForwardedEvents: forwardedEvents, FinalizedToolCalls: append([]ToolCall(nil), finalizedToolCalls...), Config: cfg}
+		var plan RecoveryPlan
+		var delay time.Duration
+		var policyErr error
+		if planner != nil {
+			plan, delay, policyErr = planner(ctx, evidence)
+		} else {
+			plan, delay = DefaultStreamRecoveryPlan(evidence)
+		}
+		if delay < 0 {
+			policyErr = errors.Join(policyErr, errors.New("negative recovery delay"))
+		}
+		if policyErr != nil {
+			err = errors.Join(err, policyErr)
+		}
+		canRetry := policyErr == nil && ctx.Err() == nil && attempt.Ordinal < maxAttempts && streamRecoverySupported(r.inner, plan)
 		if canRetry && r.replayGuard != nil {
 			if guardErr := r.replayGuard(StreamRetryContext{
 				Operation:          operation,
@@ -250,10 +321,6 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			return
 		}
 
-		delay := time.Duration(0)
-		if plan.Action != RecoveryRefreshAuth {
-			delay = backoffDelay(retriesUsed, cfg.InitialDelay, cfg.MaxDelay, err)
-		}
 		if journalErr := attempt.Complete(InferenceOutcomeFailed, failure); journalErr != nil {
 			reportFailure(errors.Join(journalErr, err), "recovery_failed")
 			return
@@ -269,8 +336,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			return
 		}
 		if plan.Action == RecoveryRefreshAuth {
-			applier := r.inner.(InferenceRecoveryApplier)
-			if applyErr := applier.ApplyInferenceRecovery(ctx, plan); applyErr != nil {
+			if applyErr := applyInferenceRequestRecovery(ctx, r.inner, attemptReq, plan); applyErr != nil {
 				_ = nextAttempt.Complete(InferenceOutcomeFailed, NormalizeFailure(applyErr))
 				reportFailure(errors.Join(applyErr, err), "recovery_failed")
 				return
@@ -448,6 +514,9 @@ func streamRecoverySupported(client StreamClient, plan RecoveryPlan) bool {
 	case RecoveryReplaySame, RecoveryWaitThenReplay, RecoverySwitchTransport:
 		return true
 	case RecoveryRefreshAuth:
+		if _, ok := client.(InferenceRequestRecoveryApplier); ok {
+			return true
+		}
 		_, ok := client.(InferenceRecoveryApplier)
 		return ok
 	default:

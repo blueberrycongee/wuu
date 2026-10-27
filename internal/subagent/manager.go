@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,7 +12,10 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -38,6 +42,7 @@ type Manager struct {
 	defaultKeepRecent      int
 	defaultDisableCompact  bool
 	defaultJournal         providers.InferenceJournal
+	BeginModelReceipts     agent.BeginModelReceiptsFunc
 	toolLedgerFactory      func(string) (*toolledger.Ledger, error)
 
 	mu        sync.Mutex
@@ -58,9 +63,12 @@ type Manager struct {
 	// admission: the owner uses this hook to reapply the authority in force
 	// now instead of the one captured at spawn. Running workers are never
 	// touched — a live turn keeps its admitted snapshot until it settles.
-	wakeAuthority   func(agent.ToolExecutor)
-	onSubagentStart func(context.Context, string) error
-	onSubagentStop  func(context.Context, string) error
+	wakeAuthority      func(agent.ToolExecutor)
+	selectedCompaction *compactionservice.Client
+	acquireLoopDriver  loopdriver.AcquireFunc
+	configureRunner    func(*agent.StreamRunner, string, string)
+	onSubagentStart    func(context.Context, string) error
+	onSubagentStop     func(context.Context, string) error
 }
 
 type ManagerOptions struct {
@@ -81,28 +89,37 @@ type ManagerOptions struct {
 	DisableAutoCompact      bool
 	// InferenceJournal is an infrastructure dependency fixed at manager
 	// construction. UpdateDefaults intentionally does not replace it.
-	InferenceJournal  providers.InferenceJournal
-	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
-	OnSubagentStart   func(context.Context, string) error
-	OnSubagentStop    func(context.Context, string) error
+	InferenceJournal   providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
+	// AcquireLoopDriver is required for execution. Missing configuration
+	// rejects the turn before lifecycle hooks, inference, or tool calls.
+	SelectedCompaction *compactionservice.Client
+	AcquireLoopDriver  loopdriver.AcquireFunc
+	// ConfigureRunner installs generation-bound policies using the resolved
+	// worker provider/model and its own transcript identity and workspace.
+	ConfigureRunner func(*agent.StreamRunner, string, string)
+	OnSubagentStart func(context.Context, string) error
+	OnSubagentStop  func(context.Context, string) error
 }
 
 type managerDefaults struct {
-	client            providers.StreamClient
-	providerName      string
-	model             string
-	effort            string
-	options           map[string]any
-	contextWindow     int
-	maxInputTokens    int
-	outputReserve     int
-	compactTokens     int
-	compactPct        float64
-	temperature       float64
-	keepRecent        int
-	disableCompact    bool
-	journal           providers.InferenceJournal
-	toolLedgerFactory func(string) (*toolledger.Ledger, error)
+	client             providers.StreamClient
+	providerName       string
+	model              string
+	effort             string
+	options            map[string]any
+	contextWindow      int
+	maxInputTokens     int
+	outputReserve      int
+	compactTokens      int
+	compactPct         float64
+	temperature        float64
+	keepRecent         int
+	disableCompact     bool
+	journal            providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	toolLedgerFactory  func(string) (*toolledger.Ledger, error)
 }
 
 type toolContextBlockProvider interface {
@@ -111,8 +128,8 @@ type toolContextBlockProvider interface {
 
 // NewManager constructs a Manager backed by the given streaming LLM
 // client. defaultModel is used when SpawnOptions.Model is empty.
-func NewManager(client providers.StreamClient, defaultModel string) *Manager {
-	return NewManagerWithOptions(client, defaultModel, ManagerOptions{})
+func NewManager(client providers.StreamClient, defaultModel string, driver loopdriver.Driver) *Manager {
+	return NewManagerWithOptions(client, defaultModel, ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(driver)})
 }
 
 // NewManagerWithOptions constructs a Manager with default request options for
@@ -133,7 +150,11 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		defaultKeepRecent:      opts.CompactKeepRecentTokens,
 		defaultDisableCompact:  opts.DisableAutoCompact,
 		defaultJournal:         opts.InferenceJournal,
+		BeginModelReceipts:     opts.BeginModelReceipts,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
+		acquireLoopDriver:      opts.AcquireLoopDriver,
+		configureRunner:        opts.ConfigureRunner,
+		selectedCompaction:     opts.SelectedCompaction,
 		onSubagentStart:        opts.OnSubagentStart,
 		onSubagentStop:         opts.OnSubagentStop,
 		agents:                 make(map[string]*SubAgent),
@@ -173,21 +194,22 @@ func (m *Manager) defaultsSnapshot() managerDefaults {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return managerDefaults{
-		client:            m.client,
-		providerName:      m.defaultProviderName,
-		model:             m.defaultModel,
-		effort:            m.defaultEffort,
-		options:           provideroptions.Clone(m.defaultProviderOptions),
-		contextWindow:     m.defaultContextWindow,
-		maxInputTokens:    m.defaultMaxInputTokens,
-		outputReserve:     m.defaultOutputReserve,
-		compactTokens:     m.defaultCompactTokens,
-		temperature:       m.defaultTemperature,
-		compactPct:        m.defaultCompactPct,
-		keepRecent:        m.defaultKeepRecent,
-		disableCompact:    m.defaultDisableCompact,
-		journal:           m.defaultJournal,
-		toolLedgerFactory: m.toolLedgerFactory,
+		client:             m.client,
+		providerName:       m.defaultProviderName,
+		model:              m.defaultModel,
+		effort:             m.defaultEffort,
+		options:            provideroptions.Clone(m.defaultProviderOptions),
+		contextWindow:      m.defaultContextWindow,
+		maxInputTokens:     m.defaultMaxInputTokens,
+		outputReserve:      m.defaultOutputReserve,
+		compactTokens:      m.defaultCompactTokens,
+		temperature:        m.defaultTemperature,
+		compactPct:         m.defaultCompactPct,
+		keepRecent:         m.defaultKeepRecent,
+		disableCompact:     m.defaultDisableCompact,
+		journal:            m.defaultJournal,
+		BeginModelReceipts: m.BeginModelReceipts,
+		toolLedgerFactory:  m.toolLedgerFactory,
 	}
 }
 
@@ -389,21 +411,22 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
 	}
 
@@ -446,17 +469,17 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 		runtime:            runtime,
 		workerRoot:         opts.WorkerRoot,
 		toolkit:            opts.Toolkit,
-		historyPath:        opts.HistoryPath,
-		initialHistory:     opts.InitialHistory,
-		history:            providers.CloneChatMessages(history),
-		maxSteps:           opts.MaxSteps,
-		maxLifetime:        lifetime,
-		runtimeDefaults:    runtimeDefaults,
-		client:             client,
-		providerName:       providerName,
-		toolLedger:         toolLedger,
-		cancelFunc:         cancel,
-		doneCh:             make(chan struct{}),
+		historyPath:        opts.HistoryPath, historyDocuments: opts.HistoryDocuments, historyScope: opts.HistoryScope,
+		initialHistory:  opts.InitialHistory,
+		history:         providers.CloneChatMessages(history),
+		maxSteps:        opts.MaxSteps,
+		maxLifetime:     lifetime,
+		runtimeDefaults: runtimeDefaults,
+		client:          client,
+		providerName:    providerName,
+		toolLedger:      toolLedger,
+		cancelFunc:      cancel,
+		doneCh:          make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -469,13 +492,13 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	doneCh := sa.doneCh
 	m.mu.Unlock()
 
-	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults)
+	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults, nil)
 
 	return sa, nil
 }
 
 // runTurn executes one turn for a sub-agent in a goroutine.
-func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults) {
+func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults, receiptErr error) {
 	ownsDone := true
 	defer func() {
 		if ownsDone {
@@ -483,15 +506,21 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		}
 	}()
 	defer cancel()
+	var releaseDriver func()
+	defer func() {
+		if releaseDriver != nil {
+			releaseDriver()
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
-			sa.Error = fmt.Errorf("worker panic: %v", r)
+			sa.Error = errors.Join(receiptErr, fmt.Errorf("worker panic: %v", r))
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
 			m.prepareTerminal(sa, StatusFailed)
-			if sa.historyPath != "" {
+			if sa.historyPath != "" || sa.historyDocuments != nil {
 				_ = persistHistory(sa)
 			}
 			m.notify(sa, StatusFailed)
@@ -546,7 +575,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	}
 
 	runner := &agent.StreamRunner{
+		SelectedCompaction:       m.selectedCompaction,
 		Client:                   sa.client,
+		DriverCheckpointStore:    workerCheckpointStore{worker: sa},
 		ProviderName:             sa.providerName,
 		Tools:                    sa.toolkit,
 		ToolLedger:               sa.toolLedger,
@@ -566,8 +597,12 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		InferenceOperationKind:   providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile: providers.InferenceProfileBackgroundAgent,
 		InferenceJournal:         defaults.journal,
+		BeginModelReceipts:       defaults.BeginModelReceipts,
 		OnUsage:                  onUsage,
 		OnTokenUsage:             onTokenUsage,
+	}
+	if m.configureRunner != nil {
+		m.configureRunner(runner, sa.ID, sa.workerRoot)
 	}
 	if provider, ok := sa.toolkit.(toolContextBlockProvider); ok {
 		runner.BeforeRequestContext = func() []agent.ContextSegment {
@@ -587,14 +622,43 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	runner.ForceToolFirstStep = sa.takeForceToolNextTurn()
 	var res agent.LoopResult
 	var err error
-	if m.onSubagentStart != nil {
-		err = m.onSubagentStart(ctx, sa.ID)
+	executionID := rand.Text()
+	if m.acquireLoopDriver == nil {
+		err = errors.New("worker loop driver is not configured")
+	} else {
+		sa.mu.Lock()
+		expected := sa.driverBinding
+		sa.mu.Unlock()
+		var binding loopdriver.Binding
+		var release func()
+		runner.LoopDriver, binding, release, err = m.acquireLoopDriver(ctx, expected)
+		if err == nil {
+			releaseDriver = release
+			sa.mu.Lock()
+			sa.driverBinding = &binding
+			sa.mu.Unlock()
+		}
 	}
 	if err == nil {
-		res, err = runner.RunWithCallback(ctx, history, onEvent)
+		sa.mu.Lock()
+		previousExecutionID := sa.driverExecutionID
+		sa.driverExecutionID = executionID
+		err = persistDriverStateLocked(sa)
+		if err != nil {
+			sa.driverExecutionID = previousExecutionID
+		}
+		sa.mu.Unlock()
 	}
-	if m.onSubagentStop != nil {
-		err = errors.Join(err, m.onSubagentStop(ctx, sa.ID))
+	// Each worker owns a distinct domain execution even when spawned from an
+	// active parent turn. Inheriting its ID would alias the callback registry.
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: executionID})
+	if err == nil {
+		err = runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStart)
+		if err == nil {
+			res, err = runner.RunWithCallback(ctx, history, onEvent)
+			sa.acceptDriverCheckpoint(res)
+		}
+		err = errors.Join(err, runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStop))
 	}
 	content := res.Content
 	nextHistory := mergeTurnHistory(history, res)
@@ -614,20 +678,20 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		//     stopped without saying anything. Ask once for a final summary,
 		//     reusing the same turn machinery in place (no parallel loop).
 		if strings.TrimSpace(content) == "" && ctx.Err() == nil {
-			if nudged, nudgedHistory, ok := m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent); ok {
-				nextHistory = nudgedHistory
-				if strings.TrimSpace(nudged) != "" {
-					content = nudged
-				}
-			}
+			var nudgeErr error
+			content, nextHistory, nudgeErr = m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent)
+			err = errors.Join(err, nudgeErr)
 		}
 		//  3. Clearly labelled placeholder: only if the worker genuinely
 		//     produced nothing. A placeholder is not a fabricated statement,
 		//     so it does not violate "the runtime never answers for the model".
-		if strings.TrimSpace(content) == "" {
+		if err == nil && strings.TrimSpace(content) == "" {
 			content = emptyWorkerResultPlaceholder
 		}
 	}
+	// An implicit continuation shares its caller's completion boundary. Its
+	// successful work cannot erase a required receipt failure from an earlier turn.
+	err = errors.Join(receiptErr, err)
 	workflowOutcome := providers.InferenceOutcomeSucceeded
 	if err != nil {
 		workflowOutcome = providers.InferenceOutcomeFailed
@@ -646,6 +710,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// normal resumed turn. No successful Followup can remain parked in memory
 	// with no future BeforeStep to consume it.
 	if ctx.Err() == nil && len(sa.pendingMessages) > 0 {
+		if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			receiptErr = err
+		}
 		continuationHistory := append(providers.CloneChatMessages(nextHistory), sa.popPendingUserMessagesLocked()...)
 		lifetime := sa.maxLifetime
 		continuationCtx, continuationCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -662,7 +729,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		sa.cancelFunc = continuationCancel
 		sa.mu.Unlock()
 		ownsDone = false
-		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults)
+		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults, receiptErr)
 		return
 	}
 	sa.history = nextHistory
@@ -672,8 +739,14 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		case errors.Is(err, context.DeadlineExceeded) && sa.maxLifetime > 0:
 			sa.Status = StatusFailed
 			sa.Error = fmt.Errorf("worker exceeded max lifetime (%s)", sa.maxLifetime)
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = errors.Join(sa.Error, err)
+			}
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			sa.Status = StatusCancelled
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = err
+			}
 		default:
 			sa.Status = StatusFailed
 			sa.Error = err
@@ -693,11 +766,26 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	m.finishTerminal(ctx, sa, finalStatus, nextHistory)
 }
 
+func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefaults, hook func(context.Context, string) error) (hookErr error) {
+	if hook == nil {
+		return nil
+	}
+	// Prompt hooks run outside the main runner and must not inherit its parent's
+	// journal or receipt lifetime, even when the worker detached cancellation.
+	ctx = providers.WithInferenceJournal(ctx, defaults.journal)
+	ctx, finish, hookErr := agent.BeginModelReceipts(ctx, defaults.BeginModelReceipts)
+	if hookErr != nil {
+		return hookErr
+	}
+	defer func() { hookErr = errors.Join(hookErr, finish()) }()
+	return hook(ctx, id)
+}
+
 // finishTerminal is shared by a running turn and cancellation of a parked turn.
 func (m *Manager) finishTerminal(ctx context.Context, sa *SubAgent, finalStatus Status, nextHistory []providers.ChatMessage) {
 	m.prepareTerminal(sa, finalStatus)
 
-	if sa.historyPath != "" {
+	if sa.historyPath != "" || sa.historyDocuments != nil {
 		if persistErr := persistHistory(sa); persistErr != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
@@ -808,24 +896,39 @@ func lastAssistantText(history []providers.ChatMessage) string {
 // runFinalSummaryNudge runs exactly one additional turn asking a completed
 // worker that produced no text for a final summary. It reuses the same runner
 // and turn loop in place (no parallel goroutine) and reports the recovered
-// text plus the extended history. Best-effort: a nudge that errors leaves the
-// worker's completed result and history untouched.
-func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, bool) {
+// text plus the extended history. Ordinary generation failures are best-effort;
+// required receipt failures preserve accepted output and fail the worker.
+func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, error) {
 	nudge := providers.ChatMessage{
 		Role:    "user",
 		Content: "You have finished the task but returned no final message. Provide your final summary now: state what you did, what you found or changed, and anything left undone.",
 	}
 	turnHistory := append(providers.CloneChatMessages(history), nudge)
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: rand.Text()})
 	res, err := runner.RunWithCallback(ctx, turnHistory, onEvent)
 	if err != nil {
-		return "", history, false
+		if !errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			return "", history, nil
+		}
+		sa.acceptDriverCheckpoint(res)
+		return res.Content, mergeTurnHistory(history, res), err
 	}
+	sa.acceptDriverCheckpoint(res)
 	nextHistory := mergeTurnHistory(turnHistory, res)
 	content := res.Content
 	if strings.TrimSpace(content) == "" {
 		content = lastAssistantText(nextHistory)
 	}
-	return content, nextHistory, true
+	return content, nextHistory, nil
+}
+
+func (sa *SubAgent) acceptDriverCheckpoint(result agent.LoopResult) {
+	if result.DriverID == "" {
+		return
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	sa.driverCheckpoint = &loopdriver.Checkpoint{ContractVersion: result.DriverContractVersion, DriverID: result.DriverID, DriverVersion: result.DriverVersion, State: append(json.RawMessage(nil), result.DriverCheckpoint...)}
 }
 
 // notify pushes a notification to all listeners. Drops on full channels.
@@ -1060,7 +1163,7 @@ func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (
 	// change made while the worker sat idle.
 	m.refreshWakeAuthority(sa.toolkit)
 
-	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults)
+	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults, nil)
 	return snap, nil
 }
 
@@ -1085,10 +1188,12 @@ type RestoreOptions struct {
 	// WorkerRuntime, when non-nil, is the complete runtime the resumed run
 	// was started with. It overrides the manager defaults and is paired
 	// with the rebuilt Client for the persisted provider.
-	WorkerRuntime *WorkerRuntime
-	HistoryPath   string
-	MaxSteps      int
-	MaxLifetime   time.Duration
+	WorkerRuntime    *WorkerRuntime
+	HistoryPath      string
+	HistoryDocuments persistence.Documents
+	HistoryScope     string
+	MaxSteps         int
+	MaxLifetime      time.Duration
 }
 
 // Restore re-registers a dormant sub-agent rebuilt from a snapshot. The
@@ -1096,6 +1201,14 @@ type RestoreOptions struct {
 // channel; a subsequent Followup starts a fresh turn from its history.
 func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 	run := opts.Run
+	// A committed terminal snapshot remains the delivery truth while a later
+	// execution is in flight. Its durable input and checkpoint are used only
+	// when that worker is explicitly resumed.
+	if run.Recovery != nil {
+		run.Messages = run.Recovery.Messages
+		run.DriverBinding = run.Recovery.DriverBinding
+		run.DriverCheckpoint = run.Recovery.DriverCheckpoint
+	}
 	id := strings.TrimSpace(run.ID)
 	if id == "" {
 		return nil, errors.New("restore requires a run id")
@@ -1152,22 +1265,39 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
+	}
+
+	binding := run.DriverBinding
+	if binding == nil && m.acquireLoopDriver != nil {
+		// Snapshots predating driver bindings always used the built-in loop.
+		// Preserve that identity even when the configured default has changed.
+		binding = &loopdriver.Binding{Profile: "default", ProviderID: loopdriver.DefaultDriverID, ContractVersion: loopdriver.ContractVersion, DriverID: loopdriver.DefaultDriverID, DriverVersion: loopdriver.DefaultDriverVersion}
+	} else if binding != nil {
+		copied := *binding
+		binding = &copied
+	}
+	checkpoint := run.DriverCheckpoint
+	if checkpoint != nil {
+		copied := *checkpoint
+		copied.State = append(json.RawMessage(nil), copied.State...)
+		checkpoint = &copied
 	}
 
 	// Terminal runs restore with an already-closed done channel so Wait
@@ -1200,6 +1330,9 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 		CompletedAt:        run.CompletedAt,
 		Result:             run.Result,
 		prompt:             run.Prompt,
+		driverExecutionID:  run.DriverExecutionID,
+		driverBinding:      binding,
+		driverCheckpoint:   checkpoint,
 		model:              model,
 		modelPin:           run.ModelPin,
 		modelAlias:         run.ModelAlias,
@@ -1207,16 +1340,16 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 		runtime:            runtime,
 		workerRoot:         run.CWD,
 		toolkit:            opts.Toolkit,
-		historyPath:        opts.HistoryPath,
-		history:            providers.CloneChatMessages(run.Messages),
-		maxSteps:           opts.MaxSteps,
-		maxLifetime:        opts.MaxLifetime,
-		runtimeDefaults:    runtimeDefaults,
-		client:             client,
-		providerName:       providerName,
-		toolLedger:         toolLedger,
-		cancelFunc:         func() {},
-		doneCh:             doneCh,
+		historyPath:        opts.HistoryPath, historyDocuments: opts.HistoryDocuments, historyScope: opts.HistoryScope,
+		history:         providers.CloneChatMessages(run.Messages),
+		maxSteps:        opts.MaxSteps,
+		maxLifetime:     opts.MaxLifetime,
+		runtimeDefaults: runtimeDefaults,
+		client:          client,
+		providerName:    providerName,
+		toolLedger:      toolLedger,
+		cancelFunc:      func() {},
+		doneCh:          doneCh,
 	}
 	if strings.TrimSpace(run.Error) != "" {
 		sa.Error = errors.New(run.Error)

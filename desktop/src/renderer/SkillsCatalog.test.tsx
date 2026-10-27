@@ -1,9 +1,53 @@
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { initialState } from "./AppState";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import { ConfirmDialogHost } from "./ConfirmDialog";
-import { SkillsCatalog } from "./SkillsCatalog";
+import { SkillsCatalog as PublicSkillsCatalog } from "./SkillsCatalog";
+import type { ComponentProps } from "react";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
+import type { ExtensionPackageUpdateParams, PluginPackageInstallResult, PluginPackageRemoveResult, RuntimeContext } from "../shared/protocol";
+
+// Existing UI scenarios provide a public application fixture; production accepts
+// no business callbacks or window transport fallback.
+function SkillsCatalog(props: Omit<ComponentProps<typeof PublicSkillsCatalog>, "application"> & {
+ activeContext?:RuntimeContext; extensionInventory?:ExtensionInventoryRecord[];
+ onTrySkill?:(skill:SkillSummary)=>void;
+ draftApplication?: Pick<ApplicationServiceV1, "getSnapshot" | "invoke">;
+ onRefreshCatalog?:()=>Promise<SkillSummary[]|undefined>;
+ onUpdateExtensionPackage?:(input:ExtensionPackageUpdateParams)=>Promise<void>;
+ onInstallPluginPackage?:()=>Promise<PluginPackageInstallResult|undefined>;
+ onRemovePluginPackage?:(id:string)=>Promise<PluginPackageRemoveResult|undefined>;
+}) {
+ const application = useMemo(() => {
+  const empty: never[] = [];
+  const snapshot = {contextKey:JSON.stringify(props.activeContext ?? null),inventory:props.extensionInventory ?? [],
+   capabilities:{install:!window.wuu?.unsupportedMethods?.includes("installPluginPackage"),update:!!props.onUpdateExtensionPackage,remove:!!props.onRemovePluginPackage}};
+  const catalog:ApplicationCatalogV1 = {
+   getSnapshot:()=>snapshot,
+   listSkills:async()=>(await window.wuu.listSkills()).skills,
+   listSkillsForThread:async input=>({ contextKey:snapshot.contextKey, threadId:input.threadId, skills:(await window.wuu.listSkills({thread_id:input.threadId})).skills }),
+   readSkill:input=>window.wuu.readSkillContent(input),
+   refresh:props.onRefreshCatalog ?? (async()=>(await window.wuu.listSkills()).skills),
+   update:async input=>{await props.onUpdateExtensionPackage?.(input.updates ? { updates: input.updates.map(update => ({ ...update })) } : input);},
+   install:async()=>props.onInstallPluginPackage?.(),remove:async id=>props.onRemovePluginPackage?.(id),
+   loadIcon:async(id,fingerprint,path)=>(await window.wuu.loadPluginIcon({id,fingerprint,path})).url,
+  };
+  return {catalog,getSnapshot:props.draftApplication?.getSnapshot ?? (()=>({tabs:{activeTabId:"test-source",navigationRevision:7}})),settingsControls:{capabilities:{diagnostics:false},listMCPServers:async()=>({servers:[]}),subscribeRemote:()=>()=>{},subscribe:()=>()=>{},getConflicts:()=>empty,getDiagnostics:()=>empty},subscribe:()=>()=>{},invoke:props.draftApplication?.invoke ?? (async(action:string,input:unknown)=>{
+   if(action === "draft.start-with-content") {
+    const text=(input as {text:string}).text;
+    const identity=JSON.parse(text.split("\n")[0].slice("/skill ".length));
+    const skill=(await window.wuu.listSkills()).skills.find(item=>item.name===identity.name);
+    if(skill) props.onTrySkill?.(skill);
+   }
+  })} as unknown as ComponentProps<typeof PublicSkillsCatalog>["application"];
+ }, [props.draftApplication,props.activeContext,props.extensionInventory,props.onTrySkill,props.onRefreshCatalog,props.onUpdateExtensionPackage,props.onInstallPluginPackage,props.onRemovePluginPackage]);
+ return <PublicSkillsCatalog {...props} application={application} />;
+}
+
 
 const toastMocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
@@ -253,7 +297,7 @@ describe("SkillsCatalog", () => {
         />,
       );
     });
-    const sectionRows = () => Array.from(container.querySelectorAll("section section")).map(
+    const sectionRows = () => Array.from(container.querySelectorAll("section section:not([data-testid=mcp-services])")).map(
       (section) => Array.from(section.querySelectorAll(".catalog-row")).map((row) => row.textContent ?? ""),
     );
     const search = async (query: string) => {
@@ -685,6 +729,40 @@ describe("SkillsCatalog", () => {
     expect(document.body.textContent).toContain("Plugin process exited before initialize");
   });
 
+  it("keeps a failed plugin diagnosable without a global toast and clears its retry state after remediation", async () => {
+    installSkillList([]);
+    const broken: ExtensionInventoryRecord = {
+      id: "plugin:user:broken", name: "broken", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "broken" },
+      state: "granted", approval_state: "granted", runtime_state: "failed", enabled: true,
+      last_error: "runtime observer capability requires protocol version 2",
+    };
+    let finish!: (skills: SkillSummary[]) => void;
+    const refresh = vi.fn(() => new Promise<SkillSummary[]>(resolve => { finish = resolve; }));
+    const update = vi.fn(async () => {});
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[broken]} onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />);
+    });
+    await act(async () => skillButton("broken")!.click());
+    const failure = container.querySelector('[role="alert"]')!;
+    expect(failure.textContent).toContain(broken.last_error);
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false);
+    const retry = failure.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => retry.click());
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(retry.disabled).toBe(true);
+    await act(async () => finish([]));
+    expect(retry.disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBe(failure);
+    await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...broken, state: "active", runtime_state: "active", last_error: undefined }]}
+      onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
   it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {
     installSkillList([]);
     let finish!: () => void;
@@ -855,6 +933,36 @@ describe("SkillsCatalog", () => {
 
     expect(onTrySkill).toHaveBeenCalledWith(expect.objectContaining({ name: "write" }));
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it.each(["cancel", "switch"] as const)("does not overwrite a newer draft when Try now is superseded by %s", async superseding => {
+    installSkillList([existingSkill]);
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "original", images: [], files: [] },
+    ] });
+    const invoke = vi.spyOn(controller, "invoke");
+    const draftApplication = { getSnapshot: controller.getSnapshot, invoke: controller.invoke.bind(controller) };
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog draftApplication={draftApplication} />);
+    });
+    await act(async () => { skillButton(existingSkill.name)?.click(); });
+    await act(async () => {
+      buttonByText("立即试用")?.click();
+      if (superseding === "cancel") {
+        await controller.invoke("navigation.cancel", {});
+        controller.setDraft("new user text");
+      } else {
+        const nextContext = { kind: "no_project" as const, cwd: "/other" };
+        controller.updateState(state => ({ ...state, activeContext: nextContext, activeSessionTabID: "draft:b", sessionTabs: [
+          ...state.sessionTabs, { id: "draft:b", kind: "draft", context: nextContext, title: "B", createdAt: 2, prompt: "new user text", images: [], files: [] },
+        ] }));
+      }
+    });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("new user text");
+    expect(invoke).toHaveBeenCalledWith("draft.start-with-content", expect.objectContaining({ sourceTabId: "draft:a", navigationRevision: 0 }));
+    expect(invoke.mock.calls.some(([action]) => action === "composer.checkpoint" || action === "draft.start")).toBe(false);
   });
 
   it("does not offer Try now for a non-user-invocable skill", async () => {

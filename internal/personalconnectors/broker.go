@@ -30,26 +30,34 @@ type Grant struct {
 	RefreshLease  string     `json:"refresh_lease,omitempty"`
 	ExpiresAt     time.Time  `json:"expires_at"`
 }
+
+// AuthorizationBoundary validates the exact frozen authority and holds the
+// selected provider's revocation boundary through the complete use callback.
+// A snapshot read followed by use is not an implementation of this contract.
+type AuthorizationBoundary func(context.Context, Actor, string, func(context.Context) error) error
+
 type Options struct {
-	StateDir       string
-	HTTPSCallbacks HTTPSCallbackTransport
-	Authorization  func(context.Context, Actor) (string, error)
-	Store          credentialstore.Store
-	HTTPClient     *http.Client
+	WithAuthorization AuthorizationBoundary
+	StateDir          string
+	HTTPSCallbacks    HTTPSCallbackTransport
+	Authorization     func(context.Context, Actor) (string, error)
+	Store             credentialstore.Store
+	HTTPClient        *http.Client
 }
 type Broker struct {
-	stateDir       string
-	httpsCallbacks HTTPSCallbackTransport
-	mu             sync.Mutex
-	activeMu       sync.Mutex
-	oauthMu        sync.Mutex
-	attempts       map[string]*oauthPending
-	active         map[string]context.CancelFunc
-	authorization  func(context.Context, Actor) (string, error)
-	store          credentialstore.Store
-	client         *http.Client
-	lifetime       context.Context
-	cancel         context.CancelFunc
+	stateDir          string
+	httpsCallbacks    HTTPSCallbackTransport
+	mu                sync.Mutex
+	activeMu          sync.Mutex
+	oauthMu           sync.Mutex
+	attempts          map[string]*oauthPending
+	active            map[string]context.CancelFunc
+	authorization     func(context.Context, Actor) (string, error)
+	withAuthorization AuthorizationBoundary
+	store             credentialstore.Store
+	client            *http.Client
+	lifetime          context.Context
+	cancel            context.CancelFunc
 }
 type action struct {
 	Result    Result  `json:"result"`
@@ -73,13 +81,21 @@ func New(o Options) *Broker {
 	}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return fault("redirect_rejected") }
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Broker{stateDir: o.StateDir, httpsCallbacks: o.HTTPSCallbacks, attempts: map[string]*oauthPending{}, active: map[string]context.CancelFunc{}, authorization: o.Authorization, store: o.Store, client: &c, lifetime: ctx, cancel: cancel}
+	return &Broker{stateDir: o.StateDir, httpsCallbacks: o.HTTPSCallbacks, attempts: map[string]*oauthPending{}, active: map[string]context.CancelFunc{}, authorization: o.Authorization, withAuthorization: o.WithAuthorization, store: o.Store, client: &c, lifetime: ctx, cancel: cancel}
 }
 func (b *Broker) SetAuthorization(f func(context.Context, Actor) (string, error)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.authorization = f
 }
+
+// SetAuthorizationBoundary is host composition, never a plugin or model route.
+func (b *Broker) SetAuthorizationBoundary(boundary AuthorizationBoundary) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.withAuthorization = boundary
+}
+
 func (b *Broker) Close() error { b.cancel(); return nil }
 func hash(s string) string     { v := sha256.Sum256([]byte(s)); return hex.EncodeToString(v[:]) }
 func validateActor(a Actor) error {
@@ -150,13 +166,15 @@ func (b *Broker) RegisterVerified(ctx context.Context, a Actor, g Grant) error {
 	}
 	g.Connection.State = "connected"
 	g.Connection.Revision = hash(time.Now().String() + g.Connection.ID)
-	return b.update(ctx, a, func(s *stored) error { s.Grants[g.Connection.ID] = g; s.Epochs[g.Connection.ID] = nonce(); return nil })
+	epoch := nonce()
+	return b.update(ctx, a, func(s *stored) error { s.Grants[g.Connection.ID] = g; s.Epochs[g.Connection.ID] = epoch; return nil })
 }
 func (b *Broker) List(ctx context.Context, a Actor) ([]Connection, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := []Connection{}
 	e := b.update(ctx, a, func(s *stored) error {
+		out = []Connection{}
 		for _, g := range s.Grants {
 			c := g.Connection
 			if !b.activated(a, g) {
@@ -219,6 +237,7 @@ func (b *Broker) Call(ctx context.Context, a Actor, r Request) (Result, error) {
 	var p Plan
 	authority := ""
 	e := b.update(ctx, a, func(s *stored) error {
+		result = Result{}
 		var ok bool
 		g, ok = s.Grants[r.ConnectionID]
 		if !ok {
@@ -296,6 +315,7 @@ func (b *Broker) Actions(ctx context.Context, a Actor) ([]Result, error) {
 	defer b.mu.Unlock()
 	out := []Result{}
 	e := b.update(ctx, a, func(s *stored) error {
+		out = []Result{}
 		for _, v := range s.Actions {
 			if !strings.HasPrefix(a.SessionID, "owner-ui:") && v.Session != a.SessionID {
 				continue
@@ -322,6 +342,7 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 	execute := false
 	var connectionID string
 	var initial Result
+	var initialAction action
 	if err := b.update(ctx, a, func(s *stored) error {
 		item, ok := s.Actions[id]
 		if !ok || item.Result.Digest != digest {
@@ -329,6 +350,7 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 		}
 		connectionID = item.Request.ConnectionID
 		initial = item.Result
+		initialAction = item
 		return nil
 	}); err != nil {
 		return Result{}, err
@@ -344,128 +366,149 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 			return Result{}, err
 		}
 	}
-	e := b.update(ctx, a, func(s *stored) error {
-		var ok bool
-		v, ok = s.Actions[id]
-		if !ok || v.Result.Digest != digest {
-			return fault("action_mismatch")
-		}
-		if v.Result.State != "awaiting_confirmation" {
-			if v.Result.State == "executing" {
-				v.Result.State = "uncertain"
+	dispatch := func(ctx context.Context) (Result, error) {
+		e := b.update(ctx, a, func(s *stored) error {
+			// A rejected credential CAS may retry against another dispatcher's
+			// durable claim. Only this final attempt may admit the external effect.
+			execute = false
+			var ok bool
+			v, ok = s.Actions[id]
+			if !ok || v.Result.Digest != digest {
+				return fault("action_mismatch")
 			}
-			return nil
-		}
-		if !approve {
-			v.Result.State = "rejected"
+			if v.Result.State != "awaiting_confirmation" {
+				if v.Result.State == "executing" {
+					v.Result.State = "uncertain"
+				}
+				return nil
+			}
+			if !approve {
+				v.Result.State = "rejected"
+				s.Actions[id] = v
+				return nil
+			}
+			g, ok = s.Grants[v.Request.ConnectionID]
+			if !ok || g.Connection.Revision != v.Revision {
+				return fault("connection_changed")
+			}
+			if v.Session != initialAction.Session || v.Authority != initialAction.Authority {
+				return fault("authorization_context_changed")
+			}
+			var e error
+			p, e = build(g.Connection, v.Request.Operation, v.Request.Arguments)
+			if e != nil {
+				return e
+			}
+			if e = check(g, p); e != nil {
+				return e
+			}
+			if !p.Write && (g.Connection.Domain != "work" || g.Connection.WorkReadPolicy == "selected_resources") {
+				return fault("action_mismatch")
+			}
+			// This selected credential CAS is account-effect admission: current
+			// validity, exact account revision and frozen request are checked
+			// atomically with the durable claim. Later revocation can stop
+			// remaining work but cannot promise rollback of admitted HTTP.
+			v.Result.State = "executing"
 			s.Actions[id] = v
+			execute = true
 			return nil
-		}
-		g, ok = s.Grants[v.Request.ConnectionID]
-		if !ok || g.Connection.Revision != v.Revision {
-			return fault("connection_changed")
-		}
-		if b.authorization == nil {
-			return fault("authorization_context_unavailable")
-		}
-		current, e := b.authorization(ctx, Actor{a.ProductDomain, a.UserSpaceID, v.Session})
-		if e != nil || current == "" || current != v.Authority {
-			return fault("authorization_context_changed")
-		}
-		p, e = build(g.Connection, v.Request.Operation, v.Request.Arguments)
+		})
 		if e != nil {
-			return e
+			return Result{}, e
 		}
-		if e = check(g, p); e != nil {
-			return e
+		if !execute {
+			return v.Result, nil
 		}
-		if !p.Write && (g.Connection.Domain != "work" || g.Connection.WorkReadPolicy == "selected_resources") {
-			return fault("action_mismatch")
+		var data json.RawMessage
+		uncertain := false
+		var err error
+		if len(p.Preflight) > 5 {
+			err = fault("preflight_limit")
 		}
-		v.Result.State = "executing"
-		s.Actions[id] = v
-		execute = true
-		return nil
-	})
-	if e != nil {
-		return Result{}, e
-	}
-	if !execute {
-		return v.Result, nil
-	}
-	var data json.RawMessage
-	uncertain := false
-	var err error
-	if len(p.Preflight) > 5 {
-		err = fault("preflight_limit")
-	}
-	if err == nil {
-		for _, read := range p.Preflight {
-			if read.Write {
-				err = fault("invalid_preflight")
-				break
-			}
-			if err = check(g, read); err != nil {
-				break
-			}
-			_, _, err = b.request(ctx, a, g, read)
-			if err != nil {
-				break
-			}
-		}
-	}
-	if err == nil {
-		current, e := b.authorization(ctx, Actor{a.ProductDomain, a.UserSpaceID, v.Session})
-		if e != nil || current != v.Authority {
-			err = fault("authorization_context_changed")
-		}
-	}
-	if err == nil {
-		data, uncertain, err = b.request(ctx, a, g, p)
-	}
-	if err == nil {
-		v.Result.Verification = "provider_accepted"
-		if p.Verify != nil {
-			var plans []Plan
-			plans, err = p.Verify(data)
-			if len(plans) > 100 {
-				err = fault("verification_limit")
-			}
-			if err == nil {
-				for _, read := range plans {
-					if read.Write {
-						err = fault("invalid_verification")
-						break
-					}
-					if err = check(g, read); err != nil {
-						break
-					}
-					_, _, err = b.request(ctx, a, g, read)
-					if err != nil {
-						break
-					}
+		if err == nil {
+			for _, read := range p.Preflight {
+				if read.Write {
+					err = fault("invalid_preflight")
+					break
+				}
+				if err = check(g, read); err != nil {
+					break
+				}
+				_, _, err = b.request(ctx, a, g, read)
+				if err != nil {
+					break
 				}
 			}
-			if err != nil {
-				uncertain = true
-			} else {
-				v.Result.Verification = "read_back_verified"
+		}
+		if err == nil {
+			data, uncertain, err = b.request(ctx, a, g, p)
+		}
+		if err == nil {
+			v.Result.Verification = "provider_accepted"
+			if p.Verify != nil {
+				var plans []Plan
+				plans, err = p.Verify(data)
+				if len(plans) > 100 {
+					err = fault("verification_limit")
+				}
+				if err == nil {
+					for _, read := range plans {
+						if read.Write {
+							err = fault("invalid_verification")
+							break
+						}
+						if err = check(g, read); err != nil {
+							break
+						}
+						_, _, err = b.request(ctx, a, g, read)
+						if err != nil {
+							break
+						}
+					}
+				}
+				if err != nil {
+					uncertain = true
+				} else {
+					v.Result.Verification = "read_back_verified"
+				}
 			}
 		}
-	}
-	v.Result.State = "completed"
-	v.Result.Data = data
-	if err != nil {
-		v.Result.Code = code(err)
-		v.Result.State = "failed"
-		if uncertain {
-			v.Result.State = "uncertain"
+		v.Result.State = "completed"
+		v.Result.Data = data
+		if err != nil {
+			v.Result.Code = code(err)
+			v.Result.State = "failed"
+			if uncertain {
+				v.Result.State = "uncertain"
+			}
 		}
+		if e = b.update(context.WithoutCancel(ctx), a, func(s *stored) error { s.Actions[id] = v; return nil }); e != nil {
+			return Result{State: "uncertain", ActionID: id, Digest: digest, Code: "receipt_persistence_failed"}, nil
+		}
+		return v.Result, nil
 	}
-	if e = b.update(context.WithoutCancel(ctx), a, func(s *stored) error { s.Actions[id] = v; return nil }); e != nil {
-		return Result{State: "uncertain", ActionID: id, Digest: digest, Code: "receipt_persistence_failed"}, nil
+	if !approve {
+		return dispatch(ctx)
 	}
-	return v.Result, nil
+	if b.withAuthorization == nil {
+		return Result{}, fault("execution_authority_unavailable")
+	}
+	var result Result
+	entered := false
+	err := b.withAuthorization(ctx, Actor{a.ProductDomain, a.UserSpaceID, initialAction.Session}, initialAction.Authority, func(guarded context.Context) error {
+		if entered {
+			return fault("execution_authority_unavailable")
+		}
+		entered = true
+		var err error
+		result, err = dispatch(guarded)
+		return err
+	})
+	if err == nil && !entered {
+		return Result{}, fault("execution_authority_unavailable")
+	}
+	return result, err
 }
 func (b *Broker) Disconnect(ctx context.Context, a Actor, id string) error {
 	if err := validateActor(a); err != nil {
@@ -495,7 +538,8 @@ func (b *Broker) Disconnect(ctx context.Context, a Actor, id string) error {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.update(ctx, a, func(s *stored) error { delete(s.Grants, id); s.Epochs[id] = nonce(); return nil })
+	epoch := nonce()
+	return b.update(ctx, a, func(s *stored) error { delete(s.Grants, id); s.Epochs[id] = epoch; return nil })
 }
 func (b *Broker) request(ctx context.Context, a Actor, g Grant, p Plan) (json.RawMessage, bool, error) {
 	u, e := url.Parse(p.URL)

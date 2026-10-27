@@ -27,7 +27,7 @@ const active = new Set();
 let UserRoutineScheduler;
 class Host {
   bindings = new Map(); storage = new Map(); sessions = new Map(); turns = new Map(); histories = new Map(); calls = []; intercept;
-  userInputs = new Map(); reviews = new Map();
+  userInputs = new Map(); reviews = new Map(); grants = new Map();
   async call(frame) {
     assert.equal(frame.method, 'host.service.call');
     const { service, method, params: p = {} } = frame.params;
@@ -35,16 +35,47 @@ class Host {
     if (this.intercept) { const result = await this.intercept(service, p); if (result !== undefined) return result; }
     const key = `${p.scope}:${p.key}`;
     switch (service) {
-      case 'host.personal': assert.equal(method, 'call'); if (p.operation === 'review.execution.status') return { ok: true, value: { requests: this.reviews?.get(p.session_id) ?? [] } }; assert.equal(p.operation, 'owner.check'); return { ok: true, value: {} };
+      case 'host.personal': assert.equal(method, 'call'); if (p.operation === 'review.execution.status') { const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution?.session_id===p.session_id); if(task?.execution.authorization) assert.deepEqual(p.execution_authorization,task.execution.authorization.reference,'receipt recovery carries its exact execution grant'); return { ok: true, value: { requests: this.reviews?.get(p.session_id) ?? [] } }; } assert.equal(p.operation, 'owner.check'); return { ok: true, value: {} };
+      case 'host.execution.authorization': {
+        assert.equal(method,'call');
+        if(p.operation==='describe') return {default_lifetime_seconds:86400,max_lifetime_seconds:86400,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run']};
+        if(p.operation==='call-service') {
+          const grant=this.grants.get(p.reference.id);assert(grant && Date.parse(grant.expires_at)>Date.now(),'selected service needs an unexpired exact grant');assert.equal(grant.scope.kind,'exact-run');
+          const issued=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.reference.id);assert(issued.params.requested_actions.includes(`service/${p.service}/${p.method}`));
+          return this.call({method:'host.service.call',params:{service:p.service,method:p.method,params:p.params}});
+        }
+        if(p.operation==='issue') {
+          assert(Number.isFinite(Date.parse(p.expires_at)), 'grant intent expiry must be persisted before issue');
+          if(p.parent) { const parent=this.grants.get(p.parent.id); if(!parent || Date.parse(parent.expires_at)<=Date.now()) throw new Error('needs_authorization: parent expired'); }
+          const reference={provider:'fixture-authority',id:`grant-${p.request_id}`};
+          const previous=this.grants.get(reference.id); if(previous){assert.equal(previous.expires_at,p.expires_at,'same issuance identity must retain expiry after a lost response');return previous;}
+          const value={reference,expires_at:this.grantExpiry ?? p.expires_at,principal:{kind:'user',issuer:'fixture',tenant:'fixture',subject:'owner'},scope:{consumer:'personal',user_space_id:'local',product_domain:'personal',task_id:p.task_id,kind:p.kind,session_id:p.kind==='exact-run'?p.session_id:'',run_id:p.run_id ?? p.request_id,revision:1},capabilities:[]};
+          this.grants.set(reference.id,value); if(this.loseGrantReply){this.loseGrantReply=false;throw new Error('grant response lost');} return value;
+        }
+        const value=this.grants.get(p.reference.id); if(!value)throw new Error('needs_authorization: missing grant');
+        if(p.operation==='inspect'){if(Date.parse(value.expires_at)<=Date.now())throw new Error('needs_authorization: expired grant');return value;}
+        assert.equal(p.operation,'revoke');this.grants.delete(p.reference.id);return {revoked:true};
+      }
       case 'host.file-lock': return method === 'acquire' ? { lock_id: 'personal-fixture-lock' } : { released: true };
       case 'calendar.personal': if (this.calendar) return this.calendar.call('service.invoke', { service, method, caller: 'personal', params: p }); throw new Error('calendar service unavailable');
       case 'automation.routines': {
         if (method === 'validate') return { schedule: new UserRoutineScheduler({ call() { throw new Error('validation must not access storage'); } }, 'validation').validate(p) };
         if (method === 'read') return { binding: this.bindings.get(p.binding_id) };
+        if (method === 'pending') return {bindings:this.pollOutbox ? [...this.bindings.values()].filter(b => b.status==='active' && b.pending_event) : []};
+        if (method === 'claim') { const binding=this.bindings.get(p.binding_id); assert.equal(binding.pending_event.event_id,p.event_id); binding.pending_event.lease_owner=p.claim_id; return {claimed:true,binding}; }
+        if (method === 'acknowledge') {
+          const binding=this.bindings.get(p.binding_id);
+          if(binding.last_event_id===p.event_id) return {binding};
+          assert.equal(binding.pending_event.lease_owner,p.claim_id);
+          if(p.defer_until) { binding.pending_event.retry_at=p.defer_until; binding.pending_event.lease_owner=undefined; }
+          else { assert.equal(p.accepted,true); binding.last_event_id=p.event_id; binding.pending_event=undefined; if(!binding.cron) binding.status='completed'; }
+          if(this.loseOutboxAck){this.loseOutboxAck=false;throw new Error('outbox acknowledgment reply lost');}
+          return {binding};
+        }
         const current = this.bindings.get(p.binding_id);
         if (current?.request_id === p.request_id) return { binding: current };
         assert.equal(current?.revision ?? 0, p.expected_revision);
-        const binding = { ...current, ...p, revision: (current?.revision ?? 0) + 1, status: method === 'upsert' ? 'active' : method === 'pause' ? 'paused' : 'stopped', next_run_at: p.run_at };
+        const binding = { ...current, ...p, revision: (current?.revision ?? 0) + 1, status: method === 'upsert' ? 'active' : method === 'pause' ? 'paused' : 'stopped', pending_event:undefined, next_run_at: p.run_at };
         this.bindings.set(p.binding_id, binding); return { binding };
       }
       case 'host.storage.get': return { value: this.storage.get(key) ?? null };
@@ -61,6 +92,10 @@ class Host {
         return { session_id, created: !existing };
       }
       case 'host.session.send': {
+        if(p.cause==='personal.reminder')assert.equal(p.disable_tools,true,'a reminder is bounded delivery, not permission to run tools');
+        if(p.disable_tools && p.execution_authorization){const issue=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert(issue.requested_actions.includes('user/session/context'),'disabled-tools delivery still needs scoped pre-step context');assert(issue.requested_actions.includes('user/session/history.read'),'delivery hook reads remain explicitly scoped');}
+        if(p.cause==='personal.reaction.feedback'){assert(p.execution_authorization,'bounded feedback recovery needs its own exact grant');const intent=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert.equal(intent.kind,'exact-run');assert(intent.requested_actions.every(a=>['user/session/send','user/session/inspect','user/session/context','user/session/history.read'].includes(a)));assert.equal(p.disable_tools,true);}
+        if(['personal.review.outcome','personal.connector.outcome'].includes(p.cause)){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
         assert(this.sessions.has(p.session_id));
         if (p.user_input_request_id) {
           const proof = this.userInputs.get(p.user_input_request_id);
@@ -107,7 +142,7 @@ class Host {
   }
 }
 class Runtime {
-  pending = new Map(); seq = 0;
+  pending = new Map(); seq = 0; background = [];
   constructor(host, path = runtimePath, pluginID = 'personal') {
     this.host = host;
     this.pluginID = pluginID;
@@ -116,7 +151,15 @@ class Runtime {
     this.process.on('exit', () => { active.delete(this); for (const p of this.pending.values()) p.reject(new Error(this.stderr || 'runtime closed')); });
     createInterface({ input: this.process.stdout }).on('line', line => {
       const frame = JSON.parse(line); evidence.frames.push(frame);
-      if (frame.method) host.call(frame).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: 'fixture_error', message: error.message } }));
+      if (frame.method && frame.params?.service === 'host.background') {
+        assert.equal(frame.params.method, 'start');
+        const execution_id = `background-${this.seq}`;
+        const params = frame.params.params;
+        this.send({ id: frame.id, result: { job_id: execution_id, execution_id } });
+        const done = this.call('service.invoke', {service:params.service,method:params.method,params:params.params ?? {},caller:this.pluginID,execution_id}, 0);
+        this.background.push({execution_id,done});
+        void done.catch(() => {});
+      } else if (frame.method) host.call(frame).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: error.code ?? 'fixture_error', message: error.message } }));
       else { const p = this.pending.get(frame.id); if (p) { this.pending.delete(frame.id); if (frame.error) p.reject(new Error(frame.error.message)); else p.resolve(frame.result); } }
     });
   }
@@ -126,10 +169,10 @@ class Runtime {
     if ((this.process.stdin.destroyed || this.process.stdin.writableEnded) && !frame.method) return;
     this.process.stdin.write(`${JSON.stringify(frame)}\n`);
   }
-  call(method, params) {
+  call(method, params, timeout = 15000) {
     const id = `r-${++this.seq}`;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout ${method}: ${this.stderr}`)), 15000);
+      const timer = timeout ? setTimeout(() => reject(new Error(`timeout ${method}: ${this.stderr}`)), timeout) : undefined;
       this.pending.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
       this.send({ id, method, params });
     });
@@ -141,14 +184,14 @@ class Runtime {
   tool(tool_id, args, session_id, context = {}) { return this.call('tool.execute', { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `c-${this.seq}`, execution_id: `e-${this.seq}`, ...context }).then(r => JSON.parse(r.result.content[0].text)); }
   lifecycle(task, state, final_output = 'unverified final output') { return this.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: task.execution.session_id, request_id: task.execution.request_id, state, final_output }, execution_id: `l-${this.seq}` }); }
   async start(domain = 'personal') {
-    this.definition = await this.call('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: this.pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, product_domain: domain, user_space_id: 'local', supported_host_services: ['host.service.call', 'host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send', 'host.session.inspect', 'host.session.context', 'host.session.cancel', 'host.session.history.read', 'host.session.history.search', 'host.session.attachment.read'] });
+    this.definition = await this.call('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: this.pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, product_domain: domain, user_space_id: 'local', supported_host_services: ['host.service.call', 'host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send', 'host.session.inspect', 'host.session.context', 'host.session.cancel', 'host.session.history.read', 'host.session.history.search', 'host.session.attachment.read'] });
     for (const descriptor of this.definition.provided_services ?? []) {
       assert.match(descriptor.name, /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/);
       for (const method of descriptor.methods) { assert.match(method.name, /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/); assert.match(method.input_schema, /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/); assert.match(method.output_schema, /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/); }
     }
-    await this.call('activate'); return this;
+    await this.call('prepare'); await this.call('activate'); return this;
   }
-  async close() { await this.call('shutdown'); this.process.stdin.end(); }
+  async close() { for (const job of this.background) this.send({id:`cancel-${job.execution_id}`,method:'execution.cancel',params:{execution_id:job.execution_id}}); await Promise.all(this.background.map(job => job.done)); await this.call('shutdown'); this.process.stdin.end(); }
 }
 async function scenario(name, fn) { await fn(); evidence.scenarios.push({ name, passed: true }); console.log(`PASS ${name}`); }
 try {
@@ -158,6 +201,23 @@ try {
   await build({ entryPoints: [join(root, 'plugins/automation/src/user-routines.ts')], alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', format: 'esm', outfile: schedulerPath });
   ({ UserRoutineScheduler } = await import(schedulerPath));
   const host = new Host(); let runtime = await new Runtime(host).start(); let main, specialist, task;
+  await scenario('selected Personal prompt is complete and preserves explicit section metadata', async () => {
+    assert(runtime.definition.provided_services.some(service => service.name === 'agent.prompt'));
+    const marker = 'explicit-context-' + Date.now();
+    const request = {role:'main',cwd:'/explicit',date:'2026-10-27',surface:{SystemFragment:marker,Tools:{tool_search:''},DeferredToolCatalog:'catalog-'+marker}, contributions:[{key:'test.contribution',content:'你好 '+marker,static:false}]};
+    const assembled = await runtime.call('service.invoke', {service:'agent.prompt',method:'assemble',caller:'session-execution',execution_id:'prompt-assembly',params:request});
+    assert(assembled.content.includes(marker));
+    assert(assembled.content.includes("catalog-"+marker));
+    assert(assembled.sections.some(section => section.key === 'test.contribution' && section.bytes === Buffer.byteLength('你好 '+marker) && section.hash.length > 0 && section.static === false));
+    await assert.rejects(runtime.call('service.invoke', {service:'agent.prompt',method:'assemble',caller:'session-execution',execution_id:'prompt-bad-role',params:{...request,role:'assistant'}}), /role/);
+  });
+  await scenario('Personal state calls preserve the admitted callback execution identity', async () => {
+    const before = evidence.frames.length;
+    await runtime.call('capability.invoke', {capability:'plugin.client.request',execution_id:'scoped-settings',input:{method:'settings.get',input:{}}});
+    const calls = evidence.frames.slice(before).filter(frame => frame.method === 'host.service.call' && frame.params.service.startsWith('host.storage.'));
+    assert(calls.length > 0);
+    assert(calls.every(frame => frame.params.execution_id === 'scoped-settings'));
+  });
   // Host review records below are authoritative fixture responses, not a model's
   // claimed receipt. These scenarios test plugin wiring, never native file I/O.
   const actionRecord = (task, status = 'awaiting_confirmation') => ({
@@ -265,7 +325,7 @@ try {
       await r.client('actions.resume', input); await r.client('actions.resume', input);
       assert.equal(actionSends(h).length, 1); assert.equal(actionSends(h)[0].params.session_id, a.main_session_id); assert.equal(actionSends(h)[0].params.disable_tools, true);
       task = (await r.client('tasks.get', { task_id: task.task_id })).task;
-      assert.equal(task.state, 'waiting_external'); assert.equal(task.result, undefined); assert.equal(task.delivery, undefined);
+      assert.equal(task.state, 'waiting_external'); assert.equal(task.result, undefined); assert.equal(task.delivery.kind, 'notice'); assert.deepEqual(actionSends(h)[0].params.execution_authorization,task.delivery.authorization.reference);
       assert.equal(task.reconciliation_required, status === 'uncertain'); await r.close();
     }
   });
@@ -531,7 +591,11 @@ try {
     h.intercept = async (service, params) => { if (service === 'host.session.create' && params.parent_session_id) created(); return intercept(service, params); };
     const creating = r.client('tasks.create', { agent_id: a.agent_id, request_id: 'cancel-before-send', title: 'Not admitted', goal: 'Do not start if cancelled' });
     await sessionCreated;
-    let task = (await r.client('tasks.list')).tasks.find(task => task.request_id === 'cancel-before-send');
+    let task;
+    // Session creation now has a separate durable exact-run grant admission.
+    // Observe that admission before choosing the user-visible control revision;
+    // the blocked agent-send queue remains the boundary under test.
+    do { await new Promise(setImmediate); task = (await r.client('tasks.list')).tasks.find(task => task.request_id === 'cancel-before-send'); } while (!task.execution.authorization);
     task = (await r.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
     release(); await first; await creating;
     assert.equal((await r.client('tasks.get', { task_id: task.task_id })).task.state, 'stopped');
@@ -552,7 +616,7 @@ try {
     const input = { ...receipt, thread_id: a.main_session_id };
     await assert.rejects(r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input }), /crash before delivery write/);
     const snapshotPath = join(scratch, 'durable-result-host.json');
-    await writeFile(snapshotPath, JSON.stringify(Object.fromEntries(['storage', 'sessions', 'turns', 'histories'].map(key => [key, [...h[key]]]))));
+    await writeFile(snapshotPath, JSON.stringify(Object.fromEntries(['storage', 'sessions', 'turns', 'histories', 'grants'].map(key => [key, [...h[key]]]))));
     const exited = new Promise(resolve => r.process.once('exit', resolve)); r.process.kill(); await exited;
     const restored = new Host(), snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
     for (const [key, entries] of Object.entries(snapshot)) restored[key] = new Map(entries);
@@ -1169,6 +1233,109 @@ try {
     await runtime.client('routines.pause', { routine_id: routine.routine_id, expected_revision: (await runtime.client('routines.list')).routines[0].revision });
     binding.pending_event.event_id = 'late-event'; params.event_id = 'late-event'; await fire(); assert.equal(host.turns.size, before + 1);
   });
+  await scenario('lost issuance response retries the persisted finite policy expiry without retargeting', async () => {
+    const h=new Host();const r=await new Runtime(h).start();const agent=(await r.client('agents.ensure_default')).agent;
+    const input={agent_id:agent.agent_id,request_id:'grant-lost-ack',title:'Finite',goal:'Only this task'};
+    h.loseGrantReply=true;await assert.rejects(r.client('tasks.create',input),/grant response lost/);
+    const first=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue');
+    assert(first.params.expires_at);const task=(await r.client('tasks.create',input)).task;
+    const repeated=h.calls.filter(c=>c.service==='host.execution.authorization' && c.params.request_id===first.params.request_id);
+    assert.equal(repeated.length,2);assert.equal(repeated[1].params.expires_at,first.params.expires_at);
+    assert.equal(task.authorization_request.expires_at,first.params.expires_at);await r.close();
+  });
+  await scenario('explicit grant refusal pauses unattended work while unknown transport does not revoke authority', async () => {
+    const h=new Host();const r=await new Runtime(h).start();const agent=(await r.client('agents.ensure_default')).agent;
+    const {task}=await r.client('tasks.create',{agent_id:agent.agent_id,request_id:'denied-task',title:'Scoped',goal:'Requested work'});
+    h.intercept=(service,p)=>{if(service==='host.session.inspect' && p.session_id===task.execution.session_id)throw new Error('temporary transport failure');};
+    let current=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(current.authorization_state,undefined);assert.equal(current.reconciliation_required,true);
+    h.intercept=(service,p)=>{if(service==='host.session.inspect' && p.session_id===task.execution.session_id)throw Object.assign(new Error('selected grant revoked'),{code:'execution_authorization_required'});};
+    current=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(current.authorization_state,'needs_authorization');assert.equal(current.reconciliation_required,false);
+    const before=h.calls.length;await r.client('tasks.reconcile',{task_id:task.task_id});assert.equal(h.calls.slice(before).filter(c=>c.service==='host.session.inspect').length,0);
+    const stopped=(await r.client('tasks.stop',{task_id:task.task_id,expected_revision:current.revision})).task;assert.equal(stopped.cancel_requested,true);assert.equal(stopped.state,'waiting_external','unsettled cancellation stays visible without a usable grant');assert.equal(stopped.reconciliation_required,true);
+    h.intercept=undefined;
+    const {routine}=await r.client('routines.create',{agent_id:agent.agent_id,request_id:'denied-routine',title:'Scoped reminder',prompt:'Only this reminder',kind:'reminder',cron:'0 12 * * *',timezone:'UTC'});
+    const binding=h.bindings.get(routine.binding.binding_id);binding.pending_event={event_id:'denied-event',binding_revision:binding.revision};
+    h.intercept=(service,p)=>{if(service==='host.execution.authorization' && p.operation==='issue' && p.parent)throw Object.assign(new Error('selected grant revoked'),{code:'execution_authorization_required'});};
+    const result=await r.call('service.invoke',{service:'automation.trigger',method:'fire',caller:'scheduler',params:{binding_id:binding.binding_id,...binding.pending_event,payload:binding.payload}});assert.equal(result.accepted,true);
+    assert.equal((await r.client('routines.list')).routines[0].status,'needs_authorization');assert.equal(h.bindings.get(routine.binding.binding_id).status,'paused');await r.close();
+  });
+  await scenario('task and routine grants persist only opaque references and expiry requires live renewal', async () => {
+    const h=new Host(); let r=await new Runtime(h).start(); const agent=(await r.client('agents.ensure_default')).agent;
+    const task=(await r.client('tasks.create',{agent_id:agent.agent_id,request_id:'grant-task',title:'Scoped',goal:'Read the requested data'})).task;
+    assert(task.authorization?.reference.id); assert(task.execution.authorization?.reference.id);
+    assert.deepEqual(Object.keys(task.authorization).sort(),['expires_at','reference']);
+    const send=h.calls.find(c=>c.service==='host.session.send' && c.params.cause==='personal.task'); assert.deepEqual(send.params.execution_authorization,task.execution.authorization.reference);
+    const lineage=input=>r.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'selected-execution-host',params:input,execution_id:'lineage-observation'});
+    const observed=await lineage({kind:'task-lineage',task_id:task.task_id,reference:task.authorization.reference});
+    assert.equal(observed.session_id,agent.main_session_id); assert.equal(observed.revision,task.requirements_revision);
+    const parent=h.grants.get(task.authorization.reference.id); parent.scope.context_digest=observed.context_digest; parent.scope.revision=observed.revision;
+    const exact={kind:'exact-run',task_id:task.task_id,session_id:task.execution.session_id,request_id:task.execution.request_id,reference:task.execution.authorization.reference,action:'user/session/inspect'};
+    assert.equal((await lineage(exact)).run_id,task.execution.request_id);
+    await assert.rejects(lineage({...exact,reference:task.authorization.reference}),/authorization changed/);
+    await assert.rejects(lineage({...exact,parent:{...parent,scope:{...parent.scope,revision:99}}}),/parent authorization/);
+    const taskEntry=[...h.storage].find(([,value])=>{try{return JSON.parse(value).task_id===task.task_id && JSON.parse(value).execution;}catch{return false;}});
+    const pending=JSON.parse(taskEntry[1]); delete pending.execution.session_id; delete pending.execution.authorization; pending.state='queued'; h.storage.set(taskEntry[0],JSON.stringify(pending));
+    const creating={parent,kind:'exact-run',task_id:task.task_id,request_id:task.execution.create_request_id,creation:task.execution.creation};
+    assert.deepEqual((await lineage(creating)).creation,task.execution.creation);
+    await assert.rejects(lineage({...creating,creation:{...task.execution.creation,context_source:'inherit'}}),/creation intent changed/);
+    h.storage.set(taskEntry[0],taskEntry[1]);
+    const revised=(await r.client('tasks.update',{task_id:task.task_id,expected_revision:task.revision,goal:'Updated scoped request'})).task;
+    const retired=await lineage({...exact,action:'user/session/cancel'}); assert.equal(retired.revision,task.requirements_revision);
+    await assert.rejects(lineage({...exact,action:'user/session/send'}),/unknown task run/);
+    assert(revised.execution.authorization.reference.id);
+    const routine=(await r.client('routines.create',{agent_id:agent.agent_id,request_id:'grant-routine',title:'Finite routine',prompt:'Only the requested reminder',kind:'reminder',cron:'0 12 * * *',timezone:'UTC'})).routine;
+    assert(routine.authorization?.expires_at); const entry=[...h.storage].find(([,value])=>{try{return JSON.parse(value).routine_id===routine.routine_id && JSON.parse(value).config_revision;}catch{return false;}});
+    const expired=JSON.parse(entry[1]); expired.authorization.expires_at='2000-01-01T00:00:00Z'; h.storage.set(entry[0],JSON.stringify(expired));
+    h.bindings.get(routine.binding.binding_id).pending_event={event_id:'expired-missed',binding_revision:routine.binding.revision};
+    await r.close();r=await new Runtime(h).start();
+    const blocked=(await r.client('routines.list')).routines[0]; assert.equal(blocked.status,'needs_authorization'); assert.equal(blocked.cron,routine.cron); assert.equal(h.bindings.get(routine.binding.binding_id).pending_event,undefined);
+    await assert.rejects(r.call('service.invoke',{service:'personal.agents',method:'routines.authorize',caller:'other',params:{routine_id:routine.routine_id,expected_revision:blocked.revision},execution_id:'forged-renewal'}),/Owner|owner|live/);
+    const renewed=(await r.client('routines.authorize',{routine_id:routine.routine_id,expected_revision:blocked.revision})).routine;
+    assert.equal(renewed.routine_id,routine.routine_id); assert.equal(renewed.status,'active'); assert.notEqual(renewed.authorization.reference.id,routine.authorization.reference.id);
+    assert.equal(h.bindings.get(routine.binding.binding_id).pending_event,undefined); await r.close();
+  });
+  await scenario('expired terminal delivery pauses and explicit owner retry never reruns work or replays unknown output', async () => {
+    const h=new Host();const r=await new Runtime(h).start();const agent=(await r.client('agents.ensure_default')).agent;
+    const {task}=await r.client('tasks.create',{agent_id:agent.agent_id,request_id:'expired-output',title:'Completed output',goal:'Original work'});
+    const entry=[...h.storage].find(([,raw])=>{try{return JSON.parse(raw).task_id===task.task_id && JSON.parse(raw).execution;}catch{return false;}});
+    const completed=JSON.parse(entry[1]);completed.state='completed';completed.execution.finished_state='completed';completed.result={summary:'Saved verified output',evidence:[],requirements_revision:1,verified_at:new Date().toISOString()};completed.authorization.expires_at='2000-01-01T00:00:00Z';completed.delivery={kind:'result',request_id:'never-admitted-output',session_id:agent.main_session_id,status:'pending'};h.storage.set(entry[0],JSON.stringify(completed));
+    let paused=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(paused.authorization_state,'needs_authorization');assert.equal(paused.state,'completed');assert.deepEqual(paused.result,completed.result);
+    await assert.rejects(r.call('service.invoke',{service:'personal.agents',method:'tasks.reconcile',caller:'forged-owner',params:{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision}}),/Owner|owner|live/);
+    const retried=(await r.client('tasks.reconcile',{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision})).task;assert.equal(retried.state,'completed');assert.deepEqual(retried.result,completed.result);assert.equal(retried.requirements_revision,completed.requirements_revision);assert.equal(retried.authorization.reference.id,completed.authorization.reference.id);assert.equal(retried.delivery.request_id,completed.delivery.request_id);
+    const issued=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.run_id===retried.delivery.request_id).params;assert.notEqual(issued.request_id,issued.run_id);assert.equal(issued.parent,undefined);assert.deepEqual(issued.requested_actions,['user/session/send','user/session/inspect','user/session/cancel','user/session/context','user/session/history.read']);assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.cause==='personal.task').length,1);
+    const missing=JSON.parse(h.storage.get(entry[0]));missing.delivery.authorization.expires_at='2000-01-01T00:00:00Z';h.storage.set(entry[0],JSON.stringify(missing));h.turns.delete(missing.delivery.request_id);
+    paused=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(paused.authorization_state,'needs_authorization');const before=h.calls.filter(c=>c.service==='host.session.send').length;
+    await assert.rejects(r.client('tasks.reconcile',{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision}),/unconfirmed|unknown/);assert.equal(h.calls.filter(c=>c.service==='host.session.send').length,before);assert.equal((await r.client('tasks.get',{task_id:task.task_id})).task.delivery.request_id,missing.delivery.request_id);await r.close();
+  });
+  await scenario('Calendar source observation uses an exact selected-service delegation without tool effects', async () => {
+    const h=new Host();const r=await new Runtime(h).start();const agent=(await r.client('agents.ensure_default')).agent;
+    const source={kind:'calendar',account_id:'account-one',generation:'generation-one',calendar_id:'cal-one',time_min:'2099-01-01T00:00:00.000Z',time_max:'2099-01-08T00:00:00.000Z',timezone:'UTC'};
+    h.intercept=(service,p)=>service==='calendar.personal'?{state:'ready',freshness:'fresh',source:{user_space_id:'local',...source},available:true,baseline:true,cursor:'observed',changes:[]}:undefined;
+    const {routine}=await r.client('routines.create',{agent_id:agent.agent_id,request_id:'source-proof',title:'Selected source',prompt:'Only this selected calendar',kind:'task',cron:'0 12 * * *',timezone:'UTC',source});
+    const binding=h.bindings.get(routine.binding.binding_id);binding.pending_event={event_id:'source-observation',binding_revision:binding.revision};
+    await r.call('service.invoke',{service:'automation.trigger',method:'fire',caller:'scheduler',params:{binding_id:binding.binding_id,...binding.pending_event,payload:binding.payload}});
+    const latest=(await r.client('routines.list')).routines[0];assert(latest.observation?.authorization?.reference);assert.equal(latest.last_error,undefined);
+    const delegated=h.calls.filter(c=>c.service==='host.execution.authorization' && c.params.operation==='call-service');assert.deepEqual(delegated.map(c=>c.params.method),['refresh','changes']);assert(delegated.every(c=>c.params.reference.id===latest.observation.authorization.reference.id));
+    const issue=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.request_id===latest.observation.request_id).params;assert(!issue.requested_actions.includes('user/session/send'));assert(!issue.requested_actions.includes('personal/file.execute'));
+    const observed=await r.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',params:{kind:'exact-run',task_id:routine.routine_id,session_id:agent.main_session_id,request_id:latest.observation.request_id,reference:latest.observation.authorization.reference}});assert.equal(observed.run_id,latest.observation.request_id);await r.close();
+  });
+  await scenario('Personal pulls producer outbox and lost acknowledgment cannot replay a scheduled task', async () => {
+    const h=new Host(); let r=await new Runtime(h).start();
+    const agent=(await r.client('agents.ensure_default')).agent;
+    const routine=(await r.client('routines.create',{agent_id:agent.agent_id,request_id:'pull-outbox',title:'Bound task',prompt:'Do the requested task',kind:'task',run_at:'2026-10-18T10:00:00Z',timezone:'UTC'})).routine;
+    const binding=h.bindings.get(routine.binding.binding_id);
+    binding.pending_event={event_id:'outbox-event',binding_revision:binding.revision,scheduled_at:binding.run_at};
+    h.pollOutbox=true; h.loseOutboxAck=true;
+    await r.close(); r=await new Runtime(h).start();
+    const tasks=(await r.client('tasks.list')).tasks; assert.equal(tasks.length,1); assert.equal(tasks[0].routine_id,routine.routine_id);
+    assert.equal(binding.last_event_id,'outbox-event'); assert.equal(binding.pending_event,undefined);
+    const sends=h.calls.filter(c=>c.service==='host.session.send' && c.params.cause==='personal.task').length;
+    await r.close(); r=await new Runtime(h).start();
+    assert.equal((await r.client('tasks.list')).tasks.length,1);
+    assert.equal((await r.client('routines.list')).routines[0].last_error,undefined);
+    assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.cause==='personal.task').length,sends);
+    await r.close();
+  });
   // History must distinguish dispatch from completion, survive replacement, retain
   // failures, avoid invented legacy timestamps, and isolate each routine's runs.
   await scenario('routine history preserves actual outcomes and task executions across restart', async () => {
@@ -1700,5 +1867,5 @@ try {
     await runtime.close(); runtime = await new Runtime(host).start(); assert.deepEqual(await attention(), { allowed: false }); host.intercept = undefined;
   });
   await runtime.close(); evidence.passed = true;
-} catch (error) { evidence.passed = false; evidence.error = error.stack; throw error; }
+} catch (error) { evidence.passed = false; evidence.error = error.stack; console.error(error); throw error; }
 finally { for (const runtime of active) runtime.process.kill(); await mkdir(evidencePath, { recursive: true }); await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify(evidence, null, 2)); await rm(scratch, { recursive: true, force: true }); }

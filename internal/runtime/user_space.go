@@ -109,10 +109,3 @@ func (s *Session) ProductDataRoot() string {
 func userHostWorkspaceStateDir(home, root string, binding userspace.Binding) (string, error) {
 	return resolveWorkspaceStateDir(binding.State(home), "", root)
 }
-
-func runtimeBasePrompt(binding userspace.Binding) string {
-	if !binding.IsUser() {
-		return config.DefaultSystemPrompt()
-	}
-	return "You are Wuu, an assistant helping the user. Follow the active product's instructions and the user's requests. Use only authorized tools, preserve source provenance, and distinguish verified outcomes from assumptions. Do not infer a project or a coding role from the host environment."
-}

@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const responseSelectionFixture = `[{"type":"response_selection","text":"Quoted assistant response (JSON):\n{\"text\":\"Alpha 🌊\",\"comment\":\"Explain this.\"}\n","selection":{"id":"selection-1","text":"Alpha 🌊","comment":"Explain this.","source":{"thread_id":"source-thread","turn_id":"source-turn","item_id":"source-item","start_offset":4,"end_offset":12}}},{"type":"text","text":"Compare it."}]`
@@ -185,6 +183,7 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	client := newBlockingStreamClient("done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -227,7 +226,7 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	rpc("steer", MethodTurnSteer, params)
 	rpc("interrupt", MethodTurnInterrupt, map[string]any{"thread_id": threadID})
 	waitForMethod(t, out, NotificationTurnError)
-	held, err := srv.loadHeldUserTurns(threadID)
+	held, err := srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +255,7 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	rpc("release", MethodTurnSteer, map[string]any{"thread_id": threadID, "client_id": "queue-1", "prompt": prompt})
 	close(client.release)
 	waitForTurnCompletedForThread(t, out, threadID)
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +388,8 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 	for _, rewrite := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rewrite=%t", rewrite), func(t *testing.T) {
 			dir := t.TempDir()
-			sess, err := session.CreateWithMetadata(dir, "selection-history", t.TempDir())
+			dirStore := newAppserverTestStore(t, dir)
+			sess, err := dirStore.CreateWithMetadata("selection-history", t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -403,21 +403,21 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			if rewrite {
-				err = rewriteChatHistory(dir, sess.ID, []providers.ChatMessage{msg})
+				err = rewriteChatHistory(dirStore, sess.ID, []providers.ChatMessage{msg})
 			} else {
-				_, err = appendChatMessage(dir, sess.ID, msg)
+				_, err = appendChatMessage(dirStore, sess.ID, msg)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			loaded, err := loadChatMessages(dir, sess.ID)
+			loaded, err := loadChatMessages(dirStore, sess.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(loaded) != 1 || loaded[0].Content != prompt || !reflect.DeepEqual(loaded[0].ContentParts, parts) {
 				t.Fatalf("provider replay lost content or metadata: %+v", loaded)
 			}
-			records, err := loadPersistedMessages(dir, sess.ID, false)
+			records, err := loadPersistedMessages(dirStore, sess.ID, false)
 			if err != nil || len(records) != 1 {
 				t.Fatalf("load display history: records=%+v err=%v", records, err)
 			}
@@ -434,8 +434,9 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 }
 
 func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	sess, err := session.CreateWithMetadata(dir, "selection-queue", t.TempDir())
+	rt := newTestRuntime(t, &fakeClient{})
+	dirStore := rt.Sessions
+	sess, err := dirStore.CreateWithMetadata("selection-queue", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,17 +446,17 @@ func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg.ClientID = "queue-1"
-	srv := &Server{rt: &runtime.Session{SessionDir: dir}}
+	srv := &Server{rt: rt}
 	srv.enqueueQueuedUserTurn(sess.ID, queuedTurn{id: msg.ClientID, msg: msg})
 	entry, ok := srv.takeNextQueuedUserTurn(sess.ID)
 	if !ok {
 		t.Fatal("queued message missing")
 	}
-	if _, err := srv.appendHeldUserTurns(sess.ID, []queuedTurn{entry}); err != nil {
+	if _, err := srv.appendHeldUserTurns(testRuntimeState(t, srv.rt), sess.ID, []queuedTurn{entry}); err != nil {
 		t.Fatal(err)
 	}
-	restarted := &Server{rt: &runtime.Session{SessionDir: dir}}
-	held, err := restarted.loadHeldUserTurns(sess.ID)
+	restarted := &Server{rt: rt}
+	held, err := restarted.loadHeldUserTurns(testRuntimeState(t, restarted.rt), sess.ID)
 	if err != nil || len(held) != 1 {
 		t.Fatalf("load held messages: %+v, err=%v", held, err)
 	}
@@ -519,6 +520,7 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &fakeClient{response: providersResponse("answer")}
 			rt := newTestRuntime(t, client)
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -605,7 +607,7 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 			}
 			checkStored := func(stage, threadID string) {
 				t.Helper()
-				records, err := session.LoadHistoryRecords(rt.SessionDir, threadID, false)
+				records, err := rt.Sessions.LoadHistoryRecords(threadID, false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -645,6 +647,18 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 			client.mu.Lock()
 			requests := append([]providers.ChatRequest(nil), client.requests...)
 			client.mu.Unlock()
+			storedMessages, err := loadChatMessages(rt.Sessions, threadID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pastedPath := ""
+			for _, message := range storedMessages {
+				for _, part := range message.ContentParts {
+					if part.Type == "pasted_text" {
+						pastedPath = part.LocalPath
+					}
+				}
+			}
 			found := false
 			for _, request := range requests {
 				for _, msg := range request.Messages {
@@ -652,9 +666,9 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 						found = true
 					}
 					if msg.Role == "user" && len(tc.want) > 0 && tc.want[0].Type == "pasted_text" {
-						found = len(msg.ContentParts) == len(tc.want) &&
+						found = len(msg.ContentParts) == 0 && pastedPath != "" &&
 							!strings.Contains(msg.Content, strings.TrimSpace(pasted)) &&
-							strings.Contains(msg.Content, msg.ContentParts[0].LocalPath) &&
+							strings.Contains(msg.Content, pastedPath) &&
 							strings.Contains(msg.Content, strings.TrimSpace(tc.want[1].Text))
 					}
 				}

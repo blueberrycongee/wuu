@@ -16,7 +16,7 @@ import (
 func TestConnectorHostAuthorityBoundary(t *testing.T) {
 	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
 	fixture := &connectorFixture{}
-	host := New(binding, Options{Connectors: fixture})
+	host := New(binding, Options{Authorize: authorizeFixture, Connectors: fixture})
 	defer host.Close()
 	for _, operation := range []string{"connectors.list", "connectors.actions", "connectors.decide", "connectors.disconnect"} {
 		if _, err := host.Call(context.Background(), operation, json.RawMessage(`{}`), "model-session"); err == nil {
@@ -56,7 +56,7 @@ func TestConnectorHostAuthorityBoundary(t *testing.T) {
 }
 func TestUnconfiguredConnectorStatusDoesNotClaimConnected(t *testing.T) {
 	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
-	h := New(binding, Options{})
+	h := New(binding, Options{Authorize: authorizeFixture})
 	defer h.Close()
 	value, err := h.Call(context.Background(), "connectors.read.list", json.RawMessage(`{}`), "verified")
 	if err != nil || !strings.Contains(string(value), `"unavailable"`) {
@@ -104,7 +104,7 @@ func TestConnectorOAuthNeverReturnsProviderURLAndCancelsFailedOpener(t *testing.
 		t.Fatal(err)
 	}
 	fixture := &connectorOAuthFixture{}
-	h := New(binding, Options{Connectors: fixture, OpenConnectorAuthorizationURL: func(context.Context, string) error { return nil }})
+	h := New(binding, Options{Authorize: authorizeFixture, Connectors: fixture, OpenConnectorAuthorizationURL: func(context.Context, string) error { return nil }})
 	defer h.Close()
 	result, err := h.Call(owner, "connectors.start", json.RawMessage(`{"provider":"gmail","connection_id":"g","domain":"personal","scopes":["read"],"resources":["me"]}`), "")
 	if err != nil || strings.Contains(string(result), "authorization_url") || strings.Contains(string(result), "secret-state") {

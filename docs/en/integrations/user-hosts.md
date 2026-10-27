@@ -12,6 +12,12 @@ Internal SDK embeddings can explicitly select `UserHostIsolationMode: "verified_
 
 The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, connector grants, remote pairing, notification credentials and deployment remain separate setup responsibilities.
 
+## Selected composition and desktop routing
+
+Choose the shipped Personal composition explicitly with `--composition-profile personal`, or set `CompositionProfile: "personal"` in SDK options. The user-space binding does not silently select a profile. Explicit service bindings and exclusions remain authoritative; removing a provider does not enable a native fallback.
+
+Desktop runtime calls may supply `userSpaceId`, `productDomain`, and `compositionProfile`. The source UI retains its original `graph_generation`. Before dispatch, the main process verifies that source identity, initializes the selected target host, and matches the exact plugin ID and fingerprint against its actual inventory. Calls and cancellation retain the target graph and connection captured by that handshake. A different target, failed binding, or removed provider is an error, not permission to replay the call elsewhere. The target independently checks its runtime state, declared service, and resource authorization. UI registration belongs to the source graph; the runtime-only target does not receive synthetic desktop activation reports.
+
 ## Identity and storage
 
 For local desktop development, run `make dev-personal` (an alias for `make dev`).
@@ -21,7 +27,7 @@ data, set an absolute `WUU_HOME` as described in the [development guide](../proj
 
 The binding is supplied by the host and returned by `initialize` as `user_space_id` and `product_domain`. Clients validate it before calling Personal services. Extension inventory changes do not change this binding.
 
-For a Wuu home, user data is separated as follows:
+With the bundled local storage providers, user data is separated as follows. These paths describe that implementation, not an authority requirement for replacement providers:
 
 - `user-spaces/<user-space>/<domain>/state`: sessions, private plugin storage, memory and managed artifacts
 - `user-spaces/<user-space>/<domain>/files`: permitted user working files and explicit attachment working copies
@@ -47,6 +53,31 @@ The persisted owner admits user attention through `session.attention` under its 
 Notification grouping defaults to off. A configured window (up to 15 minutes) coalesces pending attention separately for each responsible agent, using the first admitted item's fixed deadline. Conversation results remain individual and immediately readable. The host retains at most 128 in-memory batches and a latest-message locator; shutdown can lose pending best-effort notifications. It rechecks the latest item's current policy at flush and relay replay, and conservatively suppresses the batch if that locator is no longer authorized. Phone providers receive one generic agent notification, not a precise per-item digest. Changing the setting to zero affects new admitted attention; already pending windows otherwise keep their original deadline.
 
 Personal history search uses the public conversation projection, with optional inclusive `time_min` and exclusive `time_max` RFC3339 bounds applied before pagination. It searches visible user/assistant text, not hidden reasoning or execution-tool records. Returned sequence addresses navigate to the original main-conversation message; missing legacy timestamps remain unknown. Default Coding trace search is unchanged.
+
+### Bounded unattended authorization
+
+Unattended work uses the selected `execution.authorization@1` provider, not a
+saved owner identity or trusted-plugin status. Authenticated admission creates a
+finite, revocable grant bound to the selected task authority, current requirements,
+actions, resources, model and permission bounds. Exact runs narrow that authority
+to their persisted request and session. Personal saves opaque references and
+expiry times; it must obtain new authorization when the grant is no longer valid.
+A missing or refusing selected provider does not activate a fallback.
+
+The bundled native provider supports **local-installation authority only**, issued
+from a trusted local embedding. A paired phone or remote owner connection does
+not, by itself, establish durable account validity and cannot issue native
+unattended grants. An external provider may support authenticated accounts using
+the host-attested issuer, tenant and subject, but must own their durable validity
+and revocation checks. Account disablement, logout and device revocation have the
+semantics that provider actually implements; the host does not infer one from
+another. Closing a GUI connection is distinct from revoking an admitted grant.
+
+Each effect requires fresh selected grant and resource-policy validation after
+review and before its durable dispatch claim. Revocation prevents new admissions;
+it does not undo an effect already admitted. A saved positive check cannot be
+reused after a pending decision, retry or restart. Unknown validation outcomes
+fail closed without dispatch.
 
 ## Foreground input and attachments
 
@@ -123,13 +154,64 @@ An active worker waits at its original native tool invocation. Approval returns 
 
 AutoReview is **off by default** and explicitly enabled only in Personal settings. Its scope is these two operations, not an account grant or reusable blanket consent. It reuses the native policy reviewer with the retained original human request, exact frozen action and current task context; missing source evidence, reviewer failure or uncertainty falls back to the owner card. Hard denies still apply. Settings changes have a durable actor/time/revision audit and do not modify Coding's reviewer or permission settings.
 
-Coverage exclusions: shell commands, `apply_patch`, MCP/plugin write tools, remote execution, account/OAuth grants and external send/calendar writes are not routed through this adapter. Runtimes with file-change/permission-request hooks or an authorization-provider extension are conservatively unsupported, including callbacks retained by an older toolkit generation; the adapter rejects rather than skipping their security checks or making plugin RPCs under the file commit lock. Supporting them requires a separate preflight/commit integration. The UI preview uses synthetic state and is not evidence of native execution or account connectivity.
+Coverage exclusions: shell commands, `apply_patch`, MCP/plugin write tools, remote execution, account/OAuth grants and external send/calendar writes are not routed through this adapter. Selected authorization providers are supported only when they implement the fenced `acquire-authorization` / `release-authorization` contract; the same captured provider remains retained through the local effect and cleanup. File-change or permission-request callbacks without a captured local-only guarantee remain unsupported, including callbacks retained by an older toolkit generation. The adapter fails closed rather than skipping security checks or calling arbitrary extension hooks under the file commit lock. The UI preview uses synthetic state and is not evidence of native execution or account connectivity.
 
 The bundled Calendar adapter starts unconnected. The read and write interfaces accept a trusted, user-space/account-bound provider for an already authorized grant; tool input and plugin configuration cannot supply credentials. The shipped default does not wire an authorization provider or writer. An embedding must supply that integration after separate account authorization; source adapter tests do not complete this setup. Its write contract requires a full immutable preview, explicit client confirmation, exact revision and digest, and read-back verification. A lost acknowledgment produces an uncertain outcome that is reconciled without blindly replaying a write. Provider-injected tests do not establish a real OAuth or account outcome.
 
 See the [app-server protocol](app-server-protocol.md), [plugin authoring](../customize/plugin-authoring.md), and [native client setup](../../../clients/native/README.md) for the underlying integration surfaces.
 
 Calendar proposals are reachable from the main conversation without replacing its Session. The review overlay retains the full immutable preview and exact revision/digest confirmation. Personal exposes only a read-only operations-list adapter; confirmation and cancellation remain trusted Calendar client operations. With no authorized provider, the UI reports the disconnected/read-only state and cannot confirm a write.
+
+#### Migrating the legacy review ledger
+
+An existing `personal-review.sqlite` is never silently replaced by an empty
+selected ledger. If startup reports `personal_review_legacy_migration_required`,
+stop **all desktop, local and remote Personal hosts for that user space**, retain
+its backup, and run the local maintenance command with the same `WUU_HOME`, config
+and composition-profile override used by that host:
+
+```bash
+wuu state migrate-personal-review --user-space local --composition-profile personal
+# Inspect the selected provider, source_digest, row counts and marker status.
+wuu state migrate-personal-review --user-space local --composition-profile personal \
+  --apply --expect-source-digest DIGEST_FROM_INSPECTION
+```
+
+Use `--config /absolute/path/config.json` on both calls if the host uses an explicit
+config file. Omit `--composition-profile` only when the host also relies on its
+configured profile. Inspection is the default (`--dry-run` is equivalent): it
+imports no review rows and does not create a migration marker. Both operations
+require a verified local owner, current selected resource policy and exclusive
+stopped-host presence. Shared or multi-host storage is rejected; use the selected
+provider's offline maintenance procedure with exclusive-writer proof instead.
+
+Apply checks the expected digest against the same frozen logical source snapshot
+it imports, including committed SQLite WAL data. It copies settings, actions and
+audit into the **empty selected provider**, committing the path-bound marker in
+the same transaction. It never deletes or updates the source, overwrites selected
+records, replays uncertain actions or grants execution permission. The JSON result
+reports `migration-required`, `migrated` or `already-migrated`. If transport or
+cleanup fails, preserve the source and inspect again before retrying: a matching
+committed marker resolves an unknown import outcome without repeating the import.
+A changed source or populated incompatible destination requires explicit operator
+reconciliation, not a forced overwrite.
+
+#### Replacement-provider maintenance boundary
+
+Ordinary plugin calls cannot mint or forward host maintenance attestations. The
+native session provider can validate an admitted maintenance request and bind a
+new attestation to its exact selected document-store call. An external session
+provider can implement maintenance in its own authority, but forwarding this
+admission through `service.call` to a separate external document provider is
+**not currently supported** and fails closed. Full chained-provider maintenance
+requires a future host-mediated, dependency-bound attenuation contract; selecting
+both providers does not grant an administrative bypass.
+
+Imported child compositions also have a direct grant-policy routing limitation:
+the child bridge's provider ID is not the original grant provider ID. Direct
+child-policy calls therefore fail closed. Product session and effect handlers
+retain the parent authority; this does not establish support for every direct
+child-graph invocation. See [composition boundaries](../customize/plugin-compositions.md).
 
 ### Scoped Personal connectors
 

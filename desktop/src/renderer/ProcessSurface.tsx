@@ -1,8 +1,6 @@
 import {
   useEffect,
   useId,
-  useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type JSX,
@@ -12,12 +10,11 @@ import type { ThreadItem } from "../shared/protocol";
 import {
   browserActivityOpenURL,
   mcpToolActivityTitle,
+  latestToolActivityProcessSegment,
   buildToolActivityProcessSegments,
   collectTurnSources,
-  type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
 import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
-import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
@@ -28,145 +25,14 @@ import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { ContextCompactionIndicator } from "./ContextCompactionIndicator";
 import { TurnSourcesRow, TurnSourceChips } from "./TurnSourcesRow";
 import { collectTurnArtifacts } from "./ArtifactOutputs";
-import { translateCurrent as translate, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 import {
   useWorkspaceBrowserOpen,
   workspaceBrowserClickModifiers,
   type WorkspaceBrowserOpenModifiers,
 } from "./WorkspaceBrowserOpen";
-import {
-  CONDENSED_SUMMARY_MIN_TOOL_COUNT,
-  PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
-  PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
-  condensedToolActivityText,
-  mascotActivityForToolKind,
-  processSegmentText,
-  processSummaryIdentity,
-  processSummarySignature,
-  type ProcessSummaryPresentation,
-} from "./ProcessSummary";
+import { mascotActivityForToolKind, processSegmentText } from "./ProcessSummary";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
-import {
-  useConversationBecameRenderActive,
-  useConversationRenderActive,
-} from "./ConversationRenderActivity";
-import { motionDurationMs } from "./motion";
-
-function useDebouncedProcessSummary(
-  segments: ToolActivityProcessSegment[],
-  toolCount: number,
-  reasoningStreaming: boolean,
-  streaming: boolean,
-): ProcessSummaryPresentation {
-  const renderActive = useConversationRenderActive();
-  const becameRenderActive = useConversationBecameRenderActive();
-  const [presented, setPresented] = useState<ProcessSummaryPresentation>(() => ({
-    segments,
-    toolCount,
-  }));
-  const pendingRef = useRef<ProcessSummaryPresentation>({ segments, toolCount });
-  pendingRef.current = { segments, toolCount };
-  const presentedIdentityRef = useRef(
-    processSummaryIdentity(segments, toolCount, reasoningStreaming),
-  );
-  const presentedSignatureRef = useRef(
-    processSummarySignature(segments, toolCount, reasoningStreaming),
-  );
-  const idleTimerRef = useRef<number | undefined>(undefined);
-  const maxWaitTimerRef = useRef<number | undefined>(undefined);
-  const liveIdentity = processSummaryIdentity(
-    segments,
-    toolCount,
-    reasoningStreaming,
-  );
-  const liveSignature = processSummarySignature(
-    segments,
-    toolCount,
-    reasoningStreaming,
-  );
-
-  useLayoutEffect(() => {
-    const clearTimers = (): void => {
-      if (idleTimerRef.current !== undefined) {
-        window.clearTimeout(idleTimerRef.current);
-        idleTimerRef.current = undefined;
-      }
-      if (maxWaitTimerRef.current !== undefined) {
-        window.clearTimeout(maxWaitTimerRef.current);
-        maxWaitTimerRef.current = undefined;
-      }
-    };
-    const publish = (next: ProcessSummaryPresentation): void => {
-      clearTimers();
-      presentedIdentityRef.current = processSummaryIdentity(
-        next.segments,
-        next.toolCount,
-        reasoningStreaming,
-      );
-      presentedSignatureRef.current = processSummarySignature(
-        next.segments,
-        next.toolCount,
-        reasoningStreaming,
-      );
-      setPresented(next);
-    };
-
-    if (liveSignature === presentedSignatureRef.current) {
-      return;
-    }
-
-    if (!renderActive) {
-      clearTimers();
-      return;
-    }
-
-    // A new kind, status, or copy is a phase change. Settling the stream is
-    // also a boundary: never leave a stale count on a completed row. The first
-    // visible commit after a session switch must also snap: a delayed count
-    // change would jump the aggregated toolcall row.
-    if (
-      !streaming ||
-      becameRenderActive ||
-      liveIdentity !== presentedIdentityRef.current
-    ) {
-      publish(pendingRef.current);
-      return;
-    }
-
-    if (idleTimerRef.current !== undefined) {
-      window.clearTimeout(idleTimerRef.current);
-    }
-    idleTimerRef.current = window.setTimeout(() => {
-      idleTimerRef.current = undefined;
-      publish(pendingRef.current);
-    }, PROCESS_SUMMARY_COUNT_DEBOUNCE_MS);
-
-    if (maxWaitTimerRef.current === undefined) {
-      maxWaitTimerRef.current = window.setTimeout(() => {
-        maxWaitTimerRef.current = undefined;
-        publish(pendingRef.current);
-      }, PROCESS_SUMMARY_COUNT_MAX_WAIT_MS);
-    }
-  }, [
-    becameRenderActive,
-    liveIdentity,
-    liveSignature,
-    reasoningStreaming,
-    renderActive,
-    streaming,
-  ]);
-
-  useEffect(() => () => {
-    if (idleTimerRef.current !== undefined) {
-      window.clearTimeout(idleTimerRef.current);
-    }
-    if (maxWaitTimerRef.current !== undefined) {
-      window.clearTimeout(maxWaitTimerRef.current);
-    }
-  }, []);
-
-  return presented;
-}
 
 export function ProcessSurfaceMascot({
   active,
@@ -261,11 +127,7 @@ export function ProcessSurface({
   );
   const compactionItems = processItems.filter(item => item.type === "context_compaction");
   const hasCompaction = compactionItems.length > 0;
-  // The compaction outcome replaces completed context-management labels in
-  // the summary. Running/failed tools and history reads remain visible.
-  const toolSegments = buildToolActivityProcessSegments(toolItems).filter(segment =>
-    !hasCompaction || segment.status !== "completed" || !["context", "context-window"].includes(segment.id),
-  );
+  const currentToolSegment = latestToolActivityProcessSegment(toolItems, hasCompaction);
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
   const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning && !hasCompaction
@@ -285,27 +147,11 @@ export function ProcessSurface({
   const reasoningStreaming =
     streaming &&
     reasoningItems.some((item) => item.status === "in_progress");
-  const currentToolSegment =
-    [...toolSegments]
-      .reverse()
-      .find((segment) => segment.status === "running") ??
-    toolSegments.at(-1);
   const mascotActivity: WuuMascotActivity = compactionItems.some(item => item.status === "in_progress")
     ? "compact"
-    : reasoningStreaming || (hasReasoning && toolItems.length === 0)
+    : hasReasoning && toolItems.length === 0
       ? "thinking"
       : mascotActivityForToolKind(currentToolSegment?.kind);
-  const summaryPresentation = useDebouncedProcessSummary(
-    toolSegments,
-    toolItems.length,
-    reasoningStreaming,
-    streaming,
-  );
-  const summarySegments = summaryPresentation.segments;
-  const summaryToolCount = summaryPresentation.toolCount;
-  const useCondensedSummary =
-    summaryToolCount >= CONDENSED_SUMMARY_MIN_TOOL_COUNT &&
-    summarySegments.length > 1;
   // Activity belongs to the synthesized process entry, not to any individual
   // tool item's running/completed status. In the real turn shell `active` is
   // assigned to the latest gray process entry; `streaming` is only the legacy
@@ -352,17 +198,14 @@ export function ProcessSurface({
   const className = `process-surface${
     hasDetails ? " has-details" : " no-details"
   }${streaming ? " is-streaming" : ""}`;
-  const summaryText = useCondensedSummary
-    ? condensedToolActivityText(summarySegments, summaryToolCount, reasoningStreaming)
-    : `${summarySegments
-        .map(processSegmentText)
-        .join(t("process.actionSeparator"))}${
-        hasReasoning
-          ? `${summarySegments.length > 0 ? " · " : ""}${
-              reasoningStreaming ? t("process.thinking") : t("process.reasoning")
-            }`
-          : ""
-      }`;
+  const summarySegments = processEntryActive
+    ? currentToolSegment ? [currentToolSegment] : []
+    : buildToolActivityProcessSegments(toolItems).filter(segment =>
+      !hasCompaction || segment.status !== "completed" || !["context", "context-window"].includes(segment.id),
+    );
+  const summaryText = summarySegments.length > 0
+    ? summarySegments.map(processSegmentText).join(t("process.actionSeparator"))
+    : hasReasoning ? t(reasoningStreaming ? "process.thinking" : "process.reasoning") : "";
 
   const summaryLine = (
     <span
@@ -380,41 +223,15 @@ export function ProcessSurface({
         active={processEntryActive}
         text={summaryText}
       >
-        {useCondensedSummary ? (
+        <span className={`process-surface-segment${currentToolSegment ? "" : " process-surface-reasoning-segment"}`}>
           <AnimatedProcessText
-            className="process-surface-condensed-summary"
-            text={condensedToolActivityText(
-              summarySegments,
-              summaryToolCount,
-              reasoningStreaming,
-            )}
+            className={currentToolSegment ? undefined : "process-surface-reasoning-label"}
+            text={summaryText}
           />
-        ) : (
-          summarySegments.map((segment, index) => (
-            <ProcessSurfaceSegmentView
-              key={segment.id}
-              segment={segment}
-              separator={index > 0}
-            />
-          ))
-        )}
-        {hasReasoning && !useCondensedSummary ? (
-          <span className="process-surface-segment process-surface-reasoning-segment">
-            {summarySegments.length > 0 ? (
-              <span className="process-surface-separator">{" · "}</span>
-            ) : null}
-            <AnimatedProcessText
-              className="process-surface-reasoning-label"
-              text={
-                reasoningStreaming ? t("process.thinking") : t("process.reasoning")
-              }
-            />
-          </span>
-        ) : null}
+        </span>
       </ProcessLabel> : null}
       {hasCompaction ? (
         <span className="process-surface-compactions">
-          {summaryText ? <span className="process-surface-separator" aria-hidden>·</span> : null}
           {/* The expanded notice owns live announcements while it is visible. */}
           {compactionItems.map(item => <ContextCompactionIndicator key={item.id} item={item} announce={!expanded} />)}
         </span>
@@ -472,79 +289,6 @@ export function ProcessSurface({
       </ProcessSurfaceFold>
     </div>
   );
-  // Nesting is deterministic: conversation.process is the complete outer
-  // boundary. For a single tool, conversation.tool-activity remains the inner
-  // keyed boundary, so process replacement wins and process wrappers surround
-  // either the tool presenter result or the native unified surface.
-  const toolActivityFallback = (
-    <ToolActivityPresenter
-      item={toolItems.length === 1 && !hasReasoning && !hasCompaction ? toolItems[0] : undefined}
-      fallback={nativeFallback}
-    />
-  );
-  return (
-    <ConversationProcessPresentation
-      processItems={processItems}
-      streaming={streaming}
-      active={active}
-      fallback={toolActivityFallback}
-    />
-  );
-}
-
-function ProcessSurfaceSegmentView({
-  segment,
-  separator,
-}: {
-  segment: ToolActivityProcessSegment;
-  separator: boolean;
-}): JSX.Element {
-  return (
-    <span
-      className={`process-surface-segment process-surface-segment-${segment.kind}`}
-    >
-      {separator ? (
-        <span className="process-surface-separator">{translate("process.actionSeparator")}</span>
-      ) : null}
-      {typeof segment.count === "number" ? (
-        <>
-          <span>{segment.countPrefix}</span>
-          <ProcessSurfaceAnimatedCount value={segment.count} />
-          <span>{segment.countSuffix}</span>
-        </>
-      ) : (
-        <AnimatedProcessText text={segment.text ?? ""} />
-      )}
-    </span>
-  );
-}
-
-function ProcessSurfaceAnimatedCount({
-  value,
-}: {
-  value: number;
-}): JSX.Element {
-  const previousValue = useRef(value);
-  const [changing, setChanging] = useState(false);
-
-  useEffect(() => {
-    if (previousValue.current === value) {
-      return undefined;
-    }
-    previousValue.current = value;
-    setChanging(true);
-    // The .is-changing entrance runs on --motion-base.
-    const timeoutId = window.setTimeout(() => {
-      setChanging(false);
-    }, motionDurationMs("--motion-base", 180));
-    return () => window.clearTimeout(timeoutId);
-  }, [value]);
-
-  return (
-    <span
-      className={`process-surface-count${changing ? " is-changing" : ""}`}
-    >
-      {value}
-    </span>
-  );
+  // Keep one boundary as a single activity grows into a process group.
+  return <ConversationProcessPresentation processItems={processItems} streaming={streaming} active={processEntryActive} fallback={nativeFallback} />;
 }

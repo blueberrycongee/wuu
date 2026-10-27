@@ -15,8 +15,8 @@ const event = { id: 'dinner', status: 'confirmed', summary: 'Synthetic dinner', 
 class Host { values = new Map(); async call(method, p) { const key = `${p.scope}:${p.key}`; if (method === 'host.storage.get') return { value: this.values.get(key) ?? null }; assert.equal(method, 'host.storage.compare_exchange'); const value = this.values.get(key) ?? null; if (value !== p.expected) return { swapped: false, value }; this.values.set(key, p.value); return { swapped: true, value: p.value }; } }
 async function fixture({ host = new Host(), state = { items: [structuredClone(event)], account: grant, status: 200, requests: 0 } } = {}) {
   const plugin = new PersonalCalendarPlugin({ clock: now, reader: new GoogleCalendarReader({ clock: now, authorize: async () => state.account, fetch: async () => { state.requests++; return new Response(JSON.stringify({ timeZone: 'UTC', items: state.items }), { status: state.status }); } }) });
-  plugin.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: new AbortController().signal }); await plugin.activate();
-  const call = (method, params = {}) => plugin.invokeService({ service: 'calendar.personal', method, params, caller: 'kernel' });
+  plugin.initialize({ product_domain: 'personal', user_space_id: 'space' }, host, { signal: new AbortController().signal }); await plugin.activate(host);
+  const call = (method, params = {}) => plugin.invokeService({ service: 'calendar.personal', method, params, caller: 'kernel' }, host);
   return { state, host, plugin, call, refresh: (input = query) => call('refresh', input), changes: (input = {}) => call('changes', { ...query, ...input }) };
 }
 

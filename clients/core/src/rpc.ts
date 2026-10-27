@@ -12,6 +12,11 @@ export interface ResponseError {
   message: string;
 }
 
+export class RPCResponseError extends Error {
+  readonly kind = "app-server-response";
+  constructor(readonly code: string | undefined, message: string) { super(message); }
+}
+
 /** One line of app-server JSON in envelope form. */
 export interface ProtocolEnvelope {
   id?: string | number;
@@ -116,7 +121,7 @@ export class ProtocolClient {
     this.pending.delete(String(env.id));
     clearTimeout(pending.timer);
     if (env.error) {
-      pending.reject(new Error(env.error.message));
+      pending.reject(new RPCResponseError(env.error.code, env.error.message));
     } else {
       try {
         pending.onResult?.(env.result);
