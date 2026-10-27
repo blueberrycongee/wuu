@@ -26,6 +26,8 @@ import type { PendingViewSwitch } from "./ViewSwitchState";
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
 export type WorkspaceRuntimeActionsDeps = {
+  onError?: (error: Error) => never;
+  confirmRemoval?: (projectId: string) => Promise<boolean>;
   getPendingViewSwitch: () => PendingViewSwitch | undefined;
   getAppState: () => AppState;
   setAppState: SetAppState;
@@ -41,13 +43,14 @@ export type WorkspaceRuntimeActionsDeps = {
   closeWorkspaceMenus: () => void;
   
   beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetID: string) => number;
-  finishViewSwitch: (requestID: number) => boolean;
+  finishViewSwitch: (requestID: number, loadedState?: Partial<AppState>) => boolean;
   cancelViewSwitch: () => void;
   loadRuntime?: typeof defaultLoadRuntime;
 };
 
 export type WorkspaceRuntimeActions = {
   selectWorkspaceForNewThread: (projectId: string) => Promise<void>;
+  openWorktreeForNewThread: (path: string) => Promise<void>;
   startNewThreadInWorkspace: (projectId: string) => Promise<boolean>;
   createBlankProject: () => Promise<void>;
   chooseProjectFolder: () => Promise<void>;
@@ -62,6 +65,7 @@ export function createWorkspaceRuntimeActions(
   const loadRuntime = deps.loadRuntime ?? defaultLoadRuntime;
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 
@@ -168,7 +172,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -213,6 +217,24 @@ export function createWorkspaceRuntimeActions(
     });
   }
 
+  async function openWorktreeForNewThread(path: string): Promise<void> {
+    await retargetDraftToContext({
+      switchKind: "workspace",
+      switchTarget: path,
+      isCurrentContext: (state) => state.activeContext?.cwd === path,
+      selectContext: async () => {
+        let project = deps.getAppState().projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        if (!project && window.wuu.importWorkspaces) {
+          const imported = await window.wuu.importWorkspaces([path]);
+          project = imported.projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        }
+        if (!project) throw new Error(translateCurrent("workspace.openFailed"));
+        return window.wuu.selectProject(project.id);
+      },
+      failureStatus: translateCurrent("workspace.openFailed"),
+    });
+  }
+
   async function startNewThreadInWorkspace(projectId: string): Promise<boolean> {
     const contextSwitching = deps.getPendingViewSwitch()?.contextSwitching;
     deps.cancelViewSwitch();
@@ -233,7 +255,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       if (!loadedState.activeContext) {
@@ -309,7 +331,7 @@ export function createWorkspaceRuntimeActions(
         return;
       }
       const loadedState = await loadRuntime(workspaceState);
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -348,7 +370,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -380,11 +402,11 @@ export function createWorkspaceRuntimeActions(
     );
     if (
       !removedWorkspace ||
-      !(await confirmAction({
+      !(await (deps.confirmRemoval ? deps.confirmRemoval(projectId) : confirmAction({
         title: translateCurrent("workspace.removeTitle", { name: removedWorkspace.name }),
         message: translateCurrent("workspace.removeConfirm"),
         confirmLabel: translateCurrent("common.remove"),
-      }))
+      })))
     ) {
       return;
     }
@@ -407,7 +429,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -449,7 +471,7 @@ export function createWorkspaceRuntimeActions(
         return;
       }
       const loadedState = await loadRuntime(workspaceState);
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -497,7 +519,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       if (!loadedState.activeContext) {
@@ -547,6 +569,7 @@ export function createWorkspaceRuntimeActions(
 
   return {
     selectWorkspaceForNewThread,
+    openWorktreeForNewThread,
     startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,

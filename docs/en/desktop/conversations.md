@@ -10,6 +10,12 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+The normal sidebar includes cross-workspace **Recent**. Opening the window orders running conversations first, then unread conversations, then the remaining conversations by latest update. Reading or switching conversations clears unread indicators without changing their positions, even after the pointer or keyboard focus leaves the list. Live output and title updates also preserve the order.
+
+Starting work or receiving a new result gives that conversation priority while preserving the relative order of other conversations. A conversation that finishes stays just below the remaining running conversations, including when you are already viewing it and its result is marked read immediately. These priorities last until the window is reloaded or reopened. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, activity-driven moves wait until the interaction ends; status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
+
+These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
+
 ## Continue after an interruption
 
 When a Wuu task stops or fails, leave the input empty and click **Continue** (the send button), or use **Continue** in the failure notice. This starts a new turn from saved active history without repeating your question. Reopening the conversation or restarting Wuu retains this action. Typing a new instruction still sends a normal message.
@@ -34,14 +40,11 @@ Use the arrow keys and Enter, or click a result. Addressable user and assistant 
 
 ## Choose where a new conversation works
 
-Above a new conversation's input, the project control shows the workspace it belongs to. In a Git project, a second control holds the branch and a **Worktree** toggle:
+Below the input, new and existing conversations show their project and current Git branch. You can choose a project before starting a conversation; an existing conversation keeps its project binding. Choosing another branch checks it out in the current working tree; your editor, terminal, and other conversations using that working tree see the change. Branch switching is unavailable while a task is running there.
 
-| Worktree | Choosing a branch |
-|---|---|
-| Off | Checks the branch out in the project. Your editor, terminal, and other conversations in the project see the change. |
-| On | Only sets the branch the new worktree starts from. The project stays on its current branch. |
+Ask the agent to create and use a worktree when a task needs an isolated checkout. The composer has no manual worktree switch.
 
-With **Worktree** on, the first message creates a separate directory from the chosen branch's committed content, and the conversation works there. Uncommitted changes in the project are not carried over. The worktree starts without a branch of its own (detached `HEAD`), so a pull request from it needs a named branch first. The toggle applies to one new conversation; the next draft starts in the project again.
+When the right-side tool rail is collapsed, permissions, context usage, and model selection appear below the input. Browser, terminal, file, and new-page shortcuts stay hidden until you expand the rail again.
 
 ## While a task is running
 
@@ -63,6 +66,8 @@ Once the final answer is ready, Enter or the send button starts a normal follow-
 For other sending failures, Wuu restores the input when that composer is still empty. If you have switched away or typed a newer draft, the failed input stays in the original conversation instead. If there is no conversation because its creation failed, the error notice lets you open the retained input as a separate draft or discard it. Failed input is not retried automatically.
 
 Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
+
+Expand the activity trail to inspect tool calls. A `run_code` row shows its description, or a short source preview when no description is provided. Expand the row to read and copy the full source, program output, and any error. Long code and output scroll within their blocks.
 
 ## Quote part of a response
 

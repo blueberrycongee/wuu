@@ -1,4 +1,6 @@
+import { Tooltip } from "./Tooltip";
 import { hostSupports } from "./HostCapabilities";
+import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Project } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
@@ -151,7 +153,6 @@ export function WorkspaceList({
   onArchiveThread: (thread: ThreadSummary) => void;
   onDeleteThread: (thread: ThreadSummary) => void;
   onRenameThread?: (thread: ThreadSummary, title: string) => void;
-  
 }): JSX.Element {
   return (
     <div className="projects">
@@ -175,7 +176,6 @@ export function WorkspaceList({
           onArchiveThread={onArchiveThread}
           onDeleteThread={onDeleteThread}
           onRenameThread={onRenameThread}
-          
         />
       ))}
     </div>
@@ -217,7 +217,6 @@ export function WorkspaceGroup({
   onArchiveThread,
   onDeleteThread,
   onRenameThread,
-  
   onRemoveWorkspace,
   onRelocateWorkspace,
   onCreateProject,
@@ -246,7 +245,6 @@ export function WorkspaceGroup({
   onArchiveThread: (thread: ThreadSummary) => void;
   onDeleteThread: (thread: ThreadSummary) => void;
   onRenameThread?: (thread: ThreadSummary, title: string) => void;
-  
   // Remove a real workspace from the sidebar. Absent for the 对话 scratch
   // pseudo project (and never wired for 群聊 / Agents, which are separate
   // sections), so those can never be removed.
@@ -360,15 +358,6 @@ export function WorkspaceGroup({
                 },
               )
         }
-        title={
-          workspaceSelectionMode
-            ? t("threadSidebar.openWorkspace", { name: project.name })
-            : t(
-                expanded
-                  ? "threadSidebar.collapseConversations"
-                  : "threadSidebar.expandConversations",
-              )
-        }
         active={activeWorkspace}
         pending={pendingWorkspace}
         running={workspaceHasRunning}
@@ -390,20 +379,19 @@ export function WorkspaceGroup({
                 }
         }
         newItemButton={
-          <button
-            className="sidebar-row-icon-button project-row-new-thread"
-            type="button"
-            aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}
-            title={
+          <Tooltip asChild content={
               isMissing
                 ? t("threadSidebar.missingWorkspace")
                 : t("sidebar.newConversation")
-            }
+            }><button
+            className="sidebar-row-icon-button project-row-new-thread"
+            type="button"
+            aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}
             disabled={isMissing || (isScratchPseudo && !hostSupports("createBlankProject"))}
             onClick={() => onStartNewThread(project.id)}
           >
             <MessageSquarePlus className="icon" />
-          </button>
+          </button></Tooltip>
         }
         hoverCard={() => (
           <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
@@ -614,7 +602,7 @@ function ThreadList({
       <div className="thread-list project-thread-list" ref={listRef}>
         {pendingConversations.map((pending) => (
           <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
-            <span className="thread-row-spinner" aria-hidden="true" />
+            <SidebarActivityIndicator className="thread-row-spinner" />
             <button
               className="thread-row-main"
               type="button"
@@ -662,7 +650,6 @@ function ThreadList({
               type="button"
               onClick={onCollapse}
               aria-label={t("threadSidebar.collapseExpanded")}
-              title={t("common.collapse")}
             >
               {t("common.collapse")}
             </button>
@@ -997,7 +984,7 @@ function ThreadRows({
             {...hoverCard.anchorHandlers(thread.id)}
           >
               {running ? (
-                <span className="thread-row-spinner" aria-hidden="true" />
+                <SidebarActivityIndicator className="thread-row-spinner" />
               ) : null}
               {project ? (
                 <span className="project-thread-glyph" aria-hidden="true">
@@ -1030,24 +1017,22 @@ function ThreadRows({
                 className="thread-row-actions"
                 aria-label={t("threadSidebar.actions")}
               >
-                <button
+                <Tooltip asChild content={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}><button
                   className={`sidebar-row-icon-button thread-row-action ${thread.pinned ? "active" : ""}`}
                   type="button"
                   aria-label={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
-                  title={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
                   onClick={() => togglePinned(thread)}
                 >
                   <Pin className="icon-sm" />
-                </button>
-                <button
+                </button></Tooltip>
+                <Tooltip asChild content={t("sidebar.archiveAction")}><button
                   className="sidebar-row-icon-button thread-row-action archive"
                   type="button"
                   aria-label={t("sidebar.archiveAction")}
-                  title={t("sidebar.archiveAction")}
                   onClick={() => onArchive(thread)}
                 >
                   <Archive className="icon-sm" />
-                </button>
+                </button></Tooltip>
               </div>
           </div>
         );
@@ -1074,16 +1059,16 @@ function ThreadRows({
           y={contextMenu.y}
           items={contextMenu.mode === "folder" ? folderOrganizationMenuItems(contextMenu.thread) : [
             {
+              label: t("threadSidebar.rename"),
+              disabled: !onRename,
+              onSelect: () => openRenameDialog(contextMenu.thread),
+            },
+            {
               label: t(contextMenu.thread.pinned ? "sidebar.unpin" : "sidebar.pin"),
               onSelect: () => togglePinned(contextMenu.thread),
             },
             ...organizationMenuItems(contextMenu.thread),
             { separator: true },
-            {
-              label: t("threadSidebar.rename"),
-              disabled: !onRename,
-              onSelect: () => openRenameDialog(contextMenu.thread),
-            },
             {
               label: t("threadSidebar.copyWorkingDirectory"),
               onSelect: () => {
@@ -1091,16 +1076,16 @@ function ThreadRows({
               },
             },
             {
-              label: revealInFileManagerLabel(),
-              disabled: !hostSupports("revealSession"),
-              onSelect: () => {
-                void window.wuu.revealSession(contextMenu.thread.id);
-              },
-            },
-            {
               label: t("threadSidebar.copyConversationID"),
               onSelect: () => {
                 void copyToClipboard(contextMenu.thread.id);
+              },
+            },
+            {
+              label: revealInFileManagerLabel(),
+              disabled: !organization?.revealThread && !hostSupports("revealSession"),
+              onSelect: () => {
+                void (organization?.revealThread ? organization.revealThread(contextMenu.thread.id) : window.wuu.revealSession(contextMenu.thread.id));
               },
             },
             { separator: true },

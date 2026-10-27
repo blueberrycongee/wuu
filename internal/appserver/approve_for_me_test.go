@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
@@ -44,7 +45,13 @@ func TestNativeToolReviewerReturnsToConversationWithoutQuestions(t *testing.T) {
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
-			decision, err := (nativeToolReviewer{server: srv}).Review(context.Background(), reviewTestRequest())
+			ctx := context.Background()
+			if errors.Is(tc.err, context.DeadlineExceeded) {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				defer cancel()
+			}
+			decision, err := (nativeToolReviewer{server: srv}).Review(ctx, reviewTestRequest())
 			if err != nil || decision.Outcome != tc.want || decision.Reason == "" {
 				t.Fatalf("decision=%+v err=%v", decision, err)
 			}
@@ -85,6 +92,8 @@ func TestNativeToolReviewUsesLiveConversationAndThreadModel(t *testing.T) {
 		"max_output_tokens": 4096, "reasoningEffort": "low", "topP": 0.8, "omitStore": true,
 	}
 	runner := &agent.StreamRunner{
+		LoopDriver: agent.DefaultDriver{},
+
 		Client: providers.AdaptStreamClient(threadClient), ProviderName: "thread-provider", Model: "thread-model",
 		Temperature: 0.2, Effort: "low", ProviderOptions: options,
 	}
@@ -223,7 +232,7 @@ func TestTurnScopedReviewerUsesHostIntentAndAcceptedSteers(t *testing.T) {
 
 func TestNativeToolReviewCancellationAndInputBudget(t *testing.T) {
 	client := &fakeClient{}
-	reviewer := nativeToolReviewer{runner: &agent.StreamRunner{Client: providers.AdaptStreamClient(client)}}
+	reviewer := nativeToolReviewer{runner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: providers.AdaptStreamClient(client)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	decision, err := reviewer.Review(ctx, reviewTestRequest())

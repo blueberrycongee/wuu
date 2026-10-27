@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
 )
@@ -91,6 +93,7 @@ type Options struct {
 type Runtime struct {
 	mu       sync.Mutex
 	core     *runtime.Session
+	bindings *appserver.RuntimeBindings
 	serving  int
 	closed   bool
 	closeErr error
@@ -139,17 +142,20 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := runtimeconfig.ApplyOverrides(&cfg, runtimeconfig.Overrides{
+	overrides := runtimeconfig.Overrides{
 		AgentProfile:   opts.AgentProfile,
 		MaxTurns:       opts.MaxTurns,
 		Effort:         opts.Effort,
 		Variant:        opts.Variant,
 		PermissionMode: opts.PermissionMode,
-	}); err != nil {
+	}
+	if err := runtimeconfig.ApplyOverrides(&cfg, overrides); err != nil {
 		return nil, err
 	}
 
+	bindings := appserver.NewRuntimeBindings()
 	core, err := runtime.NewSession(runtime.Options{
+		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
@@ -160,7 +166,7 @@ func New(opts Options) (*Runtime, error) {
 		Config:                   cfg,
 		ProviderName:             strings.TrimSpace(opts.Provider),
 		ModelOverride:            strings.TrimSpace(opts.Model),
-		PermissionModeExplicit:   strings.TrimSpace(opts.PermissionMode) != "",
+		Overrides:                overrides,
 		NoTools:                  opts.NoTools,
 		NonInteractive:           opts.NonInteractive,
 		SafeMode:                 opts.SafeMode,
@@ -168,13 +174,16 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{core: core}, nil
+	return &Runtime{core: core, bindings: bindings}, nil
 }
 
 // Serve runs one app-server JSONL connection until the client requests
 // shutdown, the input closes, or the protocol returns an error. The caller owns
 // in and out.
 func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	return r.serve(ctx, in, out, nil, nil)
+}
+func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage) error {
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -202,7 +211,18 @@ func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error 
 		r.mu.Unlock()
 	}()
 
-	return appserver.RunStdio(ctx, core, in, out)
+	if credential != nil {
+		identity, err := core.AuthenticateTransport(ctx, *credential)
+		if err != nil {
+			_ = json.NewEncoder(out).Encode(map[string]any{"id": authenticationID, "error": map[string]string{"code": "authentication_failed", "message": "identity provider rejected the credential"}})
+			return errors.New("authentication failed")
+		}
+		ctx = principal.WithContext(ctx, identity)
+		if err := json.NewEncoder(out).Encode(map[string]any{"id": authenticationID, "result": principal.Authentication{Identity: identity.Identity(), ExpiresAt: identity.ExpiresAt()}}); err != nil {
+			return err
+		}
+	}
+	return appserver.RunStdio(ctx, core, in, out, appserver.WithRuntimeBindings(r.bindings))
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.

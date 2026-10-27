@@ -69,7 +69,7 @@ func TestCallClientCompletesNegotiatedReverseRPC(t *testing.T) {
 	}
 	done := make(chan callResult, 1)
 	go func() {
-		raw, err := srv.callClient(context.Background(), MethodBrowserListTabs, BrowserListTabsParams{Workdir: "/workspace"})
+		raw, err := srv.callClient(context.Background(), MethodBrowserListTabs, BrowserListTabsParams{ThreadID: "thread-browser", Workdir: "/workspace"})
 		done <- callResult{raw: raw, err: err}
 	}()
 
@@ -84,6 +84,11 @@ func TestCallClientCompletesNegotiatedReverseRPC(t *testing.T) {
 	}
 	if request.Method != MethodBrowserListTabs || string(request.ID) != `"srv-1"` {
 		t.Fatalf("unexpected reverse request: %+v", request)
+	}
+
+	var params BrowserListTabsParams
+	if err := json.Unmarshal(request.Params, &params); err != nil || params.ThreadID != "thread-browser" {
+		t.Fatalf("reverse request lost resource binding: params=%s err=%v", request.Params, err)
 	}
 
 	srv.deliverClientResponse([]byte(`{"id":"srv-1","result":{"tab_ids":["tab-1"]}}`))

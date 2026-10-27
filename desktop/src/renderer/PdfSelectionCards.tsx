@@ -39,7 +39,7 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
     setOpening(part.id);
     try {
       if (part.source.pdf?.artifact_uri) {
-        const opened = openPdf?.(part.source) ?? false;
+        const opened = await openPdf?.(part.source) ?? false;
         setLocationNotices(current => ({ ...current, [part.id]: opened ? undefined : "original" }));
         return;
       }

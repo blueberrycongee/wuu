@@ -49,7 +49,7 @@ Project `.mcp.json` entries require a local trust decision before loading. Trust
 
 ## Extensions and hooks
 
-Enabled extensions are trusted code, not sandboxed code. The current local-package workflow separates staging files from approving and activating them; see [plugin installation and updates](../customize/plugins.md). Wuu's loader, diagnostics, and safe mode do not certify an extension's safety.
+Enabled extensions are trusted code, not sandboxed code. Installing a local package grants trust and enables it. Same-source updates retain trust; changing the source requires confirmation; see [plugin installation and updates](../customize/plugins.md). Wuu's loader, diagnostics, and safe mode do not certify an extension's safety.
 
 Hooks and MCP subprocesses likewise run code outside the narrow agent-command sandbox contract. Check the source, arguments, environment, and remote destinations of code you enable. Disabling an extension is a lifecycle control, not a way to undo actions it already performed.
 

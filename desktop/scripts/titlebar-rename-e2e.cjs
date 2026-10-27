@@ -55,6 +55,8 @@ app.whenReady().then(async () => {
     nodeIntegration: false, sandbox: false, backgroundThrottling: false,
   } });
   await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await until(() => Boolean(document.querySelector(".thread-row-main")));
+  await evaluate(() => document.querySelector(".thread-row-main").click());
   await until(() => Boolean(document.querySelector(".turn"))
     && document.querySelector(".conversation-title-rename")?.textContent.includes("Resize fixture"));
   win.focus(); win.webContents.focus();

@@ -130,10 +130,14 @@ func runRemoteHost(args []string) error {
 	reportReady := fs.Bool("ready", false, "print a JSON readiness event after the relay registers this host")
 	pairTimeout := fs.Duration("pair-timeout", 10*time.Minute, "pairing window duration")
 	pairOnce := fs.Bool("pair-once", true, "close the pairing window after the first phone pairs")
+	delegatedOnly := fs.Bool("delegate-only", false, "pair a restricted agent key without owner control; requires explicit resource grants")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	if *delegatedOnly && !*pair {
+		return errors.New("--delegate-only requires --pair")
+	}
 	storePath, err := remoteStorePath()
 	if err != nil {
 		return err
@@ -168,14 +172,16 @@ func runRemoteHost(args []string) error {
 		if err != nil {
 			return err
 		}
+		bindings := appserver.NewRuntimeBindings()
 		rt, err = runtime.NewSession(runtime.Options{
-			RootDir:       rootDir,
-			WorkspaceID:   *workspaceID,
-			HomeDir:       homeDir,
-			ConfigPath:    configPath,
-			Config:        cfg,
-			ProviderName:  *providerName,
-			ModelOverride: *modelOverride,
+			NativeProviders: bindings.NativeProviders(),
+			RootDir:         rootDir,
+			WorkspaceID:     *workspaceID,
+			HomeDir:         homeDir,
+			ConfigPath:      configPath,
+			Config:          cfg,
+			ProviderName:    *providerName,
+			ModelOverride:   *modelOverride,
 		})
 		if err != nil {
 			return err
@@ -183,11 +189,13 @@ func runRemoteHost(args []string) error {
 		defer func() { _, _ = rt.Cleanup() }()
 
 		opts.Runtime = rt
+		opts.AppServerOptions = []appserver.ServerOption{appserver.WithRuntimeBindings(bindings)}
 	}
 	if *pair {
 		opts.Pairing = &host.PairingConfig{
-			Timeout: *pairTimeout,
-			Once:    *pairOnce,
+			DelegatedOnly: *delegatedOnly,
+			Timeout:       *pairTimeout,
+			Once:          *pairOnce,
 			OnURI: func(uri string) {
 				fmt.Printf("pairing uri (scan or pass to `wuu remote phone pair --uri`):\n%s\n", uri)
 			},
@@ -215,10 +223,11 @@ func runRemoteHost(args []string) error {
 // remoteDeviceJSON is the machine-readable form of one paired device, shared
 // by `remote devices --json` and `remote status --json`.
 type remoteDeviceJSON struct {
-	Pub         string `json:"pub"`
-	Fingerprint string `json:"fingerprint"`
-	Name        string `json:"name,omitempty"`
-	AddedAt     string `json:"added_at"`
+	DelegatedOnly bool   `json:"delegated_only,omitempty"`
+	Pub           string `json:"pub"`
+	Fingerprint   string `json:"fingerprint"`
+	Name          string `json:"name,omitempty"`
+	AddedAt       string `json:"added_at"`
 }
 
 func remoteDeviceFingerprint(pub string) string {
@@ -234,10 +243,11 @@ func remoteDevicesJSON(store *host.Store) []remoteDeviceJSON {
 	out := make([]remoteDeviceJSON, 0, len(devices))
 	for _, d := range devices {
 		out = append(out, remoteDeviceJSON{
-			Pub:         d.Pub,
-			Fingerprint: remoteDeviceFingerprint(d.Pub),
-			Name:        d.Name,
-			AddedAt:     d.AddedAt.Format(time.RFC3339),
+			Pub:           d.Pub,
+			DelegatedOnly: d.DelegatedOnly,
+			Fingerprint:   remoteDeviceFingerprint(d.Pub),
+			Name:          d.Name,
+			AddedAt:       d.AddedAt.Format(time.RFC3339),
 		})
 	}
 	return out

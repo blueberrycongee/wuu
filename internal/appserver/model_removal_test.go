@@ -20,7 +20,9 @@ func TestServerConfigModelRemovalPersistsAndKeepsFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"remove","method":"config/model/update","params":{"model":"next","remove_model":"old"}}`)); err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,3 @@
-import { useCallback, useLayoutEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
 import {
@@ -59,7 +58,7 @@ export type WorkspaceArtifactViewTab = ArtifactPreviewRequest & {
 export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): WorkspaceArtifactViewTab {
   const { artifact, threadID, cwd } = input;
   // Snapshot identity is separate from the editable workspace file path.
-  const identity = [threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
+  const identity = [...(artifact.locator ? [artifact.locator.execution_host] : []), threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 
@@ -84,6 +83,9 @@ export type WorkspaceViewTab =
   | WorkspacePluginViewTab
   | WorkspaceArtifactViewTab
   | WorkspaceProjectViewTab;
+
+// The conversation participates in focus history without becoming a resource tab.
+export const WORKSPACE_CONVERSATION_TAB_ID = "conversation";
 
 type WorkspaceViewTabOpenOptions = { activate?: boolean; replaceActiveNewTab?: boolean };
 
@@ -277,24 +279,8 @@ export function focusViewTab(state: WorkspaceViewTabsState, id: string | undefin
  * back to the tool picker (`activeTabID: undefined`) if there is none.
  */
 export function closeViewTab(state: WorkspaceViewTabsState, id: string): WorkspaceViewTabsState {
-  const closingTab = state.tabs.find((tab) => tab.id === id);
-  let tabs = state.tabs.filter((tab) => tab.id !== id);
-  if (
-    closingTab?.kind === "file" &&
-    state.activeTabID === id &&
-    !tabs.some((tab) => tab.kind === "file")
-  ) {
-    tabs = [...tabs, workspaceToolViewTab("files")];
-    return {
-      tabs,
-      activeTabID: "files",
-      activeFileTabID: undefined,
-      activationHistory: state.activationHistory.filter(
-        (entry) => entry !== id && tabs.some((tab) => tab.id === entry),
-      ),
-    };
-  }
-  const activeFileTabID = state.activeFileTabID === id
+  const tabs = state.tabs.filter((tab) => tab.id !== id);
+  let activeFileTabID = state.activeFileTabID === id
     ? tabs.findLast((tab) => tab.kind === "file")?.id
     : state.activeFileTabID;
   let activationHistory = state.activationHistory.filter((entry) => entry !== id);
@@ -305,10 +291,13 @@ export function closeViewTab(state: WorkspaceViewTabsState, id: string): Workspa
   while (activationHistory.length > 0) {
     const candidate = activationHistory[activationHistory.length - 1];
     activationHistory = activationHistory.slice(0, -1);
-    if (tabs.some((tab) => tab.id === candidate)) {
+    if (candidate === WORKSPACE_CONVERSATION_TAB_ID || tabs.some((tab) => tab.id === candidate)) {
       activeTabID = candidate;
       break;
     }
+  }
+  if (tabs.some((tab) => tab.id === activeTabID && tab.kind === "file")) {
+    activeFileTabID = activeTabID;
   }
   return { tabs, activationHistory, activeTabID, activeFileTabID };
 }
@@ -341,69 +330,4 @@ export function reorderViewTabs(
     return state;
   }
   return { ...state, tabs: arrayMove(state.tabs, sourceIndex, targetIndex) };
-}
-
-/**
- * React binding composed by WorkspaceToolState.ts for the right-panel tabs.
- */
-export function useWorkspaceViewTabs(panelOpen: boolean): {
-  tabs: WorkspaceViewTab[];
-  activeTabID: string | undefined;
-  activeFileTabID: string | undefined;
-  openTab: (tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => void;
-  focusTab: (id: string | undefined) => void;
-  closeTab: (id: string) => void;
-  closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
-  reorderTabs: (activeID: string, overID: string) => void;
-  syncProjectTab: (project: { id: string; title: string } | undefined) => void;
-} {
-  const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
-
-  useLayoutEffect(() => {
-    if (!panelOpen || state.activeTabID) return;
-    // The picker owns a real tab, including when a saved open panel is restored.
-    // Check the latest state so concurrent opens and Strict Mode cannot duplicate it.
-    setState((current) => current.activeTabID
-      ? current
-      : openViewTab(current, { kind: "new", id: `new:${crypto.randomUUID()}` }));
-  }, [panelOpen, state.activeTabID]);
-
-  const openTab = useCallback((tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => {
-    setState((current) => openViewTab(current, tab, options));
-  }, []);
-  const focusTab = useCallback((id: string | undefined) => {
-    setState((current) => focusViewTab(current, id));
-  }, []);
-  const closeTab = useCallback((id: string) => {
-    setState((current) => closeViewTab(current, id));
-  }, []);
-  const closeTabsWhere = useCallback((predicate: (tab: WorkspaceViewTab) => boolean) => {
-    setState((current) => closeViewTabsWhere(current, predicate));
-  }, []);
-  const reorderTabs = useCallback((activeID: string, overID: string) => {
-    setState((current) => reorderViewTabs(current, activeID, overID));
-  }, []);
-  const syncProjectTab = useCallback((project: { id: string; title: string } | undefined) => {
-    setState((current) => {
-      const tab = current.tabs.find((candidate) => candidate.kind === "project");
-      // Following a selection must not reopen a dismissed overview or steal
-      // focus from a file, terminal, or other explicitly selected tool.
-      if (!tab) return current;
-      if (!project) return closeViewTab(current, tab.id);
-      if (tab.projectID === project.id && tab.title === project.title) return current;
-      return openViewTab(current, workspaceProjectViewTab(project.id, project.title), { activate: false });
-    });
-  }, []);
-
-  return {
-    tabs: state.tabs,
-    activeTabID: state.activeTabID,
-    activeFileTabID: state.activeFileTabID,
-    openTab,
-    focusTab,
-    closeTab,
-    closeTabsWhere,
-    reorderTabs,
-    syncProjectTab,
-  };
 }

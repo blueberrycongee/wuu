@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
 
 type orchestrationTestTools struct {
@@ -34,7 +36,7 @@ func TestNestedCallsUseLedgerWithoutProviderProjection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	dir := t.TempDir()
-	ledger, err := toolledger.New(dir, "nested-owner")
+	ledger, err := toolledger.New(agentTestDocuments(t, dir), "nested-owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,15 +84,26 @@ func TestNestedCallsUseLedgerWithoutProviderProjection(t *testing.T) {
 	if err != nil || len(pending) != 1 || pending[0].ProviderCallID != "parent" {
 		t.Fatalf("provider projection: %+v, %v", pending, err)
 	}
-	db, err := session.OpenStore(dir)
+	view, err := agentTestDocuments(t, dir).Read(ctx, persistence.Query{Namespace: toolstate.Invocations})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	var state, callID, result string
-	err = db.QueryRowContext(ctx, `SELECT state, provider_call_id, result_json FROM tool_invocations WHERE parent_invocation_id = ?`, messages[0].ToolInvocationID).Scan(&state, &callID, &result)
-	if err != nil || state != string(toolledger.InvocationSucceeded) || callID == "local" || result == "" {
-		t.Fatalf("child not independently recorded: %s %s %s, %v", state, callID, result, err)
+	children := 0
+	for _, row := range view.Documents {
+		var invocation toolstate.Invocation
+		if err := json.Unmarshal(row.Value, &invocation); err != nil {
+			t.Fatal(err)
+		}
+		if invocation.ParentInvocationID != messages[0].ToolInvocationID {
+			continue
+		}
+		children++
+		if invocation.State != string(toolledger.InvocationSucceeded) || invocation.ProviderCallID == "local" || invocation.Result == nil {
+			t.Fatalf("child not independently recorded: %+v", invocation)
+		}
+	}
+	if children != 1 {
+		t.Fatalf("independent child receipts = %d, want 1", children)
 	}
 	if _, err := retained.Invoke(ctx, providers.ToolCall{ID: "late", Name: "write"}); err == nil {
 		t.Fatal("completed parent retained execution authority")

@@ -1,11 +1,11 @@
 .account-screen {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100dvh;
   background: var(--paper);
   color: var(--ink);
 }
-
 
 .account-screen-titlebar {
   display: flex;

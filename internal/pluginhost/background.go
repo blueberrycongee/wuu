@@ -18,6 +18,14 @@ const (
 	backgroundMaxResultBytes   = 1 << 20
 )
 
+type backgroundExecutionKey struct{}
+
+// IsBackgroundExecution reports host-admitted background provenance. The marker
+// stays in the authenticated execution context and is never accepted from JSON.
+func IsBackgroundExecution(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(backgroundExecutionKey{}) == true
+}
+
 func KernelBackgroundDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
 		Name: KernelBackgroundService, Version: "1.0.0",
@@ -98,7 +106,7 @@ func (h *Host) StartBackground(provenance context.Context, caller string, input 
 	if running >= backgroundMaxJobsPerPlugin {
 		return BackgroundStartResult{}, &HostServiceError{Code: "limit_exceeded", Message: "plugin has too many running background jobs"}
 	}
-	ctx, cancel := context.WithCancel(context.WithoutCancel(provenance))
+	ctx, cancel := context.WithCancel(context.WithValue(context.WithoutCancel(provenance), backgroundExecutionKey{}, true))
 	if input.TimeoutMS > 0 {
 		var deadlineCancel context.CancelFunc
 		ctx, deadlineCancel = context.WithTimeout(ctx, time.Duration(input.TimeoutMS)*time.Millisecond)
@@ -229,10 +237,10 @@ func (r *ServiceRegistry) backgroundTarget(caller, service, method string) (serv
 	var target serviceProvider
 	var targetKey serviceKey
 	for key, provider := range r.providers {
-		if key.name != service || provider.kernel || provider.pluginID != caller {
+		if key.name != service || provider.pluginID != caller {
 			continue
 		}
-		if target.invoker != nil {
+		if target.invoker != nil && targetKey.major != key.major {
 			return serviceKey{}, serviceProvider{}, &HostServiceError{Code: "invalid_params", Message: "background service must have one registered major version"}
 		}
 		target, targetKey = provider, key
@@ -251,12 +259,12 @@ func (r *ServiceRegistry) backgroundTarget(caller, service, method string) (serv
 	return serviceKey{}, serviceProvider{}, &HostServiceError{Code: "method_not_found", Message: "background target does not declare this method"}
 }
 
-func (r *ServiceRegistry) invokeBackground(ctx context.Context, caller string, key serviceKey, provider serviceProvider, method string, params json.RawMessage, executionID string) (json.RawMessage, *HostServiceError) {
+func (r *ServiceRegistry) invokeBackground(ctx context.Context, caller string, key serviceKey, provider serviceProvider, method string, params json.RawMessage, executionID string) (result json.RawMessage, callErr *HostServiceError) {
 	execCtx, executionID, release, admissionErr := r.acquireExecution(ctx, executionID, caller, key, provider.pluginID, true)
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
-	defer release()
+	defer func() { callErr = serviceCompletionError(callErr, release()) }()
 	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{Service: key.name, Method: method, Caller: caller, Params: params, ExecutionID: executionID})
 	if err != nil {
 		var hostErr *HostServiceError

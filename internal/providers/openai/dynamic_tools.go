@@ -7,11 +7,16 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// SupportsDynamicToolLoading identifies the Chat Completions model with a
+// SupportsDynamicToolLoading identifies Chat Completions models with a
 // documented message-level tools protocol. Older Kimi models reject it.
 // https://platform.kimi.ai/docs/guide/use-dynamic-tool-loading
 func SupportsDynamicToolLoading(model string) bool {
-	return strings.EqualFold(strings.TrimSpace(model), "kimi-k3")
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed":
+		return true
+	default:
+		return false
+	}
 }
 
 // applyDynamicToolLoading keeps global tools fixed and replays declarations at

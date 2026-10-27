@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // dispatchPayload is a tiny helper around handleLine for tests that need to
@@ -34,7 +32,7 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
 
 	// Another workspace process archives the session while this server caches it.
-	if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,7 +61,7 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 			t.Fatalf("thread/list leaked an archived thread: %+v", th)
 		}
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(threadID, false); err != nil {
 		t.Fatal(err)
 	}
 	dispatchPayload(t, srv, "5", "thread/listArchived", nil)
@@ -129,10 +127,10 @@ func TestServerThreadListArchivedIgnoresCallerCWD(t *testing.T) {
 
 	foreignID := "foreign-archived"
 	foreignCWD := "/tmp/some-other-project"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, foreignID, foreignCWD); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(foreignID, foreignCWD); err != nil {
 		t.Fatalf("seed foreign session: %v", err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, foreignID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(foreignID, true); err != nil {
 		t.Fatalf("archive foreign session: %v", err)
 	}
 

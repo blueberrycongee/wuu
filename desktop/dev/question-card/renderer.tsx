@@ -1,3 +1,4 @@
+import { createFixtureApplication } from "../application";
 // Production UserQuestionCard with synthetic requests; nothing is sent. It covers
 // the real Composer as an offer, or sits in the reading flow with `inline`.
 // Params: theme=dark, size=20, lang=en, width=560, inline, two (a second
@@ -68,8 +69,10 @@ const request: UserQuestionRequest = {
 };
 const card = <UserQuestionCard request={request} onAnswer={async () => {}} onCancel={async () => {}} onHold={async () => {}} onCustom={noop} />;
 
+const application = await createFixtureApplication();
+
 function Fixture(): JSX.Element {
-  const draft = useComposerDraftState();
+  const draft = useComposerDraftState(application);
   return (
     <div className="fixture-shell" style={{ ["--fixture-width" as string]: `${Number(params.get("width")) || 760}px` }}>
       <main className="fixture-pane">

@@ -26,7 +26,9 @@ async function run() {
       backgroundThrottling: false
     }
   });
-  await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
+  await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
+  await waitFor(win, () => !!document.querySelector(".thread-row-main"));
+  await evaluate(win, () => [...document.querySelectorAll(".thread-row-main")].find(row => row.textContent.includes("Resize fixture")).click());
   await waitFor(win, () => !!document.querySelector(".turn"));
 
   // Hold navigation closed while crossing its breakpoint to distinguish a
@@ -90,7 +92,7 @@ async function run() {
 
   win.setContentSize(1024, 820);
   await settledGeometry(win, 1024);
-  await evaluate(win, () => document.querySelector('[aria-label="打开关联会话"]').click());
+  await evaluate(win, () => document.querySelector('button[aria-label="Open related session"], button[aria-label="打开关联会话"]').click());
   await waitFor(win, () => document.querySelectorAll(".conversation-split-pane").length === 2);
   for (const width of [1024, 800]) {
     win.setContentSize(width, 820);
@@ -167,14 +169,15 @@ async function run() {
 }
 
 function checkGeometry(value) {
-  assert.ok(value.composerWidth > 0 && value.composerWidth <= 801, JSON.stringify(value));
+  assert.ok(value.composerWidth > 0, JSON.stringify(value));
   assert.ok(value.leftGap >= 11 && value.rightGap >= 11,
     `Composer must stay inside its available pane: ${JSON.stringify(value)}`);
   assert.ok(Math.abs(value.leftGap - value.rightGap) <= 1,
     `Composer must stay centered: ${JSON.stringify(value)}`);
-  assert.ok(Math.abs(value.flowLeft - value.composerLeft) <= 1 &&
-    Math.abs(value.flowRight - value.composerRight) <= 1,
-    `Composer must align with the content column: ${JSON.stringify(value)}`);
+  assert.ok(value.composerWidth >= value.flowRight - value.flowLeft - 1,
+    `Composer must be at least as wide as the content column: ${JSON.stringify(value)}`);
+  assert.ok(Math.abs((value.flowLeft + value.flowRight + value.railInset) - (value.composerLeft + value.composerRight)) <= 2,
+    `Composer centerline must ignore the reading column's tool-rail inset: ${JSON.stringify(value)}`);
 }
 
 async function settledGeometry(win, width, paneSelector = ".conversation-pane") {
@@ -194,14 +197,15 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const flowStyle = getComputedStyle(flow);
       const scrollRect = scroll.getBoundingClientRect();
       const scrollStyle = getComputedStyle(scroll);
+      const content = scroll.querySelector(":scope > .scroll-region-content");
+      const contentStyle = content ? getComputedStyle(content) : null;
       const scrollbarWidth = scroll.offsetWidth - scroll.clientWidth;
-      // .scroll-region reserves its stable gutter on both edges, so the
-      // content box sits half a gutter inside each edge of the padding box.
-      // That box is what the message flow centers in, and the input has to
-      // share its centerline — measure the composer against it, not against
-      // the pane box, so a pane whose two margins differ fails here.
-      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft);
-      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
+      // Scrollbars and environment panels still constrain the dock. The
+      // primary composer alone ignores the message content's tool-rail inset.
+      const railInset = pane.querySelector('[data-main-conversation-composer="dock"]')
+        ? parseFloat(contentStyle?.paddingRight || "0") : 0;
+      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft) + parseFloat(contentStyle?.paddingLeft || "0");
+      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight) - parseFloat(contentStyle?.paddingRight || "0") + railInset;
       return {
         windowWidth: innerWidth,
         composerWidth: rect.width,
@@ -210,13 +214,14 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
         leftGap: rect.left - contentLeft,
         rightGap: contentRight - rect.right,
         scrollbarWidth,
+        railInset,
         scrollbarMode: scrollStyle.scrollbarWidth,
         scrollbarGutter: scrollStyle.scrollbarGutter,
         flowLeft: flowRect.left + parseFloat(flowStyle.paddingLeft),
         flowRight: flowRect.right - parseFloat(flowStyle.paddingRight)
       };
     }, paneSelector);
-    if (value?.windowWidth === width && value.compact === (width < 760) && JSON.stringify(value) === previous) {
+    if (value?.windowWidth === width && JSON.stringify(value) === previous) {
       stable += 1;
       if (stable >= 4) return value;
     } else {

@@ -6,6 +6,7 @@ export function SettingsRow({
   description,
   hint,
   error,
+  detail,
   children,
   block = false,
   hideDescriptionWhenNarrow = false,
@@ -14,6 +15,7 @@ export function SettingsRow({
   description?: ReactNode;
   hint?: string;
   error?: string;
+  detail?: ReactNode;
   children: ReactNode;
   block?: boolean;
   hideDescriptionWhenNarrow?: boolean;
@@ -27,6 +29,7 @@ export function SettingsRow({
       </div>
       <div className={block ? "settings-row-control-block" : "settings-row-control"}>{children}</div>
       {error ? <div className="settings-row-error settings-error" role="alert">{error}</div> : null}
+      {detail ? <div className="settings-row-detail">{detail}</div> : null}
     </div>
   );
 }

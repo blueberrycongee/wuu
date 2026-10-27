@@ -1,6 +1,6 @@
 module github.com/blueberrycongee/wuu
 
-go 1.26.5
+go 1.27.0
 
 require (
 	charm.land/catwalk v0.35.3
@@ -13,6 +13,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/sergi/go-diff v1.4.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tr1v3r/cordis-go v0.0.0-20260918055155-a06db444a184
 	github.com/yuin/goldmark v1.8.6
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.51.0

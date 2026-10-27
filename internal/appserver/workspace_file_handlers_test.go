@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestWorkspaceDownloadChunksAndRejectsChangedOrEscapingFiles(t *testing.T) {
@@ -161,7 +159,7 @@ func TestWorkspaceViewAllowsRegisteredWorkspacesAndSessionWorktrees(t *testing.T
 	if err := os.WriteFile(filepath.Join(rt.WuuHome, "projects.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "worktree-thread", worktree); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("worktree-thread", worktree); err != nil {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}

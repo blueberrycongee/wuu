@@ -1,0 +1,768 @@
+/* The native ribbon and window chrome frame one shared workbench. Keep this
+   surface on the shell so menus can leave either pane without being clipped
+   by an extra wrapper, and replacement presenters retain their own layout. */
+:root {
+  /* One clean reading sheet contains navigation, conversation and workspace. */
+  --workbench-canvas-bg: var(--paper);
+  --workbench-frame-shadow: var(
+    --wuu-elevation-panel,
+    0 3px 8px -3px color-mix(in srgb, var(--shadow-color-medium) 55%, transparent),
+    0 8px 20px -10px var(--shadow-color-medium)
+  );
+  --web-workspace-address-height: max(var(--control-size-toolbar), calc(var(--font-ui) * 1.4 + var(--space-1) * 2));
+  /* The browser and native ribbon meet at one header boundary. Reserve the
+     mascot's compact-rail footprint here too, so the page cannot start above
+     the native overlay when address controls are shorter than the mascot. */
+  --web-workspace-toolbar-height: max(var(--sidebar-ribbon-compact-width, 52px), calc(var(--web-workspace-address-height) + var(--space-2) * 2 + 1px));
+}
+
+:root:has(.app-shell.navigation-ribbon-layout:not(.popped-out-shell)) {
+  /* Reserve native caption space while allowing app controls to grow with
+     page zoom without clipping the header. */
+  --window-titlebar-height: max(calc(44px / var(--desktop-page-zoom, 1)), calc(var(--control-size-toolbar) + var(--space-2) * 2));
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
+  --workbench-top: var(--window-titlebar-height);
+  --navigation-toggle-left: var(--window-titlebar-leading-inset);
+  --ribbon-restore-space: 0px;
+}
+
+.app-shell.navigation-ribbon-layout.ribbon-collapsed {
+  --ribbon-restore-space: calc(var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+/* Renderer-owned macOS lights fit in the ribbon. The workbench can therefore
+   use one symmetric inset instead of reserving a separate window-chrome row. */
+:root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  --workbench-top: var(--conversation-pane-inset);
+  --navigation-toggle-left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2);
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
+  top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-brand-wordmark {
+  visibility: hidden;
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-brand {
+  padding-bottom: 0;
+  -webkit-app-region: drag;
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-right-sidebar-toggle,
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-tool-rail-collapsed {
+  top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.titlebar, .workspace-panel-tabbar) {
+  padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
+}
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
+  padding-left: calc(var(--control-size-toolbar) + var(--space-2) + var(--ribbon-restore-space));
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
+  position: absolute;
+  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
+  z-index: -1;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--conversation-canvas-radius);
+  background: var(--workbench-canvas-bg);
+  box-shadow: var(--workbench-frame-shadow);
+  content: "";
+  pointer-events: none;
+}
+
+.workbench-window-chrome {
+  display: none;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) > .workbench-window-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 150;
+  display: block;
+  height: var(--workbench-top);
+  -webkit-app-region: drag;
+}
+
+/* The saved sidebar width includes the compact rail. Manual ribbon resizing
+   adds layout space while preserving the secondary pane's preferred width. */
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar {
+  grid-column: 1;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
+  --sidebar-content-pad-x: var(--space-2);
+  --sidebar-row-pad-x: var(--space-2);
+  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  height: calc(100% - var(--workbench-top) - var(--conversation-pane-inset));
+  margin-top: var(--workbench-top);
+  margin-left: var(--sidebar-ribbon-width);
+  border-right: 1px solid var(--hairline-soft);
+  border-radius: var(--conversation-canvas-radius) 0 0 var(--conversation-canvas-radius);
+  background: transparent;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .traffic-spacer {
+  display: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-brand {
+  min-height: var(--canvas-titlebar-height);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane {
+  --conversation-pane-left-radius: 0px;
+  margin: var(--workbench-top) 0 var(--conversation-pane-inset);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::before {
+  content: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .dock-composer-wrap::before,
+.navigation-ribbon-layout:has(.sidebar-ribbon) :is(
+  .conversation-split-pane,
+  .empty-home,
+  .project-empty-pane,
+  .view-switch-loading-conversation
+) {
+  background: var(--workbench-canvas-bg);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .plugin-workbench-view-primary,
+.navigation-ribbon-layout:has(.sidebar-ribbon) .plugin-workbench-view-primary .plugin-view-content {
+  background: var(--workbench-canvas-bg);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed .conversation-pane {
+  --conversation-pane-left-radius: var(--conversation-canvas-radius);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar {
+  padding-top: 0;
+  padding-right: var(--control-toolbar-inset);
+  padding-left: calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
+  box-shadow: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel {
+  --workspace-canvas-bg: var(--workbench-canvas-bg);
+  margin-top: var(--workbench-top);
+  clip-path: inset(0 round 0 var(--conversation-canvas-radius) var(--conversation-canvas-radius) 0);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-tabbar {
+  padding: 0 var(--control-toolbar-inset) 0 var(--workspace-row-inset);
+  box-shadow: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-sidebar-hit-hole {
+  display: none;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)
+  .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
+  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) calc(var(--workspace-sheet-left) + var(--sidebar-ribbon-extra, 0px));
+  margin: 0;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed
+  .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
+  clip-path: inset(0 round var(--conversation-canvas-radius));
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar-resizer {
+  /* This shell raises its sidebar to 132; its separator must own the edge. */
+  z-index: 133;
+  top: var(--workbench-top);
+  bottom: var(--conversation-pane-inset);
+  /* The Workbench canvas meets the first track without the legacy inset. */
+  left: auto;
+  right: -5px;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .workspace-right-panel-resizer {
+  top: var(--workbench-top);
+  bottom: var(--conversation-pane-inset);
+}
+
+.section-sidebar-toggle {
+  display: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--navigation-toggle-left);
+  z-index: 151;
+  display: grid;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
+  left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
+}
+
+.section-sidebar-toggle *,
+.ribbon-restore-toggle * {
+  -webkit-app-region: no-drag;
+}
+
+/* Manual width changes reserve space for the rail in every destination. */
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  grid-template-columns: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px)) minmax(0, 1fr) var(--workspace-right-panel-reserved-width, 0px);
+}
+
+.ribbon-resizer {
+  position: absolute;
+  top: var(--window-titlebar-height, 44px);
+  bottom: 0;
+  /* Keep the full hit target in the shell, beside native website views. */
+  left: calc(var(--sidebar-ribbon-width, 52px) - 8px);
+  width: 8px;
+  container-type: size;
+  z-index: 154;
+  cursor: col-resize;
+  touch-action: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+[data-ribbon-resizing], [data-ribbon-resizing] * { cursor: col-resize !important; user-select: none; }
+
+.sidebar-ribbon {
+  --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
+  --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
+  /* Every destination shares one row gap; the footer owns the wider break. */
+  --ribbon-row-gap: var(--space-4);
+  --ribbon-row-height: max(36px, calc(var(--font-ui) * 2.4));
+  --ribbon-group-gap: var(--space-6);
+  --ribbon-inline-inset: var(--space-2);
+  --sidebar-ribbon-icon-size: var(--icon-size);
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 126;
+  display: flex;
+  width: var(--sidebar-ribbon-width);
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  /* Keep navigation anchored to the window when composer controls move or wrap. */
+  padding: var(--ribbon-header-height) 0 max(var(--ribbon-inline-inset), env(safe-area-inset-bottom, 0px));
+  background: transparent;
+  overflow: hidden;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-ribbon[hidden] {
+  display: none;
+}
+
+/* Keep the brand on the icon axis inside the reserved header. */
+.sidebar-ribbon-brand {
+  position: absolute;
+  top: var(--workbench-top);
+  left: 0;
+  display: grid;
+  width: var(--sidebar-ribbon-compact-width, 52px);
+  height: calc(var(--ribbon-header-height) - var(--workbench-top));
+  place-items: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-ribbon-brand:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.sidebar-ribbon-brand > img {
+  display: block;
+  /* Match the destination's outer frame using artwork without launcher padding. */
+  width: var(--ribbon-brand-size);
+  height: auto;
+  aspect-ratio: 1;
+  /* Preserve the app icon's authored corner ratio. */
+  border-radius: 22%;
+  /* Give the opaque mark a readable edge and a little lift off the rail. */
+  border: 1px solid var(--hairline);
+  box-shadow:
+    0 1px 2px var(--shadow-color-medium),
+    0 5px 12px -6px var(--shadow-color-strong);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar {
+  z-index: 132;
+}
+
+.sidebar-ribbon-main,
+.sidebar-ribbon-footer {
+  --sidebar-row-pad-x: max(0px, calc((var(--sidebar-ribbon-compact-width, 52px) - var(--sidebar-ribbon-icon-size)) / 2 - var(--ribbon-inline-inset)));
+  --sidebar-nav-column-gap: var(--space-2);
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ribbon-row-gap);
+  padding-inline: var(--ribbon-inline-inset);
+}
+
+.sidebar-ribbon-main {
+  flex: 1;
+  overflow: hidden auto;
+  /* The header already leaves one inline inset below the brand artwork. */
+  padding-top: calc(var(--ribbon-row-gap) - var(--ribbon-inline-inset));
+  /* The footer owns the single group break below the scrolling destinations. */
+  padding-bottom: 0;
+}
+
+.sidebar-ribbon-footer {
+  position: relative;
+  flex-shrink: 0;
+  padding-top: var(--ribbon-group-gap);
+  gap: var(--ribbon-row-gap);
+}
+
+.sidebar-ribbon-tab-row {
+  position: relative;
+  min-width: 0;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar-ribbon-button,
+.sidebar-ribbon .sidebar-account-trigger {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--ribbon-row-height);
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-secondary);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: 1.4;
+  text-align: left;
+}
+
+.sidebar-ribbon .sidebar-ribbon-button > :is(svg, .plugin-icon-asset, .plugin-icon-themed) {
+  width: var(--sidebar-ribbon-icon-size);
+  height: var(--sidebar-ribbon-icon-size);
+  flex-shrink: 0;
+}
+
+.sidebar-ribbon-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+  display: none;
+}
+
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover {
+  background: var(--wuu-nav-item-hover-background, var(--ink-overlay-6));
+  color: var(--ink);
+}
+
+.sidebar-ribbon-button:is([aria-current="page"], [aria-pressed="true"], [aria-expanded="true"]),
+.sidebar-ribbon-tab-row.active .sidebar-ribbon-button,
+.sidebar-ribbon .sidebar-account-trigger[aria-expanded="true"] {
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
+  color: var(--ink-strong);
+}
+
+.sidebar-ribbon-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.sidebar-ribbon-button:disabled {
+  opacity: 0.45;
+}
+
+.sidebar-ribbon-button[aria-disabled="true"] {
+  color: var(--ink-tertiary);
+  opacity: 0.45;
+}
+
+.sidebar-ribbon-tab-row[data-dragging="true"] {
+  z-index: 1;
+  background: var(--workbench-canvas-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.sidebar-ribbon-button[data-dragging="true"] {
+  cursor: grabbing;
+}
+
+.sidebar-ribbon-audio-badge {
+  position: absolute;
+  inset-inline-start: calc(var(--sidebar-row-pad-x) + var(--sidebar-ribbon-icon-size) - 8px);
+  top: 2px;
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--workbench-canvas-bg);
+  color: var(--ink);
+  pointer-events: none;
+}
+.sidebar-ribbon-audio-badge > svg { width: 12px; height: 12px; }
+.sidebar-ribbon-website-icon {
+  display: grid;
+  width: var(--sidebar-ribbon-icon-size, var(--icon-size-xl));
+  height: var(--sidebar-ribbon-icon-size, var(--icon-size-xl));
+  flex-shrink: 0;
+  place-items: center;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+}
+
+.sidebar-ribbon-website-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Pinning marks a persistent browser destination without adding another tier. */
+.sidebar-ribbon .sidebar-ribbon-button > .sidebar-ribbon-pin {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  color: var(--ink-secondary);
+}
+
+.sidebar-ribbon-favicon {
+  width: var(--sidebar-ribbon-icon-size, var(--icon-size-xl));
+  height: var(--sidebar-ribbon-icon-size, var(--icon-size-xl));
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+@keyframes sidebar-ribbon-tab-spin { to { transform: rotate(360deg); } }
+.sidebar-ribbon-tab-loading { animation: sidebar-ribbon-tab-spin 1s linear infinite; }
+@container style(--motion-reduced: 1) {
+  .sidebar-ribbon-tab-loading { animation: none; }
+}
+
+.sidebar-ribbon-divider {
+  height: 1px;
+  flex-shrink: 0;
+  margin: calc(var(--ribbon-group-gap) - var(--ribbon-row-gap)) var(--sidebar-row-pad-x);
+  background: var(--hairline);
+}
+
+.sidebar-ribbon .sidebar-account-trigger {
+  display: grid;
+  grid-template-columns: var(--sidebar-ribbon-icon-size) minmax(0, 1fr) var(--sidebar-row-action-size);
+}
+
+.sidebar-ribbon .sidebar-account-trigger .sidebar-account-avatar {
+  width: var(--sidebar-ribbon-icon-size);
+  height: var(--sidebar-ribbon-icon-size);
+  flex-basis: var(--sidebar-ribbon-icon-size);
+}
+
+.sidebar-ribbon .sidebar-account-name {
+  font-weight: var(--weight-regular);
+}
+
+/* The pin remains attached to its icon instead of jumping into the title. */
+.sidebar-ribbon .sidebar-ribbon-pin {
+  position: absolute;
+  left: calc(var(--sidebar-row-pad-x) + var(--sidebar-ribbon-icon-size) - var(--icon-size-xs) / 2);
+  bottom: 1px;
+  pointer-events: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-settings:empty {
+  display: none;
+}
+
+/* The portal target remains the host-owned aside. Navigation-region plugin
+   views use the secondary pane while the native ribbon is present. */
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar:has(.sidebar-ribbon) .plugin-workbench-view-navigation {
+  top: var(--workbench-top);
+  bottom: var(--conversation-pane-inset);
+  left: var(--sidebar-ribbon-width);
+  border-right: 1px solid var(--hairline-soft);
+  border-radius: var(--conversation-canvas-radius) 0 0 var(--conversation-canvas-radius);
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed .sidebar,
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-drawer-docking .sidebar {
+  width: calc(var(--sidebar-open-width) + var(--sidebar-ribbon-extra, 0px));
+  min-width: calc(var(--sidebar-open-width) + var(--sidebar-ribbon-extra, 0px));
+  transform: none;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .sidebar {
+  position: relative;
+  inset: auto;
+  width: var(--sidebar-ribbon-width);
+  min-width: var(--sidebar-ribbon-width);
+  pointer-events: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .sidebar-content,
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .sidebar:has(.sidebar-ribbon) .plugin-workbench-view-navigation {
+  visibility: hidden;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .sidebar-content {
+  background: var(--workbench-canvas-bg);
+  box-shadow: var(--shadow-drawer-right);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed.sidebar-drawer-closing .sidebar-content {
+  opacity: 0;
+  transform: translate3d(-18px, 0, 0);
+  pointer-events: none;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed .sidebar-hover-zone {
+  top: var(--workbench-top);
+  bottom: var(--conversation-pane-inset);
+  left: var(--sidebar-ribbon-width);
+  width: 8px;
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar .sidebar-toggle-button,
+.navigation-ribbon-layout:has(.sidebar-ribbon) .globalized-sidebar-toggle-region {
+  display: none;
+}
+
+/* Each section has its own secondary navigation. Conversation rows stay
+   mounted behind the hidden wrapper so their local state survives a switch. */
+.sidebar-conversation-section {
+  display: contents;
+}
+
+.sidebar-conversation-section[hidden],
+.sidebar-section-navigation[hidden] {
+  display: none;
+}
+
+.sidebar-section-navigation {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+}
+
+.sidebar-section-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sidebar-section-title {
+  display: flex;
+  min-height: var(--canvas-titlebar-height);
+  flex-shrink: 0;
+  align-items: center;
+  margin: 0 0 var(--space-3);
+  padding: 0 var(--sidebar-row-pad-x);
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-section-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--sidebar-row-height);
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sidebar-nav-column-gap);
+  border: 0;
+  border-radius: var(--sidebar-row-radius);
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  background: transparent;
+  color: var(--sidebar-label-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-section-item > :is(svg, .plugin-icon-asset, .plugin-icon-themed) {
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  flex: 0 0 var(--sidebar-primary-icon-size);
+}
+
+.sidebar-section-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-section-item > .sidebar-section-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-section-item > .sidebar-section-count {
+  flex: none;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sidebar-section-item > .sidebar-section-count::after {
+  content: attr(data-count);
+}
+
+.sidebar-section-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+  margin-top: var(--space-2);
+}
+
+.sidebar-section-group.sidebar-section-scroll {
+  flex: 1 1 0;
+}
+
+.sidebar-section-scroll > * {
+  flex-shrink: 0;
+}
+
+.sidebar-subsection-title {
+  margin: 0;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+}
+
+.sidebar-subsection-empty {
+  margin: 0;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
+}
+
+.sidebar-section-item:hover {
+  background: var(--sidebar-row-hover-bg);
+  color: var(--ink);
+}
+
+.sidebar-section-item[aria-current="page"] {
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
+  color: var(--ink-strong);
+}
+
+.sidebar-section-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Reuse the reading pane's second grid row rather than adding another row.
+   The covered conversation remains laid out for drafts and running turns. */
+.catalog-section-pane {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  background: var(--workbench-canvas-bg);
+}
+
+.navigation-ribbon-layout:has(.sidebar-section-navigation) .catalog-section-pane .catalog-tabs {
+  display: none;
+}
+
+.catalog-section-pane[hidden] {
+  display: none;
+}
+
+.conversation-pane[data-native-section="catalog"] > :is(
+  .scroll-region,
+  .dock-composer-wrap,
+  .jump-to-latest-cluster,
+  .environment-side-stack
+) {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Replacement presenters retain the original collapsed shell and controls. */
+.app-shell.navigation-ribbon-layout.sidebar-collapsed:not(.popped-out-shell):not(:has(.sidebar-ribbon)) {
+  grid-template-columns: 0 minmax(0, 1fr) var(--workspace-right-panel-reserved-width, 0px);
+}
+
+.app-shell.navigation-ribbon-layout.sidebar-collapsed:not(.popped-out-shell):not(:has(.sidebar-ribbon))
+  .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
+  left: var(--conversation-pane-inset);
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle[hidden] { display: none; }
+
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) {
+  --content-header-inset: var(--control-toolbar-inset);
+  --content-header-start: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px) + var(--content-header-inset));
+}
+/* A collapsed sidebar puts its toggle in the active content header. */
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed {
+  --content-header-inset: calc(var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--ribbon-restore-space));
+}
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar,
+:root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) .settings-embedded .settings-titlebar {
+  padding-left: var(--content-header-inset);
+}
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
+  padding-left: calc(var(--content-header-start) - var(--workspace-sheet-left) - var(--sidebar-ribbon-extra, 0px));
+}
+
+/* The restore control remains in the shell above native browser content. */
+:root:has(.mac-window-controls) .navigation-ribbon-layout.ribbon-collapsed :is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) .workspace-browser-toolbar.web-workspace-toolbar {
+  padding-left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
+}

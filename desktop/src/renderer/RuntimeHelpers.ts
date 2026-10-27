@@ -15,17 +15,23 @@ export function hasAuthenticatedProvider(providers: readonly ProviderSummary[] |
   return providers?.some((provider) => isChatGPTProvider(provider) ? provider.auth_status === "connected" : provider.api_key_configured === true) ?? false;
 }
 
+/** Legacy v1 descriptors omitted the requirement. Remove this ID fallback when
+ * the next engine contract major makes requires_host_model mandatory. */
+export function engineRequiresHostModel(engineID: string | undefined, descriptor?: { readonly requires_host_model?: boolean }): boolean {
+  return descriptor?.requires_host_model ?? (!engineID || engineID === "wuu");
+}
+
 export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
   return speed || defaultSpeed;
 }
 
-export function providerIsCodex(initialized: InitializeResult, providerName: string): boolean {
+export function providerIsCodex(initialized: Pick<InitializeResult, "providers">, providerName: string): boolean {
   const summary = initialized.providers?.find((provider) => provider.name === providerName);
   const type = (summary?.type ?? providerName).trim().toLowerCase().replaceAll("_", "-");
   return type === "openai-codex" || type === "codex-subscription" || type === "chatgpt-codex";
 }
 
-export function isCodexProvider(initialized: InitializeResult): boolean {
+export function isCodexProvider(initialized: Pick<InitializeResult, "provider" | "providers">): boolean {
   return providerIsCodex(initialized, initialized.provider);
 }
 

@@ -53,10 +53,7 @@ func TestNativeCompactionAuthRecovery(t *testing.T) {
 			home := t.TempDir()
 			stale := fakeJWT(t, time.Now().Add(time.Hour), "acct_compact")
 			fresh := fakeJWT(t, time.Now().Add(2*time.Hour), "acct_compact")
-			store, err := authstorage.ForHome(home)
-			if err != nil {
-				t.Fatal(err)
-			}
+			store := testSelectedAuth(t, home)
 			if err := store.Set("openai-codex", authstorage.Credentials{Type: "oauth", AccessToken: stale, RefreshToken: "refresh-old"}); err != nil {
 				t.Fatal(err)
 			}
@@ -94,7 +91,7 @@ func TestNativeCompactionAuthRecovery(t *testing.T) {
 				_, _ = w.Write([]byte("event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"cmp_auth\",\"type\":\"compaction\",\"encrypted_content\":\"opaque\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"))
 			}))
 			defer apiServer.Close()
-			cfg := ClientConfig{BaseURL: apiServer.URL, Home: home, HTTPClient: apiServer.Client(), StreamTransport: providers.StreamTransportSSE}
+			cfg := ClientConfig{BaseURL: apiServer.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: apiServer.Client(), StreamTransport: providers.StreamTransportSSE}
 			if mode == "api_key" {
 				cfg.APIKey = stale
 			}

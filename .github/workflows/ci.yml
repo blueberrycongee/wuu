@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.select.outputs.go }}
+      architecture: ${{ steps.select.outputs.architecture }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
       desktop_related: ${{ steps.select.outputs.desktop_related }}
@@ -56,7 +57,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Verify CI selection contracts
-        run: node --test .github/scripts/select-ci.test.mjs
+        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs
 
       - name: Check repository metadata
         run: make repository-check
@@ -91,21 +92,50 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Install plugin build dependencies
-        run: npm ci --prefix plugins
+      - name: Install plugin and SDK dependencies
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
 
       - name: Check
         run: make check-go check-plugins
 
+      - name: Guard generation admission under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
+
+      - name: Guard shared authority and model receipt lifecycle under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
+
       - name: Test
         run: make test-go test-plugins
 
+      - name: Guard retained historical plugin packages against current host
+        timeout-minutes: 4
+        env:
+          WUU_COMPATIBILITY_EVIDENCE: ${{ runner.temp }}/wuu-plugin-compatibility
+        run: make test-plugin-compatibility
+
+      - name: Upload historical plugin compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-compatibility-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/report.json
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/wire.jsonl
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/go-test.jsonl
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build plugin model acceptance prerequisites
         run: |
-          npm ci --prefix packages/plugin-sdk
           npm --prefix packages/plugin-sdk run build
           mkdir -p .tmp/bin
-          go build -o .tmp/bin/wuu ./cmd/wuu
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
 
       - name: Guard one-shot plugin model requests
         timeout-minutes: 3
@@ -173,6 +203,252 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  architecture-conformance:
+    name: Public provider conformance
+    needs: changes
+    if: needs.changes.outputs.architecture == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            clients/core/package-lock.json
+            packages/plugin-sdk/package-lock.json
+            plugins/package-lock.json
+            desktop/package-lock.json
+
+      - name: Install public SDK, provider and renderer test dependencies
+        run: |
+          npm ci --prefix clients/core
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
+          # The additive fixture uses Vitest/jsdom, not Electron or node-pty.
+          npm ci --prefix desktop --ignore-scripts
+
+      - name: Build the tested revision and record its identity
+        id: conformance-build
+        timeout-minutes: 8
+        run: |
+          mkdir -p .tmp/bin .tmp/e2e/architecture-conformance
+          git rev-parse HEAD > .tmp/e2e/architecture-conformance/source-commit.txt
+          npm --prefix packages/plugin-sdk run build
+          npm --prefix plugins run build
+          git diff --exit-code -- internal/plugin/bundled
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
+          sha256sum .tmp/bin/wuu > .tmp/e2e/architecture-conformance/binary.sha256
+          go version -m .tmp/bin/wuu > .tmp/e2e/architecture-conformance/build-info.txt
+
+      # Independent suites continue after a peer fails so one broken boundary
+      # does not hide the others. Every failed step still fails this job.
+      - name: Verify independent state authority
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/state-authority-acceptance/run.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/state-authority.log
+
+      - name: Verify independent restricted session sharing
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/session-sharing-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-sharing.log
+
+      - name: Verify selected artifact provider through the Go boundary
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        # Rendered preview and native open-with remain separate UI acceptance.
+        env:
+          WUU_ARTIFACT_ACCEPTANCE_RENDERER: '0'
+        run: |
+          set -o pipefail
+          node scripts/artifact-provider-acceptance.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/artifact-provider.log
+
+      - name: Verify minimal composition through the public executable
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_MINIMAL_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_MINIMAL_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/minimal-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/minimal-composition.log
+
+      - name: Verify independent identity and resource policy
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_AUTH_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_AUTH_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/resource-access-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/resource-access.log
+
+      - name: Verify partial provider delegation through the public SDK
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        env:
+          WUU_DELEGATION_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node scripts/provider-delegation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/provider-delegation.log
+
+      - name: Verify public federated session routing
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+        # The fixture packs remote-core's public TypeScript sources and installs
+        # the two tarballs independently; no renderer or remote bundle is reused.
+        run: |
+          set -o pipefail
+          node scripts/session-federation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-federation.log
+
+      - name: Verify encrypted desktop delegation into the original core
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_AUTH_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_AUTH_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node desktop/scripts/trusted-desktop-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/trusted-desktop.log
+
+      - name: Verify independent additive packages across process and renderer
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_ADDITIVE_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_ADDITIVE_OUTPUT: ${{ github.workspace }}/.tmp/e2e/additive-cooperation
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/additive-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/additive-cooperation.log
+
+      - name: Verify optional plugin failure isolation and recovery
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_ISOLATION_EVIDENCE: ${{ github.workspace }}/.tmp/e2e/plugin-failure-isolation
+        run: |
+          set -o pipefail
+          node scripts/plugin-failure-isolation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/plugin-failure-isolation.log
+
+      - name: Require executed boundary cases and passing reports
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        run: |
+          sha256sum --check .tmp/e2e/architecture-conformance/binary.sha256
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, readdirSync } from 'node:fs';
+          import { join } from 'node:path';
+          const run = base => {
+            const runs = readdirSync(base).filter(name => name.startsWith('run-'));
+            assert.equal(runs.length, 1, `${base}: expected exactly one fresh fixture`);
+            return join(base, runs[0]);
+          };
+          for (const [base, file, name] of [
+            ['.tmp/e2e/provider-authority', 'verification.log', 'TestProviderAuthorityHTTPProcess'],
+            ['.tmp/e2e/session-sharing', 'verification.log', 'TestSessionSharingExternalProcess'],
+            ['.tmp/artifact-provider-acceptance', 'verification.log', 'TestThreadArtifactSelectedProvider'],
+            ['.tmp/e2e/trusted-desktop', 'go-test.log', 'TestEncryptedDelegatedDesktopSharedCore'],
+            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestProviderDelegationSDKProcess'],
+            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestStateProviderDelegationAuthority'],
+          ]) {
+            const log = readFileSync(join(run(base), file), 'utf8');
+            assert.match(log, new RegExp(`^--- PASS: ${name} [(]`, 'm'), `${name}: did not execute`);
+            assert.doesNotMatch(log, /^\s*--- SKIP:/m, `${name}: skipped coverage is not acceptance`);
+          }
+          for (const [base, file, key, expected] of [
+            ['.tmp/artifact-provider-acceptance', 'report.json', 'status', 'passed'],
+            ['.tmp/e2e/minimal-composition', 'result.json', 'passed', true],
+            ['.tmp/e2e/resource-access', 'result.json', 'passed', true],
+            ['.tmp/e2e/session-federation', 'results.json', 'status', 'passed'],
+            ['.tmp/e2e/trusted-desktop', 'result.json', 'passed', true],
+            ['.tmp/e2e/provider-delegation', 'report.json', 'passed', true],
+          ]) {
+            const report = JSON.parse(readFileSync(join(run(base), file), 'utf8'));
+            assert.equal(report[key], expected, `${base}: fixture did not pass`);
+          }
+          const additive = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/result.json', 'utf8'));
+          assert.equal(additive.passed, true, 'additive cooperation did not pass');
+          assert(Array.isArray(additive.cases) && additive.cases.length >= 11, 'additive boundary cases did not execute');
+          assert.equal(new Set(additive.cases).size, additive.cases.length, 'additive cases must be distinct');
+          // The runner emits its final marker only after the real renderer batch
+          // and report checks; renderer.log itself contains the Vitest output.
+          assert.match(readFileSync('.tmp/e2e/architecture-conformance/additive-cooperation.log', 'utf8'), /^PASS: independent additive packages cooperate through declared services and owned UI slots\.$/m);
+          const renderer = readFileSync('.tmp/e2e/additive-cooperation/renderer.log', 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
+          assert.match(renderer, /Tests\s+\d+ passed\b/);
+          assert.doesNotMatch(renderer, /\b[1-9]\d* skipped\b/);
+          const inputs = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/inputs.json', 'utf8'));
+          const binaryHash = readFileSync('.tmp/e2e/architecture-conformance/binary.sha256', 'utf8').trim().split(/\s+/)[0];
+          assert.equal(inputs.binarySHA256, binaryHash, 'additive fixture used a different executable');
+          const isolation = JSON.parse(readFileSync(join(run('.tmp/e2e/plugin-failure-isolation'), 'result.json'), 'utf8'));
+          assert.equal(isolation.status, 'passed', 'plugin failure isolation did not pass');
+          assert.equal(isolation.expectBlocked, false, 'negative control is not acceptance');
+          assert.equal(isolation.binary_sha256, binaryHash, 'isolation fixture used a different executable');
+          assert(Array.isArray(isolation.checks) && isolation.checks.length >= 15, 'isolation boundaries did not execute');
+          assert.equal(new Set(isolation.checks).size, isolation.checks.length, 'isolation cases must be distinct');
+          assert(isolation.checks.includes('new send completes while real additive plugin prepare is held; activation follows explicit barrier release'), 'held additive preparation admission was not verified');
+          NODE
+
+      - name: Preserve public boundary evidence without fixture credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-conformance-evidence
+          # Never upload fixture directories, homes, config, key material or
+          # token stores. Only these reports and fixture diagnostic logs leave
+          # the runner, including on fixture failure.
+          path: |
+            .tmp/e2e/architecture-conformance/*.txt
+            .tmp/e2e/architecture-conformance/*.sha256
+            .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/plugin-failure-isolation/run-*/result.json
+            .tmp/e2e/provider-authority/run-*/environment.json
+            .tmp/e2e/provider-authority/run-*/verification.log
+            .tmp/e2e/session-sharing/run-*/environment.json
+            .tmp/e2e/session-sharing/run-*/verification.log
+            .tmp/artifact-provider-acceptance/run-*/report.json
+            .tmp/artifact-provider-acceptance/run-*/verification.log
+            .tmp/e2e/minimal-composition/run-*/result.json
+            .tmp/e2e/minimal-composition/run-*/default-composer.log
+            .tmp/e2e/resource-access/run-*/result.json
+            .tmp/e2e/session-federation/run-*/results.json
+            .tmp/e2e/session-federation/run-*/commands.json
+            .tmp/e2e/trusted-desktop/run-*/result.json
+            .tmp/e2e/trusted-desktop/run-*/go-test.log
+            .tmp/e2e/trusted-desktop/run-*/failure.log
+            .tmp/e2e/provider-delegation/run-*/report.json
+            .tmp/e2e/provider-delegation/run-*/verification.log
+            .tmp/e2e/additive-cooperation/inputs.json
+            .tmp/e2e/additive-cooperation/result.json
+            .tmp/e2e/additive-cooperation/renderer.log
+            .tmp/e2e/additive-cooperation/failure.log
+          if-no-files-found: warn
+          retention-days: 14
+
   project-agent-check:
     name: Project Agent check
     needs: changes
@@ -210,13 +486,15 @@ jobs:
   go-check:
     name: Go check
     runs-on: ubuntu-latest
-    needs: [changes, go-validation, project-agent-check]
+    needs: [changes, go-validation, project-agent-check, architecture-conformance]
     if: always()
     steps:
       - name: Require selected Go suites
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
           GO_REQUIRED: ${{ needs.changes.outputs.go }}
+          ARCHITECTURE_REQUIRED: ${{ needs.changes.outputs.architecture }}
+          ARCHITECTURE_RESULT: ${{ needs.architecture-conformance.result }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
           PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
         run: |
@@ -227,6 +505,11 @@ jobs:
           else
             test "$GO_VALIDATION_RESULT" = skipped
             test "$PROJECT_AGENT_RESULT" = skipped
+          fi
+          if [ "$ARCHITECTURE_REQUIRED" = true ]; then
+            test "$ARCHITECTURE_RESULT" = success
+          else
+            test "$ARCHITECTURE_RESULT" = skipped
           fi
 
   desktop-suite:
@@ -245,11 +528,15 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
 
       - name: Install
         run: |
           npm ci --prefix desktop
+          # The desktop main process consumes the shared remote client source.
+          npm ci --prefix clients/core
           # Electron downloads lazily on require; parallel Vitest workers must
           # not extract into the same dist directory at the same time.
           node desktop/node_modules/electron/install.js
@@ -291,6 +578,12 @@ jobs:
       - name: Install fonts for multilingual selection captures
         if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         run: |
+          # Hosted images can select the slow Azure archive through a mirror list.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
@@ -363,6 +656,26 @@ jobs:
         with:
           name: onboarding-scroll-evidence
           path: ${{ runner.temp }}/wuu-onboarding-scroll-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard composer and process summary colors
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_PROCESS_SUMMARY_OUTPUT: ${{ runner.temp }}/wuu-process-summary-evidence
+        run: |
+          mkdir -p "$WUU_PROCESS_SUMMARY_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/process-compaction-summary-e2e.cjs 2>&1 | tee "$WUU_PROCESS_SUMMARY_OUTPUT/run.log"
+
+      - name: Upload process summary evidence
+        if: ${{ matrix.suite == 'shell' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-summary-evidence
+          path: ${{ runner.temp }}/wuu-process-summary-evidence
           if-no-files-found: ignore
           retention-days: 14
 
@@ -470,10 +783,10 @@ jobs:
 
       - name: Guard titlebar alignment and sidebar hit targets
         if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        # The complete theme/font/zoom matrix can exceed three minutes on shared runners.
-        timeout-minutes: 5
+        timeout-minutes: 3
         shell: bash
         run: |
+          node --test desktop/scripts/header-hit-ownership.test.cjs
           mkdir -p desktop/out/e2e/settings-titlebar
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
@@ -584,7 +897,9 @@ jobs:
       - name: Build desktop fixture core
         if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
-        run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+        run: |
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
       - name: Validate shareable conversation corpus
         if: ${{ matrix.suite == 'corpus' }}
@@ -804,8 +1119,130 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard first-send bubble continuity
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for order in event-first ack-first rapid-ack rejected; do
+            export WUU_FIRST_SEND_ORDER="$order" WUU_FIRST_SEND_FAST=0 WUU_FIRST_SEND_NEWER=1
+            export WUU_FIRST_SEND_OUTPUT="${{ runner.temp }}/wuu-first-send-evidence/$order"
+            mkdir -p "$WUU_FIRST_SEND_OUTPUT"
+            if [ "$order" = ack-first ]; then
+              export WUU_FIRST_SEND_THEME=dark WUU_FIRST_SEND_FONT=20 WUU_FIRST_SEND_WIDTH=760 WUU_FIRST_SEND_ATTACHMENT=1
+            else
+              export WUU_FIRST_SEND_THEME=light WUU_FIRST_SEND_FONT=15 WUU_FIRST_SEND_WIDTH=1280 WUU_FIRST_SEND_ATTACHMENT=0
+            fi
+            if [ "$order" = rapid-ack ]; then
+              export WUU_FIRST_SEND_ORDER=ack-first WUU_FIRST_SEND_FAST=1 WUU_FIRST_SEND_NEWER=0
+            fi
+            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/first-send-continuity-e2e.cjs 2>&1 | tee "$WUU_FIRST_SEND_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload first-send continuity evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-send-continuity-evidence
+          path: ${{ runner.temp }}/wuu-first-send-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard error message appearance and recovery
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            export WUU_ERROR_STYLE_FONT="$font"
+            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
+            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload error message appearance evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-message-appearance-evidence
+          path: ${{ runner.temp }}/wuu-error-message-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard confirmed archive through selected providers
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for mode in running stale-completed workspace-switched provider-replaced; do
+            export WUU_ARCHIVE_MODE="$mode"
+            export WUU_ARCHIVE_THEME=light WUU_ARCHIVE_FONT=15 WUU_ARCHIVE_WIDTH=1280
+            if [[ "$mode" == stale-completed ]]; then
+              export WUU_ARCHIVE_THEME=dark WUU_ARCHIVE_FONT=20 WUU_ARCHIVE_WIDTH=760
+            fi
+            export WUU_ARCHIVE_OUTPUT="${{ runner.temp }}/wuu-confirmed-archive-evidence/$mode"
+            mkdir -p "$WUU_ARCHIVE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/confirmed-archive-e2e.cjs 2>&1 | tee "$WUU_ARCHIVE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload confirmed archive evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: confirmed-archive-evidence
+          path: ${{ runner.temp }}/wuu-confirmed-archive-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard responsive composer footer
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 14
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            for long_names in 0 1; do
+              export WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names"
+              export WUU_FOOTER_OUTPUT="${{ runner.temp }}/wuu-composer-footer-evidence/font-$font-long-$long_names"
+              mkdir -p "$WUU_FOOTER_OUTPUT"
+              xvfb-run --auto-servernum --server-args="-screen 0 1440x1100x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-footer-e2e.cjs 2>&1 | tee "$WUU_FOOTER_OUTPUT/run.log" || failed=1
+            done
+          done
+          exit "$failed"
+
+      - name: Upload composer footer evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-footer-evidence
+          path: ${{ runner.temp }}/wuu-composer-footer-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard request lifecycle
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -866,8 +1303,65 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard workspace terminal ownership handoff
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_HANDOFF_COMMIT: ${{ github.sha }}
+          WUU_HANDOFF_OUTPUT: ${{ runner.temp }}/wuu-terminal-handoff-evidence
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_HANDOFF_OUTPUT"
+          failed=0
+          for mode in start stop web quit; do
+            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload terminal handoff evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-handoff-evidence
+          path: |
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/**/*.json
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/**/*.png
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard message-only navigation presentation
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        shell: bash
+        env:
+          WUU_SWITCH_PRESENTATION: "1"
+          WUU_SWITCH_STABLE_PRESENTATION: "1"
+          WUU_SWITCH_TURNS: "12"
+          WUU_SWITCH_ROUNDS: "1"
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          node --test desktop/scripts/session-switch-native-page.test.cjs
+          for rig in wide:1 wide:2 narrow:1; do
+            export WUU_SWITCH_VARIANT="${rig%:*}"
+            scale="${rig#*:}"
+            export WUU_SWITCH_OUTPUT="${{ runner.temp }}/wuu-presentation-evidence/${WUU_SWITCH_VARIANT}-${scale}"
+            mkdir -p "$WUU_SWITCH_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 2880x2000x24" desktop/node_modules/.bin/electron --no-sandbox --force-device-scale-factor="$scale" desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+          done
+
+      - name: Upload navigation presentation evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigation-presentation-evidence
+          path: ${{ runner.temp }}/wuu-presentation-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Check session switch budget ratchet
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
@@ -876,7 +1370,7 @@ jobs:
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         # Preserve Electron failures through the evidence log pipeline.
         shell: bash
         env:
@@ -938,6 +1432,65 @@ jobs:
           name: resize-live-evidence
           path: ${{ runner.temp }}/wuu-resize-live-evidence
           if-no-files-found: ignore
+          retention-days: 14
+
+  desktop-macos-controls:
+    name: Desktop / macOS focused controls
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true' && contains(fromJSON(needs.changes.outputs.desktop_suites), 'shell')
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      VITE_ENABLE_ACCOUNT: 'false'
+      VITE_ENABLE_REMOTE_CONTROL: 'false'
+      WUU_RELEASE: '0'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      WUU_TITLEBAR_FOCUSED_CONTROLS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
+            plugins/package-lock.json
+      - name: Install locked renderer dependencies
+        timeout-minutes: 10
+        run: |
+          for workspace in desktop clients/core clients/mobile-web plugins; do
+            npm ci --prefix "$workspace"
+          done
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
+      - name: Build production renderer
+        timeout-minutes: 6
+        # Same renderer build as Linux shell fixtures; synthetic preload does
+        # not require native core packaging or bundled plugin execution.
+        run: cd desktop && node_modules/.bin/electron-vite build
+      - name: Exercise sandboxed narrow header and notification controls
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-macos-focused-controls
+        run: |
+          mkdir -p "$WUU_TITLEBAR_OUTPUT"
+          git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+      - name: Upload hosted macOS control evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: titlebar-hosted-macos-controls-evidence
+          path: |
+            ${{ runner.temp }}/wuu-macos-focused-controls/*.png
+            ${{ runner.temp }}/wuu-macos-focused-controls/*.json
+            ${{ runner.temp }}/wuu-macos-focused-controls/*.log
+            ${{ runner.temp }}/wuu-macos-focused-controls/*.txt
+          if-no-files-found: warn
           retention-days: 14
 
   desktop-check:
@@ -1018,6 +1571,11 @@ jobs:
       - name: Build headless workspace acceptance prerequisites
         run: |
           npm --prefix desktop run build:remote
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y openssh-server
@@ -1103,21 +1661,6 @@ jobs:
           npm --prefix desktop run test:release-packaging
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
-      - name: Test desktop update download end to end
-        if: github.event_name != 'push'
-        run: npm --prefix desktop run test:e2e:desktop-update
-
-      - name: Upload desktop update evidence
-        if: always() && github.event_name != 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-update-e2e
-          path: |
-            desktop/out/e2e/desktop-update/result.json
-            desktop/out/e2e/desktop-update/failure.json
-            desktop/out/e2e/desktop-update/*.png
-          if-no-files-found: ignore
-
       - name: Build read-only app snapshot helper
         if: github.event_name != 'push'
         run: |
@@ -1187,13 +1730,20 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Install Linux packaging dependencies
         run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2
           npm ci --prefix desktop
@@ -1259,7 +1809,9 @@ jobs:
         run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
 
       - name: Install Desktop dependencies
-        run: npm ci --prefix desktop
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
 
       - name: Typecheck Desktop on Windows
         if: github.event_name != 'push'
@@ -1267,9 +1819,7 @@ jobs:
 
       - name: Install phone Web dependencies
         if: github.event_name != 'pull_request'
-        run: |
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
+        run: npm ci --prefix clients/mobile-web
 
       - name: Install plugin build dependencies
         if: github.event_name != 'pull_request'
@@ -1282,7 +1832,7 @@ jobs:
   ci-check:
     name: CI check
     runs-on: ubuntu-latest
-    needs: [changes, repository-check, go-check, desktop-check, clients-check, macos-check, linux-check, windows-check]
+    needs: [changes, repository-check, go-check, desktop-check, desktop-macos-controls, clients-check, macos-check, linux-check, windows-check]
     if: always()
     steps:
       - name: Require successful selection and all selected jobs
@@ -1299,6 +1849,7 @@ jobs:
               'repository-check': os.environ['EVENT'] != 'push',
               'go-check': True,
               'desktop-check': True,
+              'desktop-macos-controls': selected.get('desktop') == 'true' and 'shell' in json.loads(selected.get('desktop_suites', '[]')),
               'clients-check': selected.get('clients') == 'true',
               'macos-check': selected.get('native') == 'true',
               'windows-check': selected.get('native') == 'true',

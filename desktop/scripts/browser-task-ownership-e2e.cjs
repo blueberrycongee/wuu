@@ -5,7 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
-const output = path.join(root, "out-e2e", "browser-task-ownership.mjs");
+// Match the shipping ESM main directory so native hosts resolve their actual
+// preload resources without injecting CommonJS globals into the fixture.
+const output = path.join(root, "out", "main", "browser-task-ownership-e2e.mjs");
 async function main() {
   fs.mkdirSync(path.dirname(output), { recursive: true });
   await require("esbuild").build({
@@ -21,7 +23,13 @@ async function main() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-browser-ownership-"));
   try {
     const result = spawnSync(String(require("electron")), [
-      ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : [])] : []), output,
+      ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : [])] : []),
+      ...(process.env.WUU_BROWSER_OWNERSHIP_DIAGNOSTICS === "1" ? [
+        "--trace-startup=benchmark,cc,viz,gpu,toplevel,blink,renderer.scheduler",
+        "--trace-startup-duration=20", "--trace-startup-format=json",
+        `--trace-startup-file=${path.join(process.env.WUU_BROWSER_OWNERSHIP_OUTPUT ?? path.join(root, "out", "browser-task-ownership"), "hidden-startup-trace.json")}`,
+      ] : []),
+      output,
     ], { stdio: "inherit", env: { ...process.env, WUU_BROWSER_OWNERSHIP_FIXTURE: fixture } });
     process.exitCode = result.status ?? 1;
     if (result.error) throw result.error;

@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,8 +13,11 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let registry: import("../../../packages/plugin-sdk/src/ui-contributions").UIContributionRegistryV1;
 
-beforeEach(() => {
+beforeEach(async () => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
+  await desktopPluginHost.activateGeneration({ pluginId: "settings-fixture", generation: "one", graphGeneration: "fixture", register: api => { registry = api.contributions; } });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -26,6 +31,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   desktopPluginHost.unload("alpha-conflict");
   desktopPluginHost.unload("zeta-conflict");
+  desktopPluginHost.unload("settings-fixture");
 });
 
 describe("PluginSettingsEditor", () => {
@@ -127,7 +133,7 @@ describe("PluginSettingsEditor", () => {
     expect(container.querySelector(".plugin-settings-editor")).toBeNull();
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
 
-    await act(async () => root?.render(<PluginSettingsEditor plugin={{ ...pluginRecord(), enabled: false }} />));
+    await act(async () => root?.render(<SettingsControlsProvider controls={createApplicationSettingsControls({ host: registry })}><PluginSettingsEditor plugin={{ ...pluginRecord(), enabled: false }} /></SettingsControlsProvider>));
     expect(container.querySelector(".plugin-settings-editor")).toBeNull();
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
   });
@@ -139,7 +145,7 @@ describe("PluginSettingsEditor", () => {
     await renderEditor({ ...pluginRecord(), approval_state: "pending", enabled: false });
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
 
-    await act(async () => root?.render(<PluginSettingsEditor plugin={pluginRecord()} />));
+    await act(async () => root?.render(<SettingsControlsProvider controls={createApplicationSettingsControls({ host: registry })}><PluginSettingsEditor plugin={pluginRecord()} /></SettingsControlsProvider>));
     expect(getPluginDiagnostics).toHaveBeenCalledOnce();
     expect(container.textContent).not.toContain("desktop plugin is not approved and enabled");
   });
@@ -148,43 +154,54 @@ describe("PluginSettingsEditor", () => {
     const setPluginConflictPreference = vi.fn(async (key: string, pluginId: string) => ({ [key]: pluginId }));
     installAPI({ setPluginConflictPreference });
     for (const pluginId of ["alpha-conflict", "zeta-conflict"]) {
-      await desktopPluginHost.activateGeneration({
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
         pluginId,
         generation: "sha256:generation-1",
         register(api) {
-          api.registerSurface("conversation.timeline", {
-            id: `${pluginId}-main`, mode: "replace", render: (_context, fallback) => fallback,
+          api.registerPresenter({ target: "conversation.item",
+            id: `${pluginId}-main`, mode: "replace", render: ({ fallback }) => fallback,
           });
         },
       });
     }
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
-    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='surface:conversation.timeline'] .select-menu-trigger")!;
+    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='presenter:conversation.item:'] .select-menu-trigger")!;
     expect(trigger.textContent).toContain("zeta-conflict");
     await act(async () => trigger.click());
     await act(async () => document.querySelector<HTMLElement>('[role="menuitemradio"][data-value="alpha-conflict"]')?.click());
-    expect(setPluginConflictPreference).toHaveBeenCalledWith("surface:conversation.timeline", "alpha-conflict");
-    expect(desktopPluginHost.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("alpha-conflict");
+    expect(setPluginConflictPreference).toHaveBeenCalledWith("presenter:conversation.item:", "alpha-conflict");
+    expect(desktopPluginHost.getPresenters("conversation.item").at(-1)?.pluginId).toBe("alpha-conflict");
   });
 
   it("shows isolated contribution diagnostics", async () => {
     installAPI();
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "alpha-conflict",
       generation: "sha256:generation-1",
       register(api) {
-        api.registerSurface("conversation.timeline", {
-          id: "broken-main", mode: "wrap", render: (_context, fallback) => fallback,
+        api.registerPresenter({ target: "conversation.item",
+          id: "broken-main", mode: "wrap", render: ({ fallback }) => fallback,
         });
       },
     });
-    const contribution = desktopPluginHost.getSurfaceSnapshot("conversation.timeline")[0];
-    desktopPluginHost.recordRenderFailure(contribution, { surfaceId: "conversation.timeline" }, new Error("render boom"));
+    const contribution = desktopPluginHost.getPresenters("conversation.item")[0];
+    desktopPluginHost.recordPresenterFailure(contribution, new Error("render boom"));
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
     expect(container.textContent).toContain("插件贡献已被隔离");
     expect(container.textContent).toContain("render boom");
+  });
+
+  it("shows current runtime request diagnostics without claiming the contribution was isolated", async () => {
+    installAPI({});
+    vi.spyOn(desktopPluginHost, "getGenerationDiagnostics").mockReturnValue([
+      { pluginId: "demo.settings", generation: "fixture", kind: "runtime", message: "Plugin runtime request failed: runtime/read", cause: new Error("private cause") },
+    ]);
+    await renderEditor({ ...pluginRecord(), contributions: {} });
+    expect(container.textContent).toContain("Plugin runtime request failed: runtime/read");
+    expect(container.textContent).not.toContain("private cause");
+    expect(container.textContent).not.toContain("插件贡献已被隔离");
   });
 
   it("loads isolated runtime capability diagnostics", async () => {
@@ -253,7 +270,7 @@ function installAPI(overrides: Partial<WuuDesktopApi> = {}): void {
 async function renderEditor(plugin: ExtensionInventoryRecord): Promise<void> {
   await act(async () => {
     root = createRoot(container);
-    root.render(<PluginSettingsEditor plugin={plugin} />);
+    root.render(<SettingsControlsProvider controls={createApplicationSettingsControls({ host: registry })}>{<PluginSettingsEditor plugin={plugin} />}</SettingsControlsProvider>);
   });
 }
 

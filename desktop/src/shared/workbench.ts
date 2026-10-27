@@ -230,11 +230,17 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
   active?: boolean;
 }
 
+export interface PluginUIWebPageProps {
+  readonly url: string;
+  readonly title?: string;
+}
+
 /**
  * Small host-owned component set for plugin surfaces. These components own the
  * common visual rhythm while plugins retain freedom inside their contribution.
  */
 export interface PluginUIKit {
+  readonly WebPage: React.ComponentType<PluginUIWebPageProps>;
   readonly ComposerDrawer: React.ComponentType<ComposerDrawerProps>;
   readonly Page: React.ComponentType<PluginUIPageProps>;
   readonly Panel: React.ComponentType<PluginUIContainerProps>;
@@ -254,7 +260,7 @@ export interface PluginUIKit {
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
 }
 
-export function createPluginUIKit(react: typeof React): PluginUIKit {
+export function createPluginUIKit(react: typeof React): Omit<PluginUIKit, "WebPage"> {
   const container = (
     tag: "section" | "article" | "div",
     name: string,
@@ -550,29 +556,10 @@ export interface InspectorSnapshotV1 {
   readonly todo?: InspectorTodoSnapshotV1;
 }
 
-export interface InspectorSectionHostAPI {
-  executeCommand(commandId: string, input?: unknown): Promise<unknown>;
-  openView(viewTypeId: ViewTypeId, options?: OpenViewOptions): Promise<void>;
-}
-
-export interface InspectorSectionRenderProps {
-  readonly snapshot: InspectorSnapshotV1;
-  readonly host: InspectorSectionHostAPI;
-}
-
-export interface InspectorSectionDefinition {
-  readonly id: string;
-  readonly title: string;
-  readonly priority?: number;
-  /** Return false when this section has no meaningful content for the snapshot. */
-  readonly when?: (snapshot: InspectorSnapshotV1) => boolean;
-  readonly render: React.ComponentType<InspectorSectionRenderProps>;
-}
-
 export const PRESENTATION_TARGETS = [
-  "conversation.item", "conversation.process", "conversation.tool-activity",
-  "conversation.composer", "header.conversation", "header.workspace",
-  "navigation.primary", "app.status", "content.preview", "settings",
+  "conversation.item", "conversation.process",
+  "header.conversation", "header.workspace",
+  "app.status", "content.preview", "settings",
 ] as const;
 export type BuiltInPresentationTarget = (typeof PRESENTATION_TARGETS)[number];
 export type PresentationTarget = BuiltInPresentationTarget | (string & {});
@@ -938,16 +925,6 @@ export const CONVERSATION_ITEM_ACTIONS = {
 } as const;
 export type ConversationItemActionId = (typeof CONVERSATION_ITEM_ACTIONS)[keyof typeof CONVERSATION_ITEM_ACTIONS];
 
-export const COMPOSER_ACTIONS = {
-  setDraft: "conversation.composer.set-draft",
-  addAttachment: "conversation.composer.add-attachment",
-  removeAttachment: "conversation.composer.remove-attachment",
-  setSubmissionMode: "conversation.composer.set-submission-mode",
-  submit: "conversation.composer.submit",
-  stop: "conversation.composer.stop",
-} as const;
-export type ComposerActionId = (typeof COMPOSER_ACTIONS)[keyof typeof COMPOSER_ACTIONS];
-
 export const HEADER_ACTIONS = {
   selectTab: "header.select-tab",
   closeTab: "header.close-tab",
@@ -955,13 +932,6 @@ export const HEADER_ACTIONS = {
   navigateForward: "header.navigate-forward",
 } as const;
 export type HeaderActionId = (typeof HEADER_ACTIONS)[keyof typeof HEADER_ACTIONS];
-
-export const NAVIGATION_ACTIONS = {
-  activateNode: "navigation.activate-node",
-  pinNode: "navigation.pin-node",
-  unpinNode: "navigation.unpin-node",
-} as const;
-export type NavigationActionId = (typeof NAVIGATION_ACTIONS)[keyof typeof NAVIGATION_ACTIONS];
 
 export const STATUS_ACTIONS = { activateItem: "status.activate-item" } as const;
 export type StatusActionId = (typeof STATUS_ACTIONS)[keyof typeof STATUS_ACTIONS];
@@ -1054,18 +1024,6 @@ export interface ToolActivitySnapshot {
   readonly resultText?: string;
   readonly structuredResult?: ToolActivityStructuredResult;
   readonly error?: string;
-}
-
-export interface ToolActivityPresenterProps {
-  readonly activity: ToolActivitySnapshot;
-  readonly host: ViewHostAPI;
-  readonly fallback: React.ReactNode;
-}
-
-export interface ToolActivityPresenterDefinition {
-  readonly id: string;
-  readonly key: string;
-  readonly render: React.ComponentType<ToolActivityPresenterProps>;
 }
 
 /** Current on-disk workbench state schema. */
@@ -1214,13 +1172,15 @@ export interface CSSSnippet {
  * plugin manifest but typed for the TypeScript workbench API.
  */
 export interface PluginSettingDefinition {
-  type: "boolean" | "string" | "number" | "enum";
+  type: "boolean" | "string" | "number" | "enum" | "secret";
   title: string;
   description?: string;
   default: unknown;
   enum?: string[];
   scope: "user" | "workspace";
-  apply: "live" | "restart";
+  apply: "live" | "next-operation" | "restart";
+  /** Exact HTTPS origins allowed to receive this secret as a Bearer token. Required for secret settings. */
+  credential_origins?: string[];
 }
 
 /**

@@ -20,7 +20,7 @@ const electronPackagePath = join(desktopRoot, "node_modules", "electron", "packa
 const builtHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac");
 const builtPiPHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac-pip");
 const helperBuildInfo = join(desktopRoot, "build", "bin", "wuu-cua-mac.build.json");
-const identityVersion = 8;
+const identityVersion = 9;
 
 function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", name: "ad-hoc" }) {
   const electronVersion = JSON.parse(readFileSync(electronPackagePath, "utf8")).version;
@@ -60,7 +60,12 @@ function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", 
   setPlistString(
     info,
     "NSMicrophoneUsageDescription",
-    "Wuu uses the microphone only while you are dictating text.",
+    "Wuu uses the microphone when you dictate text or allow a website to use it.",
+  );
+  setPlistString(
+    info,
+    "NSCameraUsageDescription",
+    "Wuu uses the camera only when you allow a website to use it.",
   );
   const packagedHelper = helperPathForApp(devApp);
   const packagedPiPHelper = pipHelperPathForApp(devApp);

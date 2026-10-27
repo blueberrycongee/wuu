@@ -1,8 +1,9 @@
-import { chmod, copyFile, mkdtemp, open, rm } from "node:fs/promises";
+import { chmod, mkdtemp, open, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import type { ArtifactItemMenuParams } from "../shared/protocol";
-import { managedArtifactFileFromURL, verifyManagedArtifactFile, type ManagedArtifactFile } from "./renderableFileURLs";
+import type { ArtifactSourceLease } from "../shared/protocol";
+import type { ArtifactSources } from "./artifactSources";
 
 // External document opening is deliberately narrower than saving a delivery.
 // Scripts, executables, shortcuts and unknown formats remain save/reveal only.
@@ -14,26 +15,12 @@ const EXTERNAL_DOCUMENT_EXTENSIONS = new Set([
   ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".epub",
 ]);
 
-export async function artifactMenuFile(
-  input: ArtifactItemMenuParams,
-  wuuHome: string,
-): Promise<ManagedArtifactFile> {
-  if (!input || typeof input.uri !== "string" || typeof input.threadId !== "string" || !input.threadId) {
-    throw new Error("Invalid artifact reference");
-  }
-  const url = new URL(input.uri);
-  if (url.protocol !== "wuu-artifact:" || decodeURIComponent(url.pathname.split("/")[1] ?? "") !== input.threadId) {
-    throw new Error("Artifact does not belong to the source conversation");
-  }
-  const artifact = managedArtifactFileFromURL(input.uri, wuuHome);
-  if (!artifact || !await verifyManagedArtifactFile(artifact)) {
-    throw new Error("Artifact is unavailable or has changed");
-  }
-  return artifact;
+export function isExternalDocumentName(name: string): boolean {
+  return EXTERNAL_DOCUMENT_EXTENSIONS.has(extname(name).toLowerCase());
 }
 
 export async function canOpenArtifactExternally(filePath: string): Promise<boolean> {
-  if (!EXTERNAL_DOCUMENT_EXTENSIONS.has(extname(filePath).toLowerCase())) return false;
+  if (!isExternalDocumentName(filePath)) return false;
   const file = await open(filePath, "r");
   try {
     const info = await file.stat();
@@ -49,23 +36,31 @@ export async function canOpenArtifactExternally(filePath: string): Promise<boole
   }
 }
 
-/** Editors receive an independent temporary copy, never the immutable snapshot. */
-export async function exportArtifactCopy(input: ArtifactItemMenuParams, wuuHome: string): Promise<string> {
-  const artifact = await artifactMenuFile(input, wuuHome);
+/** Materialize only after an explicit open/reveal action. A failed or stale
+ * action removes its private copy; successful external apps own its temp lifetime. */
+export async function exportArtifactCopy(source: ArtifactSourceLease, artifacts: ArtifactSources): Promise<{ path: string; dispose(): Promise<void> }> {
+  const artifact = artifacts.metadata(source.leaseId);
   const directory = await mkdtemp(join(tmpdir(), "wuu-artifact-open-"));
-  const destination = join(directory, basename(artifact.filePath));
+  const name = basename(artifact.name.replace(/\\/g, "/")).replace(/[<>:"|?*\x00-\x1f]/g, "_");
+  const destination = join(directory, name && !/^\.+$/.test(name) ? name : "artifact");
+  const dispose = () => rm(directory, { recursive: true, force: true });
   try {
-    await copyFile(artifact.filePath, destination);
+    const response = await artifacts.response(new Request(source.url));
+    if (!response.ok || !response.body) throw new Error("Artifact is unavailable");
+    const reader = response.body.getReader();
+    const file = await open(destination, "wx", 0o600);
+    const hash = createHash("sha256"); let size = 0;
+    try {
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        size += value.byteLength;
+        if (size > artifact.size) throw new Error("Artifact size changed");
+        hash.update(value); await file.writeFile(value);
+      }
+      await file.sync();
+    } finally { await reader.cancel(); await file.close(); }
+    if (size !== artifact.size || hash.digest("hex") !== artifact.sha256) throw new Error("Artifact contents changed");
     await chmod(destination, 0o600);
-    // Check the copied bytes too, so a changed source cannot race verification.
-    if (!await verifyManagedArtifactFile({ filePath: destination, sha256: artifact.sha256 })) {
-      throw new Error("Artifact changed while preparing the file");
-    }
-    // Keep successful exports for the OS temporary-directory lifecycle: an
-    // external app may still have the document open after Wuu quits.
-    return destination;
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
+    return { path: destination, dispose };
+  } catch (error) { await dispose(); throw error; }
 }

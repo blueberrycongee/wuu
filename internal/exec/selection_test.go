@@ -21,7 +21,7 @@ func TestRunResumedAndForkedSelectionReachesProvider(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
-	t.Setenv("WUU_SAFE_MODE", "1")
+	t.Setenv("WUU_SAFE_MODE", "")
 	type request struct {
 		Model  string `json:"model"`
 		Effort string `json:"reasoning_effort"`
@@ -48,7 +48,8 @@ func TestRunResumedAndForkedSelectionReachesProvider(t *testing.T) {
 	config := []byte(fmt.Sprintf(`{"default_provider":"first","providers":{
 		"first":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-5.5"},
 		"second":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-5.4"}
-	},"agent":{"permission_mode":"read_only","effort":"high"}}`, server.URL+"/first", server.URL+"/second"))
+	},"agent":{"permission_mode":"read_only","effort":"high"},
+	"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.session.default","wuu.tools.default","wuu.prompt.default","wuu.compaction.default","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]}}`, server.URL+"/first", server.URL+"/second"))
 	if err := os.WriteFile(configPath, config, 0o600); err != nil {
 		t.Fatal(err)
 	}

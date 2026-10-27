@@ -40,7 +40,7 @@ export function unhoverTooltip(): void {
  */
 export async function hoverTooltipText(element: Element | null): Promise<string | null> {
   unhoverTooltip();
-  const wrapper = element?.closest(".tooltip-trigger");
+  const wrapper = element?.closest("[data-wuu-tooltip-trigger]");
   if (!wrapper) {
     return null;
   }

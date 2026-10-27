@@ -5,14 +5,15 @@ SDK v3 request transform and tool while contributing a durable workbench View pl
 theme token sample, command, status item, locales, and the conversation-header slot. The View is
 built from the host-owned `api.ui` primitives, so another appearance plugin can theme it without
 knowing this plugin exists. It uses the React instance owned by the host; React is neither a
-dependency nor part of the bundle. It reads all four setting kinds and restores its counter from
+runtime dependency nor part of the bundle. Development tests mount the view with React DOM. It reads all four setting kinds and restores its counter from
 plugin-namespaced storage.
 
 The top-level manifest icon uses package-contained SVG artwork in the plugin catalog. Host-owned
 entries declare their own semantic or package-contained icon instead of inheriting brand artwork.
 
-Its presenter registrations are deliberately layout-neutral: they observe versioned snapshots and
-retain the native fallback instead of replacing navigation, titlebars, messages, or status chrome.
+Its UI contributions observe public composer and navigation state through the selected providers’
+slots. Message wrappers and the remaining header, preview, and status presenters retain their native
+content. These observations do not change the product layout.
 The example can therefore stay enabled while testing another appearance plugin without changing
 the product layout.
 
@@ -34,9 +35,9 @@ wuu plugin pack .
 wuu plugin install ./developer-loop-example-1.0.0.zip
 ```
 
-`npm test` runs type checking, builds both entries, and then performs static contract checks. Those
-checks reject private Wuu source imports and React bundling, and verify every acceptance
-contribution. `wuu plugin test` starts the executable runtime and checks protocol negotiation, the
+`npm test` runs type checking, builds both entries, and checks the public contract and counter
+behavior in React DOM. It rejects private Wuu source imports and React bundling, verifies each
+contribution, and checks loading, saving, rerendering, and restoring the counter. `wuu plugin test` starts the executable runtime and checks protocol negotiation, the
 v3 capability descriptor, and executable tool registration. `wuu plugin dev` builds, validates,
 and publishes isolated development generations; a failed refresh keeps the previous generation.
 

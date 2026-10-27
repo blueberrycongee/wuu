@@ -587,7 +587,7 @@ func runGit(env *Env, ctx context.Context, subcmd string, gitArgs []string) (str
 		"exit_code":          exitCode,
 		"output":             trimmed,
 		"timed_out":          timedOut,
-		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
 		"next_suggestions":   gitNextSuggestions(subcmd, exitCode, timedOut),
 	}
 	if subcmd == "commit" && exitCode == 0 && !timedOut {
@@ -746,7 +746,7 @@ func gitStatus(env *Env, ctx context.Context, userArgs []string) (string, error)
 		"untracked":          untracked,
 		"output":             trimmed,
 		"timed_out":          timedOut,
-		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
 		"next_suggestions":   gitStatusNextSuggestions(staged, unstaged, untracked, exitCode, timedOut),
 	}
 	if truncated {

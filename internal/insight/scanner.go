@@ -16,15 +16,15 @@ type toolCallRec struct {
 
 // CollectUsageScan reads each session history once and extracts both token
 // usage rows and load_skill calls for the settings usage view.
-func CollectUsageScan(sessDir string) (UsageScan, error) {
-	sessions, err := sessionstore.List(sessDir, 0)
+func CollectUsageScan(store *sessionstore.Store) (UsageScan, error) {
+	sessions, err := store.List(0)
 	if err != nil {
 		return UsageScan{}, err
 	}
 	var rows []TokenUsageRow
 	counts := make(map[string]int)
 	for _, sess := range sessions {
-		records, err := sessionstore.LoadHistoryRecords(sessDir, sess.ID, true)
+		records, err := store.LoadHistoryRecords(sess.ID, true)
 		if err != nil {
 			continue
 		}

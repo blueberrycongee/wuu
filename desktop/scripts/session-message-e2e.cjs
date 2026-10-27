@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain, clipboard, dialog, Menu } = require('electron');
@@ -31,7 +32,7 @@ for (const name of Object.keys(process.env)) {
 }
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = path.resolve(process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'));
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
@@ -59,7 +60,9 @@ assert.equal(zip.status, 0, String(zip.stderr));
 const files = [
   { name: 'wuu-session-cards.zip', mime: 'application/zip', bytes: zip.stdout },
   { name: 'session-card-polish.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText) },
-  { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(4) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
+  // Remains long in a narrow pane without exceeding the provider's 160-byte
+  // filename limit, which would intentionally replace it with a safe hash.
+  { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(2) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
   { name: 'README', mime: 'application/octet-stream', bytes: Buffer.from('Extensionless artifact with unknown displayed size.\n'), noSize: true },
   { name: 'notes.txt', mime: 'text/plain', bytes: Buffer.from('Review notes without supplied size metadata.\n'), noSize: true },
   { name: 'delivery-summary.md', mime: 'text/markdown', bytes: Buffer.from('# Delivered files\nAll files remain individually accessible.\n') },
@@ -68,17 +71,9 @@ const files = [
   { name: 'empty.txt', mime: 'text/plain', bytes: Buffer.alloc(0) },
   { name: 'last-delivery-note.txt', mime: 'text/plain', bytes: Buffer.from('The eighth file is reachable after two expansions.\n') },
 ];
-const artifacts = files.map((file, index) => {
-  const threadID = index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple';
-  const id = String(index + 1).padStart(32, '0'), sha256 = createHash('sha256').update(file.bytes).digest('hex');
-  const root = path.join(home, 'workspaces', 'fixture', 'sessions', threadID, 'artifacts', id);
-  fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(path.join(root, file.name), file.bytes);
-  fs.writeFileSync(path.join(root, '.artifact.json'), JSON.stringify({ version: 1, id, thread_id: threadID, plugin_id: 'fixture', name: file.name, sha256, size: file.bytes.length }));
-  return { type: 'file', name: file.name, mime_type: file.mime,
-    uri: `wuu-artifact://fixture/${threadID}/${id}/${encodeURIComponent(file.name)}?sha256=${sha256}`,
-    artifact: { placement: 'turn_end', ref: id, sha256, ...(file.noSize ? {} : { size_bytes: file.bytes.length }) } };
-});
+// Filled from the selected provider before history is seeded. A guessed native
+// workspace directory/URI bypasses that provider's ownership and MIME contract.
+const artifacts = files.map(() => ({}));
 // Each output is the latest turn in its own conversation, matching the
 // product's latest-turn summary presentation rather than forcing old summaries.
 const artifactSessions = [
@@ -238,10 +233,25 @@ async function input(selector, text) {
   await until((selector, text) => document.querySelector(selector)?.value === text, 'native draft insertion', selector, text);
 }
 async function openConversation(id, title) {
-  await until(() => {
-    const input = document.querySelector('.composer textarea');
-    return input && !input.disabled && !input.readOnly;
-  }, 'ready conversation shell');
+  await until(selector => {
+    const input = document.querySelector(selector);
+    return input && !input.disabled && !input.readOnly && !input.closest('[inert]')
+      && input.getClientRects().length > 0;
+  }, 'ready conversation shell', mainInput);
+  // Native keyboard input requires the host window and intended composer to
+  // own focus; a mounted textarea alone does not establish either prerequisite.
+  main.focus();
+  await hostUntil(() => main.isFocused(), 'native conversation window focus');
+  await evaluate(selector => document.querySelector(selector).focus(), mainInput);
+  await until(selector => document.hasFocus()
+    && document.activeElement === document.querySelector(selector), 'conversation composer focus', mainInput);
+  await evaluate(() => {
+    window.__sessionMessageSearchKey = null;
+    window.addEventListener('keydown', event => {
+      window.__sessionMessageSearchKey = { key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+        documentFocused: document.hasFocus(), target: event.target?.outerHTML };
+    }, { capture: true, once: true });
+  });
   key('P', [process.platform === 'darwin' ? 'meta' : 'control']);
   await until(() => document.activeElement === document.querySelector('.conversation-search-dialog input'), 'conversation search focus');
   // Reuse the observable request/result barrier from conversation-search-e2e.
@@ -498,34 +508,49 @@ const watchdog = setTimeout(() => { log('Global acceptance deadline exceeded'); 
 
 async function run() {
   log(boundary);
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', cwd], {
-    env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
+  const sessionFixture = createSessionFixture(home, cwd, project.id);
+  const sourceDirectory = path.join(fixture, 'artifact-sources');
+  fs.mkdirSync(sourceDirectory);
+  const imported = sessionFixture({ op: 'import-artifacts', artifacts: files.map((file, index) => {
+    const source = path.join(sourceDirectory, file.name);
+    fs.writeFileSync(source, file.bytes);
+    return { thread_id: index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple',
+      path: source, mime_type: file.mime };
+  }) });
+  assert.equal(imported.status, 0, imported.stderr);
+  const snapshots = JSON.parse(imported.stdout).artifacts;
+  assert.equal(snapshots.length, files.length);
+  snapshots.forEach((snapshot, index) => {
+    const file = files[index];
+    assert.equal(snapshot.name, file.name);
+    assert.equal(snapshot.mime_type, file.mime);
+    assert.equal(snapshot.size, file.bytes.length);
+    assert.equal(snapshot.sha256, createHash('sha256').update(file.bytes).digest('hex'));
+    Object.assign(artifacts[index], { type: 'file', name: snapshot.name, mime_type: snapshot.mime_type, uri: snapshot.uri,
+      artifact: { placement: 'turn_end', ref: snapshot.id, sha256: snapshot.sha256,
+        ...(file.noSize ? {} : { size_bytes: snapshot.size }) } });
   });
-  assert.equal(boot.status, 0, boot.stderr || String(boot.error));
-  const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from pathlib import Path
-home=Path(sys.argv[1]); p=json.loads((home/'projects.json').read_text())['projects'][0]
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
-for s in json.loads(sys.argv[2]):
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',s['title'],p['path'],p['id'],'fixture','fixture',len(s['messages'])*2))
-    seq=0
-    for i,m in enumerate(s['messages']):
-        seq+=1
-        peer=bool(m.get('origin'))
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,display_content,origin,presentation_kind,related_session_id,read_only,name,at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (s['id'],seq,'user',('Delivery context\\n\\n'+m['text']) if peer else m['text'],m['text'] if peer else '',m.get('origin',''),'session_message' if peer else '',m.get('related',''),int(peer),m.get('name',''),'2026-01-01T00:00:00Z'))
-        if m.get('artifacts'):
-            call='deliver-'+str(i)
-            seq+=1
-            db.execute('INSERT INTO session_messages (session_id,seq,role,tool_calls_json,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant',json.dumps([{'id':call,'name':'present_artifact','arguments':'{}'}]),'2026-01-01T00:00:00Z'))
-            seq+=1
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,tool_call_id,name,tool_result_json,at) VALUES (?,?,?,?,?,?,?,?)', (s['id'],seq,'tool','Delivered files.',call,'present_artifact',json.dumps({'content':m['artifacts']}),'2026-01-01T00:00:00Z'))
-        seq+=1
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant','Acknowledged.','2026-01-01T00:00:00Z'))
-    db.execute('UPDATE sessions SET entries=? WHERE id=?', (seq,s['id']))
-db.commit()
-`, home, JSON.stringify(sessions)], { encoding: 'utf8' });
+  pass('managed artifacts imported through the selected provider with exact metadata', snapshots);
+  const stamp = '2026-01-01T00:00:00Z';
+  const seededSessions = sessions.map(s => {
+    const history = [];
+    s.messages.forEach((message, index) => {
+      const peer = Boolean(message.origin);
+      history.push({ role: 'user', content: peer ? `Delivery context\n\n${message.text}` : message.text,
+        display_content: peer ? message.text : '', origin: message.origin || '',
+        presentation_kind: peer ? 'session_message' : '', related_session_id: message.related || '',
+        read_only: peer, name: message.name || '', at: stamp });
+      if (message.artifacts?.length) {
+        const call = `deliver-${index}`;
+        history.push({ role: 'assistant', tool_calls: [{ id: call, name: 'present_artifact', arguments: '{}' }], at: stamp },
+          { role: 'tool', content: 'Delivered files.', tool_call_id: call, name: 'present_artifact', tool_result: { content: message.artifacts }, at: stamp });
+      }
+      history.push({ role: 'assistant', content: 'Acknowledged.', at: stamp });
+    });
+    return { session: { id: s.id, created_at: stamp, updated_at: stamp, title: s.title,
+      cwd, workspace_id: project.id, provider: 'fixture', model: 'fixture' }, history };
+  });
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr);
   await import(pathToFileURL(mainBundle).href);
   await hostUntil(() => main, 'bundled main window');
@@ -539,6 +564,21 @@ db.commit()
     .map(item => ({ text: item.text, origin: item.origin, target: item.related_session_id || '' })),
   messages.map(item => ({ text: item.text, origin: item.origin, target: item.related })));
   pass('incoming request/reply and missing-target metadata restored through Go');
+
+  // Verify provider ownership and bytes before the visual matrix or native
+  // popup can obscure a core/transport error with a menu visibility timeout.
+  for (const index of [0, 1]) {
+    const bytes = await evaluate(async input => {
+      const lease = await window.wuu.acquireArtifactSource(input);
+      try {
+        const response = await fetch(lease.url);
+        if (!response.ok) throw new Error(`Artifact fetch failed: ${response.status}`);
+        return [...new Uint8Array(await response.arrayBuffer())];
+      } finally { await window.wuu.releaseArtifactSource(lease.leaseId); }
+    }, { uri: artifacts[index].uri, sha256: artifacts[index].artifact.sha256, threadId: artifactSessions[index].id });
+    assert.deepEqual(Buffer.from(bytes), files[index].bytes);
+  }
+  pass('registered-workspace artifacts resolve and stream unchanged through the production desktop protocol');
 
   // Save the default product presentation before the interaction checks so a
   // later failure still leaves useful, exact-build artifact-card evidence.
@@ -737,10 +777,19 @@ run().catch(async error => {
   clearTimeout(watchdog);
   await stopRecording().catch(() => {});
   log(String(error.stack || error));
+  // Preserve the original failure even if renderer diagnostics or capture fail.
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, failures, screenshots, rpc, nativeMenus }, null, 2));
   if (main && !main.isDestroyed()) {
     try {
-      fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+      fs.writeFileSync(path.join(output, 'failure-host.json'), JSON.stringify({
+        windowFocused: main.isFocused(), windowVisible: main.isVisible(),
+        webContentsFocused: main.webContents.isFocused(),
+      }, null, 2));
+    } catch (diagnosticError) { log(`Host diagnostics: ${diagnosticError}`); }
+    try {
       fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(await evaluate(() => ({
+        documentFocused: document.hasFocus(), searchKey: window.__sessionMessageSearchKey,
+        activeElementInert: Boolean(document.activeElement?.closest('[inert]')),
         cards: [...document.querySelectorAll('.session-message-source')].map(node => node.outerHTML),
         activeElement: document.activeElement?.outerHTML,
         search: document.querySelector('.conversation-search-dialog')?.outerHTML,
@@ -748,8 +797,10 @@ run().catch(async error => {
         panes: [...document.querySelectorAll('.conversation-split-pane, .cached-conversation-pane')].map(node => ({ id: node.dataset.threadId, active: node.dataset.active })),
         inputs: [...document.querySelectorAll('.composer textarea')].map(node => ({ text: node.value, rect: node.getBoundingClientRect().toJSON() })),
       })), null, 2));
-    } catch (captureError) { log(String(captureError)); }
+    } catch (diagnosticError) { log(`Renderer diagnostics: ${diagnosticError}`); }
+    try {
+      fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+    } catch (captureError) { log(`Screenshot: ${captureError}`); }
   }
-  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, failures, screenshots, rpc, nativeMenus }, null, 2));
   app.exit(1);
 });

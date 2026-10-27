@@ -26,7 +26,7 @@ export function isForegroundControlled(
 // Main keys agent views by (workdir, tabID). The tab id travels on the
 // activity's `target` field (set to the browser tab id when the activity is
 // acquired); fall back to the activity id so we always report a stable key.
-export function browserTabIDForActivity(activity: ActivitySession): string {
+export function browserTabIDForActivity(activity: Pick<ActivitySession, "id" | "target">): string {
   return activity.target && activity.target.length > 0
     ? activity.target
     : activity.id;
@@ -36,7 +36,7 @@ export function browserTabIDForActivity(activity: ActivitySession): string {
 // per-thread tab otherwise. Both are the same kind of page: one web contents
 // the address bar can drive.
 export function displayedBrowserTabID(
-  activity: ActivitySession | undefined,
+  activity: Pick<ActivitySession, "id" | "kind" | "state" | "target"> | undefined,
   threadID: string | undefined,
 ): string | undefined {
   if (activity?.kind === "browser" && activity.state !== "stopped") {
@@ -144,6 +144,7 @@ function transitionAffectsBrowserPanel(
 // runs while a geometry-changing CSS transition is active.
 export function observeBrowserPanelBounds(
   report: (rect: BrowserBoundsRect) => void,
+  root?: HTMLElement,
 ): () => void {
   let host: Element | null = null;
   let frame: Element | null = null;
@@ -160,10 +161,10 @@ export function observeBrowserPanelBounds(
   const syncElements = (): void => {
     const nextHost = host?.isConnected
       ? host
-      : document.querySelector(".workspace-browser-host");
+      : (root ?? document).querySelector(".workspace-browser-host");
     const nextFrame = frame?.isConnected
       ? frame
-      : document.querySelector(".workspace-browser-frame");
+      : (root ?? document).querySelector(".workspace-browser-frame");
     if (nextHost === host && nextFrame === frame) {
       return;
     }
@@ -243,7 +244,7 @@ export function observeBrowserPanelBounds(
       syncElements();
       scheduleMeasure();
     });
-    mountObserver.observe(document.body, { childList: true, subtree: true });
+    mountObserver.observe(root ?? document.body, { childList: true, subtree: true });
   }
   window.addEventListener("resize", scheduleMeasure);
   window.addEventListener("scroll", scheduleMeasure, true);

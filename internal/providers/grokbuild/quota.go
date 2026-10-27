@@ -34,7 +34,7 @@ type grokQuotaReply struct {
 // proxy. This intentionally uses Grok Build's CLI bearer, not browser-account
 // SuperGrok credentials.
 func (c *Client) ReadQuota(ctx context.Context) (providers.Quota, error) {
-	token, tokenErr := c.auth.token()
+	token, tokenErr := c.auth.token(ctx)
 	source := "configured"
 	if c.auth.reuseCLI && c.auth.explicitToken == "" {
 		source = "grok-cli"

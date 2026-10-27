@@ -199,13 +199,19 @@ func (b *browserBridge) ListTabs(ctx context.Context) ([]tools.BrowserLiveTab, e
 			return nil, fmt.Errorf("decode list_tabs result: %w", err)
 		}
 	}
-	if len(res.Tabs) > 0 {
-		out := make([]tools.BrowserLiveTab, 0, len(res.Tabs))
+	if len(res.Tabs) > 0 || len(res.WorkspaceTabs) > 0 {
+		out := make([]tools.BrowserLiveTab, 0, len(res.Tabs)+len(res.WorkspaceTabs))
 		for _, tab := range res.Tabs {
 			if tab.TabID == "" {
 				continue
 			}
 			out = append(out, tools.BrowserLiveTab{ID: tab.TabID, URL: tab.URL, Title: tab.Title, Status: tab.Status})
+		}
+		for _, tab := range res.WorkspaceTabs {
+			if tab.TabID != "" {
+				out = append(out, tools.BrowserLiveTab{ID: tab.TabID, URL: tab.URL, Title: tab.Title,
+					Attachable: true, WorkspaceID: tab.WorkspaceID, Active: tab.Active, Source: tab.Source})
+			}
 		}
 		return out, nil
 	}

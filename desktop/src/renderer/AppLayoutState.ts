@@ -23,6 +23,7 @@ export const sidebarDrawerExitMs = (): number =>
   motionDurationMs("--sidebar-drawer-exit-duration", 220);
 export const rightPanelMotionMs = (): number =>
   motionDurationMs("--workspace-panel-motion-duration", 180);
+export { RIBBON_COMPACT_WIDTH as SIDEBAR_RIBBON_WIDTH } from "../shared/navigationRibbon";
 export const SIDEBAR_DEFAULT_WIDTH = 264;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
@@ -65,6 +66,9 @@ type SidebarResizeSession = {
   startX: number;
   startWidth: number;
   currentWidth: number;
+  // An opening animation may be narrower than the settled minimum. Preserve
+  // that temporary width until release, rather than jumping to its endpoint.
+  interruptedTargetWidth?: number;
   // Tracks whether the sidebar collapsed during the current drag (either at
   // pointerdown or by crossing the collapse-intent width mid-drag). When true
   // and the user drags back above that width without releasing, the move
@@ -220,10 +224,13 @@ function useWindowPointerResize<Session>({
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerEnd);
     window.addEventListener("pointercancel", handlePointerEnd);
+    // A window deactivation can deliver the eventual mouse-up elsewhere.
+    window.addEventListener("blur", handlePointerEnd);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
+      window.removeEventListener("blur", handlePointerEnd);
     };
   }, [onEnd, onMove, resizing, sessionRef]);
 }
@@ -285,6 +292,8 @@ export function useAppLayoutState({
   layoutRootRef,
   settingsLayoutRootRef,
   viewportWidth,
+  collapsedSidebarWidth = 0,
+  additionalNavigationWidth = 0,
   onCloseWorkspaceMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
@@ -295,6 +304,8 @@ export function useAppLayoutState({
   // Callers with a virtual or embedded viewport can provide the width that
   // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
+  collapsedSidebarWidth?: number;
+  additionalNavigationWidth?: number;
   onCloseWorkspaceMenu: () => void;
 }): {
   sidebarWidth: number;
@@ -348,7 +359,7 @@ export function useAppLayoutState({
   const rightPanelMotionTimerRef = useRef<number | undefined>(undefined);
   // Window resizing changes the canvas, not the user-selected sidebar width.
   const sidebarWidth = sidebarPreferredWidth;
-  const effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
+  const effectiveSidebarWidth = sidebarCollapsed ? collapsedSidebarWidth : sidebarWidth;
   // Auto-globalize the open right panel only when the window is too narrow to
   // dock conversation + panel even with the sidebar fully collapsed — i.e. we
   // measure the space WITHOUT the sidebar's width. Opening the sidebar no
@@ -362,7 +373,7 @@ export function useAppLayoutState({
   // tip the layout over the threshold and auto-globalize the panel.)
   const workspaceRightPanelAutoGlobalized = workspacePanelNeedsFocus(
     windowWidth,
-    0,
+    collapsedSidebarWidth + additionalNavigationWidth,
   );
   // Complement of the above by construction: if the panel can't dock without
   // the sidebar it auto-globalizes, and vice versa.
@@ -370,7 +381,7 @@ export function useAppLayoutState({
     !workspaceRightPanelAutoGlobalized;
   const clampedWorkspaceRightPanelWidth = clampWorkspaceRightPanelWidth(
     workspaceRightPanelWidth,
-    effectiveSidebarWidth,
+    effectiveSidebarWidth + additionalNavigationWidth,
     windowWidth,
   );
   const startSidebarMotion = useCallback((): void => {
@@ -410,10 +421,11 @@ export function useAppLayoutState({
 
   const writeLiveSidebarWidth = useCallback(
     (nextWidth: number): void => {
-      const clampedWidth = clampSidebarWidth(nextWidth);
+      const interrupted = resizeSessionRef.current?.interruptedTargetWidth !== undefined;
+      const clampedWidth = interrupted ? clamp(nextWidth, 0, SIDEBAR_MAX_WIDTH) : clampSidebarWidth(nextWidth);
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-width", `${clampedWidth}px`);
-        root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
+        root.style.setProperty("--sidebar-open-width", `${Math.max(SIDEBAR_MIN_WIDTH, clampedWidth)}px`);
         root.style.setProperty("--workspace-sheet-left", `${clampedWidth}px`);
       }
     },
@@ -444,12 +456,12 @@ export function useAppLayoutState({
       }
       const clampedWidth = clampWorkspaceRightPanelWidth(
         nextWidth,
-        effectiveSidebarWidth,
+        effectiveSidebarWidth + additionalNavigationWidth,
         windowWidth,
       );
       root.style.setProperty("--workspace-right-panel-width", `${clampedWidth}px`);
     },
-    [effectiveSidebarWidth, layoutRootRef, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, layoutRootRef, windowWidth]
   );
 
   const writeLiveSplitPercent = useCallback(
@@ -500,9 +512,9 @@ export function useAppLayoutState({
 
   const applyWorkspaceRightPanelWidth = useCallback(
     (nextWidth: number): void => {
-      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth, windowWidth));
+      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + additionalNavigationWidth, windowWidth));
     },
-    [effectiveSidebarWidth, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, windowWidth]
   );
 
   const applySplitPercent = useCallback((nextPercent: number): void => {
@@ -562,6 +574,12 @@ export function useAppLayoutState({
       sidebarLight.schedule({ resizer: session.resizer, y: event.clientY - session.resizerTop });
       const nextWidth = session.startWidth + event.clientX - session.startX;
       session.currentWidth = nextWidth;
+      // Moving outward from an interrupted opening must not interpret its
+      // below-minimum starting width as a new collapse gesture.
+      if (session.interruptedTargetWidth !== undefined && !session.collapsedDuringDrag && nextWidth >= session.startWidth && nextWidth < SIDEBAR_MIN_WIDTH) {
+        sidebarLive.schedule(nextWidth);
+        return;
+      }
       if (sidebarShouldCollapse(nextWidth)) {
         sidebarLive.cancel();
         applySidebarWidth(nextWidth);
@@ -592,8 +610,17 @@ export function useAppLayoutState({
     (session: SidebarResizeSession | null): void => {
       sidebarLight.flush();
       if (session) {
-        if (session.currentWidth === session.startWidth) {
-          sidebarLive.cancel();
+        if (session.interruptedTargetWidth !== undefined && !session.collapsedDuringDrag) {
+          const target = session.currentWidth === session.startWidth
+            ? session.interruptedTargetWidth : clampSidebarWidth(session.currentWidth);
+          // Resume toward a valid settled width. The frame writer runs after
+          // React removes direct-manipulation suppression and restores motion.
+          startSidebarMotion();
+          applySidebarWidth(target);
+          sidebarLive.schedule(target);
+        } else if (session.currentWidth === session.startWidth) {
+          // The last move can return to the origin before its frame is painted.
+          sidebarLive.flush();
         } else {
           if (!sidebarShouldCollapse(session.currentWidth)) {
             sidebarLive.flush();
@@ -616,6 +643,7 @@ export function useAppLayoutState({
       sidebarLive,
       sidebarLight,
       sidebarPreferredWidth,
+      startSidebarMotion,
     ]
   );
 
@@ -636,9 +664,13 @@ export function useAppLayoutState({
   );
 
   const handleRightPanelResizeEnd = useCallback((session: RightPanelResizeSession | null): void => {
-    if (session && session.currentWidth !== session.startWidth) {
+    if (session) {
       rightPanelLive.flush();
-      applyWorkspaceRightPanelWidth(session.currentWidth);
+      // A round trip must settle the live width without replacing a preferred
+      // width that is currently clamped by the viewport.
+      if (session.currentWidth !== session.startWidth) {
+        applyWorkspaceRightPanelWidth(session.currentWidth);
+      }
     } else {
       rightPanelLive.cancel();
     }
@@ -701,8 +733,9 @@ export function useAppLayoutState({
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers
   // (ConversationScrollState, AutoFollowScroll) stop forcing layout +
   // scrollTop writes on every pointermove.
+  const panelResizing = resizingSidebar || resizingRightPanel || resizingSplit;
   useEffect(() => {
-    if (!resizingSidebar && !resizingRightPanel && !resizingSplit) {
+    if (!panelResizing) {
       return undefined;
     }
     const root = document.documentElement;
@@ -710,15 +743,16 @@ export function useAppLayoutState({
     return () => {
       releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
     };
-  }, [resizingSidebar, resizingRightPanel, resizingSplit]);
+  }, [panelResizing]);
 
   // Opening and closing structural panels changes the conversation viewport
   // on every CSS frame just like a live resize. Mark only the geometry phase
   // (without the window-resizing CSS that would cancel the transition) so
   // scroll followers and ResizeObserver consumers defer their layout reads
   // until the panel settles.
+  const panelAnimating = sidebarAnimating || rightPanelAnimating;
   useEffect(() => {
-    if (!sidebarAnimating && !rightPanelAnimating) {
+    if (!panelAnimating) {
       return undefined;
     }
     const root = document.documentElement;
@@ -726,7 +760,7 @@ export function useAppLayoutState({
     return () => {
       releaseWindowResizeClass(LAYOUT_MOTION_CLASS);
     };
-  }, [rightPanelAnimating, sidebarAnimating]);
+  }, [panelAnimating]);
 
   function finishPanelMotion(): void {
     // A direct manipulation takes over the shared grid immediately, even if
@@ -766,13 +800,25 @@ export function useAppLayoutState({
       "--sidebar-resizer-grab-x",
       `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
     );
+    const sidebar = resizer.parentElement?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
+    const measuredWidth = sidebarAnimating && sidebar
+      ? sidebar.getBoundingClientRect().width - additionalNavigationWidth : undefined;
+    const interrupted = measuredWidth !== undefined && measuredWidth > 0 && !sidebarCollapsed;
+    const startWidth = interrupted ? measuredWidth : sidebarCollapsed ? 0 : sidebarWidth;
+    if (interrupted) {
+      for (const root of sidebarLayoutRoots()) {
+        root.style.setProperty("--sidebar-width", `${startWidth}px`);
+        root.style.setProperty("--workspace-sheet-left", `${startWidth}px`);
+      }
+    }
     finishPanelMotion();
     resizeSessionRef.current = {
       resizer,
       resizerTop: bounds.top,
       startX: event.clientX,
-      startWidth: sidebarCollapsed ? 0 : sidebarWidth,
-      currentWidth: sidebarCollapsed ? 0 : sidebarWidth,
+      startWidth,
+      currentWidth: startWidth,
+      ...(interrupted ? { interruptedTargetWidth: sidebarWidth } : {}),
       collapsedDuringDrag: sidebarCollapsed
     };
     onCloseWorkspaceMenu();

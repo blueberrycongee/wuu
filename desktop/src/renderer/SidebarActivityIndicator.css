@@ -1,0 +1,53 @@
+.sidebar-activity {
+  display: inline-flex;
+  width: var(--sidebar-activity-size);
+  height: var(--sidebar-activity-size);
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+.sidebar-activity > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+/* A diagonal light wave keeps the footprint still in a dense list. */
+.sidebar-activity circle {
+  opacity: 0.35;
+  animation: sidebar-activity-wave 1600ms ease-in-out infinite;
+}
+
+.sidebar-activity circle:nth-child(2),
+.sidebar-activity circle:nth-child(4) {
+  animation-delay: -1280ms;
+}
+
+.sidebar-activity circle:nth-child(3),
+.sidebar-activity circle:nth-child(5),
+.sidebar-activity circle:nth-child(7) {
+  animation-delay: -960ms;
+}
+
+.sidebar-activity circle:nth-child(6),
+.sidebar-activity circle:nth-child(8) {
+  animation-delay: -640ms;
+}
+
+.sidebar-activity circle:nth-child(9) {
+  animation-delay: -320ms;
+}
+
+@keyframes sidebar-activity-wave {
+  0%, 65%, 100% { opacity: 0.35; }
+  30% { opacity: 1; }
+}
+
+@container style(--motion-reduced: 1) {
+  .sidebar-activity circle {
+    animation: none;
+    opacity: 0.75;
+  }
+}

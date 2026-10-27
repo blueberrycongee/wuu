@@ -20,9 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -98,7 +99,7 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
 			configPath := filepath.Join(root, "config.json")
-			config := fmt.Sprintf(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.session.default","wuu.tools.default","wuu.prompt.default","wuu.compaction.default","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -133,8 +134,15 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			}
 			// Hold the provider response so the database sidecars are still live.
 			state := filepath.Join(root, "state")
+			documentsDir := filepath.Join(statepath.SessionsDir(state), "documents")
+			// Inspect file modes without opening another SQLite connection: its
+			// close can checkpoint/remove the sidecars we are measuring.
+			databases, err := filepath.Glob(filepath.Join(documentsDir, "*", "state.sqlite3"))
+			if err != nil || len(databases) != 1 {
+				t.Fatalf("selected database files: %v, %v", databases, err)
+			}
 			for _, suffix := range []string{"", "-wal", "-shm"} {
-				path := session.DBPath(statepath.SessionsDir(state)) + suffix
+				path := databases[0] + suffix
 				info, err := os.Stat(path)
 				if err != nil || info.Mode().Perm() != 0o600 {
 					t.Errorf("private database %s: %v, %v", path, info, err)
@@ -180,7 +188,7 @@ func execProcess(t *testing.T, root string, args ...string) (*exec.Cmd, *bytes.B
 	cmd.Dir = root
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + root,
-		"WUU_HOME=" + filepath.Join(root, "state"), "WUU_SAFE_MODE=1", "WUU_EXEC_PROCESS_TEST=1",
+		"WUU_HOME=" + filepath.Join(root, "state"), "WUU_EXEC_PROCESS_TEST=1",
 	}
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -245,19 +253,39 @@ func stalledExecProvider(t *testing.T, root string, delta string) (string, <-cha
 	}))
 	t.Cleanup(func() { close(release); server.Close() })
 	configPath := filepath.Join(root, "config.json")
-	config := fmt.Sprintf(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
+	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.session.default","wuu.tools.default","wuu.prompt.default","wuu.compaction.default","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return configPath, started
 }
 
-func assertSettledExecRun(t *testing.T, root string) {
+func execProcessStore(t *testing.T, root string) *execution.Store {
 	t.Helper()
-	store, err := execution.NewStore(statepath.SessionsDir(filepath.Join(root, "state")))
+	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
+	cfg, path, err := config.LoadPath(filepath.Join(root, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	state, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: root, HomeDir: root, ConfigPath: path, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := state.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	store, err := execution.NewStore(state.Documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func assertSettledExecRun(t *testing.T, root string) {
+	t.Helper()
+	store := execProcessStore(t, root)
 	runs, err := store.List(context.Background(), execution.ListOptions{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("stored runs: %+v, %v", runs, err)
@@ -312,10 +340,7 @@ func TestExecProcessBusyResumeWithModelSelection(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("provider was not reached")
 	}
-	store, err := execution.NewStore(statepath.SessionsDir(filepath.Join(root, "state")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := execProcessStore(t, root)
 	runs, err := store.List(context.Background(), execution.ListOptions{})
 	if err != nil || len(runs) != 1 || runs[0].Status.Terminal() {
 		t.Fatalf("expected one active Run: %+v, %v", runs, err)
@@ -391,4 +416,90 @@ func TestExecProcessDisconnectedStdoutSettlesRun(t *testing.T) {
 	}
 	waitExecProcess(t, cmd, stderr, wuuexec.ExitProtocol)
 	assertSettledExecRun(t, root)
+}
+
+func TestEvalProcessCrashRetainsRuntimeLocations(t *testing.T) {
+	root := t.TempDir()
+	configPath, started := stalledExecProvider(t, root, "partial answer")
+	state := filepath.Join(root, "state")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "config.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := func(args ...string) *exec.Cmd {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		t.Cleanup(cancel)
+		cmd := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestExecProcessHelper$", "--", "eval"}, args...)...)
+		cmd.Dir = root
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + root, "WUU_HOME=" + state, "WUU_EXEC_PROCESS_TEST=1"}
+		return cmd
+	}
+	plan := filepath.Join(root, "plan.json")
+	if output, err := command("--freeze", plan, "--task", "test_failure_fix", "--max-steps", "2", "--timeout", "1m").CombinedOutput(); err != nil {
+		t.Fatalf("freeze: %v\n%s", err, output)
+	}
+	evidence := filepath.Join(root, "evidence")
+	cmd := command("--plan", plan, "--artifacts", evidence)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("model never admitted: %s", output.String())
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	data, err = os.ReadFile(filepath.Join(evidence, "test_failure_fix", "runtime-locations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locations struct {
+		StateDir   string `json:"state_dir"`
+		SessionID  string `json:"session_id"`
+		SessionDir string `json:"session_dir"`
+		Workdir    string `json:"workdir"`
+	}
+	if err := json.Unmarshal(data, &locations); err != nil {
+		t.Fatal(err)
+	}
+	if locations.SessionID == "" {
+		t.Fatal("missing admitted session identity")
+	}
+	for _, path := range []string{locations.StateDir, locations.Workdir} {
+		if path == "" {
+			t.Fatal("missing recovery path")
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if locations.SessionDir != statepath.SessionArtifactDir(locations.StateDir, locations.SessionID) {
+		t.Fatal("session evidence path does not belong to admitted session")
+	}
+	if !strings.HasPrefix(locations.StateDir, evidence+string(os.PathSeparator)) {
+		t.Fatal("crashed runtime state must remain inside controller evidence")
+	}
+	// The killed evaluation cannot run workspace cleanup.
+	t.Cleanup(func() { _ = os.RemoveAll(locations.Workdir) })
 }

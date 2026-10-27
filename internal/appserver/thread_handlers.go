@@ -7,16 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -48,6 +50,12 @@ func workspaceKindForCWD(wuuHome, cwd string) WorkspaceKind {
 }
 
 func (s *Server) handleThreadStart(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadStartParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -63,6 +71,16 @@ func (s *Server) handleThreadStart(req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		threadCWD = canonical
+	}
+	actualWorkspace, workspaceErr := resolvedWorkspaceResource(threadCWD)
+	if workspaceErr != nil {
+		return s.writeResponse(req.ID, nil, workspaceErr)
+	}
+	// Keep the trusted local product's engine binding spelling (including
+	// symlinked project roots), while policy always sees the physical root.
+	// Delegated creation pins that physical root rather than a mutable alias.
+	if !s.Principal(s.requestAccessContext(req)).IsOwner() {
+		threadCWD = actualWorkspace.ID
 	}
 	workspaceID := strings.TrimSpace(params.WorkspaceID)
 	if workspaceID == "" {
@@ -97,22 +115,25 @@ func (s *Server) handleThreadStart(req Request) error {
 	if strings.TrimSpace(params.Engine) == "" {
 		engineID = agentengine.NormalizeEngineID(string(s.rt.DefaultEngine()))
 	}
-	if !s.rt.EngineAvailable(engineID) {
-		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
+	descriptorContext, cancelDescriptor := context.WithTimeout(s.requestAccessContext(req), 5*time.Second)
+	descriptor, descriptorErr := s.engineDescriptorForState(descriptorContext, binding, engineID)
+	cancelDescriptor()
+	if descriptorErr != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("%w: %q is unavailable: %v", agentengine.ErrUnknownEngine, engineID, descriptorErr))
 	}
+	hostLoop := slices.Contains(descriptor.Capabilities, "host-managed-continuation")
+
 	selection := s.currentSessionRuntimeSelection()
 	selection.Speed = strings.TrimSpace(params.Speed)
 	selection.ModelOptions = params.ModelOptions
-	if len(params.ModelOptions) > 0 {
-		entry, ok := enginecatalog.Lookup(string(engineID))
-		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
-			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
-		}
+	if len(params.ModelOptions) > 0 && !slices.Contains(descriptor.Capabilities, "model-options") {
+		return s.writeResponse(req.ID, nil, errors.New("selected engine does not expose additional model options"))
 	}
+
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if engineID != agentengine.EngineWuu {
+	if !hostLoop {
 		// Protocol engines do not share Wuu's provider catalog or effort
 		// surface. Empty model/effort means the agent's native default, not
 		// the current Wuu conversation's selection.
@@ -126,7 +147,7 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	if effort := strings.TrimSpace(params.Effort); effort != "" {
 		selection.Effort = effort
-		if engineID == agentengine.EngineWuu {
+		if hostLoop {
 			// The desktop mirrors one level choice into both columns before
 			// the first send, and the runtime update path stores the level
 			// in the variant column (see handleThreadModelSelection). Keep
@@ -145,8 +166,8 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	if mode := strings.TrimSpace(params.PermissionMode); mode != "" {
 		selection.PermissionMode = config.NormalizePermissionMode(mode)
-	} else if engineID != agentengine.EngineWuu {
-		// External agents initially run without interactive approval friction.
+	} else if slices.Contains(descriptor.Capabilities, "default-permission-unconfined") {
+		// Native CLI adapters initially run without interactive approval friction.
 		// The persisted generic mode is later mapped to each engine's native
 		// full-access setting and remains visible in the composer.
 		selection.PermissionMode = config.PermissionModeUnconfined
@@ -155,9 +176,18 @@ func (s *Server) handleThreadStart(req Request) error {
 		selection.ApproveForMe = *params.ApproveForMe
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
-	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	selection.ApproveForMe = selection.ApproveForMe && hostLoop && approvefor.EnabledForMode(selection.PermissionMode)
+	if _, err := s.requireRequestAccess(req, MethodThreadStart, executionEffects(selection.Provider, selection.Model, selection.PermissionMode, string(engineID)), actualWorkspace); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Compound project/handoff/worktree creation has its own admission semantics;
+	// it is not advertised as a generic delegated create operation.
+	if !s.Principal(s.requestAccessContext(req)).IsOwner() && (params.Project != nil || params.Handoff != nil || workspace == "worktree") {
+		return s.writeResponse(req.ID, nil, &access.Denied{Action: MethodThreadStart, Reason: "delegated-create-variant-unsupported"})
+	}
+
 	if params.Project != nil {
-		th, err := s.startProjectThread(selection, engineID, params)
+		th, err := s.startProjectThread(binding, selection, engineID, params)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -172,7 +202,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		return nil
 	}
 	if params.Handoff != nil {
-		th, err := s.startHandoffThread(selection, params)
+		th, err := s.startHandoffThread(binding, selection, params)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -182,7 +212,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		if err := s.writeResponse(req.ID, ThreadStartResult{Thread: thread}, nil); err != nil {
 			return err
 		}
-		if err := s.notifyThreadStarted(thread); err != nil {
+		if err := s.notifyThreadStarted(binding, thread); err != nil {
 			return err
 		}
 		s.pruneCachedThreads(thread.ID)
@@ -208,7 +238,7 @@ func (s *Server) handleThreadStart(req Request) error {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("worktree create: %w", err))
 		}
 		abandonWorktree = func() {
-			_, _ = session.Delete(s.rt.SessionDir, id)
+			_, _ = binding.Sessions.Delete(id)
 			_ = manager.Cleanup(created)
 		}
 		defer func() {
@@ -219,28 +249,31 @@ func (s *Server) handleThreadStart(req Request) error {
 		threadWorktree = session.WorktreeInfo{Path: created.Path, BaseHEAD: created.HEAD, BaseRepo: threadCWD}
 		threadCWD = created.Path
 	}
+	if _, err := s.requireRequestAccess(req, MethodThreadStart, nil); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if !params.Ephemeral {
 		if threadWorktree.Path != "" {
-			if _, err := session.CreateWithWorktree(s.rt.SessionDir, id, threadCWD, session.ForkMetadata{}, threadWorktree); err != nil {
+			if _, err := binding.Sessions.CreateWithWorktree(id, threadCWD, session.ForkMetadata{}, threadWorktree); err != nil {
 				return s.writeResponse(req.ID, nil, err)
 			}
-		} else if _, err := session.CreateWithMetadata(s.rt.SessionDir, id, threadCWD); err != nil {
+		} else if _, err := binding.Sessions.CreateWithMetadata(id, threadCWD); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if err := session.WritePluginGenerationSnapshot(s.rt.SessionDir, id, s.rt.PluginGenerationSnapshot()); err != nil {
+		if err := binding.Sessions.WritePluginGenerationSnapshot(id, s.rt.PluginGenerationSnapshot()); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if _, err := session.SetEngine(s.rt.SessionDir, id, string(engineID)); err != nil {
+		if _, err := binding.Sessions.SetEngine(id, string(engineID)); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, id, selection); err != nil {
+		if _, err := binding.Sessions.SetRuntimeSelection(id, selection); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		// Bind project threads to the active workspace's stable id so their
 		// state and listing survive the project moving. Scratch threads carry
 		// no project id.
 		if wsID := strings.TrimSpace(workspaceID); wsID != "" {
-			if _, err := session.SetWorkspaceID(s.rt.SessionDir, id, wsID); err != nil {
+			if _, err := binding.Sessions.SetWorkspaceID(id, wsID); err != nil {
 				return s.writeResponse(req.ID, nil, err)
 			}
 		}
@@ -251,10 +284,11 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	history := make([]providers.ChatMessage, 0, 1)
-	if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" {
+	if prompt := strings.TrimSpace(binding.SystemPrompt); prompt != "" {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
 	}
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, persistHistory, time.Now().UTC())
+	th.state = binding.Retain()
 	th.EngineID = string(engineID)
 	th.Source = threadSource
 	applyThreadRuntimeSelection(th, selection)
@@ -277,14 +311,14 @@ func (s *Server) handleThreadStart(req Request) error {
 	if err := s.writeResponse(req.ID, ThreadStartResult{Thread: thread}, nil); err != nil {
 		return err
 	}
-	if err := s.notifyThreadStarted(thread); err != nil {
+	if err := s.notifyThreadStarted(binding, thread); err != nil {
 		return err
 	}
 	s.pruneCachedThreads(thread.ID)
 	return nil
 }
 
-func (s *Server) startHandoffThread(selection session.RuntimeSelection, params ThreadStartParams) (*threadState, error) {
+func (s *Server) startHandoffThread(binding *runtime.State, selection session.RuntimeSelection, params ThreadStartParams) (*threadState, error) {
 	if params.Handoff == nil {
 		return nil, errors.New("handoff params are required")
 	}
@@ -326,7 +360,7 @@ func (s *Server) startHandoffThread(selection session.RuntimeSelection, params T
 			Prompt:   strings.TrimSpace(params.Handoff.Intent),
 		},
 	}
-	result, err := s.createPluginSession(context.Background(), "handoff", createParams)
+	result, err := s.createPluginSession(runtime.WithInvocationState(context.Background(), binding), "handoff", createParams)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +382,7 @@ func (s *Server) startThreadPrewarm(th *threadState) {
 	if s == nil || th == nil {
 		return
 	}
-	s.startBackground(func() {
+	s.startBackgroundWithState(th.state, func(binding *runtime.State) {
 		ctx, cancel := context.WithTimeout(context.Background(), threadPrewarmTimeout)
 		defer cancel()
 		th.mu.Lock()
@@ -377,7 +411,12 @@ func (s *Server) handleThreadResume(req Request) error {
 	id := strings.TrimSpace(params.SessionID)
 	var err error
 	if id == "" {
-		id, err = s.mostRecentVisibleThreadID()
+		current, stateErr := s.rt.RetainState()
+		if stateErr != nil {
+			return s.writeResponse(req.ID, nil, stateErr)
+		}
+		id, err = s.mostRecentVisibleThreadID(current)
+		_ = current.Close()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -385,23 +424,44 @@ func (s *Server) handleThreadResume(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("no sessions found"))
 		}
 	}
-	if th := s.thread(id); th != nil {
+	if _, err := s.requireRequestAccess(req, MethodThreadResume, nil, access.Resource{Kind: "session", ID: id}); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Reads follow an accepted execution's captured authority until it settles.
+	// A plugin publication must not turn reopening its local owner into a new
+	// admission against the replacement generation.
+	req.timing = req.timing.forThread(id)
+	phaseStarted := req.timing.now()
+	binding, _, stateErr := s.retainUserThreadExecutionState(id, true)
+	req.timing.span("resume_state", phaseStarted)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+	if th := s.threadForState(binding, id); th != nil {
+		phaseStarted = req.timing.now()
 		th.mu.Lock()
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 		thread := th.threadResumeSnapshotLocked(params)
 		th.mu.Unlock()
-		thread, err = s.threadWithChildAgents(thread)
+		req.timing.span("resume_cached_snapshot", phaseStarted)
+		phaseStarted = req.timing.now()
+		thread, err = s.threadWithChildAgents(binding, thread)
+		req.timing.span("resume_children_and_worktree", phaseStarted)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
-	th, err := s.loadPersistedThreadState(id, time.Now().UTC())
+	phaseStarted = req.timing.now()
+	req.timing.mark("resume_persisted_load_begin")
+	th, err := s.loadPersistedThreadState(binding, id, time.Now().UTC())
+	req.timing.span("resume_persisted_load", phaseStarted)
 	if err != nil {
 		if !errors.Is(err, session.ErrSessionNotFound) {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		thread, ok, agentErr := s.agentSessionThread(id)
+		thread, ok, agentErr := s.agentSessionThread(binding, id)
 		if agentErr != nil {
 			return s.writeResponse(req.ID, nil, agentErr)
 		}
@@ -413,29 +473,39 @@ func (s *Server) handleThreadResume(req Request) error {
 		} else if params.HistoryPage {
 			thread = pageThreadSnapshot(thread)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
-	th = s.addLoadedThread(th)
-	if th == nil {
-		return s.writeResponse(req.ID, nil, errServerClosed)
+	// An execution can become locally owned after the read capture. Serve the
+	// read-only snapshot rather than replacing that owner or reporting a lease
+	// conflict. Execution and mutation entry points still require admission.
+	loaded, err := s.addLoadedThread(th)
+	if err != nil && !errors.Is(err, errThreadExecutionBusy) {
+		return s.writeResponse(req.ID, nil, err)
 	}
-
+	if err == nil {
+		th = loaded
+	}
 	th.mu.Lock()
 	thread := th.threadResumeSnapshotLocked(params)
 	th.mu.Unlock()
-	thread, err = s.threadWithChildAgents(thread)
+	phaseStarted = req.timing.now()
+	thread, err = s.threadWithChildAgents(binding, thread)
+	req.timing.span("resume_children_and_worktree", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+	return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 }
 
-func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnly bool) error {
-	held, err := s.loadHeldUserTurns(thread.ID)
+func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, thread Thread, responseOnly bool) error {
+	phaseStarted := req.timing.now()
+	thread = s.threadWithPersistedMetadata(binding, thread)
+	held, err := s.loadHeldUserTurns(binding, thread.ID)
+	req.timing.span("resume_metadata_and_held", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if th := s.thread(thread.ID); th != nil {
+	if th := s.threadForState(binding, thread.ID); th != nil {
 		s.startThreadPrewarm(th)
 	}
 	heldMessages := s.heldUserMessageSnapshot(thread.ID, held)
@@ -453,14 +523,36 @@ func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnl
 			return err
 		}
 	}
-	if s.thread(thread.ID) != nil {
-		s.restorePendingProcessCompletionsOnThreadResume(thread.ID)
+	if s.threadForState(binding, thread.ID) != nil {
+		phaseStarted = req.timing.now()
+		req.timing.mark("resume_restore_begin")
+		s.restorePendingProcessCompletionsOnThreadResume(binding, thread.ID)
+		req.timing.span("resume_restore", phaseStarted)
 	}
-	s.pruneCachedThreads(thread.ID)
+	// Detach old cache entries before the next request, but do not make queued
+	// input wait for their subscription/provider cleanup after resume replied.
+	// The server owns these captured resources until cleanup joins on shutdown.
+	phaseStarted = req.timing.now()
+	cleanup := s.evictCachedThreads(thread.ID)
+	req.timing.span("resume_cache_detach", phaseStarted)
+	if cleanup != nil {
+		join := cleanup
+		if req.timing != nil {
+			join = func() {
+				started := req.timing.now()
+				req.timing.mark("resume_cleanup_begin")
+				cleanup()
+				req.timing.span("resume_cleanup", started)
+			}
+		}
+		if !s.startBackground(join) {
+			join()
+		}
+	}
 	return nil
 }
 
-func (s *Server) ensureThreadLoaded(id string) (*threadState, error) {
+func (s *Server) ensureThreadLoaded(binding *runtime.State, id string) (*threadState, error) {
 	if s == nil || s.closed.Load() {
 		return nil, errServerClosed
 	}
@@ -468,43 +560,55 @@ func (s *Server) ensureThreadLoaded(id string) (*threadState, error) {
 	if id == "" {
 		return nil, errors.New("thread_id is required")
 	}
-	if th := s.thread(id); th != nil {
+	if th := s.threadForState(binding, id); th != nil {
 		return th, nil
 	}
-	th, err := s.loadPersistedThreadState(id, time.Now().UTC())
+	th, err := s.loadPersistedThreadState(binding, id, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
-	th = s.addLoadedThread(th)
-	if th == nil {
-		return nil, errServerClosed
+	th, err = s.addLoadedThread(th)
+	if err != nil {
+		return nil, err
 	}
 	s.pruneCachedThreads(id)
 	return th, nil
 }
 
-func (s *Server) addLoadedThread(th *threadState) *threadState {
+func (s *Server) addLoadedThread(th *threadState) (*threadState, error) {
 	if s == nil || th == nil {
-		return nil
+		return nil, errServerClosed
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed.Load() {
-		return nil
+		s.mu.Unlock()
+		return nil, errServerClosed
 	}
-	if existing := s.threads[th.ID]; existing != nil {
-		return existing
+	existing := s.threads[th.ID]
+	if existing != nil && existing.state.Sessions == th.state.Sessions {
+		s.mu.Unlock()
+		return existing, nil
 	}
+	if existing != nil && (s.activeExecutionRunID(th.ID) != "" || !cachedThreadStillIdle(existing)) {
+		s.mu.Unlock()
+		return nil, threadExecutionBusyError(th.ID)
+	}
+	th.state = th.state.Retain()
 	s.threads[th.ID] = th
-	return th
+	s.mu.Unlock()
+	if existing != nil {
+		s.releaseThreadRuntime(existing)
+		_ = existing.state.Close()
+	}
+	return th, nil
 }
 
-func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadState, error) {
+func (s *Server) loadPersistedThreadState(binding *runtime.State, id string, now time.Time) (*threadState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, errors.New("thread_id is required")
 	}
-	loaded, err := s.loadPersistedThreadSnapshot(id)
+	loaded, err := s.loadPersistedThreadSnapshot(binding, id)
 	if err != nil {
 		return nil, err
 	}
@@ -512,14 +616,15 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	// The persisted display projection below owns turns; do not build and
 	// discard a second projection from the provider history first.
 	th := newThreadState(id, nil, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
+	th.state = binding
 	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
-	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
-	s.restorePluginToolLabels(th.Turns)
+	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.participantResolver(binding))
+	restorePluginToolLabels(binding.Host, th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
-	th.SessionControl, err = s.readThreadSessionControl(id)
+	th.SessionControl, err = s.readThreadSessionControl(binding, id)
 	if err != nil {
 		return nil, err
 	}
@@ -543,23 +648,27 @@ type persistedThreadSnapshot struct {
 // thread may race with the app-server that currently owns its execution lease,
 // so even a deterministic history repair must not be written back here. The
 // lease admission paths persist repairNeeded under exclusive ownership.
-func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot, error) {
+func (s *Server) loadPersistedThreadSnapshot(binding *runtime.State, id string) (persistedThreadSnapshot, error) {
+	return s.loadPersistedThreadSnapshotWithStore(binding, binding.Sessions, id)
+}
+
+func (s *Server) loadPersistedThreadSnapshotWithStore(binding *runtime.State, store *session.Store, id string) (persistedThreadSnapshot, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return persistedThreadSnapshot{}, errors.New("thread_id is required")
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, id)
+	metadata, ok, err := store.Find(id)
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
 	if !ok {
 		return persistedThreadSnapshot{}, session.ErrSessionNotFound
 	}
-	pluginGeneration, _, err := session.ReadPluginGenerationSnapshot(s.rt.SessionDir, id)
+	pluginGeneration, _, err := store.ReadPluginGenerationSnapshot(id)
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
-	providerRecords, historyHeadSeq, err := loadProviderPersistedMessages(s.rt.SessionDir, id, true)
+	providerRecords, historyHeadSeq, err := loadProviderPersistedMessages(store, id, true)
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
@@ -575,7 +684,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
-	displayHistory, err := loadPersistedMessages(s.rt.SessionDir, id, true)
+	displayHistory, err := loadPersistedMessages(store, id, true)
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
@@ -601,10 +710,10 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 		tokenMetas:         tokenMetas,
 		pluginGeneration:   pluginGeneration,
 	}
-	systemPrompt := s.rt.StreamRunner.SystemPrompt
-	// The active runtime prompt is configuration, not conversation data. Use it
-	// in memory without rewriting the thread during a read-only load.
-	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, effectiveSessionInstructions(metadata)))
+	systemPrompt := binding.SystemPrompt
+	// Keep the captured configuration with its authority without rewriting
+	// conversation data during this read-only load.
+	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
 	return loaded, nil
 }
 
@@ -626,6 +735,16 @@ type forkSourceThread struct {
 }
 
 func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+	return s.handleThreadForkForState(binding, ctx, req)
+}
+
+func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Context, req Request) error {
+
 	var params ThreadForkParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -644,23 +763,31 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 
 	// Native history and its Wuu projection must come from the same idle
 	// session revision. This lease also fences edits/turns on other connections.
-	metadata, found, err := session.Find(s.rt.SessionDir, sourceID)
+	metadata, found, err := binding.Sessions.Find(sourceID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if found && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
-		lease, err := s.tryAcquireThreadMutationLease(sourceID)
+	canonicalHistory := false
+	if found {
+		descriptor, descriptorErr := s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(metadata.EngineID))
+		if descriptorErr != nil {
+			return s.writeResponse(req.ID, nil, descriptorErr)
+		}
+		canonicalHistory = slices.Contains(descriptor.Capabilities, "canonical-history")
+	}
+	if found && !canonicalHistory {
+		lease, err := s.tryAcquireThreadMutationLease(binding, sourceID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("wait for the native turn to finish before forking: %w", err))
 		}
 		defer releaseThreadMutationLease(sourceID, lease)
-		metadata, _, err = session.Find(s.rt.SessionDir, sourceID)
+		metadata, _, err = binding.Sessions.Find(sourceID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
 	now := time.Now().UTC()
-	source, err := s.loadForkSourceThread(sourceID, now)
+	source, err := s.loadForkSourceThread(binding, sourceID, now)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -704,7 +831,7 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, errForkTargetNotFound) && agentengine.NormalizeEngineID(source.thread.EngineID) != agentengine.EngineWuu {
+		if errors.Is(err, errForkTargetNotFound) && !canonicalHistory {
 			err = fmt.Errorf("%s cannot verify this item as a native history cutoff; choose a completed turn's final reply", source.thread.EngineID)
 		}
 		return s.writeResponse(req.ID, nil, err)
@@ -744,7 +871,7 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 		}
 	}
 
-	nativeRef, err := s.forkNativeHistory(ctx, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
+	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -767,10 +894,14 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := preserveForkArtifacts(stateDir, source.thread.ID, id, history); err != nil {
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
+	artifactServices, err := binding.Services()
+	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.preserveForkArtifacts(artifactServices, stateDir, source.thread.ID, id, history); err != nil {
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
 	// Publish the binding and copied transcript together. A native fork can be
 	// orphaned if this commit fails, but an empty/misbound Wuu child cannot escape.
@@ -784,11 +915,10 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 		Speed: source.speed, ModelOptions: source.modelOptions, PermissionMode: source.permissionMode, ApproveForMe: source.approveForMe,
 		Entries: persistableMessageCount(history), Summary: threadPreview(history),
 	}
-	sess, err := session.CreateInitialized(s.rt.SessionDir, initial, historyRecordsFromChatMessages(history))
+	sess, err := binding.Sessions.CreateInitialized(initial, historyRecordsFromChatMessages(history))
 	if err != nil {
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
+		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
 	seq := 0
 	for i := range history {
@@ -800,6 +930,7 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 	}
 
 	th := newThreadState(sess.ID, history, source.modelProvider, source.model, forkCWD, true, now)
+	th.state = binding.Retain()
 	applySessionMetadata(th, *sess)
 	s.mu.Lock()
 	s.threads[th.ID] = th
@@ -814,7 +945,7 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 	if err := s.writeResponse(req.ID, ThreadForkResult{Thread: thread, Worktree: thread.Worktree}, nil); err != nil {
 		return err
 	}
-	if err := s.notifyThreadStarted(thread); err != nil {
+	if err := s.notifyThreadStarted(binding, thread); err != nil {
 		return err
 	}
 	s.pruneCachedThreads(thread.ID, source.thread.ID)
@@ -822,6 +953,16 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+	return s.handleThreadEditMessageForState(binding, ctx, req)
+}
+
+func (s *Server) handleThreadEditMessageForState(binding *runtime.State, ctx context.Context, req Request) error {
+
 	var params ThreadEditMessageParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -830,7 +971,7 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 	if threadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	th, err := s.ensureThreadLoaded(threadID)
+	th, err := s.ensureThreadLoaded(binding, threadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -847,9 +988,9 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 		th.mu.Unlock()
 		return s.writeResponse(req.ID, nil, errors.New("thread is running"))
 	}
-	var mutationLease *session.ThreadExecutionLease
+	var mutationLease *session.DocumentThreadExecutionLease
 	if th.PersistHistory {
-		mutationLease, err = s.tryAcquireThreadMutationLease(th.ID)
+		mutationLease, err = s.tryAcquireThreadMutationLease(binding, th.ID)
 		if err != nil {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -876,20 +1017,15 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 	engineID, oldNativeRef, cwd := th.EngineID, th.EngineRef, th.CWD
 	fromSeq := th.History[len(nextHistory)].Seq
 	removedHistory := cloneHistory(th.History[len(nextHistory):])
-	nativeEdit := agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu
-	if nativeEdit {
-		// The durable mutation lease fences turns/edits while the external RPC
-		// waits. Keep cached reads and Stop from blocking the stdio dispatcher.
-		th.nativeHistoryMutation = true
-		th.mu.Unlock()
-	}
-	nativeRef, err := s.forkNativeHistory(ctx, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
-	if nativeEdit {
-		th.mu.Lock()
-		th.nativeHistoryMutation = false
-		if err == nil {
-			err = ctx.Err()
-		}
+	// Every provider operation can block, including a replacement for the
+	// canonical-history engine. Fence mutation without holding the dispatch lock.
+	th.nativeHistoryMutation = true
+	th.mu.Unlock()
+	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
+	th.mu.Lock()
+	th.nativeHistoryMutation = false
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		releaseThreadMutationLease(th.ID, mutationLease)
@@ -908,9 +1044,9 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 		// provider context has already released the earlier conversation.
 		var rewriteErr error
 		if nativeRef != "" {
-			rewriteErr = session.RewriteHistoryRecordsForEngineEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq, oldNativeRef, nativeRef)
+			rewriteErr = binding.Sessions.RewriteHistoryRecordsForEngineEdit(th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq, oldNativeRef, nativeRef)
 		} else {
-			rewriteErr = session.RewriteHistoryRecordsForEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq)
+			rewriteErr = binding.Sessions.RewriteHistoryRecordsForEdit(th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq)
 		}
 		if err := rewriteErr; err != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
@@ -920,13 +1056,13 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 		if nativeRef != "" {
 			th.EngineRef = nativeRef
 		}
-		committedRecords, committedHeadSeq, loadErr := loadProviderPersistedMessages(s.rt.SessionDir, th.ID, false)
+		committedRecords, committedHeadSeq, loadErr := loadProviderPersistedMessages(binding.Sessions, th.ID, false)
 		if loadErr != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, loadErr)
 		}
-		activeRecords, loadErr := loadPersistedMessages(s.rt.SessionDir, th.ID, true)
+		activeRecords, loadErr := loadPersistedMessages(binding.Sessions, th.ID, true)
 		if loadErr != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
@@ -935,7 +1071,7 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 		committedDisplay = activeRecords
 		committedHistory = chatMessagesFromPersistedMessages(committedRecords)
 		th.historyHeadSeq = committedHeadSeq
-		if err := session.UpdateIndex(s.rt.SessionDir, th.ID, persistableMessageCount(committedHistory), threadPreview(committedHistory)); err != nil {
+		if err := binding.Sessions.UpdateIndex(th.ID, persistableMessageCount(committedHistory), threadPreview(committedHistory)); err != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -945,8 +1081,8 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 	th.History = committedHistory
 	th.Turns = turnsFromHistory(th.ID, committedHistory, now)
 	if th.PersistHistory {
-		th.Turns = turnsFromPersistedHistory(th.ID, committedDisplay, now, s.resolveParticipantSummary)
-		s.restorePluginToolLabels(th.Turns)
+		th.Turns = turnsFromPersistedHistory(th.ID, committedDisplay, now, s.participantResolver(binding))
+		restorePluginToolLabels(binding.Host, th.Turns)
 	}
 	th.UpdatedAt = now
 	th.currentTurn = ""
@@ -965,14 +1101,14 @@ func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error
 	if err := s.writeResponse(req.ID, ThreadEditMessageResult{Thread: thread, Draft: draft}, nil); err != nil {
 		return err
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(binding, thread)
 }
 
-func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThread, error) {
-	if th := s.thread(id); th != nil {
+func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now time.Time) (forkSourceThread, error) {
+	if th := s.threadForState(binding, id); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 		source := forkSourceThread{
 			liveHistory:    th.running || !th.PersistHistory,
 			history:        cloneHistory(th.History),
@@ -989,7 +1125,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			thread:         th.snapshotLocked(),
 		}
 		if th.PersistHistory {
-			loaded, err := s.loadPersistedThreadSnapshot(id)
+			loaded, err := s.loadPersistedThreadSnapshot(binding, id)
 			if err != nil {
 				return forkSourceThread{}, err
 			}
@@ -1005,12 +1141,12 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		return source, nil
 	}
 
-	if _, ok, err := session.Find(s.rt.SessionDir, id); err != nil {
+	if _, ok, err := binding.Sessions.Find(id); err != nil {
 		return forkSourceThread{}, err
 	} else if !ok {
 		return forkSourceThread{}, session.ErrSessionNotFound
 	}
-	history, err := loadChatMessages(s.rt.SessionDir, id)
+	history, err := loadChatMessages(binding.Sessions, id)
 	if err != nil {
 		return forkSourceThread{}, err
 	}
@@ -1020,24 +1156,25 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 	}
 	// Forking reads the source snapshot but never mutates it. Any repair is
 	// persisted only by an execution/mutation admission that owns the source.
-	history = replaceBaseSystemPrompt(repaired, s.rt.StreamRunner.SystemPrompt)
+	history = replaceBaseSystemPrompt(repaired, binding.SystemPrompt)
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, s.rt.RootDir, true, now)
+	th.state = binding
 	displayHistory := cloneHistory(history)
 	var rawHistory []persistedMessage
-	if loaded, loadErr := s.loadPersistedThreadSnapshot(id); loadErr != nil {
+	if loaded, loadErr := s.loadPersistedThreadSnapshot(binding, id); loadErr != nil {
 		return forkSourceThread{}, loadErr
 	} else {
 		displayHistory = chatMessagesFromPersistedMessages(loaded.displayHistory)
 		rawHistory = loaded.rawHistory
-		th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
-		s.restorePluginToolLabels(th.Turns)
+		th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.participantResolver(binding))
+		restorePluginToolLabels(binding.Host, th.Turns)
 	}
-	if metas, err := loadMetaMessages(s.rt.SessionDir, id); err != nil {
+	if metas, err := loadMetaMessages(binding.Sessions, id); err != nil {
 		return forkSourceThread{}, err
 	} else {
 		th.Turns = applyTokenUsageMetasToTurns(th.Turns, metas)
 	}
-	if metadata, ok, err := session.Find(s.rt.SessionDir, id); err != nil {
+	if metadata, ok, err := binding.Sessions.Find(id); err != nil {
 		return forkSourceThread{}, err
 	} else if ok {
 		applySessionMetadata(th, relocatedSessionMetadata(metadata, s.registeredWorkspaces()))
@@ -1063,6 +1200,12 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 }
 
 func (s *Server) handleThreadList(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1074,7 +1217,7 @@ func (s *Server) handleThreadList(req Request) error {
 	if strings.TrimSpace(params.CWD) == "" {
 		targetWorkspaceID = s.rt.WorkspaceID
 	}
-	sessions, err := session.ListForCWD(s.rt.SessionDir, targetCWD, targetWorkspaceID, 0)
+	sessions, err := binding.Sessions.ListForCWD(targetCWD, targetWorkspaceID, 0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1089,12 +1232,15 @@ func (s *Server) handleThreadList(req Request) error {
 	// entries so a restarted server cannot leak workers into the root rail
 	// without turning a list request into an N² metadata scan.
 	agentThreadIDs := make(map[string]struct{})
-	rootIDs, err := s.rootThreadIDsForSessions(sessions)
+	rootIDs, err := s.rootThreadIDsForSessions(binding, sessions)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return s.writeResponse(req.ID, nil, storeErr)
+		}
 		if store == nil {
 			continue
 		}
@@ -1109,6 +1255,8 @@ func (s *Server) handleThreadList(req Request) error {
 		}
 	}
 
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
@@ -1120,11 +1268,14 @@ func (s *Server) handleThreadList(req Request) error {
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 
 	s.mu.Lock()
 	for _, th := range s.threads {
+		if th.state == nil || th.state.Sessions != binding.Sessions {
+			continue
+		}
 		th.mu.Lock()
 		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
@@ -1158,23 +1309,29 @@ func (s *Server) handleThreadList(req Request) error {
 	}
 	s.mu.Unlock()
 
-	result, err := s.threadListResult(entries, params.SummaryOnly)
+	result, err := s.threadListResult(binding, entries, params.SummaryOnly)
 	return s.writeResponse(req.ID, result, err)
 }
 
 // handleThreadListAll returns active root conversations across every workspace.
 // Global folders must not depend on a project section having been expanded.
 func (s *Server) handleThreadListAll(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	sessions, err := session.List(s.rt.SessionDir, 0)
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	agentThreadIDs := make(map[string]struct{})
-	rootIDs, err := s.rootThreadIDs()
+	rootIDs, err := s.rootThreadIDs(binding)
 	registered := s.registeredWorkspaces()
 	for i := range sessions {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
@@ -1184,7 +1341,10 @@ func (s *Server) handleThreadListAll(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return s.writeResponse(req.ID, nil, storeErr)
+		}
 		if store == nil {
 			continue
 		}
@@ -1198,6 +1358,8 @@ func (s *Server) handleThreadListAll(req Request) error {
 			}
 		}
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
@@ -1206,10 +1368,13 @@ func (s *Server) handleThreadListAll(req Request) error {
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 	s.mu.Lock()
 	for _, th := range s.threads {
+		if th.state == nil || th.state.Sessions != binding.Sessions {
+			continue
+		}
 		th.mu.Lock()
 		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
@@ -1233,7 +1398,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 		entries[thread.ID] = entry
 	}
 	s.mu.Unlock()
-	result, err := s.threadListResult(entries, params.SummaryOnly)
+	result, err := s.threadListResult(binding, entries, params.SummaryOnly)
 	return s.writeResponse(req.ID, result, err)
 }
 
@@ -1246,15 +1411,23 @@ func (s *Server) handleThreadListAll(req Request) error {
 // both exist, mirroring handleThreadList's policy) and ignore the caller's
 // cwd argument.
 func (s *Server) handleThreadListArchived(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
-	sessions, err := session.List(s.rt.SessionDir, 0)
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	registered := s.registeredWorkspaces()
 	for i := range sessions {
@@ -1268,11 +1441,14 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if sess.ArchivedAt == nil {
 			continue
 		}
-		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entries[sess.ID] = entryForSession(sess)
 	}
 
 	s.mu.Lock()
 	for _, th := range s.threads {
+		if th.state == nil || th.state.Sessions != binding.Sessions {
+			continue
+		}
 		th.mu.Lock()
 		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
@@ -1295,15 +1471,15 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	}
 	s.mu.Unlock()
 
-	result, err := s.threadListResult(entries, params.SummaryOnly)
+	result, err := s.threadListResult(binding, entries, params.SummaryOnly)
 	return s.writeResponse(req.ID, result, err)
 }
 
-func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnly bool) (ThreadListResult, error) {
+func (s *Server) threadListResult(binding *runtime.State, entries map[string]threadListEntry, summaryOnly bool) (ThreadListResult, error) {
 	// Management is shared across app-servers, not owned by the active workspace.
 	// Read it after merging live snapshots so both unloaded sessions and stale
 	// in-memory relationships reflect persisted control (including releases).
-	controls, err := session.ListControls(s.rt.SessionDir)
+	controls, err := binding.Sessions.ListControls()
 	if err != nil {
 		return ThreadListResult{}, err
 	}
@@ -1315,16 +1491,16 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 	result := make([]Thread, 0, len(threads))
 	projectExistence := make(map[string]bool)
 	for _, entry := range threads {
-		entry.thread, err = s.withProjectGrouping(entry.thread, projectExistence)
+		entry.thread, err = s.withProjectGrouping(binding, entry.thread, projectExistence)
 		if err != nil {
 			return ThreadListResult{}, err
 		}
-		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
+		entry.thread.SessionControl = s.threadSessionControl(binding, entry.thread.ID, controls[entry.thread.ID])
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.
 		// Full thread snapshots still report it.
-		thread, err := s.threadWithChildAgentsStatus(entry.thread, !summaryOnly)
+		thread, err := s.threadWithChildAgentsStatus(binding, entry.thread, !summaryOnly)
 		if err != nil {
 			return ThreadListResult{}, err
 		}
@@ -1351,6 +1527,12 @@ func cleanThreadListCWD(cwd string) string {
 }
 
 func (s *Server) handleThreadPin(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadPinParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1359,21 +1541,27 @@ func (s *Server) handleThreadPin(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	metadata, err := session.UpdatePinned(s.rt.SessionDir, id, params.Pinned)
+	metadata, err := binding.Sessions.UpdatePinned(id, params.Pinned)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, ThreadPinResult{Thread: thread}, nil); err != nil {
 		return err
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(binding, thread)
 }
 
 func (s *Server) handleThreadArchive(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadArchiveParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1383,38 +1571,78 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
-		s.settleThreadExecutionForForcedArchive(id)
+		if err := s.settleThreadExecutionForForcedArchive(binding, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	if params.Archived {
-		if th := s.thread(id); th != nil {
+		owner, _, err := s.retainUserThreadExecutionState(id, true)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer owner.Close()
+		if err := validateArchiveExecutionOwner(binding, owner, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if th := s.threadForState(owner, id); th != nil {
 			th.mu.Lock()
 			running := th.running
+			var settlementErr error
+			if th.turnCompletion.failed() {
+				settlementErr = th.turnCompletion.durabilityErr
+			}
 			th.mu.Unlock()
+			if settlementErr != nil {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("cannot archive before durable turn settlement: %w", settlementErr))
+			}
 			if running {
 				return s.writeResponse(req.ID, nil, errors.New("cannot archive a running thread"))
 			}
 		}
 	}
-	var mutationLease *session.ThreadExecutionLease
+	var mutationLease *session.DocumentThreadExecutionLease
 	if params.Archived {
 		var leaseErr error
-		mutationLease, leaseErr = s.tryAcquireThreadMutationLease(id)
+		mutationLease, leaseErr = s.tryAcquireThreadMutationLease(binding, id)
 		if leaseErr != nil {
 			return s.writeResponse(req.ID, nil, leaseErr)
 		}
 	}
-	metadata, err := session.UpdateArchived(s.rt.SessionDir, id, params.Archived)
+	metadata, err := binding.Sessions.UpdateArchived(id, params.Archived)
 	if err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
 	releaseThreadMutationLease(id, mutationLease)
 	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
+}
+
+func validateArchiveExecutionOwner(binding, owner *runtime.State, threadID string) error {
+	// A retained execution may outlive a provider generation. Only follow it
+	// when the selected metadata still identifies the same conversation/workspace.
+	if owner.Sessions != binding.Sessions {
+		previous, found, err := owner.Sessions.Find(threadID)
+		if err != nil {
+			return err
+		}
+		current, selected, err := binding.Sessions.Find(threadID)
+		if err != nil {
+			return err
+		}
+		sameWorkspace := previous.WorkspaceID != "" && previous.WorkspaceID == current.WorkspaceID
+		if previous.WorkspaceID == "" && current.WorkspaceID == "" {
+			sameWorkspace = sameThreadListCWD(previous.CWD, current.CWD)
+		}
+		if !found || !selected || previous.ID != current.ID || previous.CreatedAt.IsZero() || !previous.CreatedAt.Equal(current.CreatedAt) || !sameWorkspace {
+			return errors.New("selected conversation does not match the retained execution owner")
+		}
+	}
+	return nil
 }
 
 var errArchivedWhileRunning = errors.New("archived while the conversation was still running")
@@ -1426,36 +1654,62 @@ var errArchivedWhileRunning = errors.New("archived while the conversation was st
 // running flag; nothing ever settles the turn again, so the thread would stay
 // un-archivable forever.
 //
-// A live turn is interrupted with the usual interrupt semantics first (queued
-// work is held, the worker tree freezes, observers are notified); the
-// synchronous settlement below then clears the running state immediately, and
-// the runner's own settlement no-ops once currentTurn is cleared. A dead turn
-// is settled in place. Cross-process ownership is unaffected: a live owner in
+// A live runner is interrupted with the usual semantics (queued work is held,
+// the worker tree freezes, observers are notified) and joined so its canonical
+// partial history and terminal result are durable. A dead runner is settled
+// in place. An unresponsive live runner retains its execution lease. Cross-process ownership is unaffected: a live owner in
 // another app-server still holds the OS-level execution lock, so the mutation
 // lease acquisition that follows keeps rejecting the archive.
-func (s *Server) settleThreadExecutionForForcedArchive(threadID string) {
-	th := s.thread(threadID)
+func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, threadID string) error {
+	owner, runID, err := s.retainUserThreadExecutionState(threadID, true)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	th := s.threadForState(owner, threadID)
 	if th == nil {
-		return
+		return nil
+	}
+	if err := validateArchiveExecutionOwner(binding, owner, threadID); err != nil {
+		return err
 	}
 	th.mu.Lock()
+	expectedTurnID := th.currentTurn
+	ownedLease := th.executionLease
+	ownedCompletion := th.turnCompletion
+	var completion *threadTurnCompletion
+	if current := th.turnCompletion; current != nil && (current.turnID == expectedTurnID || expectedTurnID == "" && current.failed()) {
+		completion = current
+	}
 	live := th.cancel != nil
 	th.mu.Unlock()
-	if live {
-		if _, err := s.interruptThreadExecution(threadID, "", ""); err != nil {
-			// The escape hatch must still work when a side-path of the full
-			// interrupt fails: cancel the turn directly so its runner exits.
-			providers.DebugLogf("interrupt thread %q for forced archive: %v", threadID, err)
-			th.mu.Lock()
-			cancel := th.cancel
-			th.mu.Unlock()
-			if cancel != nil {
-				cancel()
-			}
+	if live || runID != "" {
+		if err := s.interruptThreadForUserState(owner, threadID, runID, expectedTurnID); err != nil {
+			// Failed pause/held-input persistence is not permission to discard the
+			// queue or release an execution that still owns it.
+			return fmt.Errorf("cannot archive before interruption is confirmed: %w", err)
 		}
+	}
+
+	// Do not hold th.mu while the runner checkpoints partial output and settles.
+	if completion != nil {
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-completion.done:
+		case <-timer.C:
+			return errors.New("thread cancellation is still settling; retry archive after it stops")
+		}
+	}
+	if completion != nil && completion.durabilityErr != nil {
+		return fmt.Errorf("cannot archive before durable turn settlement: %w", completion.durabilityErr)
 	}
 	now := time.Now().UTC()
 	th.mu.Lock()
+	if th.turnCompletion != ownedCompletion || th.currentTurn != "" && th.currentTurn != expectedTurnID || th.executionLease != nil && th.executionLease != ownedLease {
+		th.mu.Unlock()
+		return errors.New("conversation execution changed while cancelling; retry archive after it stops")
+	}
 	turnID := strings.TrimSpace(th.currentTurn)
 	turnKind := th.currentTurnKind
 	providerName, model := th.runningProviderName, th.runningModel
@@ -1476,16 +1730,41 @@ func (s *Server) settleThreadExecutionForForcedArchive(threadID string) {
 		th.running = false
 	}
 	th.mu.Unlock()
-	if settledTurnID == "" {
-		return
+	var settlementErr error
+	if settledTurnID != "" {
+		diagnostic := BuildTurnError(errArchivedWhileRunning, "")
+		if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem, providerName, model, providers.TokenUsage{}); err != nil {
+			settlementErr = err
+		}
 	}
-	diagnostic := BuildTurnError(errArchivedWhileRunning, "")
-	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem, providerName, model, providers.TokenUsage{}); err != nil {
-		providers.DebugLogf("persist forced archive settlement for thread %q: %v", threadID, err)
+	// Forced turn settlement clears currentTurn, so its late runner deliberately
+	// cannot settle the accepted Run. Persist that outcome through its retained owner.
+	if runID != "" {
+		if _, err := s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "archived", "cancelled", errArchivedWhileRunning); err != nil && !errors.Is(err, errExecutionRunChanged) {
+			settlementErr = errors.Join(settlementErr, err)
+		}
 	}
+	if settlementErr != nil {
+		// A dead runner has no completion callback to retain its failed terminal
+		// write. Keep the same retry fence without replacing a successor's outcome.
+		th.mu.Lock()
+		if th.turnCompletion == ownedCompletion && th.currentTurn == "" && th.executionLease == nil {
+			failed := &threadTurnCompletion{turnID: settledTurnID, done: make(chan struct{}), durabilityErr: settlementErr}
+			close(failed.done)
+			th.turnCompletion = failed
+		}
+		th.mu.Unlock()
+	}
+	return settlementErr
 }
 
 func (s *Server) handleThreadRename(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadRenameParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1494,18 +1773,18 @@ func (s *Server) handleThreadRename(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	metadata, err := session.UpdateTitle(s.rt.SessionDir, id, params.Title)
+	metadata, err := binding.Sessions.UpdateTitle(id, params.Title)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, ThreadRenameResult{Thread: thread}, nil); err != nil {
 		return err
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(binding, thread)
 }
 
 type threadListEntry struct {
@@ -1525,15 +1804,18 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	if strings.TrimSpace(metadata.CWD) != "" {
 		th.CWD = metadata.CWD
 	}
-	th.Title = metadata.Title
+	if metadata.TitleRevision >= th.TitleRevision {
+		th.Title = metadata.Title
+		th.TitleRevision = metadata.TitleRevision
+	}
 	th.Source = metadata.Source
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
-	th.Instructions = effectiveSessionInstructions(metadata)
+	th.Instructions = metadata.Instructions
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
 	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
-	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && (selection.Model != "" || th.EngineID != string(agentengine.EngineWuu)) {
+	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
 	th.EngineRef = strings.TrimSpace(metadata.EngineRef)
@@ -1554,15 +1836,15 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 // thread (for example a codex thread id) in the session row and the live
 // thread state. It is invoked by engine sessions after they create their
 // native thread on first use, so later turns resume it.
-func (s *Server) persistThreadEngineRef(threadID, ref string) error {
+func (s *Server) persistThreadEngineRef(binding *runtime.State, threadID, ref string) error {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil
 	}
-	if _, err := session.SetEngineRef(s.rt.SessionDir, threadID, ref); err != nil {
+	if _, err := binding.Sessions.SetEngineRef(threadID, ref); err != nil {
 		return err
 	}
-	if th := s.thread(threadID); th != nil {
+	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
 		th.EngineRef = ref
 		th.mu.Unlock()
@@ -1603,76 +1885,95 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	th.ApproveForMe = selection.ApproveForMe
 }
 
-func threadEntryFromSession(sess session.Session, provider, model string) threadListEntry {
-	updatedAt := sess.UpdatedAt
-	if updatedAt.IsZero() {
-		updatedAt = sess.CreatedAt
-	}
-	selection := runtimeSelectionFromSession(sess)
-	if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
-		provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
-	}
-	permissionMode := ""
-	if selection.PermissionMode != "" {
-		permissionMode = config.NormalizePermissionMode(selection.PermissionMode)
-	}
-	return threadListEntry{
-		thread: Thread{
-			ID:                    sess.ID,
-			Source:                sess.Source,
-			ReadOnly:              projectExecutionDisabled(sess.Source),
-			ProjectID:             projectIDForSession(sess),
-			ProjectRole:           projectRoleForSession(sess),
-			Preview:               firstNonEmpty(sess.Title, sess.Summary),
-			Title:                 sess.Title,
-			ModelProvider:         firstNonEmpty(selection.Provider, provider),
-			Model:                 firstNonEmpty(selection.Model, model),
-			ModelVariant:          selection.Variant,
-			ModelEffort:           selection.Effort,
-			Speed:                 selection.Speed,
-			ModelOptions:          selection.ModelOptions,
-			PermissionMode:        permissionMode,
-			ApproveForMe:          sess.ApproveForMe,
-			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
-			CWD:                   sess.CWD,
-			WorkspaceID:           sess.WorkspaceID,
-			Status:                ThreadStatusIdle,
-			Pinned:                sess.PinnedAt != nil,
-			FolderID:              sess.FolderID,
-			Archived:              sess.ArchivedAt != nil,
-			ArchiveReason:         sess.ArchiveReason,
-			ForkedFromID:          sess.ForkedFromID,
-			ForkedFromTurnID:      sess.ForkedFromTurnID,
-			ForkedFromItemID:      sess.ForkedFromItemID,
-			Worktree:              threadWorktreeInfo(sess.WorktreePath, sess.WorktreeBaseHEAD, sess.WorktreeBaseRepo),
-			CreatedAt:             sess.CreatedAt,
-			UpdatedAt:             updatedAt,
-			LatestCompletedTurnID: sess.LatestCompletedTurnID,
-			Turns:                 []Turn{},
-		},
-		pinnedAt: sess.PinnedAt,
-	}
+// One captured listing shares a deadline and memo, including failed discovery.
+// Legacy rows must not multiply a slow provider's descriptor latency.
+func (s *Server) threadEntryBuilder(binding *runtime.State) (func(session.Session) threadListEntry, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hostManaged := make(map[agentengine.EngineID]bool)
+	return func(sess session.Session) threadListEntry {
+		provider, model := s.rt.ProviderName, s.rt.Model
+		updatedAt := sess.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = sess.CreatedAt
+		}
+		selection := runtimeSelectionFromSession(sess)
+		if selection.Provider != "" {
+			provider, model = selection.Provider, selection.Model
+		} else {
+			id := agentengine.NormalizeEngineID(sess.EngineID)
+			managed, known := hostManaged[id]
+			if !known {
+				descriptor, err := s.engineDescriptorForState(ctx, binding, id)
+				managed = err == nil && slices.Contains(descriptor.Capabilities, "host-managed-continuation")
+				hostManaged[id] = managed
+			}
+			if !managed {
+				provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
+			}
+		}
+		permissionMode := ""
+		if selection.PermissionMode != "" {
+			permissionMode = config.NormalizePermissionMode(selection.PermissionMode)
+		}
+		return threadListEntry{
+			thread: Thread{
+				ID:                    sess.ID,
+				Source:                sess.Source,
+				ReadOnly:              projectExecutionDisabled(sess.Source),
+				ProjectID:             projectIDForSession(sess),
+				ProjectRole:           projectRoleForSession(sess),
+				Preview:               firstNonEmpty(sess.Title, sess.Summary),
+				Title:                 sess.Title,
+				TitleRevision:         sess.TitleRevision,
+				ModelProvider:         firstNonEmpty(selection.Provider, provider),
+				Model:                 firstNonEmpty(selection.Model, model),
+				ModelVariant:          selection.Variant,
+				ModelEffort:           selection.Effort,
+				Speed:                 selection.Speed,
+				ModelOptions:          selection.ModelOptions,
+				PermissionMode:        permissionMode,
+				ApproveForMe:          sess.ApproveForMe,
+				EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
+				CWD:                   sess.CWD,
+				WorkspaceID:           sess.WorkspaceID,
+				Status:                ThreadStatusIdle,
+				Pinned:                sess.PinnedAt != nil,
+				FolderID:              sess.FolderID,
+				Archived:              sess.ArchivedAt != nil,
+				ArchiveReason:         sess.ArchiveReason,
+				ForkedFromID:          sess.ForkedFromID,
+				ForkedFromTurnID:      sess.ForkedFromTurnID,
+				ForkedFromItemID:      sess.ForkedFromItemID,
+				Worktree:              threadWorktreeInfo(sess.WorktreePath, sess.WorktreeBaseHEAD, sess.WorktreeBaseRepo),
+				CreatedAt:             sess.CreatedAt,
+				UpdatedAt:             updatedAt,
+				LatestCompletedTurnID: sess.LatestCompletedTurnID,
+				Turns:                 []Turn{},
+			},
+			pinnedAt: sess.PinnedAt,
+		}
+	}, cancel
 }
 
-func (s *Server) threadWithChildAgents(thread Thread) (Thread, error) {
+func (s *Server) threadWithChildAgents(binding *runtime.State, thread Thread) (Thread, error) {
 	var err error
-	thread, err = s.withProjectGrouping(thread, nil)
+	thread, err = s.withProjectGrouping(binding, thread, nil)
 	if err != nil {
 		return thread, err
 	}
-	return s.threadWithChildAgentsStatus(thread, true)
+	return s.threadWithChildAgentsStatus(binding, thread, true)
 }
 
 // A missing coordinator makes its surviving sessions recoverable as ordinary
 // rows. Archived coordinators still exist; their absence from active lists is
 // not evidence that membership ended. Cache lookups across each list request.
-func (s *Server) withProjectGrouping(thread Thread, cache map[string]bool) (Thread, error) {
+func (s *Server) withProjectGrouping(binding *runtime.State, thread Thread, cache map[string]bool) (Thread, error) {
 	if thread.Source != projectSessionSource || thread.ProjectID == "" {
 		return thread, nil
 	}
 	exists, cached := cache[thread.ProjectID]
 	if !cached {
-		parent, found, err := session.Find(s.rt.SessionDir, thread.ProjectID)
+		parent, found, err := binding.Sessions.Find(thread.ProjectID)
 		if err != nil {
 			return thread, err
 		}
@@ -1685,8 +1986,8 @@ func (s *Server) withProjectGrouping(thread Thread, cache map[string]bool) (Thre
 	return thread, nil
 }
 
-func (s *Server) threadWithChildAgentsStatus(thread Thread, worktreeStatus bool) (Thread, error) {
-	agents, err := s.childAgentsForThread(thread.ID)
+func (s *Server) threadWithChildAgentsStatus(binding *runtime.State, thread Thread, worktreeStatus bool) (Thread, error) {
+	agents, err := s.childAgentsForThread(binding, thread.ID)
 	if err != nil {
 		return thread, err
 	}
@@ -1739,8 +2040,11 @@ func worktreeBaseRepo(info *WorktreeInfo) string {
 	return strings.TrimSpace(info.BaseRepo)
 }
 
-func (s *Server) childAgentsForThread(threadID string) ([]Agent, error) {
-	store := s.agentThreadStore(threadID)
+func (s *Server) childAgentsForThread(binding *runtime.State, threadID string) ([]Agent, error) {
+	store, storeErr := s.agentThreadStore(binding, threadID)
+	if storeErr != nil {
+		return nil, storeErr
+	}
 	if store == nil {
 		return nil, nil
 	}
@@ -1748,7 +2052,7 @@ func (s *Server) childAgentsForThread(threadID string) ([]Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	threads, err = s.reconcilePersistedTerminalAgentThreads(threadID, store, threads)
+	threads, err = s.reconcilePersistedTerminalAgentThreads(binding, threadID, store, threads)
 	if err != nil {
 		return nil, err
 	}
@@ -1769,7 +2073,7 @@ func (s *Server) childAgentsForThread(threadID string) ([]Agent, error) {
 	// Per-child session.Find opens and reconfigures the (potentially huge)
 	// sessions database once per child, which dominates thread/list for
 	// workspaces with many subagent sessions.
-	childPinnedArchived, err := session.FindPinnedArchived(s.rt.SessionDir, childIDs)
+	childPinnedArchived, err := binding.Sessions.FindPinnedArchived(childIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1819,6 +2123,7 @@ func (s *Server) childAgentsForThread(threadID string) ([]Agent, error) {
 // and thread/resume must also report terminal truth without requiring the user
 // to start another turn first.
 func (s *Server) reconcilePersistedTerminalAgentThreads(
+	binding *runtime.State,
 	rootThreadID string,
 	store *agentthread.Store,
 	threads []agentthread.Metadata,
@@ -1826,27 +2131,32 @@ func (s *Server) reconcilePersistedTerminalAgentThreads(
 	if s == nil || store == nil || strings.TrimSpace(rootThreadID) == "" {
 		return threads, nil
 	}
-	stateDir, err := s.workspaceStateDir()
+	stateDirs, err := s.threadArtifactStateDirs(rootThreadID)
 	if err != nil {
 		return nil, err
 	}
-	artifactDir := statepath.SessionArtifactDir(stateDir, rootThreadID)
-	historyDir := filepath.Join(artifactDir, "workers")
-	harnessDir := filepath.Join(artifactDir, "harness")
 	for index := range threads {
 		meta := threads[index]
 		if meta.Source.Kind != agentthread.SourceThreadSpawn ||
 			!isRunningAgentStatus(string(meta.Status)) {
 			continue
 		}
-		active, err := agentcontrol.WorkerExecutionActive(harnessDir, meta.ID)
-		if err != nil {
-			return nil, fmt.Errorf("inspect worker %q execution lease: %w", meta.ID, err)
+		active := false
+		paths := make([]string, 0, len(stateDirs))
+		for _, stateDir := range stateDirs {
+			artifactDir := statepath.SessionArtifactDir(stateDir, rootThreadID)
+			running, err := agentcontrol.WorkerExecutionActive(filepath.Join(artifactDir, "harness"), meta.ID)
+			if err != nil {
+				return nil, fmt.Errorf("inspect worker %q execution lease: %w", meta.ID, err)
+			}
+			active = active || running
+			paths = append(paths, filepath.Join(artifactDir, "workers", meta.ID+".json"))
 		}
 		if active {
 			continue
 		}
-		run, err := subagent.LoadPersistedRun(filepath.Join(historyDir, meta.ID+".json"))
+		run, err := subagent.LoadPersistedRunFromDocuments(binding.Documents, rootThreadID, meta.ID, paths...)
+
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -1882,8 +2192,8 @@ func terminalAgentThreadStatus(status subagent.Status) (agentthread.Status, bool
 	}
 }
 
-func (s *Server) agentSessionThread(agentID string) (Thread, bool, error) {
-	rootID, meta, ok, err := s.agentThreadMetadata(agentID)
+func (s *Server) agentSessionThread(binding *runtime.State, agentID string) (Thread, bool, error) {
+	rootID, meta, ok, err := s.agentThreadMetadata(binding, agentID)
 	if err != nil || !ok {
 		return Thread{}, ok, err
 	}
@@ -1894,9 +2204,9 @@ func (s *Server) agentSessionThread(agentID string) (Thread, bool, error) {
 			snap := sa.Snapshot()
 			var th *threadState
 			if isRunningSubAgentStatus(snap.Status) {
-				th, _, _ = s.ensureLiveAgentThread(rootID, control, snap, time.Now().UTC())
+				th, _, _ = s.ensureLiveAgentThread(binding, rootID, control, snap, time.Now().UTC())
 			} else {
-				th, _, _, _ = s.syncFinalAgentThread(rootID, control, snap, time.Now().UTC())
+				th, _, _, _ = s.syncFinalAgentThread(binding, rootID, control, snap, time.Now().UTC())
 			}
 			if th != nil {
 				th.mu.Lock()
@@ -1913,7 +2223,11 @@ func (s *Server) agentSessionThread(agentID string) (Thread, bool, error) {
 			return Thread{}, true, err
 		}
 		if path != "" {
-			loaded, err := loadAgentHistory(path)
+			paths, pathErr := s.agentHistoryPaths(rootID, meta.ID)
+			if pathErr != nil {
+				return Thread{}, true, pathErr
+			}
+			loaded, err := loadAgentHistory(binding.Documents, rootID, meta.ID, paths...)
 			if err != nil {
 				if !errors.Is(err, os.ErrNotExist) {
 					return Thread{}, true, err
@@ -1962,17 +2276,20 @@ func (s *Server) agentSessionThread(agentID string) (Thread, bool, error) {
 	}, true, nil
 }
 
-func (s *Server) agentThreadMetadata(agentID string) (string, agentthread.Metadata, bool, error) {
+func (s *Server) agentThreadMetadata(binding *runtime.State, agentID string) (string, agentthread.Metadata, bool, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return "", agentthread.Metadata{}, false, nil
 	}
-	rootIDs, err := s.rootThreadIDs()
+	rootIDs, err := s.rootThreadIDs(binding)
 	if err != nil {
 		return "", agentthread.Metadata{}, false, err
 	}
 	for _, rootID := range rootIDs {
-		store := s.agentThreadStore(rootID)
+		store, storeErr := s.agentThreadStore(binding, rootID)
+		if storeErr != nil {
+			return "", agentthread.Metadata{}, false, storeErr
+		}
 		if store == nil {
 			continue
 		}
@@ -1989,21 +2306,21 @@ func (s *Server) agentThreadMetadata(agentID string) (string, agentthread.Metada
 	return "", agentthread.Metadata{}, false, nil
 }
 
-func (s *Server) rootThreadIDs() ([]string, error) {
+func (s *Server) rootThreadIDs(binding *runtime.State) ([]string, error) {
 	if s == nil || s.rt == nil {
 		return nil, nil
 	}
-	sessions, err := session.ListForCWD(s.rt.SessionDir, s.rt.RootDir, s.rt.WorkspaceID, 0)
+	sessions, err := binding.Sessions.ListForCWD(s.rt.RootDir, s.rt.WorkspaceID, 0)
 	if err != nil {
 		return nil, err
 	}
-	return s.rootThreadIDsForSessions(sessions)
+	return s.rootThreadIDsForSessions(binding, sessions)
 }
 
 // rootThreadIDsForSessions is rootThreadIDs with the workspace session list
 // already loaded, so thread/list does not rescan the sessions table for the
 // same rows it just fetched.
-func (s *Server) rootThreadIDsForSessions(sessions []session.Session) ([]string, error) {
+func (s *Server) rootThreadIDsForSessions(binding *runtime.State, sessions []session.Session) ([]string, error) {
 	if s == nil || s.rt == nil {
 		return nil, nil
 	}
@@ -2024,7 +2341,7 @@ func (s *Server) rootThreadIDsForSessions(sessions []session.Session) ([]string,
 
 	s.mu.Lock()
 	for id, th := range s.threads {
-		if th == nil {
+		if th == nil || th.state == nil || th.state.Sessions != binding.Sessions {
 			continue
 		}
 		th.mu.Lock()
@@ -2074,15 +2391,19 @@ func (s *Server) agentHistoryPath(rootID, agentID string) (string, error) {
 	return filepath.Join(statepath.SessionArtifactDir(stateDir, rootID), "workers", agentID+".json"), nil
 }
 
-func (s *Server) agentThreadStore(threadID string) *agentthread.Store {
+func (s *Server) agentThreadStore(binding *runtime.State, threadID string) (*agentthread.Store, error) {
 	if s == nil || s.rt == nil || strings.TrimSpace(threadID) == "" {
-		return nil
+		return nil, nil
 	}
-	stateDir, err := s.workspaceStateDir()
+	stateDirs, err := s.threadArtifactStateDirs(threadID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return agentthread.NewStore(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+	dirs := make([]string, 0, len(stateDirs))
+	for _, stateDir := range stateDirs {
+		dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+	}
+	return agentthread.NewDocumentStore(binding.Documents, threadID, dirs...), nil
 }
 
 func (s *Server) workspaceStateDir() (string, error) {
@@ -2210,17 +2531,19 @@ func sortThreadListEntries(entries []threadListEntry) {
 	})
 }
 
-func (s *Server) mostRecentVisibleThreadID() (string, error) {
-	sessions, err := session.ListForCWD(s.rt.SessionDir, s.rt.RootDir, s.rt.WorkspaceID, 0)
+func (s *Server) mostRecentVisibleThreadID(binding *runtime.State) (string, error) {
+	sessions, err := binding.Sessions.ListForCWD(s.rt.RootDir, s.rt.WorkspaceID, 0)
 	if err != nil {
 		return "", err
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	entries := make([]threadListEntry, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.ArchivedAt != nil {
 			continue
 		}
-		entries = append(entries, threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model))
+		entries = append(entries, entryForSession(sess))
 	}
 	sortThreadListEntries(entries)
 	if len(entries) == 0 {
@@ -2229,24 +2552,26 @@ func (s *Server) mostRecentVisibleThreadID() (string, error) {
 	return entries[0].thread.ID, nil
 }
 
-func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, error) {
+func (s *Server) threadAfterMetadataUpdate(binding *runtime.State, metadata session.Session) (Thread, error) {
 	metadata = relocatedSessionMetadata(metadata, s.registeredWorkspaces())
-	control, err := s.readThreadSessionControl(metadata.ID)
+	control, err := s.readThreadSessionControl(binding, metadata.ID)
 	if err != nil {
 		return Thread{}, err
 	}
-	if th := s.thread(metadata.ID); th != nil {
+	if th := s.threadForState(binding, metadata.ID); th != nil {
 		th.mu.Lock()
 		applySessionMetadata(th, metadata)
 		th.SessionControl = control
 		thread := th.snapshotLocked()
 		th.mu.Unlock()
 		thread.SessionControl = control
-		return s.threadWithChildAgents(thread)
+		return s.threadWithChildAgents(binding, thread)
 	}
-	thread := threadEntryFromSession(metadata, s.rt.ProviderName, s.rt.Model).thread
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
+	thread := entryForSession(metadata).thread
 	thread.SessionControl = control
-	return s.threadWithChildAgents(thread)
+	return s.threadWithChildAgents(binding, thread)
 }
 
 // Shared metadata wins over snapshots cached by another workspace app-server.
@@ -2256,6 +2581,10 @@ func (s *Server) refreshListedSessionMetadata(sessions []session.Session) {
 	for _, metadata := range sessions {
 		if th := s.threads[metadata.ID]; th != nil {
 			th.mu.Lock()
+			if metadata.TitleRevision >= th.TitleRevision {
+				th.Title = metadata.Title
+				th.TitleRevision = metadata.TitleRevision
+			}
 			th.ArchivedAt = metadata.ArchivedAt
 			th.ArchiveReason = metadata.ArchiveReason
 			th.PinnedAt = metadata.PinnedAt
@@ -2276,4 +2605,16 @@ func (s *Server) hasRunningThread() bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) agentHistoryPaths(rootID, workerID string) ([]string, error) {
+	stateDirs, err := s.threadArtifactStateDirs(rootID)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(stateDirs))
+	for _, dir := range stateDirs {
+		paths = append(paths, filepath.Join(statepath.SessionArtifactDir(dir, rootID), "workers", workerID+".json"))
+	}
+	return paths, nil
 }

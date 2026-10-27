@@ -1,19 +1,19 @@
 import { Minus, Square, Copy, X } from "./WuuIcons";
 import { useEffect, useState } from "react";
-import { desktopPlatform } from "./platform";
+import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { useI18n } from "./i18n";
 
-function usesCustomLinuxChrome(): boolean {
+function usesCustomLinuxChrome(desktop: ApplicationDesktopControlsV1): boolean {
   return (
-    desktopPlatform() === "linux" &&
-    (window.wuu?.hostKind ?? "desktop") === "desktop" &&
-    typeof window.wuu?.windowMinimize === "function"
+    desktop.platform === "linux" &&
+    desktop.hostKind === "desktop" &&
+    typeof desktop.minimize === "function"
   );
 }
 
 /** Double-click a drag strip to toggle maximize on Linux frameless windows. */
-export function startLinuxTitlebarMaximizeGesture(): void {
-  if (!usesCustomLinuxChrome()) return;
+export function startLinuxTitlebarMaximizeGesture(desktop: ApplicationDesktopControlsV1): () => void {
+  if (!usesCustomLinuxChrome(desktop)) return () => {};
   const onDoubleClick = (event: MouseEvent): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -31,9 +31,10 @@ export function startLinuxTitlebarMaximizeGesture(): void {
     ) {
       return;
     }
-    void window.wuu.windowToggleMaximize?.();
+    void desktop.toggleMaximize?.().catch(() => {});
   };
   document.addEventListener("dblclick", onDoubleClick);
+  return () => document.removeEventListener("dblclick", onDoubleClick);
 }
 
 function CaptionIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "close" }): JSX.Element {
@@ -41,26 +42,27 @@ function CaptionIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "cl
   return <Icon size={14} />;
 }
 
-/** Frameless Linux caption buttons that share the white app header. */
-export function LinuxWindowControls(): JSX.Element | null {
+/** Frameless Linux caption buttons; retired scopes cancel pending native calls. */
+export function LinuxWindowControls({ desktop }: { desktop: ApplicationDesktopControlsV1 }): JSX.Element | null {
   const { t } = useI18n();
-  const enabled = usesCustomLinuxChrome();
+  const enabled = usesCustomLinuxChrome(desktop);
+  useEffect(() => startLinuxTitlebarMaximizeGesture(desktop), [desktop]);
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    void window.wuu.windowIsMaximized?.().then((value) => {
+    void desktop.isMaximized?.().then((value) => {
       if (!cancelled) setMaximized(Boolean(value));
-    });
-    const dispose = window.wuu.onWindowMaximizedChange?.((value) => {
+    }, () => {});
+    const dispose = desktop.onMaximizedChange?.((value) => {
       setMaximized(Boolean(value));
     });
     return () => {
       cancelled = true;
       dispose?.();
     };
-  }, [enabled]);
+  }, [enabled, desktop]);
 
   if (!enabled) return null;
 
@@ -72,7 +74,7 @@ export function LinuxWindowControls(): JSX.Element | null {
         aria-label={t("shell.minimizeWindow")}
         title={t("shell.minimizeWindow")}
         onClick={() => {
-          void window.wuu.windowMinimize?.();
+          void desktop.minimize?.().catch(() => {});
         }}
       >
         <CaptionIcon kind="minimize" />
@@ -84,9 +86,9 @@ export function LinuxWindowControls(): JSX.Element | null {
         title={t(maximized ? "shell.restoreWindow" : "shell.maximizeWindow")}
         aria-pressed={maximized}
         onClick={() => {
-          void window.wuu.windowToggleMaximize?.().then((value) => {
+          void desktop.toggleMaximize?.().then((value) => {
             if (typeof value === "boolean") setMaximized(value);
-          });
+          }, () => {});
         }}
       >
         <CaptionIcon kind={maximized ? "restore" : "maximize"} />
@@ -97,7 +99,7 @@ export function LinuxWindowControls(): JSX.Element | null {
         aria-label={t("shell.closeWindow")}
         title={t("shell.closeWindow")}
         onClick={() => {
-          void window.wuu.windowClose?.();
+          void desktop.close?.().catch(() => {});
         }}
       >
         <CaptionIcon kind="close" />

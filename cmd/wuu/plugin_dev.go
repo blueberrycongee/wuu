@@ -19,6 +19,7 @@ import (
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprogram"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/version"
@@ -748,6 +749,9 @@ func preparePluginSource(source string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	if !info.IsDir() {
+		if filepath.Ext(abs) == ".ts" {
+			return pluginprogram.PrepareSingleFile(context.Background(), abs)
+		}
 		return abs, func() {}, nil
 	}
 	staging, err := os.MkdirTemp("", "wuu-plugin-package-")
@@ -846,7 +850,7 @@ func pluginScaffoldSources(pluginType string) map[string]string {
 
 const plugin: RuntimePlugin = {
   initialize(_params) {
-    return { hooks: [], tools: [] };
+    return { protocol_version: 3, hooks: [], tools: [] };
   },
 };
 
@@ -858,7 +862,8 @@ runJSONLRuntime(plugin, { input: process.stdin, output: process.stdout }).catch(
 	desktop := `import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
-  api.registerSlot("conversation.header", {
+  api.registerUIContribution({
+    target: "wuu.default-shell/conversation.header",
     id: "hello",
     render() {
       return api.react.createElement("span", null, "Hello from " + api.pluginId);

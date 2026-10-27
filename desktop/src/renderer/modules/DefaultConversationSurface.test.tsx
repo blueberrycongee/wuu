@@ -1,0 +1,155 @@
+import * as React from "react";
+import * as Notices from "../Toast";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, expect, it, vi } from "vitest";
+import type { ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { Thread } from "../../shared/protocol";
+import { createConversationTestApplication } from "../ConversationControlsTestProvider";
+import { PluginHost } from "../plugins/PluginHost";
+import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
+import { activate, DefaultConversationSurface } from "./DefaultConversationSurface";
+
+vi.mock("../EmptyHomeOverview", () => ({ EmptyHomeOverview: () => <div data-overview /> }));
+let root: Root | undefined, container: HTMLDivElement | undefined;
+afterEach(() => { act(() => root?.unmount()); container?.remove(); root = undefined; vi.restoreAllMocks(); });
+function thread(id: string): Thread { return { id, title: id, preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: `${id}-turn`, status: "completed", items_view: "full", items: [{ id: `${id}-user`, type: "user_message", text: `Question ${id}` }, { id: `${id}-answer`, type: "agent_message", text: `Answer ${id}`, status: "completed", terminal: true }] }] }; }
+function fixture() {
+  const preview = createConversationTestApplication(), one = thread("one"), two = thread("two");
+  // Public histories stay frozen while the selected renderer edits by action.
+  const freeze = (value: unknown): void => { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } };
+  freeze(one); freeze(two);
+  let snapshot: ApplicationSnapshotV1 = { ...preview.getSnapshot(), phase: "ready", conversation: { loading: false, threadId: one.id, turns: [] }, conversationWorkspace: { primaryThreadId: one.id, activePane: "primary", turnStreamStatus: {}, threads: [one, two] } };
+  const listeners = new Set<() => void>();
+  const invoke = vi.fn().mockResolvedValue({ accepted: true });
+  const application = { ...preview, getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke };
+  container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+  act(() => root!.render(<DefaultConversationSurface application={application} slots={{ Slot: ({ fallback }) => fallback }} />));
+  return { invoke, get: () => snapshot, update: (value: ApplicationSnapshotV1) => act(() => { snapshot = value; listeners.forEach(listener => listener()); }) };
+}
+it("retains cached panes and routes message editing by explicit public identity", async () => {
+  const h = fixture(), first = container!.querySelector('[data-thread-id="one"]');
+  expect(container!.textContent).toContain("Answer one");
+  h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, primaryThreadId: "two" } });
+  expect(container!.querySelector('[data-thread-id="one"]')).toBe(first);
+  expect(container!.querySelector('[data-thread-id="two"]')).not.toBeNull();
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .message-edit-button')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("history.begin-edit", { threadId: "two", turnId: "two-turn", itemId: "two-user" });
+});
+it("preserves split history editing, questions and closing the explicit secondary pane", async () => {
+  const h = fixture(); h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, secondaryThreadId: "two" } });
+  expect(container!.querySelectorAll(".conversation-split-pane")).toHaveLength(2);
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .message-edit-button')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("history.begin-edit", { threadId: "two", turnId: "two-turn", itemId: "two-user", pane: "secondary" });
+  h.update({ ...h.get(), conversationActions: { ...h.get().conversationActions, questions: [{ request_id: "split-question", plugin_id: "ask-user", execution_id: "execution", thread_id: "two", turn_id: "two-turn", created_at: "2026-10-24T00:00:00Z", questions: [{ id: "choice", question: "Which path?", options: [{ label: "Safe" }], allow_custom: true }] }] } });
+  expect(container!.querySelector('[data-thread-id="two"] .user-question-card')?.textContent).toContain("Which path?");
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .user-question-cancel')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("question.cancel", { requestId: "split-question" });
+  await act(async () => container!.querySelector<HTMLButtonElement>(".conversation-split-close")!.click());
+  expect(h.invoke).toHaveBeenCalledWith("conversation.close-pane", { pane: "secondary" });
+});
+it("keeps loading and empty state distinct from a failed runtime", () => {
+  const h = fixture();
+  h.update({ ...h.get(), phase: "starting", conversation: { ...h.get().conversation, loading: true } });
+  expect(container!.querySelector('[data-wuu-component="launch-view"]')).not.toBeNull();
+  h.update({ ...h.get(), phase: "ready", conversation: { loading: false, turns: [] }, conversationWorkspace: { activePane: "primary", turnStreamStatus: {}, threads: [] } });
+  expect(container!.querySelector("[data-overview]")).not.toBeNull();
+  h.update({ ...h.get(), phase: "error", conversation: { loading: false, turns: [], error: "Runtime unavailable" } });
+  expect(container!.textContent).toContain("Runtime unavailable");
+});
+it("continues the failed turn through its public identity", async () => {
+  const h = fixture(), failed = thread("one");
+  failed.turns[0] = { ...failed.turns[0], status: "failed", error: { message: "Request failed: HTTP 500 Internal Server Error" }, items: [failed.turns[0].items[0]] };
+  h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, threads: [failed] } });
+  const retry = container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button");
+  expect(retry).not.toBeNull();
+  await act(async () => retry!.click());
+  expect(h.invoke.mock.calls.map(call => call[0])).toEqual(["conversation.continue"]);
+  expect(h.invoke).toHaveBeenLastCalledWith("conversation.continue", { threadId: "one", turnId: "one-turn", text: expect.any(String) });
+});
+it("renders the canonical pending creation turn only for its tab owner", () => {
+  const h = fixture(), pending = thread("pending").turns[0];
+  h.update({ ...h.get(), submission: { ...h.get().submission, pendingCreations: [{ ownerTabId: h.get().tabs.activeTabId, operationID: "send", startedAtMs: 1, turn: { ...pending, status: "in_progress" } }] } });
+  expect(container!.querySelector('[data-turn-id="pending-turn"]')).not.toBeNull();
+  h.update({ ...h.get(), tabs: { ...h.get().tabs, activeTabId: "another-tab" } });
+  expect(container!.querySelector('[data-turn-id="pending-turn"]')).toBeNull();
+  expect(container!.querySelector('[data-turn-id="one-turn"]')).not.toBeNull();
+});
+
+it("uses the selected composer for both split owners and removes it when disabled", async () => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const base = createConversationTestApplication(), one = thread("one"), two = thread("two");
+  const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), phase: "ready",
+    conversationWorkspace: { primaryThreadId: one.id, secondaryThreadId: two.id, activePane: "primary", turnStreamStatus: {}, threads: [one, two] },
+    drafts: { ...base.getSnapshot().drafts, split: true, primary: { ...base.getSnapshot().drafts.primary, ownerTabId: "owner-one" }, secondary: { ...base.getSnapshot().drafts.secondary, ownerTabId: "owner-two" } } };
+  const application = { ...base, getSnapshot: () => snapshot, createDesktopScope: () => base.desktop,
+    setPreviewVisibility: () => {}, createComposerPresentationScope: () => base.composerPresentation };
+  const host = new PluginHost({ react: React, application });
+  try {
+    await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "test", register: activate });
+    await host.activateGeneration({ pluginId: "shell", generation: "test", register: api => {
+      api.registerUISlot({ id: "application.conversation", cardinality: "one", service: "ui.conversation" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="shell/application.conversation" /> });
+    } });
+    for (const id of ["first", "replacement"]) await host.activateGeneration({ pluginId: id, generation: "test", register: api => {
+      api.registerUIContribution({ id: "composer", target: "shell/application.composer", render: ({ context }) =>
+        <div data-selected-composer={id} data-pane={String(context.pane)} data-owner={String(context.ownerTabId)} data-variant={String(context.variant)} /> });
+    } });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    const render = (pluginId: string) => act(async () => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "test", id: "shell" }}
+      surfaceBindings={{ "ui.conversation": { pluginId: "wuu.default-conversation", generation: "test", id: "ui.conversation" }, "ui.composer": { pluginId, generation: "test", id: "composer" } }} />));
+    await render("first");
+    expect([...container.querySelectorAll('[data-selected-composer="first"]')].map(node => [node.getAttribute("data-pane"), node.getAttribute("data-owner"), node.getAttribute("data-variant")])).toEqual([
+      ["primary", "owner-one", "dock"], ["secondary", "owner-two", "dock"],
+    ]);
+    await render("replacement");
+    expect(container.querySelectorAll('[data-selected-composer="replacement"]')).toHaveLength(2);
+    expect(container.querySelector('[data-selected-composer="first"]')).toBeNull();
+    await act(async () => host.unload("replacement"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:replacement:test");
+    expect(container.textContent).not.toContain(String(notice.mock.calls.at(-1)![0]));
+    expect(container.querySelector('[data-selected-composer]')).toBeNull();
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.textContent).toContain("Answer one");
+    expect(container.textContent).toContain("Answer two");
+  } finally {
+    act(() => root?.unmount()); root = undefined;
+    for (const id of ["first", "replacement", "shell", "wuu.default-conversation"]) host.unload(id);
+  }
+});
+
+
+it("keeps a successful workspace switch quiet when the retired request rejects with an abort", async () => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const h = fixture();
+  const workspaces = [{ id: "first", name: "First", root: "/first", available: true }, { id: "second", name: "Second", root: "/second", available: true }];
+  h.update({ ...h.get(), conversation: { loading: false, turns: [] }, conversationWorkspace: { activePane: "primary", turnStreamStatus: {}, threads: [] }, workspaces: { workspaces, activeWorkspaceId: "first", activeRoot: "/first" } });
+  let reject!: (error: unknown) => void;
+  h.invoke.mockImplementationOnce(() => new Promise((_resolve, rejectRequest) => { reject = rejectRequest; }));
+  await act(async () => container!.querySelector<HTMLButtonElement>(".empty-home-workspace-link")!.click());
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === "Second")!.click());
+  expect(h.invoke).toHaveBeenCalledWith("workspace.retarget-draft", { workspaceId: "second" });
+  h.update({ ...h.get(), workspaces: { workspaces, activeWorkspaceId: "second", activeRoot: "/second" } });
+  await act(async () => reject(new PluginLifecycleCancellationError(new DOMException("signal is aborted without reason", "AbortError"))));
+  expect(container!.querySelector(".empty-home-workspace-link")?.textContent).toBe("Second");
+  expect(notice).not.toHaveBeenCalled();
+});
+
+it.each([
+  new DOMException("signal is aborted without reason", "AbortError"),
+  new Error("Workspace is unavailable. Reconnect and retry."),
+])("keeps current action failures visible rather than treating every abort as retirement", async error => {
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+  const h = fixture();
+  h.invoke.mockRejectedValueOnce(error);
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="one"] .message-edit-button')!.click());
+  expect(notice).toHaveBeenCalledTimes(1);
+  if (error.name === "AbortError") {
+    expect(notice.mock.calls[0][0]).not.toBe(error);
+    expect(diagnostic).toHaveBeenCalledWith(expect.any(String), error);
+  }
+  else expect(notice.mock.calls[0][0]).toBe(error);
+});

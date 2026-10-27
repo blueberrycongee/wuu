@@ -8,12 +8,14 @@ module.exports = (api) => {
   let enabled = true;
   let generation = 1;
   const listeners = new Set();
+  let baseInventory = [];
   const threads = fixture.threads;
   const inventory = () => enabled ? [{
     ...fixture.plugin,
     id: "builtin:next-message", name: "Next message", kind: "plugin",
     provenance: { kind: "plugin", source: "builtin", scope: "user", plugin_id: "next-message" },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    graph_generation: "default-shell-e2e-graph",
     fingerprint: `next-message-e2e-${generation}`, desktop: { entry: "desktop.js" },
   }] : [];
   const projects = () => ({ projects: fixture.projects, active_project_id: context.project_id, active_context: context });
@@ -30,18 +32,22 @@ module.exports = (api) => {
     enabled = change.enabled;
     generation++;
     for (const listener of listeners) listener({ kind: "notification", workdir: context.cwd,
-      message: { method: "plugin/inventory/changed", params: { epoch: generation, extension_inventory: inventory(), skills: [] } } });
+      message: { method: "plugin/inventory/changed", params: { epoch: generation, extension_inventory: [...baseInventory, ...inventory()], skills: [] } } });
   });
   return {
     ...api,
     initialThemePreference: "light",
-    initialize: async () => ({ ...await api.initialize(),
+    initialize: async () => {
+      const initialized = await api.initialize();
+      baseInventory = initialized.extension_inventory;
+      return { ...initialized,
       workspace_root: context.cwd, provider: "synthetic", model: "mock-next-message",
       model_aliases: { "synthetic-fast-model": { provider: "synthetic", model: "mock-next-message" } },
       providers: [{ name: "synthetic", type: "mock", model: "mock-next-message", api_key_configured: true,
         models: [{ id: "mock-next-message", capabilities: { context_window: 272000 }, variants: [{ id: "low" }, { id: "high" }] }] }],
-      extension_inventory: [...(await api.initialize()).extension_inventory, ...inventory()],
-    }),
+      extension_inventory: [...baseInventory, ...inventory()],
+      };
+    },
     listProjects: async () => projects(),
     selectProject: async (id) => {
       const project = fixture.projects.find(item => item.id === id);
@@ -71,7 +77,8 @@ module.exports = (api) => {
           imageCount: 0, fileCount: 0 })).filter(turn => turn.userText.trim() && turn.assistantText.trim()).slice(-20) ?? []
       : [] }),
     cancelPluginRuntime: (params) => ipcRenderer.invoke("test:next-message-cancel", params),
-    loadPluginDesktopModule: async ({ id, fingerprint }) => ({
+    loadPluginDesktopModule: async ({ id, fingerprint }) => id !== "builtin:next-message"
+      ? api.loadPluginDesktopModule({ id, fingerprint }) : ({
       id, fingerprint, digest: fixture.pluginDigest,
       url: `wuu-plugin://next-message/${fingerprint}/desktop.js`,
     }),

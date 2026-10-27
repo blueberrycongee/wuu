@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -246,43 +247,52 @@ func TestBashViewSurvivesStorageAndRequestPreparation(t *testing.T) {
 	if envelope.Truncated || len(envelope.Warnings) != 0 || envelope.DataRef != "" {
 		t.Fatalf("complete view advertised truncation or recovery: %+v", envelope)
 	}
-	dir := t.TempDir()
-	if _, err := session.CreateWithMetadata(dir, "bash-replay", t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := session.AppendHistoryRecord(dir, "bash-replay", session.HistoryRecord{Role: "tool", ToolCallID: call.ID, Content: result.TextProjection(), ToolResult: payload}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := session.MaintainRedundantStorage(context.Background(), dir); err != nil {
-		t.Fatal(err)
-	}
-	records, err := session.LoadHistoryRecords(dir, "bash-replay", false)
-	if err != nil || len(records) != 1 {
-		t.Fatalf("load history: records=%d err=%v", len(records), err)
-	}
-	var restored toolresult.Result
-	if err := json.Unmarshal(records[0].ToolResult, &restored); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(restored, result) || records[0].Content != result.TextProjection() {
-		t.Fatal("storage changed producer or settled model text")
-	}
-	for _, input := range []toolresult.Result{result, restored} {
-		input = kit.FinalizeToolResult(call, input)
-		messages := []providers.ChatMessage{
-			{Role: "assistant", ToolCalls: []providers.ToolCall{call}},
-			{Role: "tool", ToolCallID: call.ID, Content: input.TextProjection(), ToolResult: &input},
-		}
-		for range 2 {
-			messages, err = providers.PrepareMessagesForModelRequest("gpt-5", messages)
-			if err != nil || toolContent(messages, call.ID) != result.TextProjection() {
-				t.Fatalf("request preparation restored the JSON envelope: %v", err)
+	for _, backend := range []string{"sqlite", "jsonl"} {
+		t.Run(backend, func(t *testing.T) {
+			documents, err := persistence.Open(context.Background(), t.TempDir(), backend)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			defer documents.Close()
+			store := session.NewStore(context.Background(), documents)
+			if _, err := store.CreateWithMetadata("bash-replay", t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AppendHistoryRecord("bash-replay", session.HistoryRecord{Role: "tool", ToolCallID: call.ID, Content: result.TextProjection(), ToolResult: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.MaintainRedundantStorage(); err != nil {
+				t.Fatal(err)
+			}
+			records, err := store.LoadHistoryRecords("bash-replay", false)
+			if err != nil || len(records) != 1 {
+				t.Fatalf("load history: records=%d err=%v", len(records), err)
+			}
+			var restored toolresult.Result
+			if err := json.Unmarshal(records[0].ToolResult, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored, result) || records[0].Content != result.TextProjection() {
+				t.Fatal("storage changed producer or settled model text")
+			}
+			for _, input := range []toolresult.Result{result, restored} {
+				input = kit.FinalizeToolResult(call, input)
+				messages := []providers.ChatMessage{
+					{Role: "assistant", ToolCalls: []providers.ToolCall{call}},
+					{Role: "tool", ToolCallID: call.ID, Content: input.TextProjection(), ToolResult: &input},
+				}
+				for range 2 {
+					messages, err = providers.PrepareMessagesForModelRequest("gpt-5", messages)
+					if err != nil || toolContent(messages, call.ID) != result.TextProjection() {
+						t.Fatalf("request preparation restored the JSON envelope: %v", err)
+					}
+				}
+			}
+		})
 	}
 }
 

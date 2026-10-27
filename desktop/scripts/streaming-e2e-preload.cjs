@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
@@ -5,6 +6,7 @@ const runtimeContext = { kind: "no_project", cwd };
 let startedThreadCount = 0;
 let workspacePreviewReadFailed = false;
 const threads = new Map();
+const heldMessages = new Map();
 
 function projectList() {
   return {
@@ -85,7 +87,10 @@ function workspaceDemoPath(path) {
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
 }
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
+  acquireArtifactSource: input => ipcRenderer.invoke("test:artifact-acquire",input),
+  releaseArtifactSource: id => ipcRenderer.invoke("test:artifact-release",id),
+  initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
   projectWork: async (params) => {
     const work = projectWorks.get(params.project_id);
     if (params.operation === "list") return { project_id: params.project_id, works: work ? [work] : [], usage: [] };
@@ -137,6 +142,7 @@ contextBridge.exposeInMainWorld("wuu", {
       id: "user:workspace-e2e", name: "Workspace E2E", kind: "plugin",
       provenance: { kind: "plugin", source: "user", scope: "user" },
       state: "granted", approval_state: "granted", enabled: true, fingerprint: "workspace-e2e",
+      graph_generation: "default-shell-e2e-graph",
       desktop: { entry: "desktop.js" },
       contributions: { workspace_tools: [{
         id: "notes", view: "notes", title: "Workspace notes with a long descriptive title",
@@ -208,7 +214,10 @@ contextBridge.exposeInMainWorld("wuu", {
     threads.set(id, thread);
     return { thread };
   },
-  resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
+  resumeThread: async (id) => ({ thread: threads.get(id) ?? null,
+    ...(heldMessages.has(id) ? { held_user_messages: heldMessages.get(id) } : {}),
+  }),
+  listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
   forkThread: async () => ({ thread: null }),
   editThreadMessage: async (threadId) => {
     await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });
@@ -217,9 +226,12 @@ contextBridge.exposeInMainWorld("wuu", {
     return { thread };
   },
   listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
+  listAllThreads: async () => ({ threads: [...threads.values()] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/queue", { threadId, id });
     return { queued: { id, thread_id: threadId } };
   },
   steerTurn: async (threadId, turnId, text, _images, id) => {
@@ -265,10 +277,13 @@ contextBridge.exposeInMainWorld("wuu", {
     const listener = (_event, payload) => {
       const thread = payload.message?.params?.thread;
       if (thread) threads.set(thread.id, thread);
+      if (payload.message?.method === "turn/held") {
+        heldMessages.set(payload.message.params.thread_id, payload.message.params.messages);
+      }
       handler(payload);
     };
     ipcRenderer.on("test:server-event", listener);
     return () => ipcRenderer.removeListener("test:server-event", listener);
   },
   onWindowResizeState: () => () => undefined
-});
+}));

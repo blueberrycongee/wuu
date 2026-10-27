@@ -38,6 +38,7 @@ const SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR =
 
 export function useSidebarDrawerState({
   appShellRef,
+  sidebarSelector = SIDEBAR_RAIL_SELECTOR,
   sidebarCollapsed,
   resizingSidebar,
   motionMs,
@@ -46,6 +47,7 @@ export function useSidebarDrawerState({
   closeOnWindowResize = false,
 }: {
   appShellRef: RefObject<HTMLDivElement | null>;
+  sidebarSelector?: string;
   sidebarCollapsed: boolean;
   resizingSidebar: boolean;
   /** Read when the close starts, so it follows the current tokens. */
@@ -113,16 +115,28 @@ export function useSidebarDrawerState({
     };
   }, []);
 
-  const sidebarDrawerPointerHovered = useCallback((): boolean | undefined => {
+  const sidebarDrawerPointerHovered = useCallback((retainToggle = true): boolean | undefined => {
+    const point = sidebarPointerPositionRef.current;
+    // A toggle can retain an already-open drawer during pointer travel, but
+    // must never activate a hover preview after an explicit collapse.
+    if (!retainToggle && point && typeof document.elementFromPoint === "function" &&
+        document.elementFromPoint(point.x, point.y)?.closest(".sidebar-toggle-button")) {
+      return false;
+    }
     // A card owns its gap grace period and focus retention even outside the rail.
     if (hoverLayerCount > 0) return true;
-    const point = sidebarPointerPositionRef.current;
+    const sidebar = appShellRef.current?.querySelector(sidebarSelector);
+    const active = document.activeElement;
+    // Keyboard focus in the secondary pane retains it even after pointer exit.
+    // The persistent ribbon remains available without retaining the drawer.
+    if (active instanceof Element && sidebar?.contains(active) && !active.closest(".sidebar-ribbon")) {
+      return true;
+    }
     if (!point) {
       return undefined;
     }
-    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
     const hoverTriggers = appShellRef.current?.querySelectorAll(
-      SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
+      retainToggle ? SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR : ".sidebar-hover-zone",
     );
     for (const element of [sidebar, ...(hoverTriggers ?? [])]) {
       if (!element) continue;
@@ -149,22 +163,25 @@ export function useSidebarDrawerState({
       (sidebar && sidebar.contains(target)) ||
         [...(hoverTriggers ?? [])].some((trigger) => trigger.contains(target)),
     );
-  }, [appShellRef, hoverLayerCount]);
+  }, [appShellRef, hoverLayerCount, sidebarSelector]);
 
   const blurSidebarFocus = useCallback((): void => {
-    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
+    const sidebar = appShellRef.current?.querySelector(sidebarSelector);
     const active = document.activeElement;
-    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)) {
+    // The persistent ribbon owns its keyboard focus independently of the
+    // drawer, including when a leave arrives after the drawer already closed.
+    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)
+      && !active.closest(".sidebar-ribbon")) {
       active.blur();
     }
-  }, [appShellRef]);
+  }, [appShellRef, sidebarSelector]);
 
   const openSidebarDrawer = useCallback((): void => {
     // Entering the newly pinned rail must not cancel its docking timer.
     if (resizingSidebar || !sidebarCollapsed || sidebarDrawerSuppressedRef.current) {
       return;
     }
-    if (sidebarDrawerPointerHovered() === false) {
+    if (sidebarDrawerPointerHovered(false) === false) {
       return;
     }
     clearSidebarDrawerOpenTimer();
@@ -208,7 +225,7 @@ export function useSidebarDrawerState({
         !sidebarHoverZoneActiveRef.current ||
         resizingSidebar ||
         sidebarDrawerSuppressedRef.current ||
-        sidebarDrawerPointerHovered() === false
+        sidebarDrawerPointerHovered(false) === false
       ) {
         return;
       }
@@ -229,7 +246,7 @@ export function useSidebarDrawerState({
     clearSidebarDrawerCloseTimer();
     clearSidebarDrawerPointerLeaveTimer();
     blurSidebarFocus();
-    if (!sidebarCollapsed || resizingSidebar) {
+    if (!sidebarCollapsed || resizingSidebar || sidebarDrawerPhase === "closed") {
       setSidebarDrawerPhase("closed");
       return;
     }
@@ -246,6 +263,7 @@ export function useSidebarDrawerState({
     motionMs,
     resizingSidebar,
     sidebarCollapsed,
+    sidebarDrawerPhase,
   ]);
 
   const scheduleSidebarDrawerCloseFromPointerLeave = useCallback((event?: Event): void => {
@@ -278,7 +296,7 @@ export function useSidebarDrawerState({
 
       const relatedTarget = event instanceof MouseEvent ? event.relatedTarget : null;
       if (relatedTarget && relatedTarget instanceof Element) {
-        const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
+        const sidebar = appShellRef.current?.querySelector(sidebarSelector);
         const hoverTriggers = appShellRef.current?.querySelectorAll(
           SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
         );
@@ -302,6 +320,7 @@ export function useSidebarDrawerState({
     }, 0);
   }, [
     appShellRef,
+    sidebarSelector,
     clearSidebarDrawerPointerLeaveTimer,
     closeSidebarDrawer,
     rememberSidebarPointerPosition,
@@ -336,8 +355,18 @@ export function useSidebarDrawerState({
     function handlePointerEvent(event: Event): void {
       if ("pointerType" in event && event.pointerType === "touch") return;
       rememberSidebarPointerPosition(event);
+      const target = event.target;
+      if (sidebarCollapsed && sidebarDrawerPhase === "open" && hoverLayerCount === 0
+        && (event.type === "pointerdown" || event.type === "mousedown")
+        && target instanceof Element
+        && !appShellRef.current?.querySelector(sidebarSelector)?.contains(target)
+        && !target.closest(SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR)) {
+        closeSidebarDrawer();
+        return;
+      }
       syncSidebarDrawerHover();
     }
+    window.addEventListener("focusin", syncSidebarDrawerHover);
     window.addEventListener("pointermove", handlePointerEvent, true);
     window.addEventListener("pointerover", handlePointerEvent, true);
     window.addEventListener("pointerdown", handlePointerEvent, true);
@@ -345,6 +374,7 @@ export function useSidebarDrawerState({
     window.addEventListener("mouseover", handlePointerEvent, true);
     window.addEventListener("mousedown", handlePointerEvent, true);
     return () => {
+      window.removeEventListener("focusin", syncSidebarDrawerHover);
       window.removeEventListener("pointermove", handlePointerEvent, true);
       window.removeEventListener("pointerover", handlePointerEvent, true);
       window.removeEventListener("pointerdown", handlePointerEvent, true);
@@ -352,7 +382,8 @@ export function useSidebarDrawerState({
       window.removeEventListener("mouseover", handlePointerEvent, true);
       window.removeEventListener("mousedown", handlePointerEvent, true);
     };
-  }, [rememberSidebarPointerPosition, syncSidebarDrawerHover]);
+  }, [appShellRef, sidebarSelector, sidebarCollapsed, sidebarDrawerPhase, hoverLayerCount,
+    closeSidebarDrawer, rememberSidebarPointerPosition, syncSidebarDrawerHover]);
 
   useLayoutEffect(() => {
     const sidebarWasCollapsed = sidebarWasCollapsedRef.current;
@@ -493,12 +524,12 @@ export function useSidebarDrawerState({
     if (!resizingSidebar || !sidebarCollapsed) {
       return;
     }
-    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
+    const sidebar = appShellRef.current?.querySelector(sidebarSelector);
     const active = document.activeElement;
     if (sidebar && active instanceof HTMLElement && sidebar.contains(active)) {
       active.blur();
     }
-  }, [appShellRef, resizingSidebar, sidebarCollapsed]);
+  }, [appShellRef, resizingSidebar, sidebarCollapsed, sidebarSelector]);
 
   useEffect(
     () => () => {

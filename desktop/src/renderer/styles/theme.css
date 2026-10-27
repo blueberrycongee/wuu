@@ -15,33 +15,34 @@
  */
 
 :root[data-theme="dark"] {
+  --workbench-canvas-bg: var(--paper);
   --settings-canvas: var(--paper);
   --settings-card: var(--surface-1);
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
-  --gray-0: #1c1c1d;
-  --gray-50: #252526;
-  --gray-100: #2b2b2d;
-  --gray-150: #323234;
-  --gray-200: #39393b;
-  --gray-250: #3e3e40;
-  --gray-300: #474749;
-  --gray-350: #535355;
-  --gray-400: #626264;
-  --gray-450: #757577;
-  --gray-500: #8a8a8c;
-  --gray-550: #97979a;
-  --gray-600: #a6a6a9;
-  --gray-650: #b4b4b6;
-  --gray-700: #c2c2c4;
-  --gray-800: #d4d4d7;
-  --gray-900: #e7e7e9;
+  --gray-0: #191a1c;
+  --gray-50: #222326;
+  --gray-100: #2a2b2e;
+  --gray-150: #333438;
+  --gray-200: #3d3e43;
+  --gray-250: #414247;
+  --gray-300: #4b4c51;
+  --gray-350: #5a5b60;
+  --gray-400: #6e6f74;
+  --gray-450: #808186;
+  --gray-500: #919297;
+  --gray-550: #a0a1a5;
+  --gray-600: #b0b1b5;
+  --gray-650: #bfc0c4;
+  --gray-700: #d0d1d4;
+  --gray-800: #e2e3e5;
+  --gray-900: #f3f3f4;
 
   /* --- Ink scale: light text on dark paper --- */
-  --ink-strong: var(--wuu-color-text, var(--gray-900));
-  --ink: var(--wuu-color-text, var(--gray-800));
-  --ink-soft: var(--wuu-color-text-muted, var(--gray-650));
+  --ink-strong: var(--theme-override-color-text, var(--gray-900));
+  --ink: var(--theme-override-color-text, var(--gray-800));
+  --ink-soft: var(--theme-override-color-text-muted, var(--gray-650));
   --wuu-color-live-highlight: rgba(198, 202, 205, 0.36);
   --ink-tertiary: color-mix(in srgb, var(--ink-soft) 95%, var(--paper));
   --ink-muted: color-mix(in srgb, var(--ink-soft) 88%, var(--paper));
@@ -50,17 +51,19 @@
   /* --- Paper & surfaces: a monotonic elevation ladder. The previous dark
      surface-1 was darker than the canvas, so cards and section headers either
      disappeared into the page or became near-black bands. --- */
-  --paper: var(--wuu-color-canvas, var(--gray-0));
-  --surface-1: var(--wuu-color-surface, var(--gray-50));
-  --surface-2: var(--wuu-color-surface-muted, var(--gray-100));
-  --surface-3: var(--wuu-color-surface-elevated, var(--gray-150));
-  --surface-4: var(--wuu-color-surface-elevated, var(--gray-200));
+  --paper: var(--theme-override-color-canvas, var(--gray-0));
+  --wuu-color-canvas: var(--gray-0);
+  --surface-raised: var(--theme-override-color-surface-elevated, var(--surface-1));
+  --surface-1: var(--theme-override-color-surface, var(--gray-50));
+  --surface-2: var(--theme-override-color-surface-muted, var(--gray-100));
+  --surface-3: var(--theme-override-color-surface-elevated, var(--gray-150));
+  --surface-4: var(--theme-override-color-surface-elevated, var(--gray-200));
 
-  --hairline: var(--wuu-color-border-subtle, var(--gray-250));
-  --hairline-strong: var(--wuu-color-border-strong, var(--gray-350));
-  --control-boundary: var(--wuu-color-border-strong, var(--gray-450));
-  --slider-thumb-bg: var(--wuu-color-text, var(--gray-900));
-  --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
+  --hairline: var(--theme-override-color-border-subtle, var(--gray-250));
+  --hairline-strong: var(--theme-override-color-border-strong, var(--gray-350));
+  --control-boundary: var(--theme-override-color-border-strong, var(--gray-450));
+  --slider-thumb-bg: var(--theme-override-color-text, var(--gray-900));
+  --selection-surface: var(--theme-override-color-surface-elevated, var(--gray-200));
   --placeholder-ink: var(--gray-600);
   --field-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
@@ -79,9 +82,18 @@
   --shadow-color-medium: rgba(0, 0, 0, 0.2);
   --shadow-color-strong: rgba(0, 0, 0, 0.24);
   --shadow-color-heavy: rgba(0, 0, 0, 0.3);
-  --shadow-soft: var(--wuu-elevation-panel, inset 0 0 0 0.5px var(--shadow-inset-color));
-  --shadow-card: var(--wuu-elevation-panel, var(--shadow-inset));
-  --shadow-composer: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-soft: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 1px 3px var(--shadow-color-medium));
+  --shadow-card: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 3px 10px -4px var(--shadow-color-strong));
+  --shadow-message: var(
+    --wuu-elevation-panel,
+    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
+    0 1px 2.5px color-mix(in srgb, var(--shadow-color-medium) 75%, transparent)
+  );
+  --shadow-composer: var(
+    --wuu-elevation-panel,
+    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
+    0 3px 9px -3px color-mix(in srgb, var(--shadow-color-medium) 80%, transparent)
+  );
   --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
   --shadow-pop: var(
     --wuu-elevation-overlay,
@@ -112,7 +124,8 @@
   --danger-border: #562f29;
   --info: var(--wuu-color-info, #419cff);
 
-  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-1));
+  --surface-floating: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  --menu-bg: var(--theme-override-color-surface-elevated, var(--surface-floating));
   --menu-hover: var(--surface-2);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
@@ -161,21 +174,21 @@
   --hljs-tag: var(--wuu-syntax-tag, #e39aa0);
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
-  --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
-  --workspace-tab-active-bg: var(--surface-3);
+  --codex-runtime-trigger-icon: var(--theme-override-color-text-muted, #8f959a);
+  --workspace-tab-active-bg: var(--selection-surface);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-surface-bg: var(--surface-1);
-  --composer-textarea-disabled: var(--wuu-color-text-muted, #757b78);
-  --composer-project-menu-icon: var(--wuu-color-text-muted, #9aa0a5);
+  --composer-surface-bg: var(--surface-raised);
+  --composer-textarea-disabled: var(--theme-override-color-text-muted, #757b78);
+  --composer-project-menu-icon: var(--theme-override-color-text-muted, #9aa0a5);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #e2a04a);
   --composer-context-meter-tooltip-divider: var(--wuu-border-subtle, rgba(228, 232, 235, 0.1));
-  --context-meter-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --context-meter-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
+  --context-meter-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
+  --context-meter-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --context-meter-tooltip-shadow: var(--shadow-card);
-  --token-gauge-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --token-gauge-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
+  --token-gauge-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
+  --token-gauge-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --token-gauge-tooltip-shadow: var(--shadow-card);
 
   /* environment.css */
@@ -208,15 +221,14 @@
 
   /* workbench.css — host primitives still resolve through public theme
      tokens, so extension themes remain authoritative. */
-  --plugin-ui-panel-bg: var(--wuu-color-surface, var(--surface-1));
-  --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
+  --plugin-ui-panel-bg: var(--theme-override-color-surface, var(--surface-1));
+  --plugin-ui-card-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
 
   /* sidebar.css */
-  /* The rail sits below the canvas, as the light rail does, so
-     navigation recedes behind the reading surface. Derived from the canvas
-     so extension canvases keep the relationship. Opaque fill prevents
-     native wallpaper and browser backing surfaces from changing contrast. */
-  --sidebar-material-fill: color-mix(in oklab, var(--paper) 90%, black);
+  /* Keep the default frame independent of content themes. Opaque fill
+     prevents native wallpaper and browser backing surfaces from changing contrast. */
+  --sidebar-material-fill: #0d0e10;
+  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--selection-surface));
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);
@@ -229,24 +241,22 @@
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.05);
-  --sidebar-project-loading-notch: rgba(228, 232, 235, 0.22);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(240, 112, 95, 0.15);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-6);
-  --sidebar-thread-spinner-notch: rgba(228, 232, 235, 0.22);
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.08);
 
   /* turns.css — conversation body, process fold, waiting animation. */
   --turn-collapsed-focus-ring: var(--focus-ring);
   --message-copy-bg: rgba(38, 42, 46, 0.85);
   --message-file-bg: rgba(38, 42, 46, 0.9);
-  --message-file-fg: var(--wuu-color-text, var(--gray-800));
+  --message-file-fg: var(--theme-override-color-text, var(--gray-800));
   --reasoning-stream-cursor-color: var(--gray-550);
-  --turn-process-entry-color: var(--wuu-color-text-muted, var(--gray-600));
+  --turn-process-entry-color: var(--theme-override-color-text-muted, var(--gray-600));
   --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-700);
-  --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-650));
-  --activity-detail-color: var(--wuu-color-text-muted, #989ea3);
+  --activity-toggle-hover-color-alt: var(--theme-override-color-text-muted, var(--gray-650));
+  --activity-detail-color: var(--theme-override-color-text-muted, #989ea3);
   --diff-insert-color: var(--success);
   --diff-delete-color: var(--danger);
   --message-flow-card-bg: var(--surface-1);
@@ -255,14 +265,14 @@
   --message-flow-card-hover-bg: var(--surface-2);
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
-  --rich-blockquote-color: var(--wuu-color-text-muted, #a3a9ae);
+  --rich-blockquote-color: var(--theme-override-color-text-muted, #a3a9ae);
   --rich-rule-color: var(--wuu-border-subtle, #33383d);
-  --pre-text-color: var(--wuu-color-text, #ccd1d5);
-  --system-line-marker-color: var(--wuu-color-text-muted, #565c62);
+  --pre-text-color: var(--theme-override-color-text, #ccd1d5);
+  --system-line-marker-color: var(--theme-override-color-text-muted, #565c62);
   --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
   --empty-home-action-border-hover: var(--wuu-border-strong, var(--hairline-strong));
-  --empty-home-action-icon-color: var(--wuu-color-text-muted, #8b9196);
-  --project-empty-content-color: var(--wuu-color-text-muted, #989ea3);
+  --empty-home-action-icon-color: var(--theme-override-color-text-muted, #8b9196);
+  --project-empty-content-color: var(--theme-override-color-text-muted, #989ea3);
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: #24282c;
   --diff-insert-bg: color-mix(in srgb, var(--success) 12%, transparent);
@@ -275,18 +285,18 @@
   --shell-session-tab-status-running-notch: rgba(228, 232, 235, 0.22);
   --shell-session-tab-pending-count-bg: rgba(228, 232, 235, 0.12);
   --shell-session-tab-active-pending-count-bg: rgba(228, 232, 235, 0.16);
-  --shell-todo-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --shell-todo-card-border: var(--wuu-color-border-subtle, var(--hairline));
-  --shell-todo-card-ink: var(--wuu-color-text, var(--ink-strong));
-  --shell-todo-card-soft: var(--wuu-color-text, var(--ink));
-  --shell-todo-card-muted: var(--wuu-color-text-muted, var(--ink-tertiary));
-  --conversation-floating-surface-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --conversation-floating-surface-border: var(--wuu-color-border-subtle, var(--hairline));
-  --conversation-floating-surface-hover-bg: var(--wuu-color-surface, var(--surface-2));
-  --conversation-floating-surface-hover-border: var(--wuu-color-border-strong, var(--hairline-strong));
+  --shell-todo-card-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
+  --shell-todo-card-border: var(--theme-override-color-border-subtle, var(--hairline));
+  --shell-todo-card-ink: var(--theme-override-color-text, var(--ink-strong));
+  --shell-todo-card-soft: var(--theme-override-color-text, var(--ink));
+  --shell-todo-card-muted: var(--theme-override-color-text-muted, var(--ink-tertiary));
+  --conversation-floating-surface-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
+  --conversation-floating-surface-border: var(--theme-override-color-border-subtle, var(--hairline));
+  --conversation-floating-surface-hover-bg: var(--theme-override-color-surface, var(--surface-2));
+  --conversation-floating-surface-hover-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --conversation-floating-surface-focus: var(--focus-ring);
-  --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 6%, transparent);
-  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 20%, transparent);
+  --shell-jump-progress-step-bg: color-mix(in srgb, var(--theme-override-color-text, #e4e8eb) 6%, transparent);
+  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--theme-override-color-text, #e4e8eb) 20%, transparent);
 
   color-scheme: dark;
 }

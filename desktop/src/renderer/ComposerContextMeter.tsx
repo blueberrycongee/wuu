@@ -19,6 +19,8 @@ import { ContextUsageRing } from "./ContextUsageRing";
 import { formatCurrentNumber, translateCurrent as translate, useI18n } from "./i18n";
 
 type ComposerContextMeterProps = {
+  inToolRail?: boolean;
+  compact?: boolean;
   // Pass the latest per-turn usage snapshot from AppState. The component
   // hides entirely when no context ceiling is known yet (e.g. before the
   // first turn finishes, or for an unknown model with no limit data).
@@ -49,6 +51,8 @@ function fillColor(level: FillLevel): string {
 
 export function ComposerContextMeter({
   usage,
+  inToolRail = false,
+  compact = inToolRail,
 }: ComposerContextMeterProps): JSX.Element | null {
   const { t } = useI18n();
   const tooltipID = useId();
@@ -80,7 +84,7 @@ export function ComposerContextMeter({
   return (
     <div
       ref={anchorRef}
-      className="composer-context-meter"
+      className={`composer-context-meter${compact ? " is-compact" : ""}`}
       tabIndex={0}
       role="status"
       aria-label={ariaLabel}
@@ -96,14 +100,16 @@ export function ComposerContextMeter({
         data-fill={level}
         style={{ color: ringColor }}
       />
-      <span className="composer-context-meter-label">{valueLabel}</span>
+      {compact ? null : <span className="composer-context-meter-label">{valueLabel}</span>}
       {tooltipOpen ? (
         <FloatingMenuPortal
           anchorRef={anchorRef}
           owner="composer-context-meter"
           layer="tooltip"
-          placement="above"
+          placement={inToolRail ? "below" : "above"}
           align="right"
+          crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
+          flip
           offset={8}
           width={TOOLTIP_WIDTH}
         >

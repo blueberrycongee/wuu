@@ -23,7 +23,7 @@ import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./Composer
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { COMPOSER_ACTIONS, type PresentationHost, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../shared/workbench";
+import { type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../shared/workbench";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
@@ -43,6 +43,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -142,7 +143,6 @@ function renderComposer(props: {
   initialized?: InitializeResult;
   readOnly?: boolean;
   onInterrupt?: () => void;
-  onContinue?: () => Promise<void>;
   onSend?: (promptOverride?: string) => void;
   onSteer?: (promptOverride?: string) => void;
   onPasteAttachmentFiles?: (files: File[]) => void;
@@ -249,7 +249,6 @@ function renderComposer(props: {
           onGuideQueuedMessage={props.onGuideQueuedMessage ?? (() => {})}
           onEditQueuedMessage={props.onEditQueuedMessage ?? (() => {})}
           onEditGuideMessage={props.onEditGuideMessage ?? (() => {})}
-          onContinue={props.onContinue}
           onSend={props.onSend ?? (() => {})}
           onSteer={props.onSteer}
           onQueue={props.onQueue}
@@ -337,52 +336,6 @@ describe("attachment picker focus recovery", () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     });
   }
-
-  it("keeps attachment picking usable through composer replacement and unload", async () => {
-    const onPasteAttachmentFiles = vi.fn();
-    renderComposer({ mainConversation: true, prompt: "Keep this draft", onPasteAttachmentFiles });
-    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
-    const click = vi.spyOn(input, "click");
-    let presenterHost: PresentationHost | undefined;
-    try {
-      await act(async () => desktopPluginHost.activateGeneration({
-        pluginId: "composer-attachment-test", generation: "one", register(api) {
-          api.registerPresenter({ id: "replacement", target: "conversation.composer", render: ({ host }) => {
-            presenterHost = host;
-            return <button data-plugin-attachment>Plugin attachment</button>;
-          } });
-        },
-      }));
-      expect(container.querySelector("textarea")).toBeNull();
-      expect(container.querySelector<HTMLInputElement>('input[type="file"]')).toBe(input);
-      expect(presenterHost?.actions).toContain(COMPOSER_ACTIONS.addAttachment);
-      await act(async () => { await presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment); });
-      expect(click).toHaveBeenCalledTimes(1);
-      await settlePicker(input, "cancel");
-      expect(onPasteAttachmentFiles).not.toHaveBeenCalled();
-      for (let pick = 0; pick < 2; pick++) {
-        await act(async () => { await presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment); });
-        await settlePicker(input, "change");
-        expect(input.value).toBe("");
-      }
-      expect(click).toHaveBeenCalledTimes(3);
-      expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(2);
-      expect(onPasteAttachmentFiles.mock.calls[0]?.[0]?.[0]?.name).toBe("sample.pdf");
-      renderComposer({ mainConversation: true, prompt: "Keep this draft", readOnly: true, onPasteAttachmentFiles });
-      await expect(presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment)).rejects.toThrow("read-only");
-      expect(click).toHaveBeenCalledTimes(3);
-      renderComposer({ mainConversation: true, prompt: "Keep this draft", onPasteAttachmentFiles });
-      act(() => desktopPluginHost.unload("composer-attachment-test"));
-      expect(container.querySelector("textarea")).not.toBeNull();
-      expect(container.querySelectorAll('input[type="file"]')).toHaveLength(2);
-      expect(openPicker().input).toBe(input);
-      expect(click).toHaveBeenCalledTimes(4);
-      await settlePicker(input, "change");
-      expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(3);
-    } finally {
-      act(() => desktopPluginHost.unload("composer-attachment-test"));
-    }
-  });
 
   it.each([
     ["main", "change"], ["main", "cancel"], ["split", "change"], ["split", "cancel"],
@@ -1178,6 +1131,7 @@ describe("Composer send control", () => {
 
   it.each(["Enter", "button"])("commits keystrokes with %s while deferred composer chrome is suspended", async (submission) => {
     const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.toolbar", cardinality: "many" }); } });
     const onSend = vi.fn();
     let released = false;
     let release: (() => void) | undefined;
@@ -1198,7 +1152,7 @@ describe("Composer send control", () => {
       pluginId: "slow-composer-chrome",
       generation: "one",
       register(api) {
-        api.registerSlot("composer.toolbar", {
+        api.registerUIContribution({ target: "wuu.default-composer/composer.toolbar",
           id: "slow-toolbar",
           render() {
             return api.react.createElement(SlowToolbar);
@@ -1238,12 +1192,13 @@ describe("Composer send control", () => {
 
   it("does not rerender composer plugin slots for every non-semantic character", async () => {
     const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.toolbar", cardinality: "many" }); } });
     const renderToolbar = vi.fn(() => React.createElement("span", null, "toolbar"));
     await host.activateGeneration({
       pluginId: "composer-toolbar",
       generation: "one",
       register(api) {
-        api.registerSlot("composer.toolbar", {
+        api.registerUIContribution({ target: "wuu.default-composer/composer.toolbar",
           id: "toolbar",
           render: renderToolbar,
         });
@@ -1376,7 +1331,7 @@ describe("Composer send control", () => {
 
   it("updates split completion queue counts, aborts stale requests and preserves unknown counts", async () => {
     const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
-    await desktopPluginHost.activateGeneration({ pluginId: "split-counts", generation: "one", register(api) {
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId: "split-counts", generation: "one", register(api) {
       api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
         observations.push({ context, signal }); return new Promise(() => {});
       } });
@@ -2053,7 +2008,7 @@ describe("Composer send control", () => {
     const picker = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-handoff"]')!;
     expect(container.contains(picker)).toBe(false);
     expect(window.innerHeight - Number.parseFloat(picker.style.bottom)).toBeLessThan(500);
-    expect(container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.textContent).toContain("Grok 4.6");
+    expect(container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.getAttribute("aria-label")).toContain("Grok 4.6");
     measure.mockRestore();
     expect(container.querySelector<HTMLTextAreaElement>('[data-wuu-component="composer-input"]')?.value).toBe("/handoff");
     expect(container.querySelector<HTMLButtonElement>(".composer-send-button")?.disabled).toBe(true);
@@ -2266,7 +2221,7 @@ describe("Composer send control", () => {
     expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
-  it("shows the hero project selector above the input card", () => {
+  it("shows the hero project selector outside the input card", () => {
     renderComposer({
       variant: "hero",
     });
@@ -2371,14 +2326,14 @@ describe("Composer send control", () => {
     expect(selector?.textContent).toContain("对话");
   });
 
-  it("separates auxiliary controls from the send action for responsive collapse", () => {
+  it("keeps attachment and send actions in the editor with runtime controls below", () => {
     renderComposer({
       variant: "dock",
       prompt: "follow up",
     });
 
     const leftGroup = container.querySelector(".composer-bar-left");
-    const rightGroup = container.querySelector(".composer-bar-right");
+    const rightGroup = container.querySelector(".composer-input-actions");
     const sendButton = container.querySelector("button[aria-label=\"发送\"]");
 
     expect(leftGroup).not.toBeNull();
@@ -2387,11 +2342,12 @@ describe("Composer send control", () => {
     // project/cwd control renders in the leading slot anymore.
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
-    expect(leftGroup?.querySelector(".permission-menu-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-footer .permission-menu-anchor")).not.toBeNull();
     // The token-speed gauge is temporarily hidden from the toolbar; flip this
     // back to not.toBeNull() when it is restored.
     expect(rightGroup?.querySelector(".composer-token-gauge")).toBeNull();
-    expect(rightGroup?.querySelector(".codex-runtime-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-footer .codex-runtime-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-editor")?.contains(sendButton)).toBe(true);
     expect(rightGroup?.contains(sendButton)).toBe(true);
   });
 
@@ -2530,7 +2486,7 @@ describe("Composer send control", () => {
     });
 
     const runtimeButton = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(runtimeButton?.textContent).toContain("model-a");
+    expect(runtimeButton?.getAttribute("aria-label")).toContain("model-a");
     expect(runtimeButton?.disabled).toBe(true);
   });
 
@@ -2550,7 +2506,7 @@ describe("Composer send control", () => {
     });
 
     const runtimeButton = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(runtimeButton?.textContent).toContain("model-b");
+    expect(runtimeButton?.getAttribute("aria-label")).toContain("model-b");
     expect(runtimeButton?.disabled).toBe(false);
   });
 
@@ -3122,6 +3078,34 @@ describe("Composer queue strip", () => {
     expect(rows[2]?.querySelector(".composer-queue-index")?.textContent).toBe("3");
   });
 
+  it("keeps uncertain delivery compact while preserving its details, copy and no-redelivery fence", async () => {
+    const onGuideQueuedMessage = vi.fn(), onRemoveQueuedMessage = vi.fn(), onEditQueuedMessage = vi.fn();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      renderComposer({ running: false, queuedMessages: [{ id: "unknown", text: "Keep this exact draft", images: [], files: [], held: true, deliveryUnconfirmed: true }],
+        onGuideQueuedMessage, onRemoveQueuedMessage, onEditQueuedMessage });
+      const status = container.querySelector<HTMLElement>(".composer-pending-preview")!;
+      const row = container.querySelector<HTMLElement>(".composer-queue-row")!;
+      const details = row.getAttribute("aria-description");
+      expect(details).toBeTruthy();
+      expect(status.textContent).not.toBe(details);
+      expect(container.textContent).not.toContain(details);
+      expect(await hoverTooltipText(status)).toBe(details);
+      const copy = row.querySelector<HTMLButtonElement>(".message-copy-button")!;
+      expect(copy.disabled).toBe(false);
+      await act(async () => copy.click());
+      expect(writeText).toHaveBeenCalledWith("Keep this exact draft");
+      const fenced = [...row.querySelectorAll<HTMLButtonElement>("button")].filter(button => button !== copy);
+      expect(fenced).toHaveLength(2);
+      for (const button of fenced) { expect(button.disabled).toBe(true); await act(async () => button.click()); }
+      expect(onGuideQueuedMessage).not.toHaveBeenCalled();
+      expect(onRemoveQueuedMessage).not.toHaveBeenCalled();
+      expect(onEditQueuedMessage).not.toHaveBeenCalled();
+      expect(row.textContent).toContain("Keep this exact draft");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("shows interrupted held work in server order with per-item continue controls", () => {
     const onGuideQueuedMessage = vi.fn();
     renderComposer({
@@ -3359,18 +3343,17 @@ describe("Composer permission menu", () => {
     { mode: "standard", approve_for_me: true },
     { mode: "read_only" },
     { mode: "unconfined" },
-  ])("names the current mode with the same words on the chip and in the menu: %j", (permissions) => {
+  ])("names the current mode on the permission control and in the menu: %j", (permissions) => {
     renderComposer({ accessMenuOpen: true, permissions });
 
-    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    const chip = container.querySelector<HTMLButtonElement>(".permission-menu-anchor button")!;
     expect(chip.disabled).toBe(false);
     const rows = accessRows();
     expect(rows).toHaveLength(4);
     expect(new Set(rows.map(rowLabel)).size).toBe(4);
     const checked = rows.filter((row) => row.getAttribute("aria-checked") === "true");
     expect(checked).toHaveLength(1);
-    expect(chip.textContent).toBe(rowLabel(checked[0]));
-    expect(chip.getAttribute("aria-label")).toContain(chip.textContent);
+    expect(chip.getAttribute("aria-label")).toContain(rowLabel(checked[0]));
     // Each mode explains itself in one secondary line rather than a longer name.
     for (const row of rows) {
       expect(row.querySelector(".select-menu-item-hint")?.textContent).toBeTruthy();
@@ -3682,7 +3665,7 @@ describe("Composer menu keyboard", () => {
 
   it("starts the permission menu on the current mode and closes it with Escape", async () => {
     renderMenuComposer();
-    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    const chip = container.querySelector<HTMLButtonElement>(".permission-menu-anchor button")!;
     await openFrom(chip);
 
     const items = menuItems("composer-access");
@@ -3723,7 +3706,7 @@ describe("Composer menu keyboard", () => {
     expect(document.activeElement).toBe(menu.querySelector("input"));
     // The checked-out branch cannot be chosen again, so the arrows pass it.
     press("ArrowDown");
-    expect(document.activeElement?.getAttribute("title")).toBe("feature/menus");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("feature/menus");
 
     press("Escape");
     expect(document.body.querySelector(".composer-branch-menu")).toBeNull();
@@ -3871,105 +3854,6 @@ describe("ComposerTokenGauge", () => {
 
     const label = container.querySelector(".composer-token-gauge-label");
     expect(label?.textContent).toContain("约 18 tok/s");
-  });
-});
-
-describe("Composer expand button", () => {
-  it("keeps manual expansion through draft replacement and send-clear", () => {
-    const { replacePrompt } = renderStatefulComposer({});
-    const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    act(() => replacePrompt("Replacement draft"));
-    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
-    expect(textarea.value).toBe("Replacement draft");
-    expect(button?.getAttribute("aria-pressed")).toBe("true");
-    act(() => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    expect(textarea.value).toBe("");
-    expect(button?.getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("renders the expand button inside the composer input area", () => {
-    renderComposer({});
-
-    const frame = container.querySelector(".composer-frame");
-    const composer = container.querySelector(".composer");
-    const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-
-    expect(button).not.toBeNull();
-    expect(button?.getAttribute("aria-label")).toBe("展开输入框");
-    expect(button?.getAttribute("aria-pressed")).toBe("false");
-    expect(button?.getAttribute("title")).toBe("展开输入框");
-    expect(button?.parentElement).toBe(composer);
-    expect(frame?.lastElementChild).toBe(composer);
-    expect(button?.querySelector("svg")).not.toBeNull();
-  });
-
-  it("keeps the expand button anchored to the input area when messages are queued", () => {
-    renderComposer({
-      running: true,
-      queuedMessages: [
-        { id: "queue-1", text: "排队时按钮应该跟输入区对齐", images: [], files: [] },
-      ],
-    });
-
-    const pending = container.querySelector(".composer-pending-drawer");
-    const composer = container.querySelector(".composer");
-    const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-
-    expect(pending).not.toBeNull();
-    expect(composer).not.toBeNull();
-    expect(button).not.toBeNull();
-    expect(button?.parentElement).toBe(composer);
-    expect(pending?.contains(button ?? null)).toBe(false);
-  });
-
-  it("toggles the expanded composer state from one click", async () => {
-    renderComposer({});
-    const stack = container.querySelector(".composer-stack");
-    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
-    const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-    expect(stack).not.toBeNull();
-    expect(textarea).not.toBeNull();
-    expect(button).not.toBeNull();
-
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-
-    await act(async () => {
-      await nextAnimationFrame();
-    });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(true);
-    expect(button?.getAttribute("aria-label")).toBe("收起输入框");
-    expect(button?.getAttribute("aria-pressed")).toBe("true");
-    expect(button?.getAttribute("title")).toBe("收起输入框");
-    expect(document.activeElement).toBe(textarea);
-
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(false);
-    expect(button?.getAttribute("aria-label")).toBe("展开输入框");
-    expect(button?.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("disables expansion and explains send restrictions in read-only mode", () => {
-    renderComposer({ readOnly: true, disabledReason: "Child conversations are read-only" });
-    const stack = container.querySelector(".composer-stack");
-    const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-    expect(button).not.toBeNull();
-    expect(button?.disabled).toBe(true);
-    expect(button?.getAttribute("title")).toBe("只读对话不可展开");
-    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBe("Child conversations are read-only");
-    expect(stack?.classList.contains("is-expanded")).toBe(false);
-    renderComposer({ disabledReason: "Child conversations are read-only" });
-    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 });
 
@@ -4204,22 +4088,17 @@ describe("composer drag and drop", () => {
   });
 });
 
-
-it("continues empty idle input once without sending or clearing a draft", async () => {
-  let finish!: () => void;
-  const onContinue = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-  const onSend = vi.fn();
-  const setPrompt = vi.fn();
-  renderComposer({ onContinue, onSend, setPrompt });
-  const button = container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!;
-  expect(button.disabled).toBe(false);
-  await act(async () => { button.click(); button.click(); });
-  expect(onContinue).toHaveBeenCalledOnce();
-  expect(onSend).not.toHaveBeenCalled();
-  expect(setPrompt).not.toHaveBeenCalled();
-  expect(button.disabled).toBe(true);
-  await act(async () => { finish(); });
-  renderComposer({ prompt: "new instruction", onContinue, onSend, setPrompt });
-  act(() => { button.click(); });
-  expect(onSend).toHaveBeenCalledWith("new instruction");
+it("retains a draft while public admission is pending and allows retry after rejection", async () => {
+  let settle!: (accepted: boolean) => void;
+  const onSend = vi.fn(() => new Promise<boolean>(resolve => { settle = resolve; }));
+  renderComposer({ prompt: "Keep this draft", onSend });
+  const pressEnter = () => container.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  act(() => { pressEnter(); pressEnter(); });
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Keep this draft");
+  await act(async () => { settle(false); });
+  act(pressEnter);
+  expect(onSend).toHaveBeenCalledTimes(2);
+  await act(async () => { settle(true); });
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
 });

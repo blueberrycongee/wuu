@@ -8,9 +8,52 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
+
+func TestAppendTurnBoundsPreviewsWithoutExposingPartialSecrets(t *testing.T) {
+	for name, input := range map[string]string{
+		"value crosses preview boundary": strings.Repeat("x", finalAnswerPreviewBytes-20) + " password=private-value" + strings.Repeat("x", 2000),
+		"long secret value":              "API_KEY=" + strings.Repeat("private-value", 1000),
+		"redaction expands preview":      strings.Repeat("password=x ", 100),
+		"multibyte boundary":             "x" + strings.Repeat("界", 1000),
+		"short secret":                   "Done 🔒 access_token=private-value",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "trace.jsonl")
+			err := AppendTurn(path, TurnRecord{ThreadID: "thread", TurnID: "turn", Status: "interrupted"}, FinalRecord{
+				Status: "interrupted", FinalAnswerPreview: input, Error: input,
+			}, nil, nil, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := ReadEvents(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var final FinalRecord
+			if err := json.Unmarshal(events[len(events)-1].Data, &final); err != nil {
+				t.Fatal(err)
+			}
+			if final.Status != "interrupted" {
+				t.Fatalf("terminal trace status = %q", final.Status)
+			}
+			for _, preview := range []string{final.FinalAnswerPreview, final.Error} {
+				if strings.Contains(preview, "private") || strings.Contains(preview, "password=x") {
+					t.Fatalf("trace exposes a partial secret: %q", preview)
+				}
+				if name != "multibyte boundary" && !strings.Contains(preview, "[REDACTED]") {
+					t.Fatalf("trace omitted redaction: %q", preview)
+				}
+				if !utf8.ValidString(preview) || strings.ContainsRune(preview, utf8.RuneError) || len(preview) > finalAnswerPreviewBytes+len("...[truncated]") {
+					t.Fatalf("invalid or unbounded preview: %q", preview)
+				}
+			}
+		})
+	}
+}
 
 func TestAppendTurnWritesAgentFriendlyEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session-trace.jsonl")

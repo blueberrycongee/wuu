@@ -1,12 +1,14 @@
 import { readComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
+import { startFocusModality } from "./FocusModality";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
  * target has restored its presentation and scroll position.
  */
 import { act, Fragment, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { streamTextStore } from "./StreamText";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   InitializeResult,
   RuntimeContext,
@@ -21,6 +23,8 @@ vi.mock("./FeatureFlags", async (importOriginal) => ({
   ...await importOriginal<typeof import("./FeatureFlags")>(),
   ENABLE_ENVIRONMENT_PANEL: true,
 }));
+
+vi.mock("./WebWorkspace", () => ({ WebWorkspacePanel: () => <div data-testid="native-website-probe" /> }));
 
 const turnListFixture = vi.hoisted(() => ({ renderTurns: false }));
 
@@ -39,6 +43,7 @@ vi.mock("./ConversationTurnList", () => ({
       data-thread-id={threadID}
       data-turn-count={turns.length}
       data-latest-turn-status={turns.at(-1)?.status}
+      data-latest-turn-error={turns.at(-1)?.error?.message}
       data-latest-user-text={turns.at(-1)?.items?.find(item => item.type === "user_message")?.text}
       data-latest-agent-text={turns.at(-1)?.items?.find(item => item.type === "agent_message")?.text}
     >
@@ -68,10 +73,12 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as ComposerMessages from "./ComposerMessages";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
+import { ConfirmDialogHost } from "./ConfirmDialog";
+import { ConversationPresentationBoundary } from "./ConversationPresentationTransition";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -225,11 +232,11 @@ function installWindowStubs(): void {
       matches: false,
       media: query,
       onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => {},
     })),
   });
 }
@@ -257,6 +264,7 @@ function installWuuApi(): {
     },
   });
   const api = {
+    reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
@@ -319,11 +327,11 @@ function activeThreadProbe(): HTMLElement | null {
   return container.querySelector('[data-testid="turn-list-probe"]');
 }
 
-function visibleRuntimeModel(): string {
-  return (
-    container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")
-      ?.textContent ?? ""
-  );
+function accessibleRuntimeModel(): string {
+  // The tool rail renders an icon-only trigger; its accessible name still
+  // exposes the selected engine, model, and effort.
+  return container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")
+    ?.getAttribute("aria-label") ?? "";
 }
 
 function mainComposerTextarea(): HTMLTextAreaElement {
@@ -408,28 +416,89 @@ async function pickPendingAttachment(owner: Element, extension: "pdf" | "png" | 
 const mainComposerSelector = '[data-main-conversation-composer="dock"]';
 const attachmentCardSelector = ".composer-attachment-card";
 
+async function clickTarget(button: HTMLButtonElement | null | undefined): Promise<void> {
+  expect(button).toBeTruthy();
+  await act(async () => { button!.click(); });
+  await flushAsync();
+}
+
 describe("session tab switch latency", () => {
   beforeEach(() => {
     installWindowStubs();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
     turnListFixture.renderTurns = false;
     serverEventHandlers = [];
+    for (const thread of [threadA(), threadB()]) for (const turn of thread.turns) streamTextStore.clearTurn(turn.id);
     container = document.createElement("div");
     document.body.appendChild(container);
     window.localStorage.clear();
     window.sessionStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     act(() => {
       root?.unmount();
     });
     root = null;
+    await new Promise(resolve => window.setTimeout(resolve, 0));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it.each(["composer", "sidebar"])("captures live chrome before a new-page workspace switch from %s", async entry => {
+    installWuuApi();
+    const projects = ["alpha", "beta"].map(id => ({ id, name: id, path: "/tmp/" + id,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }));
+    let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: projects[0].path };
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn(async id => {
+      context = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
+      return { projects, active_context: context };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
+    const capture = deferred<never>();
+    window.wuu.capturePresentationFrame = vi.fn(() => capture.promise);
+    await act(async () => { root = createRoot(container); root.render(
+      <ConversationPresentationBoundary binding={1} retiring={false} failed={false}>
+        {await createDefaultApplicationTestView()}
+      </ConversationPresentationBoundary>); });
+    await flushAsync();
+    if (entry === "composer") {
+      await clickTarget(container.querySelector<HTMLButtonElement>('.composer-project-control button[aria-haspopup="menu"]'));
+      await clickTarget(document.querySelector<HTMLButtonElement>('.composer-project-menu button[aria-label="beta"]'));
+    } else {
+      const group = Array.from(container.querySelectorAll(".project-row-name")).find(label => label.textContent === "beta")!.closest(".project-group")!;
+      await clickTarget(group.querySelector<HTMLButtonElement>(".project-row-new-thread"));
+    }
+    expect(window.wuu.capturePresentationFrame).toHaveBeenCalledOnce();
+    expect(window.wuu.selectProject).not.toHaveBeenCalled();
+    await act(async () => capture.reject(new Error("Synthetic optional capture failure")));
+    await flushAsync();
+    expect(window.wuu.selectProject).toHaveBeenCalledExactlyOnceWith("beta");
+    expect(mainComposerTextarea().disabled).toBe(false);
+  });
+
+  it("defers automatic model refresh until navigation is ready and suppresses focus errors during switching", async () => {
+    const { resumeThread } = installWuuApi();
+    window.wuu.listEngines = vi.fn().mockResolvedValue({ engines: [] });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
+    await flushAsync();
+    await clickTarget(threadRowButton("session switch A"));
+    vi.mocked(window.wuu.listEngines).mockClear();
+    const pending = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => pending.promise);
+    await clickTarget(threadRowButton("session switch B"));
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(window.wuu.listEngines).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("Composer runtime owner is no longer active");
+    await act(async () => { pending.resolve({ thread: threadB() }); });
+    await flushAsync();
+    expect(window.wuu.listEngines).toHaveBeenCalled();
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
   });
 
   it.each([false, true, "error"] as const)("waits for confirmed Git status before automatically opening workspace info (repository=%s)", async (isRepository) => {
@@ -439,7 +508,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
     vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(activeSessionTabLabel()).toContain("session switch A");
     expect(window.wuu.gitStatus).toHaveBeenCalled();
@@ -471,7 +540,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
     vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
@@ -495,7 +564,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click(); });
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
@@ -526,7 +595,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
@@ -541,8 +610,8 @@ describe("session tab switch latency", () => {
     await act(async () => { toggle(); });
     await act(async () => { toggle(); });
     slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(slider.min);
-    // Native Home does not emit input/change when the range already shows min.
+    expect(slider.value).toBe(slider.max);
+    // The reopened picker retains the optimistic request; Home supersedes it.
     await act(async () => {
       slider.focus();
       slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
@@ -562,7 +631,7 @@ describe("session tab switch latency", () => {
     source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
     threadsByID.set(threadAID, source);
     turnListFixture.renderTurns = true;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     // Cache B before requesting the child, then navigate again while its
     // next resume is behind the child in the IPC stream.
@@ -607,13 +676,13 @@ describe("session tab switch latency", () => {
     source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
     threadsByID.set(threadAID, source);
     turnListFixture.renderTurns = true;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     act(() => setMainComposerPrompt("unsent primary draft"));
     expect(mainComposerTextarea().value).toBe("unsent primary draft");
     const pending = deferred<{ thread: Thread }>();
     if (delayed) resumeThread.mockImplementationOnce(() => pending.promise);
-    await act(async () => { container.querySelector<HTMLButtonElement>(".session-message-source")!.click(); });
+    await act(async () => { requestOpenThreadInSplit(child.id); });
     if (delayed) {
       act(() => setMainComposerPrompt("newer primary draft"));
       await act(async () => { emitNotification("thread/resumed", { thread: child }); pending.resolve({ thread: child }); });
@@ -632,7 +701,7 @@ describe("session tab switch latency", () => {
     const first = { ...threadB(), id: "first-child", preview: "first child" };
     const second = { ...threadB(), id: "second-child", preview: "second child" };
     threadsByID.set(first.id, first); threadsByID.set(second.id, second);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const firstRead = deferred<{ thread: Thread }>();
     const secondRead = deferred<{ thread: Thread }>();
@@ -664,7 +733,7 @@ describe("session tab switch latency", () => {
     const { threadsByID } = installWuuApi();
     const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
     threadsByID.set(third.id, third);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { threadRowButton("session switch B")!.click(); });
     await flushAsync();
@@ -698,7 +767,7 @@ describe("session tab switch latency", () => {
     const recovered = readComposerDraftRecovery().tabs.filter(tab => tab.kind === "thread");
     expect(recovered.find(tab => tab.threadID === threadAID)?.prompt).toBe("new draft for A");
     expect(recovered.find(tab => tab.threadID === threadBID)?.prompt).toBe("new draft for B");
-    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     expect(mainComposerTextarea().value).toBe("new draft for B");
   });
@@ -711,7 +780,7 @@ describe("session tab switch latency", () => {
     turnListFixture.renderTurns = true;
     const fork = deferred<{ thread: Thread }>();
     window.wuu.forkThread = vi.fn(() => fork.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const forkButton = container.querySelector<HTMLButtonElement>(
       '.agent-message-actions [aria-label="分叉"]');
@@ -739,7 +808,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const archive = deferred<{ thread: Thread }>();
     window.wuu.archiveThread = vi.fn(() => archive.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     await attachment.finish();
@@ -765,7 +834,7 @@ describe("session tab switch latency", () => {
     const { threadsByID, resumeThread, startTurn } = installWuuApi();
     const third = { ...threadB(), id: "cold-third", preview: "cold third" };
     threadsByID.set(third.id, third);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     if (split) await act(async () => { requestOpenThreadInSplit(threadBID); });
     const ownerID = split ? threadBID : threadAID;
@@ -794,7 +863,7 @@ describe("session tab switch latency", () => {
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
     const { startTurn } = installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, extension);
     await act(async () => { threadRowButton("session switch B")!.click(); });
@@ -814,7 +883,7 @@ describe("session tab switch latency", () => {
 
   it.each(["pdf", "png"] as const)("finishes a %s after its draft moves from a split pane to the main composer", async (extension) => {
     installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
     const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadAID}"]`)!, extension);
@@ -828,7 +897,7 @@ describe("session tab switch latency", () => {
 
   it.each(["remove", "send", "failure"] as const)("settles a pending PDF without losing removal, send, or failure state (%s)", async (action) => {
     const { startTurn } = installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
@@ -852,9 +921,9 @@ describe("session tab switch latency", () => {
     else expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
-  it.each(["pdf", "png"] as const)("does not revive a closed split draft when its %s finishes", async (extension) => {
+  it.each(["pdf", "png"] as const)("restores a closed split draft with its completed %s attachment", async (extension) => {
     installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
     const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadBID}"]`)!, extension);
@@ -862,16 +931,25 @@ describe("session tab switch latency", () => {
     await attachment.finish();
     expect(container.querySelector(attachmentCardSelector)).toBeNull();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
-    expect(container.querySelector(attachmentCardSelector)).toBeNull();
+    const primary = container.querySelector(`.conversation-split-pane[data-thread-id="${threadAID}"]`)!;
+    const restored = container.querySelector(`.conversation-split-pane[data-thread-id="${threadBID}"]`)!;
+    expect(primary.querySelector(attachmentCardSelector)).toBeNull();
+    expect(restored.querySelectorAll(attachmentCardSelector)).toHaveLength(1);
+    expect(restored.querySelector(".composer-attachment-preparing, .composer-attachment-failed")).toBeNull();
+    if (extension === "png") {
+      expect(restored.querySelector("img")?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
+    } else {
+      expect(restored.querySelector(attachmentCardSelector)?.textContent).toContain("A-only.pdf");
+    }
   });
 
-  it.each(["queue", "steer"] as const)("waits for pending PDF bytes before %s without refilling the sent draft", async (action) => {
+  it.each(["queue", "steer"] as const)("retains a pending PDF through %s preparation until admission is acknowledged", async (action) => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, runningThreadA());
-    const submit = vi.fn(async () => ({ queued: { id: "queued-pdf", thread_id: threadAID }, turn_id: threadA().turns[0].id }));
+    const submit = vi.fn(async (...args) => ({ queued: { id: args[action === "queue" ? 3 : 4], thread_id: threadAID }, turn_id: threadA().turns[0].id }));
     window.wuu.queueTurn = submit;
     window.wuu.steerTurn = submit;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     await act(async () => {
@@ -884,6 +962,11 @@ describe("session tab switch latency", () => {
     expect(args[0]).toBe(threadAID);
     expect(args[action === "queue" ? 4 : 5]).toEqual([{ media_type: "application/pdf", filename: "A-only.pdf", data: attachment.data }]);
     expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    await act(async () => { emitNotification("item/completed", {
+      thread_id: threadAID, turn_id: runningThreadA().turns.at(-1)!.id,
+      item: { id: "accepted-pdf", source_id: args[action === "queue" ? 3 : 4], type: "user_message", status: "completed", text: "" },
+    }); });
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
   it("keeps pending creation visible and stoppable after a background list refresh", async () => {
@@ -892,7 +975,7 @@ describe("session tab switch latency", () => {
     const creation = deferred<{ thread: Thread }>();
     window.wuu.startThread = vi.fn(() => creation.promise);
     window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { setMainComposerPrompt("first pending query"); });
     await act(async () => { mainComposerSendButton().click(); });
@@ -908,7 +991,7 @@ describe("session tab switch latency", () => {
       mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
-    expect(mainComposerTextarea().value).toBe("");
+    expect(mainComposerTextarea().value).toBe("queued follow-up");
     await act(async () => { setMainComposerPrompt("newer draft"); });
     await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(threadRowButton("first pending query")).toBeUndefined();
@@ -930,20 +1013,28 @@ describe("session tab switch latency", () => {
     expect(threadRowButton("未命名对话")).toBeUndefined();
   });
 
-  it.each(["top", "workspace"])("keeps pending drafts separate when starting another conversation from %s", async (entry) => {
+  it.each([
+    { entry: "top", newerDraft: false },
+    { entry: "workspace", newerDraft: false },
+    { entry: "workspace", newerDraft: true },
+  ])("keeps pending drafts separate when starting another conversation from $entry (newer draft=$newerDraft)", async ({ entry, newerDraft }) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
-    startTurn.mockImplementation(async (threadID: string, text: string) => ({
-      turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
-        { id: `user-${threadID}`, type: "user_message", text, status: "completed" },
-      ] },
-    }));
+    window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
+    const admissionA = deferred<void>();
+    startTurn.mockImplementation(async (threadID: string, text: string, _images, _files, _document, _contexts, _parts, _settings, clientID: string) => {
+      if (threadID === threadAID) await admissionA.promise;
+      return { turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
+        { id: `user-${threadID}`, source_id: clientID, type: "user_message", text, status: "completed" },
+      ] } };
+    });
     const first = deferred<{ thread: Thread }>();
     const second = deferred<{ thread: Thread }>();
     const rename = deferred<{ thread: Thread }>();
     window.wuu.renameThread = vi.fn(() => rename.promise);
     window.wuu.startThread = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.click(); });
     const titleInput = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
@@ -963,40 +1054,84 @@ describe("session tab switch latency", () => {
     expect(threadRowButton("pending A")).toBeDefined();
     expect(threadRowButton("pending B")).toBeDefined();
     await act(async () => { threadRowButton("pending A")!.click(); });
-    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    expect(mainComposerSendButton().getAttribute("data-wuu-state")).toBe("submitting");
     await act(async () => { second.resolve({ thread: { ...threadB(), preview: "", turns: [] } }); });
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn.mock.calls[0].slice(0, 2)).toEqual([threadBID, "pending B"]);
-    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    expect(mainComposerSendButton().getAttribute("data-wuu-state")).toBe("submitting");
     const created = { ...threadA(), preview: "", turns: [] };
     await act(async () => { first.resolve({ thread: created }); });
     expect(window.wuu.renameThread).toHaveBeenCalledWith(threadAID, "Named conversation A");
     // The creation notification may arrive while persisting the draft name.
     // It must not put a second row beside the still-pending first send.
     await act(async () => { emitNotification("thread/started", { thread: created }); });
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    // Recent activity mirrors workspace rows; neither list may duplicate a
+    // pending conversation when its server identity arrives.
+    for (const selector of [".project-section", "[data-sidebar-recents]"]) {
+      const rows = container.querySelectorAll(`${selector} .thread-row-main`);
+      expect(rows).toHaveLength(2);
+      expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
+    }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    // Naming and identity binding are not send admission. A stays in its own
+    // waiting draft; B's accepted turn must not appear in this conversation.
+    expect(activeThreadProbe()?.dataset.latestUserText).toBeUndefined();
+    expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe("0");
+    expect(mainComposerTextarea().value).toBe("pending A");
     expect(startTurn).toHaveBeenCalledTimes(1);
     if (entry === "workspace") {
-      await act(async () => { container.querySelector<HTMLButtonElement>('.composer-stop-button')!.click(); });
-      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("interrupted");
+      if (newerDraft) await act(async () => { setMainComposerPrompt("newer A draft"); });
+      await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      expect(mainComposerTextarea().value).toBe(newerDraft ? "newer A draft" : "pending A");
     } else {
       await act(async () => { emitNotification("thread/updated", {
         thread: { ...created, title: "Newer conversation name" },
       }); });
     }
+    // Force foreground recovery captured before the newer title notification.
+    // This fixture has no resume snapshot for either pending creation.
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     await act(async () => {
       if (entry === "workspace") rename.reject(new Error("Rename unavailable"));
       else rename.resolve({ thread: { ...created, title: "Named conversation A" } });
     });
     expect(startTurn).toHaveBeenCalledTimes(entry === "workspace" ? 1 : 2);
     if (entry === "top") expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
-    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-    expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    // Recent activity mirrors workspace rows; neither list may duplicate a
+    // pending conversation when its server identity arrives.
+    for (const selector of [".project-section", "[data-sidebar-recents]"]) {
+      const rows = container.querySelectorAll(`${selector} .thread-row-main`);
+      expect(rows).toHaveLength(2);
+      expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
+    }
+    if (entry === "workspace") {
+      // Stop precedes admission. Only a newer draft needs a separate recovery
+      // record for the original input; it is interrupted, never an admitted send.
+      expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe(newerDraft ? "1" : "0");
+      expect(activeThreadProbe()?.dataset.latestUserText).toBe(newerDraft ? "pending A" : undefined);
+      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe(newerDraft ? "interrupted" : undefined);
+      expect(activeThreadProbe()?.dataset.latestTurnError).toBeUndefined();
+      expect(mainComposerTextarea().value).toBe(newerDraft ? "newer A draft" : "pending A");
+      expect(mainComposerSendButton().getAttribute("data-wuu-state")).not.toBe("submitting");
+      expect(startTurn.mock.calls.map(call => call[0])).toEqual([threadBID]);
+      expect(window.wuu.deleteThread).not.toHaveBeenCalledWith(threadAID);
+      const saved = readComposerDraftRecovery().tabs.find(tab => tab.kind === "thread" && tab.threadID === threadAID);
+      expect(saved?.kind === "thread" ? saved.prompt : undefined).toBe(newerDraft ? "newer A draft" : "pending A");
+      if (newerDraft) expect(readComposerDraftRecovery().tabs.some(tab => tab.kind === "draft" && tab.prompt === "pending A")).toBe(true);
+    } else {
+      expect(threadRowButton("Newer conversation name")).toBeDefined();
+      // Calling startTurn is still only a request. The authoritative ACK moves
+      // this draft into sent history exactly once and releases only its input.
+      expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe("0");
+      expect(mainComposerTextarea().value).toBe("pending A");
+      await act(async () => admissionA.resolve());
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+      expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
+      expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+      expect(mainComposerTextarea().value).toBe("");
+      expect(startTurn.mock.calls.map(call => call[0])).toEqual([threadBID, threadAID]);
+    }
   });
 
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {
@@ -1006,8 +1141,8 @@ describe("session tab switch latency", () => {
     }));
     let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: projects[0].path };
     const alpha = { ...threadA(), cwd: projects[0].path, workspace_id: "alpha", title: "Alpha investigation" };
-    const oldBeta = { ...threadB(), cwd: projects[1].path, workspace_id: "beta", title: "Beta initial question" };
-    const beta = { ...oldBeta, title: "Beta release investigation", preview: "Beta release investigation" };
+    const oldBeta = { ...threadB(), cwd: projects[1].path, workspace_id: "beta", title: "Beta initial question", title_revision: 1 };
+    const beta = { ...oldBeta, title: "Beta release investigation", title_revision: 2, preview: "Beta release investigation" };
     const backgroundList = deferred<{ threads: Thread[] }>();
     const betaResume = deferred<{ thread: Thread }>();
     window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
@@ -1018,9 +1153,9 @@ describe("session tab switch latency", () => {
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     window.wuu.listThreads = vi.fn(async (cwd) => cwd === projects[1].path
       ? backgroundList.promise
-      : { threads: [context.cwd === alpha.cwd ? alpha : oldBeta] });
+      : { threads: [cwd === alpha.cwd || !cwd && context.cwd === alpha.cwd ? alpha : oldBeta] });
     window.wuu.resumeThread = vi.fn(async (id) => id === beta.id ? betaResume.promise : { thread: alpha });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => {
       const betaSection = Array.from(container.querySelectorAll(".project-row-name"))
@@ -1032,14 +1167,14 @@ describe("session tab switch latency", () => {
     expect(threadRowButton(oldBeta.title)).toBeDefined();
     await act(async () => { threadRowButton(oldBeta.title)!.click(); });
     expect(container.querySelector('.view-switch-loading-conversation')).not.toBeNull();
-    await act(async () => { betaResume.resolve({ thread: beta }); });
+    await act(async () => { emitNotification("thread/resumed", { thread: beta }, beta.cwd); betaResume.resolve({ thread: beta }); });
     await flushAsync();
     expect(activeThreadProbe()?.dataset.threadId).toBe(beta.id);
     expect(threadRowButton(beta.title)).toBeDefined();
     await act(async () => {
       const alphaSection = Array.from(container.querySelectorAll(".project-row-name"))
         .find((label) => label.textContent === "alpha");
-      (alphaSection?.closest("button") as HTMLButtonElement).click();
+      if (!threadRowButton(alpha.title)) (alphaSection?.closest("button") as HTMLButtonElement).click();
     });
     await act(async () => { threadRowButton(alpha.title)!.click(); });
     expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
@@ -1074,8 +1209,10 @@ describe("session tab switch latency", () => {
     });
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     window.wuu.listThreads = vi.fn(async cwd => ({ threads: [cwd === beta.cwd ? beta : alpha] }));
-    window.wuu.resumeThread = vi.fn(async id => id === beta.id ? pending.promise : { thread: alpha });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    window.wuu.resumeThread = vi.fn(async id => id === beta.id
+      ? pending.promise
+      : { thread: alpha });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     act(() => { setMainComposerPrompt("Retained source draft"); });
     const projectRow = (id: string) => Array.from(container.querySelectorAll(".project-row-name"))
@@ -1131,14 +1268,14 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
 
     expect(resumeThread).toHaveBeenCalledWith(threadAID);
     expect(activeSessionTabLabel()).toContain("session switch A");
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
 
     const rowB = threadRowButton("session switch B");
     expect(rowB).toBeDefined();
@@ -1149,7 +1286,7 @@ describe("session tab switch latency", () => {
 
     expect(activeSessionTabLabel()).toContain("session switch B");
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
-    expect(visibleRuntimeModel()).toContain("model-b");
+    expect(accessibleRuntimeModel()).toContain("model-b");
 
     const delayedResumeA = deferred<{ thread: Thread }>();
     resumeThread.mockClear();
@@ -1186,7 +1323,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
 
@@ -1194,6 +1331,8 @@ describe("session tab switch latency", () => {
     // the cached-switch path with a delayed resume.
     await act(async () => { threadRowButton("session switch B")!.click(); });
     await act(async () => { threadRowButton("session switch A")!.click(); });
+
+    await act(async () => { setMainComposerPrompt("draft blocked during restoration"); });
 
     const delayedResumeB = deferred<{ thread: Thread }>();
     resumeThread.mockImplementation((threadID: string) =>
@@ -1236,7 +1375,7 @@ describe("session tab switch latency", () => {
     threadsByID.set(threadAID, answerReady);
     window.wuu.queueTurn = vi.fn();
     window.wuu.steerTurn = vi.fn();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     if (pane === "split") {
       await act(async () => { requestOpenThreadInSplit(threadBID); });
@@ -1267,14 +1406,14 @@ describe("session tab switch latency", () => {
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     // Repeating an earlier prompt is not evidence that this send was admitted.
     const text = threadA().turns[0].items[0].text!;
     await act(async () => { setMainComposerPrompt(text); });
     expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { mainComposerSendButton().click(); });
-    expect(mainComposerTextarea().value).toBe("");
+    expect(mainComposerTextarea().value).toBe(text);
     await act(async () => { setMainComposerPrompt(newerDraft); });
     expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { pending.reject(new Error("send rejected")); });
@@ -1293,7 +1432,7 @@ describe("session tab switch latency", () => {
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { setMainComposerPrompt("send to A"); });
     await act(async () => { mainComposerSendButton().click(); });
@@ -1312,7 +1451,7 @@ describe("session tab switch latency", () => {
     expect(recovered).toContain("draft for B");
     if (outcome === "accepted") expect(recovered).not.toContain("send to A");
     else expect(recovered).toContain("send to A");
-    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     expect(mainComposerTextarea().value).toBe("draft for B");
     expect(startTurn).toHaveBeenCalledTimes(1);
@@ -1336,8 +1475,12 @@ describe("session tab switch latency", () => {
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     const encoded = { id: "prepared-image", media_type: "image/png", data: "aW1hZ2U=" };
     const encoding = deferred<ComposerMessages.ComposerImage>();
-    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation: { filename: "image.png", promise: encoding.promise, restart: vi.fn() } });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    const preparation: ComposerMessages.ComposerAttachmentPreparation<ComposerMessages.ComposerImage> = {
+      filename: "image.png", promise: encoding.promise, restart: vi.fn(),
+    };
+    void encoding.promise.then(value => { preparation.result = value; });
+    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const input = openComposerAttachmentPicker(container.querySelector('[data-main-conversation-composer="dock"]')!);
     await act(async () => {
@@ -1369,11 +1512,11 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
 
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
 
     const runningTurn = {
       id: "thread-switch-a-running-turn",
@@ -1390,7 +1533,7 @@ describe("session tab switch latency", () => {
       });
     });
 
-    expect(visibleRuntimeModel()).toContain("turn-model");
+    expect(accessibleRuntimeModel()).toContain("turn-model");
 
     await act(async () => {
       emitNotification("turn/completed", {
@@ -1399,7 +1542,7 @@ describe("session tab switch latency", () => {
       });
     });
 
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
   });
 
   it.each(["focus", "running snapshot", "active reconciliation"])("repairs a missed completion via %s with summary-only lists", async trigger => {
@@ -1414,7 +1557,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
 
@@ -1445,7 +1588,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
 
@@ -1469,7 +1612,7 @@ describe("session tab switch latency", () => {
     });
     expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("completed");
     expect(container.querySelector(".composer-stop-button")).toBeNull();
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
   });
 
   it("recovers a missed managed start from the aggregate running snapshot", async () => {
@@ -1481,7 +1624,7 @@ describe("session tab switch latency", () => {
     };
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(threadAID));
     });
     await flushAsync();
     resumeThread.mockClear();
@@ -1522,7 +1665,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
@@ -1539,8 +1682,8 @@ describe("session tab switch latency", () => {
     await act(async () => { toggle(); });
     await flushAsync();
     slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(endpoint());
-    // Home/End at the displayed endpoint produces no native input/change event.
+    expect(slider.value).not.toBe(endpoint());
+    // Capture the new endpoint before an older response can settle.
     await act(async () => {
       slider.focus();
       slider.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));

@@ -16,11 +16,12 @@ const (
 )
 
 type Grant struct {
-	SubjectID   string     `json:"subject_id"`
-	Fingerprint string     `json:"fingerprint"`
-	Scope       GrantScope `json:"scope"`
-	Permissions []string   `json:"permissions,omitempty"`
-	ApprovedAt  time.Time  `json:"approved_at"`
+	SourceIdentity string     `json:"source_identity,omitempty"`
+	SubjectID      string     `json:"subject_id"`
+	Fingerprint    string     `json:"fingerprint"`
+	Scope          GrantScope `json:"scope"`
+	Permissions    []string   `json:"permissions,omitempty"`
+	ApprovedAt     time.Time  `json:"approved_at"`
 }
 
 // PolicyDecision records a durable user decision for a specific subject and
@@ -123,6 +124,9 @@ func (s *Settings) RecordGrant(grant Grant) error {
 	if s.Rejected == nil {
 		s.Rejected = map[string]PolicyDecision{}
 	}
+	if prior, ok := s.FindGrant(grant.SubjectID, grant.Fingerprint); ok && grant.SourceIdentity == "" {
+		grant.SourceIdentity = prior.SourceIdentity
+	}
 	s.Grants[grant.SubjectID] = grant
 	delete(s.Rejected, grant.SubjectID)
 	return nil
@@ -166,4 +170,22 @@ func (s *Settings) Revoke(subjectID string) {
 	if s.Rejected != nil {
 		delete(s.Rejected, subjectID)
 	}
+}
+
+// TrustInstallation records the exact installed generation and its local source.
+// Updates preserve an explicit disabled choice; first installation enables it.
+func (s *Settings) TrustInstallation(subject, fingerprint, source string, permissions []string, first bool) error {
+	if err := s.RecordGrant(Grant{SubjectID: subject, Fingerprint: fingerprint, SourceIdentity: source, Scope: GrantScopeUser, Permissions: append([]string(nil), permissions...), ApprovedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	if first {
+		s.SetEnabled(subject, true)
+	}
+	return nil
+}
+
+// TrustsSource never infers a source for legacy fingerprint-only grants.
+func (s Settings) TrustsSource(subject, fingerprint, source string) bool {
+	grant, ok := s.FindGrant(subject, fingerprint)
+	return ok && source != "" && grant.SourceIdentity == source
 }

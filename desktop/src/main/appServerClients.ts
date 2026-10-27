@@ -1,10 +1,12 @@
+import { defaultDesktopSessionRoutes, SessionOutcomeUnknownError, sessionRouteHost, sessionRouteKey, type DesktopSessionRoutes, type SessionRoute } from "./sessionRoutes";
+import { RemoteAppServerClient, type PooledAppServerClient } from "./remoteAppServerClient";
 import { shutdownChild } from "./childShutdown";
 import { AppServerResponseError } from "./appServerErrors";
 import {
   spawn as spawnChild,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWuuCommand } from "./wuuCommand";
@@ -15,6 +17,7 @@ import type {
   RunningThreadSnapshot,
   RuntimeContext,
   ServerEvent,
+  SessionLocatorV1,
 } from "../shared/protocol";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,13 +60,14 @@ type PendingRequest = {
 };
 
 export type AppServerClientEvent =
+  | { kind: "connection-reset" }
   | { kind: "notification"; message: AppServerNotification }
   | { kind: "server-request"; message: Required<AppServerRequest> }
   | { kind: "server-error"; message: string }
   | { kind: "server-exit"; code: number | null; message: string };
 
 type ServerRequestRoute = {
-  client: AppServerClient;
+  client: PooledAppServerClient;
   serverID: string;
 };
 
@@ -71,11 +75,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** A trusted adapter declares cleanup when it issues an owned operation. The
+ * returned zero-argument release cannot change target, generation or payload. */
+export type OwnedAppServerOperation<T> = { result: Promise<T>; release: () => Promise<void>; forget: () => void };
+export type BoundAppServerRequest = PooledAppServerClient["request"] & {
+  owned<T>(method: string, params: unknown, cleanup: { method: string; params?: unknown; retainAfterResult?: boolean }, onResponse?: (response: AppServerResponse) => void): OwnedAppServerOperation<T>;
+};
+const OWNED_CLEANUP_TIMEOUT_MS = 5000;
+
+export type AppServerBindingOptions = { localOnly?: boolean };
+
 export class AppServerClientPool {
   private closing = false;
-  private clients = new Map<string, AppServerClient>();
-  private retiredClients = new Set<AppServerClient>();
-  private sessionOwners = new Map<string, AppServerClient>();
+  private readonly ownedCleanups = new Map<PooledAppServerClient, Set<() => Promise<void>>>();
+  private readonly disposal = new Map<PooledAppServerClient, Promise<void>>();
+  private readonly eventSources = new WeakMap<ServerEvent, PooledAppServerClient>();
+  private clients = new Map<string, PooledAppServerClient>();
+  private clientRoutes = new Map<PooledAppServerClient, { context: RuntimeContext; route: SessionRoute }>();
+  private retiredClients = new Set<PooledAppServerClient>();
+  private sessionOwners = new Map<string, PooledAppServerClient>();
   private nextServerRequestRouteID = 1;
   private serverRequestRoutes = new Map<string, ServerRequestRoute>();
   // Most-recently-used workdirs (most recent last). prewarmContexts fills the
@@ -97,6 +115,7 @@ export class AppServerClientPool {
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly getInitializeParams?: () => unknown,
     private readonly desktopPaths?: DesktopPaths,
+    private readonly sessionRoutes: DesktopSessionRoutes = defaultDesktopSessionRoutes(),
   ) {}
 
   // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
@@ -176,11 +195,12 @@ export class AppServerClientPool {
 
   // Related control frames must reach the same process even if its workspace
   // registration changes while the original request is still running.
-  bindContextRequest(context: RuntimeContext): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
-    return this.clientForContext(context).bindRequest();
+  bindContextRequest(context: RuntimeContext, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const client = this.clientForContext(context);
+    return this.bindClientRequest(client, options);
   }
 
-  requestInContext<T>(
+  async requestInContext<T>(
     context: RuntimeContext,
     method: string,
     params?: unknown,
@@ -193,7 +213,7 @@ export class AppServerClientPool {
       : undefined;
     return typeof sessionID === "string" && sessionID
       ? this.requestForSession<T>(context, sessionID, method, params, onResponse)
-      : this.clientForContext(context).request<T>(method, params, onResponse);
+      : this.contextRequest<T>(context, method, params, onResponse);
   }
 
   requestForSession<T>(
@@ -203,23 +223,155 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse, workdir: string) => void,
   ): Promise<T> {
-    const owner = this.sessionOwners.get(sessionID);
-    // A relocated project must resume through its new root. Cross-project
-    // execution owners still retain control of their own sessions.
+    const client = this.ownerForSession(context, sessionID);
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params, (response) => onResponse?.(response, client.workdir));
+  }
+
+  bindSessionRequest(context: RuntimeContext, sessionID: string, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const owner = this.ownerForSession(context, sessionID);
+    return this.bindClientRequest(owner, options);
+  }
+
+  /** Bind an actual emitted event to its original connection generation. A
+   * workdir/locator copied from wire data cannot select a replacement owner. */
+  bindEventRequest(event: ServerEvent, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const source = this.eventSources.get(event);
+    if (!source || !this.isSelectedClient(source)) throw new Error("The event's owning session connection is no longer available");
+    return this.bindClientRequest(source, options);
+  }
+
+  private bindClientRequest(client: PooledAppServerClient, options?: AppServerBindingOptions): BoundAppServerRequest {
+    if (options?.localOnly && this.clientRoutes.get(client)?.route.kind !== "local") {
+      throw new Error("Trusted transport requires an existing local stdio connection");
+    }
+    const request = this.guardRequest(client, client.bindRequest()) as BoundAppServerRequest;
+    const captureCleanup = client.bindCleanup();
+    request.owned = <T>(method: string, params: unknown, cleanup: {method:string;params?:unknown;retainAfterResult?:boolean}, onResponse?: (response:AppServerResponse)=>void): OwnedAppServerOperation<T> => {
+      if(this.disposal.has(client)||!this.isSelectedClient(client))throw new Error("The owning operation connection is no longer available");
+      const registered=this.ownedCleanups.get(client) ?? new Set<()=>Promise<void>>();
+      if(registered.size>=4096) throw new Error("Too many owned operations on session connection");
+      this.ownedCleanups.set(client,registered);
+      const perform=captureCleanup(cleanup.method,cleanup.params);
+      let active=true, released:Promise<void>|undefined;
+      const forget=()=>{if(!active)return;active=false;registered.delete(release);if(registered.size===0&&this.ownedCleanups.get(client)===registered)this.ownedCleanups.delete(client);};
+      const release=():Promise<void>=>{
+        if(released)return released;
+        if(!active)return Promise.resolve();
+        forget();released=Promise.resolve().then(perform);return released;
+      };
+      registered.add(release);
+      const result=request<T>(method,params,onResponse);
+      if(!cleanup.retainAfterResult)void result.then(forget,forget);
+      return {result,release,forget};
+    };
+    return request;
+  }
+
+  private disposeAfterOwnedCleanup(client: PooledAppServerClient): Promise<void> {
+    const previous=this.disposal.get(client);if(previous)return previous;
+    const releases=[...(this.ownedCleanups.get(client)??[])];
+    const done=(async()=>{
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      try {
+        if(releases.length) await Promise.race([
+          Promise.allSettled(releases.map(release=>release())),
+          new Promise<void>(resolve=>{timer=setTimeout(resolve,OWNED_CLEANUP_TIMEOUT_MS);}),
+        ]);
+      } finally {if(timer)clearTimeout(timer);this.ownedCleanups.delete(client);await client.dispose();}
+    })();
+    this.disposal.set(client,done);void done.finally(()=>this.disposal.delete(client)).catch(()=>{});return done;
+  }
+
+  private contextRequest<T>(context: RuntimeContext, method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
+    const client = this.clientForContext(context);
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params, onResponse);
+  }
+
+  private guardRequest(client: PooledAppServerClient, request: PooledAppServerClient["request"]): PooledAppServerClient["request"] {
+    const metadata = this.clientRoutes.get(client);
+    if (!metadata) throw new Error("Session connection has no selected route");
+    // Idle eviction may occur between a completed reply and its promise
+    // continuation. Fence by the captured selection, not pool residency.
+    const selected = () => {
+      if (!metadata || this.closing) return false;
+      try { return sessionRouteKey(this.sessionRoutes.select(metadata.context)) === sessionRouteKey(metadata.route); }
+      catch { return false; }
+    };
+    return async <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> => {
+      if (this.disposal.has(client) || !selected()) throw new Error("The selected session route is no longer available");
+      let stale = false;
+      const result = await request<T>(method, params, response => {
+        if (!selected()) stale = true;
+        else {
+          this.locateResponse(metadata.route, response.result);
+          onResponse?.(response);
+        }
+      });
+      if (stale || !selected()) throw new SessionOutcomeUnknownError("the selected session route changed");
+      return result;
+    };
+  }
+
+  private locator(route: SessionRoute, sessionID?: string): SessionLocatorV1 {
+    return { version: 1, execution_host: sessionRouteHost(route),
+      ...(sessionID ? { session_id: sessionID } : {}),
+      ...(route.kind === "remote" && route.storage_host ? { storage_host: route.storage_host } : {}),
+      ...(route.kind === "remote" && route.display_host ? { display_host: route.display_host } : {}),
+    };
+  }
+
+  private locateResponse(route: SessionRoute, result: unknown): void {
+    if (!isRecord(result)) return;
+    const threads = [result.thread, ...(Array.isArray(result.threads) ? result.threads : [])];
+    for (const thread of threads) {
+      if (isRecord(thread) && typeof thread.id === "string") thread.session_locator = this.locator(route, thread.id);
+    }
+  }
+
+  private selectedRoute(context: RuntimeContext): SessionRoute {
+    const current = this.clients.get(resolve(context.cwd));
+    let route: SessionRoute;
+    try {
+      const selected = this.sessionRoutes.select(context);
+      // Selectors may reuse mutable configuration objects. Past provenance must
+      // not change when the provider updates that same object in place.
+      route = Object.freeze(selected.kind === "remote"
+        ? { ...selected, connector: Object.freeze({ ...selected.connector }) }
+        : { ...selected });
+    }
+    catch (error) { if (current) this.disposeClient(current); throw error; }
+    const previous = current && this.clientRoutes.get(current)?.route;
+    if (current && previous && sessionRouteKey(previous) !== sessionRouteKey(route)) {
+      this.disposeClient(current);
+      this.emitToRenderer({ kind: "connection-reset", workdir: current.workdir });
+    }
+    return route;
+  }
+
+  private ownerForSession(context: RuntimeContext, sessionID: string): PooledAppServerClient {
+    const route = this.selectedRoute(context);
+    if (route.kind === "disabled") throw new Error(`Desktop session connection disabled: ${route.reason}`);
+    const locator = context.session_locator;
+    if (locator && (locator.version !== 1 || locator.execution_host !== sessionRouteHost(route) ||
+      locator.session_id && locator.session_id !== sessionID ||
+      locator.storage_host && route.kind === "remote" && locator.storage_host !== route.storage_host)) {
+      throw new Error("Session locator does not match the selected desktop connection");
+    }
+    const owner = this.sessionOwners.get(JSON.stringify([sessionRouteHost(route), sessionID]));
     const relocated = owner && context.kind === "project" &&
       owner.workspaceId === context.project_id && owner.workdir !== resolve(context.cwd);
-    const client = (relocated ? undefined : owner) ?? this.clientForContext(context);
-    return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
+    return owner && !relocated && this.isSelectedClient(owner) ? owner : this.clientForContext(context);
   }
 
   requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
-    const threadID = isRecord(params) ? params.thread_id : undefined;
-    const client = (typeof threadID === "string" ? this.sessionOwners.get(threadID) : undefined)
-      ?? this.clients.get(resolve(workdir));
-    if (!client) {
+    const current = this.clients.get(resolve(workdir));
+    const metadata = current && this.clientRoutes.get(current);
+    if (!current || !metadata || !this.isSelectedClient(current)) {
       return Promise.reject(new Error("activity workspace is no longer connected"));
     }
-    return client.request<T>(method, params);
+    const threadID = isRecord(params) ? params.thread_id : undefined;
+    const client = typeof threadID === "string" ? this.ownerForSession(metadata.context, threadID) : current;
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params);
   }
 
   runningThreadCwds(): string[] {
@@ -281,15 +433,16 @@ export class AppServerClientPool {
 
   async shutdown(): Promise<void> {
     this.closing = true;
-    const stopping: Promise<void>[] = [];
+    const stopping: Promise<void>[] = [...this.disposal.values()];
     const workdirs = new Set<string>();
     for (const client of this.allClients()) {
-      stopping.push(client.dispose());
+      stopping.push(this.disposeAfterOwnedCleanup(client));
       workdirs.add(client.workdir);
     }
     for (const workdir of workdirs) this.clientTorndownHandler?.(workdir);
     this.clients.clear();
     this.retiredClients.clear();
+    this.clientRoutes.clear();
     this.sessionOwners.clear();
     this.serverRequestRoutes.clear();
     const results = await Promise.allSettled(stopping);
@@ -310,13 +463,15 @@ export class AppServerClientPool {
     }
   }
 
-  private allClients(): AppServerClient[] {
+  private allClients(): PooledAppServerClient[] {
     return [...this.clients.values(), ...this.retiredClients];
   }
 
-  private clientForContext(context: RuntimeContext): AppServerClient {
+  private clientForContext(context: RuntimeContext): PooledAppServerClient {
     if (this.closing) throw new Error("App-server pool is shutting down");
     const workdir = resolve(context.cwd);
+    const route = this.selectedRoute(context);
+    if (route.kind === "disabled") throw new Error(`Desktop session connection disabled: ${route.reason}`);
     // Only registered projects carry a stable id; the no-project (对话)
     // workspace stays path-keyed (its scratch dir never moves).
     const workspaceId = context.kind === "project" ? context.project_id : "";
@@ -329,20 +484,31 @@ export class AppServerClientPool {
       client = undefined;
     }
     if (!client) {
-      client = new AppServerClient(
+      const onStateChange = () => {
+        this.evictIdleClients();
+        this.maybeBroadcastRunningThreads();
+      };
+      if (route.kind === "remote") {
+        const remote = new RemoteAppServerClient(
+          workdir, workspaceId, route, this.sessionRoutes.connect.bind(this.sessionRoutes),
+          (source, event) => this.emitServerEvent(source, event), onStateChange,
+          () => this.isSelectedClient(remote),
+        );
+        client = remote;
+      } else client = new AppServerClient(
         workdir,
         workspaceId,
         (source, event) => this.emitServerEvent(source, event),
-        () => {
-          this.evictIdleClients();
-          this.maybeBroadcastRunningThreads();
-        },
+        onStateChange,
         this.spawnAppServer,
         undefined,
         this.getInitializeParams,
         this.desktopPaths,
       );
       this.clients.set(workdir, client);
+      this.clientRoutes.set(client, { context: Object.freeze({ ...context,
+        ...(context.session_locator ? { session_locator: Object.freeze({ ...context.session_locator }) } : {}),
+      }), route });
     }
     client.touch();
     // The caller registers its request synchronously after this returns. Keep
@@ -353,33 +519,55 @@ export class AppServerClientPool {
   }
 
   private emitServerEvent(
-    client: AppServerClient,
+    client: PooledAppServerClient,
     event: AppServerClientEvent,
   ): void {
+    if (!this.isSelectedClient(client)) {
+      if (client instanceof RemoteAppServerClient && this.clientRoutes.has(client)) this.disposeClient(client);
+      return;
+    }
+    const selected = this.clientRoutes.get(client);
+    if (selected && event.kind === "notification") this.locateResponse(selected.route, event.message.params);
+    if (event.kind === "connection-reset") this.dropServerRequestRoutesForClient(client);
     if (event.kind === "notification") {
       const params = isRecord(event.message.params) ? event.message.params : undefined;
       const id = params?.thread_id;
       if (typeof id === "string" && event.message.method === "turn/started") {
-        this.sessionOwners.set(id, client);
+        const route = this.clientRoutes.get(client)?.route;
+        if (route) this.sessionOwners.set(JSON.stringify([sessionRouteHost(route), id]), client);
       }
     } else if (event.kind === "server-exit") {
       this.forgetSessionOwner(client);
     }
-    this.emitToRenderer(this.routeServerEvent(client, event));
+    const routed = this.routeServerEvent(client, event);
+    this.eventSources.set(routed, client);
+    this.emitToRenderer(routed);
   }
 
-  private forgetSessionOwner(client: AppServerClient): void {
+  private isSelectedClient(client: PooledAppServerClient): boolean {
+    const metadata = this.clientRoutes.get(client);
+    if (!metadata || this.closing) return false;
+    try { return sessionRouteKey(this.sessionRoutes.select(metadata.context)) === sessionRouteKey(metadata.route); }
+    catch { return false; }
+  }
+
+  private forgetSessionOwner(client: PooledAppServerClient): void {
     for (const [id, owner] of this.sessionOwners) {
       if (owner === client) this.sessionOwners.delete(id);
     }
   }
 
   private routeServerEvent(
-    client: AppServerClient,
+    client: PooledAppServerClient,
     event: AppServerClientEvent,
   ): ServerEvent {
+    const route = this.clientRoutes.get(client)?.route;
+    const params = "message" in event && isRecord(event.message) && isRecord(event.message.params) ? event.message.params : undefined;
+    const thread = isRecord(params?.thread) ? params.thread : undefined;
+    const sessionID = params?.thread_id ?? params?.session_id ?? thread?.id;
+    const session_locator = route && this.locator(route, typeof sessionID === "string" ? sessionID : undefined);
     if (event.kind !== "server-request") {
-      return { ...event, workdir: client.workdir };
+      return { ...event, workdir: client.workdir, session_locator };
     }
     const publicID = `server-request-${this.nextServerRequestRouteID++}`;
     this.serverRequestRoutes.set(publicID, {
@@ -389,6 +577,7 @@ export class AppServerClientPool {
     return {
       ...event,
       workdir: client.workdir,
+      session_locator,
       message: {
         ...event.message,
         id: publicID,
@@ -396,7 +585,7 @@ export class AppServerClientPool {
     };
   }
 
-  private evictIdleClients(admittingClient?: AppServerClient): void {
+  private evictIdleClients(admittingClient?: PooledAppServerClient): void {
     for (const client of this.retiredClients) {
       if (!client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
         this.disposeClient(client);
@@ -423,13 +612,14 @@ export class AppServerClientPool {
     }
   }
 
-  private disposeClient(client: AppServerClient): void {
+  private disposeClient(client: PooledAppServerClient): void {
     const isCurrent = this.clients.get(client.workdir) === client;
     if (isCurrent) this.clients.delete(client.workdir);
     this.retiredClients.delete(client);
+    this.clientRoutes.delete(client);
     this.forgetSessionOwner(client);
     this.dropServerRequestRoutesForClient(client);
-    client.dispose();
+    void this.disposeAfterOwnedCleanup(client).catch(error => console.error("App-server disconnect failed", error));
     // After the routes are dropped so any view-recycle broadcast the handler
     // fires can't collide with an in-flight reply for this client.
     if (!this.allClients().some(other => other.workdir === client.workdir)) {
@@ -437,7 +627,7 @@ export class AppServerClientPool {
     }
   }
 
-  private dropServerRequestRoutesForClient(client: AppServerClient): void {
+  private dropServerRequestRoutesForClient(client: PooledAppServerClient): void {
     for (const [id, route] of this.serverRequestRoutes) {
       if (route.client === client) {
         this.serverRequestRoutes.delete(id);
@@ -458,6 +648,7 @@ export class AppServerClient {
   private lastUsedAt = Date.now();
   private lastStderr = "";
   private stoppedActivityIDs = new Set<string>();
+  private readonly canonicalWorkdir: string;
 
   constructor(
     readonly workdir: string,
@@ -475,7 +666,17 @@ export class AppServerClient {
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
     private readonly getInitializeParams?: () => unknown,
     private readonly desktopPaths?: DesktopPaths,
-  ) {}
+  ) {
+    // Go resolves workspace symlinks for tool execution, while desktop route
+    // keys retain the user's selected path (notably /var vs /private/var).
+    try { this.canonicalWorkdir = realpathSync.native(workdir); }
+    catch { this.canonicalWorkdir = workdir; } // Missing roots still fail at spawn.
+  }
+
+  private routedActivity(value: unknown): unknown {
+    if (!isRecord(value) || value.workdir !== this.canonicalWorkdir || this.canonicalWorkdir === this.workdir) return value;
+    return { ...value, workdir: this.workdir };
+  }
 
   start(): void {
     this.touch();
@@ -490,6 +691,14 @@ export class AppServerClient {
         throw new Error("The owning app-server process is no longer available");
       }
       return this.request<T>(method, params, onResponse);
+    };
+  }
+
+  bindCleanup(): (method: string, params?: unknown) => () => Promise<void> {
+    const request=this.bindRequest();
+    return (method,params)=>{
+      const frozen=params===undefined?undefined:JSON.parse(JSON.stringify(params));
+      return async()=>{await request(method,frozen);};
     };
   }
 
@@ -883,6 +1092,9 @@ export class AppServerClient {
 
     const maybeNotification = message as AppServerNotification;
     if (maybeNotification.method) {
+      if (maybeNotification.method.startsWith("activity/")) {
+        maybeNotification.params = this.routedActivity(maybeNotification.params);
+      }
       updateStoppedActivityIDs(this.stoppedActivityIDs, maybeNotification);
       this.updateRunningFromNotification(maybeNotification);
       this.emit(this, { kind: "notification", message: maybeNotification });
@@ -897,6 +1109,11 @@ export class AppServerClient {
       return;
     }
     this.pending.delete(key);
+    if (pending.method.startsWith("activity/") && isRecord(response.result)) {
+      const result = response.result;
+      if (result.activity) result.activity = this.routedActivity(result.activity);
+      if (Array.isArray(result.activities)) result.activities = result.activities.map(activity => this.routedActivity(activity));
+    }
     this.updateRunningFromResponse(
       pending.method,
       pending.params,

@@ -1,14 +1,12 @@
-import { AppContextCaptureHost } from "./AppContextCapture";
-import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
+import { flushTerminalCleanup } from "./RendererTerminalCleanup";
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
-import { AccountScreen } from "./AccountScreen";
-import { App } from "./App";
+import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
+import { DesktopApplicationRoot } from "./plugins/DesktopApplicationRoot";
+import { desktopPluginRuntime, desktopCompositionRoot } from "./plugins/DesktopPluginRuntime";
 import { startAppearanceSync } from "./AppearancePreferences";
-import { AppBackground } from "./background/AppBackground";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
-import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
@@ -35,7 +33,6 @@ startAppearanceSync();
 // Same story for data-platform: the preload stamps it pre-paint; this
 // covers boots whose preload was replaced (e2e mocks).
 applyPlatformStamp();
-startLinuxTitlebarMaximizeGesture();
 
 // Stamp the platform's real scrollbar gutter width before React renders so
 // the dock composer and the message flow are centered in the same visible
@@ -90,17 +87,28 @@ console.error = (...args: unknown[]): void => {
   }
 };
 
-ReactDOM.createRoot(rendererRoot).render(
+const accountWindow = ENABLE_ACCOUNT && Boolean(window.wuu?.isAccountWindow);
+
+const root = ReactDOM.createRoot(rendererRoot);
+root.render(
   <I18nProvider>
     <WuuUIRoot>
-      <AppBackground />
-      {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
-        ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
-        : <><App />{ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost />}</>}
-      {/* Native drag regions follow DOM order; caption exclusions must follow app titlebars. */}
-      <LinuxWindowControls />
+      {accountWindow
+        ? <StandaloneAccountWindow />
+        : <DesktopApplicationRoot />}
       <ToastViewport />
       <ConfirmDialogHost />
     </WuuUIRoot>
   </I18nProvider>,
 );
+
+window.wuu?.onPrepareToQuit?.(async () => {
+  root.unmount();
+  const results = await Promise.allSettled([desktopPluginRuntime.shutdown()]);
+  // Plugin shutdown fences the final writer before joining PTYs detached by
+  // earlier workspace handoffs. Keep the native bridge alive until they settle.
+  results.push(...await Promise.allSettled([flushTerminalCleanup()]));
+  await desktopCompositionRoot.fiber.dispose();
+  const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+  if (failures.length) throw new AggregateError(failures, "Renderer cleanup failed");
+});

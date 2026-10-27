@@ -16,6 +16,7 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 	stream := newBlockingStreamClient("finished normally")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = stream
+	attachTestModelGeneration(t, rt)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
@@ -30,6 +31,7 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(func() {
 		select {
@@ -132,6 +134,7 @@ func TestExecutionEnvironmentSelectionSurvivesSettingsChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	defer srv.Close()
 	send := func(id, method, params string) map[string]any {

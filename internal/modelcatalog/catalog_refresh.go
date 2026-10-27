@@ -48,10 +48,42 @@ func catalogProviders() ([]Provider, error) {
 	return data.Providers, nil
 }
 
+// Keep saved MiniMax selections resolvable after upstream removes retired entries.
+// Read the raw embedded snapshot once, without applying discovery filters.
+var embeddedMiniMaxModels = sync.OnceValues(func() (map[string][]Model, error) {
+	var data catalogData
+	if err := json.Unmarshal(catalogJSON, &data); err != nil {
+		return nil, err
+	}
+	models := make(map[string][]Model)
+	for _, provider := range data.Providers {
+		if isMiniMaxProviderID(provider.ID) {
+			for _, model := range provider.Models {
+				if isLegacyMiniMaxModel(model.ID) {
+					models[provider.ID] = append(models[provider.ID], model)
+				}
+			}
+		}
+	}
+	return models, nil
+})
+
 func decodeCatalog(data []byte) (catalogData, error) {
 	var decoded catalogData
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return catalogData{}, err
+	}
+	legacy, err := embeddedMiniMaxModels()
+	if err != nil {
+		return catalogData{}, err
+	}
+	for i := range decoded.Providers {
+		provider := &decoded.Providers[i]
+		for _, model := range legacy[normalizeID(provider.ID)] {
+			if _, exists := modelByID(*provider, model.ID); !exists {
+				provider.legacyModels = append(provider.legacyModels, model)
+			}
+		}
 	}
 	applyOfficialCatalogCorrections(&decoded)
 	counts := countCatalog(decoded)

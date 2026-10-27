@@ -2,7 +2,7 @@
  * live with the other session rows in sidebar.css. */
 
 .project-status-spinner {
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
 }
 
 @container style(--motion-reduced: 1) {

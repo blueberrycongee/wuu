@@ -3,50 +3,77 @@ package pluginhost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestHostRetirePluginLeavesUnrelatedPluginActive(t *testing.T) {
-	retired := &fakeCapabilityClient{
-		fakeClient:   &fakeClient{id: "plugin-a", status: Status{ID: "plugin-a", State: StateActive}},
-		capabilities: []CapabilityDescriptor{{ID: "capability.a", Kind: "observe", Version: 1}},
-	}
-	retained := &fakeCapabilityClient{
-		fakeClient:   &fakeClient{id: "plugin-b", status: Status{ID: "plugin-b", State: StateActive}},
-		capabilities: []CapabilityDescriptor{{ID: "capability.b", Kind: "observe", Version: 1}},
-	}
-	host := New(retired, retained)
-	staleCapability := host.Capabilities("capability.a")[0]
-	retiredExecutionID := host.executions.Begin(retired.id)
-	retiredContext := host.executions.live[retiredExecutionID].ctx
-	retainedExecutionID := host.executions.Begin(retained.id)
-	retainedContext := host.executions.live[retainedExecutionID].ctx
+	for _, preserveFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(preserveFailure), func(t *testing.T) {
+			retired := &fakeCapabilityClient{
+				fakeClient:   &fakeClient{id: "plugin-a", status: Status{ID: "plugin-a", State: StateActive}},
+				capabilities: []CapabilityDescriptor{{ID: "capability.a", Kind: "observe", Version: 1}},
+			}
+			retained := &fakeCapabilityClient{
+				fakeClient:   &fakeClient{id: "plugin-b", status: Status{ID: "plugin-b", State: StateActive}},
+				capabilities: []CapabilityDescriptor{{ID: "capability.b", Kind: "observe", Version: 1}},
+			}
+			host := New(retired, retained)
+			staleCapability := host.Capabilities("capability.a")[0]
+			retiredExecutionID := host.executions.Begin(retired.id)
+			retiredContext := host.executions.live[retiredExecutionID].ctx
+			retainedExecutionID := host.executions.Begin(retained.id)
+			retainedContext := host.executions.live[retainedExecutionID].ctx
 
-	outcome, found := host.RetirePlugin(context.Background(), retired.id, errors.New("retired"))
-	if !found || outcome.PluginID != retired.id || outcome.Err != nil {
-		t.Fatalf("retirement = (%+v, %v)", outcome, found)
-	}
-	if !retired.closed || retained.closed {
-		t.Fatalf("closed clients: retired=%v retained=%v", retired.closed, retained.closed)
-	}
-	if context.Cause(retiredContext) == nil {
-		t.Fatal("retired plugin execution was not canceled")
-	}
-	if context.Cause(retainedContext) != nil {
-		t.Fatalf("retained plugin execution canceled: %v", context.Cause(retainedContext))
-	}
-	if got := host.Statuses(); len(got) != 1 || got[0].ID != retained.id {
-		t.Fatalf("statuses = %+v", got)
-	}
-	if got := host.Capabilities("capability.a"); len(got) != 0 {
-		t.Fatalf("retired capabilities remain: %+v", got)
-	}
-	if got := host.Capabilities("capability.b"); len(got) != 1 || got[0].PluginID != retained.id {
-		t.Fatalf("retained capabilities = %+v", got)
-	}
-	if err := host.InvokeCapability(context.Background(), staleCapability, struct{}{}, &struct{}{}); err == nil || !strings.Contains(err.Error(), "is not active") {
-		t.Fatalf("stale capability invocation error = %v", err)
+			var outcome ClientShutdownOutcome
+			var found bool
+			failure := Status{ID: retired.id, State: StateFailed, Error: "activation refused"}
+			dependent := &fakeClient{id: "plugin-c", status: Status{ID: "plugin-c", State: StateFailed, Error: "original dependency failure"}}
+			if preserveFailure {
+				retired.status = failure
+				host.Add(dependent)
+				host.SetPackageRequirements(map[string][]string{dependent.id: {retired.id}})
+				outcome, found = host.RetireFailedPlugin(context.Background(), failure, errors.New("retired"))
+			} else {
+				outcome, found = host.RetirePlugin(context.Background(), retired.id, errors.New("retired"))
+			}
+			if !found || outcome.PluginID != retired.id || outcome.Err != nil {
+				t.Fatalf("retirement = (%+v, %v)", outcome, found)
+			}
+			if !retired.closed || retained.closed {
+				t.Fatalf("closed clients: retired=%v retained=%v", retired.closed, retained.closed)
+			}
+			if context.Cause(retiredContext) == nil {
+				t.Fatal("retired plugin execution was not canceled")
+			}
+			if context.Cause(retainedContext) != nil {
+				t.Fatalf("retained plugin execution canceled: %v", context.Cause(retainedContext))
+			}
+			statuses := host.Statuses()
+			if preserveFailure {
+				if len(statuses) != 3 || statuses[0] != failure || statuses[1].ID != retained.id || statuses[2] != dependent.status || !dependent.closed {
+					t.Fatalf("failure diagnostic was not retained: %+v", statuses)
+				}
+			} else if len(statuses) != 1 || statuses[0].ID != retained.id {
+				t.Fatalf("statuses = %+v", statuses)
+			}
+			if got := host.Capabilities("capability.a"); len(got) != 0 {
+				t.Fatalf("retired capabilities remain: %+v", got)
+			}
+			if got := host.Capabilities("capability.b"); len(got) != 1 || got[0].PluginID != retained.id {
+				t.Fatalf("retained capabilities = %+v", got)
+			}
+			if err := host.InvokeCapability(context.Background(), staleCapability, struct{}{}, &struct{}{}); err == nil || !strings.Contains(err.Error(), "is not active") {
+				t.Fatalf("stale capability invocation error = %v", err)
+			}
+			if err := host.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := host.Statuses(); len(got) != 0 {
+				t.Fatalf("shutdown retained diagnostics: %+v", got)
+			}
+		})
 	}
 }
 
@@ -59,14 +86,17 @@ func (c *cleanupServiceClient) Close(ctx context.Context) error { return c.clean
 
 func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 	provider := &fakeServiceProcess{id: "storage", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
-	stateService := ServiceDescriptor{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "save"}}}
+	stateService := ServiceDescriptor{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "save", InputSchema: "fixture.save.input.v1", OutputSchema: "fixture.save.output.v1"}}}
 	consumer := &cleanupServiceClient{fakeServiceProcess: &fakeServiceProcess{
 		id: "workflow", state: StateActive, provided: []ServiceDescriptor{stateService},
-		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}, {Name: stateService.Name, MajorVersion: 1, Required: true}},
+		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}},
 	}}
 	observer := &fakeServiceProcess{id: "observer", state: StateActive, required: []ServiceRequirement{{Name: stateService.Name, MajorVersion: 1, Required: true}}}
 	host := New(provider, consumer, observer)
 	registry, conflicts := BuildServiceRegistry(provider, consumer, observer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
 	host.AttachServiceRegistry(registry, conflicts)
 	registry.Activate()
 	consumer.cleanup = func(ctx context.Context) error {
@@ -78,10 +108,12 @@ func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 		if _, err := registry.Call(ctx, observer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err == nil {
 			return errors.New("retiring provider accepted another consumer during shutdown")
 		}
-		if _, err := registry.CallProvider(ctx, stateService.Name, 1, "save", nil, "late-driver"); err == nil {
-			return errors.New("retiring provider accepted new kernel work during shutdown")
+		if _, err := host.CallService(ctx, observer.id, stateService.Name, "save", nil); err == nil {
+			return errors.New("retiring provider accepted new native work during shutdown")
 		}
-		if _, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err != nil {
+		// A provider cleans up its own state directly; requiring its own
+		// service would be an invalid public dependency declaration.
+		if _, err := consumer.InvokeService(ctx, ServiceInvokeParams{Service: stateService.Name, Method: "save"}); err != nil {
 			return err
 		}
 		_, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: "search.provider", Method: "query"})

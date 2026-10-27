@@ -10,6 +10,7 @@ import {
 } from "./AppState";
 import type { QueuedComposerMessage } from "./ComposerMessages";
 import {
+  createComposerPendingState,
   heldComposerMessagesFromResumeResult,
   useComposerPendingState,
   type ComposerPendingStateController,
@@ -134,6 +135,22 @@ async function renderComposerPendingState({
     },
   };
 }
+
+it("keeps pending input in its host owner across observer disposal", () => {
+  const owner = createComposerPendingState({ getAppState: () => initialState,
+    getComposerDraftForThread: () => emptyComposerDraft(), restoreComposerDraftForThread: vi.fn(),
+    preserveFailedComposerMessage: vi.fn(), setStatus: vi.fn() });
+  const notify = vi.fn();
+  const dispose = owner.subscribe(notify);
+  owner.enqueueComposerMessage("thread", message("queued", "keep me"));
+  dispose();
+  owner.enqueueComposerMessage("other", message("second", "other input"));
+  expect(notify).toHaveBeenCalledTimes(1);
+  expect(owner.pendingComposerMessagesForThread("thread").queued[0].text).toBe("keep me");
+  owner.clearThreadPendingComposerMessages("thread");
+  expect(owner.pendingComposerMessagesForThread("thread").queued).toEqual([]);
+  expect(owner.pendingComposerMessagesForThread("other").queued[0].id).toBe("second");
+});
 
 describe("useComposerPendingState", () => {
   const fileSelection: Extract<MessageContentPart, { type: "file_selection" }> = {
@@ -1172,4 +1189,18 @@ describe("useComposerPendingState", () => {
     act(() => vi.advanceTimersByTime(6_000));
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
+});
+
+it.each(["item/completed", "turn/dequeued", "turn/held"])("resolves only the matching conversation's unknown delivery on %s", async method => {
+  installWuuStub({});
+  const hook = await renderComposerPendingState();
+  const notify = (method: string, params: Record<string, unknown>) => hook.get().syncPendingComposerMessagesFromServerEvent({ kind: "notification", message: { method, params } } as ServerEvent);
+  await act(async () => {
+    for (const id of ["thread-a", "thread-b"]) notify("turn/held", { thread_id: id, messages: [{ id: "same-id", origin: "queue", prompt: id, delivery_unconfirmed: true }] });
+  });
+  expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued[0].deliveryUnconfirmed).toBe(true);
+  await act(async () => notify(method, { thread_id: "thread-a", queue_id: "same-id", messages: [], item: { id: "materialized", type: "user_message", text: "thread-a", source_id: "same-id" } }));
+  expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued ?? []).toHaveLength(0);
+  expect(hook.get().pendingComposerMessagesByThread["thread-b"].queued).toEqual([expect.objectContaining({ id: "same-id", text: "thread-b", deliveryUnconfirmed: true })]);
+  expect(hook.sendComposerMessageToThread).not.toHaveBeenCalled();
 });

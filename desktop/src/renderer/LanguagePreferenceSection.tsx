@@ -18,7 +18,7 @@ export function LanguagePreferenceControl(): JSX.Element {
     label: t(LANGUAGE_LABEL_KEYS[value]),
   }));
   return (
-    <div className="theme-segmented" role="group" aria-label={t("settings.languageGroup")}>
+    <div className="theme-segmented settings-language-options" role="group" aria-label={t("settings.languageGroup")}>
       {options.map((option) => (
         <button key={option.value} type="button" aria-pressed={preference === option.value}
           data-testid={`settings-language-${option.value}`} onClick={() => setPreference(option.value)}>

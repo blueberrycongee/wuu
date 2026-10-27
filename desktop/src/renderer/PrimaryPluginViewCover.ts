@@ -1,12 +1,14 @@
 import { useSyncExternalStore } from "react";
 
-import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import { visibleWorkbenchView, type WorkbenchController } from "./plugins/Workbench";
+import { useApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
+import type { ApplicationWorkbenchV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { visibleWorkbenchView } from "./plugins/Workbench";
 
 /** True while a primary plugin page is portaled over the conversation pane. */
 export function usePrimaryPluginViewCover(
-  controller: WorkbenchController = desktopWorkbenchController,
+  suppliedController?: ApplicationWorkbenchV1,
 ): boolean {
+  const controller = useApplicationWorkbench(suppliedController);
   const snapshot = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,

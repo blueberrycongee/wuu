@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_PERMISSION_E2E_CWD || process.cwd();
@@ -51,7 +52,7 @@ contextBridge.exposeInMainWorld("permissionE2E", {
   })
 });
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -168,4 +169,4 @@ contextBridge.exposeInMainWorld("wuu", {
     return () => ipcRenderer.removeListener("test:server-event", listener);
   },
   onWindowResizeState: () => () => undefined
-});
+}));

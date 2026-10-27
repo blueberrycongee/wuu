@@ -60,6 +60,7 @@ export function WorkspaceDocumentTurnDock({
   const menuRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLButtonElement>(null);
   const restoreEditorRef = useRef(false);
+  const selectionPointerRef = useRef<number | null>(null);
   const finalAnswers = turn ? finalAnswerItems(turn) : [];
   const previousTurnIDRef = useRef(turn?.id);
   const previousFinalAnswerCountRef = useRef(finalAnswers.length);
@@ -87,17 +88,52 @@ export function WorkspaceDocumentTurnDock({
 
   useEffect(() => {
     if (minimized) return;
-    const dismissOutside = (event: Event) => {
-      if (ownsFocus(event.target)) return;
+    let active = true;
+    const dismiss = () => {
       setInputFocused(false);
       setMenuOpen(false);
       setExpanded(false);
     };
+    const dismissOutside = (event: Event) => {
+      if (ownsFocus(event.target)) return;
+      if (event.type === "pointerdown") {
+        const pointer = event as PointerEvent;
+        if (pointer.button === 0 && event.composedPath().some(target =>
+          target instanceof Element && target.hasAttribute("data-selectable"))) {
+          // Shrinking the dock changes document scroll padding. Keep that
+          // geometry until a native text drag has read its final range.
+          selectionPointerRef.current = pointer.pointerId ?? 0;
+          return;
+        }
+        selectionPointerRef.current = null;
+      }
+      if (selectionPointerRef.current === null) dismiss();
+    };
+    const finishSelection = (event: PointerEvent) => {
+      const pointer = selectionPointerRef.current;
+      if (pointer === null || pointer !== (event.pointerId ?? 0)) return;
+      // PDF selection readers also run on pointerup. Settle all of them before
+      // a smaller scroll range can move the selected glyphs under the pointer.
+      queueMicrotask(() => {
+        if (!active || selectionPointerRef.current !== pointer) return;
+        selectionPointerRef.current = null;
+        if (!ownsFocus(document.activeElement)) dismiss();
+      });
+    };
+    const windowBlur = () => { selectionPointerRef.current = null; dismiss(); };
     document.addEventListener("pointerdown", dismissOutside, true);
     document.addEventListener("focusin", dismissOutside);
+    document.addEventListener("pointerup", finishSelection);
+    document.addEventListener("pointercancel", finishSelection);
+    window.addEventListener("blur", windowBlur);
     return () => {
+      active = false;
+      selectionPointerRef.current = null;
       document.removeEventListener("pointerdown", dismissOutside, true);
       document.removeEventListener("focusin", dismissOutside);
+      document.removeEventListener("pointerup", finishSelection);
+      document.removeEventListener("pointercancel", finishSelection);
+      window.removeEventListener("blur", windowBlur);
     };
   }, [minimized]);
 
@@ -133,7 +169,7 @@ export function WorkspaceDocumentTurnDock({
           if (event.target.matches(editorSelector)) setInputFocused(true);
         }}
         onBlurCapture={(event) => {
-          if (ownsFocus(event.relatedTarget)) return;
+          if (selectionPointerRef.current !== null || ownsFocus(event.relatedTarget)) return;
           if (event.relatedTarget) {
             setInputFocused(false);
             setMenuOpen(false);

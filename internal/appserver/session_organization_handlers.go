@@ -3,39 +3,60 @@ package appserver
 import (
 	"errors"
 	"strings"
-
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func (s *Server) handleSessionOrganizationList(req Request) error {
-	organization, err := session.ListOrganization(s.rt.SessionDir)
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+	organization, err := binding.Sessions.ListOrganization()
 	return s.writeResponse(req.ID, SessionOrganizationListResult{Organization: organization}, err)
 }
 
 func (s *Server) handleOrganizationGroupCreate(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params OrganizationGroupCreateParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	group, err := session.CreateFolder(s.rt.SessionDir, params.Name)
+	group, err := binding.Sessions.CreateFolder(params.Name)
 	return s.writeResponse(req.ID, OrganizationGroupResult{Group: group}, err)
 }
 
 func (s *Server) handleOrganizationGroupUpdate(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params OrganizationGroupUpdateParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	group, err := session.RenameFolder(s.rt.SessionDir, params.ID, params.Name)
+	group, err := binding.Sessions.RenameFolder(params.ID, params.Name)
 	return s.writeResponse(req.ID, OrganizationGroupResult{Group: group}, err)
 }
 
 func (s *Server) handleOrganizationGroupDelete(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params OrganizationGroupDeleteParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	sessions, err := session.List(s.rt.SessionDir, 0)
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -45,38 +66,50 @@ func (s *Server) handleOrganizationGroupDelete(req Request) error {
 			affected = append(affected, sess.ID)
 		}
 	}
-	if err := session.DeleteFolder(s.rt.SessionDir, params.ID); err != nil {
+	if err := binding.Sessions.DeleteFolder(params.ID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, map[string]bool{"ok": true}, nil); err != nil {
 		return err
 	}
 	for _, id := range affected {
-		metadata, ok, findErr := session.Find(s.rt.SessionDir, id)
+		metadata, ok, findErr := binding.Sessions.Find(id)
 		if findErr != nil || !ok {
 			continue
 		}
-		thread, updateErr := s.threadAfterMetadataUpdate(metadata)
+		thread, updateErr := s.threadAfterMetadataUpdate(binding, metadata)
 		if updateErr == nil {
-			_ = s.notifyThreadUpdated(thread)
+			_ = s.notifyThreadUpdated(binding, thread)
 		}
 	}
 	return nil
 }
 
 func (s *Server) handleOrganizationGroupReorder(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params OrganizationGroupReorderParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := session.ReorderFolders(s.rt.SessionDir, params.IDs); err != nil {
+	if err := binding.Sessions.ReorderFolders(params.IDs); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	organization, err := session.ListOrganization(s.rt.SessionDir)
+	organization, err := binding.Sessions.ListOrganization()
 	return s.writeResponse(req.ID, SessionOrganizationListResult{Organization: organization}, err)
 }
 
 func (s *Server) handleThreadOrganizationUpdate(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadOrganizationUpdateParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -85,16 +118,16 @@ func (s *Server) handleThreadOrganizationUpdate(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	metadata, err := session.UpdateOrganization(s.rt.SessionDir, id, params.FolderID)
+	metadata, err := binding.Sessions.UpdateOrganization(id, params.FolderID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, ThreadOrganizationUpdateResult{Thread: thread}, nil); err != nil {
 		return err
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(binding, thread)
 }

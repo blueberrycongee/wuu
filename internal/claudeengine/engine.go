@@ -56,13 +56,15 @@ func NewEngine(binaryPath, rootDir string) *Engine {
 
 // Descriptor describes the claude engine.
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	version := Version(e.binaryPath)
+	requiresHostModel := false
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineID("claude"),
-		Version: version,
+		ID:                agentengine.EngineID("claude"),
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"default-permission-unconfined",
 		},
 	}, nil
 }

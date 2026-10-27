@@ -35,6 +35,7 @@ func TestTextSnapshotReadsFullDisplayTextWithoutResumingOrLeakingPayloads(t *tes
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	th := newThreadState("history-copy", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+	th.state = testRuntimeState(t, rt)
 	text := strings.Repeat("完整正文", 3000)
 	th.Turns = []Turn{{ID: "turn", Items: []ThreadItem{
 		{ID: "user", Type: ThreadItemUserMessage, Text: "visible question", InputText: "private raw input", Images: []ThreadItemImage{{Data: "private image"}}},

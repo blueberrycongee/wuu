@@ -71,6 +71,7 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 					t.Fatal(err)
 				}
 				rt.StreamRunner.Client = client
+				attachTestModelGeneration(t, rt)
 				rt.StreamRunner.ProviderOptions = map[string]any{"thinking": map[string]any{"type": "enabled", "budget_tokens": 1024}}
 			} else {
 				wire := ""
@@ -82,8 +83,9 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 					t.Fatal(err)
 				}
 				rt.StreamRunner.Client = client
+				attachTestModelGeneration(t, rt)
 			}
-			sess, err := session.CreateWithMetadata(rt.SessionDir, session.NewID(), rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +98,7 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 			case "chat_completions":
 				reasoning.ReasoningContent = "completed reasoning"
 			}
-			if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{{Role: "user", Content: "original task"}, reasoning, {Role: "tool", Name: "read_file", ToolCallID: "call_saved", Content: "tool output saved"}, {Role: "assistant", Content: "completed step"}, {Role: "assistant", Content: "discard fragment", Cause: providers.IncompleteStreamFragment}}); err != nil {
+			if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{{Role: "user", Content: "original task"}, reasoning, {Role: "tool", Name: "read_file", ToolCallID: "call_saved", Content: "tool output saved"}, {Role: "assistant", Content: "completed step"}, {Role: "assistant", Content: "discard fragment", Cause: providers.IncompleteStreamFragment}}); err != nil {
 				t.Fatal(err)
 			}
 			out := &lockedBuffer{}
@@ -110,7 +112,7 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 				t.Fatalf("admission: %+v", reply)
 			}
 			waitForTurnCompletedForThread(t, out, sess.ID)
-			waitForThreadLeaseRelease(t, rt.SessionDir, sess.ID)
+			waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, sess.ID)
 			if requests.Load() != 1 {
 				t.Fatalf("requests=%d", requests.Load())
 			}

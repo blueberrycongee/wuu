@@ -56,6 +56,9 @@ async function start() {
   await win.loadFile(renderer);
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+  await until(() => [...document.querySelectorAll('.thread-row-main')].some(row => row.textContent.includes('Resize fixture')));
+  await evaluate(() => [...document.querySelectorAll('.thread-row-main')].find(row => row.textContent.includes('Resize fixture')).dataset.e2eSelect = 'initial');
+  await click('[data-e2e-select="initial"]');
   await until(() => !!document.querySelector('.turn') && !!document.querySelector('[data-main-conversation-composer] textarea'));
   await evaluate(() => {
     const original = File.prototype.arrayBuffer;

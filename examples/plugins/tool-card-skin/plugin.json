@@ -3,19 +3,8 @@
   "id": "tool-card-skin",
   "name": "Tool Card Skin",
   "version": "1.0.0",
-  "description": "An appearance-only Presenter for command Tool activity using only the public immutable snapshot and native fallback.",
+  "description": "A UI contribution wrapping command tool activity using its public immutable snapshot.",
   "desktop": {
     "entry": "desktop.js"
-  },
-  "contributes": {
-    "presenters": [
-      {
-        "id": "command-tool-card",
-        "target": "conversation.tool-activity",
-        "mode": "replace",
-        "priority": 40,
-        "title": "Command Tool card skin"
-      }
-    ]
   }
 }

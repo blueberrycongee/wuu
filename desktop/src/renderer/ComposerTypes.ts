@@ -1,7 +1,7 @@
-import type { CodexModelSummary } from "../shared/protocol";
+import type { CodexModelSummary, InitializeResult, DesktopProject } from "../shared/protocol";
 import { resolveLocalizedText } from "./i18n";
 
-export const COMPOSER_PROJECT_MENU_WIDTH = 320;
+export const COMPOSER_PROJECT_MENU_WIDTH = 256;
 // The plus and slash menus share one compact card, drawn at this width for the
 // default UI size.
 export const COMPOSER_COMMAND_MENU_WIDTH = 304;
@@ -20,8 +20,15 @@ export type CodexModelLoadState = {
 export type CodexRuntimeMenu = "model" | null;
 export type ComposerVariant = "dock" | "document" | "hero";
 export type FloatingMenuOwner =
+  | "web-workspace-address"
+  | "web-workspace-downloads"
+  | "web-workspace-options"
   | "sidebar-account"
+  | "sidebar-workspace"
   | "conversation-actions"
+  | "conversation-workspace"
+  | "conversation-status"
+  | "conversation-todo"
   | "conversation-triggers"
   | "composer-handoff"
   | "composer-runtime"
@@ -64,6 +71,10 @@ export type ComposerWorktreeControl = {
   enabled: boolean;
   /** Branch the worktree starts from; empty starts from the project's HEAD. */
   startBranch: string;
-  onToggle: () => void;
   onSelectStartBranch: (branch: string) => void;
 };
+
+/** Only presentation fields consumed by the editor and its runtime menus. */
+export type ComposerConfiguration = Pick<InitializeResult, "provider" | "model" | "effort" | "variant" | "speed" | "providers" | "permissions" | "features" | "extension_inventory" | "extension_trust" | "runtime_host" | "advanced_settings">;
+
+export type ComposerWorkspace = Pick<DesktopProject, "id" | "name" | "path" | "missing">;

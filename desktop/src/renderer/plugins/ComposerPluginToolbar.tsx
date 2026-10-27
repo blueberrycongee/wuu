@@ -1,41 +1,54 @@
+import { Tooltip } from "../Tooltip";
+import type { UISlotLayoutProps } from "../../../../packages/plugin-sdk/src/ui";
 import { Ellipsis } from "../WuuIcons";
 import {
-  useCallback,
+  Fragment,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 import { FloatingMenuPortal, isInsideFloatingMenu } from "../ComposerFloatingMenu";
 import { useI18n } from "../i18n";
-import type { PluginHost, PluginSlotRenderContext } from "./PluginHost";
-import { PluginSlotContribution } from "./PluginSlot";
 
 const INLINE_PLUGIN_TOOL_LIMIT = 2;
 
-export function ComposerPluginToolbar({
-  host,
-  context,
-}: {
-  host: PluginHost;
-  context: PluginSlotRenderContext;
-}): ReactNode {
+export function ComposerPluginToolbar({ items }: UISlotLayoutProps): ReactNode {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const expandedWidth = useRef(0);
+  const measuredItems = useRef(items);
   const triggerRef = useRef<HTMLDivElement>(null);
-  const subscribe = useCallback(
-    (listener: () => void) => host.subscribeSlot("composer.toolbar", listener),
-    [host],
-  );
-  const getSnapshot = useCallback(
-    () => host.getSlotSnapshot("composer.toolbar"),
-    [host],
-  );
-  const contributions = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const inline = contributions.slice(0, INLINE_PLUGIN_TOOL_LIMIT);
-  const overflow = contributions.slice(INLINE_PLUGIN_TOOL_LIMIT);
+  const inlineCount = compact ? 0 : INLINE_PLUGIN_TOOL_LIMIT;
+  const inline = items.slice(0, inlineCount);
+  const overflow = items.slice(inlineCount);
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    const parent = toolbar?.parentElement;
+    if (!toolbar || !parent) return;
+    const measure = (): void => {
+      if (compact && measuredItems.current !== items) {
+        setCompact(false);
+        return;
+      }
+      if (!compact) {
+        expandedWidth.current = toolbar.scrollWidth;
+        measuredItems.current = items;
+      }
+      const available = parent.getBoundingClientRect().right - toolbar.getBoundingClientRect().left;
+      setCompact(available < expandedWidth.current);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [compact, items]);
 
   useEffect(() => {
     if (overflow.length === 0) {
@@ -62,42 +75,33 @@ export function ComposerPluginToolbar({
         setOpen(false);
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
 
-  if (contributions.length === 0) {
+  if (items.length === 0) {
     return null;
   }
 
   return (
-    <div className="composer-plugin-toolbar">
-      {inline.map((contribution) => (
-        <PluginSlotContribution
-          key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
-          host={host}
-          id="composer.toolbar"
-          context={context}
-          contribution={contribution}
-        />
-      ))}
+    <div className="composer-plugin-toolbar" ref={toolbarRef}>
+      {inline.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}
       {overflow.length > 0 ? (
         <div className="composer-plugin-tools-anchor" ref={triggerRef}>
-          <button
+          <Tooltip asChild content={t("composer.pluginToolsMore")}><button
             className="composer-tool-button composer-plugin-tools-trigger"
             type="button"
             aria-haspopup="dialog"
             aria-expanded={open}
             aria-label={t("composer.pluginToolsMore")}
-            title={t("composer.pluginToolsMore")}
             onClick={() => setOpen((current) => !current)}
           >
             <Ellipsis aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           {open ? (
             <FloatingMenuPortal
               anchorRef={triggerRef}
@@ -117,21 +121,16 @@ export function ComposerPluginToolbar({
                 }}
               >
                 {overflow.map((contribution) => {
-                  const label = contribution.title || `${contribution.pluginId}: ${contribution.id}`;
+                  const label = contribution.title;
                   return (
                     <div
                       className="composer-plugin-tools-item"
                       role="group"
                       aria-label={label}
-                      key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
+                      key={contribution.key}
                     >
                       <span className="composer-plugin-tools-label">{label}</span>
-                      <PluginSlotContribution
-                        host={host}
-                        id="composer.toolbar"
-                        context={context}
-                        contribution={contribution}
-                      />
+                      {contribution.node}
                     </div>
                   );
                 })}

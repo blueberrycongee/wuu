@@ -54,9 +54,28 @@
 
 包依赖与运行时服务要求用途不同。包依赖选择已安装的包并确定生命周期顺序；`provided_services` / `required_services` 协商命名 API 和服务主版本，不按包 ID 选择，也不继承包版本。功能需要特定包及其 API 时，应同时声明两者。仅依赖服务的消费者则可接受该服务的任意合格 provider。
 
+## 不替换 provider 也能协作
+
+新增插件可以消费已有服务，并向服务所属插件公开的 UI 插槽贡献内容，
+无需修改该插件或选择替代 provider。例如，[计数器与控制插件](../../../examples/plugins/additive-counter/README.md)
+组合了外部进程状态/操作 API、公开的类型化 helper、可取消订阅和嵌套桌面贡献。
+这只是可复验的一个样本，不限制插件组合服务、hook、capability 和 UI 的方式。
+
+使用 `api.invokeService` 前先声明 `desktop.required_services`；运行时消费者在
+初始化时声明 `required_services`。宿主依据消费者身份和已捕获的 generation
+路由调用。所属插件通过 `registerUISlot` 发布插槽，其他包通过
+`registerUIContribution` 添加内容。使用公开 UI kit 和契约 context，
+不要访问私有 DOM 或 controller。注册和调用取消由 generation 管理；
+视图卸载时也应停止领域订阅。
+
+交互安装缺少必需依赖的新插件时，候选会被拒绝。更新若会破坏已活跃消费者的
+必需依赖，也会在发布前拒绝并保留原有可用图。可选依赖不保证服务可用：应处理
+调用失败，只禁用受影响的功能。包版本约束与服务主版本是独立检查。
+安装附加插件并不隐含替换现有 provider；存在 provider 冲突时，仍需明确选择组合。
+
 ## 声明式贡献
 
-主题和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
+主题、外壳皮肤和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
 
 ```json
 {
@@ -83,23 +102,130 @@
 }
 ```
 
-主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
+主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。公共语义颜色为独立 UI 外壳提供可读取的默认值。在主题的 `tokens` 中声明颜色即可覆盖内置界面；未声明的颜色保留各组件的默认外观。清除或停用主题会恢复这些默认外观。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|next-operation|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
 
 `contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。`side_conversation` 引用包内提示词，打开宿主管理的附属会话界面；消息继续使用现有侧聊执行与历史机制，宿主保留当前权限边界。发送请求使用 `plugin.command` 公共 ID 标识命令；停用或移除所属插件会取消正在生成的回答，但不会删除历史。同 ID 更新从下一次回答生效，正在生成的回答保留其原有 generation。此类命令不需要桌面入口或辅助进程。
 
 首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
-UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
+manifest UI 声明使用 `contributes.presenters`、`navigation`、`workspaceTools` 或 `settingsPages`，描述放置位置和入口，实际渲染由桌面模块注册。对于已声明的 UI 区域，调用 `registerUIContribution` 并指定带所有者前缀的目标，无需 manifest 条目。旧 `contributes.slots` 和 `surfaces` 字段会被拒绝。组合规则见[桌面 UI 插件](desktop-plugins.md)。
+
+### 配置快照与生效时机
+
+修改配置不会重启插件或重建其资源。为每个非 secret 设置选择生效方式：
+
+| `apply` | 运行时读取行为 |
+| --- | --- |
+| `live` | 每次读取或刷新采用最新的、完整验证通过的候选配置。 |
+| `next-operation` | 经过宿主认证的工具、能力或服务执行首次读取快照或非 secret 设置时，固定全部操作级设置；同次执行后续读取保留这些值，新执行采用新值。 |
+| `restart` | 在 generation 准备阶段之前固定；该 generation 及其保留的在途执行都使用旧值，成功重载或宿主重启后采用已保存的新值。 |
+
+连接端点、池结构等资源配置使用 `restart`，操作参数使用 `next-operation`。
+执行级读取要使用该回调收到的 `host`；后台 host 没有所属操作。对插件自定义的
+多步骤操作，即使设置声明为 `live`，也可以只捕获一次，再把不可变快照传给每一步：
+
+```ts
+import { createPluginSettings, requireKernelService } from "@wuu/plugin-sdk";
+
+// initialize(): required_services: [requireKernelService("host.settings.list")]
+// 在 executeTool、invokeService 或 invokeCapability 中：
+const settings = createPluginSettings(host, { signal: execution.signal });
+const config = await settings.capture();
+// 整次操作使用 config.values；后续刷新不会修改已有快照。
+```
+
+`host.settings.list` 继续接受 `{}` 并返回 `entries`，同时增加不透明的 `revision`、
+已保存配置的 `scope_revisions`、以及待重启生效的本地键 `restart_required`。
+可选参数 `{scope: "user" | "workspace"}` 过滤返回值及其元数据。修订标识是内容
+令牌，只能比较相等，不能排序，也不是事件日志。每个 scope 只读取一次提供方文档，
+所有已声明值通过验证后才发布。各 scope 独立提交；组合快照**不是跨 scope 事务**，
+相互依赖的值应放在同一 scope。secret 条目始终为空字符串，修订标识不包含秘密，
+也不随秘密是否已配置而改变。
+
+读取器的 `refresh()` 只有在读取与可选的 `validate(values)` 跨字段校验成功后才
+原子替换 `current`。存储值非法、后端失败或取消会拒绝刷新，已有快照不变。
+`subscribe(callback)` 只通知新发布且修订不同的快照，返回取消订阅函数。
+可选的 `watch(intervalMs)` 默认每秒刷新，允许 100–60,000 毫秒，并合并并发刷新。
+必须等待其 Promise 或处理拒绝。订阅不会自动启动观察；轮询可能合并中间变化，
+不是持久事件流。后台观察传入 generation 生命周期 signal；中止后清除监听器，
+晚到结果不得发布。监听器异常会在**发布后**使刷新拒绝，不会回滚已发布配置。
+
+现有 `get`/`getAll` 接口和 `host.settings.get/list` 调用形态保持可用。新读取器要求
+快照元数据，面对旧宿主会明确拒绝，不把多次独立读取伪装成一致快照。
+桌面 `host.getSetting` 用于配置编辑器，返回**已保存值**，不代表运行时 restart
+设置的当前生效值。secret 读取仍不返回令牌。
+
+带 fingerprint 校验的 `plugin/setting/set` 编辑入口在现有 `key`、`value` 外，
+接受可选的 `patch`，原子修改主键所在 scope 内的其他非 secret 键。完整声明候选
+验证通过后，通过所选提供方的一次 compare-and-exchange 提交。重复键、外来键、
+跨 scope 修改以及 patch 中的 secret 都会在写入前拒绝；这也允许一次修复 schema
+变更后多个非法存储值。已移除的声明仍保留存储以兼容降级，但不暴露给当前插件。
+结果不确定的提供方写入失败不会自动重试；先重新读取，再决定是否重试。
+
+执行 `node scripts/plugin-settings-e2e.mjs`，可用打包后的 SDK 子进程验收在途读取、
+重载、资源稳定性、候选拒绝及退休。测试只用合成状态，可复查证据保存在
+`.tmp/e2e/plugin-settings/`，也可通过 `WUU_SETTINGS_EVIDENCE` 指定目录。
+
+### 外壳皮肤
+
+使用独立于 `contributes.themes` 的 `contributes.skins` 声明皮肤。每套皮肤包含插件内唯一的 `id`、`name`，以及必填的 `light` 和 `dark` 两种方案。每种方案提供不透明的 `#RRGGBB` 格式 `background` 和 `foreground`，可选包内相对路径 `image`，以及可选的 `overlay`、`hover`、`active` 颜色（`#RRGGBB` 或 `#RRGGBBAA`）。`position` 可选 `center`（默认）、`top`、`bottom`、`left` 或 `right`。
+
+```json
+{
+  "contributes": {
+    "skins": [{
+      "id": "ocean",
+      "name": "Ocean",
+      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg" },
+      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555" }
+    }]
+  }
+}
+```
+
+图片支持 PNG、JPEG、WebP 和自包含 SVG，每张最多 8 MiB；渐变和纹理也通过图片提供。路径必须位于插件包内，SVG 不允许外部引用和脚本。桌面只提供所请求包指纹中声明的图片。图片以整个窗口为基准连续覆盖 ribbon 和外框。应用负责布局、裁切、交互和内容区边界，皮肤颜色不会覆盖内容主题变量。请搭配图片设计前景、悬停和选中颜色，保证控件清晰。
+
+皮肤选择保存在桌面配置中，跟随浅色／深色模式，并在插件更新后保留。禁用、移除插件或进入安全模式会停止装饰外框；重新启用同一插件会恢复选择。图片加载失败时显示方案底色，并在预览中报告图片不可用。同一插件可以同时提供皮肤和内容主题，用户分别选择。可安装的完整示例见外壳皮肤示例（`examples/plugins/shell-skins`）。
+
+### 秘密设置与认证请求
+
+将凭据声明为 `secret` 设置，要求 `default: ""`、`scope: "user"`、
+`apply: "live"` 和 `credential_origins: ["https://api.example.com"]`。
+每项必须是完整 HTTPS 来源，不含路径、查询、片段或用户信息。宿主设置界面使用
+掩码输入和明确的保存、移除按钮。凭据保存在 macOS 钥匙串或 Linux Secret Service，
+不会回退到明文文件；存储不受支持或被锁定时会明确报错。秘密设置读取始终返回空字符串，
+只有宿主设置界面收到 `configured` 存在标记；凭据不会写入普通设置或工具历史。
+
+运行时声明 `requireKernelService("host.credentials.request")`，再调用
+`host.call("host.credentials.request", { credential: "token", url, method,
+headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设置。宿主仅向声明的
+来源添加 Bearer 认证，拒绝重定向以及调用方提供的认证、Cookie、路由和连接控制头，
+返回 `{ status, headers, body }`。响应头使用小写，仅暴露内容类型、重试间隔和请求 ID。
+请求超时为 20 秒，请求与响应正文各限 4 MiB。响应正文、头及传输错误会隐藏令牌。
+不要把凭据作为工具参数，也不要复制到普通存储、日志或生成的插件包。
+
+凭据绑定 Wuu 数据目录、插件来源身份、本地键和来源集合；项目插件还绑定项目根目录。
+更改这些信息需要重新输入凭据。停用插件会阻止新调用，但保留凭据，直到用户移除。
+凭据已保存不代表 API 权限已验证。令牌刷新和服务专用授权仍由插件负责。
+写入失败或超时可能已经在远端生效，不要静默重试。
 
 ## 运行时进程和生命周期
 
 宿主启动 manifest 中的命令，通过 stdin/stdout 交换每行一个 JSON 对象。stdout 专用于协议帧，诊断信息写入 stderr。manifest 的传输名称 `wuu-plugin-v1` 与协商的能力协议编号是不同字段；使用服务的新运行时应协商 `protocol_version: 3`。
 
-官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v1 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
+官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v2 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
+
+添加能力（包括观察能力）时，应从 `initialize` 返回 `protocol_version: 3`。
+这是**返回结果**中的字段：宿主的 `params.protocol_version: 1` 标识传输协议，
+不能照搬为能力协议版本；`params.capability_protocol_version` 表示宿主支持的
+能力协议。没有服务声明时，省略返回结果的版本意味着仅支持工具的旧版 v1，
+不是最新版。SDK 会在返回声明前，以 `invalid_capability_protocol` 拒绝 v1 的
+能力或模型适配器声明。显式 v2 能力仍受支持；声明服务时，SDK 仍选择 v3。
 
 | 回调 | 职责 |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | 返回工具、能力、提供的服务和需要的服务 |
+| `prepare(host, lifecycle)` | 服务绑定完成后读取并验证状态，不写入或启动后台工作 |
 | `activate(host, lifecycle)` | 运行时变更提交后，启动定时器、订阅或其他行为 |
 | `executeTool(params, host, execution)` | 执行已注册工具，返回结果 |
 | `invokeCapability(params, host, execution)` | 处理已声明能力 |
@@ -107,7 +233,7 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 | `serviceChanged(params, host)` | 响应服务解析变化 |
 | `shutdown()` | 停止插件拥有的工作并释放资源 |
 
-初始化是准备阶段，不代表可以开始产品行为。原生预检查期间，宿主只允许调用读取阶段的服务。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
+`initialize` 只声明契约。Lifecycle v2 在全部声明绑定后增加独立的 `prepare` 请求。请将持久状态的读取和验证从 `initialize` 移到 `prepare`，使用配套 SDK 重新构建；手写适配器需返回 `lifecycle_version: 2`。旧生命周期适配器会在提交前被拒绝。provider 先于消费者准备；准备阶段只能调用已声明且标记 `preparation: true` 的方法，嵌套调用也遵守此约束。该标记承诺不进行持久化写入或产生外部效果；省略时仅可在激活后调用。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
 
 请求关闭或连接结束时，`lifecycle.signal` 会中止。激活后启动的后台工作应
 使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
@@ -117,7 +243,7 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
 
-TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
+TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、prepare、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
 
 启用前应保护共享可变状态。每次调用的 execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
 
@@ -135,13 +261,14 @@ TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具�
 | `agent.system_prompt.section` | `transform`：添加提示词区块 |
 | `agent.request.transform` | `transform`：在模型请求前添加系统消息 |
 | `agent.pre_step` | `transform`：在步骤前追加带标识的消息 |
+| `agent.step.policy` | `decision`：继续或停止默认循环的模型步骤，见 [Harness 实验](harness-experiments.md) |
 | `agent.turn.completed`、`agent.turn.lifecycle`、`agent.turn.interrupted` | `observe`：响应支持的轮次事件 |
 | `plugin.client.request` | `decision`：分派插件桌面 UI 发来的请求 |
 | `agent.compaction` | `decision`：实验性的压缩契约 |
 
 `agent.request.transform` 接收与 provider 无关的请求视图，公开输出是 `prepend_system_messages`，不是任意修改 provider 的传输请求。SDK 将压缩标为实验性，不应把它当作稳定的、可替换整个 agent 循环的通用接口。
 
-能力可声明 `priority`、`depends_on` 和 `conflicts`。优先级高的先执行，同优先级保留发现顺序。`error_policy` 为 `propagate`、`isolate` 或 `ignore`；观察能力不能传播错误，只有观察能力能忽略错误。内置轮次观察能力默认隔离，其他能力默认传播。预期内的失败应在插件内部处理，不要只依赖统一错误策略。
+能力可声明 `priority`、`depends_on` 和 `conflicts`。优先级高的先执行，同优先级按插件 ID 排序。`error_policy` 为 `propagate`、`isolate` 或 `ignore`；观察能力不能传播错误，只有观察能力能忽略错误。内置轮次观察能力默认隔离，其他能力默认传播。预期内的失败应在插件内部处理，不要只依赖统一错误策略。
 
 ## 调用宿主服务
 
@@ -187,6 +314,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.background` | 调用插件自己服务的 generation 所属后台工作 |
 | `host.process` | 绑定会话的 shell 进程、输出读取和事件投递 |
 | `host.settings.get/list` | 声明的设置值 |
+| `host.credentials.request` | 使用宿主持有的 Bearer 凭据向限定 HTTPS 来源发送请求 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
 | `host.workspace.status/apply/discard` | 检查或处理所拥有会话工作区中的改动 |
@@ -341,7 +469,7 @@ capability 不能启动进程。同一 key 和相同参数返回已有记录，�
 
 初始化时返回 `provided_services`，并实现 `invokeService`。描述包含小写点分名称、严格的 `MAJOR.MINOR.PATCH` 版本，以及带 `input_schema`、`output_schema` 标识的方法。这些标识命名契约，不是内嵌 JSON Schema 定义。
 
-消费者声明服务名和主版本，再通过统一入口调用。宿主提供调用者身份并路由到活动 provider，不应直接寻址另一个插件进程或依赖其私有文件。同一初始化结果不能同时提供和消费同名服务。缺少必需服务会阻止消费者激活；同名同主版本的多个 provider 会产生诊断，不会合并实现。
+消费者声明服务名和主版本，再通过统一入口调用。宿主提供调用者身份并路由到活动 provider，不应直接寻址另一个插件进程或依赖其私有文件。适配插件可以同时提供和消费同名服务，通过显式的 consumer 绑定委托给另一个实现；已解析的依赖图拒绝自调用和循环。参见[局部扩展 provider](replaceable-providers.md#局部扩展-provider)。缺少必需服务会阻止消费者激活；同名同主版本的多个 provider 会产生诊断，不会合并实现。
 
 [服务组合示例](../../../examples/plugins/service-composition/README.md)（英文）包含两个可构建的包：无状态的文本分析 provider，以及消费其版本 1 API 的写作报告工具。示例展示两种声明和真实的 gateway 调用。
 
@@ -394,7 +522,7 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 ## 开发和分发
 
-`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 仅在实际宿主中调用，使用其读取阶段服务。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
+`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 
@@ -402,6 +530,6 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`。路径相对插件目录，支持相邻文件或目录；修改后会重新构建并发布，无需重启。绝对路径、插件祖先目录、经过符号链接的路径，以及超过 64 个额外输入会被拒绝。不要列入生成文件；输入目录中的 `.git`、`node_modules`、`dist` 仍被忽略。这只控制开发监听，不改变运行时权限。
 
-当前 install/update CLI 会先暂存包，再单独批准代码激活。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
+install CLI 会确认信任并启用包。同一已记录来源的更新继承信任与启停状态；来源改变或尚未记录来源时需要确认。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
 完整插件编写类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)。Go 宿主及其内部应用嵌入接口属于宿主实现，不是另一套插件编写 SDK。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。

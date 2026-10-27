@@ -5,17 +5,23 @@ import type { WorkbenchSnapshot } from "./Workbench";
 export function primaryViewNavigation(
   entries: readonly RegisteredPluginViewEntry[],
   snapshot: WorkbenchSnapshot,
-): readonly (RegisteredPluginViewEntry & { instanceId?: string })[] {
+): readonly (RegisteredPluginViewEntry & { instanceId?: string; navigationId?: string })[] {
   const views = snapshot.views.filter((view) => view.region === "primary");
-  const rows: (RegisteredPluginViewEntry & { instanceId?: string })[] = [];
+  const rows: (RegisteredPluginViewEntry & { instanceId?: string; navigationId?: string })[] = [];
   const included = new Set<string>();
   for (const entry of entries) {
     const instances = views.filter((view) => view.pluginId === entry.pluginId && view.viewTypeId === entry.view);
     if (instances.length === 0) rows.push(entry);
-    for (const view of instances) {
+    for (const [index, view] of instances.entries()) {
       if (included.has(view.id)) continue;
       included.add(view.id);
-      rows.push({ ...entry, id: view.id, instanceId: view.id });
+      rows.push({
+        ...entry,
+        id: view.id,
+        instanceId: view.id,
+        // Opening the declared destination must not change its saved ribbon order.
+        navigationId: index === 0 ? entry.id : view.id,
+      });
     }
   }
   for (const view of views) {

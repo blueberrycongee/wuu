@@ -12,7 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestPluginTurnWaitHubNotifiesAllAndCleansUp(t *testing.T) {
@@ -72,7 +71,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			rt := newTestRuntime(t, client)
 			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 			observer := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: observerRelease}
-			rt.PluginHost = pluginhost.New(observer)
+			attachTestModelGeneration(t, rt, observer)
 			out := newTerminalBlockingWriter()
 			srv := New(rt, out)
 			t.Cleanup(func() {
@@ -82,7 +81,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 				srv.Close()
 			})
 
-			created, err := rt.PluginSessionRouter.Create(context.Background(), observer.ID(), pluginhost.SessionCreateParams{
+			created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), observer.ID(), pluginhost.SessionCreateParams{
 				RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 			})
 			if err != nil {
@@ -99,12 +98,12 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := session.PutPluginTurnLifecycleOutbox(rt.SessionDir, observer.ID(), discarded.RequestID, payload); err != nil {
+				if err := rt.Sessions.PutPluginTurnLifecycleOutbox(observer.ID(), discarded.RequestID, payload); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			sent, err := rt.PluginSessionRouter.Send(context.Background(), observer.ID(), pluginhost.SessionSendParams{
+			sent, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), observer.ID(), pluginhost.SessionSendParams{
 				RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
 			})
 			if err != nil || sent.State != pluginhost.TurnLifecycleRunning {
@@ -125,14 +124,14 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("turn did not reach its terminal notification")
 			}
-			snapshot, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+			snapshot, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), observer.ID(), pluginhost.SessionInspectParams{
 				SessionID: created.SessionID, RequestID: "run",
 			})
 			if err != nil || snapshot.TimedOut || snapshot.Turn == nil || snapshot.Turn.State != pluginhost.TurnLifecycleCompleted {
 				t.Fatalf("nonblocking inspect = %+v, %v", snapshot, err)
 			}
 
-			timedOut, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+			timedOut, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), observer.ID(), pluginhost.SessionInspectParams{
 				SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
 			})
 			if err != nil || !timedOut.TimedOut || timedOut.Turn == nil || timedOut.Turn.CompletedAt != nil {
@@ -145,7 +144,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			cancelCtx, cancel := context.WithCancel(context.Background())
 			cancelled := make(chan error, 1)
 			go func() {
-				_, err := rt.PluginSessionRouter.Inspect(cancelCtx, observer.ID(), pluginhost.SessionInspectParams{
+				_, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, cancelCtx), observer.ID(), pluginhost.SessionInspectParams{
 					SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
 				})
 				cancelled <- err
@@ -168,7 +167,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			}
 			completed := make(chan inspectResponse, 1)
 			go func() {
-				result, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+				result, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), observer.ID(), pluginhost.SessionInspectParams{
 					SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
 				})
 				completed <- inspectResponse{result: result, err: err}
@@ -176,7 +175,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
 			if retry {
 				// Replaying the old shutdown receipt must not settle the live retry.
-				srv.notifyPluginTurnLifecycleAsync(observer.ID(), discarded)
+				srv.notifyPluginTurnLifecycleAsync(testRuntimeState(t, rt), observer.ID(), discarded)
 				waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
 			}
 			out.unblock()
@@ -209,14 +208,14 @@ func TestPluginSessionInspectTimeoutCapAdmitsForegroundBudget(t *testing.T) {
 	if maxPluginSessionInspectTimeout < 10*time.Minute {
 		t.Fatalf("host inspect cap = %s, must admit the ten-minute foreground budget", maxPluginSessionInspectTimeout)
 	}
-	_, err := rt.PluginSessionRouter.Inspect(context.Background(), "subagent", pluginhost.SessionInspectParams{
+	_, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionInspectParams{
 		SessionID: "missing", Wait: pluginhost.SessionInspectWaitTerminal,
 		TimeoutMS: int(maxPluginSessionInspectTimeout/time.Millisecond) + 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "timeout_ms") {
 		t.Fatalf("timeout above host cap returned %v", err)
 	}
-	_, err = rt.PluginSessionRouter.Inspect(context.Background(), "subagent", pluginhost.SessionInspectParams{
+	_, err = rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionInspectParams{
 		SessionID: "missing", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 10 * 60 * 1000,
 	})
 	if err != nil && strings.Contains(err.Error(), "timeout_ms") {

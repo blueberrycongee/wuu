@@ -49,6 +49,12 @@ app.whenReady().then(async () => {
  await openSettingsPage(win,"/^(General|常规)$/",'[data-testid="settings-general"]');
  await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-general"] button')].find(b=>b.textContent.trim()==="English").click());
  await waitFor(win,()=>document.documentElement.lang==="en-US");
+ for(const theme of ["light","dark"]) for(const font of [15,20]) for(const width of [1180,640]) {
+  win.setContentSize(width,860);
+  await win.webContents.executeJavaScript(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--font-ui','${font}px')`);
+  await settle(win);
+  fs.writeFileSync(path.join(evidence,`general-${theme}-${font}-${width}.png`),(await win.webContents.capturePage()).toPNG());
+ }
  await openSettingsPage(win,"/^(Built-in agent|内置 Agent)$/",'[data-testid="settings-execution-environments"]');
  await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-execution-environments"] button')].find(b=>b.textContent.trim()==="Add environment").click());
  await waitFor(win,()=>Boolean(document.querySelector('[aria-label="Name"]')));
@@ -60,7 +66,7 @@ app.whenReady().then(async () => {
  await fill("CPU cores","2");
  await fill("Memory limit","2048");
  const samples=[];
- for(const theme of ["light","dark"]) for(const font of [14,20]) for(const width of [1180,640]) {
+ for(const theme of ["light","dark"]) for(const font of [15,20]) for(const width of [1180,640]) {
   win.setContentSize(width,860);
   await win.webContents.executeJavaScript(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--font-ui','${font}px')`);
   await evaluate(win,()=>document.querySelector('[aria-label="Name"]').scrollIntoView({block:'center'}));
@@ -72,8 +78,7 @@ app.whenReady().then(async () => {
  }
  await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-execution-environments"] button')].find(b=>b.textContent.trim()==='Save').click());
  await waitFor(win,()=>!document.querySelector('[data-testid="settings-execution-environments"] input[aria-label="Name"]'));
- // The default environment is chosen with the other new-conversation defaults on General.
- await openSettingsPage(win,"/^(General|常规)$/",'[aria-label="Default for new conversations"]');
+ // The default environment is chosen alongside its profiles.
  await evaluate(win,()=>document.querySelector('[aria-label="Default for new conversations"]').click());
  await waitFor(win,()=>Boolean(document.querySelector('[role="menuitemradio"][data-value="isolated-tools"]')));
  await evaluate(win,()=>document.querySelector('[role="menuitemradio"][data-value="isolated-tools"]').click());
@@ -88,8 +93,7 @@ app.whenReady().then(async () => {
  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
  await openSettingsPage(win,"/^(Built-in agent|内置 Agent)$/",'[data-testid="settings-execution-environments"]');
  await evaluate(win,()=>document.querySelector('[data-testid="settings-execution-environments"] button[aria-label="Remove isolated-tools"]').click());
- await openSettingsPage(win,"/^(General|常规)$/",'[aria-label="Default for new conversations"]');
  await waitFor(win,()=>document.querySelector('[aria-label="Default for new conversations"]').textContent.includes('Local'));
- fs.writeFileSync(path.join(evidence,'receipt.json'),JSON.stringify({settings,samples,verified:['create profile','save numeric limits','select default','keyboard menu','delete active profile','light and dark','14px and 20px','wide and narrow']},null,2));
+ fs.writeFileSync(path.join(evidence,'receipt.json'),JSON.stringify({settings,samples,verified:['create profile','save numeric limits','select default','keyboard menu','delete active profile','light and dark','15px and 20px','wide and narrow']},null,2));
  console.log('Execution environment settings acceptance passed');win.destroy();app.quit();
 }).catch(error=>{console.error(error);app.exit(1)});

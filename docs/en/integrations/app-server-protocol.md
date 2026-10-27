@@ -169,6 +169,13 @@ when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
 
+`turn/completed` and `turn/error` may include `index_error` when the selected
+index provider did not confirm the trace append. This diagnostic is separate
+from the model turn's status: the index write may already have committed, and
+clients must not rerun the turn or replay tools to repair it. An absent
+`trace_path` alone is not an error; external index providers need not export a
+local trace file.
+
 For persistent conversations, human queue/steer acceptance and pending-input edits
 or cancellation commit before a successful RPC response. Reuse a stable
 `client_id` when retrying an ambiguous response: a pending queue duplicate returns
@@ -617,6 +624,8 @@ The basic browser client advertises six methods: `browser/cdp`, `browser/screens
 methods despite appearing beside other method constants in the source.
 
 Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+`browser/list_tabs` can additionally return `workspace_tabs`: live user-owned website/plugin candidates with `tab_id`, `url`, `title`, `workspace_id`, `source`, and `active`. These are discovery metadata, separate from the conversation's owned `tabs`; listing grants no page-content access. An explicit tool `attach` sends `browser/open_tab` with identical `tab_id` and `workspace_tab_id`, without `initial_url`, under the existing activity and execution lease. The host borrows the exact native view and rejects busy, closed, or foreign-window pages. It must never recreate a `workspace:` tab by navigation. `browser/close_tab` (tool `detach`), finalize, turn completion, takeover, stop, and owner teardown release the binding without closing the user's page. Released binding IDs are reported in `closed`, even though their native user pages remain open. Agent permission restrictions apply while borrowed; no capture or media permissions are expanded.
 
 A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
 

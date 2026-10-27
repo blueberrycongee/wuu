@@ -1,5 +1,9 @@
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot as createReactRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ImagePreviewProvider,
@@ -49,9 +53,9 @@ function renderWithProbe(): { getAPI: () => ImagePreviewContextValue | null } {
   act(() => {
     root = createRoot(container);
     root.render(
-      <ImagePreviewProvider>
+      <ConversationControlsTestProvider><ImagePreviewProvider>
         <Probe />
-      </ImagePreviewProvider>
+      </ImagePreviewProvider></ConversationControlsTestProvider>
     );
   });
 
@@ -185,12 +189,12 @@ const toolTurn: Turn = {
 function renderConversations(turns: Turn[]): void {
   act(() => {
     root ??= createRoot(container);
-    root.render(<ImagePreviewProvider>
+    root.render(<ConversationControlsTestProvider><ImagePreviewProvider>
       <ConversationTurnList threadID="current" turns={turns}
         renderTurn={turn => <TurnView turn={turn} threadID="current" onStreamFrame={() => {}} />} />
       <div hidden><ConversationTurnList threadID="cached" turns={[uploadTurn]}
         renderTurn={turn => <TurnView turn={turn} threadID="cached" onStreamFrame={() => {}} />} /></div>
-    </ImagePreviewProvider>);
+    </ImagePreviewProvider></ConversationControlsTestProvider>);
   });
 }
 
@@ -383,4 +387,27 @@ it("contains keyboard focus and Escape without triggering conversation shortcuts
     window.removeEventListener("keydown", underlying);
     opener.remove();
   }
+});
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  const artifacts = new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: () => undefined, openFile: async () => {}});
+  return {...root, render: (children: ReactNode) => root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>), unmount: () => root.unmount()};
+}
+
+it("saves the resolved original and fences a failed save after changing the image", async () => {
+  const prior = window.wuu;
+  let fail!: (cause: Error) => void;
+  const saveArtifactFile = vi.fn(() => new Promise<void>((_, reject) => { fail = reject; }));
+  window.wuu = {...prior, saveArtifactFile};
+  try {
+    const probe = renderWithProbe();
+    await act(async () => probe.getAPI()!.openPreview({src:"data:image/png;base64,dGh1bWI=", loadSource: async () => "data:image/png;base64,b3JpZ2luYWw=", title:"original.png"}));
+    loadImage();
+    act(() => container.querySelector<HTMLButtonElement>(".image-preview-toolbar-button")!.click());
+    expect(saveArtifactFile).toHaveBeenCalledWith("original.png", "data:image/png;base64,b3JpZ2luYWw=");
+    act(() => probe.getAPI()!.openPreview({src:"data:image/png;base64,bmV3"}));
+    await act(async () => fail(new Error("old save failed")));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  } finally {window.wuu = prior;}
 });

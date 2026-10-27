@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { showErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
 import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
@@ -20,15 +21,6 @@ import type { SettingsPage } from "./SettingsView";
 /** Window event a conversation notice sends to open Settings on a page. */
 export const OPEN_SETTINGS_EVENT = "wuu:open-settings";
 export type OpenSettingsDetail = { page: SettingsPage };
-
-/**
- * Window event a failure notice sends to continue an interrupted reply. The
- * request identifies the terminal source turn and adds no user input.
- * A handler calls preventDefault to claim
- * the request and reports through done once the message was sent or not.
- */
-export const CONTINUE_TURN_EVENT = "wuu:continue-turn";
-export type ContinueTurnDetail = { threadID: string; turnID: string; text?: string; done: (sent: boolean) => void };
 
 export type SystemEventDisplay = {
   label: string;
@@ -381,15 +373,14 @@ export function TurnFailureNotice({
           ) : recover || openSettings ? (
             <div className="turn-failure-recovery">
               {recover ? (
-                <button
+                <Tooltip asChild content={continues ? t("turnFailure.continueHint") : undefined}><button aria-description={continues ? t("turnFailure.continueHint") : undefined}
                   type="button"
                   className="turn-failure-pill turn-failure-action"
-                  title={continues ? t("turnFailure.continueHint") : undefined}
                   disabled={recoverPending}
                   onClick={() => void runRecover()}
                 >
                   {continues ? t("turnFailure.continue") : t(recoverPending ? "appState.retryNow" : "appState.retryAction")}
-                </button>
+                </button></Tooltip>
               ) : null}
               {openSettings ? (
                 <button type="button" className="turn-failure-pill turn-failure-action is-primary" onClick={openSettings}>

@@ -19,11 +19,11 @@ import (
 func TestTurnContinueAdmissionAndRestart(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "continued"}}
 	rt := newTestRuntime(t, client)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "continue-admission", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("continue-admission", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{
+	if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{
 		{Role: "user", Content: "original task"}, {Role: "assistant", Content: "completed progress"},
 	}); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestTurnContinueAdmissionAndRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	external := acquireExternalThreadLease(t, rt.SessionDir, sess.ID)
+	external := acquireExternalThreadLease(t, rt.Sessions, rt.SessionDir, sess.ID)
 	submit(srv, "busy", source)
 	assertCrossServerBusyResponse(t, out, "busy")
 	if err := external.Release(); err != nil {
@@ -54,13 +54,13 @@ func TestTurnContinueAdmissionAndRestart(t *testing.T) {
 		t.Fatalf("not an empty new turn: %+v", result.Turn)
 	}
 	waitForTurnCompletedForThread(t, out, sess.ID)
-	waitForThreadLeaseRelease(t, rt.SessionDir, sess.ID)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, sess.ID)
 	submit(srv, "duplicate", source)
 	if responseByID(t, parseOutput(t, out.String()), "duplicate")["error"] == nil {
 		t.Fatal("late duplicate admitted")
 	}
 	assertFakeClientRequestCount(t, client, 1)
-	records, err := session.LoadHistoryRecords(rt.SessionDir, sess.ID, true)
+	records, err := rt.Sessions.LoadHistoryRecords(sess.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestTurnContinueAdmissionAndRestart(t *testing.T) {
 	reloadedOut := &lockedBuffer{}
 	reloaded := New(rt, reloadedOut)
 	t.Cleanup(reloaded.Close)
-	th, err := reloaded.ensureThreadLoaded(sess.ID)
+	th, err := reloaded.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,14 +100,14 @@ func TestTurnContinueRecoversLedgerAndRejectsUnknownEffect(t *testing.T) {
 		t.Run(fmt.Sprint("unknown=", unknown), func(t *testing.T) {
 			client := &fakeClient{response: providers.ChatResponse{Content: "finished"}}
 			rt := newTestRuntime(t, client)
-			sess, err := session.CreateWithMetadata(rt.SessionDir, session.NewID(), rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{{Role: "user", Content: "write once"}, {Role: "assistant", Content: "partial must stay display only", Cause: providers.IncompleteStreamFragment}}); err != nil {
+			if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{{Role: "user", Content: "write once"}, {Role: "assistant", Content: "partial must stay display only", Cause: providers.IncompleteStreamFragment}}); err != nil {
 				t.Fatal(err)
 			}
-			ledger, err := toolledger.New(rt.SessionDir, sess.ID)
+			ledger, err := toolledger.New(rt.Documents, sess.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +148,7 @@ func TestTurnContinueRecoversLedgerAndRejectsUnknownEffect(t *testing.T) {
 				t.Fatalf("settled effect blocked: %+v", reply)
 			}
 			waitForTurnCompletedForThread(t, out, sess.ID)
-			waitForThreadLeaseRelease(t, rt.SessionDir, sess.ID)
+			waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, sess.ID)
 			client.mu.Lock()
 			defer client.mu.Unlock()
 			req := client.requests[0]
@@ -205,7 +205,8 @@ func TestTurnContinueOnlyExplicitlyAfterStop(t *testing.T) {
 	client := &stopContinueClient{started: make(chan struct{})}
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
-	sess, err := session.CreateWithMetadata(rt.SessionDir, session.NewID(), rt.RootDir)
+	attachTestModelGeneration(t, rt)
+	sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,8 +226,8 @@ func TestTurnContinueOnlyExplicitlyAfterStop(t *testing.T) {
 		t.Fatal("first request did not start")
 	}
 	request("stop", "turn/interrupt", "")
-	waitForThreadLeaseRelease(t, rt.SessionDir, sess.ID)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestTurnContinueOnlyExplicitlyAfterStop(t *testing.T) {
 	}
 	request("continue", "turn/start", fmt.Sprintf(`,"resume_after_turn_id":%q`, source.ID))
 	waitForTurnCompletedForThread(t, out, sess.ID)
-	waitForThreadLeaseRelease(t, rt.SessionDir, sess.ID)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, sess.ID)
 	if client.calls.Load() != 2 {
 		t.Fatalf("requests=%d", client.calls.Load())
 	}
@@ -247,27 +248,27 @@ func TestTurnContinueOnlyExplicitlyAfterStop(t *testing.T) {
 
 func TestTurnContinueBoundarySurvivesHistoryRewrite(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, session.NewID(), rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "first"}}); err != nil {
+	if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "first"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, session.HistoryRecord{Role: "meta", Content: turnContinueHistoryRecord, ClientID: sess.ID + "-turn-0002"}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord(sess.ID, session.HistoryRecord{Role: "meta", Content: turnContinueHistoryRecord, ClientID: sess.ID + "-turn-0002"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{{Role: "assistant", Content: "resumed"}, {Role: "user", Content: "follow up"}, {Role: "assistant", Content: "last"}}); err != nil {
+	if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{{Role: "assistant", Content: "resumed"}, {Role: "user", Content: "follow up"}, {Role: "assistant", Content: "last"}}); err != nil {
 		t.Fatal(err)
 	}
-	history, err := loadChatMessages(rt.SessionDir, sess.ID)
+	history, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, history); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := loadPersistedMessages(rt.SessionDir, sess.ID, true)
+	rows, err := loadPersistedMessages(rt.Sessions, sess.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ window.renderRecovery=(state)=>{
  running={progress} status="ready" readOnly={false} initialized={{protocol_version:'wuu-app-server/v0.1',provider:'fake',model:'test',workspace_root:'/synthetic',providers:[{name:'fake',type:'openai-compatible',model:'test'}]}}
  codexModels={{loading:false,error:'',models:[]}} codexRuntimeMenu={null} codexRuntimeRef={createRef()} menuOpen={false} accessMenuOpen={false} branchMenuOpen={false} menuRef={createRef()} accessMenuRef={createRef()} workspaceFilter="" setWorkspaceFilter={noop}
  onToggleMenu={noop} onToggleAccessMenu={noop} onToggleCodexRuntimeMenu={noop} onSelectRuntimeModel={noop} onSelectRuntimeEffort={noop} onSelectPermissionMode={noop} onToggleBranchMenu={noop} onOpenSettings={noop} onOpenSkillsCatalog={noop} onSelectWorkspace={noop} onSelectNoProject={noop} onSelectGitBranch={noop} onCreateWorkspace={noop} onOpenWorkspace={noop} onStartNewThread={noop} onOpenWorkspaceTool={noop} onPasteAttachmentFiles={noop} onRemoveFile={noop} onRemoveImage={noop} onRemoveQueuedMessage={noop} onRemoveGuideMessage={noop} onGuideQueuedMessage={noop} onEditQueuedMessage={noop} onEditGuideMessage={noop}
- onSend={()=>{window.sendCalls++;}} onInterrupt={noop} onContinue={progress?undefined:()=>new Promise(resolve=>{window.continueCalls++;window.finishContinue=resolve;})} tokensPerSecond={0}/>
+ onSend={()=>{window.sendCalls++;}} onInterrupt={noop} continuation={progress?undefined:{threadID:"fixture",turnID:"failed",continue:()=>new Promise(resolve=>{window.continueCalls++;window.finishContinue=()=>resolve(true);})}} tokensPerSecond={0}/>
  </main></WorkbenchConnectionContext.Provider></ImagePreviewProvider></I18nProvider>);
 };
 window.renderRecovery('exhausted');

@@ -13,11 +13,11 @@ import (
 )
 
 type pluginAuthorizer struct {
-	registry *pluginhost.ServiceRegistry
+	host *pluginhost.Host
 }
 
 func (a *pluginAuthorizer) Authorize(ctx context.Context, request tools.AuthorizationRequest) (tools.AuthorizationDecision, error) {
-	if a == nil || a.registry == nil {
+	if a == nil || a.host == nil {
 		return tools.AuthorizationDecision{}, errors.New("authorization provider is unavailable")
 	}
 	input := pluginhost.AuthorizationRequest{
@@ -32,7 +32,7 @@ func (a *pluginAuthorizer) Authorize(ctx context.Context, request tools.Authoriz
 	if err != nil {
 		return tools.AuthorizationDecision{}, err
 	}
-	result, callErr := a.registry.CallProvider(ctx, pluginhost.SecurityAuthorizeService, pluginhost.SecurityServiceMajor, pluginhost.SecurityAuthorizeMethod, raw, "")
+	result, callErr := a.host.CallService(ctx, toolExecutionConsumer, pluginhost.SecurityAuthorizeService, pluginhost.SecurityAuthorizeMethod, raw)
 	if callErr != nil {
 		return tools.AuthorizationDecision{}, callErr
 	}
@@ -48,11 +48,11 @@ func (a *pluginAuthorizer) Authorize(ctx context.Context, request tools.Authoriz
 }
 
 type pluginSandboxProvider struct {
-	registry *pluginhost.ServiceRegistry
+	host *pluginhost.Host
 }
 
 func (p *pluginSandboxProvider) Confine(ctx context.Context, argv []string, policy processsandbox.Policy) (processsandbox.ConfinedCommand, error) {
-	if p == nil || p.registry == nil {
+	if p == nil || p.host == nil {
 		return processsandbox.ConfinedCommand{}, errors.New("sandbox provider is unavailable")
 	}
 	input := pluginhost.ProcessSandboxRequest{
@@ -63,7 +63,7 @@ func (p *pluginSandboxProvider) Confine(ctx context.Context, argv []string, poli
 	if err != nil {
 		return processsandbox.ConfinedCommand{}, err
 	}
-	result, callErr := p.registry.CallProvider(ctx, pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor, pluginhost.ProcessSandboxMethod, raw, "")
+	result, callErr := p.host.CallService(ctx, toolExecutionConsumer, pluginhost.ProcessSandboxService, pluginhost.ProcessSandboxMethod, raw)
 	if callErr != nil {
 		return processsandbox.ConfinedCommand{}, callErr
 	}
@@ -77,19 +77,19 @@ func (p *pluginSandboxProvider) Confine(ctx context.Context, argv []string, poli
 	}, nil
 }
 
-func configureToolkitSecurityExtensions(kit *tools.Toolkit, registry *pluginhost.ServiceRegistry) {
+func configureToolkitSecurityExtensions(kit *tools.Toolkit, host *pluginhost.Host) {
 	if kit == nil {
 		return
 	}
-	kit.SetAuthorizer(nil)
+	// Capture this generation even when its selected authority is unavailable.
+	// Clearing the binding would turn missing or retired policy into local allow.
+	kit.SetAuthorizer(&pluginAuthorizer{host: host})
 	kit.SetProcessSandboxProvider(nil)
-	if registry == nil {
+	if host == nil || host.ServiceRegistry() == nil {
 		return
 	}
-	if registry.HasProvider(pluginhost.SecurityAuthorizeService, pluginhost.SecurityServiceMajor) {
-		kit.SetAuthorizer(&pluginAuthorizer{registry: registry})
-	}
-	if registry.HasProvider(pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
-		kit.SetProcessSandboxProvider(&pluginSandboxProvider{registry: registry})
+	registry := host.ServiceRegistry()
+	if registry.HasProviderFor(toolExecutionConsumer, pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
+		kit.SetProcessSandboxProvider(&pluginSandboxProvider{host: host})
 	}
 }

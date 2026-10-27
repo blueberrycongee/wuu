@@ -726,6 +726,14 @@ function buildTurn(
 }
 
 describe("firstUserMessageText", () => {
+  it("previews visible question text instead of structured reference context", () => {
+    const turn: Turn = { id: "structured", status: "completed", items_view: "full", items: [{
+      id: "user", type: "user_message", text: "Attached notesOriginal question",
+      content_parts: [{ type: "pasted_text", text: "Attached notes" }, { type: "text", text: "Original question" }],
+    }] };
+    expect(firstUserMessageText(turn)).toBe("Original question");
+  });
+
   it("returns the first user_message text in a turn", () => {
     const turn = buildTurn([
       { id: "a-1", type: "agent_message", text: "ignored" },

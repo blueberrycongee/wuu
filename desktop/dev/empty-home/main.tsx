@@ -1,3 +1,4 @@
+import { createFixtureApplication } from "../preview-services";
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type { UsageOverviewResponse } from "../../src/shared/protocol";
@@ -31,7 +32,7 @@ const usage: UsageOverviewResponse = {
   days,
 };
 // Only the usage read exists in this fixture. No product bridge or user data.
-Object.assign(window, { wuu: { getUsageOverview: async () => usage } });
+const application = createFixtureApplication({}, async () => usage);
 
 function Preview() {
   const play = useRef<ReturnType<typeof startEmptyHomePlay>>(undefined);
@@ -46,7 +47,7 @@ function Preview() {
       <button onClick={() => { play.current?.stop(); play.current = undefined; }}>Stop</button>
     </nav>
     <EmptyConversationHome title={params.has("long") ? "夜深了，今天的灵感还没写完，要不要再一起试一试？" : "夜深了，还要继续吗？"}>
-      <EmptyHomeOverview />
+      <EmptyHomeOverview application={application} />
     </EmptyConversationHome>
   </>;
 }

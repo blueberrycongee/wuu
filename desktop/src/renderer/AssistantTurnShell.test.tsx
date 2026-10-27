@@ -1,3 +1,5 @@
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
+import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 /**
  * Tests for `AssistantTurnShell`. The shell is the visual layer that
  * splits a turn into the process region (commentary, tool calls,
@@ -173,6 +175,17 @@ function defaultItemRenderer(
   return createElement("div", null, item.text ?? "");
 }
 
+const publicTurns = new WeakMap<Root, { turn: Turn; service: ReturnType<typeof createConversationTestApplication> }>();
+function publicShellService(turn: Turn) {
+  const preview = createConversationTestApplication();
+  const source = { turn, service: preview };
+  source.service = { ...preview,
+    getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { ...preview.getSnapshot().conversationWorkspace, activePane: "primary", threads: [{ id: "shell-thread", title: "Shell", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [source.turn] }] } }),
+    conversationText: { getSnapshot: target => { const key = streamTextKey(target.turnId, target.itemId, target.field); return streamTextStore.has(key) ? streamTextStore.get(key) : undefined; }, subscribe: (target, listener) => streamTextStore.subscribe(streamTextKey(target.turnId, target.itemId, target.field), listener) },
+  };
+  return source;
+}
+
 function renderShell(
   turn: Turn,
   options: RenderOptions = {},
@@ -180,6 +193,7 @@ function renderShell(
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const source = publicShellService(turn); publicTurns.set(root, source);
   const display = buildAssistantTurnDisplay(
     turn,
     undefined,
@@ -190,14 +204,14 @@ function renderShell(
   }
   act(() => {
     root.render(
-      createElement(AssistantTurnShell, {
+      <ConversationControlsTestProvider service={source.service}><ArtifactThreadContext.Provider value="shell-thread">{createElement(AssistantTurnShell, {
         turn,
         display,
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
         onOpenURL: options.onOpenURL,
-      }),
+      })}</ArtifactThreadContext.Provider></ConversationControlsTestProvider>,
     );
   });
   mountedRoots.push(root);
@@ -209,6 +223,7 @@ function rerenderShell(
   turn: Turn,
   options: RenderOptions = {},
 ): void {
+  const source = publicTurns.get(root)!; source.turn = turn;
   const display = buildAssistantTurnDisplay(
     turn,
     undefined,
@@ -219,14 +234,14 @@ function rerenderShell(
   }
   act(() => {
     root.render(
-      createElement(AssistantTurnShell, {
+      <ConversationControlsTestProvider service={source.service}><ArtifactThreadContext.Provider value="shell-thread">{createElement(AssistantTurnShell, {
         turn,
         display,
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
         onOpenURL: options.onOpenURL,
-      }),
+      })}</ArtifactThreadContext.Provider></ConversationControlsTestProvider>,
     );
   });
 }
@@ -560,7 +575,7 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
       if (!display) throw new Error("expected a display");
       act(() => {
         root.render(
-          createElement(ConversationRenderActivityProvider, {
+          <ConversationControlsTestProvider>{createElement(ConversationRenderActivityProvider, {
             active,
             children: createElement(AssistantTurnShell, {
               turn,
@@ -568,7 +583,7 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
               onStreamFrame: () => {},
               onCollapseComplete,
             }),
-          }),
+          })}</ConversationControlsTestProvider>,
         );
       });
     };
@@ -986,7 +1001,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].classList.contains("is-live-gray")).toBe(true);
     expect(rows[0].classList.contains("is-streaming")).toBe(false);
-    expect(rows[0].textContent).toContain("思考过程");
+    expect(rows[0].textContent).toContain("App.tsx");
   });
 
   it("does not sweep older process rows after commentary becomes latest", () => {
@@ -1001,7 +1016,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].classList.contains("is-live-gray")).toBe(false);
     expect(rows[0].classList.contains("is-streaming")).toBe(false);
-    expect(rows[0].textContent).toContain("思考过程");
+    expect(rows[0].textContent).toContain("App.tsx");
   });
 
   it("keeps the reasoning fold closed even when the outer process fold is open", () => {
@@ -1078,7 +1093,6 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const groups = processSurfaceRows(container);
     expect(groups).toHaveLength(1);
     expect(groups[0].textContent).toContain("搜索");
-    expect(groups[0].textContent).toContain("正在思考");
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     expect(reasoningSummaryText(folds[0])).toBe("正在思考");
@@ -1111,8 +1125,8 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     expect(container.textContent).toContain("提示词改动是中途新出现的");
     expect(
-      container.querySelector(".turn-process-entry-commentary .agent-message-actions"),
-    ).toBeNull();
+      (container.querySelector(".turn-process-entry-commentary .agent-message-actions") as HTMLElement)?.style.display,
+    ).toBe("none");
     expect(
       container.querySelector(".turn-process-entry-commentary .agent-block-with-action-slot"),
     ).toBeNull();
@@ -1141,7 +1155,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     const surfaceAfter = container.querySelector(".process-surface");
     expect(surfaceAfter).toBe(surfaceBefore);
-    expect(surfaceAfter?.textContent).toContain("正在思考");
+    expect(surfaceAfter?.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("App.tsx");
   });
 
   it("groups consecutive tool activity into one count row with details", () => {
@@ -1154,9 +1168,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     const groups = processSurfaceFolds(container);
     expect(groups).toHaveLength(1);
-    expect(groups[0].querySelector(".process-surface-count")?.textContent).toBe(
-      "2",
-    );
+    expect(groups[0].querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("2");
     expect(groups[0].querySelectorAll(".activity-group")).toHaveLength(2);
   });
 

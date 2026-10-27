@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -12,11 +13,13 @@ import (
 // InferenceSubmissionMeta describes one physical request submission without
 // carrying credentials, prompt text, response bodies, or provider receipts.
 type InferenceSubmissionMeta struct {
-	Provider  string
-	Protocol  string
-	Transport string
-	Mode      string
-	Reason    string
+	// CapacityScope is an opaque account domain, never a raw credential.
+	CapacityScope string
+	Provider      string
+	Protocol      string
+	Transport     string
+	Mode          string
+	Reason        string
 	// RequestBytes is the serialized request body size. It seeds a
 	// conservative input-token estimate so a submission whose endpoint never
 	// reports usage can settle as estimated instead of occupying the
@@ -69,6 +72,7 @@ type InferenceSubmission struct {
 	OutputBytes     int
 
 	execution *InferenceExecution
+	remote    *remoteAccounting
 	// Stream observations are fallback evidence. A terminal receipt supplied
 	// explicitly by the protocol client takes precedence over buffered deltas.
 	usageFromStream bool
@@ -85,6 +89,10 @@ func (s InferenceSubmission) mutable() bool {
 // ObserveOutput records a conservative partial-output estimate. Provider
 // usage, when it arrives, always supersedes this estimate.
 func (s InferenceSubmission) ObserveOutput(content string) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Output: content})
+		return
+	}
 	if !s.mutable() || content == "" {
 		return
 	}
@@ -104,6 +112,10 @@ func (s InferenceSubmission) ObserveOutput(content string) {
 // complete conservative estimate, including input. Partial output evidence
 // alone remains unknown-but-billable because input often dominates cost.
 func (s InferenceSubmission) ObserveEstimatedUsage(usage *TokenUsage) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Usage: usage, Estimated: true})
+		return
+	}
 	if !s.mutable() || usage == nil {
 		return
 	}
@@ -125,6 +137,10 @@ func (s InferenceSubmission) ObserveUsage(usage *TokenUsage) {
 }
 
 func (s InferenceSubmission) observeUsage(usage *TokenUsage, fromStream bool) {
+	if s.remote != nil {
+		s.remote.observe(RemoteSubmissionUpdate{ID: s.ID, Usage: usage, FromStream: fromStream})
+		return
+	}
 	if !s.mutable() || usage == nil {
 		return
 	}
@@ -156,6 +172,10 @@ func (s InferenceSubmission) Abandon() {
 }
 
 func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failure NormalizedFailure, usage *TokenUsage, fromStream bool) {
+	if s.remote != nil {
+		_ = s.remote.invoke("settle", RemoteSubmissionUpdate{ID: s.ID, Outcome: outcome, Usage: usage, Failure: DurableInferenceFailure(failure), RetryAfter: failure.RetryAfter, FromStream: fromStream}, nil)
+		return
+	}
 	if !s.mutable() {
 		return
 	}
@@ -260,18 +280,23 @@ func addTokenUsage(total *TokenUsage, usage TokenUsage) {
 type InferenceExecution struct {
 	mu sync.Mutex
 
-	operation       InferenceOperation
-	workflow        *InferenceWorkflow
-	nextAttempt     int
-	nextSubmission  int
-	submissions     []InferenceSubmission
-	journal         InferenceJournal
-	requestHash     string
-	journalErr      error
-	journalDegraded error
-	firstEvents     map[string]bool
-	terminal        bool
-	ownsWorkflow    bool
+	operation         InferenceOperation
+	workflow          *InferenceWorkflow
+	nextAttempt       int
+	nextSubmission    int
+	submissions       []InferenceSubmission
+	journal           InferenceJournal
+	checkpoints       map[string]InferenceSubmissionJournalRecord
+	requestHash       string
+	journalErr        error
+	journalDegraded   error
+	firstEvents       map[string]bool
+	terminal          bool
+	terminalRequested bool
+	physicalReceipts  int
+	pendingAttempts   []pendingAttemptTerminal
+	pendingTerminal   *pendingOperationTerminal
+	ownsWorkflow      bool
 }
 
 // InferenceAttempt identifies one ExecuteOnce call. The execution pointer is
@@ -282,6 +307,7 @@ type InferenceAttempt struct {
 	Ordinal int
 
 	execution *InferenceExecution
+	remote    *remoteAccounting
 }
 
 func NewInferenceExecution(operation InferenceOperation) *InferenceExecution {
@@ -355,10 +381,33 @@ func ensureInferenceExecution(ctx context.Context, req ChatRequest, fallbackKind
 }
 
 // EnsureInferenceExecutionContext attaches the process-local execution
-// identity. Durable request hashing is intentionally deferred until an attempt
-// is prepared, after provider-specific request normalization has completed.
+// identity and registers it with the current receipt scope. An ended ticket
+// rejects registration before attempt preparation. Durable request hashing is
+// deferred until provider-specific request normalization has completed.
 func EnsureInferenceExecutionContext(ctx context.Context, req ChatRequest, fallbackKind InferenceOperationKind, fallbackProfile InferenceWorkloadProfile) (ChatRequest, error) {
-	return ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	req, err := ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	if err != nil || ctx == nil {
+		return req, err
+	}
+	ticket, ok := ctx.Value(modelReceiptContextKey{}).(*modelReceiptTicket)
+	if !ok {
+		return req, nil
+	}
+	scope := ticket.scope
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if ticket.ended || scope.aborted {
+		return req, ErrModelReceiptScopeClosed
+	}
+	// Ensure is repeated by wrappers and attempt preparation. Keep the actual
+	// execution once, including identities supplied before entering this scope.
+	for _, execution := range scope.executions {
+		if execution == req.Execution {
+			return req, nil
+		}
+	}
+	scope.executions = append(scope.executions, req.Execution)
+	return req, nil
 }
 
 func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequest, error) {
@@ -382,6 +431,16 @@ func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequ
 }
 
 func EnsureInferenceAttemptContext(ctx context.Context, req ChatRequest, fallbackKind InferenceOperationKind, fallbackProfile InferenceWorkloadProfile) (ChatRequest, error) {
+	if req.Attempt.remote != nil {
+		if err := inferenceContextError(ctx); err != nil {
+			return req, err
+		}
+		if !req.Attempt.Valid() {
+			return req, errors.New("invalid remote inference attempt")
+		}
+		req.Operation = req.Attempt.Operation()
+		return req, req.Attempt.JournalError()
+	}
 	if err := inferenceContextError(ctx); err != nil {
 		return req, err
 	}
@@ -451,7 +510,7 @@ func (e *InferenceExecution) BeginAttemptChecked() (InferenceAttempt, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.terminal {
+	if e.terminal || e.terminalRequested {
 		return InferenceAttempt{}, errors.New("inference operation is already terminal")
 	}
 	if e.journalErr != nil {
@@ -489,13 +548,16 @@ func (e *InferenceExecution) BeginAttemptChecked() (InferenceAttempt, error) {
 }
 
 func (a InferenceAttempt) Valid() bool {
-	return a.execution != nil && strings.TrimSpace(a.ID) != "" && a.Ordinal > 0
+	return (a.execution != nil || a.remote != nil) && strings.TrimSpace(a.ID) != "" && a.Ordinal > 0
 }
 
 // Operation returns the immutable logical-operation metadata associated with
 // this attempt. Invalid attempts return the zero value so scheduling callers
 // can safely fall back to the interactive profile.
 func (a InferenceAttempt) Operation() InferenceOperation {
+	if a.remote != nil {
+		return a.remote.operation
+	}
 	if !a.Valid() {
 		return InferenceOperation{}
 	}
@@ -503,6 +565,13 @@ func (a InferenceAttempt) Operation() InferenceOperation {
 }
 
 func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (InferenceSubmission, error) {
+	if a.remote != nil {
+		var result InferenceSubmission
+		err := a.remote.invoke("create", meta, &result)
+		result.execution = nil
+		result.remote = a.remote
+		return result, err
+	}
 	if !a.Valid() {
 		return InferenceSubmission{}, errors.New("record submission without a valid inference attempt")
 	}
@@ -511,6 +580,9 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 	defer e.mu.Unlock()
 	if e.journalErr != nil {
 		return InferenceSubmission{}, e.journalErr
+	}
+	if e.terminal || e.terminalRequested {
+		return InferenceSubmission{}, errors.New("inference operation is already closing")
 	}
 	for _, existing := range e.submissions {
 		if existing.AttemptID == a.ID {
@@ -543,7 +615,7 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 	}
 	e.nextSubmission = nextOrdinal
 	if e.journal != nil {
-		if err := e.journal.UpsertSubmission(journalSubmission(e.operation.ID, submission)); err != nil {
+		if err := e.journal.UpsertSubmission(context.Background(), journalSubmission(e.operation.ID, submission)); err != nil {
 			e.nextSubmission--
 			if !IsWorkflowBudgetError(err) {
 				e.journalErr = err
@@ -559,6 +631,9 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 // recent physical submission in this attempt. Protocol adapters may also
 // update an exact submission handle; both paths are idempotent at terminal.
 func (a InferenceAttempt) ObserveStreamEvent(event StreamEvent) error {
+	if a.remote != nil {
+		return errors.New("remote transport must report physical receipts, not logical events")
+	}
 	if !a.Valid() {
 		return nil
 	}
@@ -655,16 +730,30 @@ func isProviderResponseEvidence(eventType StreamEventType) bool {
 }
 
 func (a InferenceAttempt) JournalError() error {
+	if a.remote != nil {
+		return a.remote.journalError()
+	}
 	if !a.Valid() {
 		return nil
 	}
-	e := a.execution
+	return a.execution.JournalError()
+}
+
+// JournalError returns the first required journal write failure, including
+// failures before the first attempt. A nil execution has no journal error.
+func (e *InferenceExecution) JournalError() error {
+	if e == nil {
+		return nil
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.journalErr
 }
 
 func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
+	if a.remote != nil {
+		return errors.New("logical attempt completion belongs to the host")
+	}
 	if !a.Valid() {
 		return errors.New("complete without a valid inference attempt")
 	}
@@ -674,8 +763,27 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 	if e.journalErr != nil {
 		return e.journalErr
 	}
+	if e.physicalReceipts > 0 {
+		for _, pending := range e.pendingAttempts {
+			if pending.attempt.ID == a.ID {
+				return nil
+			}
+		}
+		e.pendingAttempts = append(e.pendingAttempts, pendingAttemptTerminal{a, outcome, failure})
+		return nil
+	}
+	return e.completeAttemptLocked(a, outcome, failure)
+}
+
+func (e *InferenceExecution) completeAttemptLocked(a InferenceAttempt, outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
+	if e.journalErr != nil {
+		return e.journalErr
+	}
 	if e.journal == nil {
 		return nil
+	}
+	if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
+		return err
 	}
 	if err := e.journal.CompleteAttempt(InferenceAttemptTerminalRecord{
 		OperationID: e.operation.ID,
@@ -691,6 +799,9 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 }
 
 func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan RecoveryPlan, retryAt time.Time) (InferenceAttempt, error) {
+	if a.remote != nil {
+		return InferenceAttempt{}, errors.New("recovery admission belongs to the host")
+	}
 	if !a.Valid() {
 		return InferenceAttempt{}, errors.New("prepare recovery without a valid inference attempt")
 	}
@@ -700,7 +811,7 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 	if e.journalErr != nil {
 		return InferenceAttempt{}, e.journalErr
 	}
-	if e.terminal {
+	if e.terminal || e.terminalRequested {
 		return InferenceAttempt{}, errors.New("inference operation is already terminal")
 	}
 	nextOrdinal := e.nextAttempt + 1
@@ -714,6 +825,9 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 		}
 		if e.journal == nil {
 			return nil
+		}
+		if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
+			return err
 		}
 		return e.journal.PrepareRecoveryAttempt(ctx, InferenceRecoveryAttemptJournalRecord{
 			Recovery: InferenceRecoveryJournalRecord{
@@ -751,6 +865,20 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.physicalReceipts > 0 {
+		e.terminalRequested = true
+		if e.pendingTerminal == nil {
+			e.pendingTerminal = &pendingOperationTerminal{outcome, failure}
+		}
+		return nil
+	}
+	return e.completeLocked(outcome, failure)
+}
+
+func (e *InferenceExecution) completeLocked(outcome InferenceTerminalOutcome, failure NormalizedFailure) error {
 	if e.terminal {
 		return e.journalErr
 	}
@@ -758,6 +886,9 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 		return e.journalErr
 	}
 	if e.journal != nil {
+		if err := e.checkpointSubmissionsLocked(context.Background(), ""); err != nil {
+			return err
+		}
 		if err := e.journal.CompleteOperation(InferenceOperationTerminalRecord{
 			OperationID: e.operation.ID,
 			Outcome:     outcome,
@@ -774,6 +905,52 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 			e.journalErr = err
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckpointSubmissions persists current physical receipts, including after
+// logical completion. The owner first joins the producers and observers, then
+// supplies its remaining cleanup deadline. This does not repeat logical
+// completion or retry a previously failed required write.
+func (e *InferenceExecution) CheckpointSubmissions(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.journal == nil {
+		return nil
+	}
+	return e.checkpointSubmissionsLocked(ctx, "")
+}
+
+// checkpointSubmissionsLocked persists the actual observations before a logical
+// transition. Empty attemptID covers the entire operation. The caller holds e.mu.
+func (e *InferenceExecution) checkpointSubmissionsLocked(ctx context.Context, attemptID string) error {
+	for _, submission := range e.submissions {
+		if attemptID != "" && submission.AttemptID != attemptID {
+			continue
+		}
+		record := journalSubmission(e.operation.ID, snapshotSubmission(submission))
+		// Only acknowledged synchronous checkpoints can discharge this write.
+		// Progress is best effort; late physical evidence changes the snapshot.
+		if prior, ok := e.checkpoints[submission.ID]; ok && reflect.DeepEqual(prior, record) {
+			continue
+		}
+		if err := e.journal.UpsertSubmission(ctx, record); err != nil {
+			// Cancellation of a required write is still a persistence failure;
+			// recovery must not discard it as ordinary caller cancellation.
+			e.journalErr = err
+			return err
+		}
+		if e.checkpoints == nil {
+			e.checkpoints = make(map[string]InferenceSubmissionJournalRecord)
+		}
+		e.checkpoints[submission.ID] = record
 	}
 	return nil
 }
@@ -841,6 +1018,11 @@ func (a InferenceAttempt) latestSubmission() (InferenceSubmission, bool) {
 }
 
 func (a InferenceAttempt) SubmissionSnapshot() []InferenceSubmission {
+	if a.remote != nil {
+		var result []InferenceSubmission
+		_ = a.remote.invoke("snapshot", nil, &result)
+		return result
+	}
 	if !a.Valid() {
 		return nil
 	}
@@ -891,21 +1073,18 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 			workflow := e.workflow
 			journal := e.journal
 			operationID := e.operation.ID
-			e.mu.Unlock()
 			if workflow != nil && workflow.spend != nil {
 				workflow.spend.SettleSubmission(submission)
 			}
-			// A per-delta submission update is streaming cost telemetry, not a
-			// durability checkpoint. Hand it to the journal's async progress
-			// path when available so the write never blocks token delivery, and
-			// never let a bookkeeping failure poison the execution or abort the
-			// stream — the terminal record (via CompleteAttempt) is the real
-			// durability boundary and stays synchronous.
-			if journal != nil {
-				record := journalSubmission(operationID, submission)
-				if progress, ok := journal.(InferenceProgressJournal); ok {
-					progress.RecordSubmissionProgress(record)
-				} else if err := journal.UpsertSubmission(record); err != nil {
+			e.mu.Unlock()
+			// Progress is optional telemetry. Checkpoint-only journals (including
+			// service proxies) must not turn every delta into a synchronous
+			// durable write. Keep terminal observations durable, including usage
+			// arriving after a completion timeout and its final checkpoint.
+			if progress, ok := journal.(InferenceProgressJournal); ok {
+				progress.RecordSubmissionProgress(journalSubmission(operationID, submission))
+			} else if journal != nil && submission.Outcome != InferenceSubmissionInFlight {
+				if err := journal.UpsertSubmission(context.Background(), journalSubmission(operationID, submission)); err != nil {
 					e.noteJournalDegraded(err)
 				}
 			}

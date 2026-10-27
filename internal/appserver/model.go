@@ -63,30 +63,38 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	if th.running {
 		status = ThreadStatusInProgress
 	}
+	var runningProvider, runningModel string
+	if th.runningModelRevision != 0 || th.running && th.stepModelSelection {
+		runningProvider, runningModel = th.runningProviderName, th.runningModel
+	}
 	return Thread{
-		SessionControl:  th.SessionControl,
-		ID:              th.ID,
-		Source:          th.Source,
-		ProjectID:       th.ProjectID,
-		ProjectRole:     th.ProjectRole,
-		ParentID:        th.ParentID,
-		AgentPath:       th.AgentPath,
-		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),
-		Title:           th.Title,
-		ModelProvider:   th.ModelProvider,
-		Model:           th.Model,
-		ModelVariant:    th.ModelVariant,
-		ModelEffort:     th.ModelEffort,
-		Speed:           th.Speed,
-		ModelOptions:    th.ModelOptions,
-		PermissionMode:  th.PermissionMode,
-		ApproveForMe:    th.ApproveForMe,
-		EngineID:        string(agentengine.NormalizeEngineID(th.EngineID)),
-		CWD:             th.CWD,
-		WorkspaceID:     th.WorkspaceID,
-		WorkspaceKind:   th.WorkspaceKind,
-		Status:          status,
-		TreeInterrupted: th.workerTreeFrozen,
+		SessionControl:       th.SessionControl,
+		ID:                   th.ID,
+		Source:               th.Source,
+		ProjectID:            th.ProjectID,
+		ProjectRole:          th.ProjectRole,
+		ParentID:             th.ParentID,
+		AgentPath:            th.AgentPath,
+		Preview:              firstNonEmpty(th.Title, threadPreview(th.History)),
+		Title:                th.Title,
+		TitleRevision:        th.TitleRevision,
+		ModelProvider:        th.ModelProvider,
+		Model:                th.Model,
+		ModelVariant:         th.ModelVariant,
+		RunningModelProvider: runningProvider,
+		RunningModel:         runningModel,
+		RunningModelRevision: th.runningModelRevision,
+		ModelEffort:          th.ModelEffort,
+		Speed:                th.Speed,
+		ModelOptions:         th.ModelOptions,
+		PermissionMode:       th.PermissionMode,
+		ApproveForMe:         th.ApproveForMe,
+		EngineID:             string(agentengine.NormalizeEngineID(th.EngineID)),
+		CWD:                  th.CWD,
+		WorkspaceID:          th.WorkspaceID,
+		WorkspaceKind:        th.WorkspaceKind,
+		Status:               status,
+		TreeInterrupted:      th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.
 		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
@@ -449,6 +457,8 @@ func (th *threadState) releaseTurnExecutionLocked(turnID string) {
 	th.currentTurnResumed = false
 	th.runningProviderName = ""
 	th.runningModel = ""
+	th.runningModelRevision = 0
+	th.stepModelSelection = false
 	th.cancel = nil
 	th.completeAfterAnswerReadyCancel = false
 	th.steerWake = nil
@@ -1600,6 +1610,12 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 				current.Items = items
 				current.Status = status
 				current.Error = nil
+				current.ModelProvider = rec.Provider
+				current.Model = rec.Model
+				if rec.StartedAt != nil {
+					turnStartedAt[current.ID] = *rec.StartedAt
+				}
+				current.AnswerReadyAt = rec.AnswerReadyAt
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], at)
 				if status == TurnStatusCompleted {
 					continue

@@ -3,15 +3,17 @@
 // case holds the result of an actual CDP geometry read to exercise its async
 // boundary without replacing the browser or fabricating a command response.
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, nativeImage, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
+import { app, BrowserWindow, nativeImage, webContents, session, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
+import { WebWorkspaceHost } from "../src/main/webWorkspaceHost";
+import { WebWorkspaceDownloads } from "../src/main/webWorkspaceDownloads";
 import { createBrowserView } from "../src/main/browserView";
 import { AppServerClientPool } from "../src/main/appServerClients";
 import {
-  BrowserHostCoordinator, defaultBrowserHostDeps,
+  BrowserHostCoordinator, defaultBrowserHostDeps, installBrowserSessionHandlers, BROWSER_PARTITION,
   type BrowserHostWindowHandle, type BrowserViewHandle,
 } from "../src/main/browserHostWindows";
 import type { WindowRegistry } from "../src/main/windowRegistry";
@@ -20,17 +22,21 @@ import {
   type ActivitySession, type RuntimeContext, type ServerEvent, type Thread,
 } from "../src/shared/protocol";
 
-const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = process.env.WUU_BROWSER_OWNERSHIP_OUTPUT ?? join(desktop, "out", "browser-task-ownership");
 const fixture = process.env.WUU_BROWSER_OWNERSHIP_FIXTURE;
 assert(fixture, "Run the fixture through browser-task-ownership-e2e.cjs");
 const home = join(fixture, "home");
 const workdir = join(fixture, "project");
-for (const directory of [output, home, workdir]) mkdirSync(directory, { recursive: true });
+const actualWorkdir = join(fixture, "project-real");
+for (const directory of [output, home, actualWorkdir]) mkdirSync(directory, { recursive: true });
+// Exercise the real macOS /var ↔ /private/var identity failure on every OS.
+// The activity's canonical execution root must retain the desktop route key.
+symlinkSync(actualWorkdir, workdir, process.platform === "win32" ? "junction" : "dir");
 app.setPath("userData", join(fixture, "profile"));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = resolve(process.env.WUU_BROWSER_OWNERSHIP_CORE ?? join(desktop, "build", "bin", "wuu-core"));
-process.env.WUU_SAFE_MODE = "1";
+process.env.WUU_SAFE_MODE = "0";
 process.env.WUU_ENABLE_BROWSER = "1";
 
 function deferred() {
@@ -47,6 +53,27 @@ async function bounded<T>(label: string, promise: Promise<T>, timeout = 30_000):
   } finally { clearTimeout(timer); }
 }
 
+const SHELL_STARTUP_TIMEOUT_MS = 30_000;
+async function initializeFixtureShell(window: BrowserWindow, url: string, timeout = SHELL_STARTUP_TIMEOUT_MS): Promise<void> {
+  let onReady!: () => void;
+  let onClosed!: () => void;
+  const firstPaint = new Promise<void>((resolve, reject) => {
+    onReady = resolve;
+    onClosed = () => reject(new Error("Fixture shell closed before first paint"));
+    window.once("ready-to-show", onReady);
+    window.once("closed", onClosed);
+  });
+  try {
+    await bounded("fixture shell first paint", Promise.all([window.loadURL(url), firstPaint]), timeout);
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  } finally {
+    window.removeListener("ready-to-show", onReady);
+    window.removeListener("closed", onClosed);
+  }
+}
+
 const events: unknown[] = [];
 const calls: { id: string; method: string; params: Record<string, unknown> }[] = [];
 const providerRequests: unknown[] = [];
@@ -55,8 +82,26 @@ const clickRequests: string[] = [];
 const nativeInputCommands: { webContentsID: number; method: string; params: unknown }[] = [];
 const failures: string[] = [];
 const checks: { name: string; passed: boolean; detail?: string }[] = [];
+// Temporary CI-only evidence for cold hidden-host frame readiness. Remove once
+// the first-frame stall is explained; this observes only the synthetic fixture.
+const diagnosticsEnabled = process.env.WUU_BROWSER_OWNERSHIP_DIAGNOSTICS === "1";
+const captureDiagnostics: Record<string, unknown>[] = [];
+function recordCaptureDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
+  if (diagnosticsEnabled) captureDiagnostics.push({ stage, at: Date.now(), uptimeMs: Math.round(process.uptime() * 1000), ...detail });
+}
+function writeCaptureDiagnostics() {
+  if (diagnosticsEnabled) writeFileSync(join(output, "hidden-capture-diagnostics.json"), JSON.stringify(captureDiagnostics, null, 2));
+}
+if (diagnosticsEnabled) {
+  recordCaptureDiagnostic("fixture-start", { electron: process.versions.electron, chrome: process.versions.chrome, platform: process.platform });
+  app.on("gpu-info-update", () => recordCaptureDiagnostic("gpu-info-update", { features: app.getGPUFeatureStatus() }));
+  app.on("child-process-gone", (_event, details) => {
+    if (details.type === "GPU") recordCaptureDiagnostic("gpu-process-gone", { reason: details.reason, exitCode: details.exitCode });
+  });
+}
 function check(name: string, condition: unknown, detail?: string) {
   checks.push({ name, passed: Boolean(condition), ...(detail ? { detail } : {}) });
+  console.log(`${condition ? "PASS" : "FAIL"} ${checks.length}: ${name}`);
   if (!condition) failures.push(`${name}${detail ? `: ${detail}` : ""}`);
 }
 const completed = new Map<string, ReturnType<typeof deferred>>();
@@ -68,7 +113,7 @@ const activeTurnIDs = new Map<string, string>();
 const activeExecutionIDs = new Map<string, string>();
 const controlledResponses = new Map<string, ServerResponse>();
 const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
-const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_CAPTURE_CANCEL", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+const controlledMarkers = new Set(["OWNERSHIP_WORKSPACE_CHILD", "OWNERSHIP_WORKSPACE", "OWNERSHIP_HIDDEN", "OWNERSHIP_CAPTURE_CANCEL", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
 function controlledWaiter(marker: string) {
   let waiter = controlledWaiters.get(marker);
   if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
@@ -191,9 +236,15 @@ const server = createServer((req, res) => {
     res.writeHead(204).end();
     return;
   }
+  if (pathname === "/workspace-download") {
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": 'attachment; filename="workspace-proof.txt"' });
+    res.end("Local workspace download proof");
+    return;
+  }
   if (req.method === "GET") {
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(`<!doctype html><title>${req.url}</title><body><h1>${req.url}</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button><input id="field" style="position:absolute;left:100px;top:200px"><script>window.clicks=0;document.querySelector('#target').onclick=()=>{window.clicks++;fetch('/clicked?source='+encodeURIComponent(location.pathname));};</script>`);
+    const workspaceControls = pathname === "/workspace-ribbon" ? `<a href="/workspace-child" target="_blank" rel="opener" style="position:absolute;left:100px;top:280px">Open child</a><button style="position:absolute;left:100px;top:330px" onclick="window.child.postMessage('download',location.origin)">Download child</button><script>addEventListener('message',event=>{if(event.origin===location.origin&&event.data==='child-ready')window.child=event.source;});</script>` : pathname === "/workspace-child" ? `<script>addEventListener('message',event=>{if(event.origin===location.origin&&event.source===opener&&event.data==='download')location.href='/workspace-download';});opener.postMessage('child-ready',location.origin);fetch('/popup-ready?source=/workspace-child');</script>` : "";
+    res.end(`<!doctype html><title>${req.url}</title><body><h1>${req.url}</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button><input id="field" style="position:absolute;left:100px;top:200px">${workspaceControls}<script>window.clicks=0;document.querySelector('#target').onclick=()=>{window.clicks++;fetch('/clicked?source='+encodeURIComponent(location.pathname));};</script>`);
     return;
   }
   let body = "";
@@ -212,7 +263,7 @@ const server = createServer((req, res) => {
     const step = turns.get(marker) ?? 0;
     turns.set(marker, step + 1);
     if (step === 0) {
-      respond(res, marker === "OWNERSHIP_C_CONTINUE" ? { action: "tabs" }
+      respond(res, ["OWNERSHIP_C_CONTINUE", "OWNERSHIP_WORKSPACE", "OWNERSHIP_WORKSPACE_CHILD"].includes(marker) ? { action: "tabs" }
         : { action: "navigate", url: `${baseURL}/${["OWNERSHIP_POPUP", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP"].includes(marker) ? "popup-opener" : marker}` });
       return;
     }
@@ -304,7 +355,29 @@ async function readTab(tabID: string): Promise<WebContentsView | undefined> {
   return views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
 }
 
+async function waitForPopupDocument(openerTabID: string, path: string, existingTabID?: string): Promise<string> {
+  await bounded(`popup document ${path}`, popupLoads.get(path)!.promise);
+  const url = `${baseURL}${path}`;
+  const adoption = popupAdoptions.find(item => item.openerTabID === openerTabID &&
+    (existingTabID ? item.tabID === existingTabID : item.url === url));
+  assert(adoption, `The popup document ${path} belongs to an adopted child`);
+  // The page's ready fetch can precede Chromium publishing its committed URL
+  // to the main process. Follow the adopted identity across that boundary,
+  // including a named window's second navigation without another adoption.
+  const navigation = deferred();
+  const removeNavigation = host!.addNavigateListener((cwd, tabID, committedURL) => {
+    if (cwd === workdir && tabID === adoption.tabID && committedURL === url) navigation.resolve();
+  });
+  try {
+    if (host!.tabSurfaceMeta(workdir, adoption.tabID)?.url === url) navigation.resolve();
+    await bounded(`popup native navigation commits ${path}`, navigation.promise);
+  } finally { removeNavigation(); }
+  assert.equal(host!.tabSurfaceMeta(workdir, adoption.tabID)?.url, url, "The adopted popup publishes its committed URL");
+  return adoption.tabID;
+}
+
 app.whenReady().then(async () => {
+  recordCaptureDiagnostic("app-ready");
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   writeFileSync(join(home, "config.json"), JSON.stringify({
@@ -316,14 +389,48 @@ app.whenReady().then(async () => {
   }));
   const nativePresentations: { windowID: number; event: string }[] = [];
   const hostWindows: BrowserWindow[] = [];
+  const windowIDs = new WeakMap<BrowserWindow, number>();
+  function nativeWindowState(window: BrowserWindow) {
+    return { windowID: windowIDs.get(window), destroyed: window.isDestroyed(), ...(!window.isDestroyed() ? {
+      visible: window.isVisible(), focused: window.isFocused(), minimized: window.isMinimized(),
+    } : {}) };
+  }
   function watchPresentation(window: BrowserWindow) {
+    windowIDs.set(window, window.id);
     window.on("show", () => nativePresentations.push({ windowID: window.id, event: "show" }));
     window.on("focus", () => nativePresentations.push({ windowID: window.id, event: "focus" }));
+    if (diagnosticsEnabled) {
+      recordCaptureDiagnostic("window-created", nativeWindowState(window));
+      for (const event of ["ready-to-show", "show", "focus", "hide", "blur", "closed"] as const) {
+        window.on(event, () => recordCaptureDiagnostic(`window-${event}`, nativeWindowState(window)));
+      }
+    }
     return window;
   }
   const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
     ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}),
   }));
+  // A user starts Browser Use from a painted shell. Unlike the shipping
+  // shell, this main-process fixture used to issue turns without loading any
+  // shell document, charging cold Chromium/GL startup to the page's 5s frame
+  // budget. Establish native first paint independently; never show this window
+  // or navigate/capture an agent page before the hidden-capture assertions.
+  const shellStartedAt = Date.now();
+  let shellReady = false;
+  recordCaptureDiagnostic("shell-startup-start");
+  try {
+    await initializeFixtureShell(main, "data:text/html,<!doctype html><title>Browser ownership fixture shell</title><main>Browser ownership fixture</main>");
+    shellReady = true;
+  } finally {
+    const elapsedMs = Date.now() - shellStartedAt;
+    writeFileSync(join(output, "shell-startup.json"), JSON.stringify({ ready: shellReady, startedAt: shellStartedAt,
+      elapsedMs, timeoutMs: SHELL_STARTUP_TIMEOUT_MS, visible: !main.isDestroyed() && main.isVisible(),
+      browserPages: views.length, browserRequests: calls.length }, null, 2));
+    recordCaptureDiagnostic("shell-startup-settled", { ready: shellReady, elapsedMs });
+    console.log(`STARTUP: fixture shell first paint ${shellReady ? "ready" : "failed"} after ${elapsedMs}ms (budget ${SHELL_STARTUP_TIMEOUT_MS}ms)`);
+  }
+  check("fixture shell paints before browser pages or requests without presentation", views.length === 0 && calls.length === 0
+    && nativePresentations.length === 0 && !main.isVisible());
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
@@ -353,6 +460,53 @@ app.whenReady().then(async () => {
     },
     (options?: WebContentsViewConstructorOptions) => {
       const view = createBrowserView(options);
+      if (diagnosticsEnabled) {
+        const contents = view.webContents;
+        const contentsID = contents.id;
+        let frameWaitSerial = 0;
+        const state = () => contents.isDestroyed() ? { contentsID, destroyed: true } : ({ contentsID,
+          bounds: view.getBounds(), visible: view.getVisible(), throttled: contents.getBackgroundThrottling(),
+          loading: contents.isLoading(), loadingMainFrame: contents.isLoadingMainFrame(),
+          windows: hostWindows.map(nativeWindowState) });
+        recordCaptureDiagnostic("view-created", state());
+        for (const event of ["dom-ready", "did-finish-load", "did-stop-loading"] as const) {
+          contents.on(event, () => recordCaptureDiagnostic(`view-${event}`, state()));
+        }
+        const setVisible = view.setVisible.bind(view);
+        view.setVisible = visible => { setVisible(visible); recordCaptureDiagnostic("view-visibility", state()); };
+        const setBackgroundThrottling = contents.setBackgroundThrottling.bind(contents);
+        contents.setBackgroundThrottling = allowed => { setBackgroundThrottling(allowed); recordCaptureDiagnostic("view-throttling", state()); };
+        const prefix = "wuu-hidden-frame-diagnostic:";
+        contents.on("console-message", details => {
+          if (details.message.startsWith(prefix)) recordCaptureDiagnostic("renderer-frame", { contentsID, ...JSON.parse(details.message.slice(prefix.length)) });
+        });
+        const execute = contents.executeJavaScript.bind(contents);
+        contents.executeJavaScript = async (code, userGesture) => {
+          if (code !== "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))") return execute(code, userGesture);
+          const frameWaitID = ++frameWaitSerial;
+          recordCaptureDiagnostic("frame-wait-start", { ...state(), frameWaitID,
+            gpuProcesses: app.getAppMetrics().filter(metric => metric.type === "GPU").map(metric => ({ pid: metric.pid, creationTime: metric.creationTime })) });
+          // Keep the same two callbacks, including the second RAF timestamp
+          // passed to resolve. Never add a frame, timer, capture or visibility change.
+          return execute(`new Promise(resolve => {
+            const note = stage => console.info(${JSON.stringify(prefix)} + JSON.stringify({
+              frameStage: stage, frameWaitID: ${frameWaitID}, rendererAt: Date.now(), pageMs: performance.now(),
+              visibility: document.visibilityState, readyState: document.readyState
+            }));
+            note("requested");
+            requestAnimationFrame(() => { note("raf-1"); requestAnimationFrame(time => { note("raf-2"); resolve(time); }); });
+          })`, userGesture).finally(() => recordCaptureDiagnostic("frame-wait-settled", { contentsID, frameWaitID }));
+        };
+        const capture = contents.capturePage.bind(contents);
+        contents.capturePage = async (rect, opts) => {
+          recordCaptureDiagnostic("capture-page-start", state());
+          try {
+            const image = await capture(rect, opts);
+            recordCaptureDiagnostic("capture-page-result", { contentsID, size: image.getSize(), empty: image.isEmpty() });
+            return image;
+          } finally { recordCaptureDiagnostic("capture-page-settled", { contentsID }); }
+        };
+      }
       const send = view.webContents.debugger.sendCommand.bind(view.webContents.debugger);
       view.webContents.debugger.sendCommand = async (method, params, session) => {
         if (method.startsWith("Input.")) nativeInputCommands.push({ webContentsID: view.webContents.id, method, params });
@@ -466,6 +620,29 @@ app.whenReady().then(async () => {
     check(`${label} never shows or focuses a native window`, nativePresentations.length === 0 && BrowserWindow.getAllWindows().every(window => !window.isVisible()), JSON.stringify(nativePresentations));
   }
 
+  // Startup failure coverage comes after the cold captures, so these extra
+  // native windows cannot prepare the compositor for the first hidden page.
+  const stalledShell = watchPresentation(new BrowserWindow({ show: false, paintWhenInitiallyHidden: false }));
+  const stalledShellReadyListeners = stalledShell.listenerCount("ready-to-show");
+  const stalledShellClosedListeners = stalledShell.listenerCount("closed");
+  const stalledShellResult = await initializeFixtureShell(stalledShell, "data:text/html,<title>Loaded but not painted</title>", 100)
+    .then(() => "ready", error => String(error));
+  check("shell startup has a bounded first-paint failure", stalledShellResult.includes("Timed out: fixture shell first paint"), stalledShellResult);
+  check("shell startup timeout destroys its window and removes readiness listeners", stalledShell.isDestroyed()
+    && stalledShell.listenerCount("ready-to-show") === stalledShellReadyListeners
+    && stalledShell.listenerCount("closed") === stalledShellClosedListeners);
+
+  const failedShell = watchPresentation(new BrowserWindow({ show: false }));
+  const failedShellReadyListeners = failedShell.listenerCount("ready-to-show");
+  const failedShellClosedListeners = failedShell.listenerCount("closed");
+  const failedShellResult = await initializeFixtureShell(failedShell, "not a valid URL")
+    .then(() => "ready", error => String(error));
+  check("shell startup reports navigation failure instead of waiting for paint", failedShellResult.includes("ERR_INVALID_URL"), failedShellResult);
+  check("shell navigation failure destroys its window and removes readiness listeners", failedShell.isDestroyed()
+    && failedShell.listenerCount("ready-to-show") === failedShellReadyListeners
+    && failedShell.listenerCount("closed") === failedShellClosedListeners);
+  check("shell readiness failures never present native windows", nativePresentations.length === 0, JSON.stringify(nativePresentations));
+
   const captureCancelled = await start("OWNERSHIP_CAPTURE_CANCEL");
   cancellations.set(captureCancelled, deferred());
   await bounded("capture cancellation page", controlledWaiter("OWNERSHIP_CAPTURE_CANCEL").promise);
@@ -523,10 +700,10 @@ app.whenReady().then(async () => {
   }
   type ListedTabs = { tab_ids: string[]; tabs: { tab_id: string; url: string; title: string }[] };
   async function popupTabs() { return await request(popup, "browser/list_tabs") as ListedTabs; }
-  async function clickPopup(y: number, path?: string) {
+  async function clickPopup(y: number, path?: string, existingTabID?: string) {
     if (path) popupLoads.set(path, deferred());
     await popupTool({ action: "click", tab_id: popupTab, x: 120, y });
-    if (path) await bounded(`popup document ${path}`, popupLoads.get(path)!.promise);
+    if (path) return await waitForPopupDocument(popupTab, path, existingTabID);
   }
   await clickPopup(60);
   const blankState = await popupView.webContents.executeJavaScript("window.popupState");
@@ -538,9 +715,9 @@ app.whenReady().then(async () => {
     const blankView = await readTab(blank.tab_id);
     check("adopted blank popup retains synchronously written content", await blankView?.webContents.executeJavaScript("document.body.dataset.nonce") === popupNonce);
   }
-  await clickPopup(120, "/popup-message");
-  const message = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-message`);
-  check("navigated popup is adopted into the owning task", Boolean(message));
+  const messageID = await clickPopup(120, "/popup-message");
+  const message = (await popupTabs()).tabs.find(tab => tab.tab_id === messageID);
+  check("navigated popup is adopted into the owning task", message?.url === `${baseURL}/popup-message`);
   const messageView = message ? await readTab(message.tab_id) : undefined;
   check("child sees the original opener", await messageView?.webContents.executeJavaScript("window.popupProof.hasOpener") === true);
   const messageProof = await popupView.webContents.executeJavaScript(`new Promise(resolve => {
@@ -555,9 +732,9 @@ app.whenReady().then(async () => {
   const submitted = popupRequests.filter(item => item.url === "/popup-form");
   const formBody = new URLSearchParams(submitted[0]?.body);
   check("target=_blank form preserves POST and encoded body", submitted.length === 1 && submitted[0]?.method === "POST" && formBody.get("nonce") === popupNonce && formBody.get("payload") === "two words & a plus +", JSON.stringify(submitted));
-  await clickPopup(240, "/popup-named?step=1");
+  const namedID = await clickPopup(240, "/popup-named?step=1");
   const namedBefore = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
-  await clickPopup(300, "/popup-named?step=2");
+  await clickPopup(300, "/popup-named?step=2", namedID);
   const namedAfter = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
   check("named popup reuses its WindowProxy", await popupView.webContents.executeJavaScript("window.popupState.namedReused") === true);
   check("named popup reuses one owned tab", namedBefore.length === 1 && namedAfter.length === 1 && namedBefore[0].tab_id === namedAfter[0].tab_id && namedAfter[0].url.endsWith("?step=2"), JSON.stringify({ namedBefore, namedAfter }));
@@ -576,9 +753,11 @@ app.whenReady().then(async () => {
   // A page closes its native child directly. Observe the real destruction
   // before the host's listener, since the regression throws inside that listener.
   // Record that exception only for this bounded scenario and fail explicitly.
-  await clickPopup(540, "/popup-self-close");
-  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-self-close`);
-  assert(selfCloseTab, "The self-closing popup is adopted before it closes itself");
+  const selfCloseTabID = await clickPopup(540, "/popup-self-close");
+  assert(selfCloseTabID, "The self-closing popup is adopted before it closes itself");
+  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.tab_id === selfCloseTabID);
+  assert.equal(selfCloseTab?.url, `${baseURL}/popup-self-close`, "The adopted self-closing popup publishes its committed URL");
+  assert(selfCloseTab);
   const selfCloseView = await readTab(selfCloseTab.tab_id);
   const siblingTab = openedForThread(sibling)[0];
   const siblingView = await readTab(siblingTab);
@@ -677,10 +856,9 @@ app.whenReady().then(async () => {
   await retainedOpenerView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   popupLoads.set("/popup-message", deferred());
   await controlledTool("OWNERSHIP_KEEP", { action: "click", tab_id: retainedOpenerTab, x: 120, y: 120 });
-  await bounded("retained popup loads with original opener", popupLoads.get("/popup-message")!.promise);
+  const handoffTab = await waitForPopupDocument(retainedOpenerTab, "/popup-message");
   const retainedTabs = await request(retained, "browser/list_tabs") as ListedTabs;
-  const handoffTab = retainedTabs.tabs.find(tab => tab.url === `${baseURL}/popup-message`)?.tab_id;
-  assert(handoffTab, "Handoff target is a genuine page-created child");
+  assert.equal(retainedTabs.tabs.find(tab => tab.tab_id === handoffTab)?.url, `${baseURL}/popup-message`, "Handoff target is a genuine page-created child");
   await controlledTool("OWNERSHIP_KEEP", { action: "navigate", url: `${baseURL}/deliverable` });
   const deliverableTab = openedForThread(retained).at(-1)!;
   const persistentTab = "manually-opened-persistent-tab";
@@ -739,7 +917,7 @@ app.whenReady().then(async () => {
     popupLoads.set(scenario.path, deferred());
     retainedOpenerView.webContents.sendInputEvent({ type: "mouseDown", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
     retainedOpenerView.webContents.sendInputEvent({ type: "mouseUp", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
-    await bounded(`${scenario.label} loads the actual destination`, popupLoads.get(scenario.path)!.promise);
+    await waitForPopupDocument(retainedOpenerTab, scenario.path);
     const adopted = popupAdoptions.find(item => item.openerTabID === retainedOpenerTab && item.url === `${baseURL}${scenario.path}`);
     check(`${scenario.label} adopts and navigates its child`, Boolean(adopted && host.tabSurfaceMeta(workdir, adopted.tabID)?.url === `${baseURL}${scenario.path}`));
     check(`${scenario.label} leaves its retained opener in place`, host.tabSurfaceMeta(workdir, retainedOpenerTab)?.url === `${baseURL}/popup-opener`);
@@ -963,6 +1141,200 @@ app.whenReady().then(async () => {
   const lateCompletedInput = await request(c, "browser/cdp", { tab_id: cTab, method: "click", params: { x: 140, y: 120 } })
     .then(() => "delivered", error => String(error));
   check("completion revokes the fresh execution too", lateCompletedInput !== "delivered", lateCompletedInput);
+  // Borrow real ribbon/plugin native views through the same Go tool and
+  // reverse-RPC route. No external accounts or duplicate navigation are used.
+  const websiteReveals: string[] = [];
+  const websiteDownloads = new WebWorkspaceDownloads(() => undefined);
+  const websites = new WebWorkspaceHost(() => undefined, () => undefined, { downloads: websiteDownloads, onReveal: (_owner, id) => websiteReveals.push(id) });
+  const browserSession = session.fromPartition(BROWSER_PARTITION);
+  let downloadSerial = 0;
+  const nextWorkspaceDownload = () => bounded("native workspace download settles", new Promise<string>(resolve => {
+    browserSession.prependOnceListener("will-download", (event, item) => {
+      // A policy regression must produce evidence, not hang a native save dialog.
+      item.setSavePath(join(fixture!, `workspace-download-${++downloadSerial}.txt`));
+      // preventDefault can synchronously emit done(cancelled) before the
+      // session's remaining download handlers have returned.
+      item.once("done", (_event, state) => setImmediate(() => resolve(event.defaultPrevented ? "blocked" : state)));
+      setImmediate(() => { if (event.defaultPrevented) resolve("blocked"); });
+    });
+  }));
+  const clickWorkspaceControl = async (name: string) => {
+    await controlledTool("OWNERSHIP_WORKSPACE", { action: "observe", tab_id: ribbonTab.tab_id });
+    const observation = lastToolText(providerRequests.at(-1) as { messages?: { role: string; content?: unknown }[] });
+    const node = new RegExp(`\\[(\\d+)\\][^\\n]*${name}`).exec(observation)?.[1];
+    assert(node, observation);
+    await controlledTool("OWNERSHIP_WORKSPACE", { action: "click", tab_id: ribbonTab.tab_id, node_id: Number(node) });
+  };
+  const workspaceSource = websites.browserSource(() => main);
+  host.setWorkspaceSource(workspaceSource);
+  host.setRendererSink({
+    surface() {}, presented() {}, adopted() {},
+    userInput(payload) {
+      if (!payload.workspace || !payload.activityID || payload.inputGeneration === undefined) return;
+      void pool!.requestForWorkdir<{ activity: ActivitySession }>(payload.workdir, "activity/takeover", {
+        thread_id: payload.threadID, activity_id: payload.activityID, execution_id: payload.executionID,
+      }).then(result => host!.acknowledgeLocalTakeover(result.activity, payload.inputGeneration!));
+    },
+  });
+  installBrowserSessionHandlers(session.fromPartition(BROWSER_PARTITION), host, websites);
+  const ribbon = websites.open(main, { id: "acceptance-ribbon", url: `${baseURL}/workspace-ribbon`, tabs: true });
+  websites.reportBounds(main, ribbon.id, { x: 0, y: 40, width: 800, height: 550 });
+  const plugin = websites.open(main, { id: "plugin:feishu-workspace:page", url: `${baseURL}/workspace-plugin` });
+  const otherWindow = new BrowserWindow({ show: false });
+  websites.open(otherWindow, { id: "other-window", url: `${baseURL}/workspace-private` });
+  const ribbonTab = workspaceSource.list().find(tab => tab.workspace_id === ribbon.id)!;
+  const pluginTab = workspaceSource.list().find(tab => tab.workspace_id === plugin.id)!;
+  assert(ribbonTab && pluginTab);
+  const ribbonContents = (main.contentView.children.find(view => {
+    const contents = (view as WebContentsView).webContents;
+    return contents && websites.ownsWebContents(contents.id);
+  }) as WebContentsView | undefined)?.webContents;
+  assert(ribbonContents);
+  if (ribbonContents.isLoading()) await bounded("ribbon website loads", new Promise<void>(resolve => ribbonContents.once("did-stop-loading", resolve)));
+  const nativeRibbonID = ribbonContents.id;
+  await ribbonContents.executeJavaScript("window.workspaceNonce='original-live-document'; document.cookie='workspace_fixture=retained'; undefined");
+  websites.setZoom(main, ribbon.id, 1.25);
+  const initialListeners = ribbonContents.listenerCount("before-input-event");
+  const workspace = await start("OWNERSHIP_WORKSPACE");
+  await bounded("workspace discovery through real Go tool", controlledWaiter("OWNERSHIP_WORKSPACE").promise);
+  const discoveryText = lastToolText(providerRequests.at(-1) as { messages?: { role: string; content?: unknown }[] });
+  check("tabs exposes live ribbon and plugin candidates without private windows", discoveryText.includes(ribbonTab.tab_id) && discoveryText.includes(pluginTab.tab_id) && !discoveryText.includes("workspace-private"), discoveryText);
+  check("discovery does not attach debuggers or read page content", !ribbonContents.debugger.isAttached() && !discoveryText.includes("original-live-document"));
+  const nativePresentationsBeforeAttach = nativePresentations.length;
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: ribbonTab.tab_id });
+  check("explicit attach borrows the original ribbon contents", host.ownsWebContents(nativeRibbonID) && host.tabSurfaceMeta(workdir, ribbonTab.tab_id)?.url === `${baseURL}/workspace-ribbon` && ribbonContents.id === nativeRibbonID);
+  check("attachment preserves URL, cookies, selection and document state", await ribbonContents.executeJavaScript("window.workspaceNonce==='original-live-document' && document.cookie.includes('workspace_fixture=retained')") === true && websites.open(main, { id: ribbon.id, url: `${baseURL}/workspace-ribbon`, tabs: true }).activeTabId === ribbon.activeTabId);
+  check("attachment does not show or focus a native window", nativePresentations.length === nativePresentationsBeforeAttach && websiteReveals.length === 0);
+  check("visible borrowed page remains in its website panel", host.isInPanel(workdir, ribbonTab.tab_id) && main.contentView.children.some(view => (view as WebContentsView).webContents?.id === nativeRibbonID));
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "observe", tab_id: ribbonTab.tab_id });
+  const workspaceObservation = lastToolText(providerRequests.at(-1) as { messages?: { role: string; content?: unknown }[] });
+  const workspaceNode = /\[(\d+)\][^\n]*Target/.exec(workspaceObservation)?.[1];
+  assert(workspaceNode, workspaceObservation);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "click", tab_id: ribbonTab.tab_id, node_id: Number(workspaceNode) });
+  check("ordinary Browser Use input changes the same user page", await ribbonContents.executeJavaScript("window.clicks") === 1);
+  const workspaceChildReady = deferred();
+  popupLoads.set("/workspace-child", workspaceChildReady);
+  await clickWorkspaceControl("Open child");
+  await bounded("agent-created website child loads", workspaceChildReady.promise);
+  const workspaceChildTab = workspaceSource.list().find(tab => tab.url === `${baseURL}/workspace-child`);
+  const workspaceChild = webContents.getAllWebContents().find(contents => contents.getURL() === `${baseURL}/workspace-child`);
+  assert(workspaceChildTab && workspaceChild);
+  check("agent-created website tab remains unadopted and preserves its opener", !workspaceChild.debugger.isAttached() && !host.ownsWebContents(workspaceChild.id) && await workspaceChild.executeJavaScript("opener.workspaceNonce") === "original-live-document");
+  const blockedChildDownload = nextWorkspaceDownload();
+  await clickWorkspaceControl("Download child");
+  const childDownloadState = await blockedChildDownload;
+  check("unadopted agent-created child inherits the download restriction", childDownloadState === "cancelled" && websiteDownloads.list(main).length === 0, childDownloadState);
+  const childTask = await start("OWNERSHIP_WORKSPACE_CHILD");
+  await bounded("independent child activity starts", controlledWaiter("OWNERSHIP_WORKSPACE_CHILD").promise);
+  await controlledTool("OWNERSHIP_WORKSPACE_CHILD", { action: "attach", tab_id: workspaceChildTab.tab_id });
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "detach", tab_id: ribbonTab.tab_id });
+  const independentChildDownload = nextWorkspaceDownload();
+  workspaceChild.downloadURL(`${baseURL}/workspace-download`);
+  const independentState = await independentChildDownload;
+  check("releasing opener never releases a child's independent lease", independentState === "blocked" && host.ownsWebContents(workspaceChild.id) && websiteDownloads.list(main).length === 0, JSON.stringify({ download: independentState, agentOwned: host.ownsWebContents(workspaceChild.id), downloads: websiteDownloads.list(main).length }));
+  await finishControlled("OWNERSHIP_WORKSPACE_CHILD", childTask);
+  const userChildDownload = nextWorkspaceDownload();
+  workspaceChild.downloadURL(`${baseURL}/workspace-download`);
+  const userDownloadState = await userChildDownload;
+  check("released popup returns to ordinary user download policy", userDownloadState === "completed" && websiteDownloads.list(main).length === 1 && !workspaceChild.debugger.isAttached(), userDownloadState);
+  const detachedRibbon = { destroyed: ribbonContents.isDestroyed(), debuggerAttached: ribbonContents.debugger.isAttached(), inputListeners: ribbonContents.listenerCount("before-input-event"), initialListeners, zoomFactor: ribbonContents.getZoomFactor(), agentOwned: host.ownsWebContents(nativeRibbonID) };
+  check("detach keeps native page and zoom while removing debugger and listeners", !detachedRibbon.destroyed && !detachedRibbon.debuggerAttached && detachedRibbon.inputListeners === initialListeners && detachedRibbon.zoomFactor === 1.25 && !detachedRibbon.agentOwned, JSON.stringify(detachedRibbon));
+  const viewsBeforeDetachedRead = webContents.getAllWebContents().length;
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "observe", tab_id: ribbonTab.tab_id });
+  check("detached workspace read fails without recreating or adopting a page", webContents.getAllWebContents().length === viewsBeforeDetachedRead && !ribbonContents.debugger.isAttached());
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: ribbonTab.tab_id });
+  const competitor = await pool.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" });
+  host.handleServerEvent({ kind: "notification", workdir, message: { method: "browser/turn_started", params: { workdir, thread_id: competitor.thread.id, turn_id: "foreign", execution_id: "foreign" } } } as ServerEvent);
+  const foreignAttach = await request(competitor.thread.id, "browser/open_tab", { tab_id: ribbonTab.tab_id, workspace_tab_id: ribbonTab.tab_id, turn_id: "foreign", execution_id: "foreign" }).then(() => "attached", error => String(error));
+  check("another thread cannot attach the same borrowed page", foreignAttach !== "attached", foreignAttach);
+  websites.reportBounds(main, ribbon.id, null);
+  const previewWindow = new BrowserWindow({ show: false });
+  const restoredBounds = host.mountTabOnWindow(workdir, ribbonTab.tab_id, previewWindow as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 400, height: 275 }, 0.5);
+  check("PiP mounts the adopted live contents instead of a duplicate", Boolean(restoredBounds) && previewWindow.contentView.children.some(view => (view as WebContentsView).webContents?.id === nativeRibbonID));
+  check("PiP Expand targets the original website destination", host.revealWorkspaceTab(workdir, ribbonTab.tab_id) && websiteReveals.at(-1) === ribbon.id);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "detach", tab_id: ribbonTab.tab_id });
+  check("releasing PiP restores native website ownership and geometry", main.contentView.children.some(view => (view as WebContentsView).webContents?.id === nativeRibbonID) && !ribbonContents.debugger.isAttached() && ribbonContents.getZoomFactor() === 1.25);
+  previewWindow.destroy();
+  websites.reportBounds(main, ribbon.id, null);
+  websites.reportBounds(main, plugin.id, { x: 0, y: 40, width: 800, height: 550 });
+  const pluginContents = webContents.getAllWebContents().find(contents => contents.getURL() === `${baseURL}/workspace-plugin`);
+  assert(pluginContents);
+  if (pluginContents.isLoading()) await bounded("plugin website loads", new Promise<void>(resolve => pluginContents.once("did-stop-loading", resolve)));
+  const nativePluginID = pluginContents.id;
+  await pluginContents.executeJavaScript("window.workspaceNonce='original-plugin-document'; undefined");
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: pluginTab.tab_id });
+  check("plugin WebPage attaches through the same browser mechanism", host.tabSurfaceMeta(workdir, pluginTab.tab_id)?.url === `${baseURL}/workspace-plugin` && host.isInPanel(workdir, pluginTab.tab_id));
+  // The renderer retention journey checks the Chat click itself. Its native
+  // contract is a null bounds update, never page destruction or navigation.
+  websites.reportBounds(main, plugin.id, null);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "observe", tab_id: pluginTab.tab_id });
+  const pluginObservation = lastToolText(providerRequests.at(-1) as { messages?: { role: string; content?: unknown }[] });
+  const pluginNode = /\[(\d+)\][^\n]*Target/.exec(pluginObservation)?.[1];
+  assert(pluginNode, pluginObservation);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "click", tab_id: pluginTab.tab_id, node_id: Number(pluginNode) });
+  check("Browser Use continues on the same hidden plugin document", !host.isInPanel(workdir, pluginTab.tab_id) && pluginContents.id === nativePluginID && await pluginContents.executeJavaScript("window.clicks===1 && window.workspaceNonce==='original-plugin-document'") === true);
+  const pluginPreview = new BrowserWindow({ show: false });
+  const pluginPreviewBounds = host.mountTabOnWindow(workdir, pluginTab.tab_id, pluginPreview as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 400, height: 275 }, 0.5);
+  check("plugin PiP uses the original live page", Boolean(pluginPreviewBounds) && pluginPreview.contentView.children.some(view => (view as WebContentsView).webContents?.id === nativePluginID));
+  check("plugin PiP Expand identifies its original retained view", host.revealWorkspaceTab(workdir, pluginTab.tab_id) && websiteReveals.at(-1) === plugin.id);
+  websites.reportBounds(main, plugin.id, { x: 0, y: 40, width: 800, height: 550 });
+  check("revealing the plugin restores its existing contents from PiP", host.isInPanel(workdir, pluginTab.tab_id) && main.contentView.children.some(view => (view as WebContentsView).webContents?.id === nativePluginID) && pluginContents.id === nativePluginID);
+  writeFileSync(join(output, "adopted-plugin-page.png"), (await pluginContents.capturePage(undefined, { stayHidden: true })).toPNG());
+  pluginPreview.destroy();
+  await finishControlled("OWNERSHIP_WORKSPACE", workspace);
+  check("turn completion releases plugin binding and preserves plugin page", !host.tabSurfaceMeta(workdir, pluginTab.tab_id) && workspaceSource.list().some(tab => tab.tab_id === pluginTab.tab_id));
+
+  const takeoverWorkspace = await start("OWNERSHIP_WORKSPACE");
+  await bounded("workspace takeover execution", controlledWaiter("OWNERSHIP_WORKSPACE").promise);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: ribbonTab.tab_id });
+  const readForTakeover = await request(takeoverWorkspace, "browser/cdp", { tab_id: ribbonTab.tab_id, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
+  const takeoverNode = readForTakeover.result.nodes.find(node => node.name === "Target")!;
+  const workspaceGate = { entered: deferred(), resume: deferred() };
+  const sendWorkspace = ribbonContents.debugger.sendCommand.bind(ribbonContents.debugger);
+  ribbonContents.debugger.sendCommand = async (method, params, sessionID) => {
+    const result = await sendWorkspace(method, params, sessionID);
+    if (method === "DOM.getBoxModel") { workspaceGate.entered.resolve(); await workspaceGate.resume.promise; }
+    return result;
+  };
+  const lateWorkspaceInput = request(takeoverWorkspace, "browser/cdp", { tab_id: ribbonTab.tab_id, method: "click", params: { node_id: takeoverNode.node_id } }).then(() => "delivered", error => String(error));
+  await bounded("workspace input awaits geometry", workspaceGate.entered.promise);
+  websites.command(main, ribbon.id, "takeOver");
+  workspaceGate.resume.resolve();
+  const workspaceInterrupted = await lateWorkspaceInput;
+  ribbonContents.debugger.sendCommand = sendWorkspace;
+  check("native website takeover fences pending browser input immediately", workspaceInterrupted !== "delivered" && await ribbonContents.executeJavaScript("window.clicks") === 1 && !ribbonContents.debugger.isAttached(), workspaceInterrupted);
+  await bounded("native workspace takeover interrupts the owning turn", completed.get(takeoverWorkspace)!.promise);
+  check("native takeover reaches the real core activity", terminalEvents.get(takeoverWorkspace)?.status === "interrupted");
+  controlledResponses.get("OWNERSHIP_WORKSPACE")?.end();
+  controlledResponses.delete("OWNERSHIP_WORKSPACE");
+
+  const stoppedWorkspace = await start("OWNERSHIP_WORKSPACE");
+  await bounded("workspace stop execution", controlledWaiter("OWNERSHIP_WORKSPACE").promise);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: ribbonTab.tab_id });
+  await pool.request("activity/stop", controlParams(stoppedWorkspace));
+  await bounded("workspace stop reaches terminal", completed.get(stoppedWorkspace)!.promise);
+  check("Stop returns the original live page and detaches automation", !ribbonContents.isDestroyed() && !ribbonContents.debugger.isAttached() && !host.tabSurfaceMeta(workdir, ribbonTab.tab_id));
+  controlledResponses.get("OWNERSHIP_WORKSPACE")?.end();
+  controlledResponses.delete("OWNERSHIP_WORKSPACE");
+
+  const unloadedWorkspace = await start("OWNERSHIP_WORKSPACE");
+  await bounded("workspace plugin unload execution", controlledWaiter("OWNERSHIP_WORKSPACE").promise);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: pluginTab.tab_id });
+  websites.close(main, plugin.id);
+  check("plugin page unload invalidates the borrowed binding", !host.tabSurfaceMeta(workdir, pluginTab.tab_id) && !workspaceSource.list().some(tab => tab.tab_id === pluginTab.tab_id));
+  await bounded("plugin unload interrupts its owning turn", completed.get(unloadedWorkspace)!.promise);
+  controlledResponses.get("OWNERSHIP_WORKSPACE")?.end();
+  controlledResponses.delete("OWNERSHIP_WORKSPACE");
+
+  const teardownWorkspace = await start("OWNERSHIP_WORKSPACE");
+  await bounded("workspace teardown execution", controlledWaiter("OWNERSHIP_WORKSPACE").promise);
+  await controlledTool("OWNERSHIP_WORKSPACE", { action: "attach", tab_id: ribbonTab.tab_id });
+  host.onClientTorndown(workdir);
+  check("core teardown releases borrowed pages without closing user tabs", !ribbonContents.isDestroyed() && !ribbonContents.debugger.isAttached() && !host.ownsWebContents(nativeRibbonID));
+  await finishControlled("OWNERSHIP_WORKSPACE", teardownWorkspace);
+  websites.destroyAll();
+  otherWindow.destroy();
+
   const disposal = await start("OWNERSHIP_DISPOSE");
   await bounded("disposal turn opens a live page", controlledWaiter("OWNERSHIP_DISPOSE").promise);
   const disposalTab = openedForThread(disposal)[0];
@@ -982,7 +1354,7 @@ app.whenReady().then(async () => {
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
   writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, captureCancelled, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, cancelledCaptureTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
-  console.log(JSON.stringify(checks, null, 2));
+  writeCaptureDiagnostics();
   await pool.shutdown();
   host.destroyAll();
   main.destroy();
@@ -991,6 +1363,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
+  writeCaptureDiagnostics();
   writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);

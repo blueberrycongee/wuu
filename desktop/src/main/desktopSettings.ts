@@ -47,7 +47,6 @@ export type DesktopSettings = {
   theme?: ThemePreference;
   language?: LanguagePreference;
   phone_access_enabled?: boolean;
-  activity_preview_auto_show?: boolean;
   // User-facing reading size for the message stream, in pixels. The
   // renderer clamps incoming values to MESSAGE_FLOW_FONT_SIZE_RANGE
   // (13–20 in 0.5px steps) before applying and the IPC boundary
@@ -87,9 +86,6 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
     const settings: DesktopSettings = {};
     if (typeof record.phone_access_enabled === "boolean") {
       settings.phone_access_enabled = record.phone_access_enabled;
-    }
-    if (typeof record.activity_preview_auto_show === "boolean") {
-      settings.activity_preview_auto_show = record.activity_preview_auto_show;
     }
     if (THEME_PREFERENCES.includes(record.theme as ThemePreference)) {
       settings.theme = record.theme as ThemePreference;
@@ -179,15 +175,6 @@ export function writeDesktopSettings(
     filePath,
     `${JSON.stringify(settings, null, 2)}\n`,
   );
-}
-
-export function getActivityPreviewAutoShow(filePath?: string): boolean {
-  return readDesktopSettings(filePath).activity_preview_auto_show ?? true;
-}
-
-export function setActivityPreviewAutoShow(enabled: boolean, filePath?: string): void {
-  const settings = readDesktopSettings(filePath);
-  writeDesktopSettings({ ...settings, activity_preview_auto_show: enabled }, filePath);
 }
 
 export function getThemePreference(filePath?: string): ThemePreference {

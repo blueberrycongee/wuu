@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { SideConversationAvailableContext } from "./ResponseSelection";
 import { useContext, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFileSelectionActions } from "./FileSelectionContext";
@@ -288,9 +289,9 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
               aria-label={labels.instruction} placeholder={labels.instruction}
               onChange={event => setForm({ ...form, value: event.target.value })}
               onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-            <button type="submit" aria-label={labels.submit} title={labels.submit} disabled={sending || !form.value.trim() || stale}>
+            <Tooltip asChild content={labels.submit}><button type="submit" aria-label={labels.submit} disabled={sending || !form.value.trim() || stale}>
               <ArrowUp className="icon" aria-hidden="true" />
-            </button>
+            </button></Tooltip>
           </div>
           {current.blockFallback && <p role="status">{labels.block}</p>}
           {stale && <p role="status">{labels.stale}</p>}
@@ -308,8 +309,8 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
         onCommentSubmit={() => { if (form?.kind !== "comment") return; if (form.value.trim()) actions!.addComment(current.source, form.value.trim(), form.id); else if (!form.id) actions!.addQuote(current.source); else return; close(); }}
         commentToggleRef={commentToggle} commentInputRef={textarea}
         extraActions={<>
-          {sideConversationAvailable ? <button type="button" disabled={!actions!.askSide || stale} title={!actions!.askSide ? labels.sideUnavailable : undefined}
-            onPointerDown={event => event.preventDefault()} onClick={() => { actions!.askSide?.(current.source); close(); }}>{labels.askSide}</button> : null}
+          {sideConversationAvailable ? <Tooltip asChild content={!actions!.askSide ? labels.sideUnavailable : undefined}><button aria-description={!actions!.askSide ? labels.sideUnavailable : undefined} type="button" disabled={!actions!.askSide || stale}
+            onPointerDown={event => event.preventDefault()} onClick={() => { actions!.askSide?.(current.source); close(); }}>{labels.askSide}</button></Tooltip> : null}
           <button type="button" disabled={stale} onPointerDown={event => event.preventDefault()} onClick={() => startForm("edit")}>{labels.edit}</button>
           <button type="button" aria-label={labels.close} onPointerDown={event => event.preventDefault()} onClick={close}>×</button>
         </>}

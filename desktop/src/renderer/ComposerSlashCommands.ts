@@ -1,5 +1,6 @@
+import type { ComposerConfiguration } from "./ComposerTypes";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { InitializeResult, RuntimeContext, SkillSummary } from "../shared/protocol";
+import type { RuntimeContext, SkillSummary } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
 import {
   pluginCommandPackagesFromInventory,
@@ -92,7 +93,7 @@ export function buildComposerSlashCommands({
   fastMode,
 }: {
   activeContext?: RuntimeContext;
-  initialized?: InitializeResult;
+  initialized?: ComposerConfiguration;
   running: boolean;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;

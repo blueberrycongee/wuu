@@ -26,15 +26,17 @@ const (
 )
 
 type toolRun struct {
-	call            providers.ToolCall
-	order           int
-	finalized       bool
-	concurrencySafe bool
-	streamSafe      bool
-	streamStarted   bool
-	invocationID    string
-	parent          *toolRun
-	depth           int
+	call                   providers.ToolCall
+	order                  int
+	finalized              bool
+	concurrencySafe        bool
+	streamSafe             bool
+	streamStarted          bool
+	streamAdmissionChecked bool
+	streamAdmitted         bool
+	invocationID           string
+	parent                 *toolRun
+	depth                  int
 
 	mu             sync.Mutex
 	state          toolRunState
@@ -49,16 +51,21 @@ type toolRun struct {
 // enqueue read-only tools early, and the loop later waits for those same runs
 // while executing any remaining final tool calls.
 type TurnToolRuntime struct {
-	executor    ToolExecutor
-	ledger      *toolledger.Ledger
-	operationID string
-	runContext  context.Context
-	gate        *ToolExecutionGate
+	streamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	serial          bool
+	executor        ToolExecutor
+	ledger          *toolledger.Ledger
+	operationID     string
+	runContext      context.Context
+	gate            *ToolExecutionGate
 
 	mu       sync.Mutex
 	runs     []*toolRun
 	byID     map[string]*toolRun
 	canceled bool
+	started  bool
+	workers  sync.WaitGroup
+	running  map[*toolRun]context.CancelFunc
 
 	requestContext []ContextSegment
 	stepIndex      *int
@@ -68,6 +75,8 @@ type TurnToolRuntime struct {
 }
 
 type ToolRuntimeConfig struct {
+	StreamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	Serial          bool
 	// Gate must be shared when multiple runtimes can have live nested work.
 	Gate        *ToolExecutionGate
 	Executor    ToolExecutor
@@ -94,15 +103,22 @@ func (r *TurnToolRuntime) SetResultCallback(callback func(providers.ToolCall, to
 
 func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 	runtime := &TurnToolRuntime{
-		executor:    config.Executor,
-		ledger:      config.Ledger,
-		operationID: strings.TrimSpace(config.OperationID),
-		runContext:  config.RunContext,
-		gate:        config.Gate,
-		byID:        map[string]*toolRun{},
+		streamAdmission: config.StreamAdmission,
+		serial:          config.Serial,
+		executor:        config.Executor,
+		ledger:          config.Ledger,
+		operationID:     strings.TrimSpace(config.OperationID),
+		runContext:      config.RunContext,
+		gate:            config.Gate,
+		byID:            map[string]*toolRun{},
+		running:         map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
-		runtime.gate = NewToolExecutionGate(maxToolConcurrency)
+		capacity := maxToolConcurrency
+		if config.Serial {
+			capacity = 1
+		}
+		runtime.gate = NewToolExecutionGate(capacity)
 	}
 	runtime.SetStepIndex(config.StepIndex)
 	return runtime
@@ -151,26 +167,61 @@ func (r *TurnToolRuntime) Cancel() {
 	}
 	r.mu.Lock()
 	r.canceled = true
-	runs := append([]*toolRun(nil), r.runs...)
-	r.mu.Unlock()
-
-	for _, run := range runs {
-		run.mu.Lock()
-		cancel := run.cancel
-		run.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
+	for _, cancel := range r.running {
+		cancel()
 	}
+	r.mu.Unlock()
+}
+
+// Close waits for physical completion, including orphaned and nested calls.
+// Cancel closes admission before Wait, so no new worker can race the drain.
+func (r *TurnToolRuntime) Close() {
+	if r == nil {
+		return
+	}
+	r.Cancel()
+	r.workers.Wait()
+}
+
+func (r *TurnToolRuntime) HasAcceptedCalls() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs) > 0
+}
+
+func (r *TurnToolRuntime) Join(ctx context.Context, calls []providers.ToolCall, stepIndex int, onDetail func(providers.ToolCall, toolresult.Result), onResult func(providers.ToolCall, string), onRejected func(ToolBatchRejectionInfo)) ([]providers.ChatMessage, error) {
+	r.SetStepIndex(stepIndex)
+	r.SetResultCallback(onDetail)
+	return r.ExecuteFinalCalls(ctx, calls, onResult, onRejected)
+}
+
+func (r *TurnToolRuntime) HasStartedWork() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.started
 }
 
 func (r *TurnToolRuntime) ReplayDecision(ctx context.Context) (toolledger.ReplayDecision, error) {
-	if r == nil || r.ledger == nil {
+	if r == nil {
 		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
 	}
 	r.mu.Lock()
-	batchID := r.batchID
+	batchID, started := r.batchID, r.started
 	r.mu.Unlock()
+	if r.ledger == nil {
+		if started {
+			// A missing ledger cannot prove that an accepted effect is safe to
+			// repeat. Even a retry with new model call IDs must stop here.
+			return toolledger.ReplayDecision{Action: toolledger.ReplayBlock, Reason: toolledger.ReplayReasonInvocationUnknown}, nil
+		}
+		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
+	}
 	return r.ledger.DecideReplay(ctx, batchID)
 }
 
@@ -265,6 +316,20 @@ func (r *TurnToolRuntime) startReadyStreamPrefixLocked(ctx context.Context) {
 		if !run.streamSafe {
 			return
 		}
+		if r.streamAdmission != nil {
+			if !run.streamAdmissionChecked {
+				admitted, err := r.streamAdmission(ctx, providers.CloneToolCall(run.call))
+				run.streamAdmissionChecked = true
+				if err != nil {
+					r.ledgerErr = err
+					return
+				}
+				run.streamAdmitted = admitted
+			}
+			if !run.streamAdmitted {
+				return
+			}
+		}
 		r.startRunLocked(ctx, run, true)
 	}
 }
@@ -273,6 +338,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	run.mu.Lock()
 	if run.state != toolRunQueued {
 		run.mu.Unlock()
+		return
+	}
+	if r.canceled {
+		run.mu.Unlock()
+		run.complete(toolresult.Result{}, context.Canceled)
 		return
 	}
 	run.streamStarted = run.streamStarted || streamStarted
@@ -306,8 +376,17 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	// already starting. Use the scheduling decision made under the runtime lock.
 	concurrencySafe := run.concurrencySafe
 	run.mu.Unlock()
+	r.started = true
+	r.running[run] = cancel
+	r.workers.Add(1)
 
 	go func() {
+		defer r.workers.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.running, run)
+			r.mu.Unlock()
+		}()
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
 			if run.parent != nil {
@@ -654,7 +733,7 @@ func (r *TurnToolRuntime) executeBatch(
 	callCtxProvider, hasCallCtxProvider := r.executor.(ToolCallContextProvider)
 	discoveryProvider, hasDiscoveryProvider := r.executor.(ToolDiscoveryProvider)
 
-	if !batch.concurrent || len(batch.calls) == 1 {
+	if r.serial || !batch.concurrent || len(batch.calls) == 1 {
 		msgs := make([]providers.ChatMessage, 0, len(batch.calls))
 		requestContext := make([]ContextSegment, 0, len(batch.calls))
 		for _, call := range batch.calls {
@@ -824,12 +903,8 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 	if executor == nil {
 		return toolresult.Result{}, context.Canceled
 	}
-	arguments := strings.TrimSpace(call.Arguments)
-	if arguments != "" && !json.Valid([]byte(arguments)) {
-		return toolresult.Result{}, toolerrors.New(
-			toolerrors.InvalidArguments,
-			fmt.Sprintf("tool %q arguments are invalid JSON", call.Name),
-		)
+	if err := validateRuntimeToolArguments(call); err != nil {
+		return toolresult.Result{}, err
 	}
 	// A panic in a tool executor must not crash the whole process: convert it
 	// into an error result so the turn survives and the model sees the failure.
@@ -853,6 +928,16 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 		return toolresult.FromErrorText(errorJSON(validationErr)), validationErr
 	}
 	return result, err
+}
+
+func validateRuntimeToolArguments(call providers.ToolCall) error {
+	arguments := strings.TrimSpace(call.Arguments)
+	// Custom transport input is normalized to JSON {"input": ...} before
+	// reaching execution. Every canonical call retains the same JSON contract.
+	if arguments != "" && !json.Valid([]byte(arguments)) {
+		return toolerrors.New(toolerrors.InvalidArguments, fmt.Sprintf("tool %q arguments are invalid JSON", call.Name))
+	}
+	return nil
 }
 
 func (r *TurnToolRuntime) notifyResult(call providers.ToolCall, result toolresult.Result, legacy func(providers.ToolCall, string)) {

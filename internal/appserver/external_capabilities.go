@@ -36,6 +36,8 @@ type externalCapabilities struct {
 	tools    []mcp.Tool
 	allowed  map[string]bool
 	serial   chan struct{}
+	binding  *runtime.State
+	journal  providers.InferenceJournal
 
 	mu       sync.Mutex
 	closed   bool
@@ -44,35 +46,61 @@ type externalCapabilities struct {
 	close    func()
 }
 
-func startExternalCapabilities(ctx context.Context, thread *runtime.ThreadRuntime) (*externalCapabilities, error) {
-	if thread == nil || thread.CapabilityTools == nil || thread.Toolkit == nil {
+func startExternalCapabilities(ctx context.Context, binding *runtime.State, thread *runtime.ThreadRuntime) (*externalCapabilities, error) {
+	if thread == nil || thread.CapabilityTools == nil {
 		return nil, nil
+	}
+	if binding == nil || binding.InferenceJournalRuntime == nil {
+		return nil, errors.New("host capabilities require captured inference accounting")
 	}
 	// Pin the actual MCP connection objects as well as their definitions. A
 	// helper reconnect cannot let delayed work borrow the replacement's control.
-	thread.Toolkit.FreezeToolSurface()
-	definitions := thread.CapabilityTools.Definitions()
+	freezer, _ := thread.CapabilityTools.(agent.ToolSurfaceFreezer)
+	if freezer != nil {
+		freezer.FreezeToolSurface()
+	}
+	unfreeze := func() {
+		if freezer != nil {
+			freezer.UnfreezeToolSurface()
+		}
+	}
+	var definitions []providers.ToolDefinition
+	if selected, ok := thread.CapabilityTools.(agent.ContextualToolDefinitions); ok {
+		var err error
+		definitions, err = selected.DefinitionsContext(ctx)
+		if err != nil {
+			unfreeze()
+			return nil, err
+		}
+	} else {
+		definitions = thread.CapabilityTools.Definitions()
+	}
 	if len(definitions) == 0 {
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 		return nil, nil
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 		return nil, fmt.Errorf("start host capability endpoint: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	ownerID := thread.SessionID
+	if ownerID == "" && thread.Toolkit != nil {
+		ownerID = thread.Toolkit.SessionID()
+	}
 	bridge := &externalCapabilities{
 		ctx: ctx, cancel: cancel, host: listener.Addr().String(), path: "/mcp/" + rand.Text(),
 		executor: thread.CapabilityTools, allowed: make(map[string]bool, len(definitions)),
 		serial: make(chan struct{}, 1), requests: make(map[string]context.CancelFunc),
+		binding: binding, journal: binding.InferenceJournalRuntime.ForOwner(ownerID),
 	}
 	for _, definition := range definitions {
 		schema, err := json.Marshal(definition.InputSchema)
 		if err != nil {
 			cancel()
 			_ = listener.Close()
-			thread.Toolkit.UnfreezeToolSurface()
+			unfreeze()
 			return nil, fmt.Errorf("encode host tool %s: %w", definition.Name, err)
 		}
 		bridge.tools = append(bridge.tools, mcp.Tool{Name: definition.Name, Description: definition.Description, InputSchema: schema})
@@ -88,7 +116,7 @@ func startExternalCapabilities(ctx context.Context, thread *runtime.ThreadRuntim
 		// The cached toolkit cannot be rebound for the next turn while any old
 		// request is still unwinding through hooks, permissions or UI cleanup.
 		bridge.active.Wait()
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 	})
 	go func() { _ = bridge.server.Serve(listener) }()
 	context.AfterFunc(ctx, bridge.Close)
@@ -232,7 +260,7 @@ func (b *externalCapabilities) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	writeCapabilityRPC(w, request.ID, result, rpcError)
 }
 
-func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall) mcp.CallToolResult {
+func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall) (response mcp.CallToolResult) {
 	select {
 	case b.serial <- struct{}{}:
 		defer func() { <-b.serial }()
@@ -244,6 +272,22 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 	}
 	var result toolresult.Result
 	var err error
+	var finishReceipts func() error
+	if providers.ModelReceiptScopeFromContext(ctx) == nil {
+		// External engines have no native runner owner. Admission retains this
+		// turn's State through actual receipt completion, including after Close.
+		ctx, finishReceipts, err = agent.BeginModelReceipts(ctx, b.binding.BeginModelReceipts)
+		if err != nil {
+			return capabilityToolResult(result, err)
+		}
+	}
+	ctx = providers.WithInferenceJournal(ctx, b.journal)
+	defer func() {
+		if finishReceipts != nil {
+			err = errors.Join(err, finishReceipts())
+		}
+		response = capabilityToolResult(result, err)
+	}()
 	if rich, ok := b.executor.(agent.RichToolExecutor); ok {
 		result, err = rich.ExecuteResult(ctx, call)
 	} else {
@@ -256,7 +300,7 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 			result.Content = append(result.Content, toolresult.ContentPart{Type: toolresult.ContentTypeText, Text: additional})
 		}
 	}
-	return capabilityToolResult(result, err)
+	return
 }
 
 func capabilityToolResult(result toolresult.Result, err error) mcp.CallToolResult {

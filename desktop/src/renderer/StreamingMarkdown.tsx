@@ -1,10 +1,12 @@
+import { useConversationControls } from "./ConversationControlsContext";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
 import {
   MarkdownContent,
@@ -71,7 +73,38 @@ const CURSOR_MARKDOWN_BOUNDARY = " ";
 // outside <code>, so copied and selected code stays exact.
 const CODE_CURSOR = <span className={CURSOR_CLASS_NAME} aria-hidden="true" />;
 
-export function StreamingMarkdown({
+export function StreamingMarkdown(props: StreamingMarkdownProps): JSX.Element {
+  const active = useConversationRenderActive();
+  const hasValue = useStreamedTextHasValue(props.streamKey, active);
+  const text = useStreamedText(props.streamKey, props.initialText ?? "", active);
+  return <StreamingMarkdownBody {...props} source={{ text, hasValue, replacementVersion: streamTextStore.replacementVersion(props.streamKey) }} />;
+}
+
+/** Public live observer uses the host's existing stream; hidden panes retain their last paint. */
+export function ApplicationStreamingMarkdown({ threadId, turnId, itemId, ...props }: Omit<StreamingMarkdownProps, "streamKey"> & { threadId?: string; turnId: string; itemId: string }): JSX.Element {
+  const { application } = useConversationControls();
+  const active = useConversationRenderActive();
+  const key = JSON.stringify([threadId, turnId, itemId]);
+  const target = useMemo(() => threadId ? { threadId, turnId, itemId, field: "text" as const } : undefined, [threadId, turnId, itemId]);
+  // Side conversations publish complete message snapshots; only ordinary loaded
+  // threads have a live-text address in the public application workspace.
+  const addressed = Boolean(target && application.getSnapshot().conversationWorkspace.threads.some(thread => thread.id === threadId && thread.turns.some(turn => turn.id === turnId && turn.items.some(item => item.id === itemId))));
+  const held = useRef<{ key: string; value?: string }>({ key });
+  if (held.current.key !== key) held.current = { key };
+  const read = useCallback(() => {
+    if (active) held.current.value = target && addressed ? application.conversationText.getSnapshot(target) : undefined;
+    return held.current.value;
+  }, [application, active, target, addressed]);
+  const subscribe = useCallback((listener: () => void) => active && target && addressed ? application.conversationText.subscribe(target, listener) : () => {}, [application, active, target, addressed]);
+  const live = useSyncExternalStore(subscribe, read, read);
+  const text = live ?? props.initialText ?? "";
+  const previous = useRef({ key, text, version: 0 });
+  if (previous.current.key !== key) previous.current = { key, text, version: 0 };
+  else if (previous.current.text !== text) previous.current = { key, text, version: previous.current.version + (text.startsWith(previous.current.text) ? 0 : 1) };
+  return <StreamingMarkdownBody {...props} streamKey={key} source={{ text, hasValue: live !== undefined, replacementVersion: previous.current.version }} />;
+}
+
+function StreamingMarkdownBody({
   streamKey,
   initialText = "",
   cwd,
@@ -79,13 +112,13 @@ export function StreamingMarkdown({
   className = DEFAULT_CLASS_NAME,
   isLive,
   onFrame,
-  onSettled
-}: StreamingMarkdownProps): JSX.Element {
-  /* ------------------------- External store wiring ------------------------ */
+  onSettled,
+  source,
+}: StreamingMarkdownProps & { source: { text: string; hasValue: boolean; replacementVersion: number } }): JSX.Element {
   const renderActive = useConversationRenderActive();
   const becameRenderActive = useConversationBecameRenderActive();
-  const hasStreamValue = useStreamedTextHasValue(streamKey, renderActive);
-  const targetText = useStreamedText(streamKey, initialText, renderActive);
+  const hasStreamValue = source.hasValue;
+  const targetText = source.text;
 
   /* ----------------------------- Sticky text ------------------------------ */
   // The text we actually render. The store may be cleared (in `onSettled`)
@@ -95,24 +128,24 @@ export function StreamingMarkdown({
     targetText,
   );
   const renderedReplacementVersionRef = useRef(
-    streamTextStore.replacementVersion(streamKey),
+    source.replacementVersion,
   );
   const acceptedStreamValueRef = useRef(hasStreamValue);
   const renderedSourceKeyRef = useRef(streamKey);
   if (renderedSourceKeyRef.current !== streamKey) {
     renderedSourceKeyRef.current = streamKey;
     acceptedStreamValueRef.current = hasStreamValue;
-    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+    renderedReplacementVersionRef.current = source.replacementVersion;
   }
   // Resolve the sticky snapshot before committing DOM. Publishing in a layout
   // effect lets the parent's scroll restore measure the previous text first.
   if (hasStreamValue) {
     acceptedStreamValueRef.current = true;
-    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+    renderedReplacementVersionRef.current = source.replacementVersion;
   }
   if (targetText !== renderedText && !(acceptedStreamValueRef.current &&
     !hasStreamValue && targetText.length < renderedText.length)) {
-    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+    renderedReplacementVersionRef.current = source.replacementVersion;
     setRenderedText(targetText);
   }
 
@@ -210,7 +243,7 @@ export function StreamingMarkdown({
     visibleText,
     streamKey,
     renderedReplacementVersionRef.current,
-    streamTextStore.has(streamKey),
+    hasStreamValue,
   );
   // Keep the synthetic cursor separated from the Markdown source. Appending
   // the private-use sentinel directly after a closing emphasis delimiter can

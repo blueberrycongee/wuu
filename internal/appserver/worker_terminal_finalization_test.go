@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -29,10 +30,10 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 		rootID        = "terminal-finalization-owner"
 		participantID = "prt-terminal-finalization"
 	)
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
-	if err := session.UpsertParticipant(rt.SessionDir, participant.Participant{
+	if err := rt.Sessions.UpsertParticipant(participant.Participant{
 		ID: participantID, Kind: participant.KindNamed, Name: "Terminal finalizer",
 	}); err != nil {
 		t.Fatalf("create participant: %v", err)
@@ -41,6 +42,8 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	workerClient := newBlockingStreamClient("worker done")
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -60,6 +63,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	out := &lockedBuffer{}
 	owner := New(rt, out)
 	root := newThreadState(rootID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	root.state = testRuntimeState(t, rt)
 	// Keep the synthetic root-completion drain parked so the test can inspect
 	// the queued completion at the exact pre-lease-release boundary.
 	root.running = true
@@ -72,18 +76,18 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	firstCompletionAttempt := make(chan struct{})
 	releaseFirstCompletionAttempt := make(chan struct{})
 	var completionAttempts atomic.Int32
-	completeParticipantRun := func(sessDir, pid, agentID, outcome, summary string) error {
+	completeParticipantRun := func(pid, agentID, outcome, summary string) error {
 		if completionAttempts.Add(1) == 1 {
 			close(firstCompletionAttempt)
 			<-releaseFirstCompletionAttempt
 			return errors.New("injected transient participant-run write failure")
 		}
-		return session.CompleteParticipantRun(sessDir, pid, agentID, outcome, summary)
+		return rt.Sessions.CompleteParticipantRun(pid, agentID, outcome, summary)
 	}
 	terminalFinalized := make(chan subagent.Notification, 1)
 	terminalFinalizeErr := make(chan error, 1)
 	unsubscribeTerminal := control.SubscribeWorkerTerminalFinalizer(func(notification subagent.Notification) error {
-		if err := owner.finalizeAgentTerminalWithCompleter(rootID, control, notification, completeParticipantRun); err != nil {
+		if err := owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, control, notification, completeParticipantRun); err != nil {
 			terminalFinalizeErr <- err
 			return err
 		}
@@ -127,7 +131,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker provider request did not start")
 	}
-	if err := session.UpsertParticipantRun(rt.SessionDir, session.ParticipantRun{
+	if err := rt.Sessions.UpsertParticipantRun(session.ParticipantRun{
 		ID:            spawned.AgentID,
 		ParticipantID: participantID,
 		AgentID:       spawned.AgentID,
@@ -148,7 +152,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	if !control.HasOwnedWorkerExecutions() {
 		t.Fatal("worker lease was released while durable participant-run completion was blocked")
 	}
-	runs, err := session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err := rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatalf("list participant runs before retry: %v", err)
 	}
@@ -189,7 +193,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 		t.Fatalf("participant-run completion attempts = %d, want 2", got)
 	}
 
-	runs, err = session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err = rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatalf("list participant runs: %v", err)
 	}
@@ -220,7 +224,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 
 	// The best-effort status stream can replay the same terminal snapshot after
 	// the reliable finalizer returns. It must not write or settle the run twice.
-	if err := owner.finalizeAgentTerminalWithCompleter(rootID, control, terminalNotification, completeParticipantRun); err != nil {
+	if err := owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, control, terminalNotification, completeParticipantRun); err != nil {
 		t.Fatalf("replay terminal finalization: %v", err)
 	}
 	if got := completionAttempts.Load(); got != 2 {
@@ -239,8 +243,10 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	contenderRuntime := newTestRuntime(t, &fakeClient{})
 	contenderRuntime.RootDir = rt.RootDir
 	contenderRuntime.SessionDir = rt.SessionDir
+	contenderRuntime.Documents, contenderRuntime.Sessions = rt.Documents, rt.Sessions
 	contenderRuntime.StateDir = rt.StateDir
 	contenderOut := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, contenderRuntime, &threadDeleteArtifactProvider{})
 	contender := New(contenderRuntime, contenderOut)
 	t.Cleanup(contender.Close)
 	dispatchPayload(t, contender, "delete-before-release", MethodThreadDelete, ThreadDeleteParams{ThreadID: rootID})
@@ -257,7 +263,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	if deleted["error"] != nil {
 		t.Fatalf("delete after terminal finalization failed: %+v", deleted["error"])
 	}
-	if _, found, err := session.Find(rt.SessionDir, rootID); err != nil || found {
+	if _, found, err := rt.Sessions.Find(rootID); err != nil || found {
 		t.Fatalf("root session survived delete: found=%t err=%v", found, err)
 	}
 }
@@ -269,10 +275,10 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 		rootID        = "terminal-durable-recovery-owner"
 		participantID = "prt-terminal-durable-recovery"
 	)
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
-	if err := session.UpsertParticipant(rt.SessionDir, participant.Participant{
+	if err := rt.Sessions.UpsertParticipant(participant.Participant{
 		ID: participantID, Kind: participant.KindNamed, Name: "Durable recovery",
 	}); err != nil {
 		t.Fatalf("create participant: %v", err)
@@ -282,6 +288,8 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	newControl := func(client *blockingStreamClient) *agentcontrol.AgentControl {
 		t.Helper()
 		control, err := agentcontrol.New(agentcontrol.Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 			Client:       client,
 			DefaultModel: "fake-model",
 			ParentRepo:   rt.RootDir,
@@ -302,6 +310,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	attachRoot := func(server *Server, control *agentcontrol.AgentControl) {
 		t.Helper()
 		root := newThreadState(rootID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+		root.state = testRuntimeState(t, rt)
 		root.running = true
 		root.execRuntime = &runtime.ThreadRuntime{AgentControl: control}
 		server.mu.Lock()
@@ -317,7 +326,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	injectedFailure := errors.New("injected persistent participant-run write failure")
 	var failedAttempts atomic.Int32
 	unsubscribe := control.SubscribeWorkerTerminalFinalizer(func(notification subagent.Notification) error {
-		return owner.finalizeAgentTerminalWithCompleter(rootID, control, notification, func(string, string, string, string, string) error {
+		return owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, control, notification, func(string, string, string, string) error {
 			failedAttempts.Add(1)
 			return injectedFailure
 		})
@@ -347,7 +356,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker provider request did not start")
 	}
-	if err := session.UpsertParticipantRun(rt.SessionDir, session.ParticipantRun{
+	if err := rt.Sessions.UpsertParticipantRun(session.ParticipantRun{
 		ID: spawned.AgentID, ParticipantID: participantID, AgentID: spawned.AgentID,
 		TaskID: spawned.TaskName, SessionID: rootID, Summary: "running", Outcome: "running",
 	}); err != nil {
@@ -368,7 +377,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	if !control.HasPendingWorkerTerminalFinalizations() {
 		t.Fatal("terminal retry intent was not durable while completion kept failing")
 	}
-	runs, err := session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err := rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,9 +477,9 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	var successfulWrites atomic.Int32
 	recovered := make(chan subagent.Notification, 1)
 	recoveryUnsubscribe := recoveryControl.SubscribeWorkerTerminalFinalizer(func(notification subagent.Notification) error {
-		err := recoveryOwner.finalizeAgentTerminalWithCompleter(rootID, recoveryControl, notification, func(sessDir, pid, agentID, outcome, summary string) error {
+		err := recoveryOwner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, recoveryOwner.rt), rootID, recoveryControl, notification, func(pid, agentID, outcome, summary string) error {
 			successfulWrites.Add(1)
-			return session.CompleteParticipantRun(sessDir, pid, agentID, outcome, summary)
+			return rt.Sessions.CompleteParticipantRun(pid, agentID, outcome, summary)
 		})
 		if err == nil {
 			select {
@@ -497,7 +506,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	if recoveryControl.HasPendingWorkerTerminalFinalizations() {
 		t.Fatal("acknowledged terminal intent survived recovery")
 	}
-	runs, err = session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err = rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,9 +538,9 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	if meta, ok := recoveryControl.Threads().Resolve(spawned.AgentID); !ok || meta.Status != agentthread.StatusCompleted {
 		t.Fatalf("terminal recovery did not rebuild worker thread: %+v ok=%t", meta, ok)
 	}
-	if err := recoveryOwner.finalizeAgentTerminalWithCompleter(rootID, recoveryControl, recoveredNotification, func(sessDir, pid, agentID, outcome, summary string) error {
+	if err := recoveryOwner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, recoveryOwner.rt), rootID, recoveryControl, recoveredNotification, func(pid, agentID, outcome, summary string) error {
 		successfulWrites.Add(1)
-		return session.CompleteParticipantRun(sessDir, pid, agentID, outcome, summary)
+		return rt.Sessions.CompleteParticipantRun(pid, agentID, outcome, summary)
 	}); err != nil {
 		t.Fatalf("replay recovered terminal finalization: %v", err)
 	}
@@ -548,15 +557,15 @@ func TestServerTerminalFinalizationFailureRemainsReplayable(t *testing.T) {
 		participantID = "prt-terminal-replay"
 		agentID       = "agt-terminal-replay"
 	)
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpsertParticipant(rt.SessionDir, participant.Participant{
+	if err := rt.Sessions.UpsertParticipant(participant.Participant{
 		ID: participantID, Kind: participant.KindNamed, Name: "Replay owner",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpsertParticipantRun(rt.SessionDir, session.ParticipantRun{
+	if err := rt.Sessions.UpsertParticipantRun(session.ParticipantRun{
 		ID: agentID, ParticipantID: participantID, AgentID: agentID,
 		SessionID: rootID, Outcome: "running", Summary: "working",
 	}); err != nil {
@@ -578,7 +587,7 @@ func TestServerTerminalFinalizationFailureRemainsReplayable(t *testing.T) {
 
 	var failedAttempts atomic.Int32
 	injectedFailure := errors.New("injected persistent participant-run write failure")
-	err := owner.finalizeAgentTerminalWithCompleter(rootID, nil, notification, func(string, string, string, string, string) error {
+	err := owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, nil, notification, func(string, string, string, string) error {
 		failedAttempts.Add(1)
 		return injectedFailure
 	})
@@ -588,7 +597,7 @@ func TestServerTerminalFinalizationFailureRemainsReplayable(t *testing.T) {
 	if got := failedAttempts.Load(); got != participantRunCompletionMaxAttempts {
 		t.Fatalf("terminal finalization attempts = %d, want %d", got, participantRunCompletionMaxAttempts)
 	}
-	runs, err := session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err := rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,21 +609,21 @@ func TestServerTerminalFinalizationFailureRemainsReplayable(t *testing.T) {
 	}
 
 	var successfulWrites atomic.Int32
-	succeed := func(sessDir, pid, runAgentID, outcome, summary string) error {
+	succeed := func(pid, runAgentID, outcome, summary string) error {
 		successfulWrites.Add(1)
-		return session.CompleteParticipantRun(sessDir, pid, runAgentID, outcome, summary)
+		return rt.Sessions.CompleteParticipantRun(pid, runAgentID, outcome, summary)
 	}
-	if err := owner.finalizeAgentTerminalWithCompleter(rootID, nil, notification, succeed); err != nil {
+	if err := owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, nil, notification, succeed); err != nil {
 		t.Fatalf("replay terminal finalization: %v", err)
 	}
-	runs, err = session.ListParticipantRuns(rt.SessionDir, participantID, 0)
+	runs, err = rt.Sessions.ListParticipantRuns(participantID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(runs) != 1 || runs[0].Outcome != string(subagent.StatusCompleted) {
 		t.Fatalf("participant run after successful replay = %+v", runs)
 	}
-	if err := owner.finalizeAgentTerminalWithCompleter(rootID, nil, notification, succeed); err != nil {
+	if err := owner.finalizeAgentTerminalWithCompleter(testRuntimeState(t, owner.rt), rootID, nil, notification, succeed); err != nil {
 		t.Fatalf("deduplicated terminal replay: %v", err)
 	}
 	if got := successfulWrites.Load(); got != 1 {

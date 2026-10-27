@@ -40,7 +40,7 @@ func TestToolHooksDoNotSpeculativelyExecuteRewrittenCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			dir := t.TempDir()
-			ledger, err := toolledger.New(dir, "hook-scheduling")
+			ledger, err := toolledger.New(agentTestDocuments(t, dir), "hook-scheduling")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -56,8 +56,20 @@
   fill: color-mix(in oklab, var(--wuu-accessory-color) 76%, var(--wuu-mascot-mix-white));
 }
 
-.wuu-accessory-headband {
-  stroke-width: 2.4;
+/* The earpiece cushion is a second tone inside the shell, without a second
+ * outline that would make the cup read as a separate device. */
+.wuu-accessory-inset {
+  fill: color-mix(in oklab, var(--wuu-accessory-color) 62%, var(--wuu-mascot-mix-white));
+}
+
+/* The boom shares the accessory colour so it stays legible when it leaves the
+ * light body and sits against a dark page. */
+.wuu-accessory-cable {
+  fill: none;
+  stroke: var(--wuu-accessory-color);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
 }
 
 .wuu-accessory-motion {

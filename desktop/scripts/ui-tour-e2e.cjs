@@ -46,7 +46,7 @@ process.env.HOME = userHome;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_TOUR_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = 'Ada Lovelace';
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL = 'ada@example.test';

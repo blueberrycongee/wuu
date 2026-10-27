@@ -7,14 +7,13 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
-func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
+func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistoryReadParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
-	sessDir, meta, err := loadVisibleHistorySession(wuuHome, pluginID, params.SessionID)
+	meta, err := loadVisibleHistorySession(ctx, store, pluginID, params.SessionID)
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
@@ -30,7 +29,7 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 		}
 		cursor = &decoded
 	}
-	page, err := session.ReadHistoryQuery(ctx, sessDir, session.HistoryReadQuery{
+	page, err := store.WithContext(ctx).ReadHistoryQuery(session.HistoryReadQuery{
 		SessionID: meta.ID, StartSeq: params.StartSeq, EndSeq: params.EndSeq, SnapshotSeq: params.SnapshotSeq, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
@@ -53,11 +52,11 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 	return result, nil
 }
 
-func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, params pluginhost.SessionHistorySearchParams) (pluginhost.SessionHistoryPage, error) {
+func searchPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, params pluginhost.SessionHistorySearchParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistorySearchParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
-	sessDir, meta, err := loadVisibleHistorySession(wuuHome, pluginID, params.SessionID)
+	meta, err := loadVisibleHistorySession(ctx, store, pluginID, params.SessionID)
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
@@ -73,7 +72,7 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 		}
 		cursor = &decoded
 	}
-	page, err := session.SearchHistoryQuery(ctx, sessDir, session.HistorySearchQuery{
+	page, err := store.WithContext(ctx).SearchHistoryQuery(session.HistorySearchQuery{
 		SessionID: meta.ID, Query: params.Query, StartSeq: params.StartSeq, EndSeq: params.EndSeq,
 		SnapshotSeq: params.SnapshotSeq, BeforeSeq: params.BeforeSeq, Limit: limit, Cursor: cursor,
 	})
@@ -95,24 +94,22 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 	return result, nil
 }
 
-func loadVisibleHistorySession(wuuHome, pluginID, sessionID string) (string, session.Session, error) {
-	home := strings.TrimSpace(wuuHome)
-	if home == "" {
-		return "", session.Session{}, serviceError("service_unavailable", "session history is unavailable")
+func loadVisibleHistorySession(ctx context.Context, store *session.Store, pluginID, sessionID string) (session.Session, error) {
+	if store == nil {
+		return session.Session{}, serviceError("service_unavailable", "session history is unavailable")
 	}
-	sessDir := statepath.SessionsDir(home)
-	meta, ok, err := session.Find(sessDir, sessionID)
+	meta, ok, err := store.WithContext(ctx).Find(sessionID)
 	if err != nil {
-		return "", session.Session{}, historyServiceError(err)
+		return session.Session{}, historyServiceError(err)
 	}
 	if !ok {
-		return "", session.Session{}, serviceError("not_found", "session history is unavailable")
+		return session.Session{}, serviceError("not_found", "session history is unavailable")
 	}
 	owner := "plugin:" + strings.TrimSpace(pluginID)
 	if meta.Visibility == pluginhost.SessionVisibilityPlugin && meta.Owner != owner {
-		return "", session.Session{}, serviceError("not_found", "session history is unavailable")
+		return session.Session{}, serviceError("not_found", "session history is unavailable")
 	}
-	return sessDir, meta, nil
+	return meta, nil
 }
 
 func historyServiceError(err error) error {

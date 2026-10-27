@@ -16,7 +16,7 @@ it("renders untrusted matching text literally and selects the addressed result",
     model_provider: "test", model: "test", cwd: "/workspace", status: "idle",
     created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
   };
-  const result = { thread, snippet: "Literal <img src=x> details [ui] and [UI]", message_seq: 7 };
+  const result = { resultId: "match", thread: { ...thread, turn_count: thread.turns.length }, snippet: "Literal <img src=x> details [ui] and [UI]", messageSeq: 7 };
   const state: ConversationSearchState = {
     open: true, closing: false, query: "[UI]", loading: false, error: "",
     results: [result], selectedIndex: 0,
@@ -49,7 +49,7 @@ it("distinguishes otherwise identical title results without adding metadata to d
     { id: "fork-12345abcdef", title: "Follow-up", updated_at: "2026-09-01T09:00:05Z", cwd: "/same" },
     { id: "fork-67890abcdef", title: "Follow-up", updated_at: "2026-09-01T09:00:10Z", cwd: "/same" },
   ].map(thread => ({ ...thread, preview: "", turns: [], model_provider: "test", model: "test", status: "idle", created_at: thread.updated_at }));
-  const results = threads.map(thread => ({ thread, snippet: thread.title }));
+  const results = threads.map(thread => ({ resultId: thread.id, thread: { ...thread, turn_count: thread.turns.length }, snippet: thread.title }));
   act(() => root.render(createElement(ConversationSearchOverlay, {
     state: { open: true, closing: false, query: "Release", loading: false, error: "", results, selectedIndex: 0 },
     results, threads, projects: [

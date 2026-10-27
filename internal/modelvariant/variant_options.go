@@ -16,8 +16,15 @@ func setOptionDefault(options map[string]any, key string, value any) {
 	options[key] = value
 }
 
+func isGemini4(apiID string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(apiID)), "gemini-4")
+}
+
 func compatGoogleThinkingLevelEfforts(apiID string) []string {
 	id := strings.ToLower(apiID)
+	if isGemini4(id) {
+		return []string{"low", "medium", "high"}
+	}
 	if !strings.Contains(id, "gemini-3") {
 		return []string{"low", "high"}
 	}
@@ -234,7 +241,11 @@ func compatGatewayGoogleVariants(id string) map[string]map[string]any {
 			"max":  {"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingBudget": compatGoogleThinkingBudgetMax(id)}},
 		}
 	}
-	return compatVariantsFromEfforts([]string{"low", "high"}, func(effort string) map[string]any {
+	efforts := []string{"low", "high"}
+	if isGemini4(id) {
+		efforts = []string{"low", "medium", "high"}
+	}
+	return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
 		return map[string]any{"includeThoughts": true, "thinkingLevel": effort}
 	})
 }

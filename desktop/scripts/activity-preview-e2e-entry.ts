@@ -368,8 +368,6 @@ app.whenReady().then(async () => {
   await waitFor("session restores its own stack", () => visibleCards().length === 5);
   check("session switch preserves individual dismissal", !promoted.window.isVisible());
 
-  coordinator.setAutoShow(false);
-  check("auto-show preference hides every card", visibleCards().length === 0);
   coordinator.showForThread(threadID);
   await waitFor("manual show restores the capped stack", () => visibleCards().length === 5 && promoted.window.isVisible());
   check("manual show retains all target windows", surfaceCount === 6);

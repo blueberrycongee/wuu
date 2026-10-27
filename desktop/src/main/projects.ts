@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
 } from "node:fs";
@@ -36,10 +37,19 @@ export class ProjectManager {
   list(): ProjectListResult {
     this.load();
     const context = this.reconcileRuntimeContext();
-    const projects = this.store.projects.map((project) => ({
-      ...project,
-      missing: !isDirectory(project.path),
-    }));
+    const projects = this.store.projects.map((project) => {
+      let canonicalPath: string | undefined;
+      try {
+        canonicalPath = realpathSync(project.path);
+      } catch {
+        // Missing folders and unavailable volumes still appear in the workspace list.
+      }
+      return {
+        ...project,
+        canonical_path: canonicalPath,
+        missing: !isDirectory(project.path),
+      };
+    });
     const activeProject =
       context.kind === "project"
         ? projects.find((project) => project.id === context.project_id)
@@ -199,6 +209,11 @@ export class ProjectManager {
     );
     if (index < 0) {
       throw new Error("workspace not found");
+    }
+    if (this.store.projects.some((project) =>
+      project.id !== projectIDToRelocate && resolve(project.path) === resolvedPath,
+    )) {
+      throw new Error(`Workspace folder is already registered: ${resolvedPath}`);
     }
     // Keep the stable id; only the path (and derived name) move. Because the
     // workspace state dir and its sessions are keyed by the id, everything

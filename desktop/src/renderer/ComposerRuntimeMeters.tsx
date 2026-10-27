@@ -1,3 +1,4 @@
+import { useComposerServices } from "./ComposerServicesContext";
 import { useSyncExternalStore } from "react";
 import type { TurnContextUsage } from "./AppState";
 import { ComposerContextMeter } from "./ComposerContextMeter";
@@ -12,6 +13,8 @@ function isExternalEngine(engine?: string): boolean {
 }
 
 export function ComposerRuntimeMeters({
+  inToolRail = false,
+  compact = inToolRail,
   running,
   turnID,
   fallbackTokensPerSecond = 0,
@@ -20,6 +23,8 @@ export function ComposerRuntimeMeters({
   fallbackContextUsage,
   activeEngine,
 }: {
+  inToolRail?: boolean;
+  compact?: boolean;
   running: boolean;
   turnID?: string;
   fallbackTokensPerSecond?: number;
@@ -31,10 +36,11 @@ export function ComposerRuntimeMeters({
   // trustworthy. The built-in Wuu engine keeps the meter.
   activeEngine?: string;
 }): JSX.Element | null {
+  const services = useComposerServices();
   const telemetry = useSyncExternalStore(
-    turnTelemetryStore.subscribe,
-    () => turnTelemetryStore.getSnapshot(turnID),
-    () => turnTelemetryStore.getSnapshot(turnID),
+    services?.presentation.subscribeTelemetry ?? turnTelemetryStore.subscribe,
+    () => services ? services.presentation.getTelemetry(turnID) : turnTelemetryStore.getSnapshot(turnID),
+    () => services ? services.presentation.getTelemetry(turnID) : turnTelemetryStore.getSnapshot(turnID),
   );
   const useLiveTelemetry = Boolean(turnID && telemetry.source !== "none");
   const contextUsage = telemetry.contextUsage
@@ -62,7 +68,7 @@ export function ComposerRuntimeMeters({
             sampledAt={useLiveTelemetry ? telemetry.sampledAt : fallbackSampledAt}
             source={useLiveTelemetry ? telemetry.source : fallbackSource}
           /> */}
-      <ComposerContextMeter usage={contextUsage} />
+      <ComposerContextMeter usage={contextUsage} inToolRail={inToolRail} compact={compact} />
     </>
   );
 }

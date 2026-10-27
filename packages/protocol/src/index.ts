@@ -1,3 +1,6 @@
+import type { SessionLocatorV1 } from "./sessionLocator";
+export type { SessionLocatorV1 } from "./sessionLocator";
+export type * from "./trusted-transport";
 import type { AppContextSettings, AppContextState } from "./appContext";
 import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
 export type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
@@ -121,10 +124,22 @@ export type WorkspaceItemMenuResult = {
   action: "none";
 };
 
-export type ArtifactItemMenuParams = {
+export type ArtifactSourceCapabilities = {
+  strategy: "streaming" | "bounded-memory";
+  maxBytes?: number;
+  maxTotalBytes?: number;
+  unsupportedMimeTypes?: readonly string[];
+};
+export type ArtifactSourceParams = {
+  /** Caller-generated cancellation identity; also returned as leaseId. */
+  requestId?: string;
+  locator?: SessionLocatorV1;
   uri: string;
   threadId: string;
+  sha256: string;
 };
+export type ArtifactSourceLease = { url: string; leaseId: string };
+export type ArtifactItemMenuParams = ArtifactSourceParams;
 
 export type ArtifactItemMenuResult = {
   action: "none" | "save";
@@ -154,7 +169,23 @@ export type InitializeParams = {
   };
 };
 
+export type ApplicationShellBinding = {
+  plugin_id: string;
+  generation: string;
+  provider_id: string;
+};
+
+export type ResourceAccessCapabilities = {
+  version: 1;
+  /** Supported delegated RPC actions, not grants. Each still requires policy approval. */
+  delegated_actions: string[];
+};
+
 export type InitializeResult = {
+  resource_access?: ResourceAccessCapabilities;
+  application_shell?: ApplicationShellBinding | null;
+  /** Selected UI service providers from the same committed composition as the shell. */
+  application_surfaces?: Record<string, ApplicationShellBinding>;
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -253,6 +284,7 @@ export type BrowserOpenTabParams = {
   workdir: string;
   tab_id: string;
   initial_url?: string;
+  workspace_tab_id?: string;
 };
 
 export type BrowserCloseTabParams = {
@@ -293,11 +325,15 @@ export type BrowserListedTab = {
   url?: string;
   title?: string;
   status?: BrowserTabStatus;
+  workspace_id?: string;
+  active?: boolean;
+  source?: "website" | "plugin";
 };
 
 export type BrowserListTabsResult = {
   tab_ids: string[];
   tabs?: BrowserListedTab[];
+  workspace_tabs?: BrowserListedTab[];
 };
 
 export type BrowserTabStatus = "temporary" | "persistent" | "handoff" | "deliverable";
@@ -478,7 +514,24 @@ export interface ExtensionThemeDescriptor {
   syntax?: Record<string, string>;
 }
 
-export type ExtensionSettingType = "boolean" | "string" | "number" | "enum";
+export interface ExtensionSkinVariant {
+  background: string;
+  foreground: string;
+  image?: string;
+  position?: "center" | "top" | "bottom" | "left" | "right";
+  overlay?: string;
+  hover?: string;
+  active?: string;
+}
+
+export interface ExtensionSkinDescriptor {
+  id: string;
+  name: string;
+  light: ExtensionSkinVariant;
+  dark: ExtensionSkinVariant;
+}
+
+export type ExtensionSettingType = "boolean" | "string" | "number" | "enum" | "secret";
 export type ExtensionSettingScope = "user" | "workspace";
 export type ExtensionSettingApplyMode = "live" | "restart";
 
@@ -491,14 +544,14 @@ export interface ExtensionSettingDescriptor {
   enum?: string[];
   scope: ExtensionSettingScope;
   apply: ExtensionSettingApplyMode;
+  credential_origins?: string[];
 }
 
 export type ExtensionContributions = {
   commands?: ExtensionCommandDescriptor[];
   themes?: ExtensionThemeDescriptor[];
+  skins?: ExtensionSkinDescriptor[];
   settings?: ExtensionSettingDescriptor[];
-  slots?: ExtensionSlotContributionDescriptor[];
-  surfaces?: ExtensionSurfaceContributionDescriptor[];
   presenters?: ExtensionPresenterContributionDescriptor[];
   navigation?: ExtensionViewEntryDescriptor[];
   workspace_tools?: ExtensionViewEntryDescriptor[];
@@ -518,21 +571,6 @@ export type ExtensionIconDescriptor =
   | { name: string; path?: never; light?: never; dark?: never }
   | { name?: never; path: string; light?: never; dark?: never }
   | { name?: never; path?: never; light: string; dark: string };
-
-export interface ExtensionSlotContributionDescriptor {
-  id: string;
-  target: string;
-  order?: number;
-  title?: string;
-}
-
-export interface ExtensionSurfaceContributionDescriptor {
-  id: string;
-  target: string;
-  mode: "replace" | "wrap";
-  order?: number;
-  title?: string;
-}
 
 export interface ExtensionPresenterContributionDescriptor {
   id: string;
@@ -580,6 +618,7 @@ export type ExtensionInventoryRecord = {
   state: ExtensionState;
   executable?: boolean;
   fingerprint?: string;
+  graph_generation?: string;
   package_source?: "bundled" | "user" | "project" | "dev";
   grant_scope?: "action" | "session" | "project" | "user";
   requested_permissions?: string[];
@@ -591,6 +630,7 @@ export type ExtensionInventoryRecord = {
   requires?: string[];
   dependencies?: Array<{ id: string; version?: string; optional?: boolean }>;
   resolved_dependencies?: string[];
+  resolved_required_dependencies?: string[];
   breaks?: string[];
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];
@@ -611,11 +651,25 @@ export type ExtensionPackageAction =
   | "promote_update"
   | "reject_update";
 
-export type ExtensionPackageUpdateParams = {
+export type ExtensionPackageEnablementUpdate = {
   id: string;
   fingerprint?: string;
-  action: ExtensionPackageAction;
+  action: "enable" | "disable";
 };
+
+export type ExtensionPackageUpdateParams =
+  | {
+      id: string;
+      fingerprint?: string;
+      action: ExtensionPackageAction;
+      updates?: never;
+    }
+  | {
+      updates: ExtensionPackageEnablementUpdate[];
+      id?: never;
+      fingerprint?: never;
+      action?: never;
+    };
 
 export type ExtensionPackageUpdateResult = {
   extension_inventory: ExtensionInventoryRecord[];
@@ -628,6 +682,9 @@ export type ExtensionCatalogRefreshResult = {
 
 /** Published after the core atomically activates a new plugin generation. */
 export type PluginInventoryChangedNotification = {
+  application_shell?: ApplicationShellBinding | null;
+  /** Replaces the surface bindings when the published generation changes. */
+  application_surfaces?: Record<string, ApplicationShellBinding>;
   epoch: number;
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];
@@ -682,6 +739,16 @@ export type PluginPackageRemoveResult = {
   skills: SkillSummary[];
 };
 
+export interface PluginDesktopActivationParams {
+  id: string;
+  fingerprint: string;
+  graph_generation: string;
+  activation: number;
+  phase: "registration" | "render" | "cleanup";
+  status: "active" | "failed" | "disposed";
+  message?: string;
+}
+
 export interface PluginDesktopModuleReadParams {
   id: string;
   fingerprint: string;
@@ -710,7 +777,7 @@ export interface PluginIconReadParams {
 }
 
 export interface PluginIconReadResult extends PluginIconReadParams {
-  media_type: "image/svg+xml" | "image/png" | "image/webp";
+  media_type: "image/svg+xml" | "image/png" | "image/webp" | "image/jpeg";
   digest: string;
   data: string;
 }
@@ -723,8 +790,14 @@ export interface PluginIconLoadResult extends PluginIconReadParams {
 export type PluginValueScope = "user" | "workspace";
 export interface PluginIdentityParams { id: string; fingerprint: string; }
 export interface PluginSettingGetParams extends PluginIdentityParams { key: string; }
-export interface PluginSettingSetParams extends PluginSettingGetParams { value: boolean | string | number; }
+export interface PluginSettingSetParams extends PluginSettingGetParams {
+  value: boolean | string | number;
+  /** Atomic additional non-secret keys in the primary key's scope. */
+  patch?: Record<string, boolean | string | number>;
+}
 export interface PluginSettingResult {
+  /** Secret values are always blank; this only indicates presence in the OS credential store. */
+  configured?: boolean;
   id: string;
   key: string;
   scope: PluginValueScope;
@@ -772,6 +845,10 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Exact admitted graph identity, independent of the plugin code fingerprint. */
+  graph_generation: string;
+  /** Declared service dependency. Omit to invoke the plugin's client capability. */
+  service?: string;
   /** Optional opaque ID enabling cancellation of this request. */
   request_id?: string;
   method: string;
@@ -783,10 +860,12 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
-export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; graph_generation: string; }
 export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
+  /** Accepted durable intent, not a claim that an in-flight request changed. */
+  model_selection?: { revision: number; apply_at: "next_step"; provider: string; model: string };
   provider: string;
   model: string;
   effort?: string;
@@ -999,8 +1078,29 @@ export type MessageImageReadParams = {
   sha256?: string;
 };
 
+export type MCPServerConfig = {
+  command?: string;
+  args?: string[];
+  url?: string;
+  transport?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
+  enabled?: boolean;
+  tool_timeout_ms?: number;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+};
+export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
+export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
+export type MCPLoginStartResult = { login_id: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+
 export type MCPServerStatus = {
   name: string;
+  plugin_id?: string;
+  display_name?: string;
+  editable?: boolean;
+  oauth_redirect_uri?: string;
   state: string;
   auth_status?: string;
   connected: boolean;
@@ -1156,8 +1256,22 @@ export type BrowserCookieImportResult = {
   failed: number;
 };
 
-// An extension loaded into the shared embedded-browser session. The source
-// directory is owned by the user and remains untouched on removal.
+// Browser extensions use Electron's partial Chrome extension API, separately
+// from Wuu TypeScript plugins. Sites include content-script match patterns.
+export type BrowserExtensionManifest = {
+  name: string;
+  version: string;
+  manifestVersion: 2 | 3;
+  description?: string;
+  permissions: string[];
+  sites: string[];
+  optionalPermissions: string[];
+  optionalSites: string[];
+  unsupportedPermissions: string[];
+  compatibility: ("serviceWorker" | "action" | "options" | "browserUI" | "devtools")[];
+};
+
+// The source directory is user-owned and is never changed or removed by Wuu.
 export type BrowserExtensionRecord = {
   id: string;
   name: string;
@@ -1165,6 +1279,9 @@ export type BrowserExtensionRecord = {
   path: string;
   enabled: boolean;
   loaded: boolean;
+  hasOptions?: boolean;
+  manifest?: BrowserExtensionManifest;
+  needsReview?: boolean;
   error?: string;
 };
 
@@ -1264,6 +1381,8 @@ export type EngineInfo = {
   /** Vendor guide only; Wuu does not manage the CLI installation. */
   update_url?: string;
   capabilities?: string[];
+  /** Selected implementation's client readiness/model source; not backend authorization. Omitted uses legacy client admission. */
+  requires_host_model?: boolean;
   enabled: boolean;
   binary_path?: string;
   binary_ok: boolean;
@@ -1439,6 +1558,8 @@ export type DesktopProject = {
   id: string;
   name: string;
   path: string;
+  /** Derived filesystem path, resolving symlinks for workspace identity comparisons. */
+  canonical_path?: string;
   created_at: string;
   updated_at: string;
   // Derived (not persisted): true when the project's path cannot currently be
@@ -1468,10 +1589,12 @@ export type RuntimeContext =
       kind: "project";
       project_id: string;
       cwd: string;
+      session_locator?: SessionLocatorV1;
     }
   | {
       kind: "no_project";
       cwd: string;
+      session_locator?: SessionLocatorV1;
     };
 
 export type ProjectRuntimeIssue = {
@@ -1495,6 +1618,8 @@ export type GitStatusResult = {
   is_repo: boolean;
   branch?: string;
   branches?: string[];
+  /** Local branches checked out in worktrees, including the current worktree. */
+  branch_worktrees?: { branch: string; path: string }[];
   dirty_count: number;
   detached?: boolean;
   diff?: GitDiffStats;
@@ -1940,6 +2065,11 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  /** Attached by the selected GUI connection, not trusted from remote JSON. */
+  session_locator?: SessionLocatorV1;
+  running_model_provider?: string;
+  running_model?: string;
+  running_model_revision?: number;
   model_options?: Record<string, string>;
   speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
@@ -1948,6 +2078,8 @@ export type Thread = {
   agent_path?: string;
   preview: string;
   title?: string;
+  /** Monotonic persisted title revision; independent of turn timestamps. */
+  title_revision?: number;
   // "project" marks a project coordinator; "project-session" a session it manages.
   source?: string;
   // The coordinator that manages this session.
@@ -2449,6 +2581,9 @@ export type TurnCompletedNotification = {
 };
 
 export type TurnUsageNotification = {
+  /** Identity is the current dispatched step; token counters remain turn aggregates. */
+  provider?: string;
+  model_selection_revision?: number;
   thread_id: string;
   turn_id: string;
   model?: string;
@@ -2511,7 +2646,9 @@ export type ProviderStatePayload = {
   delta_input_items?: number;
 };
 
+export type ModelStepSummary = { provider: string; model: string; api_model?: string; revision?: number; step_index: number; operation_id: string; context_window_tokens?: number };
 export type StreamEventPayload = {
+  model_step?: ModelStepSummary;
   type: string;
   agent_activity?: ExternalAgentActivity;
   lifecycle?: StreamLifecyclePayload;
@@ -2652,6 +2789,7 @@ export type ThreadResumeResult = {
 
 export type ServerEvent = {
   workdir: string;
+  session_locator?: SessionLocatorV1;
 } & (
   | {
       kind: "notification";
@@ -3007,6 +3145,12 @@ export type WuuDesktopApi = {
    * remounting the renderer or discarding local drafts. The host remains
    * restoring until all subscribers finish; failure is retryable. */
   onRuntimeRestore?: (handler: () => Promise<void>) => () => void;
+  /** Observe foreground initialize requests, including workspace switches; newest request wins. */
+  /** Open the desktop bootstrap recovery window without application plugins. */
+  /** Ephemeral own-window presentation pixels; unavailable in remote bridges. */
+  capturePresentationFrame?: () => Promise<PresentationFrame | undefined>;
+  openRecovery?: () => Promise<void>;
+  onRuntimeInitialization?: (handler: (event: { phase: "started"; requestId: number } | { phase: "completed"; requestId: number; initialized: InitializeResult }) => void) => () => void;
   // Pre-paint first-run gate. Optional so browser fixtures and older preload
   // mocks continue to enter the normal shell unless they explicitly exercise
   // onboarding.
@@ -3100,7 +3244,7 @@ export type WuuDesktopApi = {
     threadId?: string,
     speed?: string,
     targetContext?: RuntimeContext,
-    engineSelection?: { reset_model?: boolean; model_options?: Record<string, string> }
+    engineSelection?: { reset_model?: boolean; model_options?: Record<string, string>; apply_at?: "next_step" }
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,
@@ -3126,7 +3270,10 @@ export type WuuDesktopApi = {
   loadPluginDesktopModule: (
     params: PluginDesktopModuleReadParams,
   ) => Promise<PluginDesktopModuleLoadResult>;
+  reportPluginDesktopActivation: (params: PluginDesktopActivationParams) => Promise<void>;
   loadPluginIcon: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
+  loadPluginSkinImage?: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
+  cacheShellImage?: (data: ArrayBuffer) => Promise<string>;
   getPluginSetting: (params: PluginSettingGetParams) => Promise<PluginSettingResult>;
   setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
@@ -3134,6 +3281,12 @@ export type WuuDesktopApi = {
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
+  readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
+  configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
+  startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
+  pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
+  cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
+  cancelMCPAuth: (name: string, state: string) => Promise<{ ok: boolean }>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
@@ -3184,6 +3337,9 @@ export type WuuDesktopApi = {
   // 远程控制（设置 → 远程）。管理机器级 remote host 守护进程与手机配对,
   // 走主进程 RemoteHostManager 而非 app-server 协议。
   /** Save original artifact bytes via a desktop save dialog or mobile share sheet. */
+  artifactSourceCapabilities?: ArtifactSourceCapabilities;
+  acquireArtifactSource?: (params: ArtifactSourceParams) => Promise<ArtifactSourceLease>;
+  releaseArtifactSource?: (leaseId: string) => Promise<void>;
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
   /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
   exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;
@@ -3201,17 +3357,19 @@ export type WuuDesktopApi = {
   // on <html> before first paint (window-chrome CSS keys off it) and
   // mirrors the value here for renderer logic (shortcut hints, OS labels).
   platform?: DesktopPlatform;
-  // Linux frameless chrome: the renderer draws caption buttons. Absent or
-  // unused on macOS (traffic lights) and Windows (controls overlay).
+  // Desktop window actions and native macOS controls; Windows uses its native overlay.
   windowMinimize?: () => Promise<void>;
   windowToggleMaximize?: () => Promise<boolean>;
+  windowToggleFullScreen?: () => Promise<void>;
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
+  windowIsFullScreen?: () => Promise<boolean>;
+  /** Cursor position in window content CSS pixels; null when the window is unfocused. */
+  windowPointerPosition?: () => Promise<{ x: number; y: number } | null>;
+  /** Show native macOS buttons at a position in window content CSS pixels. */
+  windowSetControls?: (state: { visible: boolean; x: number; y: number }) => Promise<void>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
-  // Desktop-only presentation preference. Does not enable or disable extensions.
-  getActivityPreviewAutoShow?: () => Promise<boolean>;
-  setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
-  onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
+  onWindowFullScreenChange?: (handler: (fullscreen: boolean) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously
@@ -3350,6 +3508,8 @@ export type WuuDesktopApi = {
   interruptTurn: (threadId: string) => Promise<{ ok: boolean }>;
   respondToServerRequest: (id: string, result: unknown) => Promise<void>;
   rejectServerRequest: (id: string, message: string) => Promise<void>;
+  /** Native desktop waits for renderer cleanup before closing backend processes. */
+  onPrepareToQuit?: (handler: () => Promise<void>) => () => void;
   onServerEvent: (handler: (event: ServerEvent) => void) => () => void;
   // Cross-workdir activity aggregate: which sessions are actively turning in
   // any workspace, computed by the host process from each runtime's own turn
@@ -3477,6 +3637,8 @@ export type WuuDesktopApi = {
     id: string,
     enabled: boolean,
   ) => Promise<BrowserExtensionRecord[]>;
+  reloadBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
+  openBrowserExtensionOptions?: (id: string) => Promise<void>;
   removeBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.
@@ -3524,3 +3686,6 @@ declare global {
     wuuRenderableFileURL?: (encodedPath: string) => string;
   }
 }
+
+/** Local PNG pixels; width/height are physical pixels, divided by scaleFactor for logical size. */
+export type PresentationFrame = { data: Uint8Array; width: number; height: number; scaleFactor: number };

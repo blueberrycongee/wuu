@@ -4,46 +4,41 @@
 
 ## 向草稿添加审查提示
 
-输入框 Presenter 可以读取公开的草稿快照并调用宿主动作。本例使用包装模式保留原生输入框，让用户检查新增文本后自行发送。
+输入框贡献读取公开应用快照并更新所属草稿。原生输入框保持不变，用户可以检查新增文本后自行发送。
 
 ```ts
-import type { ComposerSnapshotV1, PluginGenerationApi, PresenterProps } from "@wuu/plugin-sdk";
+import type { PluginGenerationApi, UISlotRenderProps } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Button = api.ui.Button as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
-  const action = "conversation.composer.set-draft";
-
-  function ReviewPrompt(input: Readonly<Record<string, unknown>>) {
-    const props = input.presenter as PresenterProps;
-    const snapshot = props.snapshot as ComposerSnapshotV1;
+  function ReviewPrompt({ application }: UISlotRenderProps) {
+    const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
     const [error, setError] = React.useState("");
-    const disabled = snapshot.readOnly || !props.host.actions.includes(action);
+    const draft = snapshot.drafts[snapshot.drafts.activePane];
+    const ownerTabId = draft.ownerTabId;
     async function append() {
+      if (!ownerTabId) return;
       try {
-        const draft = snapshot.draftText?.trimEnd() ?? "";
-        await props.host.invoke(action,
-          `${draft}${draft ? "\n\n" : ""}Review the current changes for concrete bugs.`);
+        const text = draft.text.trimEnd();
+        await application.invoke("composer.set-draft", {
+          ownerTabId, text: `${text}${text ? "\n\n" : ""}Review the current changes for concrete bugs.`,
+        });
         setError("");
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
     return React.createElement("div", null,
-      props.fallback,
-      React.createElement(Button, { disabled, onClick: append }, "Add review prompt"),
+      React.createElement("button", { disabled: !ownerTabId || snapshot.composer.readOnly, onClick: append }, "Add review prompt"),
       error ? React.createElement("p", { role: "alert" }, error) : null);
   }
-
-  api.registerPresenter({
-    id: "review-prompt", target: "conversation.composer", mode: "wrap",
-    render: props => React.createElement(ReviewPrompt, { presenter: props }),
+  api.registerUIContribution({
+    id: "review-prompt", target: "wuu.default-composer/composer.above", render: ReviewPrompt,
   });
 }
 ```
 
-动作接受字符串，不接受 DOM 事件或 textarea 引用，宿主仍会检查只读状态。实现“将选区加入草稿”时，可通过浏览器 Selection API 获取纯文本，确认选区属于公开的消息锚点，再通过相同动作传入文本。卸载时移除选区监听器，点击时保留用户选区，并处理滚动和视口边缘。
+应用会验证草稿归属和 generation 生命周期。选中文本后写入草稿也使用同一操作；贡献卸载时移除选择监听器。
 
 ## 添加工作区页面
 
@@ -76,6 +71,43 @@ export function activate(api: PluginGenerationApi): void {
 ```
 
 `view` 必须匹配同一插件注册的 ID。设置页使用 `settingsPages`，导航入口使用 `navigation`。只有确实需要初始打开位置时才添加 `registerViewPlacement`，不要把每个可选工具都强制打开在工作台上。
+
+## 添加网站页面
+
+网站复用现有 View 和导航契约。下面是可选的 Notion 示例，只有用户选择其导航入口后才打开页面；将 URL 改为飞书或其他 HTTP(S) 网站，即可用于其他扩展。
+
+```ts
+import type { PluginGenerationApi } from "@wuu/plugin-sdk";
+
+export function activate(api: PluginGenerationApi): void {
+  const WebPage = api.ui.WebPage as unknown as
+    (props: Readonly<Record<string, unknown>>) => unknown;
+  api.registerViewType({
+    id: "website",
+    title: "Notion",
+    defaultRegion: "primary",
+    persistence: "durable",
+    render: () => api.react.createElement(WebPage, {
+      url: "https://www.notion.so/",
+      title: "Notion",
+    }),
+  });
+}
+```
+
+在包的 `plugin.json` 中使用普通导航贡献：
+
+```json
+{
+  "contributes": {
+    "navigation": [
+      { "id": "website-entry", "view": "website", "title": "Notion" }
+    ]
+  }
+}
+```
+
+对于没有 manifest 的单个本地 TypeScript 文件，可在激活时添加 `api.registerViewPlacement({ id: "website-entry", view: "website", region: "primary" })`，打开同一个 View。其 Ribbon 入口、布局、浏览器会话和清理由宿主管理。网站与 Wuu 其他浏览器页面共用已导入的 Cookie；会话中没有有效登录时，需要重新登录。普通的工作台视图切换只会隐藏网页，并保留同一个页面。显式关闭 View、卸载 WebPage 组件、禁用插件或重新加载其 generation 会关闭页面与弹窗。此配方不会安装任何网站。兼容旧宿主时可检查 `typeof api.ui.WebPage === "function"`。此组件仅支持桌面主工作台窗口，不支持弹出的会话窗口或远程 Web／移动客户端。非桌面客户端显示浏览器不可用状态。
 
 ## 连接页面和运行时
 

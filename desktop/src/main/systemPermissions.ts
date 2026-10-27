@@ -1,7 +1,8 @@
 /// <reference types="electron-vite/node" />
 import { app, BrowserWindow, ipcMain, nativeImage, screen, shell, systemPreferences, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from "electron";
 import appIcon from "../../../assets/app-icon-256.png?asset";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "../shared/protocol";
 import type { SystemPermissionGuideConfig } from "../shared/systemPermissionGuide";
 import type { AppContextCapture } from "./appContextCapture";
@@ -174,7 +175,7 @@ export class SystemPermissions {
         fullscreenable: false, skipTaskbar: true, alwaysOnTop: true,
         backgroundColor: this.config.theme === "dark" ? "#191919" : "#ffffff",
         webPreferences: {
-          preload: join(__dirname, "../preload/permissionGuide.cjs"),
+          preload: fileURLToPath(new URL("../preload/permissionGuide.cjs", import.meta.url)),
           contextIsolation: true, nodeIntegration: false, sandbox: true,
           zoomFactor: owner.webContents.getZoomFactor(),
           ...appShellWebPreferences(app.isPackaged),
@@ -196,7 +197,7 @@ export class SystemPermissions {
       try {
         await Promise.all([painted, process.env.ELECTRON_RENDERER_URL
           ? guide.loadURL(new URL("permission-guide.html", process.env.ELECTRON_RENDERER_URL).href)
-          : guide.loadFile(join(__dirname, "../renderer/permission-guide.html"))]);
+          : guide.loadFile(fileURLToPath(new URL("../renderer/permission-guide.html", import.meta.url)))]);
       } finally {
         clearTimeout(paintTimeout!);
         if (this.painted === markPainted!) this.painted = undefined;

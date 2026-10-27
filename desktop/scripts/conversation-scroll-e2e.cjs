@@ -234,8 +234,22 @@ async function typeAndSend(win, text) {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, text);
-  await frames(win, 3);
-  await evaluate(win, () => document.querySelector(".composer-send-button").click());
+  // Mounting the composer does not mean its engine inventory is ready. A
+  // disabled DOM click is silently discarded, so wait for the actual action
+  // before sending one native click; never retry the submission itself.
+  const point = await until(win, text => {
+    const input = document.querySelector(".composer textarea");
+    const button = document.querySelector(".composer-send-button");
+    if (!input || input.value !== text || input.disabled || input.readOnly || input.closest("[inert]")) return false;
+    if (!button || button.disabled || button.closest("[inert]")) return false;
+    const bounds = button.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return false;
+    const point = { x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) };
+    return button.contains(document.elementFromPoint(point.x, point.y)) && point;
+  }, "the composer send action to be ready and reachable", 8000, text);
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type, button: "left", clickCount: 1, ...point });
+  }
 }
 
 /**
@@ -736,6 +750,8 @@ app.whenReady().then(async () => {
       const state = await evaluate(testWindow, () => ({
         query: document.querySelector(".conversation-search-dialog input")?.value,
         composer: document.querySelector(".composer textarea")?.value,
+        sendDisabled: document.querySelector(".composer-send-button")?.disabled,
+        composerInert: Boolean(document.querySelector(".composer")?.closest("[inert]")),
         focus: document.activeElement && { tag: document.activeElement.tagName, role: document.activeElement.getAttribute("role"), className: document.activeElement.className },
         resultsBusy: document.querySelector(".conversation-search-results")?.getAttribute("aria-busy"),
         results: [...document.querySelectorAll(".conversation-search-result")].map(result => ({ selected: result.getAttribute("aria-selected"), text: result.textContent?.slice(0, 500) })),

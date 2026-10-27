@@ -56,3 +56,12 @@ it.each(["file:///private/file", "javascript:alert(1)"])("rejects unsupported so
   expect(session.fetch).not.toHaveBeenCalled();
   expect(dialog.showSaveDialog).not.toHaveBeenCalled();
 });
+
+it("preserves an existing destination when a selected download has changed its content", async () => {
+  directory = await mkdtemp(join(tmpdir(), "wuu-artifact-save-"));
+  const destination=join(directory,"report.pdf"); await writeFile(destination,"original destination");
+  vi.mocked(dialog.showSaveDialog).mockResolvedValue({canceled:false,filePath:destination});
+  vi.mocked(session.fetch).mockResolvedValue(new Response("changed",{headers:{"x-artifact-sha256":"0".repeat(64)}}));
+  await expect(saveArtifactFile(parent,session,"report.pdf","wuu-artifact://lease/owned")).rejects.toThrow("contents changed");
+  expect(await readFile(destination,"utf8")).toBe("original destination");
+});

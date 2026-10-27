@@ -1,9 +1,13 @@
+import type { WindowOpenHandlerResponse } from "electron";
+
+type WindowOpenDetails = { url: string; frameName?: string };
+
 export type ExternalURLOpener = (url: string) => Promise<void>;
 
 export type ExternalNavigationWindow = {
   webContents: {
     setWindowOpenHandler: (
-      handler: (details: { url: string }) => { action: "deny" },
+      handler: (details: WindowOpenDetails) => WindowOpenHandlerResponse,
     ) => void;
     on: (
       event: "will-navigate",
@@ -52,13 +56,17 @@ export function wireExternalNavigationGuards(
   {
     rendererURL,
     openExternal,
+    openWindow,
   }: {
     rendererURL: string;
     openExternal: (url: string) => Promise<boolean>;
+    openWindow?: (details: WindowOpenDetails) => WindowOpenHandlerResponse | undefined;
   },
 ): void {
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    openExternalSafely(openExternal, url);
+  window.webContents.setWindowOpenHandler((details) => {
+    const handled = openWindow?.(details);
+    if (handled) return handled;
+    openExternalSafely(openExternal, details.url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {

@@ -73,14 +73,10 @@
 
 .sidebar-account-trigger > svg { justify-self: center; flex-shrink: 0; color: var(--ink-muted); }
 .sidebar-account-menu {
-  position: absolute;
-  inset-inline: 0;
-  bottom: calc(100% + 8px);
-  z-index: 2;
-  width: 100%;
+  width: var(--floating-menu-available-width);
   min-width: 0;
   box-sizing: border-box;
-  max-height: min(400px, calc(100dvh - 160px));
+  max-height: min(400px, var(--floating-menu-available-height));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

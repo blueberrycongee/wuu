@@ -6,11 +6,11 @@ A desktop plugin is a trusted JavaScript module loaded into Wuu's renderer. It u
 
 | Goal | API |
 | --- | --- |
-| Add a small control at an existing location | `registerSlot` |
+| Add a small control at a declared location | `registerUIContribution` |
 | Change the presentation of a product concept | `registerPresenter` |
-| Wrap or replace a message or timeline region | `registerSurface` |
+| Wrap or replace a declared message or timeline region | `registerUIContribution` |
 | Add a page, editor, or dashboard | `registerViewType`, with placement or a manifest entry |
-| Add a compact inspector section | `registerInspectorSection` |
+| Add a compact inspector section | `registerUIContribution` targeting `wuu.default-shell/inspector.sections` |
 | Render a particular content type | `registerRenderer` |
 | Show temporary interaction beneath a conversation | `showConversationCard` |
 | Publish compact composer status | `registerComposerStatusSource` |
@@ -21,18 +21,39 @@ Use the smallest boundary that fits. A toolbar button does not need a replacemen
 
 ## Slots and surfaces
 
-Slots add content alongside native UI. Multiple registrations compose by `order`.
+Slot owners declare and render regions; contributions target a named owner. Multiple content registrations compose by `order`.
+
+When a primary plugin page is active, its contextual sidebar also renders that plugin's `sidebar.primary` contributions below its navigation entries. Its `context` contains `ownerPluginId`, `viewTypeId` and `viewContext` (the same immutable context object passed to the page). Use them to show page-specific summaries and keep separate page instances isolated. These fields are absent in the conversation sidebar.
 
 | Slot | Location |
 | --- | --- |
-| `sidebar.primary`, `sidebar.footer` | Sidebar content and footer |
-| `workspace.header`, `conversation.header` | Corresponding headers |
-| `conversation.message.before`, `conversation.message.after` | Around each message |
-| `composer.above`, `composer.toolbar` | Above the composer or in its toolbar |
+| `wuu.default-navigation/sidebar.primary`, `wuu.default-navigation/sidebar.footer` | Sidebar content and footer |
+| `wuu.default-shell/workspace.header`, `wuu.default-shell/conversation.header` | Corresponding headers |
+| `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
+| `wuu.default-composer/composer.above`, `wuu.default-composer/composer.toolbar` | Above the composer or in its toolbar |
 
-The two surfaces are `conversation.timeline` and `conversation.message`. A surface receives a context and fallback, with `mode=wrap` or `replace`. The timeline boundary is a turn's timeline/orchestration group, not ownership of the entire conversation's scroll container.
+Use an explicitly qualified slot target to compose a region. The default conversation provider declares `wuu.default-conversation/conversation.turn` and `wuu.default-conversation/conversation.message`; the preview provider declares its own message slots under `wuu.default-preview`. The turn boundary includes that turn’s messages and process group, not the entire scroll container.
 
-Manifest declarations under `contributes.slots`, `surfaces`, or `presenters` describe contributions; the desktop module still registers their rendering. When a declaration list is supplied, registration IDs, targets, modes, and ordering must match it, and declared contributions must be registered during activation.
+```js
+api.registerUIContribution({
+  id: "timeline-frame",
+  target: "wuu.default-conversation/conversation.turn",
+  mode: "wrap",
+  render: ({ children }) => api.react.createElement("section", null, children),
+});
+```
+
+Omit `mode` (or use `content`) to supply content instead of the caller’s fallback. Single-content slots reject conflicting registrations during preparation, preserving the active generation. Wrappers surround the composed content in ascending `order`, then plugin ID and contribution ID; later wrappers are outermost. A failed wrapper reports a render diagnostic and preserves its children. Removing the slot owner removes the region; unloading a contribution removes only that contribution. Provider cleanup waits for mounted views to release their effects. Graph-selected service slots retain their exact provider binding and reject wrappers. The local SDK preview uses the same content/wrapper ordering and conflict rules; wrapper failures remain visible in its browser console.
+
+This replaces `registerSlot`, `registerSurface`, `contributes.slots`, and `contributes.surfaces`, which have been removed. Change `render(context)` to `render({ context, locale, translate })`, use a qualified target, and remove the obsolete manifest fields. `registerUIContribution` needs no parallel manifest declaration. Manifest `contributes.presenters` declarations still require matching IDs, targets, modes, priorities, and registrations during activation.
+
+The Inspector uses the same public slot contract. `wuu.default-shell/inspector.sections` accepts multiple contributions and passes `context.snapshot` as `InspectorSnapshotV1`. Render your section and heading, return `null` when there is no content, and use `order` for placement. Application actions are scoped to the contribution generation. The former `registerInspectorSection`, `when`, and Inspector-specific host API have been removed; move the condition into the component and use the public application or captured plugin APIs for actions. The bundled TODO module is a complete example. The stock information panel is currently feature-disabled; declaring this slot alone does not make it visible. An alternative shell must declare and render its own slot; contributions target that explicit owner.
+
+A contribution receives `locale` and `translate(key, values?)` alongside `context`, `application`, and `slots`. Register translations with `registerLocale`. Lookup tries the exact locale, its language, `en-US`, then `en`; missing entries return the key. The packed SDK preview follows the same contract.
+
+Slot owners may pass a React component through `<Slot layout={Layout} ... />`. It receives the ordered `items` (`key`, `pluginId`, `id`, `title`, `node`) and `context`; render each selected `node` using its `key`. A contribution's optional `title` defaults to its ID. Layouts can group or filter content without creating another registry. Wrappers surround the result; empty slots use `fallback`. Graph-selected service slots render their selected provider directly and ignore custom layouts.
+
+The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal and Monitor now use `registerUIContribution`; remove their old `contributes.slots` entries. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
 
 ## Presenters and actions
 
@@ -46,19 +67,25 @@ Wrappers stay outside replacements, with higher-priority wrappers outermost. The
 
 A failing contribution falls back to the next presenter with its unmodified incoming snapshot. The rest of the plugin stays loaded; reactivation allows the failed contribution to run again.
 
-Current built-in targets are `conversation.item`, `conversation.process`, `conversation.tool-activity`, `conversation.composer`, `header.conversation`, `header.workspace`, `navigation.primary`, `app.status`, `content.preview`, and `settings`. A permissive TypeScript string type does not mean the host renders arbitrary new targets.
+The remaining presenter targets are `header.conversation`, `header.workspace`, `app.status`, `content.preview`, and `settings`. A permissive TypeScript string type does not mean the host renders arbitrary new targets.
 
 Use `host.actions` to discover the actions advertised by that render and `host.invoke(action, input)` to call them. The host checks that the generation remains active and validates the action's input and current state. An advertised action can still reject because the composer is read-only or submission is disabled.
 
-For example, `conversation.composer.set-draft` accepts a string; attachment removal accepts an attachment ID. Submit and stop take no input. Do not assume an SDK constant is an implemented action: the current composer does not advertise `conversation.composer.set-submission-mode`.
+Composer and navigation customization uses public UI contributions. Add controls at `wuu.default-composer/composer.above` or `composer.toolbar`, and navigation content at `wuu.default-navigation/sidebar.primary` or `sidebar.footer`. Read current state through `application.getSnapshot()` and subscribe with `application.subscribe`; change a draft with `application.invoke("composer.set-draft", { text, ownerTabId })`. Replace the complete surface by selecting a `ui.composer` or `ui.navigation` provider. The retired `conversation.composer` and `navigation.primary` presenter targets are rejected at registration; remove their manifest presenter declarations.
 
-Tool activity presenters customize execution summaries and controls. Rich result bodies have separate host-owned placement: `inline` output precedes the answer and `turn_end` output follows it. Use a `tool-result` renderer for those bodies instead of rendering `structuredResult.content` again inside the activity presenter.
+Messages and process groups use qualified `conversation.message` and `conversation.process` slots under `wuu.default-conversation` or `wuu.default-preview`. The rendering component supplies the immutable `context.snapshot` (`ConversationItemSnapshotV1` or `ConversationProcessSnapshotV1`) alongside `threadId`, `turnId`, and `itemId` or `itemIds`. Message snapshots include live streamed text; process snapshots report the group's actual `active` and `streaming` states. Message actions receive the same semantic item shape. Contributions no longer look up another copy of the conversation by ID. Use `mode: "wrap"` and return `children` for item kinds you do not handle. Edit a message through `application.invoke("history.begin-edit", { threadId, turnId, itemId })`; the application validates current state and generation lifetime. Migrate `conversation.item` and `conversation.process` presenter registrations to these slots and remove their manifest presenter declarations. Process groups containing compaction notices retain the native rendering because the process payload does not describe those notices.
+
+Tool activity uses `registerUIContribution` with `mode: "wrap"` and the qualified targets `wuu.default-conversation/conversation.tool-activity` and `wuu.default-preview/conversation.tool-activity`. The leaf supplies `context.threadId`, `turnId`, `itemId`, and an immutable `context.snapshot: ToolActivitySnapshot`, including partial arguments and structured results. Select the calls you handle using `snapshot.capability ?? snapshot.toolName`; return `children` for other calls. Multiple plugins may wrap the same activity in contribution order. A failing wrapper preserves its children, and disabling its generation removes it. The old `registerToolActivityPresenter` API and `conversation.tool-activity` presenter target have been removed; migrate their registrations and remove the corresponding manifest presenter declarations. See [Tool Card Skin](../../../examples/plugins/tool-card-skin/desktop.js).
+
+Rich result bodies have separate host-owned placement: `inline` output precedes the answer and `turn_end` output follows it. Use a `tool-result` renderer for those bodies instead of rendering `structuredResult.content` again inside the activity contribution.
 
 ## Views, cards, and status
 
 A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.
 
 `persistence=durable` preserves view layout state across restoration; it does not persist arbitrary component state. Use namespaced storage for data that must survive unmounting. View props include a host API for storage, settings, commands, and view navigation.
+
+For a website page, render `api.ui.WebPage({ url, title? })` as a component inside the same registered View. It is supported only in Wuu's main desktop workbench window, not popped-out conversation windows or remote web/mobile clients. It uses the desktop Chromium surface and shared browser login session, including cookies imported through the existing browser settings. It does not read another browser's cookie store automatically. The initial `url` must be HTTP(S); changing it navigates the page. The host provides navigation controls and keeps the native page inside its visible region. Switching to another workbench view hides the page while preserving the same live page and its in-page state. Explicitly closing the View, unmounting its WebPage component, disabling the extension, or reloading its generation closes the page and popups; cookies remain in Wuu's browser session. Restoring a durable View opens its configured URL, not its previous in-page state. There is no website-specific plugin registry or manifest. See the [website page recipe](plugin-recipes.md#add-a-website-page).
 
 Conversations and primary plugin views use sidebar navigation, including API-opened views without a declared navigation entry. Their headers omit `tabs`, `activeTabId`, and tab actions. Primary plugin headers provide `canNavigateBack` and `header.navigate-back`. The host adds its own close control only when closing removes the page from the sidebar: API-opened views and additional instances. A declared navigation entry's page is left through Back or the sidebar. Compact workspace headers also provide back navigation, beside a close control for the open tab. These remain optional fields and actions in contract version 1: inspect the snapshot and `host.actions` instead of rebuilding a top tab strip from saved views. Auxiliary panels and plugin content can still have their own tabs.
 
@@ -107,10 +134,16 @@ A provider receives unsent draft text. Choose deliberately what leaves the machi
 
 For older desktop hosts, check `typeof api.registerComposerInlineCompletionProvider === "function"` before registering. Feature-detect `typeof handle.refresh === "function"` for refresh and interaction support on hosts that already expose registration. The context's `contractVersion: 1` describes this callback shape; it is separate from runtime service versions and Wuu's product CalVer. Exact public types are in the [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts).
 
+## Diagnostics
+
+Plugin details use `plugin/diagnostics/list` for both built-in UI modules and installed plugins. The request's `id` and `fingerprint` are checked against the runtime generation retained for that request. Unknown, disabled, and outdated identities return errors.
+
+The response includes runtime contribution failures and reported renderer registration, render, and cleanup failures. Renderer entries identify the window connection and phase in `contribution`, with the reported error in `message`. A healthy plugin returns an empty diagnostics list.
+
 ## Appearance and cleanup
 
 Use `api.react` and `api.ui` so controls follow the host's theme, spacing, and typography. Keep UI size separate from code size. Prefer declarative theme tokens for appearance-only changes; the [surface matrix](theme-surface-matrix.md) lists the public contract.
 
 Standard browser APIs such as selection and resize observers are available. Public `data-wuu-component`, `data-wuu-slot`, and `data-wuu-surface` anchors are preferable to private class names or React internals. They do not make surrounding DOM structure stable. Register cleanup for listeners, observers, timers, and other resources you create outside React's own effect cleanup.
 
-Registrations belong to a plugin generation and are removed when it unloads. That lifecycle is not a security sandbox: trusted renderer code and CSS can still misbehave. Keep the default-UI recovery path available, handle asynchronous action errors, and test disable/reload as well as initial rendering. Package trust and update behavior are described in [plugin management](plugins.md).
+Registrations belong to a plugin generation and are removed when it unloads. On native desktop quit, Wuu first unmounts React consumers, aborts pending activation, cleans up plugins in reverse dependency order, and flushes activation reports before disconnecting the renderer and stopping backend processes. A renderer that cannot acknowledge cleanup within ten seconds is closed and the failure is logged. That lifecycle is not a security sandbox: trusted renderer code and CSS can still misbehave. Keep the default-UI recovery path available, handle asynchronous action errors, and test disable/reload as well as initial rendering. Package trust and update behavior are described in [plugin management](plugins.md).

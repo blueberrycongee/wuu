@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Tooltip } from "./Tooltip";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motionDurationMs } from "./motion";
 import type { IconComponent } from "./WuuIcons";
 import { X } from "./WuuIcons";
@@ -8,6 +9,7 @@ const TOP_NOTICE_AUTO_DISMISS_MS = 6000;
 export type TopNoticeAction = {
   label: string;
   onClick: () => void;
+  disabled?: boolean;
 };
 
 export type TopNoticeProps = {
@@ -34,18 +36,21 @@ export function TopNotice({
   persistent = false,
 }: TopNoticeProps): JSX.Element {
   const [leaving, setLeaving] = useState(false);
+  const onDismissRef = useRef(onDismiss);
+  useLayoutEffect(() => { onDismissRef.current = onDismiss; }, [onDismiss]);
 
+  // Parent updates must not restart the notice's lifetime.
   useEffect(() => {
     if (persistent) return;
     const timer = window.setTimeout(() => {
       setLeaving(true);
     }, TOP_NOTICE_AUTO_DISMISS_MS - 400);
-    const finalize = window.setTimeout(onDismiss, TOP_NOTICE_AUTO_DISMISS_MS);
+    const finalize = window.setTimeout(() => onDismissRef.current(), TOP_NOTICE_AUTO_DISMISS_MS);
     return () => {
       window.clearTimeout(timer);
       window.clearTimeout(finalize);
     };
-  }, [onDismiss, persistent]);
+  }, [persistent]);
 
   return (
     <div
@@ -64,15 +69,15 @@ export function TopNotice({
           type="button"
           className="archive-tip-action"
           onClick={action.onClick}
+          disabled={action.disabled}
         >
           {action.label}
         </button>
       ) : null}
-      <button
+      <Tooltip asChild content={dismissAriaLabel}><button
         type="button"
         className="archive-tip-dismiss"
         aria-label={dismissAriaLabel}
-        title={dismissAriaLabel}
         onClick={() => {
           setLeaving(true);
           // The `.leaving` exit runs on --motion-base; unmounting sooner would cut it
@@ -81,7 +86,7 @@ export function TopNotice({
         }}
       >
         <X className="icon-sm" />
-      </button>
+      </button></Tooltip>
     </div>
   );
 }

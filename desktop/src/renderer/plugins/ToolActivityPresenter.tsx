@@ -1,45 +1,25 @@
 import { type ReactNode } from "react";
+import { useI18n } from "../i18n";
 
 import type { ThreadItem } from "../../shared/protocol";
-import { useI18n } from "../i18n";
 import { toolDisplayLabel } from "../ToolActivityHelpers";
 import type { ToolActivitySnapshot, ToolActivityStructuredResult } from "../../shared/workbench";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
-import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import { useConversationControls, useConversationTurnIdentity } from "../ConversationControlsContext";
 
 export interface ToolActivityPresenterProps {
   item?: ThreadItem;
   fallback: ReactNode;
-  host?: PluginHost;
-  controller?: WorkbenchController;
 }
 
-export function ToolActivityPresenter({
-  item,
-  fallback,
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
-}: ToolActivityPresenterProps): JSX.Element {
+export function ToolActivityPresenter({ item, fallback }: ToolActivityPresenterProps): JSX.Element {
+  const { slots, slotOwner } = useConversationControls();
   const { locale } = useI18n();
-  const dispatchKey = item?.display?.capability ?? item?.name;
-  return (
-    <PluginPresentation
-      enabled={item !== undefined && dispatchKey !== undefined}
-      host={host}
-      controller={controller}
-      target="conversation.tool-activity"
-      presentationKey={dispatchKey}
-      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item, locale)}
-      fallback={fallback}
-    />
-  );
+  const { threadId, turnId } = useConversationTurnIdentity();
+  return item ? <slots.Slot name={`${slotOwner}/conversation.tool-activity`}
+    context={{ threadId, turnId, itemId: item.id, snapshot: toToolActivitySnapshot(item, locale) }} fallback={fallback} /> : <>{fallback}</>;
 }
 
-const EMPTY_TOOL_ACTIVITY_SNAPSHOT = Object.freeze({});
-
-/** Convert the private thread record into the complete public presenter DTO. */
+/** The leaf owns the immutable public payload supplied to tool UI contributions. */
 export function toToolActivitySnapshot(item: ThreadItem, locale?: string): ToolActivitySnapshot {
   const displayLabel = toolDisplayLabel(item.display, locale);
   const detail = item.result_detail;

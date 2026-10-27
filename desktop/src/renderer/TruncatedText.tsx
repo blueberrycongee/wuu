@@ -12,7 +12,7 @@
  * and re-measured on resize and text change, so responsive layouts arm
  * and disarm the tooltip as the available width changes.
  */
-import { type ElementType, useLayoutEffect, useRef, useState } from "react";
+import { type ElementType, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
 import {
   createWindowResizeSettleScheduler,
@@ -23,9 +23,12 @@ export function TruncatedText({
   text,
   className,
   as = "span",
+  children,
   ...rest
 }: {
   text: string;
+  /** Optional styled rendering of the same text, measured as one text box. */
+  children?: ReactNode;
   className?: string;
   /** Host tag for the text box. Keeps block-level semantics (div/h2/strong). */
   as?: "span" | "div" | "strong" | "h2";
@@ -66,9 +69,9 @@ export function TruncatedText({
 
   const Tag = as as ElementType;
   return (
-    <Tooltip content={text} disabled={!truncated}>
+    <Tooltip asChild content={text} disabled={!truncated}>
       <Tag ref={ref} className={className} data-text={text} {...rest}>
-        {text}
+        {children ?? text}
       </Tag>
     </Tooltip>
   );

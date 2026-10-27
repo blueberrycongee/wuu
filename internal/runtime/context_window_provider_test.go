@@ -46,7 +46,7 @@ func TestDefaultContextWindowsSurviveExtensionTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &agent.StreamRunner{CompactionRegistry: registry}
+	runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, CompactionRegistry: registry}
 	if !runner.ContextWindowsAvailable() {
 		t.Fatal("context windows require an extension")
 	}

@@ -36,7 +36,11 @@ async function main() {
   });
 
   const electronBinary = require("electron");
-  const result = spawnSync(String(electronBinary), [outFile], {
+  const result = spawnSync(String(electronBinary), [
+    ...(process.platform === "linux" && !process.env.DISPLAY
+      ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : []),
+    outFile,
+  ], {
     stdio: "inherit",
     env: { ...process.env },
   });

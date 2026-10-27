@@ -1,271 +1,126 @@
+import { WorkbenchController } from "./plugins/Workbench";
+import { registerShellContributions } from "./plugins/DefaultUIContributions";
 import * as React from "react";
-import { act, createRef } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionInventoryRecord, Thread } from "../shared/protocol";
+import { afterEach, expect, it, vi } from "vitest";
+import type { ApplicationSnapshotV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
-import { AppSidebar } from "./AppSidebar";
-import { createThreadSessionTab, initialState } from "./AppState";
 import { ConversationTitleContent } from "./ConversationShellRenderers";
-import { translateCurrent as t } from "./i18n";
+import { createConversationTestApplication } from "./ConversationControlsTestProvider";
 import { PluginHost } from "./plugins/PluginHost";
-import { DesktopWorkbench, WorkbenchController } from "./plugins/Workbench";
+import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { translateCurrent as t } from "./i18n";
 
-const context = { kind: "project" as const, project_id: "project", cwd: "/repo" };
-const thread: Thread = {
-  id: "conversation", title: "Original conversation", preview: "", cwd: "/repo",
-  model_provider: "test", model: "test", status: "idle", turns: [],
-  created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
-};
-const draft = { ...createThreadSessionTab(thread, context), prompt: "Unsent draft" };
-const state = {
-  ...initialState, activeContext: context, thread, threads: [thread],
-  sessionTabs: [draft], activeSessionTabID: draft.id,
-};
-const pluginId = "test:primary-views";
-const inventory: ExtensionInventoryRecord[] = [{
-  id: pluginId, name: "Views", kind: "plugin", enabled: true,
-  state: "granted", approval_state: "granted",
-  provenance: { kind: "plugin", source: "user", scope: "user" },
-}];
-let container: HTMLDivElement;
-let root: Root;
-let host: PluginHost;
-let controller: WorkbenchController;
-const selectThread = vi.fn();
+let container: HTMLDivElement, root: Root | undefined, host: PluginHost;
+afterEach(() => { act(() => root?.unmount()); root = undefined; container?.remove(); host?.unload("shell"); host?.unload("header"); });
 
-beforeEach(() => {
-  window.localStorage.clear();
-  selectThread.mockClear();
-  host = new PluginHost({ react: React });
-  controller = new WorkbenchController(host);
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
+async function fixture() {
+  const base = createConversationTestApplication();
+  const thread = { id: "source", title: "Original conversation", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [] };
+  let snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), tabs: { ...base.getSnapshot().tabs, activeTabId: "source-tab", items: [{ id: "source-tab", kind: "thread", title: thread.title, threadId: thread.id, workspaceRoot: "/repo", project: false, draftText: "Unsent draft", hasAttachments: false }] }, conversationWorkspace: { ...base.getSnapshot().conversationWorkspace, primaryThreadId: thread.id, threads: [thread] }, navigationWorkspace: { ...base.getSnapshot().navigationWorkspace, activeContextKind: "project", selectedWorkspaceId: "project" } };
+  const listeners = new Set<() => void>();
+  const publish = (next: ApplicationSnapshotV1) => { snapshot = next; listeners.forEach(listener => listener()); };
+  const invoke = vi.fn().mockImplementation(async action => { if (action === "workspace.start-draft") return { activated: true, tabId: "created-draft" }; if (action === "navigation.show-native" || action === "navigation.close-plugin") publish({ ...snapshot, navigationWorkspace: { ...snapshot.navigationWorkspace, activePluginView: undefined } }); });
+  const application = { ...base, getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke,
+    createDesktopScope: () => base.desktop, setPreviewVisibility: () => {}, createComposerPresentationScope: () => base.composerPresentation };
+  host = new PluginHost({ react: React, application });
+  Object.defineProperty(application, "workbench", { value: new WorkbenchController(host) });
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+    for (const id of ["conversation.header", "workspace.header"] as const) api.registerUISlot({ id, cardinality: "many" });
+    for (const id of ["header.conversation", "header.workspace"] as const) api.registerUISlot({ id, cardinality: "one" });
+    registerShellContributions(api);
+    api.registerApplicationShell({ id: "shell", render: ({ application, slots }) => <ConversationTitleContent application={application} slots={slots} slotOwner="shell" /> });
+  } });
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "one", id: "shell" }} />));
+  return { invoke, get: () => snapshot, update: (next: ApplicationSnapshotV1) => act(() => publish(next)) };
+}
+
+it("creates a draft in the captured workspace and renames the explicit thread", async () => {
+  const h = await fixture();
+  await act(async () => container.querySelector<HTMLButtonElement>(".session-tab-new")!.click());
+  expect(h.invoke).toHaveBeenCalledWith("workspace.start-draft", { workspaceId: "project" }, { signal: expect.any(AbortSignal) });
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([["navigation.focus-composer", { tabId: "created-draft" }, { signal: expect.any(AbortSignal) }]]);
+  act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.click());
+  const input = container.querySelector<HTMLInputElement>("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Renamed");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(h.invoke).toHaveBeenCalledWith("thread.rename", { threadId: "source", title: "Renamed" }, { signal: expect.any(AbortSignal) });
 });
 
-afterEach(() => {
-  act(() => root.unmount());
-  controller.dispose();
-  container.remove();
-  window.localStorage.clear();
+it("does not reclaim focus when the user moves it while draft creation is pending", async () => {
+  const h = await fixture();
+  let finish!: (result: { activated: boolean; tabId: string }) => void;
+  h.invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const button = container.querySelector<HTMLButtonElement>(".session-tab-new")!;
+  act(() => { button.focus(); button.click(); });
+  act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.focus());
+  await act(async () => finish({ activated: true, tabId: "created-draft" }));
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([]);
 });
 
-async function register(generation = "one", title = "Automation") {
-  await act(async () => host.activateGeneration({
-    pluginId, generation,
-    contributions: { navigation: [{ id: "catalog-entry", title, view: "catalog" }] },
-    register(api) {
-      api.registerViewType({ id: "catalog", title, persistence: "durable", render: () => <article>Catalog content</article> });
-      api.registerViewType({ id: "detail", title: "Detail", persistence: "durable", render: () => <article>Detail content</article> });
-    },
-  }));
-}
+it("does not request composer focus when draft creation did not activate an owner", async () => {
+  const h = await fixture();
+  h.invoke.mockResolvedValueOnce({ activated: false });
+  await act(async () => container.querySelector<HTMLButtonElement>(".session-tab-new")!.click());
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([]);
+});
 
-function renderShell({ inventory: available }: { inventory?: ExtensionInventoryRecord[] } = { inventory }) {
-  act(() => root.render(<>
-    <AppSidebar
-      state={state}
-      sidebarWorkspaces={[]}
-      pinnedThreads={[{ ...thread, turn_count: 0 }]}
-      activeThreadID={thread.id}
-      collapsedSidebarSectionIDs={new Set()}
-      collapsedFolderIDs={new Set()}
-      setCollapsedFolderIDs={() => {}}
-      expandedSidebarSectionIDs={new Set()}
-      workspaceThreadsByWorkspaceID={{}}
-      workspaceMenuOpen={false}
-      workspaceMenuRef={createRef()}
-      searchOpen={false}
-      sectionOrder={[]}
-      onStartNewThread={() => {}}
-      onOpenSkillsTab={() => {}}
-      onToggleConversationSearch={() => {}}
-      onSelectThread={selectThread}
-      onTogglePinned={() => {}}
-      onArchiveThread={() => {}}
-      onDeleteThread={() => {}}
-      onRenameThread={() => {}}
-      onToggleWorkspaceMenu={() => {}}
-      onCreateWorkspace={() => {}}
-      onOpenWorkspaceFolder={() => {}}
-      onToggleSidebarSectionCollapsed={() => {}}
-      onLoadWorkspaceThreads={async () => {}}
-      onStartNewThreadInWorkspace={() => {}}
-      onSelectWorkspaceThread={() => {}}
-      onRemoveWorkspace={() => {}}
-      onRelocateWorkspace={() => {}}
-      onOpenSettings={() => {}}
-      onMarkThreadsViewed={() => {}}
-      unreadViewOpen={false}
-      onToggleUnreadView={() => {}}
-      pluginHost={host}
-      workbenchController={controller}
-    />
-    <main className="conversation-pane">
-      <header>
-        <ConversationTitleContent state={state} activeTitle="Original conversation"
-          onStartNewThread={() => {}} pluginHost={host} workbenchController={controller} />
-      </header>
-    </main>
-    <DesktopWorkbench host={host} controller={controller} inventory={available} />
-  </>));
-}
+it("uses published closeability and restores native heading focus through public navigation", async () => {
+  const h = await fixture();
+  const native = h.get();
+  h.update({ ...native, navigationWorkspace: { ...native.navigationWorkspace, activePluginView: { id: "declared-view", pluginId: "extension", title: "Automation", webPage: false, closable: false } } });
+  expect(container.querySelector("h1")?.textContent).toBe("Automation");
+  expect(container.querySelector('[data-wuu-component="primary-view-close"]')).toBeNull();
+  expect(container.querySelector(".conversation-title-rename")).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="primary-view-back"]')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("navigation.show-native", {}, { signal: expect.any(AbortSignal) });
+  expect(document.activeElement).toBe(container.querySelector("h1"));
+  expect(h.get().tabs.items[0].draftText).toBe("Unsent draft");
+  h.update({ ...native, navigationWorkspace: { ...native.navigationWorkspace, activePluginView: { id: "extra-instance", pluginId: "extension", title: "Detail", webPage: false, closable: true } } });
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="primary-view-close"]')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("navigation.close-plugin", { viewId: "extra-instance" }, { signal: expect.any(AbortSignal) });
+  expect(container.querySelector("h1")?.textContent).toBe("Original conversation");
+});
 
-function findButton(label: string): HTMLButtonElement | undefined {
-  return [...container.querySelectorAll<HTMLButtonElement>("button")]
-    .find((item) => item.getAttribute("aria-label") === label || item.textContent === label);
-}
+it("renders header contributions and presenters through the shell's actual composition", async () => {
+  const h = await fixture();
+  let header: HeaderSnapshotV1 | undefined, presentation: PresentationHost | undefined, context: unknown;
+  await act(async () => host.activateGeneration({ pluginId: "header", generation: "one", register: api => {
+    api.registerUIContribution({ target: "shell/workspace.header", id: "before", render: props => { context = props.context; return <span>Public header</span>; } });
+    api.registerPresenter({ id: "title", target: "header.workspace", render: props => { header = props.snapshot as HeaderSnapshotV1; presentation = props.host; return <h1>{header.title}</h1>; } });
+  } }));
+  const current = h.get();
+  h.update({ ...current, navigationWorkspace: { ...current.navigationWorkspace, activePluginView: { id: "view", pluginId: "extension", title: "Automation", webPage: false, closable: false } } });
+  expect(container.textContent).toContain("Public header");
+  expect(container.querySelector("h1")?.textContent).toBe("Automation");
+  expect(header).toMatchObject({ scope: "workspace", title: "Automation", canNavigateBack: true });
+  expect(header?.tabs).toBeUndefined();
+  expect(context).toMatchObject({ viewId: "view", threadId: "source", ownerTabId: "source-tab", hasSessionTabs: false, tabCount: 0 });
+  expect(presentation?.actions).toContain("header.navigate-back");
+  await act(async () => presentation!.invoke("header.navigate-back"));
+  expect(h.invoke).toHaveBeenCalledWith("navigation.show-native", expect.any(Object), { signal: expect.any(AbortSignal) });
+  expect(container.querySelector("h1")?.textContent).toBe("Original conversation");
+  await act(async () => host.unload("header"));
+  expect(container.querySelector('button[aria-label="' + t("tabs.newConversation") + '"]')).not.toBeNull();
+});
 
-function button(label: string): HTMLButtonElement {
-  const result = findButton(label);
-  expect(result, `button ${label}`).toBeDefined();
-  return result!;
-}
-
-async function click(label: string) {
-  await act(async () => button(label).click());
-}
-
-function expectPage(title: string, content?: string) {
-  expect(container.querySelector("main header h1")?.textContent).toBe(title);
-  expect(container.querySelector("main header [role=tablist]")).toBeNull();
-  expect(container.querySelector("main header [role=tab]")).toBeNull();
-  const view = container.querySelector(".plugin-workbench-view-primary");
-  if (content) expect(view?.textContent).toContain(content);
-  else expect(view).toBeNull();
-}
-
-describe("primary plugin navigation without a tab strip", () => {
-  it("opens, returns, switches API-opened instances, reloads and closes through visible controls", async () => {
-    await register();
-    renderShell();
-    expectPage("Original conversation");
-    await click("Automation");
-    expectPage("Automation", "Catalog content");
-    expect(button("Automation").getAttribute("aria-current")).toBe("page");
-    const first = controller.getSnapshot().activeViewByRegion.primary;
-
-    await click("Original conversation");
-    expect(selectThread).toHaveBeenCalledWith(thread.id);
-    expectPage("Original conversation");
-    expect(button("Automation").hasAttribute("aria-current")).toBe(false);
-    await click("Automation");
-    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
-    expectPage("Automation", "Catalog content");
-
-    await act(async () => { await controller.openPluginView(pluginId, "detail"); });
-    expectPage("Detail", "Detail content");
-    await act(async () => { await controller.openPluginView(pluginId, "detail", { reveal: false }); });
-    await click("Detail · 1");
-    expect(button("Detail · 1").getAttribute("aria-current")).toBe("page");
-    expect(button("Detail · 2").hasAttribute("aria-current")).toBe(false);
-    await click(t("workspace.closeTab", { label: "Detail" }));
-    expectPage("Detail", "Detail content");
-    await click(t("workspace.closeTab", { label: "Detail" }));
-    expectPage("Automation", "Catalog content");
-    // The sidebar destination outlives its page, so Back is its only exit.
-    expect(findButton(t("workspace.closeTab", { label: "Automation" }))).toBeUndefined();
-    await register("two", "Updated catalog");
-    expectPage("Updated catalog", "Catalog content");
-    await click(t("common.back"));
-    expectPage("Original conversation");
-    expect(document.activeElement).toBe(container.querySelector("main header h1"));
-    await click("Updated catalog");
-    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
-    expect(findButton(t("workspace.closeTab", { label: "Updated catalog" }))).toBeUndefined();
-    await click(t("common.back"));
-    expectPage("Original conversation");
-    expect(state.sessionTabs[0].prompt).toBe("Unsent draft");
-
-    await click("Updated catalog");
-    act(() => host.unload(pluginId));
-    expectPage("Original conversation");
-    expect(container.querySelector('[data-wuu-component="plugin-navigation-item"]')).toBeNull();
-    await register("three");
-    expectPage("Original conversation");
-  });
-
-  it("restores old durable views after async registration and remembers returning to the conversation", async () => {
-    await register();
-    await controller.openPluginView(pluginId, "detail");
-    controller.dispose();
-    host = new PluginHost({ react: React });
-    controller = new WorkbenchController(host);
-    renderShell({});
-    expectPage("Original conversation");
-    renderShell();
-    await register("two");
-    expectPage("Detail", "Detail content");
-    expect(button("Detail").getAttribute("aria-current")).toBe("page");
-    await click(t("common.back"));
-    expectPage("Original conversation");
-
-    act(() => root.unmount());
-    root = createRoot(container);
-    controller.dispose();
-    host = new PluginHost({ react: React });
-    controller = new WorkbenchController(host);
-    renderShell();
-    await register("three");
-    expectPage("Original conversation");
-    await click("Detail");
-    expectPage("Detail", "Detail content");
-    renderShell({ inventory: [] });
-    expectPage("Original conversation");
-    expect(controller.getSnapshot().views).toEqual([]);
-  });
-
-  it("keeps different plugins with the same view type independently reachable", async () => {
-    await register();
-    const other = "test:other-views";
-    await host.activateGeneration({ pluginId: other, generation: "one", register(api) {
-      api.registerViewType({ id: "catalog", title: "Other catalog", render: () => <article>Other content</article> });
+it("replaces the native conversation title with an existing registered header presenter", async () => {
+  await fixture();
+  let snapshot: HeaderSnapshotV1 | undefined;
+  await act(async () => host.activateGeneration({ pluginId: "header", generation: "one", register: api => {
+    api.registerPresenter({ id: "conversation", target: "header.conversation", render: props => {
+      snapshot = props.snapshot as HeaderSnapshotV1;
+      return <div data-conversation-header>{snapshot.title}</div>;
     } });
-    renderShell({ inventory: [...inventory, { ...inventory[0], id: other }] });
-    await click("Automation");
-    await act(async () => { await controller.openPluginView(other, "catalog"); });
-    expectPage("Other catalog", "Other content");
-    expect(button("Other catalog").getAttribute("aria-current")).toBe("page");
-    expect(button("Automation").hasAttribute("aria-current")).toBe(false);
-    await click("Automation");
-    expectPage("Automation", "Catalog content");
-    await click("Other catalog");
-    await click(t("workspace.closeTab", { label: "Other catalog" }));
-    expectPage("Automation", "Catalog content");
-    expect(button("Automation").getAttribute("aria-current")).toBe("page");
-  });
-
-  it("advertises back navigation, not tab actions, to header presenters and slots", async () => {
-    await register();
-    let snapshot: HeaderSnapshotV1 | undefined;
-    let presentation: PresentationHost | undefined;
-    let slotContext: unknown;
-    await host.activateGeneration({ pluginId: "header", generation: "one", register(api) {
-      api.registerPresenter({ id: "header", target: "header.workspace", render(props) {
-        snapshot = props.snapshot as HeaderSnapshotV1;
-        presentation = props.host;
-        return <h1>{snapshot.title}</h1>;
-      } });
-      api.registerSlot("workspace.header", { id: "header-slot", render(props) {
-        slotContext = props;
-        return null;
-      } });
-    } });
-    renderShell();
-    await click("Automation");
-    expectPage("Automation", "Catalog content");
-    expect(snapshot?.tabs).toBeUndefined();
-    expect(snapshot?.activeTabId).toBeUndefined();
-    expect(snapshot?.canNavigateBack).toBe(true);
-    expect(slotContext).toMatchObject({ hasSessionTabs: false, tabCount: 0 });
-    expect(presentation?.actions).toEqual(["header.navigate-back"]);
-    await expect(presentation!.invoke("header.select-tab", { tabId: draft.id })).rejects.toThrow();
-    await act(async () => { await presentation!.invoke("header.navigate-back"); });
-    expectPage("Original conversation");
-    await click("Automation");
-    await act(async () => { await controller.openPluginView(pluginId, "detail"); });
-    await click(t("workspace.closeTab", { label: "Detail" }));
-    expectPage("Automation", "Catalog content");
-  });
+  } }));
+  expect(container.querySelector("[data-conversation-header]")?.textContent).toBe("Original conversation");
+  expect(container.querySelector(".conversation-title-heading")).toBeNull();
+  expect(snapshot).toMatchObject({ contractVersion: 1, scope: "conversation", title: "Original conversation" });
+  await act(async () => host.unload("header"));
+  expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe("Original conversation");
 });

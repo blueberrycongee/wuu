@@ -31,9 +31,10 @@ for (const operation of ['state', 'recording', 'save', 'permission', 'discard'])
 ipcMain.on('snapshot:subscribe', () => snapshotCalls.push('subscribe'));
 ipcMain.on('snapshot:send', () => sends++);
 let preload = fs.readFileSync(path.join(__dirname, 'streaming-e2e-preload.cjs'), 'utf8');
-preload = preload.replace('contextBridge.exposeInMainWorld("wuu", {', `
+preload = preload.replace('const withDefaultShell = require("./default-shell-e2e.cjs");', `const withDefaultShell = ${require('./default-shell-e2e.cjs')};`);
+preload = preload.replace('contextBridge.exposeInMainWorld("wuu", withDefaultShell({', `
 ipcRenderer.on('snapshot:changed', () => ipcRenderer.send('snapshot:delivered'));
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   platform: 'darwin',
   getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
   listMCPServers: async () => ({ servers: [] }),
@@ -125,8 +126,8 @@ app.whenReady().then(async () => {
   await evaluate(win, () => document.querySelector('.system-permissions-error button').click());
   await waitFor(win, () => document.querySelectorAll('.system-permission-granted').length === 2);
   await capture(win, 'permissions-granted');
-  await evaluate(win, () => document.querySelector('.settings-back-button').click());
-  await waitFor(win, () => Boolean(document.querySelector('.composer textarea')) && !document.querySelector('.settings-back-button'));
+  await evaluate(win, () => document.querySelector('[data-ribbon-id="conversations"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('.composer textarea')) && !document.querySelector('.app-shell[data-settings-open]'));
   assert.ok(guideClosed > 0, 'Leaving permission settings closes the guide');
   win.setContentSize(1150, 900);
   await evaluate(win, () => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--conversation-message-font-size', '15px'); });

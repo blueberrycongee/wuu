@@ -35,7 +35,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -43,7 +45,14 @@ jobs:
       - name: Install capture dependencies
         run: |
           npm ci --prefix desktop
+          npm ci --prefix clients/core
           node desktop/node_modules/electron/install.js
+          # Match Linux/workbench acceptance: avoid the slow hosted Azure mirror.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb ffmpeg fonts-noto-cjk fonts-noto-color-emoji
       - name: Typecheck and script syntax

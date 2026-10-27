@@ -9,15 +9,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/composition"
 )
 
 // The service registry is the only addressable layer for plugin-provided
-// services. Plugins cannot discover, connect to, or address one another; a
-// consumer emits one host-mediated frame (service.call) and the registry
-// resolves the provider by (service name, required major version), enforces
+// services. Plugins cannot choose provider identities or transports in calls;
+// a consumer emits one host-mediated frame (service.call) and the registry
+// resolves its configured (consumer, service name, required major) route, enforces
 // the consumer's explicit declaration, and routes the call. The registry is
-// built from one generation's initialize results and only accepts calls while
-// that generation is active; closing it revokes every address and notifies
+// built from one generation's initialize results. Preparation permits only
+// explicitly marked methods; active generations admit other calls. Closing it
+// revokes every address and notifies
 // consumers so stale resolutions cannot leak across generations.
 
 // ServiceInvoker is the provider-side surface the registry routes calls to.
@@ -41,8 +44,23 @@ type ServiceClient interface {
 	RequiredServices() []ServiceRequirement
 }
 
-// ServiceConflict describes a rejected provider registration. The first
-// provider of a (name, major) wins; later duplicates surface as diagnostics.
+// RuntimeServiceRequirements preserves declaration origin when a host-owned
+// mixed-transport client combines its process and renderer requirements. All
+// ordinary native/process declarations originate in the runtime. The optional
+// method is internal host metadata, never a field accepted from plugin wire data.
+func RuntimeServiceRequirements(client ServiceClient) []ServiceRequirement {
+	if mixed, ok := client.(interface{ RuntimeRequiredServices() []ServiceRequirement }); ok {
+		return mixed.RuntimeRequiredServices()
+	}
+	return client.RequiredServices()
+}
+
+type serviceConsumption struct {
+	runtime bool // False only for requirements originating exclusively in a renderer.
+}
+
+// ServiceConflict describes a rejected provider registration. An ambiguous
+// service stays unavailable unless the composition explicitly selects a provider.
 type ServiceConflict struct {
 	PluginID string
 	Service  string
@@ -51,18 +69,29 @@ type ServiceConflict struct {
 }
 
 type serviceKey struct {
-	name  string
-	major int
+	consumer string // Empty for the default route and for requirement declarations.
+	name     string
+	major    int
 }
 
 type serviceProvider struct {
 	descriptor ServiceDescriptor
 	pluginID   string
 	invoker    ServiceInvoker
-	kernel     bool
+}
+
+type callerScopeKey struct {
+	provider  string
+	execution string
+}
+
+type callerScopeResource struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type serviceExecution struct {
+	retained     bool // Opaque resources retain this execution until physical cleanup.
 	ctx          context.Context
 	cancel       context.CancelFunc
 	refs         int
@@ -70,50 +99,183 @@ type serviceExecution struct {
 	autonomous   bool
 }
 
+type serviceCompletionKey struct{}
+
+type serviceCompletion struct {
+	mu         sync.Mutex
+	references int
+	closed     bool
+	finalizers []func() error
+}
+
+// DeferServiceCompletion releases native invocation resources after the entire
+// authenticated service chain has left the registry. It adds no wire authority.
+// False means there is no live completion boundary; the caller must release now.
+func DeferServiceCompletion(ctx context.Context, finalize func() error) bool {
+	completion, _ := ctx.Value(serviceCompletionKey{}).(*serviceCompletion)
+	if completion == nil {
+		return false
+	}
+	completion.mu.Lock()
+	defer completion.mu.Unlock()
+	if completion.closed {
+		return false
+	}
+	completion.finalizers = append(completion.finalizers, finalize)
+	return true
+}
+
+func retainServiceCompletion(ctx context.Context) context.Context {
+	if completion, _ := ctx.Value(serviceCompletionKey{}).(*serviceCompletion); completion != nil {
+		completion.mu.Lock()
+		if !completion.closed {
+			completion.references++
+			completion.mu.Unlock()
+			return ctx
+		}
+		completion.mu.Unlock()
+	}
+	return context.WithValue(ctx, serviceCompletionKey{}, &serviceCompletion{references: 1})
+}
+
+func (c *serviceCompletion) release() error {
+	c.mu.Lock()
+	c.references--
+	if c.references != 0 {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	finalizers := c.finalizers
+	c.finalizers = nil
+	c.mu.Unlock()
+	var err error
+	for i := len(finalizers) - 1; i >= 0; i-- {
+		err = errors.Join(err, finalizers[i]())
+	}
+	return err
+}
+
+func serviceCompletionError(callErr *HostServiceError, cleanupErr error) *HostServiceError {
+	if cleanupErr == nil {
+		return callErr
+	}
+	code := "service_unavailable"
+	if callErr != nil {
+		code = callErr.Code
+		cleanupErr = errors.Join(callErr, cleanupErr)
+	}
+	return &HostServiceError{Code: code, Message: fmt.Sprintf("service completion failed: %v", cleanupErr)}
+}
+
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
+	renderers            map[string]*rendererRegistration
 	mu                   sync.RWMutex
 	active               bool
 	open                 bool
 	providers            map[serviceKey]serviceProvider
-	consumers            map[string]map[serviceKey]struct{}
+	bindings             map[serviceKey]string
+	bindingSources       map[serviceKey]string
+	ambiguous            map[serviceKey]string
+	invalidDeclarations  map[string]string
+	consumers            map[string]map[serviceKey]serviceConsumption
+	requirements         map[string][]ServiceRequirement
 	notifiers            map[string]ServiceChangedNotifier
-	kernelLifecycles     []kernelServiceLifecycle
 	executions           map[string]*serviceExecution
 	executionChanged     chan struct{}
 	nextExecution        uint64
 	scopeTracker         *ExecutionTracker
+	callerScopes         map[callerScopeKey]*callerScopeResource
 	backgroundStopped    bool
 	cleanupOwners        map[string]int
+	preparing            map[string]bool
 	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
-}
-
-// ServiceRegistration is the common provider entry consumed by the registry.
-// Kernel and plugin providers both become these entries before routing starts.
-type ServiceRegistration struct {
-	Descriptor ServiceDescriptor
-	Invoker    ServiceInvoker
-	Kernel     bool
-}
-
-type kernelServiceClient interface {
-	ServiceClient
-	KernelServiceRegistrations() []ServiceRegistration
-}
-
-type kernelServiceLifecycle interface {
-	ActivateKernelServices()
-	CloseKernelServices()
+	graphGeneration      string
+	composition          *CompositionSnapshot
+	moduleStatuses       func() []Status
+	dependencies         func() map[string][]Dependency
 }
 
 func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
 		open: true, providers: make(map[serviceKey]serviceProvider),
-		consumers:  make(map[string]map[serviceKey]struct{}),
-		notifiers:  make(map[string]ServiceChangedNotifier),
-		executions: make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
+		bindings: make(map[serviceKey]string), bindingSources: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
+		consumers:    make(map[string]map[serviceKey]serviceConsumption),
+		requirements: make(map[string][]ServiceRequirement),
+		notifiers:    make(map[string]ServiceChangedNotifier),
+		executions:   make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
 	}
+}
+
+// NewServiceRegistryWithBindings prepares explicit provider selections before
+// any initialization calls can resolve a service.
+func NewServiceRegistryWithBindings(bindings []composition.Binding) (*ServiceRegistry, error) {
+	if err := (composition.Config{Version: composition.Version, Services: bindings}).Validate(); err != nil {
+		return nil, err
+	}
+	registry := NewServiceRegistry()
+	for _, binding := range bindings {
+		key := serviceKey{consumer: binding.Consumer, name: binding.Service, major: binding.Major}
+		registry.bindings[key] = binding.Provider
+		source := binding.Source
+		if source == "" {
+			source = "composition"
+		}
+		registry.bindingSources[key] = source
+	}
+	return registry, nil
+}
+
+// ValidateBindings refuses a candidate whose explicit choices cannot be met.
+// Call after all providers have initialized and before committing configuration.
+func (r *ServiceRegistry) ValidateBindings() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var failures []string
+	for _, message := range r.invalidDeclarations {
+		failures = append(failures, message)
+	}
+	for key, selected := range r.bindings {
+		if key.consumer != "" {
+			declaration := serviceKey{name: key.name, major: key.major}
+			if _, declared := r.consumers[key.consumer][declaration]; !declared {
+				failures = append(failures, fmt.Sprintf("composition consumer %q does not declare service %s@%d", key.consumer, key.name, key.major))
+			}
+			if key.consumer == selected && r.consumers[key.consumer][declaration].runtime {
+				failures = append(failures, fmt.Sprintf("composition consumer %q delegates %s@%d to itself", key.consumer, key.name, key.major))
+			}
+		}
+		provider, ok := r.providers[key]
+		if !ok || provider.pluginID != selected {
+			failures = append(failures, fmt.Sprintf("composition selects unavailable provider %q for %s@%d (consumer %q)", selected, key.name, key.major, key.consumer))
+		}
+		if ok && key.consumer != "" {
+			// A same-contract adapter cannot silently reinterpret the delegate's
+			// schemas or preparation/cleanup authority for a shared method.
+			for route, adapter := range r.providers {
+				if route.name != key.name || route.major != key.major || adapter.pluginID != key.consumer {
+					continue
+				}
+				for _, method := range adapter.descriptor.Methods {
+					for _, target := range provider.descriptor.Methods {
+						if method.Name == target.Name && method != target {
+							failures = append(failures, fmt.Sprintf("composition delegate %q has incompatible contract for %s@%d.%s consumed by %q", selected, key.name, key.major, method.Name, key.consumer))
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, diagnostic := range r.ambiguous {
+		failures = append(failures, diagnostic)
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	sort.Strings(failures)
+	return errors.New(strings.Join(failures, "; "))
 }
 
 // bindRootExecutionContext connects a new plugin-initiated service chain to
@@ -135,72 +297,115 @@ func BuildServiceRegistry(clients ...Client) (*ServiceRegistry, []ServiceConflic
 
 // RegisterClients adds prepared providers and consumers before activation.
 func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceConflict {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
 	var conflicts []ServiceConflict
 	for _, client := range clients {
 		declared, ok := client.(ServiceClient)
 		if !ok {
 			continue
 		}
+		if err := ValidateServiceNegotiation(CapabilityInitializeResult{ProtocolVersion: 3, ProvidedServices: declared.ProvidedServices(), RequiredServices: declared.RequiredServices()}); err != nil {
+			message := fmt.Sprintf("provider %q has invalid service declarations: %v", declared.ID(), err)
+			if registry.invalidDeclarations == nil {
+				registry.invalidDeclarations = map[string]string{}
+			}
+			registry.invalidDeclarations[declared.ID()] = message
+			for key, provider := range registry.providers {
+				if provider.pluginID == declared.ID() {
+					delete(registry.providers, key)
+				}
+			}
+			delete(registry.consumers, declared.ID())
+			delete(registry.requirements, declared.ID())
+			delete(registry.notifiers, declared.ID())
+			conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Message: message})
+			continue
+		}
+		delete(registry.invalidDeclarations, declared.ID())
 		if notifier, ok := client.(ServiceChangedNotifier); ok {
 			registry.notifiers[declared.ID()] = notifier
 		}
-		kernelClient, kernel := declared.(kernelServiceClient)
-		registrations := make([]ServiceRegistration, 0, len(declared.ProvidedServices()))
-		if kernel {
-			registrations = append(registrations, kernelClient.KernelServiceRegistrations()...)
-		} else if invoker, ok := client.(ServiceInvoker); ok {
-			for _, descriptor := range declared.ProvidedServices() {
-				registrations = append(registrations, ServiceRegistration{Descriptor: descriptor, Invoker: invoker})
-			}
-		}
-		if lifecycle, ok := client.(kernelServiceLifecycle); kernel && ok {
-			registry.kernelLifecycles = append(registry.kernelLifecycles, lifecycle)
-		}
-		for _, registration := range registrations {
-			descriptor := registration.Descriptor
+		invoker, _ := client.(ServiceInvoker)
+		for _, descriptor := range declared.ProvidedServices() {
 			major, ok := ServiceVersionMajor(descriptor.Version)
 			if !ok {
 				continue
 			}
 			key := serviceKey{name: strings.TrimSpace(descriptor.Name), major: major}
-			if existing, duplicate := registry.providers[key]; duplicate {
-				conflicts = append(conflicts, ServiceConflict{
-					PluginID: declared.ID(),
-					Service:  key.name,
-					Major:    key.major,
-					Message:  fmt.Sprintf("service %s@%d is already provided by plugin %q; keeping the first registration", key.name, key.major, existing.pluginID),
-				})
-				continue
+			routes := []serviceKey{key}
+			for route, selected := range registry.bindings {
+				if route.consumer != "" && route.name == key.name && route.major == key.major && selected == declared.ID() {
+					routes = append(routes, route)
+				}
 			}
-			if registration.Invoker == nil {
-				conflicts = append(conflicts, ServiceConflict{
-					PluginID: declared.ID(),
-					Service:  key.name,
-					Major:    key.major,
-					Message:  fmt.Sprintf("service %s@%d cannot receive host-routed calls", key.name, key.major),
-				})
-				continue
+			for _, route := range routes {
+				if selected := registry.bindings[route]; selected != "" && selected != declared.ID() {
+					continue
+				}
+				if existing, duplicate := registry.providers[route]; duplicate || registry.ambiguous[route] != "" {
+					message := registry.ambiguous[route]
+					if message == "" {
+						message = fmt.Sprintf("service %s@%d is provided by both %q and %q; select a provider in composition.services", route.name, route.major, existing.pluginID, declared.ID())
+					}
+					registry.ambiguous[route] = message
+					delete(registry.providers, route)
+					conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: route.name, Major: route.major, Message: message})
+					continue
+				}
+				if invoker == nil {
+					conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: route.name, Major: route.major,
+						Message: fmt.Sprintf("service %s@%d cannot receive host-routed calls", route.name, route.major)})
+					continue
+				}
+				descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
+				registry.providers[route] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: invoker}
 			}
-			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: registration.Invoker, kernel: kernel || registration.Kernel}
 		}
-		registry.consumers[declared.ID()] = make(map[serviceKey]struct{})
-		for _, requirement := range declared.RequiredServices() {
+		registry.consumers[declared.ID()] = make(map[serviceKey]serviceConsumption)
+		registry.requirements[declared.ID()] = append([]ServiceRequirement(nil), declared.RequiredServices()...)
+		for _, requirement := range registry.requirements[declared.ID()] {
 			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
-			registry.consumers[declared.ID()][key] = struct{}{}
+			registry.consumers[declared.ID()][key] = serviceConsumption{}
+		}
+		for _, requirement := range RuntimeServiceRequirements(declared) {
+			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
+			if _, declared := registry.consumers[client.ID()][key]; declared {
+				registry.consumers[client.ID()][key] = serviceConsumption{runtime: true}
+			}
 		}
 	}
 	return conflicts
 }
 
-// AllowPreflight grants only read-phase kernel calls while initialize runs.
-func (r *ServiceRegistry) AllowPreflight(pluginID string, requirements []ServiceRequirement) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	allowed := make(map[serviceKey]struct{}, len(requirements))
-	for _, requirement := range requirements {
-		allowed[serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}] = struct{}{}
+// RuntimeConsumesService distinguishes backend delegation from a renderer using
+// its own package's runtime. Both remain authorized under the same package ID;
+// only runtime declarations can establish a provider delegation chain.
+func (r *ServiceRegistry) RuntimeConsumesService(consumer, service string, major int) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.consumers[consumer][serviceKey{name: strings.TrimSpace(service), major: major}].runtime
+}
+
+type servicePreparationKey struct{}
+
+// Preparation authority belongs to one lifecycle callback and its admitted
+// descendants. Initialize cannot call services before declarations are bound.
+func (r *ServiceRegistry) allowPreparation(pluginID string) func() {
+	if r == nil {
+		return func() {}
 	}
-	r.consumers[pluginID] = allowed
+	r.mu.Lock()
+	if r.preparing == nil {
+		r.preparing = make(map[string]bool)
+	}
+	r.preparing[pluginID] = true
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		delete(r.preparing, pluginID)
+		r.mu.Unlock()
+	}
 }
 
 // Activate opens the registry for calls. The runtime activates the registry
@@ -209,9 +414,6 @@ func (r *ServiceRegistry) Activate() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.active = true
-	for _, lifecycle := range r.kernelLifecycles {
-		lifecycle.ActivateKernelServices()
-	}
 }
 
 // Close rejects new executions, drains calls already admitted by this
@@ -247,9 +449,7 @@ func (r *ServiceRegistry) Close(ctx context.Context) {
 	r.mu.Unlock()
 
 drained:
-	for _, lifecycle := range r.kernelLifecycles {
-		lifecycle.CloseKernelServices()
-	}
+	r.cancelCallerScopes("")
 	for _, key := range keys {
 		r.notifyConsumers(ctx, key, "provider_closed")
 	}
@@ -269,11 +469,12 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	r.mu.Lock()
 	var revoked []serviceKey
 	for key, provider := range r.providers {
-		if provider.pluginID == pluginID && !provider.kernel {
+		if provider.pluginID == pluginID {
 			delete(r.providers, key)
 			revoked = append(revoked, key)
 		}
 	}
+	delete(r.invalidDeclarations, pluginID)
 	delete(r.consumers, pluginID)
 	delete(r.notifiers, pluginID)
 	for _, execution := range r.executions {
@@ -282,6 +483,7 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 		}
 	}
 	r.mu.Unlock()
+	r.cancelCallerScopes(pluginID)
 	for _, key := range revoked {
 		r.notifyConsumers(ctx, key, "provider_closed")
 	}
@@ -319,7 +521,7 @@ func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool
 		return false
 	}
 	_, allowed := execution.participants[caller]
-	return caller == "kernel" || allowed
+	return allowed
 }
 
 // A shutdown callback may persist through its declared services while normal
@@ -353,7 +555,7 @@ func (r *ServiceRegistry) allowShutdownCleanup(pluginID string) func() {
 	})
 }
 
-func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
+func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func() error, *HostServiceError) {
 	callerContext := ctx
 	if err := callerContext.Err(); err != nil {
 		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"}
@@ -361,7 +563,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.mu.Lock()
 	// Call reads declarations before checking provider readiness. Revalidate
 	// identity at admission so revocation cannot leave a stale caller window.
-	if _, registered := r.consumers[caller]; caller != "kernel" && !registered {
+	if _, registered := r.consumers[caller]; !registered {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_not_authorized", Message: "service caller was revoked"}
 	}
@@ -370,17 +572,29 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service provider was revoked"}
 	}
+	id := strings.TrimSpace(requestedID)
+	execution := r.executions[id]
+	if marker, ok := ctx.Value(inheritedInvocationKey{}).(*nativeInvocation); ok && marker != nil {
+		if marker.registry != r || marker.owner != caller || marker.executionID != id || !marker.live || (execution == nil && !marker.root) {
+			r.mu.Unlock()
+			return nil, "", nil, &HostServiceError{Code: "execution_not_found", Message: "native callback execution is no longer live"}
+		}
+	}
 	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
+	if execution != nil {
+		if _, allowed := execution.participants[caller]; !allowed {
+			r.mu.Unlock()
+			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
+		}
+		// A process transports the execution ID, not the Go context. Continue
+		// the authenticated cleanup chain across provider callbacks.
+		cleanup = cleanup || InShutdownCleanup(execution.ctx)
+	}
 	if r.retiringProviders[provider] && !cleanup {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
 	}
-	id := strings.TrimSpace(requestedID)
-	if execution := r.executions[id]; id != "" && execution != nil {
-		if _, allowed := execution.participants[caller]; caller != "kernel" && !allowed {
-			r.mu.Unlock()
-			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
-		}
+	if execution != nil {
 		if execution.ctx.Err() != nil {
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
@@ -393,10 +607,10 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		callContext, cancel := context.WithCancel(execution.ctx)
 		stopCaller := context.AfterFunc(callerContext, cancel)
 		release := r.releaseExecution(id)
-		return callContext, id, func() { stopCaller(); cancel(); release() }, nil
+		return callContext, id, func() error { stopCaller(); cancel(); return release() }, nil
 	}
 	scoped := false
-	if r.scopeTracker != nil && id != "" && caller != "kernel" {
+	if r.scopeTracker != nil && id != "" {
 		scope, scopeErr := r.scopeTracker.Resolve(caller, id)
 		if scopeErr != nil {
 			r.mu.Unlock()
@@ -411,7 +625,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	if cleanup {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
-	if r.backgroundStopped && !scoped && !cleanup && caller != "kernel" {
+	if r.backgroundStopped && !scoped && !cleanup {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "generation is not accepting autonomous service calls"}
 	}
@@ -424,7 +638,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		id = fmt.Sprintf("service-%d", r.nextExecution)
 	}
 	parentContext := ctx
-	if requestedID != "" && caller != "kernel" && r.rootExecutionContext != nil {
+	if requestedID != "" && r.rootExecutionContext != nil {
 		rootContext, handled, err := r.rootExecutionContext(caller, id)
 		if err != nil {
 			r.mu.Unlock()
@@ -434,23 +648,25 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 			parentContext = rootContext
 		}
 	}
-	execCtx, cancelRoot := context.WithCancel(parentContext)
+	execCtx, cancelRoot := context.WithCancel(retainServiceCompletion(parentContext))
 	stopCaller := context.AfterFunc(callerContext, cancelRoot)
 	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
-		ctx: execCtx, cancel: cancel, refs: 1,
+		retained: ctx.Value(retainedServiceScopeAdmissionKey{}) == true, ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
-		autonomous:   !scoped && !cleanup && caller != "kernel",
+		autonomous:   !scoped && !cleanup,
 	}
 	r.mu.Unlock()
 	return execCtx, id, r.releaseExecution(id), nil
 }
 
-func (r *ServiceRegistry) releaseExecution(id string) func() {
+func (r *ServiceRegistry) releaseExecution(id string) func() error {
 	var once sync.Once
-	return func() {
+	var releaseErr error
+	return func() error {
 		once.Do(func() {
 			r.mu.Lock()
+			var completion *serviceCompletion
 			execution := r.executions[id]
 			if execution != nil {
 				execution.refs--
@@ -459,72 +675,177 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 					execution.cancel()
 					close(r.executionChanged)
 					r.executionChanged = make(chan struct{})
+					completion, _ = execution.ctx.Value(serviceCompletionKey{}).(*serviceCompletion)
 				}
 			}
 			r.mu.Unlock()
+			// Finalizers may close this registry. Remove all chain executions
+			// and drop the mutex before allowing the final owner to do so.
+			if completion != nil {
+				releaseErr = completion.release()
+			}
 		})
+		return releaseErr
 	}
 }
 
-// invokeProvider gives each plugin callback its own generic execution scope.
-// The caller's scope supplies cancellation and attribution, never tool authority
-// or an execution ID owned by a different plugin. Kernel calls keep the incoming
-// scope because their scoped services validate the original plugin caller.
-func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+type nativeInvocationKey struct{}
+type inheritedInvocationKey struct{}
+
+// The marker is private to one callback, registry and authenticated owner.
+// Its lifetime is guarded by the registry mutex, including admission checks.
+type nativeInvocation struct {
+	registry           *ServiceRegistry
+	owner, executionID string
+	live               bool
+	root               bool // Host-authenticated capability root, resolved by scopeTracker.
+}
+
+func (r *ServiceRegistry) invokeNativeContext(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+	marker := &nativeInvocation{registry: r, owner: provider.pluginID, executionID: params.ExecutionID, live: true}
+	defer func() { r.mu.Lock(); marker.live = false; r.mu.Unlock() }()
+	ctx = context.WithValue(ctx, inheritedInvocationKey{}, (*nativeInvocation)(nil))
+	return provider.invoker.InvokeService(context.WithValue(ctx, nativeInvocationKey{}, marker), params)
+}
+
+// invokeProvider gives each callback its own identity. Caller metadata never
+// confers tool authority: only a native tool dispatch can explicitly delegate
+// it to this callback. Nested ordinary service calls remain generic callbacks.
+func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams, toolScope *ToolExecuteInput) (result json.RawMessage, invokeErr error) {
 	r.mu.RLock()
 	tracker := r.scopeTracker
 	r.mu.RUnlock()
 	cleanup := InShutdownCleanup(ctx)
-	if provider.kernel || tracker == nil || cleanup {
-		return provider.invoker.InvokeService(ctx, params)
-	}
-	callbackParent, cancel := context.WithCancel(ctx)
-	var executionID string
-	var callbackCtx context.Context
-	for {
-		executionID, callbackCtx = tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
-		r.mu.Lock()
-		// Kernel-originated service IDs can share the tracker prefix. Never
-		// replace an already-live routing record with a callback's new scope.
-		if r.executions[executionID] == nil {
-			r.executions[executionID] = &serviceExecution{
-				ctx: callbackCtx, cancel: cancel, refs: 1,
-				participants: map[string]struct{}{provider.pluginID: {}},
-			}
-			r.mu.Unlock()
-			break
+	if tracker != nil && strings.HasPrefix(params.ExecutionID, "exec-") && !cleanup {
+		scope, err := tracker.Resolve(params.Caller, params.ExecutionID)
+		if err != nil {
+			return nil, err
 		}
-		r.mu.Unlock()
-		tracker.End(executionID)
+		if err := r.bindCallerScope(provider.pluginID, &scope); err != nil {
+			return nil, err
+		}
+		params.CallerScope = &scope
 	}
+	if tracker == nil || cleanup {
+		return r.invokeNativeContext(ctx, provider, params)
+	}
+	callbackParent, cancel := context.WithCancel(retainServiceCompletion(ctx))
+	input := ToolExecuteInput{}
+	if toolScope != nil {
+		input = *toolScope
+	}
+	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, input, toolScope != nil)
+	r.mu.Lock()
+	r.executions[executionID] = &serviceExecution{
+		ctx: callbackCtx, cancel: cancel, refs: 1,
+		participants: map[string]struct{}{provider.pluginID: {}},
+	}
+	r.mu.Unlock()
 	release := r.releaseExecution(executionID)
 	defer func() {
 		tracker.End(executionID)
 		cancel()
-		release()
+		invokeErr = errors.Join(invokeErr, release())
 	}()
 	params.ExecutionID = executionID
-	return provider.invoker.InvokeService(callbackCtx, params)
+	return r.invokeNativeContext(callbackCtx, provider, params)
+}
+
+// Caller resources are effects owned by the provider lifecycle, bounded also
+// by their originating invocation. Repeated callbacks share one lifetime.
+func (r *ServiceRegistry) bindCallerScope(provider string, scope *ExecutionScope) *HostServiceError {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retiringProviders[provider] {
+		return &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
+	}
+	key := callerScopeKey{provider: provider, execution: scope.ID}
+	resource := r.callerScopes[key]
+	if resource == nil {
+		ctx, cancel := context.WithCancel(scope.Context)
+		resource = &callerScopeResource{ctx: ctx, cancel: cancel}
+		if r.callerScopes == nil {
+			r.callerScopes = make(map[callerScopeKey]*callerScopeResource)
+		}
+		r.callerScopes[key] = resource
+		context.AfterFunc(ctx, func() {
+			r.mu.Lock()
+			if r.callerScopes[key] == resource {
+				delete(r.callerScopes, key)
+			}
+			r.mu.Unlock()
+		})
+	}
+	scope.Context = resource.ctx
+	return nil
+}
+
+func (r *ServiceRegistry) cancelCallerScopes(provider string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, resource := range r.callerScopes {
+		if provider == "" || key.provider == provider {
+			delete(r.callerScopes, key)
+			resource.cancel()
+		}
+	}
+}
+
+// providerKeyLocked uses the consumer's explicit binding even when its target
+// was revoked. Only the absence of a scoped selection permits the global route.
+// The same key is captured by dispatch, admission, dependencies and scopes.
+func (r *ServiceRegistry) providerKeyLocked(consumer string, key serviceKey) serviceKey {
+	scoped := serviceKey{consumer: consumer, name: key.name, major: key.major}
+	if _, selected := r.bindings[scoped]; selected {
+		return scoped
+	}
+	return serviceKey{name: key.name, major: key.major}
 }
 
 // HasProvider reports whether a provider exists for (name, major).
 func (r *ServiceRegistry) HasProvider(name string, major int) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.providers[serviceKey{name: strings.TrimSpace(name), major: major}]
-	return ok
+	return r.HasProviderFor("", name, major)
+}
+
+// HasProviderFor probes the same binding used by this consumer's calls. A
+// missing explicit scoped target never probes the global implementation.
+func (r *ServiceRegistry) HasProviderFor(consumer, name string, major int) bool {
+	_, found := r.ProviderPluginIDFor(consumer, name, major)
+	return found
 }
 
 // ProviderPluginID reports which plugin provides one service major, so
-// kernel-side resolution can stamp execution ownership (remote drivers).
+// callers can attribute resources to the selected implementation.
 func (r *ServiceRegistry) ProviderPluginID(name string, major int) (string, bool) {
+	return r.ProviderPluginIDFor("", name, major)
+}
+
+// ProviderPluginIDFor reports the same explicit route used by an authenticated
+// consumer's calls. This is attribution only; it grants no invocation authority.
+func (r *ServiceRegistry) ProviderPluginIDFor(consumer, name string, major int) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	provider, ok := r.providers[serviceKey{name: strings.TrimSpace(name), major: major}]
+	key := r.providerKeyLocked(consumer, serviceKey{name: strings.TrimSpace(name), major: major})
+	provider, ok := r.providers[key]
 	if !ok {
 		return "", false
 	}
 	return provider.pluginID, true
+}
+
+// ServiceDescriptorFor returns an owned copy of the selected route's contract.
+// Diagnostic snapshots may also contain other consumers' explicit routes.
+func (r *ServiceRegistry) ServiceDescriptorFor(consumer, name string, major int) (ServiceDescriptor, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	key := r.providerKeyLocked(consumer, serviceKey{name: name, major: major})
+	provider, found := r.providers[key]
+	descriptor := provider.descriptor
+	descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
+	return descriptor, found
 }
 
 // ProviderMajors returns the provided majors for one service name, for
@@ -535,7 +856,7 @@ func (r *ServiceRegistry) ProviderMajors(name string) []int {
 	name = strings.TrimSpace(name)
 	var majors []int
 	for key := range r.providers {
-		if key.name == name {
+		if key.consumer == "" && key.name == name {
 			majors = append(majors, key.major)
 		}
 	}
@@ -566,7 +887,21 @@ func (r *ServiceRegistry) CheckSatisfaction(requirements []ServiceRequirement) e
 // Authority is exactly the consumer's explicit declaration captured during
 // initialize; the not-authorized check runs before existence checks so an
 // undeclared consumer cannot probe which services exist.
-func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, params ServiceCallParams) (json.RawMessage, *HostServiceError) {
+func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, params ServiceCallParams) (result json.RawMessage, callErr *HostServiceError) {
+	return r.call(ctx, consumerPluginID, params, nil)
+}
+
+// toolScope is a host-only delegation; no wire field can grant it.
+func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, params ServiceCallParams, toolScope *ToolExecuteInput) (result json.RawMessage, callErr *HostServiceError) {
+	if params.ExecutionID == "" {
+		if marker, ok := ctx.Value(nativeInvocationKey{}).(*nativeInvocation); ok {
+			if marker.registry != r || marker.owner != consumerPluginID {
+				return nil, &HostServiceError{Code: "service_not_authorized", Message: "native callback identity does not match service caller"}
+			}
+			params.ExecutionID = marker.executionID
+			ctx = context.WithValue(ctx, inheritedInvocationKey{}, marker)
+		}
+	}
 	service := strings.TrimSpace(params.Service)
 	method := strings.TrimSpace(params.Method)
 	if service == "" || method == "" {
@@ -596,6 +931,7 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 	}
 	key.major = *declaredMajor
 	r.mu.RLock()
+	key = r.providerKeyLocked(consumerPluginID, key)
 	provider, found := r.providers[key]
 	nameExists := false
 	if !found {
@@ -613,41 +949,55 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		}
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, key.major, r.ProviderMajors(service))}
 	}
-	if !active && !provider.kernel && !continuation {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s is unavailable during generation prepare", service)}
+	r.mu.RLock()
+	preparing := r.preparing[consumerPluginID]
+	if execution := r.executions[params.ExecutionID]; execution != nil {
+		if _, participant := execution.participants[consumerPluginID]; participant {
+			inherited, _ := execution.ctx.Value(servicePreparationKey{}).(bool)
+			preparing = preparing || inherited
+		}
 	}
-	methodDeclared := false
+	r.mu.RUnlock()
+	if preparing {
+		ctx = context.WithValue(ctx, servicePreparationKey{}, true)
+	}
+	methodDeclared, preparationMethod, cleanupMethod := false, false, false
 	for _, declared := range provider.descriptor.Methods {
 		if declared.Name == method {
-			methodDeclared = true
+			methodDeclared, preparationMethod, cleanupMethod = true, declared.Preparation, declared.Cleanup
 			break
 		}
 	}
 	if !methodDeclared {
 		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
 	}
-	if state := provider.invoker.Status().State; state != StateActive && !(provider.kernel && !active) {
+	if params.Cleanup && (!cleanupMethod || params.ExecutionID != "") {
+		return nil, &HostServiceError{Code: "invalid_cleanup", Message: "cleanup requires a declared resource-release method and no borrowed execution identity"}
+	}
+	if preparing && !preparationMethod || !active && !preparing && !continuation {
+		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s method %q is unavailable during generation prepare", service, method)}
+	}
+	if state := provider.invoker.Status().State; state != StateActive && !(preparing && state == StatePrepared) {
 		go r.notifyConsumers(context.Background(), key, "provider_unavailable")
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
 	}
-	// A cancelled foreground or background callback must still be able to
-	// release its generation-owned lock through its unscoped lifecycle host.
-	// This grants cleanup only, never another acquisition or execution scope.
-	if provider.kernel && service == KernelFileLockService && method == "release" {
+	// Providers declare resource-release methods independently of transport.
+	// Cleanup grants no new execution or tool authority.
+	if cleanupMethod {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
-	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || provider.kernel)
+	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || preparing)
 	if executionErr != nil {
 		return nil, executionErr
 	}
-	defer release()
+	defer func() { callErr = serviceCompletionError(callErr, release()) }()
 	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
 		Caller:      consumerPluginID,
 		Params:      params.Params,
 		ExecutionID: executionID,
-	})
+	}, toolScope)
 	if err != nil {
 		var hostErr *HostServiceError
 		if errors.As(err, &hostErr) && hostErr.Code != "" {
@@ -669,78 +1019,15 @@ func (r *ServiceRegistry) RouteServiceCall(ctx context.Context, pluginID string,
 	return r.Call(ctx, pluginID, params)
 }
 
-// CallProvider is the kernel-caller entry point: the kernel itself is the
-// authority and needs no consumer declaration, but provider existence,
-// activation state, and the declared method set are still enforced, and the
-// execution id rides the invoke so long-lived kernel-initiated calls (loop
-// drivers) cancel through the execution plane.
-func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, major int, method string, params json.RawMessage, executionID string) (json.RawMessage, *HostServiceError) {
-	service = strings.TrimSpace(service)
-	method = strings.TrimSpace(method)
-	if service == "" || method == "" {
-		return nil, &HostServiceError{Code: "invalid_request", Message: "kernel service call requires non-empty service and method"}
-	}
-	key := serviceKey{name: service, major: major}
-	r.mu.RLock()
-	provider, found := r.providers[key]
-	active := r.active
-	r.mu.RUnlock()
-	if !found {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, major, r.ProviderMajors(service))}
-	}
-	continuation := r.executionContinuation(executionID, "kernel")
-	if !active && !provider.kernel && !continuation {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s is unavailable during generation prepare", service)}
-	}
-	methodDeclared := false
-	for _, declared := range provider.descriptor.Methods {
-		if declared.Name == method {
-			methodDeclared = true
-			break
-		}
-	}
-	if !methodDeclared {
-		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
-	}
-	if state := provider.invoker.Status().State; state != StateActive && !(provider.kernel && !active) {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
-	}
-	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, executionID, "kernel", key, provider.pluginID, active || provider.kernel)
-	if executionErr != nil {
-		return nil, executionErr
-	}
-	defer release()
-	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
-		Service:     service,
-		Method:      method,
-		Caller:      "kernel",
-		Params:      params,
-		ExecutionID: executionID,
-	})
-	if err != nil {
-		var hostErr *HostServiceError
-		if errors.As(err, &hostErr) && hostErr.Code != "" {
-			return nil, hostErr
-		}
-		var remoteErr *remoteCallError
-		if errors.As(err, &remoteErr) && remoteErr.code != "" {
-			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
-		}
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s call failed: %v", service, err)}
-	}
-	if len(result) == 0 || !json.Valid(result) {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider returned an invalid result", service)}
-	}
-	return result, nil
-}
-
 // ServiceRegistryEntry describes one provided service in a registry snapshot.
 type ServiceRegistryEntry struct {
-	Service  string   `json:"service"`
-	Version  string   `json:"version"`
-	Provider string   `json:"provider"`
-	Kernel   bool     `json:"kernel,omitempty"`
-	Methods  []string `json:"methods"`
+	Consumer      string            `json:"consumer,omitempty"`
+	Descriptor    ServiceDescriptor `json:"descriptor"`
+	Service       string            `json:"service"`
+	Version       string            `json:"version"`
+	Provider      string            `json:"provider"`
+	Methods       []string          `json:"methods"`
+	BindingSource string            `json:"binding_source"`
 }
 
 // ServiceRegistrySnapshot is the machine-readable answer to "which services
@@ -748,8 +1035,54 @@ type ServiceRegistryEntry struct {
 // registration metadata only — never configuration values, credentials, or
 // another plugin's private data.
 type ServiceRegistrySnapshot struct {
-	Generation uint64                 `json:"generation"`
-	Services   []ServiceRegistryEntry `json:"services"`
+	// GraphGeneration identifies this immutable runtime, independently of the
+	// mutable catalog epoch shared by concurrent and retained compositions.
+	GraphGeneration string `json:"graph_generation,omitempty"`
+	// Dependencies retain the lifecycle graph after provider retirement.
+	Dependencies map[string][]Dependency `json:"dependencies"`
+	// Requirements include unresolved optional and required declarations.
+	Requirements map[string][]ServiceRequirement `json:"requirements"`
+	Generation   uint64                          `json:"generation"`
+	Services     []ServiceRegistryEntry          `json:"services"`
+	Composition  *CompositionSnapshot            `json:"composition,omitempty"`
+}
+
+// CompositionSnapshot records selected modules without exposing configuration
+// values. Version is the package version, or product build for native modules.
+// Declarative-only packages have no runtime State.
+type CompositionSnapshot struct {
+	Profile      string                      `json:"profile,omitempty"`
+	ModuleSource string                      `json:"module_source"`
+	Layers       []string                    `json:"layers,omitempty"`
+	Modules      []CompositionModuleSnapshot `json:"modules"`
+}
+
+type CompositionModuleSnapshot struct {
+	Renderer *RendererActivationSnapshot `json:"renderer,omitempty"`
+	ID       string                      `json:"id"`
+	Source   string                      `json:"source"`
+	Version  string                      `json:"version,omitempty"`
+	State    State                       `json:"state,omitempty"`
+	Error    string                      `json:"error,omitempty"`
+}
+
+// SetGraphGeneration binds the runtime identity before effectful activation.
+// A retained registry keeps this identity even after the catalog epoch changes.
+func (r *ServiceRegistry) SetGraphGeneration(identity string) {
+	r.mu.Lock()
+	r.graphGeneration = identity
+	r.mu.Unlock()
+}
+
+// SetComposition binds diagnostic metadata before candidate preparation.
+// Runtime states come from the owning Host's authoritative lifecycle graph.
+func (r *ServiceRegistry) SetComposition(snapshot CompositionSnapshot) {
+	snapshot.Layers = append([]string(nil), snapshot.Layers...)
+	snapshot.Modules = append([]CompositionModuleSnapshot{}, snapshot.Modules...)
+	sort.Slice(snapshot.Modules, func(i, j int) bool { return snapshot.Modules[i].ID < snapshot.Modules[j].ID })
+	r.mu.Lock()
+	r.composition = &snapshot
+	r.mu.Unlock()
 }
 
 // Snapshot returns a deterministic view of the currently registered
@@ -757,29 +1090,73 @@ type ServiceRegistrySnapshot struct {
 // registry itself is generation-scoped but does not own the durable epoch.
 func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	var composition *CompositionSnapshot
+	if r.composition != nil {
+		copy := *r.composition
+		copy.Layers = append([]string(nil), copy.Layers...)
+		copy.Modules = append([]CompositionModuleSnapshot{}, copy.Modules...)
+		composition = &copy
+		for i := range composition.Modules {
+			composition.Modules[i].Renderer = r.rendererSnapshot(composition.Modules[i].ID)
+		}
+	}
+	graphGeneration := r.graphGeneration
+	moduleStatuses := r.moduleStatuses
+	dependencies := r.dependencies
+	requirements := make(map[string][]ServiceRequirement, len(r.requirements))
+	for id, declared := range r.requirements {
+		requirements[id] = append([]ServiceRequirement{}, declared...)
+	}
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))
-	for _, provider := range r.providers {
+	for route, provider := range r.providers {
 		methods := make([]string, 0, len(provider.descriptor.Methods))
 		for _, method := range provider.descriptor.Methods {
 			methods = append(methods, method.Name)
 		}
 		sort.Strings(methods)
+		source := "unique-provider"
+		if selectedSource := r.bindingSources[route]; selectedSource != "" {
+			source = selectedSource
+		}
+		descriptor := provider.descriptor
+		descriptor.Methods = append([]ServiceMethodDescriptor{}, descriptor.Methods...)
+		sort.Slice(descriptor.Methods, func(i, j int) bool { return descriptor.Methods[i].Name < descriptor.Methods[j].Name })
 		entries = append(entries, ServiceRegistryEntry{
-			Service:  provider.descriptor.Name,
-			Version:  provider.descriptor.Version,
-			Provider: provider.pluginID,
-			Kernel:   provider.kernel,
-			Methods:  methods,
+			Consumer:      route.consumer,
+			Descriptor:    descriptor,
+			Service:       provider.descriptor.Name,
+			Version:       provider.descriptor.Version,
+			Provider:      provider.pluginID,
+			Methods:       methods,
+			BindingSource: source,
 		})
+	}
+	r.mu.RUnlock()
+	if composition != nil && moduleStatuses != nil {
+		statuses := make(map[string]Status)
+		for _, status := range moduleStatuses() {
+			statuses[status.ID] = status
+		}
+		for index := range composition.Modules {
+			module := &composition.Modules[index]
+			status := statuses[module.ID]
+			module.State, module.Error = status.State, status.Error
+		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Service != entries[j].Service {
 			return entries[i].Service < entries[j].Service
 		}
-		return entries[i].Version < entries[j].Version
+		if entries[i].Version != entries[j].Version {
+			return entries[i].Version < entries[j].Version
+		}
+		return entries[i].Consumer < entries[j].Consumer
 	})
-	return ServiceRegistrySnapshot{Generation: generation, Services: entries}
+	graph := make(map[string][]Dependency)
+	if dependencies != nil {
+		graph = dependencies()
+	}
+	return ServiceRegistrySnapshot{GraphGeneration: graphGeneration, Generation: generation, Services: entries, Composition: composition, Dependencies: graph, Requirements: requirements}
 }
 
 // notifyConsumers delivers service.changed to every consumer of (name,
@@ -788,7 +1165,10 @@ func (r *ServiceRegistry) notifyConsumers(ctx context.Context, key serviceKey, r
 	r.mu.RLock()
 	targets := make([]ServiceChangedNotifier, 0, len(r.consumers))
 	for consumerID, requirements := range r.consumers {
-		if _, ok := requirements[key]; !ok {
+		if r.providerKeyLocked(consumerID, key) != key {
+			continue
+		}
+		if _, ok := requirements[serviceKey{name: key.name, major: key.major}]; !ok {
 			continue
 		}
 		if notifier, ok := r.notifiers[consumerID]; ok {

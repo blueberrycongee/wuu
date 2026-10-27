@@ -14,6 +14,7 @@ import (
 )
 
 func TestConfigModelCatalogRefreshRPC(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Cleanup(func() { _ = modelcatalog.UseEmbedded() })
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
@@ -40,9 +41,9 @@ func TestConfigModelCatalogRefreshRPC(t *testing.T) {
     }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server := New(&runtime.Session{
-		WuuHome: wuuHome, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile,
-	}, &out)
+	rt := &runtime.Session{WuuHome: wuuHome, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile}
+	bindConfigSourceForTest(t, rt)
+	server := New(rt, &out)
 	defer server.Close()
 	server.modelCatalogURL = upstream.URL
 	server.modelCatalogHTTPClient = upstream.Client()
@@ -75,9 +76,9 @@ func TestConfigModelCatalogRefreshRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	var restartedOut bytes.Buffer
-	restarted := New(&runtime.Session{
-		WuuHome: wuuHome, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile,
-	}, &restartedOut)
+	restartedRuntime := &runtime.Session{WuuHome: wuuHome, ConfigPath: configPath, ConfigLoadMode: runtime.ConfigLoadFile}
+	bindConfigSourceForTest(t, restartedRuntime)
+	restarted := New(restartedRuntime, &restartedOut)
 	defer restarted.Close()
 	cached, ok := modelcatalog.ProviderByID("openai")
 	if !ok {

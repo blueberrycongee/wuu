@@ -21,7 +21,7 @@ func (j *adapterJournal) PrepareOperation(record providers.InferenceOperationJou
 	return nil
 }
 func (*adapterJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error { return nil }
-func (*adapterJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (*adapterJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (*adapterJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error { return nil }

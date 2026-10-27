@@ -1,29 +1,33 @@
 export async function activate(api) {
   const h = api.react.createElement;
 
-  api.registerInspectorSection({
+  api.registerUIContribution({
     id: "current-todo",
-    title: "TODO",
-    priority: 10,
-    when(snapshot) {
-      return Array.isArray(snapshot.todo?.items) && snapshot.todo.items.length > 0;
-    },
-    render({ snapshot }) {
-      return renderTodos(h, snapshot.todo?.items);
+    target: "wuu.default-shell/inspector.sections",
+    order: 10,
+    render({ context }) {
+      const items = context.snapshot.todo?.items;
+      if (!items?.length) return null;
+      return h("section", { className: "plugin-inspector-section", "data-plugin-id": api.pluginId, "data-plugin-generation": api.generation },
+        h("h2", null, "TODO"),
+        h("div", { className: "plugin-inspector-section-content" }, renderTodos(h, items)));
     },
   });
 
-  api.registerPresenter({
-    id: "todo-tool",
-    target: "conversation.tool-activity",
-    key: "todo",
-    mode: "replace",
-    priority: 20,
-    render({ snapshot, fallback }) {
-      const items = parseTodos(snapshot.argumentsText);
-      return items ? renderTodos(h, items) : fallback;
-    },
-  });
+  for (const owner of ["wuu.default-conversation", "wuu.default-preview"]) {
+    api.registerUIContribution({
+      id: `todo-tool-${owner}`,
+      target: `${owner}/conversation.tool-activity`,
+      mode: "wrap",
+      order: 20,
+      render({ context, children }) {
+        const snapshot = context.snapshot;
+        if ((snapshot.capability ?? snapshot.toolName) !== "todo") return children;
+        const items = parseTodos(snapshot.argumentsText);
+        return items ? renderTodos(h, items) : children;
+      },
+    });
+  }
 
   api.registerCSSSnippet({
     id: "todo-layout",

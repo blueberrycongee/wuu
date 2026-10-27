@@ -9,6 +9,5 @@
   "minimumWuuVersion": "2026.10.19",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
-  "contributes": { "slots": [{ "id": "monitor-tasks", "target": "composer.above", "order": 30, "title": "Monitors" }] },
   "interface": { "displayName": "Monitor", "shortDescription": "Follow background events without blocking the conversation.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read", "Write"] }
 }

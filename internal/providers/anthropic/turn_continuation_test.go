@@ -84,8 +84,8 @@ func TestMessagesTurnContinuation(t *testing.T) {
 				if !streaming {
 					api = continuationChatOnly{client}
 				}
-				runner := &agent.Runner{Client: api, Model: "test", MaxSteps: 3}
-				result, err := runner.RunWithUsage(context.Background(), "hello", nil)
+				runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "test", MaxSteps: 3}
+				result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "hello"}}, nil)
 				wantRequests, wantContent := int32(1), tc.content
 				if tc.continueTurn {
 					wantRequests, wantContent = 2, "final answer"

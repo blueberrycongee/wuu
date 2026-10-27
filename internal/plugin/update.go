@@ -26,6 +26,7 @@ var (
 // plugin discovery roots. Package.SourcePath points to the private staged copy,
 // not to the caller's original package.
 type PendingUpdate struct {
+	SourceIdentity    string            `json:"source_identity,omitempty"`
 	Package           PackageInspection `json:"package"`
 	ActiveFingerprint string            `json:"active_fingerprint"`
 	Path              string            `json:"path"`
@@ -40,6 +41,7 @@ type PendingUpdateRemoval struct {
 }
 
 type pendingUpdateMetadata struct {
+	SourceIdentity    string            `json:"source_identity,omitempty"`
 	Package           PackageInspection `json:"package"`
 	ActiveFingerprint string            `json:"active_fingerprint"`
 }
@@ -53,6 +55,11 @@ func StagePackageUpdate(wuuHome, source string) (PendingUpdate, error) {
 	pendingUpdatesMu.Lock()
 	defer pendingUpdatesMu.Unlock()
 
+	identity, err := PackageSourceIdentity(source)
+	if err != nil {
+		return PendingUpdate{}, err
+	}
+	source = identity
 	root, err := pendingUpdatesRoot(wuuHome)
 	if err != nil {
 		return PendingUpdate{}, err
@@ -124,6 +131,7 @@ func StagePackageUpdate(wuuHome, source string) (PendingUpdate, error) {
 	inspection.SourcePath = destinationPackagePath(destination)
 	inspection.ArchiveRoot = filepath.ToSlash(archiveRoot)
 	metadata := pendingUpdateMetadata{
+		SourceIdentity:    identity,
 		Package:           inspection,
 		ActiveFingerprint: active.Fingerprint,
 	}
@@ -488,6 +496,7 @@ func readPendingUpdateAt(wuuHome, root, id string) (PendingUpdate, error) {
 	}
 	metadata.Package.SourcePath = packageRoot
 	return PendingUpdate{
+		SourceIdentity:    metadata.SourceIdentity,
 		Package:           metadata.Package,
 		ActiveFingerprint: metadata.ActiveFingerprint,
 		Path:              destination,

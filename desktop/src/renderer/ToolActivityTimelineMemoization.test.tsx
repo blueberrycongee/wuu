@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -60,9 +61,9 @@ describe("ToolActivityTimeline memoization", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     act(() => root?.render(
-      <I18nProvider preferenceStore={preferenceStore}>
+      <ConversationControlsTestProvider>{<I18nProvider preferenceStore={preferenceStore}>
         <ToolActivityTimeline items={items} />
-      </I18nProvider>,
+      </I18nProvider>}</ConversationControlsTestProvider>,
     ));
     expect(container.textContent).toContain(display.label);
     act(() => changeLanguage?.("zh-CN"));
@@ -75,7 +76,7 @@ describe("ToolActivityTimeline memoization", () => {
     const second = readTool("tool-2", "second.ts", "completed");
     const third = readTool("tool-3", "third.ts", "in_progress");
     const render = (items: ThreadItem[]): void => {
-      root?.render(<ToolActivityTimeline items={items} streaming />);
+      root?.render(<ConversationControlsTestProvider>{<ToolActivityTimeline items={items} streaming />}</ConversationControlsTestProvider>);
     };
 
     container = document.createElement("div");

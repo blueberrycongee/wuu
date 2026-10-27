@@ -9,10 +9,5 @@
   "minimumWuuVersion": "0.1.0",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
   "desktop": { "entry": "desktop.js" },
-  "contributes": {
-    "presenters": [
-      { "id": "todo-tool", "target": "conversation.tool-activity", "mode": "replace", "priority": 20, "title": "TODO update" }
-    ]
-  },
   "interface": { "displayName": "TODO", "shortDescription": "Track a visible task checklist.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
-const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/automation/desktop.js"), "utf8");
+const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/automation-client/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 const task = { id: "one", title: "Review", prompt: "Review recent changes", cron: "0 9 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "worktree", next_run_at: "2026-09-16T01:00:00Z" };
 const cleanups: Array<() => void> = [];
@@ -18,16 +18,20 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; mutate?
     if (method === "automation.run.list") return { runs: options.runs || [] };
     return options.mutate ? options.mutate(input) : { ...task, ...(input as object), id: "one" };
   });
-  const host = new PluginHost({ react: React, invokeRuntime: invoke,
+  const host = new PluginHost({ react: React, invokeRuntime: request => {
+    expect(request).toMatchObject({ pluginId: "automation-client", generation: "one", graphGeneration: "selected-graph", service: "automation.scheduler", method: "request" });
+    const { method, input } = request.input as { method: string; input?: unknown };
+    return invoke({ ...request, method, input });
+  },
     listWorkspaces: async () => ({ activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }),
     listThreads: async () => [{ id: "chat", title: "Existing investigation", pinned: true }],
   });
-  await host.activateGeneration({ pluginId: "automation", generation: "one", register: activate });
+  await host.activateGeneration({ pluginId: "automation-client", generation: "one", graphGeneration: "selected-graph", register: activate });
   const controller = new WorkbenchController(host);
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.disable("automation"); container.remove(); });
-  await act(async () => root.render(<PluginViewContent controller={controller} pluginId="automation" viewTypeId="automation.catalog" />));
+  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.disable("automation-client"); container.remove(); });
+  await act(async () => root.render(<PluginViewContent controller={controller} pluginId="automation-client" viewTypeId="automation.catalog" />));
   const click = async (text: string) => {
     const button = [...container.querySelectorAll("button")].find(item => item.textContent === text || item.getAttribute("aria-label") === text);
     expect(button, text).toBeDefined(); await act(async () => button!.click());

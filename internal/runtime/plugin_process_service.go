@@ -16,7 +16,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// Only the host's tool dispatcher can supply a conversation-bound toolkit.
+// Legacy native dispatch carries an existing Toolkit; convert only that
+// explicit native context to the common process scope. External dispatch
+// supplies pluginProcessScopeKey directly and never creates a Toolkit.
 type pluginProcessToolkitKey struct{}
 
 type pluginProcessStart struct {
@@ -34,7 +36,6 @@ type pluginProcessDelivery struct {
 
 type pluginProcess struct {
 	manager            *proc.Manager
-	toolkit            *tools.Toolkit
 	id, key, sessionID string
 	input              pluginProcessStart
 	cancel             func() bool
@@ -117,9 +118,10 @@ type processServiceInvoker struct{ parent *kernelHostServices }
 func (k *processServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *processServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
 func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	ctx, releaseState := k.parent.captureInvocationState(ctx)
+	defer releaseState()
 	k.parent.mu.RLock()
 	s := k.parent.services[params.Caller]
-	executions := k.parent.executions
 	k.parent.mu.RUnlock()
 	if s == nil {
 		return nil, serviceError("service_unavailable", "process owner is unavailable")
@@ -142,16 +144,30 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if input.Key == "" || len(input.Key) > 128 || input.Command == "" || len(input.Command) > 64*1024 || input.TimeoutMS < 0 || input.TimeoutMS > int64((1<<63-1)/time.Millisecond) {
 			return nil, serviceError("invalid_params", "start requires a key, a command within 64 KiB and a non-negative timeout_ms")
 		}
-		if executions == nil {
-			return nil, serviceError("service_unavailable", "tool execution is unavailable")
-		}
-		scope, scopeErr := executions.ResolveToolExecution(params.Caller, params.ExecutionID)
+		scope, scopeErr := params.CallerExecution(true)
 		if scopeErr != nil {
 			return nil, scopeErr
 		}
-		kit, ok := scope.Context.Value(pluginProcessToolkitKey{}).(*tools.Toolkit)
-		if !ok {
-			return nil, serviceError("invalid_execution_scope", "process start requires a conversation tool execution")
+		processScope, _ := scope.Context.Value(pluginProcessScopeKey{}).(*tools.ProcessScope)
+		if processScope == nil {
+			if kit, ok := scope.Context.Value(pluginProcessToolkitKey{}).(*tools.Toolkit); ok {
+				var err error
+				processScope, err = kit.PluginProcessScope()
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if processScope == nil {
+			return nil, serviceError("invalid_execution_scope", "process start requires host process authority")
+		}
+		actorID := scope.ActorID
+		if actorID == "" {
+			actorID = scope.ThreadID
+		}
+		processScope, bindErr := processScope.Bind(scope.ThreadID, actorID, scope.CWD)
+		if bindErr != nil {
+			return nil, serviceError("invalid_execution_scope", bindErr.Error())
 		}
 		if err := scope.Context.Err(); err != nil {
 			return nil, err
@@ -184,15 +200,25 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if running >= 64 {
 			return nil, serviceError("limit_exceeded", "at most 64 extension processes may run")
 		}
+		binding, err := RetainInvocationState(ctx)
+		if err != nil {
+			return nil, err
+		}
+		watchStarted := false
+		defer func() {
+			if !watchStarted {
+				_ = binding.Close()
+			}
+		}()
 		startCtx, cancel := context.WithCancel(scope.Context)
 		stopTransport := context.AfterFunc(ctx, cancel)
 		stopGeneration := context.AfterFunc(generation, cancel)
 		defer func() { stopTransport(); stopGeneration(); cancel() }()
-		started, manager, err := kit.StartPluginProcess(startCtx, input.Command, input.CWD)
+		started, manager, err := processScope.Start(startCtx, input.Command, input.CWD)
 		if err != nil {
 			return nil, err
 		}
-		p := &pluginProcess{manager: manager, toolkit: kit, id: started.ID, key: key, sessionID: scope.SessionID, input: input}
+		p := &pluginProcess{manager: manager, id: started.ID, key: key, sessionID: scope.SessionID, input: input}
 		if err := startCtx.Err(); err != nil {
 			_, stopErr := p.stop("requested_stop")
 			return nil, errors.Join(err, stopErr)
@@ -213,7 +239,11 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 			s.processes = make(map[string]*pluginProcess)
 		}
 		s.processes[p.id] = p
-		go p.watchSession(generation, s.turnRouter)
+		watchStarted = true
+		go func() {
+			defer binding.Close()
+			p.watchSession(WithInvocationState(generation, binding), s.turnRouter)
+		}()
 		return processServiceSnapshot(p)
 	}
 	var input struct {
@@ -323,7 +353,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 			NextOffset int64  `json:"next_offset"`
 			TotalBytes int64  `json:"total_bytes"`
 			Truncated  bool   `json:"truncated"`
-		}{status, p.toolkit.RedactProcessOutput(out.Output), out.EndOffset, out.TotalBytes, out.Truncated})
+		}{status, tools.RedactToolOutput(out.Output), out.EndOffset, out.TotalBytes, out.Truncated})
 	default:
 		return nil, serviceError("method_not_found", fmt.Sprintf("unknown process method %q", params.Method))
 	}
@@ -351,5 +381,5 @@ func processServiceStatus(p *pluginProcess, current *proc.Process) any {
 		ExitCode  int         `json:"exit_code"`
 		Reason    string      `json:"reason,omitempty"`
 		Error     string      `json:"error,omitempty"`
-	}{p.id, sessionID, current.Status, current.ExitCode, reason, p.toolkit.RedactProcessOutput(current.LastError)}
+	}{p.id, sessionID, current.Status, current.ExitCode, reason, tools.RedactToolOutput(current.LastError)}
 }

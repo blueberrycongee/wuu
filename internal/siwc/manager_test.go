@@ -61,9 +61,10 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f := &fixture{t: t, key: key, client: "oaiapp_first", subject: "subject-one", scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"}
+	// Drain HTTP handlers before removing the registration and credential files.
+	root := t.TempDir()
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
-	root := t.TempDir()
 	f.config = Config{StateDir: filepath.Join(root, "siwc"), Credentials: credentialstore.NewFileStore(filepath.Join(root, "credentials.json")), Issuer: f.server.URL, HTTPClient: f.server.Client()}
 	f.manager, err = New(f.config)
 	if err != nil {
@@ -86,9 +87,6 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]string{"kty": "RSA", "kid": "fixture", "alg": "RS256", "use": "sig", "n": base64.RawURLEncoding.EncodeToString(f.key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(f.key.E)).Bytes())}}})
 	case "/token":
 		_ = r.ParseForm()
-		if f.beforeToken != nil {
-			f.beforeToken(r.Form)
-		}
 		if r.Form.Get("client_id") != f.client || r.Form.Get("resource") != "https://api.openai.com/v1" {
 			f.t.Errorf("token identity/resource mismatch: %v", r.Form)
 		}
@@ -106,6 +104,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			if r.Form.Get("refresh_token") != fmt.Sprintf("refresh-%d", n-1) || r.Form.Has("scope") {
 				f.t.Errorf("refresh rotation or scope mismatch: %v", r.Form)
 			}
+		}
+		if f.beforeToken != nil {
+			f.beforeToken(r.Form)
 		}
 		if f.tokenError != "" {
 			status := f.tokenStatus
@@ -481,6 +482,9 @@ func TestProtocolCallbackIsSingleUseAndCancellationFencesPersistence(t *testing.
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	// Cancelling the exchange releases its caller before the token handler
+	// finishes. Join that handler before inspecting the final persisted state.
+	f.server.Close()
 	account, err := f.manager.Account(context.Background(), f.client)
 	if err != nil || account.Connected {
 		t.Fatalf("cancelled exchange persisted tokens: %+v %v", account, err)

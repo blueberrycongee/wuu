@@ -10,7 +10,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -19,10 +18,10 @@ func TestServerThreadListReconcilesTerminalWorkerSnapshot(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StateDir = filepath.Join(rt.RootDir, ".wuu", "state")
 	rootID := "root-with-interrupted-child"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, rootID, 2, "root summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex(rootID, 2, "root summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,7 +84,10 @@ func TestServerThreadListReconcilesTerminalWorkerSnapshot(t *testing.T) {
 	if status := result.Threads[0].ChildAgents[0].Status; status != string(agentthread.StatusCancelled) {
 		t.Fatalf("child status = %q, want cancelled", status)
 	}
-	threads, err := store.ListThreads()
+	// Reconciliation migrates legacy snapshots into the selected document store;
+	// the retired file store is not the write authority.
+	selected := agentthread.NewDocumentStore(testRuntimeState(t, rt).Documents, rootID, store.Dir())
+	threads, err := selected.ListThreads()
 	if err != nil {
 		t.Fatalf("list reconciled thread store: %v", err)
 	}

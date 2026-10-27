@@ -1,3 +1,6 @@
+import { RuntimeInitializationObservation, type InitializationRecovery } from "./runtimeInitializationObservation";
+import type { PageContextApi } from "../shared/pageContext";
+import type { ApplicationDesktopContextMenuV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
@@ -27,7 +30,11 @@ import {
   type WuuDesktopApi,
 } from "../shared/protocol";
 
+import type { ChromeOverlayApi, ChromeOverlayEvent } from "../shared/chromeOverlay";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import type { WebWorkspaceApi, WebWorkspaceState } from "../shared/webWorkspace";
+import type { WebWorkspaceDownloadState } from "../shared/webWorkspaceDownloads";
+import type { WebWorkspaceLibraryState } from "../shared/webWorkspaceLibrary";
 import { initializeDesktopPageZoom, type DesktopZoomAction } from "../shared/DesktopPageZoom";
 
 // Restore shell zoom independently of font preferences.
@@ -145,6 +152,8 @@ try {
   // only costs a one-frame flash at the default size.
 }
 
+const runtimeInitialization = new RuntimeInitializationObservation();
+ipcRenderer.on("wuu:runtime-initialization-recovery", (_event, recovery: InitializationRecovery) => runtimeInitialization.recover(recovery));
 const api: WuuDesktopApi = {
   getDesktopUpdateState: () => ipcRenderer.invoke("wuu:desktop-update-state"),
   downloadDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-download"),
@@ -237,7 +246,15 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:managed-process-resize", threadId, processId, cols, rows),
   stopManagedProcess: (threadId: string, processId: string) =>
     ipcRenderer.invoke("wuu:managed-process-stop", threadId, processId),
-  initialize: () => ipcRenderer.invoke("wuu:initialize"),
+  capturePresentationFrame: () => ipcRenderer.invoke("wuu:presentation-frame"),
+  openRecovery: () => ipcRenderer.invoke("wuu:recovery-open"),
+  onRuntimeInitialization: runtimeInitialization.subscribe,
+  initialize: async () => {
+    const requestId = runtimeInitialization.begin();
+    const initialized = await ipcRenderer.invoke("wuu:initialize", requestId);
+    runtimeInitialization.complete(requestId, initialized);
+    return initialized;
+  },
   listUserQuestions: (threadId?: string) =>
     ipcRenderer.invoke("wuu:user-question-list", threadId),
   answerUserQuestion: (requestId, answer) =>
@@ -302,9 +319,12 @@ const api: WuuDesktopApi = {
   installPluginPackage: () => ipcRenderer.invoke("wuu:plugin-package-install"),
   removePluginPackage: (id: string) =>
     ipcRenderer.invoke("wuu:plugin-package-remove", id),
+  reportPluginDesktopActivation: (params) => ipcRenderer.invoke("wuu:plugin-desktop-activation", params),
   loadPluginDesktopModule: (params) =>
     ipcRenderer.invoke("wuu:plugin-desktop-module-load", params),
   loadPluginIcon: (params) => ipcRenderer.invoke("wuu:plugin-icon-load", params),
+  loadPluginSkinImage: (params) => ipcRenderer.invoke("wuu:plugin-skin-image-load", params),
+  cacheShellImage: (data) => ipcRenderer.invoke("wuu:shell-image-cache", data),
   getPluginSetting: (params) => ipcRenderer.invoke("wuu:plugin-setting-get", params),
   setPluginSetting: (params) => ipcRenderer.invoke("wuu:plugin-setting-set", params),
   getPluginDiagnostics: (params) => ipcRenderer.invoke("wuu:plugin-diagnostics-list", params),
@@ -322,6 +342,12 @@ const api: WuuDesktopApi = {
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
   getUsageOverview: (params: UsageOverviewParams) =>
     ipcRenderer.invoke("wuu:usage-overview", params),
+  readMCPDefinition: (name) => ipcRenderer.invoke("wuu:mcp-definition-read", name),
+  configureMCPServers: (params) => ipcRenderer.invoke("wuu:mcp-configure", params),
+  startMCPLogin: (name) => ipcRenderer.invoke("wuu:mcp-login-start", name),
+  pollMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-poll", loginId),
+  cancelMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-cancel", loginId),
+  cancelMCPAuth: (name, state) => ipcRenderer.invoke("wuu:mcp-auth-cancel", name, state),
   listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>
@@ -412,13 +438,6 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
-  getActivityPreviewAutoShow: () => ipcRenderer.invoke("wuu:activity-preview-auto-show-get"),
-  setActivityPreviewAutoShow: (enabled) => ipcRenderer.invoke("wuu:activity-preview-auto-show-set", enabled),
-  onActivityPreviewAutoShowChange: (handler) => {
-    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) => handler(enabled);
-    ipcRenderer.on("wuu:activity-preview-auto-show-changed", listener);
-    return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
-  },
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),
@@ -473,6 +492,9 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  artifactSourceCapabilities: {strategy: "streaming"},
+  acquireArtifactSource: (params) => ipcRenderer.invoke("wuu:artifact-acquire", params),
+  releaseArtifactSource: (leaseId) => ipcRenderer.invoke("wuu:artifact-release", leaseId),
   showArtifactItemMenu: (params) =>
     ipcRenderer.invoke("wuu:artifact-show-menu", params),
   saveArtifactFile: async (name: string, source: string) => {
@@ -522,6 +544,16 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:respond-server-request", id, result),
   rejectServerRequest: (id: string, message: string) =>
     ipcRenderer.invoke("wuu:reject-server-request", id, message),
+  onPrepareToQuit: (handler) => {
+    const listener = (): void => {
+      void Promise.resolve().then(handler).then(
+        () => ipcRenderer.send("wuu:renderer-shutdown-complete"),
+        (error: unknown) => ipcRenderer.send("wuu:renderer-shutdown-complete", String(error)),
+      );
+    };
+    ipcRenderer.once("wuu:renderer-shutdown", listener);
+    return () => ipcRenderer.removeListener("wuu:renderer-shutdown", listener);
+  },
   onServerEvent: (handler: (event: ServerEvent) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
@@ -577,9 +609,15 @@ const api: WuuDesktopApi = {
   windowMinimize: () => ipcRenderer.invoke("wuu:window-minimize"),
   windowToggleMaximize: () =>
     ipcRenderer.invoke("wuu:window-toggle-maximize") as Promise<boolean>,
+  windowToggleFullScreen: () => ipcRenderer.invoke("wuu:window-toggle-full-screen"),
   windowClose: () => ipcRenderer.invoke("wuu:window-close"),
   windowIsMaximized: () =>
     ipcRenderer.invoke("wuu:window-is-maximized") as Promise<boolean>,
+  windowIsFullScreen: () =>
+    ipcRenderer.invoke("wuu:window-is-full-screen") as Promise<boolean>,
+  windowPointerPosition: () =>
+    ipcRenderer.invoke("wuu:window-pointer-position") as Promise<{ x: number; y: number } | null>,
+  windowSetControls: (state) => ipcRenderer.invoke("wuu:window-set-controls", state),
   onWindowMaximizedChange: (handler: (maximized: boolean) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
@@ -588,6 +626,15 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:window-maximized-changed", listener);
     return () =>
       ipcRenderer.removeListener("wuu:window-maximized-changed", listener);
+  },
+  onWindowFullScreenChange: (handler: (fullscreen: boolean) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      fullscreen: boolean,
+    ) => handler(fullscreen);
+    ipcRenderer.on("wuu:window-full-screen-changed", listener);
+    return () =>
+      ipcRenderer.removeListener("wuu:window-full-screen-changed", listener);
   },
   popOutSession: (params) =>
     ipcRenderer.invoke("wuu:pop-out-session", params),
@@ -709,6 +756,82 @@ browserApi.onBrowserDock = (handler) => {
   return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
 if (!process.argv.includes("--wuu-browser-disabled")) {
+  (api as WuuDesktopApi & { chromeOverlay: ChromeOverlayApi }).chromeOverlay = {
+    show: request => ipcRenderer.invoke("wuu:chrome-overlay-show", request),
+    hide: (token, generation) => ipcRenderer.invoke("wuu:chrome-overlay-hide", token, generation),
+    onEvent: listener => {
+      const receive = (_event: Electron.IpcRendererEvent, message: ChromeOverlayEvent) => listener(message);
+      ipcRenderer.on("wuu:chrome-overlay-event", receive);
+      return () => ipcRenderer.removeListener("wuu:chrome-overlay-event", receive);
+    },
+  };
+  (api as WuuDesktopApi & { webWorkspace: WebWorkspaceApi }).webWorkspace = {
+    reportPopover: (token, bounds) => ipcRenderer.invoke("wuu:web-workspace-popover", token, bounds),
+    onPopoverDismiss: handler => {
+      const listener = (_event: Electron.IpcRendererEvent, token: string) => handler(token);
+      ipcRenderer.on("wuu:web-workspace-popover-dismiss", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-popover-dismiss", listener);
+    },
+    initializeTabs: (destinations) => ipcRenderer.invoke("wuu:web-workspace-tabs-initialize", destinations),
+    open: (destination) => ipcRenderer.invoke("wuu:web-workspace-open", destination),
+    showTooltip: (token, hint) => ipcRenderer.invoke("wuu:web-workspace-tooltip", token, hint),
+    dismissOptions: id => ipcRenderer.invoke("wuu:web-workspace-options-dismiss", id),
+    showOptions: (id, request) => ipcRenderer.invoke("wuu:web-workspace-options", id, request),
+    capture: (id) => ipcRenderer.invoke("wuu:web-workspace-capture", id),
+    onReveal: handler => {
+      const listener = (_event: Electron.IpcRendererEvent, id: string) => handler(id);
+      ipcRenderer.on("wuu:web-workspace-reveal", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-reveal", listener);
+    },
+    supportsWindowInsets: true,
+    reportBounds: (id, bounds) => ipcRenderer.invoke("wuu:web-workspace-bounds", id, bounds),
+    command: (id, command, url) => ipcRenderer.invoke("wuu:web-workspace-command", id, command, url),
+    setShortcutTarget: (id, active) => ipcRenderer.invoke("wuu:web-workspace-shortcut-target", id, active),
+    close: (id) => ipcRenderer.invoke("wuu:web-workspace-close", id),
+    createTab: (id, url) => ipcRenderer.invoke("wuu:web-workspace-tab-create", id, url),
+    selectTab: (id, tabId) => ipcRenderer.invoke("wuu:web-workspace-tab-select", id, tabId),
+    closeTab: (id, tabId) => ipcRenderer.invoke("wuu:web-workspace-tab-close", id, tabId),
+    reopenTab: (id) => ipcRenderer.invoke("wuu:web-workspace-tab-reopen", id),
+    setTabPinned: (id, tabId, pinned) => ipcRenderer.invoke("wuu:web-workspace-tab-pin", id, tabId, pinned),
+    setTabMuted: (id, tabId, muted) => ipcRenderer.invoke("wuu:web-workspace-tab-mute", id, tabId, muted),
+    reorderTabs: (id, tabIds) => ipcRenderer.invoke("wuu:web-workspace-tabs-reorder", id, tabIds),
+    find: (id, text, options) => ipcRenderer.invoke("wuu:web-workspace-find", id, text, options),
+    stopFind: (id) => ipcRenderer.invoke("wuu:web-workspace-stop-find", id),
+    setZoom: (id, factor) => ipcRenderer.invoke("wuu:web-workspace-zoom", id, factor),
+    listDownloads: () => ipcRenderer.invoke("wuu:web-workspace-downloads-list"),
+    downloadCommand: (id, command) => ipcRenderer.invoke("wuu:web-workspace-download-command", id, command),
+    onDownloads: handler => {
+      const listener = (_event: Electron.IpcRendererEvent, items: WebWorkspaceDownloadState[]) => handler(items);
+      ipcRenderer.on("wuu:web-workspace-downloads", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-downloads", listener);
+    },
+    library: {
+      getState: () => ipcRenderer.invoke("wuu:web-workspace-library-get"),
+      setBookmark: (url, title, bookmarked) => ipcRenderer.invoke("wuu:web-workspace-library-bookmark", url, title, bookmarked),
+      removeHistory: id => ipcRenderer.invoke("wuu:web-workspace-library-remove", id),
+      clearHistory: () => ipcRenderer.invoke("wuu:web-workspace-library-clear"),
+      onState: handler => {
+        const listener = (_event: Electron.IpcRendererEvent, state: WebWorkspaceLibraryState) => handler(state);
+        ipcRenderer.on("wuu:web-workspace-library", listener);
+        return () => ipcRenderer.removeListener("wuu:web-workspace-library", listener);
+      },
+    },
+    onFocusFind: handler => {
+      const listener = (_event: Electron.IpcRendererEvent, id: string) => handler(id);
+      ipcRenderer.on("wuu:web-workspace-focus-find", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-focus-find", listener);
+    },
+    onState: (handler) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WebWorkspaceState) => handler(state);
+      ipcRenderer.on("wuu:web-workspace-state", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-state", listener);
+    },
+    onFocusAddress: (handler) => {
+      const listener = (_event: Electron.IpcRendererEvent, target: { id: string; newTabId?: string }) => handler(target.id, target.newTabId);
+      ipcRenderer.on("wuu:web-workspace-focus-address", listener);
+      return () => ipcRenderer.removeListener("wuu:web-workspace-focus-address", listener);
+    },
+  };
   browserApi.listBrowserProfiles = () =>
     ipcRenderer.invoke("wuu:browser-profiles") as Promise<BrowserProfile[]>;
   browserApi.importBrowserCookies = (profilePath) =>
@@ -720,8 +843,19 @@ browserApi.addBrowserExtension = () =>
   ipcRenderer.invoke("wuu:browser-extensions-add") as Promise<BrowserExtensionRecord[]>;
 browserApi.setBrowserExtensionEnabled = (id, enabled) =>
   ipcRenderer.invoke("wuu:browser-extensions-set-enabled", id, enabled) as Promise<BrowserExtensionRecord[]>;
+browserApi.reloadBrowserExtension = (id) =>
+  ipcRenderer.invoke("wuu:browser-extensions-reload", id) as Promise<BrowserExtensionRecord[]>;
+browserApi.openBrowserExtensionOptions = (id) =>
+  ipcRenderer.invoke("wuu:browser-extensions-options", id) as Promise<void>;
 browserApi.removeBrowserExtension = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
+
+(api as WuuDesktopApi & PageContextApi).readPageContext = (id, tabId) => ipcRenderer.invoke("wuu:page-context-read", id, tabId);
+
+(api as WuuDesktopApi & { contextMenu: ApplicationDesktopContextMenuV1 }).contextMenu = {
+  show: request => ipcRenderer.invoke("wuu:context-menu-show", request),
+  dismiss: token => ipcRenderer.invoke("wuu:context-menu-dismiss", token),
+};
 
 contextBridge.exposeInMainWorld("wuu", api);
 

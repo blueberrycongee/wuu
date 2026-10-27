@@ -104,6 +104,10 @@ test-native:
 
 build: build-go build-desktop build-clients
 
+.PHONY: test-plugin-compatibility
+test-plugin-compatibility:
+	node scripts/plugin-compatibility-e2e.mjs
+
 test-plugins: build-plugins
 	npm --prefix plugins test
 	node scripts/bundled-plugins-e2e.mjs
@@ -115,6 +119,7 @@ build-plugins:
 check-plugins:
 	npm --prefix plugins run typecheck
 	npm --prefix plugins run build:check
+	go test -count=1 -run '^TestPluginPackageMutationKeepsRunningConversationReadable/disable_deleted_source$$' ./internal/appserver
 
 build-go: build-plugins
 	go build -ldflags "$(LDFLAGS)" -o bin/wuu ./cmd/wuu
@@ -146,7 +151,7 @@ vet:
 clean:
 	rm -rf bin/ dist/
 
-release-check: version-check check-go check-plugins test-go-uncached test-plugins test-desktop test-native
+release-check: version-check check-go check-plugins test-go-uncached test-plugins test-plugin-compatibility test-desktop test-native
 
 version-check:
 	node --test scripts/release-version.test.mjs

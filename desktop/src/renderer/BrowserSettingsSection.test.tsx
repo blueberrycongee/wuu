@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -73,9 +75,9 @@ async function render(): Promise<void> {
   act(() => {
     root = createRoot(container);
     root.render(
-      <I18nProvider>
+      <SettingsControlsProvider controls={createApplicationSettingsControls()}>{<I18nProvider>
         <BrowserSettingsSection />
-      </I18nProvider>,
+      </I18nProvider>}</SettingsControlsProvider>,
     );
   });
   await act(async () => {
@@ -85,6 +87,19 @@ async function render(): Promise<void> {
 }
 
 describe("BrowserSettingsSection", () => {
+  it("does not refresh extensions after a removed settings view receives a reload failure", async () => {
+    const api = stubBrowserAPI({ listBrowserExtensions: vi.fn().mockResolvedValue([{ id: "fixture", name: "Fixture", version: "1", path: "/fixture", enabled: true, loaded: true }]) });
+    let rejectReload!: (reason: Error) => void;
+    Object.assign(api, { reloadBrowserExtension: vi.fn().mockReturnValue(new Promise((_, reject) => { rejectReload = reject; })) });
+    await render();
+    const reload = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(button => button.getAttribute("aria-label")?.includes("Reload"));
+    expect(reload).toBeDefined();
+    await act(async () => reload!.click());
+    act(() => root!.render(null));
+    await act(async () => rejectReload(new Error("late reload failure")));
+    expect(api.listBrowserExtensions).toHaveBeenCalledTimes(1);
+  });
+
   it("imports cookies from the selected local profile", async () => {
     const api = stubBrowserAPI();
     await render();

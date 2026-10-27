@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const (
@@ -77,34 +81,37 @@ type remoteCallError struct {
 func (e *remoteCallError) Error() string { return e.message }
 
 type ProcessClient struct {
-	config             ProcessConfig
-	cmd                *exec.Cmd
-	stdin              io.WriteCloser
-	scanner            *bufio.Scanner
-	seq                atomic.Uint64
-	writeGate          chan struct{}
-	pendingMu          sync.Mutex
-	pending            map[string]chan rpcResponse
-	readerDone         chan struct{}
-	readerErrMu        sync.Mutex
-	readerErr          error
-	processCtx         context.Context
-	processCancel      context.CancelFunc
-	mu                 sync.RWMutex
-	status             Status
-	tools              []ToolRegistration
-	protocol           int
-	capabilities       []CapabilityDescriptor
-	modelAdapters      []ModelAdapterDescriptor
-	providedServices   []ServiceDescriptor
-	requiredServices   []ServiceRequirement
-	negotiated         map[HostServiceMethod]struct{}
-	activationServices map[HostServiceMethod]struct{}
-	lifecycleVersion   int
-	stderr             lockedBuffer
-	stopMu             sync.Mutex
-	stopped            bool
-	stopErr            error
+	config               ProcessConfig
+	cmd                  *exec.Cmd
+	stdin                io.WriteCloser
+	scanner              *bufio.Scanner
+	seq                  atomic.Uint64
+	writeGate            chan struct{}
+	pendingMu            sync.Mutex
+	pending              map[string]chan rpcResponse
+	readerDone           chan struct{}
+	readerErrMu          sync.Mutex
+	readerErr            error
+	processCtx           context.Context
+	processCancel        context.CancelFunc
+	mu                   sync.RWMutex
+	status               Status
+	tools                []ToolRegistration
+	protocol             int
+	capabilities         []CapabilityDescriptor
+	modelAdapters        []ModelAdapterDescriptor
+	providedServices     []ServiceDescriptor
+	requiredServices     []ServiceRequirement
+	negotiated           map[HostServiceMethod]struct{}
+	activationServices   map[HostServiceMethod]struct{}
+	lifecycleVersion     int
+	stderr               lockedBuffer
+	sensitiveDiagnostics atomic.Bool
+	stopMu               sync.Mutex
+	stopped              bool
+	stopErr              error
+	callerScopeMu        sync.Mutex
+	callerScopes         map[string]struct{}
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
@@ -149,8 +156,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		readerDone: make(chan struct{}),
 	}
 	client.processCtx, client.processCancel = context.WithCancel(context.Background())
-	// Initialization is a prepare phase. Only read-only services are available
-	// until the generation and its durable policy commit.
+	// The transport negotiates routing only. Initialize has no consumer
+	// declarations yet; the registry admits calls during explicit preparation.
 	client.negotiated = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 4096), maxResponseLineSize)
@@ -176,6 +183,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		},
 		CapabilityProtocolVersion: CapabilityProtocolVersion,
 		SupportedHostServices:     []HostServiceMethod{ServiceCallMethod},
+		SupportedHostFeatures:     SupportedHostFeatures(),
 		LifecycleVersion:          RuntimeLifecycleVersion,
 	}, &initialized); err != nil {
 		_ = client.stopProcess()
@@ -195,12 +203,12 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	}
 	if config.PrepareOnly && initialized.LifecycleVersion != RuntimeLifecycleVersion {
 		_ = client.stopProcess()
-		err := fmt.Errorf("runtime lifecycle version %d is required for generation preflight", RuntimeLifecycleVersion)
+		err := fmt.Errorf("runtime lifecycle version %d is required for generation preflight (received %d)", RuntimeLifecycleVersion, initialized.LifecycleVersion)
 		client.setFailure(err)
 		return nil, fmt.Errorf("initialize plugin %q: %w", config.ID, err)
 	}
 	client.mu.Lock()
-	client.status.State = StatePrepared
+	client.status.State = StateInitialized
 	client.tools = make([]ToolRegistration, len(initialized.Tools))
 	for index, registration := range initialized.Tools {
 		client.tools[index] = cloneToolRegistration(registration)
@@ -214,10 +222,14 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
-	client.negotiated = preflightNegotiatedHostServices(client.activationServices)
+	client.negotiated = cloneHostServiceSet(client.activationServices)
 	client.lifecycleVersion = initialized.LifecycleVersion
 	client.mu.Unlock()
 	if !config.PrepareOnly {
+		if err := client.Prepare(ctx); err != nil {
+			_ = client.Close(context.Background())
+			return nil, fmt.Errorf("prepare plugin %q: %w", config.ID, err)
+		}
 		if err := client.Activate(ctx); err != nil {
 			return nil, fmt.Errorf("activate plugin %q: %w", config.ID, err)
 		}
@@ -266,10 +278,15 @@ func (c *ProcessClient) RequiredServices() []ServiceRequirement {
 	return cloneServiceRequirements(c.requiredServices)
 }
 
-// InvokeService delivers one registry-routed call to this provider plugin.
+// InvokeService delivers one call to this provider plugin. Structured provider
+// failures retain their codes as HostServiceError; transport errors stay unclassified.
 func (c *ProcessClient) InvokeService(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
 	var result json.RawMessage
 	if err := c.call(ctx, ServiceInvokeMethod, params, &result); err != nil {
+		var remoteErr *remoteCallError
+		if errors.As(err, &remoteErr) && remoteErr.code != "" {
+			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
+		}
 		return nil, err
 	}
 	return result, nil
@@ -281,6 +298,9 @@ func (c *ProcessClient) NotifyServiceChanged(ctx context.Context, params Service
 }
 
 func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityInvokeParams) (CapabilityInvokeResult, error) {
+	if sensitiveModelValidation(params.Capability, params.Input) {
+		c.suppressSensitiveDiagnostics()
+	}
 	callCtx := ctx
 	if params.Capability != CapabilityModelAdapter && params.Capability != CapabilityModelMiddleware {
 		var cancel context.CancelFunc
@@ -291,9 +311,12 @@ func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityI
 	// Their caller controls the deadline; the handshake timeout must not kill
 	// a healthy provider operation or retire its plugin while it is streaming.
 	var result CapabilityInvokeResult
-	if err := c.call(callCtx, "capability.invoke", params, &result); err != nil {
+	if err := c.callWithPhysicalDrain(callCtx, "capability.invoke", params, &result, params.Capability == CapabilityModelAdapter); err != nil {
 		if ctx.Err() == nil {
 			c.failFatalCall(err)
+		}
+		if params.Capability == CapabilityModelAdapter {
+			return result, err
 		}
 		return CapabilityInvokeResult{}, err
 	}
@@ -310,6 +333,32 @@ func (c *ProcessClient) Status() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
+}
+
+// Prepare validates state after declarations and dependency binding are complete.
+// A failure leaves the transport alive for ordered candidate cleanup.
+func (c *ProcessClient) Prepare(ctx context.Context) error {
+	c.mu.RLock()
+	state, version := c.status.State, c.lifecycleVersion
+	c.mu.RUnlock()
+	if state == StatePrepared || state == StateActive {
+		return nil
+	}
+	if state != StateInitialized {
+		return fmt.Errorf("plugin process cannot prepare from state %q", state)
+	}
+	if version == RuntimeLifecycleVersion {
+		prepareCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+		defer cancel()
+		if err := c.call(prepareCtx, "prepare", nil, nil); err != nil {
+			c.setFailure(err)
+			return err
+		}
+	}
+	c.mu.Lock()
+	c.status.State = StatePrepared
+	c.mu.Unlock()
+	return nil
 }
 
 // Activate opens the negotiated service set and starts lifecycle-aware
@@ -426,8 +475,14 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = c.call(shutdownCtx, "shutdown", nil, nil)
+	shutdownErr := c.call(shutdownCtx, "shutdown", nil, nil)
 	err := c.stopProcess()
+	// Runtimes may exit without replying. Only a received rejection proves a
+	// shutdown callback failure independently of the process retirement result.
+	var remoteErr *remoteCallError
+	if errors.As(shutdownErr, &remoteErr) {
+		err = errors.Join(shutdownErr, err)
+	}
 	c.mu.Lock()
 	c.status.State = StateStopped
 	c.tools = nil
@@ -438,6 +493,11 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 }
 
 func (c *ProcessClient) call(ctx context.Context, method string, params, result any) error {
+	return c.callWithPhysicalDrain(ctx, method, params, result, false)
+}
+
+func (c *ProcessClient) callWithPhysicalDrain(ctx context.Context, method string, params, result any, physicalDrain bool) (callErr error) {
+	defer func() { callErr = c.diagnosticError(callErr) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -455,13 +515,43 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	if err != nil {
 		return err
 	}
+	defer clear(payload)
+	var completeReceipt func(error)
+	receiptScope := providers.ModelReceiptScopeFromContext(ctx)
+	if receiptScope != nil {
+		ctx, completeReceipt, err = providers.BeginModelReceipt(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	var receiptErr error
+	callerOwnsPending := true
 	responseCh := make(chan rpcResponse, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
-	defer c.removePending(id)
-	if err := c.writeLine(ctx, payload); err != nil {
-		return fmt.Errorf("write request: %w", err)
+	defer func() {
+		if callerOwnsPending {
+			c.removePending(id)
+			if completeReceipt != nil {
+				completeReceipt(c.diagnosticError(receiptErr))
+			}
+		}
+	}()
+	writeLabel := "write request"
+	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
+		writeLabel = "write scoped request"
+		err = c.writeScopedInvocation(ctx, payload, input.CallerScope)
+	} else {
+		err = c.writeLine(ctx, payload)
+	}
+	if err != nil {
+		// Canceling before acquiring the writer launches no remote work. A
+		// failed write retires the transport because delivery is uncertain.
+		if ctx.Err() == nil || c.processCtx.Err() != nil {
+			receiptErr = err
+		}
+		return fmt.Errorf("%s: %w", writeLabel, err)
 	}
 	// The invoke frame must be written before cancellation can be signalled.
 	// Otherwise a fast cancel can arrive before the runtime registers its
@@ -478,30 +568,124 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	finishExecution := c.watchExecution(ctx, executionID)
 	defer finishExecution()
 
+	response, err := c.waitResponse(ctx, responseCh)
+	if err != nil {
+		if physicalDrain && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			// A model capability owns physical submissions until its exact RPC replies
+			// or its process has been terminated and joined. The outer logical stream
+			// relay may already have returned cancellation; it must not release this
+			// callback's receipt/capacity handles while remote settlement is still live.
+			observation := context.Background()
+			if receiptScope != nil {
+				observation = receiptScope.ObservationContext()
+			}
+			drainCtx, cancelDrain := context.WithTimeout(observation, 3*time.Second)
+			response, drainErr := c.waitResponse(drainCtx, responseCh)
+			cancelDrain()
+			if drainErr != nil {
+				receiptErr = errors.Join(drainErr, c.retireProcess(drainErr))
+				<-c.readerDone
+			} else if response.Error == nil && result != nil {
+				if len(response.Result) == 0 {
+					receiptErr = errors.New("response is missing result")
+				} else if decodeErr := json.Unmarshal(response.Result, result); decodeErr != nil {
+					receiptErr = fmt.Errorf("decode late model result: %w", decodeErr)
+				}
+			}
+			return errors.Join(err, receiptErr)
+		}
+		if completeReceipt != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			callerOwnsPending = false
+			// Local cancellation does not acknowledge the remote callback.
+			// Retain its original response without writing into caller-owned result.
+			go func() {
+				observationCtx := receiptScope.ObservationContext()
+				response, completionErr := c.waitResponse(observationCtx, responseCh)
+				if completionErr != nil && observationCtx.Err() != nil {
+					completionErr = errors.Join(completionErr, context.Cause(observationCtx))
+				}
+				if completionErr == nil && response.Error == nil && result != nil && len(response.Result) == 0 {
+					completionErr = errors.New("response is missing result")
+				}
+				c.removePending(id)
+				completeReceipt(c.diagnosticError(completionErr))
+			}()
+		} else {
+			receiptErr = err
+		}
+		return err
+	}
+	if response.Error != nil {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "plugin call failed"
+		}
+		return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
+	}
+	if result == nil {
+		return nil
+	}
+	if len(response.Result) == 0 {
+		receiptErr = errors.New("response is missing result")
+		return receiptErr
+	}
+	if err := json.Unmarshal(response.Result, result); err != nil {
+		receiptErr = fmt.Errorf("decode result: %w", err)
+		return receiptErr
+	}
+	return nil
+}
+
+func (c *ProcessClient) waitResponse(ctx context.Context, responseCh <-chan rpcResponse) (rpcResponse, error) {
 	select {
 	case response := <-responseCh:
-		if response.Error != nil {
-			message := strings.TrimSpace(response.Error.Message)
-			if message == "" {
-				message = "plugin call failed"
-			}
-			return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
-		}
-		if result == nil {
-			return nil
-		}
-		if len(response.Result) == 0 {
-			return errors.New("response is missing result")
-		}
-		if err := json.Unmarshal(response.Result, result); err != nil {
-			return fmt.Errorf("decode result: %w", err)
-		}
-		return nil
+		return response, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return rpcResponse{}, ctx.Err()
 	case <-c.readerDone:
-		return c.readFailure()
+		// EOF can follow a complete reply before the caller resumes. Keep
+		// that reply authoritative; only an empty queue means transport loss.
+		select {
+		case response := <-responseCh:
+			return response, nil
+		default:
+			return rpcResponse{}, c.readFailure()
+		}
 	}
+}
+
+// Serialize caller-scope admission with its terminal signal. A signal cannot
+// precede a queued invocation and then accidentally reopen that scope in the SDK.
+// One observer per live caller survives individual callback responses.
+func (c *ProcessClient) writeScopedInvocation(ctx context.Context, payload []byte, scope *ExecutionScope) error {
+	c.callerScopeMu.Lock()
+	defer c.callerScopeMu.Unlock()
+	if err := scope.Context.Err(); err != nil {
+		return err
+	}
+	if err := c.writeLine(ctx, payload); err != nil {
+		return err
+	}
+	if _, watching := c.callerScopes[scope.ID]; watching {
+		return nil
+	}
+	if c.callerScopes == nil {
+		c.callerScopes = make(map[string]struct{})
+	}
+	c.callerScopes[scope.ID] = struct{}{}
+	go func() {
+		select {
+		case <-scope.Context.Done():
+		case <-c.processCtx.Done():
+		}
+		c.callerScopeMu.Lock()
+		defer c.callerScopeMu.Unlock()
+		delete(c.callerScopes, scope.ID)
+		if c.processCtx.Err() == nil {
+			c.notifyExecutionCancel(scope.ID)
+		}
+	}()
+	return nil
 }
 
 func (c *ProcessClient) readLoop() {
@@ -560,7 +744,7 @@ func (c *ProcessClient) setReadFailure(err error) {
 	}
 	c.readerErrMu.Lock()
 	if c.readerErr == nil {
-		c.readerErr = err
+		c.readerErr = c.diagnosticError(err)
 	}
 	c.readerErrMu.Unlock()
 }
@@ -598,6 +782,7 @@ func (c *ProcessClient) writeLine(ctx context.Context, payload []byte) error {
 		close(interrupted)
 	})
 	payload = append(payload, '\n')
+	defer clear(payload)
 	n, err := c.stdin.Write(payload)
 	if !stopInterrupt() {
 		<-interrupted
@@ -618,16 +803,6 @@ const (
 	pluginMessageResponse pluginMessageKind = iota
 	pluginMessageHostCall
 )
-
-func preflightNegotiatedHostServices(negotiated map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
-	out := make(map[HostServiceMethod]struct{})
-	for service := range negotiated {
-		if service == ServiceCallMethod {
-			out[service] = struct{}{}
-		}
-	}
-	return out
-}
 
 func cloneHostServiceSet(source map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
 	out := make(map[HostServiceMethod]struct{}, len(source))
@@ -735,7 +910,9 @@ func (c *ProcessClient) rejectHostService(id, code, message string) error {
 }
 
 func (c *ProcessClient) writeHostServiceResult(response HostServiceResult) error {
-	payload, err := json.Marshal(response)
+	// Preserve bounded raw results inside the RPC envelope. HTML and JavaScript
+	// escaping can otherwise expand an already valid provider page.
+	payload, err := jsonv2.Marshal(response, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false), jsontext.EscapeForJS(false))
 	if err != nil {
 		return fmt.Errorf("encode host service result: %w", err)
 	}
@@ -798,7 +975,7 @@ func (c *ProcessClient) setFailure(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status.State = StateFailed
-	c.status.Error = err.Error()
+	c.status.Error = c.diagnosticError(err).Error()
 	c.tools = nil
 	c.capabilities = nil
 	c.modelAdapters = nil
@@ -809,7 +986,7 @@ func (c *ProcessClient) fail(err error) {
 }
 
 func (c *ProcessClient) failFatalCall(err error) {
-	if err == nil {
+	if err == nil || errors.Is(err, providers.ErrModelReceiptScopeClosed) {
 		return
 	}
 	var domainErr *remoteCallError
@@ -907,15 +1084,19 @@ var baselineEnvKeys = func() []string {
 }()
 
 type lockedBuffer struct {
-	mu        sync.Mutex
-	b         bytes.Buffer
-	truncated bool
+	mu         sync.Mutex
+	b          bytes.Buffer
+	truncated  bool
+	suppressed bool
 }
 
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(p)
+	if b.suppressed {
+		return n, nil
+	}
 	if n >= maxPluginStderrBytes {
 		b.truncated = b.truncated || b.b.Len() > 0 || n > maxPluginStderrBytes
 		b.b.Reset()

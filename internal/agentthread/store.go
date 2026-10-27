@@ -12,13 +12,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
 
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	legacyDirs    []string
+	documents     persistence.Documents
+	documentKey   string
+	image         *persistence.DocumentImage
+	operationTime time.Time
+	dir           string
+	mu            sync.Mutex
 }
 
 func NewStore(dir string) *Store {
@@ -33,7 +39,17 @@ func (s *Store) Dir() string {
 }
 
 func (s *Store) UpsertThread(meta Metadata) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.UpsertThread(meta)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -41,7 +57,7 @@ func (s *Store) UpsertThread(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -71,12 +87,22 @@ func (s *Store) UpsertThread(meta Metadata) error {
 		Path:      meta.Path,
 		Status:    meta.Status,
 		Metadata:  &meta,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: s.now(),
 	})
 }
 
 func (s *Store) RecordStatus(meta Metadata) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.RecordStatus(meta)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -84,7 +110,7 @@ func (s *Store) RecordStatus(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -105,12 +131,22 @@ func (s *Store) RecordStatus(meta Metadata) error {
 		ThreadID:  meta.ID,
 		Path:      meta.Path,
 		Status:    meta.Status,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: s.now(),
 	})
 }
 
 func (s *Store) RecordEdgeStatus(meta Metadata) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.RecordEdgeStatus(meta)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -118,7 +154,7 @@ func (s *Store) RecordEdgeStatus(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -139,12 +175,22 @@ func (s *Store) RecordEdgeStatus(meta Metadata) error {
 		ThreadID:   meta.ID,
 		Path:       meta.Path,
 		EdgeStatus: meta.Source.EdgeStatus,
-		CreatedAt:  time.Now().UTC(),
+		CreatedAt:  s.now(),
 	})
 }
 
 func (s *Store) RecordCommunication(threadID string, communication InterAgentCommunication) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.RecordCommunication(threadID, communication)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -152,7 +198,7 @@ func (s *Store) RecordCommunication(threadID string, communication InterAgentCom
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	return s.appendEventLocked(Event{
@@ -163,7 +209,7 @@ func (s *Store) RecordCommunication(threadID string, communication InterAgentCom
 		RecipientPath: string(communication.Recipient),
 		Message:       communication.Content,
 		TriggerTurn:   communication.TriggerTurn,
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     s.now(),
 	})
 }
 
@@ -171,7 +217,17 @@ func (s *Store) RecordCommunication(threadID string, communication InterAgentCom
 // for a terminal child result. Replays may call it repeatedly, but the stable
 // result ID ensures the parent event log contains only one pending delivery.
 func (s *Store) RecordResultCommunication(threadID, resultID string, communication InterAgentCommunication) (bool, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 bool
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.RecordResultCommunication(threadID, resultID, communication)
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return true, nil
 	}
 	threadID = strings.TrimSpace(threadID)
@@ -184,7 +240,7 @@ func (s *Store) RecordResultCommunication(threadID, resultID string, communicati
 		return false, err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return false, fmt.Errorf("create thread store: %w", err)
 	}
 	events, err := s.loadEvents()
@@ -205,12 +261,22 @@ func (s *Store) RecordResultCommunication(threadID, resultID string, communicati
 		RecipientPath: string(communication.Recipient),
 		Message:       communication.Content,
 		TriggerTurn:   communication.TriggerTurn,
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     s.now(),
 	})
 }
 
 func (s *Store) AppendEvent(event Event) error {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+
+		err := s.access(func(view *Store) error {
+			var err error
+			err = view.AppendEvent(event)
+			return err
+		})
+		return err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil
 	}
 	release, err := s.lockStore()
@@ -218,21 +284,41 @@ func (s *Store) AppendEvent(event Event) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
+	if err := s.ensureDir(); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	return s.appendEventLocked(event)
 }
 
 func (s *Store) ListThreads() ([]Metadata, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Metadata
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ListThreads()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadThreads()
 }
 
 func (s *Store) ReadEvents() ([]Event, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 []Event
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ReadEvents()
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return nil, nil
 	}
 	return s.loadEvents()
@@ -241,7 +327,18 @@ func (s *Store) ReadEvents() ([]Event, error) {
 // ClaimResultDelivery compares and appends a result claim while holding the
 // durable event-store lock. Exactly one process can claim an unconsumed result.
 func (s *Store) ClaimResultDelivery(event Event) (bool, string, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 bool
+		var result1 string
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, result1, err = view.ClaimResultDelivery(event)
+			return err
+		})
+		return result0, result1, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return false, "", nil
 	}
 	resultID := strings.TrimSpace(event.ResultID)
@@ -282,7 +379,18 @@ func (s *Store) ClaimResultDelivery(event Event) (bool, string, error) {
 // applied consumer is recorded only after the recipient's terminal history
 // proves that the inbox message reached a completed turn.
 func (s *Store) TransitionResultDelivery(event Event, fromConsumer string) (bool, string, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 bool
+		var result1 string
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, result1, err = view.TransitionResultDelivery(event, fromConsumer)
+			return err
+		})
+		return result0, result1, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return false, "", nil
 	}
 	resultID := strings.TrimSpace(event.ResultID)
@@ -319,7 +427,17 @@ func (s *Store) TransitionResultDelivery(event Event, fromConsumer string) (bool
 // ReleaseResultDelivery compares and appends a result release while holding
 // the durable event-store lock. A stale or non-owner release is a no-op.
 func (s *Store) ReleaseResultDelivery(event Event) (bool, error) {
-	if s == nil || s.dir == "" {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var result0 bool
+		err := s.access(func(view *Store) error {
+			var err error
+			result0, err = view.ReleaseResultDelivery(event)
+			return err
+		})
+		return result0, err
+	}
+
+	if s == nil || (s.dir == "" && s.documentKey == "") {
 		return false, nil
 	}
 	resultID := strings.TrimSpace(event.ResultID)
@@ -360,6 +478,9 @@ func (s *Store) ReleaseResultDelivery(event Event) (bool, error) {
 // waiting on the cross-process lock holds s.mu for the whole wait and would
 // stall every read behind a wedged transaction in another process.
 func (s *Store) lockStore() (func(), error) {
+	if s.image != nil {
+		return func() {}, nil
+	}
 	s.mu.Lock()
 	durable, err := storelock.Acquire(s.dir)
 	if err != nil {
@@ -377,6 +498,11 @@ func (s *Store) lockStore() (func(), error) {
 // tail; transactional methods call it under lockStore for read-modify-write
 // atomicity.
 func (s *Store) loadEvents() ([]Event, error) {
+	if s.image != nil {
+		var out []Event
+		err := s.image.Get("events", &out)
+		return out, err
+	}
 	path := filepath.Join(s.dir, "events.jsonl")
 	file, err := os.Open(path)
 	if err != nil {
@@ -450,6 +576,11 @@ func cloneThreadIndex(threads []Metadata) []Metadata {
 // because writers replace the index atomically; write transactions call it
 // under lockStore for read-modify-write atomicity.
 func (s *Store) loadThreads() ([]Metadata, error) {
+	if s.image != nil {
+		var out []Metadata
+		err := s.image.Get("threads", &out)
+		return out, err
+	}
 	path := filepath.Join(s.dir, "threads.json")
 	info, err := os.Stat(path)
 	if err != nil {
@@ -494,6 +625,9 @@ func (s *Store) loadThreads() ([]Metadata, error) {
 }
 
 func (s *Store) writeThreadsLocked(threads []Metadata) error {
+	if s.image != nil {
+		return s.image.Put("threads", threads)
+	}
 	agentIndexCache.Delete(s.dir)
 	data, err := json.MarshalIndent(threads, "", "  ")
 	if err != nil {
@@ -526,8 +660,18 @@ func (s *Store) writeThreadsLocked(threads []Metadata) error {
 }
 
 func (s *Store) appendEventLocked(event Event) error {
+	if s.image != nil {
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = s.now()
+		}
+		var events []Event
+		if err := s.image.Get("events", &events); err != nil {
+			return err
+		}
+		return s.image.Put("events", append(events, event))
+	}
 	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
+		event.CreatedAt = s.now()
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, securefs.FileMode)

@@ -1,18 +1,17 @@
-import { showErrorToast } from "./Toast";
-import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions } from "./ComposerInlineCompletion";
+import { createPortal } from "react-dom";
+import { useComposerServices } from "./ComposerServicesContext";
+import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
+import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions, type ComposerInlineSource } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
-import { effectiveModelSpeed } from "./RuntimeHelpers";
+import { effectiveModelSpeed, engineRequiresHostModel } from "./RuntimeHelpers";
 import {
   ChevronDown,
   Folder,
   FolderOpen,
-  Maximize2,
   MessageSquare,
-  Minimize2,
   ArrowUp,
   ShieldCheck,
-  Split,
 } from "./WuuIcons";
 import {
   type CSSProperties,
@@ -37,10 +36,8 @@ import {
   useSyncExternalStore
 } from "react";
 import type {
-  DesktopProject,
   EngineInfo,
   GitStatusResult,
-  InitializeResult,
   MessageContentPart,
   ResponseSelection,
   RuntimeContext,
@@ -86,12 +83,13 @@ import {
 import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
-import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
+import { ComposerContinueButton, ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
+import type { TurnContinuationTarget } from "./TurnContinuation";
 import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
-import { PluginSlot } from "./plugins/PluginSlot";
+import { createUIComposition, UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
@@ -116,14 +114,12 @@ import type {
 import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
-import { ComposerPresentation } from "./plugins/ComposerPresentation";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
-const MemoizedComposerPluginSlot = memo(PluginSlot);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
 
 type ExpandedComposerDrawer = "pending" | null;
@@ -149,6 +145,7 @@ export function Composer({
   inlineSelection,
   permissionLocked = false,
   containerRef,
+  runtimeControlsTarget,
   prompt: committedPrompt,
   promptRevision = 0,
   setPrompt: commitPrompt,
@@ -164,18 +161,24 @@ export function Composer({
   forceStopWhileRunning = false,
   stopState,
   submitting = false,
+  draftPending = false,
+  clearOnSubmit = true,
+  continuation,
   runtimeControlsDisabled = running,
   status,
   disabledReason,
-  readOnly,
+  readOnly: sessionReadOnly,
+  interactionDisabled = false,
   initialized,
   projects,
   gitStatus,
   branchPickerDisabled = false,
+  branchPickerPending = false,
   branchMenuOpen,
   onToggleBranchMenu,
   onSelectGitBranch,
   onCreateGitBranch,
+  onOpenGitWorktree,
   worktree,
   activeContext,
   inlineCompletionWorkspace = activeContext,
@@ -189,6 +192,7 @@ export function Composer({
   menuOpen,
   accessMenuOpen,
   menuRef,
+  menuTriggerRef,
   accessMenuRef,
   workspaceFilter,
   setWorkspaceFilter,
@@ -232,7 +236,6 @@ export function Composer({
   onEditQueuedMessage,
   onEditGuideMessage,
   onSend,
-  onContinue,
   onSteer,
   onQueue,
   onInterrupt,
@@ -249,7 +252,6 @@ export function Composer({
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
-  hideExpandButton = false,
   placeholder,
   textOnly = false,
   slashCommandsOverride,
@@ -264,6 +266,7 @@ export function Composer({
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
+  runtimeControlsTarget?: HTMLElement | null;
   prompt: string;
   // Changes only for programmatic clear/restore operations. This lets the
   // editor accept an external empty string even if App's delayed snapshot was
@@ -282,20 +285,27 @@ export function Composer({
   forceStopWhileRunning?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  draftPending?: boolean;
+  clearOnSubmit?: boolean;
+  continuation?: TurnContinuationTarget;
   runtimeControlsDisabled?: boolean;
   status: string;
   disabledReason?: string;
   readOnly: boolean;
-  initialized?: InitializeResult;
+  /** Temporary ownership transfer lock; does not change session semantics. */
+  interactionDisabled?: boolean;
+  initialized?: ComposerConfiguration;
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
+  branchPickerPending?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
+  onOpenGitWorktree?: (path: string) => Promise<void>;
   worktree?: ComposerWorktreeControl;
-  projects: DesktopProject[];
+  projects: ComposerWorkspace[];
   activeContext?: RuntimeContext;
   /** The conversation's runtime can differ from the workspace shown by controls. */
   inlineCompletionWorkspace?: RuntimeContext;
-  activeWorkspace?: DesktopProject;
+  activeWorkspace?: ComposerWorkspace;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;
   handoffDisabledReason?: string;
@@ -306,6 +316,7 @@ export function Composer({
   accessMenuOpen: boolean;
   branchMenuOpen: boolean;
   menuRef: RefObject<HTMLDivElement | null>;
+  menuTriggerRef?: RefObject<HTMLElement | null>;
   accessMenuRef: RefObject<HTMLDivElement | null>;
   workspaceFilter: string;
   setWorkspaceFilter: (value: string) => void;
@@ -352,10 +363,9 @@ export function Composer({
   onGuideQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string) => void;
   onEditGuideMessage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onContinue?: () => Promise<void>;
-  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
   tokensPerSecond?: number;
@@ -377,12 +387,10 @@ export function Composer({
   // Suppress the model/context/token runtime chrome on the bar's right edge.
   // Side-thread composers reuse this input without a separate runtime picker.
   hideRuntimeControls?: boolean;
-  hideExpandButton?: boolean;
   // A shared composer can be embedded in a conversation surface whose
-  // transport accepts text only. The editor, keyboard handling, expansion,
-  // context menu, and send/stop controls remain the canonical Composer; only
-  // unsupported attachment, slash-command, and permission affordances
-  // are removed.
+  // transport accepts text only. The editor, keyboard handling, context menu,
+  // and send/stop controls remain the canonical Composer; only unsupported
+  // attachment, slash-command, and permission affordances are removed.
   textOnly?: boolean;
   placeholder?: string;
   // Replaces the built-in main-conversation command list with a
@@ -394,22 +402,28 @@ export function Composer({
   onResetSideThread?: () => void;
   pluginHost?: PluginHost;
 }): JSX.Element {
+  const readOnly = sessionReadOnly || interactionDisabled;
   const { locale, t } = useI18n();
   const workbenchConnected = useWorkbenchConnected();
   const disconnected = !workbenchConnected;
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
   // not dispatch into a dead bridge. Gate only the action paths, never readOnly.
-  const effectiveSendDisabled = sendDisabled || Boolean(stopState) || !workbenchConnected;
+  const effectiveSendDisabled = sendDisabled || draftPending || Boolean(stopState) || !workbenchConnected;
   const effectiveRuntimeControlsDisabled = runtimeControlsDisabled || !workbenchConnected;
   // Keep the controlled textarea on a small, synchronous state path. The
   // canonical draft still lives above Composer, but updating it makes App
   // recalculate the whole desktop shell. Marking that propagation as a
   // transition lets React yield to subsequent keystrokes instead of putting
   // the shell's render cost directly on the input event.
-  const [prompt, setLocalPrompt] = useState(committedPrompt);
+  // Keep the revision with the value: React can replay deferred input updates
+  // after an authoritative clear, so each replay must retain its old revision.
+  const [localPrompt, setLocalPromptState] = useState({ value: committedPrompt, revision: promptRevision });
+  const { value: prompt, revision: lastPromptRevision } = localPrompt;
   const [lastCommittedPrompt, setLastCommittedPrompt] = useState(committedPrompt);
-  const [lastPromptRevision, setLastPromptRevision] = useState(promptRevision);
+  function setLocalPrompt(value: string): void {
+    setLocalPromptState({ value, revision: promptRevision });
+  }
   const [programmaticPromptRevision, setProgrammaticPromptRevision] = useState(0);
   const optimisticPromptQueueRef = useRef<string[]>([]);
   // Parent draft clearing crosses an async/transition boundary. Close the
@@ -418,10 +432,9 @@ export function Composer({
   const submittedDraftSignatureRef = useRef<string | null>(null);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
-    setLastPromptRevision(promptRevision);
     setLastCommittedPrompt(committedPrompt);
     optimisticPromptQueueRef.current.length = 0;
-    submittedDraftSignatureRef.current = null;
+    if (committedPrompt !== "") submittedDraftSignatureRef.current = null;
     setLocalPrompt(committedPrompt);
   } else if (committedPrompt !== lastCommittedPrompt) {
     setLastCommittedPrompt(committedPrompt);
@@ -435,7 +448,9 @@ export function Composer({
       optimisticPromptQueueRef.current.splice(0, optimisticPromptIndex + 1);
     } else {
       optimisticPromptQueueRef.current.length = 0;
-      submittedDraftSignatureRef.current = null;
+      // Admission clears the canonical draft before its promise settles. Keep
+      // the pending send identity so its completion also clears local input.
+      if (committedPrompt !== "") submittedDraftSignatureRef.current = null;
       setLocalPrompt(committedPrompt);
     }
   }
@@ -446,6 +461,8 @@ export function Composer({
     setLocalPrompt(value);
     commitPrompt(value);
   }
+  const services = useComposerServices();
+  const catalog = services?.catalog;
   const statusText = composerStatusText(status);
   const className = `composer-wrap ${
     variant === "hero"
@@ -456,9 +473,6 @@ export function Composer({
   }`;
   const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
-  const [continuePending, setContinuePending] = useState(false);
-  const continuePendingRef = useRef(false);
-  const canContinue = Boolean(onContinue) && !running && !submitting && parseComposerSlashDraft(prompt)?.query !== "handoff";
   const pluginTranslate = useMemo(() => t, [locale]);
   const pluginSlotContext = useMemo(() => Object.freeze({
     threadId: queryHistorySessionID,
@@ -484,12 +498,12 @@ export function Composer({
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
   // decision as Enter, while preserving the stop affordance for an empty input.
-  const showComposerStop = Boolean(stopState) || ((running || submitting) && (forceStopWhileRunning || !hasDraft));
+  const showComposerStop = Boolean(stopState) || (!draftPending && (running || submitting) && (forceStopWhileRunning || !hasDraft));
   const composerSendLabel = running && hasDraft && onSteer
     ? t("composer.steerSend")
     : running
       ? t("composer.queueSend")
-      : !hasDraft && canContinue ? t("turnFailure.continue") : t("composer.send");
+      : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
   const workspacePillRef = useRef<HTMLButtonElement>(null);
@@ -498,8 +512,8 @@ export function Composer({
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
-  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const showComposerStopAction = showComposerStop;
+  const showContinue = continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
   const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
     ? disabledReason
     : undefined;
@@ -586,7 +600,7 @@ export function Composer({
   const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
 
-  const composerPlaceholder = placeholder ?? (readOnly
+  const composerPlaceholder = placeholder ?? (sessionReadOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
       ? t("composer.followupChanges")
@@ -630,14 +644,16 @@ export function Composer({
   const handoffPanelWidth = handoffMode ? runtimePanelWidth() : 0;
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
-  const slashSkillCountKey = initialized?.extension_trust?.main_session?.skills?.count ?? 0;
+  const slashSkillCountKey = services?.view.skillRevision ?? initialized?.extension_trust?.main_session?.skills?.count ?? 0;
   const slashSkillInventory = initialized?.extension_inventory;
   const slashRuntimeReady = Boolean(activeContext && initialized);
   const subscribePluginHost = useCallback(
-    (listener: () => void) => pluginHost.subscribe(listener),
-    [pluginHost],
+    (listener: () => void) => services ? services.presentation.subscribe(listener) : pluginHost.subscribe(listener),
+    [pluginHost, services],
   );
-  const getPluginCommands = useCallback(() => pluginHost.getCommands(), [pluginHost]);
+  const getPluginCommands = useCallback(() => services ? services.presentation.getCommands() : pluginHost.getCommands(), [pluginHost, services]);
+  const localSlots = useMemo(() => createUIComposition(pluginHost), [pluginHost]);
+  const slots = services?.slots ?? localSlots;
   const registeredPluginCommands = useSyncExternalStore(
     subscribePluginHost,
     getPluginCommands,
@@ -647,12 +663,14 @@ export function Composer({
     () => new Set(registeredPluginCommands.map((command) => `${command.pluginId}:${command.id}`)),
     [registeredPluginCommands],
   );
-  const fastModeModel = activeEngine && activeEngine !== "wuu"
-    ? engines?.find(engine => engine.id === activeEngine)?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
+  const selectedEngine = engines?.find(engine => engine.id === (activeEngine || "wuu"));
+  const hostModel = engineRequiresHostModel(activeEngine, selectedEngine);
+  const fastModeModel = !hostModel
+    ? selectedEngine?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
     : initialized?.providers?.find(provider => provider.name === initialized.provider)?.models?.find(model => model.id === initialized.model);
   const fastModeSupported = Boolean(onSelectSpeed && fastModeModel?.fast_mode);
   const fastModeEnabled = effectiveModelSpeed(
-    activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed,
+    !hostModel ? engineSpeed : initialized?.speed,
     fastModeModel?.default_speed,
   ) === "fast";
   const builtinSlashCommands = useMemo(
@@ -729,9 +747,9 @@ export function Composer({
 
     async function loadSlashSkills(): Promise<void> {
       try {
-        const result = await window.wuu.listSkills(skillThreadID ? { thread_id: skillThreadID } : undefined);
+        const result = catalog ? await catalog.listSkillsForThread({ threadId: skillThreadID }) : await window.wuu.listSkills(skillThreadID ? { thread_id: skillThreadID } : undefined);
         if (!cancelled) {
-          setSlashSkills(result.skills);
+          setSlashSkills(structuredClone(result.skills) as SkillSummary[]);
         }
       } catch {
         if (!cancelled) {
@@ -739,13 +757,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID]);
-
-  useEffect(() => {
-    if (readOnly) {
-      setIsComposerExpanded(false);
-    }
-  }, [readOnly]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID, catalog]);
 
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
@@ -757,7 +769,6 @@ export function Composer({
 
   function openCamera(): void {
     textareaRef.current?.blur();
-    setIsComposerExpanded(false);
     setExpandedDrawer(null);
     setCameraOpen(true);
   }
@@ -773,16 +784,8 @@ export function Composer({
     focusComposerSoon();
   }
 
-  function toggleComposerExpansion(): void {
-    if (readOnly) {
-      return;
-    }
-    setIsComposerExpanded((expanded) => !expanded);
-    focusComposerSoon();
-  }
-
   function submitComposerWith(
-    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
+    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>,
     promptOverride = prompt,
     mode: ComposerSubmissionModeV1 = "send",
   ): void {
@@ -818,15 +821,31 @@ export function Composer({
     const contentParts = collapsedContentPartsForPrompt(promptOverride);
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts
-      ? onSubmit(canonicalPrompt, contentParts)
-      : onSubmit(promptOverride);
-    if (accepted === false) return;
-    inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
     submittedDraftSignatureRef.current = draftSignature;
-    optimisticPromptQueueRef.current.length = 0;
-    setLocalPrompt("");
-    setSubmissionClearRevision((current) => current + 1);
+    const dispatched = inlineCompletionActionsRef.current?.prepareDispatch(canonicalPrompt, mode);
+    const finish = (accepted: boolean | void): void => {
+      if (accepted !== false) dispatched?.();
+      if (submittedDraftSignatureRef.current !== draftSignature) return;
+      if (accepted === false) {
+        submittedDraftSignatureRef.current = null;
+        return;
+      }
+      if (!clearOnSubmit) {
+        submittedDraftSignatureRef.current = null;
+        return;
+      }
+      optimisticPromptQueueRef.current.length = 0;
+      setLocalPrompt("");
+      setSubmissionClearRevision((current) => current + 1);
+    };
+    try {
+      const accepted = contentParts ? onSubmit(canonicalPrompt, contentParts) : onSubmit(promptOverride);
+      if (accepted instanceof Promise) void accepted.then(finish, () => finish(false));
+      else finish(accepted);
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     // Restore focus within the user action so software keyboards can open.
     // An already-focused editor must not blur/refocus or scroll on send.
     const textarea = textareaRef.current;
@@ -867,16 +886,6 @@ export function Composer({
       return;
     }
     const submittingHasDraft = promptOverride.trim().length > 0 || hasAttachments;
-    if (!submittingHasDraft && canContinue && onContinue && !readOnly && !effectiveSendDisabled) {
-      if (continuePendingRef.current) return;
-      continuePendingRef.current = true;
-      setContinuePending(true);
-      void onContinue().catch((error) => showErrorToast(error)).finally(() => {
-        continuePendingRef.current = false;
-        setContinuePending(false);
-      });
-      return;
-    }
     submitComposerWith(
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
@@ -1017,6 +1026,10 @@ export function Composer({
         onOpenInstructions();
         break;
       case "plugin": {
+        if (services) {
+          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch((error: unknown) => console.error("Plugin slash command failed", error));
+          break;
+        }
         const pluginCommand = pluginHost.getCommands().find((candidate) =>
           candidate.pluginId === command.pluginId
           && candidate.id === command.pluginCommandId);
@@ -1122,7 +1135,7 @@ export function Composer({
     if (handleQueryHistoryKeyDown(event)) {
       return;
     }
-    if (event.key === "Escape" && running && !effectiveSendDisabled && !event.repeat) {
+    if (event.key === "Escape" && (running || draftPending) && !sendDisabled && workbenchConnected && !event.repeat) {
       event.preventDefault();
       onInterrupt();
       return;
@@ -1168,15 +1181,194 @@ export function Composer({
     });
   }
 
+  const controlsBelowInput = !mobileWeb && variant !== "document" && !textOnly;
+  const controlsInRail = Boolean(runtimeControlsTarget && !topAccessory);
+  const compactControls = controlsInRail || controlsBelowInput;
+  // Navigation temporarily fences interaction, not the displayed capability.
+  // Keep genuine readonly/running styles, without flashing every control disabled.
+  const preventPendingControl = (event: { preventDefault(): void; stopPropagation(): void }) => {
+    event.preventDefault(); event.stopPropagation();
+  };
+  const blockControls = (pending: boolean) => ({ inert: pending || undefined,
+    onClickCapture: pending ? preventPendingControl : undefined, onKeyDownCapture: pending ? preventPendingControl : undefined });
+  const pendingControlProps = blockControls(interactionDisabled);
+  const workspaceControls = canSelectWorkspace || (mainConversation && controlsBelowInput) ? (
+    <div className={controlsInRail ? "composer-workspace-rail" : "composer-workspace-bar"} ref={menuRef} {...pendingControlProps}>
+      <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
+        <Tooltip
+          content={workspacePillTitle}
+          disabled={!controlsInRail && workspacePillTitle === workspacePillLabel}
+        >
+          <button
+            ref={workspacePillRef}
+            className={controlsInRail ? "icon-button" : "hero-project-pill"}
+            type="button"
+            disabled={!canSelectWorkspace}
+            aria-haspopup={canSelectWorkspace ? "menu" : undefined}
+            aria-expanded={canSelectWorkspace ? menuOpen : undefined}
+            aria-label={canSelectWorkspace ? t("composer.switchWorkspace", { workspace: workspacePillLabel }) : workspacePillLabel}
+            onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
+            onClick={onToggleMenu}
+            onKeyDown={(event) => {
+              if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
+            }}
+          >
+            <span className="hero-project-pill-icon" aria-hidden="true">
+              <WorkspacePillIcon />
+            </span>
+            {controlsInRail ? null : <span className="hero-project-pill-text">{workspacePillLabel}</span>}
+          </button>
+        </Tooltip>
+        {canSelectWorkspace && menuOpen ? (
+          <FloatingMenuPortal
+            anchorRef={workspacePillRef}
+            owner="composer-runtime"
+            onDismiss={onToggleMenu}
+            placement={controlsInRail ? "below" : "above"}
+            align={controlsInRail ? "right" : "left"}
+            crossAxisOffset={controlsInRail ? -(workspacePillRef.current?.offsetWidth ?? 0) - 8 : 0}
+            flip
+            width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
+            mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
+          >
+            <WorkspacePickerMenu
+              projects={projects}
+              activeContext={activeContext}
+              query={workspaceFilter}
+              setQuery={setWorkspaceFilter}
+              onSelectWorkspace={onSelectWorkspace}
+              onSelectNoProject={onSelectNoProject}
+              onCreateWorkspace={onCreateWorkspace}
+              onOpenWorkspace={onOpenWorkspace}
+              onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
+            />
+          </FloatingMenuPortal>
+        ) : null}
+      </div>
+      {gitStatus?.is_repo || branchPickerPending ? (
+        <div className="composer-workspace-group composer-git-controls" {...blockControls(interactionDisabled || branchPickerPending)}>
+          <ComposerBranchPicker
+            key={activeContext?.cwd}
+            inToolRail={controlsInRail}
+            gitStatus={gitStatus}
+            pending={branchPickerPending}
+            disabled={branchPickerDisabled || sessionReadOnly}
+            open={branchMenuOpen}
+            onToggle={onToggleBranchMenu}
+            onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
+            onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
+            onOpenWorktree={onOpenGitWorktree}
+            worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
+          />
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const permissionControl = !textOnly ? (
+    <div className="permission-menu-anchor" ref={accessMenuRef}>
+      <Tooltip content={compactControls ? t("composer.permissionMode", { mode: permissionChipLabel }) : undefined}>
+        <button
+          ref={permissionChipRef}
+          className={`${compactControls ? "icon-button permission-rail-button" : "permission-chip"} tone-${permissionOption.tone}`}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={accessMenuOpen}
+          aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
+          disabled={!initialized || sessionReadOnly || running || permissionLocked}
+          onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
+          onClick={onToggleAccessMenu}
+          onKeyDown={(event) => {
+            if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
+          }}
+        >
+          <PermissionChipIcon aria-hidden="true" />
+          {compactControls ? null : <><span>{permissionChipLabel}</span><ChevronDown aria-hidden="true" /></>}
+        </button>
+      </Tooltip>
+      {accessMenuOpen ? (
+        <FloatingMenuPortal
+          anchorRef={accessMenuRef}
+          owner="composer-access"
+          onDismiss={onToggleAccessMenu}
+          placement={controlsInRail ? "below" : "above"}
+          align={controlsInRail ? "right" : "left"}
+          crossAxisOffset={controlsInRail ? -(accessMenuRef.current?.offsetWidth ?? 0) - 8 : 0}
+          flip
+          offset={6}
+          width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
+          mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
+        >
+          <AccessMenu
+            permissions={initialized?.permissions}
+            engine={activeEngine}
+            permissionModes={enginePermissionModes}
+            disabled={!initialized || readOnly || running}
+            onSelect={(mode, approveForMe) => {
+              permissionChipRef.current?.focus();
+              onSelectPermissionMode(mode, approveForMe);
+            }}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
+          />
+        </FloatingMenuPortal>
+      ) : null}
+    </div>
+  ) : null;
+  const runtimeControls = <div style={{ display: "contents" }} {...pendingControlProps}>
+    {permissionControl}
+    {hideRuntimeControls ? null : (
+      <>
+        <ComposerRuntimeMeters
+          inToolRail={controlsInRail}
+          compact={compactControls}
+          running={running}
+          turnID={telemetryTurnID}
+          fallbackTokensPerSecond={tokensPerSecond}
+          fallbackSampledAt={tokenSpeedSampledAt}
+          fallbackSource={tokenSpeedSource}
+          fallbackContextUsage={contextUsage}
+          activeEngine={activeEngine}
+        />
+        {/* Until the runtime reports, there is no model to name. */}
+        {initialized ? (
+          <RuntimePicker
+            inToolRail={controlsInRail}
+            compact={compactControls}
+            initialized={initialized}
+            state={codexModels}
+            openMenu={codexRuntimeMenu}
+            anchorRef={codexRuntimeRef}
+            running={effectiveRuntimeControlsDisabled}
+            engines={engines}
+            activeEngine={activeEngine}
+            engineLocked={engineLocked}
+            engineModel={engineModel}
+            engineEffort={engineEffort}
+            engineSpeed={engineSpeed}
+            engineModelOptions={engineModelOptions}
+            onSelectSpeed={onSelectSpeed}
+            onSelectEngine={onSelectEngine}
+            onSelectEngineModel={onSelectEngineModel}
+            onSelectEngineEffort={onSelectEngineEffort}
+            onSelectEngineModelOptions={onSelectEngineModelOptions}
+            onToggleMenu={onToggleCodexRuntimeMenu}
+            onSelectModel={onSelectRuntimeModel}
+            onSelectEffort={onSelectRuntimeEffort}
+
+          />
+        ) : null}
+      </>
+    )}
+  </div>;
   const content = (
     <div
-      className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`}
+      className="composer-stack"
       data-wuu-component="composer"
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       <div className="composer-above-input">
-        <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+        <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
       <div className="composer-shell">
         {slashMenuOpen ? (
@@ -1262,85 +1454,7 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
-          {canSelectWorkspace ? (
-            <div className="composer-workspace-bar" ref={menuRef}>
-              <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
-                <Tooltip
-                  content={workspacePillTitle}
-                  disabled={workspacePillTitle === workspacePillLabel}
-                >
-                  <button
-                    ref={workspacePillRef}
-                    className="hero-project-pill"
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={menuOpen}
-                    aria-label={t("composer.switchWorkspace", { workspace: workspacePillLabel })}
-                    onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
-                    onClick={onToggleMenu}
-                    onKeyDown={(event) => {
-                      if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
-                    }}
-                  >
-                    <span className="hero-project-pill-icon" aria-hidden="true">
-                      <WorkspacePillIcon />
-                    </span>
-                    <span className="hero-project-pill-text">{workspacePillLabel}</span>
-                  </button>
-                </Tooltip>
-                {menuOpen ? (
-                  <FloatingMenuPortal
-                    anchorRef={menuRef}
-                    owner="composer-runtime"
-                    placement="above"
-                    align="left"
-                    width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
-                    mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
-                  >
-                    <WorkspacePickerMenu
-                      projects={projects}
-                      activeContext={activeContext}
-                      query={workspaceFilter}
-                      setQuery={setWorkspaceFilter}
-                      onSelectWorkspace={onSelectWorkspace}
-                      onSelectNoProject={onSelectNoProject}
-                      onCreateWorkspace={onCreateWorkspace}
-                      onOpenWorkspace={onOpenWorkspace}
-                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, workspacePillRef.current)}
-                    />
-                  </FloatingMenuPortal>
-                ) : null}
-              </div>
-              {gitStatus?.is_repo ? (
-                <div className="composer-workspace-group composer-git-controls">
-                  <ComposerBranchPicker
-                    key={activeContext?.cwd}
-                    gitStatus={gitStatus}
-                    disabled={branchPickerDisabled || readOnly}
-                    open={branchMenuOpen}
-                    onToggle={onToggleBranchMenu}
-                    onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
-                    onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
-                    worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
-                  />
-                  {worktree ? (
-                    <Tooltip content={t("composer.worktreeHint")}>
-                      <button
-                        className="composer-worktree-toggle"
-                        type="button"
-                        aria-pressed={worktree.enabled}
-                        disabled={branchPickerDisabled || readOnly}
-                        onClick={worktree.onToggle}
-                      >
-                        <Split className="hero-project-pill-icon" aria-hidden="true" />
-                        <span>{t("composer.worktree")}</span>
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {controlsBelowInput || controlsInRail ? null : workspaceControls}
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
@@ -1374,65 +1488,15 @@ export function Composer({
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
           <div className="composer" hidden={Boolean(topAccessory)}>
-            <ComposerTextarea
-              ref={textareaRef}
-              expanded={isComposerExpanded}
-              value={visiblePromptValue}
-              valueRevision={promptRevision}
-              submissionClearRevision={submissionClearRevision}
-              placeholder={composerPlaceholder}
-              disabled={readOnly}
-              pluginHost={pluginHost}
-              inlineCompletionKind={inlineCompletionKind}
-              workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
-              workspaceRoot={inlineCompletionWorkspace?.cwd}
-              attachmentCount={files.length + images.length + selections.length}
-              queuedCount={queuedMessages.length}
-              pendingCount={guideMessages.length}
-              inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
-                && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
-              inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
-                inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
-              inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
-              inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
-              inlineCompletionActionsRef={inlineCompletionActionsRef}
-              threadId={threadId}
-              sideThreadId={sideThreadId}
-              running={running}
-              ariaControls={slashMenuOpen ? slashMenuID : undefined}
-              ariaActiveDescendant={
-                selectedSlashCommand
-                  ? `${slashMenuID}-${selectedSlashCommand.id}`
-                  : undefined
-              }
-              ariaExpanded={slashMenuOpen || undefined}
-              onValueChange={updateVisiblePrompt}
-              onPaste={handleComposerPaste}
-              onBlurValue={(value) => {
-                if (slashMenuOpen) {
-                  setSlashDismissedValue(value);
-                }
-              }}
-              onKeyDown={handleComposerKeyDown}
-              onContextMenu={handleComposerContextMenu}
-            />
-            {!hideExpandButton ? (
-              <button
-                className="composer-expand-button"
-                type="button"
-                aria-label={isComposerExpanded ? t("composer.collapseInput") : t("composer.expandInput")}
-                aria-pressed={isComposerExpanded}
-                title={readOnly ? t("composer.readOnlyCannotExpand") : isComposerExpanded ? t("composer.collapseInput") : t("composer.expandInput")}
-                disabled={readOnly}
-                onClick={toggleComposerExpansion}
-              >
-                {isComposerExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-              </button>
-            ) : null}
             <div
               className="composer-bar"
               data-wuu-component="composer-toolbar"
             >
+              <div className="composer-bar-right">
+                <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
+              </div>
+            </div>
+            <div className="composer-editor">
               <div className="composer-bar-left">
                 {!textOnly ? (
                   <ComposerPlusButton
@@ -1453,99 +1517,62 @@ export function Composer({
                     onSelectCommand={(command) => applySlashCommand(command, undefined)}
                   />
                 ) : null}
-                {!textOnly ? (
-                  <div className="permission-menu-anchor" ref={accessMenuRef}>
-                    <button
-                      ref={permissionChipRef}
-                      className={`permission-chip tone-${permissionOption.tone}`}
-                      type="button"
-                      aria-haspopup="menu"
-                      aria-expanded={accessMenuOpen}
-                      aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
-                      disabled={!initialized || readOnly || running || permissionLocked}
-                      onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
-                      onClick={onToggleAccessMenu}
-                      onKeyDown={(event) => {
-                        if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
-                      }}
-                    >
-                      <PermissionChipIcon aria-hidden="true" />
-                      <span>{permissionChipLabel}</span>
-                      <ChevronDown aria-hidden="true" />
-                    </button>
-                    {accessMenuOpen ? (
-                      <FloatingMenuPortal
-                        anchorRef={accessMenuRef}
-                        owner="composer-access"
-                        placement="above"
-                        align="left"
-                        offset={6}
-                        width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
-                        mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
-                      >
-                        <AccessMenu
-                          permissions={initialized?.permissions}
-                          engine={activeEngine}
-                          permissionModes={enginePermissionModes}
-                          disabled={!initialized || readOnly || running}
-                          onSelect={(mode, approveForMe) => {
-                            permissionChipRef.current?.focus();
-                            onSelectPermissionMode(mode, approveForMe);
-                          }}
-                          onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
-                        />
-                      </FloatingMenuPortal>
-                    ) : null}
-                  </div>
-                ) : null}
-                <MemoizedComposerPluginToolbar host={pluginHost} context={pluginSlotContext} />
               </div>
-              <div className="composer-bar-right">
-                {hideRuntimeControls ? null : (
-                  <>
-                    <ComposerRuntimeMeters
-                      running={running}
-                      turnID={telemetryTurnID}
-                      fallbackTokensPerSecond={tokensPerSecond}
-                      fallbackSampledAt={tokenSpeedSampledAt}
-                      fallbackSource={tokenSpeedSource}
-                      fallbackContextUsage={contextUsage}
-                      activeEngine={activeEngine}
-                    />
-                    {/* Until the runtime reports, there is no model to name. */}
-                    {initialized ? (
-                      <RuntimePicker
-                        initialized={initialized}
-                        state={codexModels}
-                        openMenu={codexRuntimeMenu}
-                        anchorRef={codexRuntimeRef}
-                        running={effectiveRuntimeControlsDisabled}
-                        engines={engines}
-                        activeEngine={activeEngine}
-                        engineLocked={engineLocked}
-                        engineModel={engineModel}
-                        engineEffort={engineEffort}
-                        engineSpeed={engineSpeed}
-                        engineModelOptions={engineModelOptions}
-                        onSelectSpeed={onSelectSpeed}
-                        onSelectEngine={onSelectEngine}
-                        onSelectEngineModel={onSelectEngineModel}
-                        onSelectEngineEffort={onSelectEngineEffort}
-                        onSelectEngineModelOptions={onSelectEngineModelOptions}
-                        onToggleMenu={onToggleCodexRuntimeMenu}
-                        onSelectModel={onSelectRuntimeModel}
-                        onSelectEffort={onSelectRuntimeEffort}
-
-                      />
-                    ) : null}
-                  </>
-                )}
-                <Tooltip content={sendDisabledReason}>
+              <ComposerTextarea
+                ref={textareaRef}
+                value={visiblePromptValue}
+                valueRevision={promptRevision}
+                submissionClearRevision={submissionClearRevision}
+                placeholder={composerPlaceholder}
+                disabled={readOnly}
+                pluginHost={services?.presentation ?? pluginHost}
+                inlineCompletionKind={inlineCompletionKind}
+                workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
+                workspaceRoot={inlineCompletionWorkspace?.cwd}
+                attachmentCount={files.length + images.length + selections.length}
+                queuedCount={queuedMessages.length}
+                pendingCount={guideMessages.length}
+                inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
+                  && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
+                inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
+                  inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
+                inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
+                inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
+                inlineCompletionActionsRef={inlineCompletionActionsRef}
+                threadId={threadId}
+                sideThreadId={sideThreadId}
+                running={running}
+                ariaControls={slashMenuOpen ? slashMenuID : undefined}
+                ariaActiveDescendant={
+                  selectedSlashCommand
+                    ? `${slashMenuID}-${selectedSlashCommand.id}`
+                    : undefined
+                }
+                ariaExpanded={slashMenuOpen || undefined}
+                onValueChange={updateVisiblePrompt}
+                onPaste={handleComposerPaste}
+                onBlurValue={(value) => {
+                  if (slashMenuOpen) {
+                    setSlashDismissedValue(value);
+                  }
+                }}
+                onKeyDown={handleComposerKeyDown}
+                onContextMenu={handleComposerContextMenu}
+              />
+              <div className="composer-input-actions">
+                {controlsInRail ? createPortal(<>{workspaceControls}{runtimeControls}</>, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
+                {showContinue ? (
+                  <ComposerContinueButton
+                    key={`${continuation.threadID}:${continuation.turnID}`}
+                    continuation={continuation}
+                    disabled={effectiveSendDisabled}
+                  />
+                ) : <Tooltip asChild content={sendDisabledReason || (stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel)}>
                   <button
                     className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                     data-wuu-component="composer-send"
-                    data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                    aria-busy={continuePending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                    data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                    aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
                     type="button"
                     onPointerDown={(event) => {
                       if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1557,20 +1584,25 @@ export function Composer({
                     onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
                     aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
                     aria-description={sendDisabledReason}
-                    title={sendDisabledReason ? undefined : stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                     disabled={
-                      continuePending || stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (!hasDraft && !canContinue) || (handoffMode && !canConfirmHandoff)))
+                      stopState === "pending" || (!showComposerStopAction &&
+                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
                   >
-                    {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
+                    {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
                   </button>
-                </Tooltip>
+                </Tooltip>}
               </div>
             </div>
           </div>
           </div>
           </div>
+        {controlsBelowInput ? (
+          <ComposerFooter collapsed={controlsInRail}>
+            {controlsInRail ? null : workspaceControls}
+            {!controlsInRail && !topAccessory ? <div className="composer-footer-runtime">{runtimeControls}</div> : null}
+          </ComposerFooter>
+        ) : null}
         {handoffMode && initialized && !handoffUnavailableReason ? (
           <FloatingMenuPortal
             anchorRef={composerFrameRef}
@@ -1674,51 +1706,52 @@ export function Composer({
       {content}
     </footer>
   );
-  const availableSubmissionModes = running
-    ? ([...(onSteer ? ["steer" as const] : []), ...(onQueue ? ["queue" as const] : [])])
-    : (["send" as const]);
-  const activeSubmissionMode = running && onSteer ? "steer" : running && onQueue ? "queue" : "send";
+  return <>{attachmentPickers}{nativeComposer}</>;
+}
+
+function ComposerFooter({ collapsed, children }: { collapsed: boolean; children: ReactNode }): JSX.Element {
+  const compositionPending = useContext(UICompositionPendingContext);
+  const [motionReady, setMotionReady] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    setMotionReady(false);
+    if (compositionPending) return;
+    // A selected preview can publish its portal after the composer. Resolve
+    // that first layout, including the dock inset, before enabling rail motion.
+    const frame = requestAnimationFrame(() => {
+      shellRef.current?.getBoundingClientRect();
+      setMotionReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [compositionPending]);
+  useLayoutEffect(() => {
+    if (collapsed) return;
+    const shell = shellRef.current!;
+    const content = contentRef.current!;
+    // Keep the last measured height while controls move into the rail, so the
+    // dock releases their actual footprint smoothly, including wrapped rows.
+    const measure = () => shell.style.setProperty("--composer-footer-height", `${content.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [collapsed]);
   return (
-    <>
-      {attachmentPickers}
-      <ComposerPresentation
-        enabled={mainConversation}
-        fallback={nativeComposer}
-        draftText={prompt}
-        files={files}
-        images={images}
-        queuedMessages={queuedMessages}
-        pendingMessages={guideMessages}
-        running={running}
-        readOnly={readOnly}
-        sendDisabled={effectiveSendDisabled}
-        variant={variant}
-        threadId={queryHistorySessionID}
-        initialized={initialized}
-        contextUsage={contextUsage}
-        disabledReason={readOnly || effectiveSendDisabled ? disabledReason || statusText || undefined : undefined}
-        activeSubmissionMode={activeSubmissionMode}
-        availableSubmissionModes={availableSubmissionModes}
-        attachmentInputRef={attachmentInputRef}
-        attachmentsEnabled={!textOnly}
-        onSetDraft={setPrompt}
-        onRemoveFile={onRemoveFile}
-        onRemoveImage={onRemoveImage}
-        onSubmit={submitDraft}
-        onStop={onInterrupt}
-      />
-    </>
+    <div ref={shellRef} className="composer-footer-shell" data-collapsed={collapsed || undefined}
+      data-layout-pending={compositionPending || !motionReady || undefined} inert={collapsed}>
+      <div ref={contentRef} className="composer-footer">{children}</div>
+    </div>
   );
 }
 
 type ComposerTextareaProps = {
-  expanded: boolean;
   value: string;
   valueRevision: number;
   submissionClearRevision: number;
   placeholder: string;
   disabled: boolean;
-  pluginHost: PluginHost;
+  pluginHost: ComposerInlineSource;
   inlineCompletionKind: ComposerInlineCompletionContext["kind"];
   inlineCompletionEnabled: boolean;
   inlineCompletionContextKey: string;
@@ -1748,7 +1781,6 @@ type ComposerTextareaProps = {
 // and the surrounding chrome update in an interruptible transition.
 const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
   function ComposerTextarea({
-    expanded,
     value: committedValue,
     valueRevision,
     submissionClearRevision,
@@ -1778,7 +1810,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     const inputRef = useRef<HTMLTextAreaElement>(null);
     useImperativeHandle(ref, () => inputRef.current!, []);
     const [value, setValue] = useState(committedValue);
-    useComposerHeight(inputRef, expanded, value);
+    useComposerHeight(inputRef, value);
     const [lastCommittedValue, setLastCommittedValue] = useState(committedValue);
     const [externalResetRevision, setExternalResetRevision] = useState(0);
     const [lastValueRevision, setLastValueRevision] = useState(valueRevision);
@@ -1906,7 +1938,7 @@ function composerRuntimeContextKey(context: RuntimeContext): string {
   return context.kind === "project" ? `project:${context.project_id}` : `no_project:${context.cwd}`;
 }
 
-function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activeWorkspace: DesktopProject | undefined): string {
+function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activeWorkspace: ComposerWorkspace | undefined): string {
   if (activeContext?.kind === "project") {
     return activeWorkspace?.name ?? translate("composer.currentWorkspace");
   }

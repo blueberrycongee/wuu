@@ -135,7 +135,7 @@ func (*recordingCompactJournal) PrepareAttempt(providers.InferenceAttemptJournal
 	return nil
 }
 
-func (j *recordingCompactJournal) UpsertSubmission(record providers.InferenceSubmissionJournalRecord) error {
+func (j *recordingCompactJournal) UpsertSubmission(_ context.Context, record providers.InferenceSubmissionJournalRecord) error {
 	if j.submissions == nil {
 		j.submissions = make(map[string]providers.InferenceSubmissionJournalRecord)
 	}

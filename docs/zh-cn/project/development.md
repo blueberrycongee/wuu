@@ -123,7 +123,7 @@ worker 与页面渲染，以及 Mermaid。证据目录保存归档哈希、日�
 
 ### 实时活动预览验收
 
-安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查同一会话的独立目标、最多 5 张可见卡片及候补补位、提到最前、会话可见性、对话框遮挡、单张隐藏、自动预览设置、多个保留目标的原生控制状态更新、旧回调拒绝、画面确认、捕获错误恢复和关闭清理。结果、传输日志、出现动画帧采样、堆叠几何信息和截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。macOS 还会保存浅色默认字号和深色大字号布局的堆叠合成截图。无图形会话的 Linux 自动使用软件渲染和合成显示器。
+安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查同一会话的独立目标、最多 5 张可见卡片及候补补位、提到最前、会话可见性、对话框遮挡、单张隐藏与重新打开、多个保留目标的原生控制状态更新、旧回调拒绝、画面确认、捕获错误恢复和关闭清理。结果、传输日志、出现动画帧采样、堆叠几何信息和截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。macOS 还会保存浅色默认字号和深色大字号布局的堆叠合成截图。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
 
@@ -148,13 +148,6 @@ open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
 目录，以及显式禁用。使用合成 Codex 协议端，要求系统公共目录没有安装 Codex；
 不验证上游登录与推理。可向 `open` 添加 `--env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output`
 以保留独立证据目录。
-
-在 macOS 上运行 `npm --prefix desktop run test:e2e:desktop-update`，可用真实
-MacUpdater 和本地 HTTP 更新源验证生产更新按钮、preload、菜单和轮询回调。
-覆盖新版本、检查失败、版本撤回、串行下载和确认期间版本变化，并校验下载 ZIP 的哈希。
-确认操作由脚本控制，不会请求安装。测试使用临时配置和缓存，截图、请求与状态证据保存在
-`desktop/out/e2e/desktop-update/`，可用 `WUU_UPDATE_E2E_OUTPUT` 覆盖。
-macOS CI 会执行并上传证据。这不验证 GitHub 可用性、发布签名或已安装应用的替换。
 
 ## 选择相关检查
 
@@ -195,6 +188,94 @@ macOS CI 会执行并上传证据。这不验证 GitHub 可用性、发布签名
 后代码卡片高度保持不变。脚本使用同样的自启动测试页面服务器，覆盖浅色/深色、1000/420px
 窗口和 15/20px 字号。测量结果和截图保存在 `desktop/out/stream-code-cursor/`，可用
 `WUU_CODE_CURSOR_OUTPUT` 更改目录。
+
+### 首条消息连续性验收
+
+构建桌面和核心后，运行 `npm --prefix desktop run test:e2e:first-send`；
+`WUU_DESKTOP_CORE` 指定被测核心。脚本使用独立临时配置和 loopback 合成模型服务，
+通过真实 Electron 键盘输入、preload、主进程与 Go 接收链路，分别暂停会话创建、
+消息接收与通知。用 `WUU_FIRST_SEND_ORDER=event-first|ack-first|rejected` 选择
+通知先到、响应先到或明确拒绝。重复 Enter 只能接收一条消息；气泡在每个采样帧中
+必须连续可见，不能重新播放入场动画。确认或失败均不得覆盖用户后来编辑的草稿。
+`WUU_FIRST_SEND_ATTACHMENT=1` 添加附件；`WUU_FIRST_SEND_THEME`、
+`WUU_FIRST_SEND_FONT`、`WUU_FIRST_SEND_WIDTH` 控制主题、字号与窗口宽度。
+中文采用原生文本插入，不模拟操作系统输入法候选词选择。
+
+桌面 session CI 运行三种顺序和入场动画期间快速确认的场景，包含深色、窄窗口、
+大字号和附件，并上传
+`report.json`、逐帧 `frames.json`、日志、截图以及核心和渲染器哈希。
+`WUU_FIRST_SEND_OUTPUT` 指定证据目录，`WUU_FIRST_SEND_DESKTOP` 可选择已构建的
+基线，复现修复前失败。Linux 无头渲染不等同于实体 macOS 验收；使用本文说明的
+独立 Electron 测试环境。
+
+### 错误消息外观与恢复验收
+
+构建桌面和核心后，分别运行：
+
+```sh
+WUU_ERROR_STYLE_FONT=15 npm --prefix desktop run test:e2e:error-message-style
+WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
+```
+
+`WUU_DESKTOP_CORE` 指定已构建的核心。每次使用独立的应用与用户配置和 loopback
+合成模型服务，经过真实 Electron 输入、preload、主进程和 Go。检查浅色/深色、
+1280/640px 窗口、IM/普通气泡、字号与裁切、原生详情开合和键盘焦点、HTTP 401 后
+手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的完整诊断；原始模型服务
+错误正文可能在到达渲染器前被归一化。
+
+session CI 使用已有渲染器/核心构建运行两种字号，并上传合成截图、布局测量、日志
+和构建哈希。证据默认位于 `desktop/out/e2e/error-message-style-15/` 或
+`error-message-style-20/`；`WUU_ERROR_STYLE_OUTPUT` 更改目录，
+`WUU_ERROR_STYLE_DESKTOP` 选择已构建的对照桌面。应目视检查实际画面的气泡风格
+一致性；自动检查不固定 CSS 声明，也不能替代视觉验收。Linux 结果不等同于实体
+macOS 验收。
+
+### 确认归档验收
+
+构建桌面与核心后，逐一运行独立场景：
+
+```sh
+for mode in running stale-completed workspace-switched provider-replaced; do
+  WUU_ARCHIVE_MODE="$mode" npm --prefix desktop run test:e2e:confirmed-archive
+done
+```
+
+`WUU_DESKTOP_CORE` 指定核心。测试使用原生侧栏与提示按钮点击、loopback 流式模型
+服务和公开本地插件，不使用真实账户或对话。检查重复点击只提交一次明确确认的强制
+归档、过期运行状态、工作区切换、插件提供者替换、用户与助手历史持久化以及归档列表。
+运行中场景还会排队一条输入，并在独立进程中打开当前选定的存储，证明原始输入仍被
+保留且没有自动启动下一轮模型请求。默认构建 `scripts/session-fixture`；可用
+`WUU_SESSION_FIXTURE` 指定已有辅助程序。持久化检查不会恢复或激活对话。
+
+session CI 运行全部四个场景，包含深色、窄窗口和 20px 确认按钮。
+`WUU_ARCHIVE_THEME`、`WUU_ARCHIVE_FONT`、`WUU_ARCHIVE_WIDTH` 控制视觉变体。
+报告记录原生输入、请求结果、持久化历史、合成截图和构建哈希，默认目录为
+`desktop/out/e2e/confirmed-archive/<mode>/`；`WUU_ARCHIVE_OUTPUT` 更改目录，
+`WUU_ARCHIVE_DESKTOP` 选择已构建的对照桌面。应同时目视检查截图，不能只看断言。
+Linux Electron 结果不等同于实体 macOS 验收。
+
+### 输入框底栏验收
+
+构建桌面与核心后，运行字号和名称长度矩阵：
+
+```sh
+for font in 15 20; do
+  for long_names in 0 1; do
+    WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names" \
+      npm --prefix desktop run test:e2e:composer-footer
+  done
+done
+```
+
+每个临时 Git 项目通过生产 main/preload/core 验证浅色与深色、宽窄窗格，以及工具栏
+展开和收起。原生拖动面板分隔条复现 240–320px 输入框。检查底栏几何、控件字号不变、
+无裁切、可信点击、焦点和草稿可编辑性；测试禁止发送消息或发起模型推理。
+
+session CI 复用已有 renderer/core 构建，运行全部四种组合。`WUU_DESKTOP_CORE`
+指定核心，`WUU_FOOTER_DESKTOP` 指定已构建的桌面。报告、几何、截图和构建哈希默认
+位于 `desktop/out/e2e/composer-footer-<font>/`（长名称增加 `-long` 后缀）；
+`WUU_FOOTER_OUTPUT` 更改证据目录。应同时目视检查合成截图，不能只看断言。
+Linux Electron 结果不等同于实体 macOS 验收。
 
 ### MCP 连接生命周期
 
@@ -303,6 +384,30 @@ JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
 用真实 Node PDF.js 验证相同的 PDF 字节。此模式检查解析、命名和页面引用解析，
 以及不安全动作数据，不验证渲染或点击。
 
+### 原生浏览器布局与动画
+
+Workbench 网页使用保留的 Electron `WebContentsView` 实例。选择其他入口时隐藏
+页面，不重新导航或创建；显式关闭、资源回收和 renderer 恢复有各自的生命周期规则。
+Agent Browser 在现有任务归属约束下接入同一个页面。
+
+main 以设备独立像素管理原生视图边界。铺满窗口的页面上报 chrome 内边距，使原生
+窗口缩放无需等待 renderer 的下一帧；嵌入扩展面板的页面上报 DOM 矩形。后者跟踪
+页面及其祖先的 CSS transition 和 animation，包括取消、反向和重叠效果，也跟踪
+移动的遮挡层、合并重复几何上报，并在动画结束后停止采样。滚动驱动的效果依靠滚动
+事件更新，不在静止时保持连续定时采样。原生兄弟视图不会继承
+React 元素的 transform 或裁剪；renderer 到 main 的边界消息不是原子的呈现事务。
+
+不要让原生网页和 React 工具栏分别沿两条独立时间线运动。修改原生动画时必须检查
+合成画面、中间网页视口尺寸、原生命中测试、焦点与输入法、中断，以及页面实例保留。
+单纯看到合成器变换平滑，不能证明这些契约成立。
+
+构建 core 和桌面后，在图形会话运行
+`desktop/node_modules/.bin/electron desktop/scripts/browser-workspace-switch-e2e.cjs`。
+测试使用生产 main、preload、renderer 和真实网页，检查状态保留、CSS 动画期间的
+原生边界、遮挡、取消和静止后停止采样。产物位于
+`desktop/out/e2e/browser-workspace-switch/`，可通过 `WUU_BROWSER_SWITCH_OUTPUT`
+指定其他目录。几何检查容许异步采样偏差，不测量实际呈现帧率，也不证明每一帧都对齐。
+
 ### 实时缩放布局护栏
 
 桌面生产构建完成后，在图形会话中运行
@@ -312,7 +417,8 @@ JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
 宿主边界；它不启动真实 Go 进程或嵌入式浏览器。
 
 `desktop/out/e2e/resize-live-layout.json` 记录公开主题/语法 token、宿主几何尺寸，
-以及左右拖动和收起/展开动画中的中间消息宽度与文字行数。测试还检查流式跟随、
+以及左右拖动和收起/展开动画中的中间消息宽度与文字行数。测试还检查退出中的工作区
+面板反向展开、窗口失焦时结束拖动、流式跟随、
 暂停阅读的终点锚定，以及重新排版期间的提交问题定位和保持。
 连续样本用于证明拖动中真实换行；终点检查本身不能证明每个绘制帧的滚动偏移都不变。
 CI 不使用实际耗时性能门槛。
@@ -368,6 +474,41 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 这些是 RPC 整体耗时，不是独立 SQL 计时；首次进入项目不一定启动新进程，应与冷启动区分。
 夹具还保存 `subscription-navigation.png`。挂起响应验证导航独立性，不模拟数据库锁或账户服务故障。
 
+### 核心 RPC 分段计时
+
+以 `WUU_RPC_TIMING=1` 启动诊断核心，会在 `WUU_HOME/log/debug.log` 中增加
+`rpc_timing` JSON 记录。正常核心启动会初始化此元数据日志，无须 verbose 或
+`WUU_DEBUG_WIRE`。延迟测试不要开启 wire 日志，它可能包含请求和响应正文。
+默认计时路径不创建 recorder、不哈希、不取时钟、不分配诊断对象。修改 Go 测点后
+需重建核心；测试已用 `WUU_DESKTOP_CORE` 选择核心时，不必重建渲染器。
+
+记录仅含核心 PID、白名单方法名（未知方法记为 `other`）、请求/会话 ID 哈希、
+阶段、单调时钟毫秒数及写入结果，不含提示词、历史、附件、路径、凭据或错误正文。
+stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 的十六进制
+结果关联；会话哈希使用 ID 的 UTF-8 字节。按 PID 和请求哈希分组，再按 `at_ms`
+排序；该时间相对于本核心的 recorder，不属于渲染器或主进程的时钟域。
+临界区内仅在内存中保存测量，解锁后才写日志，因此日志行顺序不一定是事件顺序。
+响应记录使用有界元数据缓冲，在 handler、服务自有后台任务返回或服务关闭时写出；
+`response_records_dropped` 明确标记溢出，此时记录不完整。
+开启计时有探针开销，应与未插桩的墙钟基线分开统计。
+
+- `stdin_read`、`handler_start`、`response_written`、`handler_end` 区分请求处理
+  和回复后的工作。`stdin_read` 表示串行扫描器已读到完整帧，不是字节最早到达管道
+  的时刻。已有异步 handler 可能先返回、后回复。
+- `resume_*` 区分持久历史载入、子代理/工作树检查、元数据/暂存输入读取、进程恢复、
+  缓存分离及已分离资源清理。
+- `queue_*` 区分输入准备、权限/控制检查、真正的互斥锁获取等待及持久接受。
+  `queue_persist` 包含所选存储服务，不是单独的 SQL 或文件系统耗时。
+- `admission_*`、`answer_ready_handoff` 和 `turn_launch_committed` 区分上轮结算、
+  插件刷新、执行租约、历史刷新、运行环境准备、hook 和用户输入持久追加。
+  launch **不等于** provider 请求，仍需保留本地 provider/HTTP 包装器的派发时间。
+- `interrupt_*` 区分会话控制、暂存输入持久化、取消、worker 冻结、受管理进程停止
+  及生命周期记录。中断回复与后续终态通知/UI 更新是不同事件。
+
+若包装器测得 queue RPC 往返很长，但其 handler 很短，应先检查前一 handler 的
+回复到返回间隔，再判断是否是锁等待。聚合阶段耗时长不能证明锁竞争，只有
+`*_mutex_wait` 直接测量获取锁。保留精确核心/UI 哈希、夹具规模，以及插桩和未插桩结果。
+
 ### 端到端用户流程诊断
 
 同一测试现在始终记录从主进程 bundle 导入到恢复会话、原生输入草稿、
@@ -409,6 +550,43 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 预热样本应单独保留，不并入测量结果。
 无图形 Linux 可用 `--no-sandbox --ozone-platform=headless`；两帧仅表示绘制
 机会，不证明物理显示或 120 Hz。墙钟耗时仅供诊断，不作为 CI 阈值。
+
+### 仅消息流的导航切换展示
+
+在 session-switch 测试中设置 `WUU_SWITCH_PRESENTATION=1`、`WUU_SWITCH_STABLE_PRESENTATION=1`、
+`WUU_SWITCH_TURNS=12` 和 `WUU_SWITCH_ROUNDS=1`，运行独立的产品回归流程。
+它通过真实侧栏和输入框的原生输入，检查普通会话、分屏、新草稿，以及从浏览器新页面
+经可见的「会话」导航入口切换工作区，并覆盖普通动效和减少动态效果设置。
+工作区选择器流程还验证多行未发送草稿及较高输入区的保留，返回原工作区时其原草稿也仍在。
+窗口保持 1380×860，
+不会为通过截图预算而缩小；CI 分别以 1× 和 2× 设备缩放运行，之后独立检查
+820px 深色窄窗口与保存的 20px 界面字号。
+
+门禁逐帧检查外壳动画、输入区和状态区被覆盖、旧画面侵入新界面的可交互区域，
+以及普通切换意外进入全窗口恢复视图。每次切换后验证输入框接收原生输入，
+并注入截图停滞，检查有界动作调度及迟到结果不会重复执行导航。
+稳定模式是默认值和 CI/npm 门禁：仅允许一次消息动作截图，不得出现全窗口位图或
+恢复视图；同 surface 的普通业务换代必须保留 shell、侧栏、输入框、底栏及工具栏 DOM。
+分屏和浏览器路由可以有意替换输入框结构。`WUU_SWITCH_STABLE_PRESENTATION=0`
+只用于旧构建基线对比，严格要求旧版的第二次退役截图，不作为当前产品门禁。
+证据包括 `presentation-results.json`、合成器逐帧 PNG、最终截图和日志。
+这些是隔离测试中的 Chromium 合成器观测，不代表物理屏幕呈现证明。
+截图只保留像素，不保留退役业务服务。选择新契约的 UI 注册和 DOM 跨业务换代
+保留，但动作获得新的权限作用域；旧模块与有意的代码或 surface 替换仍使用有界截图和恢复。
+
+工作区业务交接会先同步停止旧 controller、撤销真实 workbench 回调，再激活后继。
+已捕获原生 PTY ID 的回收可在交接后完成：renderer 文档保留这些任务，报告失败，并在
+原生退出时等候完成；`flushCleanup()` 仍是完整的显式 drain。Web 资源的 destination
+ID 可能跨 controller 复用，因此其清理仍会阻塞交接。这不是通用的异步销毁策略，
+也不会取消受管理的代理进程。
+
+desktop 的 `session` CI 复用已构建产物运行 `terminal-handoff-e2e.cjs`，覆盖四个隔离
+场景：PTY 启动挂起、PTY 停止挂起、Web 所有权屏障，以及旧 PTY 尚未完成时原生退出。
+测试使用原生输入和真实 IPC/PTY，验证侧栏节点保留、后继可编辑，并保存产物哈希、事件
+记录和截图，不发送推理请求。手动复验时设置 `WUU_HANDOFF_COMMIT`，以
+`WUU_DESKTOP_CORE` 选择现有二进制，再用 `WUU_HANDOFF_MODE=start|stop|web|quit`
+运行 `npm --prefix desktop run test:e2e:terminal-handoff`。`WUU_HANDOFF_OUTPUT`
+指定源码树外的证据目录，默认位于系统临时目录；测试命令不会重新构建产品。
 
 ### 新进程启动诊断
 

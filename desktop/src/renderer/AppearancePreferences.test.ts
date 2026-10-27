@@ -37,6 +37,21 @@ describe("appearance preferences", () => {
     expect(changed).toHaveBeenCalledTimes(2);
   });
 
+  it("restores message style across reloads and windows while upgrading old preferences", () => {
+    localStorage.setItem("wuu.appearance.v1", JSON.stringify({ codeSize: 16 }));
+    const stop = startAppearanceSync();
+    expect(document.documentElement.dataset.messageStyle).toBe("bubble");
+    saveAppearance({ ...readAppearance(), messageStyle: "im" });
+    expect(readAppearance()).toMatchObject({ messageStyle: "im", codeSize: 16 });
+    stop();
+    const restart = startAppearanceSync();
+    expect(document.documentElement.dataset.messageStyle).toBe("im");
+    localStorage.setItem("wuu.appearance.v1", JSON.stringify({ messageStyle: "unknown" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "wuu.appearance.v1" }));
+    expect(document.documentElement.dataset.messageStyle).toBe("bubble");
+    restart();
+  });
+
   it("preserves the existing reading size and ignores the retired local UI size", () => {
     localStorage.setItem("wuu.appearance.v1", JSON.stringify({ uiSize: 16, codeSize: 11, uiFont: "Example Sans" }));
     applyMessageFlowFontSize(18);

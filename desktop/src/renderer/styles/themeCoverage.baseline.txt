@@ -6,17 +6,13 @@ agent-avatar-feedback.css .agent-avatar-ribbon-fourth stroke --agent-ribbon-four
 agent-avatar-feedback.css .agent-avatar-ribbon-lead stroke --agent-ribbon-lead
 agent-avatar-feedback.css .agent-avatar-ribbon-tail stroke --agent-ribbon-tail
 agent-avatar-feedback.css .agent-avatar-ribbon-third stroke --agent-ribbon-third
-archive-tip.css .archive-tip-action:hover background --ink-overlay-8
-archive-tip.css .archive-tip-dismiss:hover background --ink-overlay-8
 base.css ::selection background --selection-bg
 chat.css .chat-bubble background --ink-overlay-4
-composer-context-meter.css .composer-context-meter-track stroke --context-meter-track
 composer-token-gauge.css .composer-token-gauge-track stroke --token-gauge-track
-composer.css .composer-expand-button:hover:not(:disabled), .composer-expand-button[aria-pressed="true"] background-color --ink-overlay-8
-composer.css .composer-frame.composer-frame-drop-active::after box-shadow --ink-overlay-18
-composer.css .composer-input-header-action:hover:not(:disabled) background --ink-overlay-8
+composer.css .composer-frame-drop-active .composer-editor::after box-shadow --ink-overlay-18
 composer.css .composer-queue-row:hover .composer-queue-preview, .composer-queue-row:focus-within .composer-queue-preview background --ink-overlay-4
 composer.css .user-question-close:hover:not(:disabled) background --ink-overlay-6
+context-usage-ring.css .context-usage-ring-track stroke --context-meter-track
 conversation-shell.css .linux-window-control-close:active background --linux-caption-close-active
 conversation-shell.css .linux-window-control-close:active color --linux-caption-close-ink
 conversation-shell.css .linux-window-control-close:hover background --linux-caption-close-hover
@@ -53,7 +49,12 @@ image-preview.css .image-preview-toolbar-button:active:not(:disabled) background
 image-preview.css .image-preview-toolbar-button:focus-visible outline --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover
 image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
+mac-window-controls.css .mac-window-control background --traffic-light-color
+model-services.css .connection-auth-methods [aria-pressed="true"] background --ink-overlay-6
 model-services.css .model-service-tile:hover:not(:disabled) background --ink-overlay-4
+navigation-ribbon.css :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button, :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover, :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover background --ink-overlay-6
+navigation-ribbon.css .sidebar-ribbon-brand > img box-shadow --shadow-color-medium
+navigation-ribbon.css .sidebar-ribbon-brand > img box-shadow --shadow-color-strong
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge
@@ -83,6 +84,7 @@ settings.css .settings-button-primary background --gray-900
 settings.css .settings-button-primary:hover:not(:disabled) background --gray-900
 settings.css .settings-engine-row-toggle:hover > .settings-engine-expand background --ink-overlay-6
 settings.css .settings-remote-qr background --settings-remote-qr-quiet-zone
+settings.css .settings-shell background --sidebar-material-fill
 settings.css .settings-skill-usage-bar span background --settings-heatmap-level-3
 settings.css .settings-theme-preview-window-dark background --settings-preview-dark-canvas
 settings.css .settings-theme-preview-window-dark .settings-theme-preview-line background --settings-preview-dark-line
@@ -97,16 +99,25 @@ settings.css .settings-usage-heatmap-cell[data-level="4"], .settings-heatmap-leg
 settings.css .settings-usage-trend-day i background --settings-heatmap-level-3
 settings.css .settings-usage-trend-day:hover i background --settings-heatmap-level-4
 settings.css button.settings-engine-expand:hover background --ink-overlay-6
-sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
+sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after background --sidebar-resizer-hover-bg
+sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after box-shadow --sidebar-resizer-hover-ring
+sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before background --sidebar-resizer-hover-bg
+sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before box-shadow --sidebar-resizer-hover-bg
+sidebar.css .app-shell background --sidebar-material-fill
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg
+sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within background --sidebar-drawer-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within border-right-color --sidebar-drawer-edge
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within box-shadow --sidebar-drawer-inner-edge
+sidebar.css .sidebar-collapsed.sidebar-drawer-open .sidebar, .sidebar-collapsed.sidebar-drawer-closing .sidebar, .sidebar-collapsed:not(.resizing-sidebar) .sidebar:focus-within background --sidebar-drawer-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open .sidebar, .sidebar-collapsed.sidebar-drawer-closing .sidebar, .sidebar-collapsed:not(.resizing-sidebar) .sidebar:focus-within border-right-color --sidebar-drawer-edge
 sidebar.css .sidebar-collapsed.sidebar-drawer-open .sidebar, .sidebar-collapsed.sidebar-drawer-closing .sidebar, .sidebar-collapsed:not(.resizing-sidebar) .sidebar:focus-within box-shadow --sidebar-drawer-inner-edge
 sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) box-shadow --sidebar-edge-shadow
 sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) border-right-color --sidebar-material-edge
+sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) background --sidebar-material-fill
+sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) background --sidebar-material-fill
 sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) box-shadow --sidebar-material-inner-edge
 sidebar.css .sidebar-functional-action:hover, .sidebar-functional-action:focus-visible, .sidebar-functional-action[aria-expanded="true"] background --sidebar-row-icon-hover-bg-default
+sidebar.css .sidebar-notifications-dot border --sidebar-material-fill
 sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before background --sidebar-resizer-hover-bg
 sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before box-shadow --sidebar-resizer-hover-ring
 sidebar.css .sidebar-row-icon-button:hover, .sidebar-row-icon-button:focus-visible background --sidebar-row-icon-hover-bg
@@ -114,20 +125,24 @@ sidebar.css .sidebar-section-drag-overlay box-shadow --sidebar-hover-card-rim
 sidebar.css .sidebar-settings-button:hover, .sidebar-settings-button[aria-expanded="true"] box-shadow --sidebar-settings-button-hover-ring
 sidebar.css .sidebar, .settings-sidebar box-shadow --sidebar-edge-shadow
 sidebar.css .sidebar, .settings-sidebar border-right --sidebar-material-edge
+sidebar.css .sidebar, .settings-sidebar border-right-color --sidebar-material-edge
+sidebar.css .sidebar, .settings-sidebar background --sidebar-material-fill
+sidebar.css .sidebar, .settings-sidebar background --sidebar-material-fill
 sidebar.css .sidebar, .settings-sidebar box-shadow --sidebar-material-inner-edge
 sidebar.css .thread-list-more:focus-visible, .thread-list-collapse-btn:focus-visible, .sidebar-heading-text-action:focus-visible background --sidebar-thread-list-button-hover-bg
 sidebar.css .thread-list-more:hover, .thread-list-collapse-btn:hover, .sidebar-heading-text-action:hover background --sidebar-thread-list-button-hover-bg
 sidebar.css .thread-row-action.archive.confirm background --sidebar-row-action-archive-confirm-bg
-sidebar.css .thread-row-spinner border-top-color --sidebar-thread-spinner-notch
 sidebar.css .thread-row::before background --sidebar-session-status-bg
 sidebar.css .thread-row:hover::before background --sidebar-session-status-bg
 sidebar.css .thread-row.active::before background --sidebar-session-status-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before background --sidebar-resizer-hover-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before box-shadow --sidebar-resizer-hover-ring
+system-permissions.css .system-permission-row[data-permission="screen"] .system-permission-symbol background --danger-soft
 turns.css .artifact-preview-frame, .artifact-preview-body > .workspace-file-pdf-preview background --artifact-preview-frame-bg
 turns.css .artifact-preview-overlay background --artifact-preview-overlay-bg
 turns.css .artifact-preview-shell border --artifact-preview-shell-border
 turns.css .context-category-swatch background --ink-overlay-18
+turns.css .context-compaction-indicator .context-usage-ring color --token-gauge-mid
 turns.css .context-composition-bar background --ink-overlay-6
 turns.css .context-composition-segment background --ink-overlay-18
 turns.css .context-composition-segment.tone-deferred, .context-category-row.tone-deferred .context-category-swatch background --env-tone-deferred
@@ -192,9 +207,9 @@ workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before box-shadow --sidebar-resizer-hover-ring
 workspace.css .workspace-review-row:hover background --ink-overlay-4
 workspace.css .workspace-review-search background --ink-overlay-4
-workspace.css .workspace-tool-menu-item:active, .workspace-tool-menu-more > summary:active background --ink-overlay-8
 workspace.css .workspace-tool-menu-item:hover, .workspace-tool-menu-more > summary:hover background --ink-overlay-4
 workspace.css .workspace-tool-tab:hover::before, .workspace-tool-tab:focus-within::before background --workspace-tab-chip-hover-bg
+wuu-mascot.css .wuu-accessory-inset fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-accessory-trim fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-mascot-activity-fill fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-mascot-thinking-bubble fill --wuu-mascot-mix-white

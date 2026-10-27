@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -69,12 +69,12 @@ func TestClassifyError(t *testing.T) {
 		},
 		{
 			name: "empty answer without stop reason → retryable",
-			err:  &agent.EmptyAnswerError{},
+			err:  &loopdriver.EmptyAnswerError{},
 			want: ErrorClassRetryable,
 		},
 		{
 			name: "empty answer with stop reason → fatal",
-			err:  &agent.EmptyAnswerError{StopReason: "stop"},
+			err:  &loopdriver.EmptyAnswerError{StopReason: "stop"},
 			want: ErrorClassFatal,
 		},
 		{

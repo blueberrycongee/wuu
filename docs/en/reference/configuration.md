@@ -64,7 +64,7 @@ Replace the endpoint and model with values your service supports, and supply the
 loading: OpenAI Responses with supported GPT-5.4 or later models (excluding
 [GPT-5.4 nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano)),
 [Claude models with tool search support](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#model-compatibility)
-(including Haiku 4.5; excluding Opus 4.1 and earlier) on Anthropic, and `kimi-k3` Chat Completions at
+(including Haiku 4.5; excluding Opus 4.1 and earlier) on Anthropic, and `kimi-k3`, `kimi-k3.1-pro`, or `kimi-k3.1-pro-highspeed` Chat Completions at
 `https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`. Kimi uses a separate
 message-level tools protocol; its Responses and Anthropic-compatible endpoints
 are not enabled by this rule.

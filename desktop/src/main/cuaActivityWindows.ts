@@ -169,7 +169,6 @@ export class ObservationCoordinator {
   private activeThreadID: string | undefined;
   private darkAppearance: boolean | undefined;
   private appearance: ActivityPreviewAppearance | undefined;
-  private autoShow = true;
   private readonly explicitlyShown = new Set<string>();
   private browserInPanel: ((activity: ActivitySession) => boolean) | undefined;
   private onBrowserExpand: ((activity: ActivitySession) => void) | undefined;
@@ -223,11 +222,6 @@ export class ObservationCoordinator {
     for (const entry of this.entries.values()) entry.pip.setAppearance?.(dark, this.appearance);
   }
 
-  setAutoShow(enabled: boolean): void {
-    this.autoShow = enabled;
-    this.syncAll();
-  }
-
   showForThread(threadID: string): void {
     this.endedThreads.delete(threadID);
     this.explicitlyShown.add(threadID);
@@ -257,8 +251,7 @@ export class ObservationCoordinator {
   }
 
   private wantsCard(threadID: string): boolean {
-    return !this.endedThreads.has(threadID)
-      && (this.autoShow || this.explicitlyShown.has(threadID));
+    return !this.endedThreads.has(threadID);
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
@@ -370,11 +363,6 @@ export class ObservationCoordinator {
     this.retryTimers.clear();
     for (const entry of [...this.entries.values()]) this.stopEntry(entry);
     return Promise.all([...this.pendingStops]).then(() => undefined);
-  }
-
-  private syncAll(): void {
-    for (const key of this.observations.keys()) this.syncObservation(key);
-    this.restack();
   }
 
   private syncThread(threadID: string): void {

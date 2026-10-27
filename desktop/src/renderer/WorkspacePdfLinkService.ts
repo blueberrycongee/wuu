@@ -5,7 +5,8 @@ import { parseLinkTarget } from "./LinkTargets";
 export class WorkspacePdfLinkService extends PDFLinkService {
   private navigation = 0;
 
-  constructor(eventBus: EventBus, private readonly isReady: () => boolean) {
+  constructor(eventBus: EventBus, private readonly isReady: () => boolean,
+    private readonly openExternal?: (url: string) => Promise<void>) {
     super({ eventBus, ignoreDestinationZoom: true });
   }
 
@@ -47,8 +48,9 @@ export class WorkspacePdfLinkService extends PDFLinkService {
 
   override addLinkAttributes(link: HTMLAnchorElement, url: string): void {
     const target = parseLinkTarget(url);
-    if (target.kind !== "external") {
+    if (target.kind !== "external" || !this.openExternal) {
       link.removeAttribute("href");
+      link.setAttribute("aria-disabled", "true");
       link.onclick = link.onauxclick = event => { event.preventDefault(); };
       return;
     }
@@ -59,7 +61,7 @@ export class WorkspacePdfLinkService extends PDFLinkService {
       if (!this.isReady() || !this.externalLinkEnabled) return;
       // The main-process external URL policy remains authoritative. No renderer
       // navigation or window creation is needed for a PDF annotation click.
-      void window.wuu?.openExternal?.(target.url).catch(error => {
+      void this.openExternal!(target.url).catch(error => {
         console.warn("Could not open PDF link", error);
       });
     };

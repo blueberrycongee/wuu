@@ -1,4 +1,4 @@
-// Manual runtime review of the real turn shell and tool-call source circles.
+// Manual runtime review of the real turn shell and tool-call source cards.
 const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -31,7 +31,7 @@ app.whenReady().then(async () => {
   const ready = async () => {
     await until("document.querySelector('.process-surface')");
     await run(`window.sourceArrivals = 0; document.addEventListener('animationstart', event => {
-      if (event.animationName === 'web-source-arrive') window.sourceArrivals++;
+      if (event.animationName === 'web-source-deal') window.sourceArrivals++;
     })`);
   };
   const resetArrivals = () => run("window.sourceArrivals = 0");
@@ -49,7 +49,22 @@ app.whenReady().then(async () => {
     ))), 3000))
   ])`); };
   const shot = async name => fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
-  const point = async selector => run(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) }; })()`);
+  const point = async selector => run(`(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    const avatar = node.classList.contains('web-source-link') && !node.classList.contains('web-source-detail')
+      ? node.querySelector('.web-source-avatar') : null;
+    if (avatar) {
+      const bounds = avatar.getBoundingClientRect();
+      for (let y = Math.ceil(bounds.top) + 2; y < bounds.bottom - 2; y += 2) {
+        for (let x = Math.ceil(bounds.left) + 1; x < bounds.right - 1; x++) {
+          const hit = document.elementFromPoint(x, y);
+          if (hit && avatar.contains(hit)) return { x, y };
+        }
+      }
+    }
+    const r = node.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+  })()`);
   const click = async selector => {
     await run(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest', behavior:'instant'})`);
     await frames();
@@ -63,17 +78,17 @@ app.whenReady().then(async () => {
     const sourceDetails = document.querySelector('.web-research-expanded');
     const body = document.querySelector('.process-surface-fold > .process-surface-body');
     const summary = document.querySelector('.process-surface-row');
-    const circles = [...document.querySelectorAll('.web-source-link')].filter(node => !node.closest('[inert]'));
+    const cards = [...document.querySelectorAll('.web-source-link')].filter(node => !node.closest('[inert]'));
     const bounds = el => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; };
-    return { running:region?.getAnimations({subtree:true}).filter(a => a.animationName === 'web-source-arrive' && a.playState === 'running').length ?? 0,
-      pageWidth:document.documentElement.scrollWidth, width:innerWidth, circles:circles.map(bounds),
-      region:region && bounds(region), count:circles.length, focus:document.activeElement?.className,
+    return { running:region?.getAnimations({subtree:true}).filter(a => a.animationName === 'web-source-deal' && a.playState === 'running').length ?? 0,
+      pageWidth:document.documentElement.scrollWidth, width:innerWidth, cards:cards.map(bounds),
+      region:region && bounds(region), count:cards.length, focus:document.activeElement?.className,
       sourceDetails:sourceDetails && bounds(sourceDetails), detailCount:sourceDetails?.querySelectorAll(".web-source-link").length ?? 0, body:body && bounds(body), summary:summary && bounds(summary),
       toolOwned:region ? !!region.closest('.process-surface') : null,
       expanded:document.querySelector('.turn-process-toggle')?.getAttribute('aria-expanded'),
       more:document.querySelector('.process-surface-fold')?.open,
       summaryFocused:document.activeElement === summary,
-      loaded:circles.filter(node => node.querySelector('img[data-loaded=true]')).length };
+      loaded:cards.filter(node => node.querySelector('img[data-loaded=true]')).length };
   })()`);
   const results = [];
   for (const theme of ["light", "dark"]) for (const size of [14, 20]) for (const width of [900, 390]) {
@@ -87,16 +102,19 @@ app.whenReady().then(async () => {
     await click("#results");
     const entranceCount = await run(`(() => {
       window.sourceEntranceClocks = document.querySelector('.turn-web-research').getAnimations({subtree:true})
-        .filter(animation => animation.animationName === 'web-source-arrive')
+        .filter(animation => animation.animationName === 'web-source-deal')
         .map(animation => ({ animation, delay: animation.effect.getTiming().delay }));
       return window.sourceEntranceClocks.length;
     })()`);
     const initialHeaderCount = await run("document.querySelectorAll('.web-research-sources .web-source-link').length");
-    assert.equal(entranceCount, initialHeaderCount, "each visible live result starts its avatar entrance");
+    assert.equal(entranceCount, initialHeaderCount, "each visible live result starts its source-card deal");
     // Opening a source updates the fixture's opened URL and rerenders its
     // real turn shell while the entrance is still active. Receipt tracking
     // must not change the clocks of avatars already in flight.
     await click(".web-source-link");
+    assert.equal(await run("document.querySelector('#opened').textContent"),
+      "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_animations/Using_CSS_animations",
+      "the exposed portion of a fanned source card still opens that source");
     assert.ok(await run(`window.sourceEntranceClocks.every(({ animation, delay }) =>
       animation.effect.getTiming().delay === delay)`), "streaming rerenders preserve entrance delays");
     // A click intentionally suppresses this source's tooltip until leave.
@@ -107,8 +125,8 @@ app.whenReady().then(async () => {
     assert.equal(arrival.count, initialHeaderCount);
     assert.equal(arrival.toolOwned, true);
     assert.ok(arrival.pageWidth <= width, name);
-    assert.ok(arrival.region.height <= 36, "source controls stay on one compact row");
-    assert.ok(arrival.circles.every(r => r.x >= 0 && r.x+r.width <= width && r.height >= 28 && r.height <= 36), name);
+    assert.ok(arrival.region.height <= 44, "source controls stay on one compact row");
+    assert.ok(arrival.cards.every(r => r.x >= 0 && r.x+r.width <= width && r.height >= 32 && r.height <= 44), name);
     await run("window.scrollTo({top:0,behavior:'instant'})");
     await frames();
     await shot(`${name}-results`);
@@ -149,12 +167,12 @@ app.whenReady().then(async () => {
     await resetArrivals();
     await click(".process-surface-row");
     await noArrivalReplay("reopening does not replay source arrivals");
-    const stableHeader = await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))");
+    const stableHeader = await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-card')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))");
     await click(".process-surface-row");
     await click(".process-surface-row");
     await noArrivalReplay("rapid reversal does not replay arrivals");
     assert.equal((await measure()).detailCount, 8);
-    assert.deepEqual(await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))"), stableHeader);
+    assert.deepEqual(await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-card')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))"), stableHeader);
     await run("document.querySelectorAll('.web-research-expanded .web-source-link')[7].focus()");
     await key("Enter", 13);
     await frames();

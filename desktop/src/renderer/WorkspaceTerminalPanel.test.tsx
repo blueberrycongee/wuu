@@ -11,7 +11,14 @@ import {
   appendPendingTerminalEvent,
   WorkspaceTerminalPanel,
 } from "./WorkspaceTerminalPanel";
-import { appearanceDefaults, saveAppearance } from "./AppearancePreferences";
+import { appearanceDefaults, saveAppearance, readAppearance, observeAppearance } from "./AppearancePreferences";
+
+import { currentAppliedTheme, observeAppliedTheme } from "./Theme";
+import { TerminalControlsProvider } from "./TerminalControlsContext";
+import { ApplicationTerminals } from "./plugins/ApplicationTerminals";
+let controls: ApplicationTerminals;
+const appearance = {readAppearance,observeAppearance,currentAppliedTheme,observeAppliedTheme};
+function provided(element: JSX.Element): JSX.Element { return <TerminalControlsProvider controls={controls} appearance={appearance}>{element}</TerminalControlsProvider>; }
 
 const { terminalConstructorOptions, terminalDataHandlers, terminalInstances } = vi.hoisted(() => ({
   terminalConstructorOptions: [] as Array<{
@@ -138,15 +145,17 @@ beforeEach(() => {
       }),
     },
   });
+  controls = new ApplicationTerminals(window.wuu);
   (globalThis as unknown as { ResizeObserver: typeof StubResizeObserver }).ResizeObserver =
     StubResizeObserver;
 });
 
-afterEach(() => {
+afterEach(async () => {
   act(() => {
     root?.unmount();
   });
   root = null;
+  await controls.dispose();
   container.remove();
   delete document.documentElement.dataset.theme;
   document.documentElement.removeAttribute("style");
@@ -178,7 +187,7 @@ async function withClientSize(width: number, height: number, body: () => Promise
 
 async function render(element: JSX.Element): Promise<void> {
   await act(async () => {
-    root?.render(element);
+    root?.render(provided(element));
   });
   await vi.waitFor(() => {
     const opening = container.querySelector(".workspace-terminal-host, .workspace-agent-terminal");
@@ -288,6 +297,24 @@ describe("WorkspaceTerminalPanel", () => {
     expect(container.querySelectorAll(".workspace-terminal-panel")).toHaveLength(1);
   });
 
+  it("stops a late start exactly once after the panel unmounts", async () => {
+    let resolve!: (value: {id:string;cwd:string;shell:string;started_at:string}) => void;
+    startTerminalSession.mockReturnValue(new Promise(done => {resolve = done;}));
+    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
+    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(1));
+    act(() => {root?.unmount(); root = null;});
+    await act(async () => {resolve({id:"late",cwd:worktreeContext.cwd,shell:"/bin/zsh",started_at:"now"});});
+    await vi.waitFor(() => expect(stopTerminalSession).toHaveBeenCalledExactlyOnceWith("late"));
+  });
+
+  it("does not kill a borrowed agent process when the panel unmounts", async () => {
+    listManagedProcesses.mockResolvedValue({processes:[runningProcess]});
+    readManagedProcess.mockImplementation(() => new Promise(() => {}));
+    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} thread={threadWithLiveRun} />);
+    act(() => {root?.unmount(); root = null;});
+    expect(stopManagedProcess).not.toHaveBeenCalled(); expect(stopTerminalSession).not.toHaveBeenCalled();
+  });
+
   it("keeps the pty when the terminal pane is hidden and shown again", async () => {
     await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
     expect(startTerminalSession).toHaveBeenCalledTimes(1);
@@ -334,7 +361,7 @@ describe("WorkspaceTerminalPanel", () => {
     expect(terminalInstances[0]?.options.disableStdin).toBe(true);
     const restart = container.querySelector<HTMLButtonElement>(".workspace-terminal-restart");
     expect(restart).not.toBeNull();
-    act(() => restart?.click());
+    await act(async () => { restart?.click(); });
     await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(2));
     expect(terminalInstances.at(-1)?.options.disableStdin).toBeFalsy();
     expect(container.querySelector(".workspace-terminal-restart")).toBeNull();
@@ -361,7 +388,7 @@ describe("WorkspaceTerminalPanel", () => {
 
   it("does not render a terminal without a workspace context", () => {
     act(() => {
-      root?.render(<WorkspaceTerminalPanel activeContext={undefined} />);
+      root?.render(provided(<WorkspaceTerminalPanel activeContext={undefined} />));
     });
 
     expect(startTerminalSession).not.toHaveBeenCalled();
@@ -456,6 +483,7 @@ describe("WorkspaceTerminalPanel", () => {
 
   it("keeps managed tty controls working when native terminal creation is unavailable", async () => {
     window.wuu.unsupportedMethods = ["startTerminalSession", "writeTerminalSession", "resizeTerminalSession", "stopTerminalSession"];
+    controls = new ApplicationTerminals(window.wuu);
     listManagedProcesses.mockResolvedValue({ processes: [runningProcess] });
     readManagedProcess
       .mockResolvedValueOnce({

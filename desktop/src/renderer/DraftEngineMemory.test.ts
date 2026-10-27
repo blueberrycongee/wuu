@@ -222,3 +222,10 @@ describe("draft engine memory", () => {
     expect(window.localStorage.getItem(MEMORY_KEY)).toBeNull();
   });
 });
+
+it("remembers model-free replacement wuu choices without treating its identity as native", () => {
+  const selected: EngineListResult = { engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false, models: [{ id: "own-model", supported_efforts: ["high"] }] }] };
+  writeDraftEngineMemory({ engine: "wuu", model: "own-model", effort: "high" });
+  expect(resolveDraftEngineMemory(selected)).toMatchObject({ engine: "wuu", model: "own-model", effort: "high" });
+  expect(rememberedEngineRuntime("wuu", selected)).toMatchObject({ model: "own-model", effort: "high" });
+});

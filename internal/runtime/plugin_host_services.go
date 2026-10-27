@@ -11,31 +11,44 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
-	mu          sync.RWMutex
-	active      bool
-	open        bool
-	pluginID    string
-	subjectID   string
-	fingerprint string
-	projectRoot string
-	wuuHome     string
-	settings    map[string]pluginpkg.SettingDefinition
-	turnRouter  *PluginSessionRouter
-	fileLocks   map[string]func()
-	lockContext context.Context
-	lockCancel  context.CancelFunc
-	processMu   sync.Mutex
-	processes   map[string]*pluginProcess
+	mu                     sync.RWMutex
+	active                 bool
+	open                   bool
+	pluginID               string
+	subjectID              string
+	fingerprint            string
+	projectRoot            string
+	wuuHome                string
+	settings               map[string]pluginpkg.SettingDefinition
+	sessions               *session.Store
+	credentials            credentialstore.Store
+	settingsClient         *pluginsettings.Client
+	settingsMu             sync.Mutex
+	settingsBaseline       map[string]json.RawMessage
+	settingsOperations     map[string]map[string]json.RawMessage
+	settingsOperationStops map[string]func() bool
+	turnRouter             *PluginSessionRouter
+	fileLocks              map[string]func()
+	lockContext            context.Context
+	lockCancel             context.CancelFunc
+	processMu              sync.Mutex
+	processes              map[string]*pluginProcess
+	closeCompositions      func() error
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -54,19 +67,27 @@ func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, t
 }
 
 func (s *pluginHostServices) close() {
+	// Cancel in-flight I/O before waiting for invoke's read lock.
+	if s.lockCancel != nil {
+		s.lockCancel()
+	}
 	s.mu.Lock()
 	s.open = false
 	s.active = false
 	locks := s.fileLocks
 	s.fileLocks = make(map[string]func())
-	cancel := s.lockCancel
+	closeCompositions := s.closeCompositions
+	s.closeCompositions = nil
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if closeCompositions != nil {
+		if err := closeCompositions(); err != nil {
+			providers.DebugLogf("close plugin compositions: %v", err)
+		}
 	}
 	for _, release := range locks {
 		release()
 	}
+	s.closeSettings()
 	s.closeProcesses()
 }
 
@@ -95,6 +116,19 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServiceSessionRoute:
+		if s.turnRouter == nil {
+			return nil, serviceError("service_unavailable", "session service is unavailable")
+		}
+		var params pluginhost.SessionRouteRequest
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		result, err := s.turnRouter.Route(ctx, s.pluginID, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionControl:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")
@@ -178,7 +212,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := readPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +222,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := searchPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := searchPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -232,49 +266,56 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 			return nil, err
 		}
 		return marshalServiceResult(result)
+	case pluginhost.HostServiceCredentialsRequest:
+		return s.credentialRequest(ctx, raw)
 	case pluginhost.HostServiceSettingsGet:
-		return s.settingsGet(raw)
+		return s.settingsGet(ctx, raw)
 	case pluginhost.HostServiceSettingsList:
-		if err := decodeServiceParams(raw, &struct{}{}); err != nil {
+		var params pluginhost.SettingsListParams
+		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.settingsList()
+		view, err := s.settingsSnapshot(ctx, params.Scope)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(view)
 	case pluginhost.HostServiceStorageGet:
 		var params pluginhost.StorageGetParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageGet(params)
+		return s.storageGet(ctx, params)
 	case pluginhost.HostServiceStorageSet:
 		var params pluginhost.StorageSetParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageSet(params)
+		return s.storageSet(ctx, params)
 	case pluginhost.HostServiceStorageDelete:
 		var params pluginhost.StorageDeleteParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageDelete(params)
+		return s.storageDelete(ctx, params)
 	case pluginhost.HostServiceStorageKeys:
 		var params pluginhost.StorageKeysParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageKeys(params)
+		return s.storageKeys(ctx, params)
 	case pluginhost.HostServiceStorageCompareExchange:
 		var params pluginhost.StorageCompareExchangeParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageCompareExchange(params)
+		return s.storageCompareExchange(ctx, params)
 	default:
 		return nil, serviceError("method_not_found", fmt.Sprintf("host service %q is not implemented", method))
 	}
 }
 
-func (s *pluginHostServices) settingsGet(raw json.RawMessage) (json.RawMessage, error) {
+func (s *pluginHostServices) settingsGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var params pluginhost.SettingsGetParams
 	if err := decodeServiceParams(raw, &params); err != nil {
 		return nil, err
@@ -283,35 +324,15 @@ func (s *pluginHostServices) settingsGet(raw json.RawMessage) (json.RawMessage, 
 	if err != nil {
 		return nil, err
 	}
-	value, err := s.settingValue(localKey, definition)
+	// Secrets never enter the ordinary settings read path.
+	if definition.Type == pluginpkg.SettingTypeSecret {
+		return marshalServiceResult(pluginhost.SettingsGetResult{Value: json.RawMessage(`""`)})
+	}
+	view, err := s.settingsSnapshot(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	return marshalServiceResult(pluginhost.SettingsGetResult{Value: value})
-}
-
-func (s *pluginHostServices) settingsList() (json.RawMessage, error) {
-	entries := make(map[string]json.RawMessage, len(s.settings))
-	keys := make([]string, 0, len(s.settings))
-	for qualified := range s.settings {
-		prefix := s.pluginID + "."
-		if strings.HasPrefix(qualified, prefix) {
-			keys = append(keys, strings.TrimPrefix(qualified, prefix))
-		}
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		_, definition, err := s.ownedSetting(key)
-		if err != nil {
-			return nil, err
-		}
-		value, err := s.settingValue(key, definition)
-		if err != nil {
-			return nil, err
-		}
-		entries[key] = value
-	}
-	return marshalServiceResult(pluginhost.SettingsListResult{Entries: entries})
+	return marshalServiceResult(pluginhost.SettingsGetResult{Value: view.Entries[localKey]})
 }
 
 func (s *pluginHostServices) ownedSetting(key string) (string, pluginpkg.SettingDefinition, error) {
@@ -324,29 +345,6 @@ func (s *pluginHostServices) ownedSetting(key string) (string, pluginpkg.Setting
 		return "", pluginpkg.SettingDefinition{}, serviceError("setting_not_owned", fmt.Sprintf("plugin does not own setting %q", key))
 	}
 	return key, definition, nil
-}
-
-func (s *pluginHostServices) settingValue(key string, definition pluginpkg.SettingDefinition) (json.RawMessage, error) {
-	scope := pluginsettings.Scope(definition.Scope)
-	// Settings are intentionally read-only on this channel. Persisted values
-	// survive plugin upgrades, so a document fingerprint may differ from this
-	// generation's fingerprint. Reading never rewrites it; Desktop's existing
-	// fingerprint-gated direct API remains the sole settings writer.
-	document, err := pluginsettings.Read(s.wuuHome, s.projectRoot, s.subjectID, scope)
-	if err != nil {
-		return nil, err
-	}
-	value, ok := document.Values[key]
-	if !ok {
-		value, err = json.Marshal(definition.Default)
-		if err != nil {
-			return nil, fmt.Errorf("encode setting default: %w", err)
-		}
-	}
-	if err := validateRuntimeSettingValue(definition, value); err != nil {
-		return nil, fmt.Errorf("persisted setting %q: %w", key, err)
-	}
-	return append(json.RawMessage(nil), value...), nil
 }
 
 // HandleHostService remains an internal semantic test seam; transport routing
@@ -377,23 +375,44 @@ type executionUpdateRecorder interface {
 	ResolveToolExecution(callerPluginID, executionID string) (pluginhost.ToolExecutionScope, *pluginhost.HostServiceError)
 }
 
+const kernelHostModule = "kernel"
+
 type kernelHostServices struct {
+	requiredPlugins   map[string]bool
+	stateGeneration   *PluginGeneration
+	stateOwner        *Session
 	mu                sync.RWMutex
 	active            bool
+	closed            bool
 	services          map[string]*pluginHostServices
 	registry          *pluginhost.ServiceRegistry
 	generation        func() uint64
 	executions        executionUpdateRecorder
 	userQuestions     *pluginhost.UserQuestionBroker
+	engineGateways    *engineGatewayTable
 	driverGateways    *driverGatewayTable
 	workspaceStateDir string
 	wuuHome           string
 	modelSession      *Session
 	modelHost         *pluginhost.Host
+	state             *runtimeState
+	selectedServices  *runtimeServices
+	providers         map[string]nativeServiceRegistration
+	compositions      *compositionService
+}
+
+type nativeServiceRegistration struct {
+	Descriptor pluginhost.ServiceDescriptor
+	Invoker    pluginhost.ServiceInvoker
 }
 
 func newKernelHostServices(generation func() uint64, executions executionUpdateRecorder) *kernelHostServices {
-	return &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, driverGateways: newDriverGatewayTable()}
+	k := &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, engineGateways: newEngineGatewayTable(), driverGateways: newDriverGatewayTable(), providers: make(map[string]nativeServiceRegistration)}
+	k.compositions = newCompositionService(k)
+	for _, registration := range k.serviceRegistrations() {
+		k.providers[registration.Descriptor.Name] = registration
+	}
+	return k
 }
 
 // bindWorkspaceStateDir sets the workspace state directory used by read-only
@@ -417,6 +436,7 @@ func (k *kernelHostServices) bindUserQuestions(broker *pluginhost.UserQuestionBr
 }
 
 func (k *kernelHostServices) add(pluginID string, services *pluginHostServices) {
+	services.closeCompositions = func() error { return k.compositions.stopCaller(pluginID) }
 	k.mu.Lock()
 	k.services[pluginID] = services
 	k.mu.Unlock()
@@ -430,7 +450,7 @@ func (k *kernelHostServices) bindRegistry(registry *pluginhost.ServiceRegistry) 
 	k.mu.Unlock()
 }
 
-func (k *kernelHostServices) ID() string { return "kernel" }
+func (k *kernelHostServices) ID() string { return kernelHostModule }
 
 func (k *kernelHostServices) Status() pluginhost.Status {
 	k.mu.RLock()
@@ -439,15 +459,41 @@ func (k *kernelHostServices) Status() pluginhost.Status {
 	if k.active {
 		state = pluginhost.StateActive
 	}
+	if k.closed {
+		state = pluginhost.StateStopped
+	}
 	return pluginhost.Status{ID: k.ID(), State: state}
 }
 
-func (k *kernelHostServices) Close(context.Context) error { return nil }
 func (k *kernelHostServices) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return pluginhost.KernelServiceDescriptors()
+	descriptors := make([]pluginhost.ServiceDescriptor, 0, len(k.providers))
+	for _, registration := range k.providers {
+		descriptors = append(descriptors, registration.Descriptor)
+	}
+	sort.Slice(descriptors, func(i, j int) bool { return descriptors[i].Name < descriptors[j].Name })
+	return descriptors
 }
-func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement { return nil }
-func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRegistration {
+
+func (k *kernelHostServices) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	registration, ok := k.providers[params.Service]
+	if !ok {
+		return nil, serviceError("service_unavailable", "native service is unavailable")
+	}
+	return registration.Invoker.InvokeService(ctx, params)
+}
+func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{
+		// These adapters are lazy. Selected dependencies still participate in
+		// lifecycle ordering; invoking an omitted service fails at the router.
+		{Name: credentialstore.ServiceName, MajorVersion: 1},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1},
+		{Name: config.ServiceName, MajorVersion: 1, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1},
+		{Name: persistence.ServiceName, MajorVersion: 1},
+		{Name: session.ServiceName, MajorVersion: 1},
+	}
+}
+func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration {
 	descriptors := pluginhost.KernelServiceDescriptors()
 	methods := []pluginhost.HostServiceMethod{
 		pluginhost.HostServiceStorageGet, pluginhost.HostServiceStorageSet,
@@ -459,81 +505,106 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,
-		pluginhost.HostServiceSessionControl,
+		pluginhost.HostServiceSessionControl, pluginhost.HostServiceCredentialsRequest, pluginhost.HostServiceSessionRoute,
 	}
-	registrations := make([]pluginhost.ServiceRegistration, 0, len(descriptors)+8)
+	registrations := make([]nativeServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {
-		registrations = append(registrations, pluginhost.ServiceRegistration{
-			Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]}, Kernel: true,
-		})
+		registrations = append(registrations,
+			nativeServiceRegistration{Descriptor: engineGatewayDescriptor(), Invoker: &engineGatewayInvoker{parent: k}}, nativeServiceRegistration{
+				Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]},
+			})
 	}
 	registrations = append(registrations,
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{Descriptor: pluginhost.KernelModelReceiptDescriptor(), Invoker: &modelReceiptInvoker{parent: k}},
+		nativeServiceRegistration{Descriptor: pluginhost.CompositionDescriptor(), Invoker: k.compositions},
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
-			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()}, Kernel: true,
+			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelEmitDescriptor(),
-			Invoker:    &modelEmitInvoker{parent: k}, Kernel: true,
+			Invoker:    &modelEmitInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelProcessDescriptor(),
-			Invoker:    &processServiceInvoker{parent: k}, Kernel: true,
+			Invoker:    &processServiceInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelBackgroundDescriptor(),
-			Invoker:    &backgroundInvoker{parent: k}, Kernel: true,
+			Invoker:    &backgroundInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelRequestDescriptor(),
-			Invoker:    &modelRequestInvoker{parent: k}, Kernel: true,
+			Invoker:    &modelRequestInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelRegistryIntrospectDescriptor(),
-			Invoker:    &registryIntrospectInvoker{parent: k}, Kernel: true,
+			Invoker:    &registryIntrospectInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelExecutionUpdateDescriptor(),
-			Invoker:    &executionUpdateInvoker{parent: k}, Kernel: true,
+			Invoker:    &executionUpdateInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelInvokeToolDescriptor(),
-			Invoker:    &nestedToolInvoker{parent: k}, Kernel: true,
+			Invoker:    &nestedToolInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelUserQuestionAskDescriptor(),
-			Invoker:    &userQuestionAskInvoker{parent: k}, Kernel: true,
+			Invoker:    &userQuestionAskInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelUserQuestionOfferDescriptor(),
-			Invoker:    &userQuestionOfferInvoker{parent: k}, Kernel: true,
+			Invoker:    &userQuestionOfferInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelFileLockDescriptor(),
-			Invoker:    &fileLockInvoker{parent: k}, Kernel: true,
+			Invoker:    &fileLockInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelArtifactImportDescriptor(),
-			Invoker:    &artifactImportInvoker{parent: k}, Kernel: true,
+			Invoker:    &artifactImportInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
-			Descriptor: pluginhost.KernelDataQueryDescriptor(),
-			Invoker:    &dataQueryInvoker{parent: k}, Kernel: true,
+		nativeServiceRegistration{Descriptor: toolbatch.ResourceDescriptor(), Invoker: &toolBatchResourceInvoker{parent: k}},
+		nativeServiceRegistration{
+			Descriptor: pluginhost.DriverTurnDescriptor(),
+			Invoker:    &driverTurnInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
-			Descriptor: pluginhost.KernelDriverModelLoopDescriptor(),
-			Invoker:    &driverModelLoopInvoker{parent: k}, Kernel: true,
-		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelDriverCheckpointDescriptor(),
-			Invoker:    &driverCheckpointInvoker{parent: k}, Kernel: true,
+			Invoker:    &driverCheckpointInvoker{parent: k},
 		},
 	)
 	return registrations
 }
 
-func (k *kernelHostServices) ActivateKernelServices() {
+// Prepare captures structural settings before any dependent plugin preparation.
+// Failed validation rejects the candidate graph, leaving the admitted graph intact.
+func (k *kernelHostServices) Prepare(ctx context.Context) error {
+	ctx = context.WithValue(ctx, kernelServicePreparationKey{}, true)
+	k.mu.RLock()
+	services := make([]*pluginHostServices, 0, len(k.services))
+	for _, service := range k.services {
+		services = append(services, service)
+	}
+	k.mu.RUnlock()
+	for _, service := range services {
+		if err := service.prepareSettings(ctx); err != nil {
+			return fmt.Errorf("plugin %s settings: %w", service.pluginID, err)
+		}
+	}
+	return nil
+}
+
+func (k *kernelHostServices) Activate(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	k.mu.Lock()
+	if k.closed {
+		k.mu.Unlock()
+		return errors.New("native host services are closed")
+	}
 	k.active = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
@@ -543,19 +614,25 @@ func (k *kernelHostServices) ActivateKernelServices() {
 	for _, service := range services {
 		service.activate()
 	}
+	return nil
 }
 
-func (k *kernelHostServices) CloseKernelServices() {
+// Close completes resource cleanup even when the generation's context is cancelled.
+func (k *kernelHostServices) Close(context.Context) error {
 	k.mu.Lock()
 	k.active = false
+	k.closed = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
 		services = append(services, service)
 	}
 	k.mu.Unlock()
+	k.engineGateways.close()
+	err := k.compositions.close()
 	for _, service := range services {
 		service.close()
 	}
+	return err
 }
 
 type kernelServiceInvoker struct {
@@ -565,7 +642,7 @@ type kernelServiceInvoker struct {
 
 func (k *kernelServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *kernelServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
-func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, callErr error) {
 	k.parent.mu.RLock()
 	services := k.parent.services[params.Caller]
 	k.parent.mu.RUnlock()
@@ -575,6 +652,16 @@ func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginh
 	if params.Method != pluginhost.KernelServiceMethod {
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
+	ctx = context.WithValue(ctx, kernelServiceExecutionKey{}, params.ExecutionID)
+	if params.CallerScope != nil {
+		scope, err := params.CallerExecution(false)
+		if err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(ctx, pluginSettingsOperationKey{}, &scope)
+	}
+	ctx, releaseState := k.parent.captureInvocationState(ctx)
+	defer func() { callErr = errors.Join(callErr, releaseState()) }()
 	return services.invoke(ctx, k.method, params.Params)
 }
 
@@ -673,15 +760,11 @@ func invokeUserQuestion(ctx context.Context, parent *kernelHostServices, params 
 	}
 	parent.mu.RLock()
 	broker := parent.userQuestions
-	executions := parent.executions
 	parent.mu.RUnlock()
 	if broker == nil {
 		return nil, serviceError("service_unavailable", "user interaction is unavailable")
 	}
-	if executions == nil {
-		return nil, serviceError("service_unavailable", "execution scope is unavailable")
-	}
-	scope, scopeErr := executions.ResolveToolExecution(params.Caller, params.ExecutionID)
+	scope, scopeErr := params.CallerExecution(true)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}
@@ -715,7 +798,7 @@ func userQuestionServiceError(err error) error {
 	return err
 }
 
-func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageGet(ctx context.Context, params pluginhost.StorageGetParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -723,7 +806,7 @@ func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (jso
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -734,7 +817,7 @@ func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (jso
 	return marshalServiceResult(pluginhost.StorageGetResult{Value: &value})
 }
 
-func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageSet(ctx context.Context, params pluginhost.StorageSetParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -745,7 +828,7 @@ func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (jso
 	if len([]byte(params.Value)) > pluginsettings.MaxStateValueBytes {
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -755,7 +838,7 @@ func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (jso
 	return marshalServiceResult(struct{}{})
 }
 
-func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageDelete(ctx context.Context, params pluginhost.StorageDeleteParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -763,7 +846,7 @@ func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		delete(values, params.Key)
 		return nil
 	})
@@ -773,12 +856,12 @@ func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams
 	return marshalServiceResult(struct{}{})
 }
 
-func (s *pluginHostServices) storageKeys(params pluginhost.StorageKeysParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageKeys(ctx context.Context, params pluginhost.StorageKeysParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -790,7 +873,7 @@ func (s *pluginHostServices) storageKeys(params pluginhost.StorageKeysParams) (j
 	return marshalServiceResult(pluginhost.StorageKeysResult{Keys: keys})
 }
 
-func (s *pluginHostServices) storageCompareExchange(params pluginhost.StorageCompareExchangeParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageCompareExchange(ctx context.Context, params pluginhost.StorageCompareExchangeParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -802,7 +885,7 @@ func (s *pluginHostServices) storageCompareExchange(params pluginhost.StorageCom
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {
@@ -865,34 +948,4 @@ func marshalServiceResult(value any) (json.RawMessage, error) {
 
 func serviceError(code, message string) error {
 	return &pluginhost.HostServiceError{Code: code, Message: message}
-}
-
-func validateRuntimeSettingValue(definition pluginpkg.SettingDefinition, raw json.RawMessage) error {
-	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
-		return errors.New("value must be valid JSON within 65536 bytes")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return errors.New("value is invalid")
-	}
-	valid := false
-	switch definition.Type {
-	case pluginpkg.SettingTypeBoolean:
-		_, valid = value.(bool)
-	case pluginpkg.SettingTypeString:
-		_, valid = value.(string)
-	case pluginpkg.SettingTypeNumber:
-		_, valid = value.(json.Number)
-	case pluginpkg.SettingTypeEnum:
-		text, ok := value.(string)
-		for _, candidate := range definition.Enum {
-			valid = valid || (ok && text == candidate)
-		}
-	}
-	if !valid {
-		return fmt.Errorf("value does not match declared type %q", definition.Type)
-	}
-	return nil
 }

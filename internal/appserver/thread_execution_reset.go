@@ -44,7 +44,7 @@ func (s *Server) watchThreadExecutionReset(ctx context.Context, th *threadState,
 				if !requested {
 					continue
 				}
-				if _, err := s.interruptThreadExecution(th.ID, "", ""); err != nil {
+				if _, err := s.interruptThreadExecution(th.state, th.ID, "", ""); err != nil {
 					providers.DebugLogf("apply thread execution reset for %q: %v", th.ID, err)
 				}
 				return

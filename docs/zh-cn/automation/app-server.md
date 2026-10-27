@@ -119,6 +119,8 @@ Responses 和 Chat Completions 使用经过规范化的客户端历史，保留�
 清理按对话隔离；页面打开的标签页继承来源页的归属。现有标签页属于其他对话时，应拒绝
 请求，不得导航或接管该标签页。
 
+`browser/list_tabs` 还可返回 `workspace_tabs`：用户已打开的网站或插件页面候选项，包含 `tab_id`、`url`、`title`、`workspace_id`、`source` 和 `active`。候选项与当前对话拥有的 `tabs` 分开；列举只提供元数据，不读取正文或取得控制权。工具显式 `attach` 时，在原有活动和执行租约内发送 `browser/open_tab`，令 `tab_id` 与 `workspace_tab_id` 相同且不传 `initial_url`。宿主借用原生页面，拒绝已占用、已关闭或其他窗口的页面；不得按 URL 重建 `workspace:` 标签。`browser/close_tab`（工具 `detach`）、finalize、轮次结束、接管、停止和所属宿主销毁都释放绑定，不关闭用户页面。被释放的绑定 ID 出现在 `closed` 中，原生页面仍存活。借用期间沿用 Agent 权限限制，不扩大截图或媒体权限。
+
 `request_id` 标识进行中的操作。核心停止等待时，`browser/request_cancelled` 通知携带
 该 ID 及相同的 `thread_id`、`workdir`。只取消匹配的操作，在异步工作后和输入派发前
 再次检查。用户接管或停止活动会撤销该对话所有标签页的输入权限；之后归还控制权可
@@ -135,6 +137,11 @@ Responses 和 Chat Completions 使用经过规范化的客户端历史，保留�
 `thread/resume` 接受 `session_id`，省略时选择工作区最近的可见会话。`thread/fork` 接受
 `thread_id`，创建独立对话。`thread/start` 的 `ephemeral: true` 创建内存会话，服务退出后
 无法恢复。
+
+会话快照中的可选字段 `title_revision` 是随标题修改一起保存、单调递增的版本号，省略时
+视为零。合并列表、恢复响应或 `thread/updated` 通知时，保留版本较大的标题；
+`updated_at` 表示会话活动时间，不能用来判断标题的新旧。自动生成只填补空标题，
+可在后续回合成功后重试，不会覆盖已保存的手动标题。
 
 每个对话保留自己的模型和权限选择。应在对话空闲时，用带 `thread_id` 的
 `config/model/update` 修改；这不会改变工作区默认值。对话忙时返回 `thread_busy`，客户端可
@@ -239,6 +246,17 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 已接受的元数据会随历史和暂存队列回放保留。客户端必须容忍未知字段和分段类型；
 无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
 不能只保存在元数据中。
+
+## 选择引擎
+
+`thread/start` 未指定 `engine` 时使用 `engines.default_engine`，空默认值选择
+`wuu`。所选引擎被禁用、移除或不可用时，在持久化会话之前拒绝创建，不会改用
+另一实现。通过 `engine/update` 禁用引擎会保留配置中的默认选择；重新启用它，
+或显式将 `default_engine` 设为可用引擎（例如 `wuu`）后，才能继续创建对话。
+已有对话保留其引擎绑定与历史，修改默认值不会迁移这些对话。
+
+此行为替代了原先自动回退 Wuu 的逻辑。客户端应处理默认引擎不可用的情况，
+提供显式选择，而不是自动改写默认值。
 
 ## 刷新外部引擎
 

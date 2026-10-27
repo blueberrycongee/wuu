@@ -132,7 +132,7 @@ func (h *Host) conversationRPC(ctx context.Context) (func(string, string, any, a
 		if h.appServer != nil {
 			_ = h.appServer(ctx, inR, outW)
 		} else {
-			_ = appserver.RunStdio(ctx, h.rt, inR, outW)
+			_ = appserver.RunStdio(ctx, h.rt, inR, outW, h.appServerOptions...)
 		}
 		_ = outW.Close()
 	}()

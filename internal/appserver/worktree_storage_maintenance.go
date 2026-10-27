@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -17,7 +17,7 @@ const orphanWorktreeMinimumAge = 10 * time.Minute
 // cleanupOrphanWorktrees removes managed worktree groups whose owning thread
 // no longer exists. Live threads, reviewable completed threads, and any group
 // with a pending terminal recovery record are preserved.
-func (s *Server) cleanupOrphanWorktrees() (int, error) {
+func (s *Server) cleanupOrphanWorktrees(binding *runtime.State) (int, error) {
 	if s == nil || s.rt == nil {
 		return 0, nil
 	}
@@ -50,7 +50,7 @@ func (s *Server) cleanupOrphanWorktrees() (int, error) {
 		if infoErr != nil || time.Since(info.ModTime()) < orphanWorktreeMinimumAge {
 			continue
 		}
-		if _, found, findErr := session.Find(s.rt.SessionDir, ownerID); findErr != nil {
+		if _, found, findErr := binding.Sessions.Find(ownerID); findErr != nil {
 			return removed, fmt.Errorf("inspect worktree owner %q: %w", ownerID, findErr)
 		} else if found {
 			continue
@@ -62,7 +62,7 @@ func (s *Server) cleanupOrphanWorktrees() (int, error) {
 		}
 		// Worktree creation precedes the session row commit. Recheck after the
 		// filesystem inspections so a concurrently committed owner is preserved.
-		if _, found, findErr := session.Find(s.rt.SessionDir, ownerID); findErr != nil {
+		if _, found, findErr := binding.Sessions.Find(ownerID); findErr != nil {
 			return removed, fmt.Errorf("reinspect worktree owner %q: %w", ownerID, findErr)
 		} else if found {
 			continue

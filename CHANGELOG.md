@@ -10,6 +10,107 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
+- Compose explicit consumer-scoped service delegates so downstream packages can augment selected methods while reusing the remaining implementation, with the same dependency, cancellation, and retirement rules as complete provider replacements.
+- Verify independent public-SDK providers and additive service/UI cooperation through executable conformance gates, including disabled providers, rejected upgrades, retained tasks, revoked access, and uncertain delivery.
+- Let the default composer use model-free replacement engines under the same engine identity, honoring each selected implementation’s declared host-model requirement across provider updates without losing drafts or admitted work.
+
+- Preserve old explicit version-3 compositions with a read-only, traceable resource-authority migration to composition version 4. Preserve explicit exclusions and external policies; current-version omissions never receive fallback providers.
+
+- Add a model-free `minimal` composition using the default product’s session-host bundle, with independently replaceable execution and explicit provider availability. Include packed-public-SDK acceptance for real session messages, replacement, cancellation and cleanup.
+- Select local, disabled, or encrypted remote desktop session connections through public configuration, with host-scoped session ownership, connection-bound reads, explicit uncertain outcomes, and detach-only remote shutdown.
+- Manage MCP services in the Plugins catalog: add, edit, import and remove standalone definitions, and connect plugin-owned services from their parent plugin's page. Complete desktop OAuth through a validated loopback callback with automatic connection, cancellation and expiry; retain manual completion for browser clients and custom callback URLs.
+
+- Add GPT-6.1 Terra and its Fast option with official pricing, context and output limits, image input, all six reasoning efforts, and Responses tool calling. Codex subscription catalogs reuse the metadata and Fast alias when Terra is available to the account.
+
+- Add opt-in, metadata-only RPC phase timing for conversation resume, queued input, turn admission and interruption, with request correlation and no hashing, clock samples or diagnostic allocations when disabled.
+
+- Select complete tool-batch execution through `agent.tool.batch@1`, independently of loop and tool providers. Preserve default streaming overlap through explicit admission, ordered durable outcomes, cancellation and in-flight bindings; reject malformed canonical calls and incompatible provider capabilities without fallback.
+
+- Read plugin configuration as immutable, revisioned snapshots with lifecycle-scoped change observation. Distinguish live, next-operation and restart-only values without rebuilding resources, and atomically validate and repair same-scope setting patches.
+- Guard plugin upgrades with retained historical SDK/package process tests, explicit lifecycle/version diagnostics, and a public compatibility, deprecation and data-preserving migration contract independent of product CalVer.
+- Add opt-in durable next-step model selection for active Wuu conversations, with frozen retry bindings, actual-step events, and per-model usage attribution without changing tool permissions or plugin generation.
+
+- Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
+
+- Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
+
+- Show a temporary conversation immediately in the sidebar's Recent section when starting a draft. Keep its title stable while typing. Hide unsent drafts when switching conversations, preserve their input, and keep submitted conversations visible.
+
+- Select application business state, complete agent engines, model transports, retry/scheduling policies, and shared model capacity through public provider contracts. Expose immutable graph identities, resolved dependencies, and exact authoring types; composition version 3 retains explicit legacy migration provenance.
+
+- Keep child-agent coordination, pending and terminal worker history, browser tab state, and quota snapshots in selected document providers. Import existing state once, preserve uncertain commit outcomes, and retain providers until admitted work and cleanup finish.
+
+- Extend isolated experiments with independent task/scoring/acceptance controllers, bounded scheduling, retained evidence, and supervised rebuilt-host attempts. Host comparisons use controller-owned elapsed time; these workflows support experimentation without claiming autonomous improvement.
+
+
+- Add native Copy Image and Save As context menu actions for desktop images, including enlarged previews and popped-out conversations.
+
+- Keep new-page, browser, terminal, and file tools available in a compact right-side rail, with content space reserved while the workspace panel is closed or open. Let users collapse the rail to widen the conversation, restore it from the header, and retain that choice across reloads. Keep project, branch, permissions, context usage, and model selection together in the rail; when the rail is collapsed, move these controls below the input. Animate the footer height as controls change location so the input settles smoothly, retaining existing project bindings. Remove the manual worktree toggle from the composer.
+
+- Expose caller-owned temporary agent compositions through `host.composition` and the public SDK: snapshot local TypeScript or package sources, try isolated runtimes, compare-and-exchange agent selections, and undo selection. Admitted runs retain their original providers; disposal drains executions before dependency-ordered cleanup. Creating a composition preserves the host's process-wide model catalog and refresh ownership. Include a directly loadable agent tool example and complete the embedded SDK source set used by single-file plugins.
+
+- Continue interrupted replies from an empty composer in the main conversation or split panes. The follow-up preserves earlier work in the same conversation; typing or adding attachments restores the send action.
+
+- Show running and upcoming automations in the contextual sidebar, with task status, scheduled time, workspace-aware selection, and access to dispatched one-shot run details.
+
+- Add opt-in SQLite and JSONL providers for the public `state.documents` contract, with atomic revision checks, durable retry receipts, explicit migration, portable exports/imports and provider revocation. Add SDK helpers and independent process/CLI verification. Conversation persistence migration remains separate.
+
+- Move the default multi-round algorithm into an ordinary driver provider using `driver.turn` 4.0 for model, tool, context, compaction and observation effects. Remove the whole-loop host gateway and migrate embedded callers. Driver service version 2 preserves typed terminal failures and recovery evidence; existing default checkpoint identity and format remain compatible. The SDK exposes the same resources to independent process drivers.
+
+- Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.
+
+- Persist independent drivers' model-input receipts before model or streaming-tool dispatch. Storage failure prevents execution; receipts preserve the bound driver, execution, operation identity and submitted input across native and process implementations.
+
+- Let independent drivers opt into overlapping safe tools with model streaming through `driver.turn` 4.0. Typed batch receipts join the original effects once; cancellation drains tools before provider release, and model replay stops after accepted work even without a durable ledger.
+
+- Give independent loop drivers explicit input admission, request-context and request-transform operations through `driver.turn` 3.0. Model submission preserves classified failures, partial messages and reported usage without implicitly consuming input or preparing the request. Update the SDK and service requirement together; the evidence workflow owns its preparation order and bounded context-overflow recovery.
+
+- Persist conversation driver bindings before execution, retain them across default changes and forks, and reject mismatched checkpoints or missing session owners before effects. Migrate older native conversations to their historical driver identity; retain unknown external bindings for explicit recovery.
+
+- Resolve session and background worker drivers through `driver.default`, provided by the removable `wuu.default-loop` module or a selected external implementation. Native drivers use the same service lifecycle and protocol as process drivers; failed and canceled calls retain observed history. Workers retain their driver binding across follow-up and restart, preserve pending checkpoints separately from committed terminal results, and hold providers until execution cleanup completes. Embedded runners and worker managers require an explicit driver instead of silently selecting the native loop.
+
+- Expose independent model, tool-batch, context replacement, completion and checkpoint operations for external loop drivers. Context replacement preserves original durable history and survives cancellation after commit. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
+
+- Own runtime client activation and cleanup through generation-local cordis-go scopes, with serialized shutdown barriers and attributable provider panic errors. Building from source now requires Go 1.27.0; build and CI version selection follows `go.mod`.
+
+- Select runtime modules and service providers through named `composition.profiles` and explicit `modules` / `services` overrides. Inspect binding sources, package versions and lifecycle states. Ambiguous or unavailable choices reject preparation; failed or removed providers never fall back to another implementation. Removing native modules also retires them in retained generations; safe mode starts no composition modules.
+
+- Switch workspaces from the underlined workspace name in the new-conversation greeting, using the existing workspace picker.
+
+- Select plugin-provided shell skins independently of content themes, with paired light/dark artwork, ribbon previews, native ribbon continuity and default-frame recovery. Local images use a fixed Gaussian blur with automatic contrast, replacing effect, strength and position controls. Shared controls use soft surfaces and shadows, translucent menus and neutral filled selections.
+
+- Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries. MiniMax connections recognize the current China API hostname, preserve saved model metadata across catalog refreshes, keep new models discoverable while hiding retired entries, enforce always-on M3.1 thinking, mark M3/M3.1 temperature as fixed, and avoid unsupported forced tool choice.
+
+- Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.
+
+- Show desktop update progress above the navigation ribbon's gear menu in compact and expanded layouts, with settings, usage, and available account actions grouped in that menu.
+
+- Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
+
+- Show the Wuu mascot icon at the top of the desktop navigation ribbon.
+
+- Resize the workbench ribbon between compact icons and persistent titled tabs, independently of the conversation list, with saved width and keyboard controls.
+
+- Order the normal desktop sidebar's Recent list with running conversations first, then unread conversations, then the remaining recent conversations, showing up to 50 in total. Keep unread indicators visible and hold row positions during pointer, keyboard, and drag interaction.
+
+- Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
+- Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
+
+- Reclaim eligible website tabs after 30 minutes in the background, restoring their history and scroll position on selection while protecting edited, pinned, media, and other stateful pages.
+- Review local browser extension permissions before loading, manage installed snapshots with details and reload controls, and preserve the previous working copy when an update fails.
+
+- Add local history and bookmark suggestions to browser address fields, with keyboard selection and a mascot-centered new-tab search page.
+
+- Feishu, Notion, and ChatGPT workspace plugins are now separate opt-in source packages rather than bundled software; install them explicitly when needed.
+- Optional Feishu and Notion workspace extensions combine native website views with bounded document API tools and host-managed credentials in the OS secure store.
+- An optional ChatGPT website extension joins the reorderable workbench ribbon.
+
+- Expand the experimental website workbench with tabs, page search and zoom, download controls, bookmarks, recent history, and lazy restoration of tab addresses.
+
+- Experimental workbench website destinations share the desktop browser profile, retain navigation state, and can be added, edited, removed, and reordered alongside conversations and extension pages.
+- Desktop extensions can render a native website through the existing view API, with page lifecycle tied to the mounted extension view.
+
 - Continue interrupted Wuu tasks from durable history without repeating user input; preserve completed items and tool results, isolate incomplete fragments, and distinguish network waiting, retries, exhaustion and unsafe replay.
 
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
@@ -34,15 +135,299 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Public process service for conversation-bound extension commands and event delivery,
   with process-tree cleanup and optional handoff from completed child sessions.
 
+### Changed
+
+- Keep the main conversation input centered across the full canvas regardless of the right tool rail. Let the rail scroll above the input in short windows and when drafts expand.
+
+- Reduce redundant desktop hover labels, reveal clipped names only when needed, and unify useful hints at the saved UI text size with readable wrapping. Keep hints next to their controls, prevent nested duplicates, and preserve control layout and click targets.
+
+- Remove the app-wide Back and Forward buttons and page-history stack, reclaiming their header space. Website navigation keeps its own Back and Forward controls.
+
+- Keep the compact capsule composer with attachment and send buttons inside, and move permission, model, and plugin controls to a separate toolbar below. Give drafts more horizontal space and keep longer text growing upward in main, document, and split conversations.
+
+- Simplify General settings by removing new-conversation defaults and the automatic activity-preview toggle. Choose the agent, model, and reasoning effort in the composer; manage the default environment beside its profiles under Built-in agent. Activity previews appear automatically and remain individually dismissible; the retired auto-show preference no longer suppresses them. Remove the corresponding desktop bridge and SDK settings controls.
+
+- Reduce the sidebar row minimum height from 36px to 28px at the default text size, preserving row spacing and automatic growth for larger text.
+
+- Use native desktop context menus for object actions such as rename, pin, move, copy, and delete, plus standard text editing. Group session actions consistently and share the web fallback with the file tree. Keep creation menus, composer commands, pickers, and panel controls rendered in the app.
+
+- Show the latest concrete tool call in the active conversation activity row and keep historical rows summarized by activity. Keep the full tool and reasoning trail in the expandable details, without a dot-separated reasoning label.
+
+- Keep the conversation composer centered on the message flow as the right-side tool rail expands or collapses.
+
+- Use narrower workspace and branch menus, tighter shared menu spacing, and less padding in the home usage card. Simplify the branch picker to a search field and branch list, showing branch creation only after a new name is entered.
+
+- Balance composer and sent-message shadows between the previous and lighter treatments in both light and dark themes.
+
+- Simplify delivered file cards to a single filename row, removing the redundant format and size subtitle.
+
+- Replace sidebar running-state rings with a nine-dot diagonal light wave, shared by workspace and conversation indicators, with a static matrix under reduced motion.
+
+- Increase vertical spacing between desktop navigation ribbon buttons and below the app icon, with more separation above the footer controls.
+
+- Keep action buttons visible on historical assistant answers. Sent-message actions still appear on hover or keyboard focus.
+
+- Prioritize the selected workspace at desktop startup. Recover the last explicitly opened conversation when possible; if historical recovery fails, keep its catalog entry and open a usable draft with the failure reason. Legacy cleanup advances in durable batches, completed imports no longer reread retired databases, and document providers can supply incremental checkpoints instead of repeatedly exporting all history during startup.
+
+- Group onboarding choices in shared cards and show the companion beside workspace selection. Long workspace lists scroll within the card while selection tools and navigation actions remain visible; narrow windows give the list the full width.
+
+- Align External Connections with the other settings pages using shared grouped lists, consistent detail sections and spacing, and a labeled add action; retain responsive quota readouts and connection status.
+
+- Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
+
+- Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.
+
+- Redesign desktop surfaces with neutral window chrome, white and charcoal reading canvases, clearer selections, regular UI-sized menus, grouped settings cards, and a consistent two-row composer across window sizes.
+
+- Grant persistent storage to the site loaded directly in a website tab without a permission dialog, matching ordinary browser behavior while keeping embedded and Agent-controlled pages excluded.
+
+- Use the same user-message background in IM list and bubble presentation modes, and keep IM frame backgrounds visible during window resizing.
+
+- Keep the experimental navigation ribbon at its saved width on pointer hover.
+
+- Float sent-message timestamps and actions in trailing text space, otherwise below or above the frame as available. Match their typography and vertical alignment to the message text without reserving a row or moving following content.
+
+- Replace the page chat shortcut with Wuu's mascot, with click-to-compose, a keyboard-accessible context menu, and draft-preserving focus return to the page.
+
+- Animate the hover tab ribbon with a stable icon column, reversible native bounds, and both system and in-app reduced-motion support.
+
+- Keep websites live beneath the hover tab ribbon and account menu with bounded, isolated native chrome surfaces.
+
+- Expand the vertical browser tab rail with readable titles and direct close controls for web tabs, while keeping built-in destinations permanent and preserving sidebar content widths.
+
+- Remove the redundant full-width browser loading line while retaining ribbon tab loading feedback and Stop/Reload controls.
+- Represent each browser page as one ribbon tab, with direct new-tab creation, drag ordering, and a compact pin/close menu instead of nested tab rows and navigation management.
+
+- Refine browser tab sizing, selection surfaces, and close/new-tab alignment across font sizes.
+
+- Use a soft off-white workbench canvas across navigation, conversations, empty states, catalog/settings pages, and right-panel tools and previews while retaining distinct control surfaces.
+- Rename the plugins-and-skills navigation entry to Extensions and restore a large heading for the selected catalog category.
+- Separate plugins, settings, and account controls into a persistent icon ribbon
+  beside contextual conversation, catalog, and plugin navigation, within the
+  existing sidebar width. Share one rounded workbench between the secondary
+  sidebar and content, retaining conversation drafts and position across sections.
+  Use the same ribbon and frame for settings, with a shorter centered window toolbar.
+  Keep search beside the Wuu wordmark. Show folder groups when used, unify the
+  window header, and clarify process summaries above answers. Keep activity controls readable and adapt conversation
+  gutters to the reading pane.
+
 ### Fixed
 
-- Check for desktop updates every 30 minutes instead of every six hours.
+- Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
-- Continue checking for newer desktop releases while an update is available,
-  and refresh the latest version before downloading from either update entry point.
+- Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 
-- Reduce desktop sidebar group gaps and conversation title emphasis, and align
-  the account control's bottom edge with the message composer.
+- Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.
+- Resolve website tab, popup, and system-permission guide resources from the desktop's ESM main bundle so browser navigation and permission guidance do not fail on missing CommonJS globals.
+- Declare MCP configuration, definition reads, and login cancellation in the resource-access contract so owner actions reach their handlers while selected policies and non-owner restrictions remain enforced.
+- Keep MCP catalog, login, and configuration failures concise and local to the failed operation, with shared opt-in diagnostics and explicit login retry without losing completed authorization.
+- Keep MCP connection and login failures beside their server with concise recovery guidance, and show technical diagnostics only on request instead of repeating raw transport errors.
+- Keep admitted plugin package bytes and desktop assets alive across rejected upgrades and unrelated package publications, while releasing each generation’s snapshots after its last reader finishes.
+- Keep published artifact images and their source leases stable across streamed commentary and answer handoff, without reloading unchanged media.
+- Preserve typed driver cancellation causes so force-archiving a running conversation keeps queued input pending without a false delivery error; retain independent provider, receipt, and parent-context failures.
+- Keep the default product usable when an add-on's required package dependency is missing, incompatible, disabled, or removed. Leave affected consumers inactive with diagnostics while preserving explicit composition requirements.
+
+- Preserve typed paths in the web folder picker while directory requests finish, ignore stale replies after newer navigation or dismissal, and require the displayed path to match the loaded directory before selecting it or creating a child folder.
+
+- Keep workspace handoffs responsive while retired native terminal requests finish. Revoke the old workbench immediately, retain terminal cleanup for renderer shutdown, and preserve the web-resource ownership barrier.
+- Keep live child-agent completion status and result text from the same snapshot when awaiting results, preventing a concurrent completion from delivering an empty first result.
+
+- Hand queued input from the composer to the pending drawer as soon as its matching server admission receipt arrives, without waiting for a delayed RPC reply or restoring a duplicate draft after a late timeout.
+- Keep queued-message acceptance responsive after reopening a conversation by moving detached old-runtime cleanup off the serial request loop, while preserving ordered cache eviction, durable queue acknowledgement and shutdown ownership.
+
+- Focus conversation search after its input mounts, without overriding a newer interaction or refocusing a closing dialog.
+
+- Reduce message submission and response startup delays under concurrent session activity by waking local storage-lock waiters immediately when the lock is released, while preserving operating-system locking and cancellation.
+
+- Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
+
+- Keep opted-in desktop presentation mounted across service-graph renewals while replacing business scopes. Preserve sidebar, tool-rail, composer DOM and draft selection; fence delayed old actions, rebind subscriptions, close chosen workspace pickers explicitly, and retain conservative teardown for legacy extensions.
+
+- Keep the application, sidebar, and unsent drafts available when a conversation cannot be restored after a plugin change. Report that conversation failure locally and allow an explicit retry without replaying messages or changing selected providers.
+
+- Make explicitly confirmed archival settle the retained execution after provider replacement before archiving through the selected storage. Preserve partial history and held input, reject uncertain settlement and other-process ownership truthfully, and admit one confirmation under repeated clicks without reusing retired consent.
+
+- Keep session and workspace switch presentation inside message regions. Preserve static pixels during provider handoff without animating or blocking live sidebar, titlebar, or composer controls; add native product regression coverage for normal/reduced motion and 1×/2× displays.
+
+- Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
+
+- Give the conversation composer at least the message flow's width, with up to 12px of extra space on each side in roomy panes. Keep its center aligned with the messages and respect narrow windows and display safe areas.
+
+- Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Keep the bottom-left Settings and navigation controls anchored to the window with consistent spacing when the right tool rail expands or collapses and composer controls move or wrap.
+
+- Match error and retry messages to the conversation bubble frame, with distinct status colors and full-width IM alignment; keep recovery actions readable at large text sizes and narrow widths.
+
+- Keep the first sent message visible through new-conversation creation and admission, without flashing or replaying its entrance; preserve newer drafts and recover rejected sends.
+
+- Round the main conversation dock's own background and restore exposed canvas corners immediately when closing the workspace panel, preventing transient square corners during compositing.
+
+- Keep maximized workspace conversations and tools in one tab switching flow: restore the last visited conversation when closing a resource, retain the expanded strip when switching conversations or closing the final tool, and prevent double-clicks from closing tool tabs.
+
+- Automatically continue interrupted model streams from completed reply or reasoning items when the round has no tool declarations or accepted tool work. Preserve displayed fragments, avoid transient failure cards, and bound consecutive continuations while retaining manual recovery for ambiguous effects.
+
+- Keep streamed model progress from issuing synchronous persistence checkpoints through session service proxies, reducing shared-store contention during conversation switching while preserving terminal and recovery checkpoints.
+
+- Prevent completed answers from replaying the copy, fork, and timestamp entrance animation when returning to a cached conversation, including answers completed in the background.
+
+- Keep submitted drafts in the composer with a busy send button through attachment preparation and admission. Show messages once they reach the conversation, avoiding transient queue rows and repeated arrival animations; retain input on failure and suppress duplicate sends while waiting.
+
+- Keep settings titlebar actions on one line without overlapping the page title in narrow windows and at larger UI font sizes.
+
+- Avoid reparsing unchanged cached conversation Markdown on session switches and composer updates by retaining the preview service context until its service or slots change.
+
+- Extend model and engine connection row hover and click areas across the settings card, preserving inset dividers, content spacing, rounded outer corners, and visible keyboard focus.
+
+- Keep the composer's send and stop circles concentric with its rounded corner by deriving equal right and bottom spacing from the frame radius and control size, including document composers.
+
+- Let the new-tab mascot rest facing forward, gently follow the pointer, and briefly glance at the search field only when typing.
+
+- Preserve newer conversation titles when a delayed recovery request returns no session snapshot.
+
+- Restore workspace extension icons and readable long titles, and preserve keyboard discovery, document selection, and attachment recovery through the public desktop paths.
+
+- Migrate composer and navigation observations to public slots, remove obsolete presenters, and preserve developer-loop counter state across rendering and plugin reload.
+
+- Enable plugins when installed, retain trust and disabled state on same-source updates, and allow CLI and Agent callers to toggle bundled plugins. Preserve installation recovery and committed activation diagnostics.
+
+- Keep new child agents on the current composition while existing workers retain admitted bindings, and preserve tool call identities in handoff history.
+
+- Retain recoverable evaluation state and completed task results after interruption, and reject frozen plans when task or scoring code changes.
+
+- Keep conversation navigation responsive when its viewport remounts, and ignore stale model-discovery failures after switching tabs.
+
+- Center the startup icon, title, and progress bar without reserving invisible space for the delayed loading hint; showing the hint keeps the startup content in place.
+
+- Keep successful replies completed when only post-run model receipt cleanup fails, retaining the failure in diagnostics without a conversation notice. Distinguish receipt lifecycle failures from user stops in live and restored error messages.
+
+- Show the right-sidebar toggle and workspace tool rail only on conversation pages, hiding them on catalog, settings, website, and plugin pages.
+
+- Align the workspace tool rail icons with the right-panel toggle across UI font sizes and window widths.
+
+- Avoid rewriting unchanged, acknowledged model-call receipts during turn cleanup, preventing completed replies from failing their cleanup deadline when conversations run concurrently. Late usage and physical completion evidence still require durable checkpoints.
+
+- Anchor the new-conversation workspace menu below the workspace name in the greeting, keeping it attached during scrolling and resizing. Selecting a workspace retargets the current draft and preserves its content instead of reopening the workspace's latest conversation.
+
+- Restore manual navigation ribbon resizing and remembered width while keeping the default compact and disabling automatic expansion on hover or focus.
+
+- Match sidebar group headings, including Workspaces and Recent, to the list text size and follow the saved UI font preference.
+
+- Keep existing Recent sidebar conversations in place when execution or unread status changes. Assign priority when a conversation first enters the mounted sidebar, while continuing to update status indicators immediately.
+
+- Hide the conversation composer on plugin and skill management pages while preserving unsent drafts and pending message recovery when returning to chat.
+
+- Distinguish the built-in interface modules and automation scheduler in the extension catalog.
+
+- Declare the automation sidebar contribution so its interface loads through the public plugin contract.
+
+- Resolve built-in UI diagnostics against the same retained runtime generation as installed plugins. Show renderer registration, rendering, and cleanup failures alongside runtime contribution failures instead of reporting healthy built-in modules as unavailable.
+
+- Restore built-in composer, menu, text and border colors while keeping public semantic color defaults available to independent UI shells. Explicit plugin theme colors still override the corresponding surfaces; partial themes preserve unspecified component defaults.
+
+- Return to the conversation and exit full-panel mode when the last workspace tab closes. Closing a file no longer creates a replacement Files tab, and restoring a previous file keeps its selected tab and editor content aligned.
+
+- Size sidebar new-conversation, pin, and archive action icons consistently with toolbar controls at default and large UI font sizes, while preserving their row click targets.
+
+- Keep Recent conversation positions stable after reading or switching sessions. Completed work stays immediately below remaining running conversations, including results read in the active conversation; only new activity changes priority until the window is reopened.
+
+- Open branches already checked out elsewhere in their existing worktrees from the composer and environment panel, preserving conversation drafts. Explain common branch-switch failures in the selected language and keep independent worktree start-point selection separate from checkout.
+
+- Release native engine session resources after their active turn and workers finish cleanup. `Open` and `Resume` retain their provider generation until `Close` drains the owned runtime; canceling the close wait no longer reports premature completion or abandons cleanup.
+
+- Preserve the selected default engine when it is disabled or unavailable. New conversations now report the unavailable selection instead of silently falling back to Wuu; explicitly choose another engine or restore the selected one. Removed native engine registrations also stop admission and execution.
+
+- Limit ambient loading rings in project rows, conversation rows, and session tabs to 30 angle updates per second while preserving their existing rotation speed.
+
+- Give the regular conversation input the full card inset above its first line, matching the welcome input and keeping placeholders, typed text, and the caret clear of rounded corners.
+
+- Resolve wallpaper cover sizing in CSS during window resizing, avoiding inherited style updates across the conversation while retaining wallpaper alignment in the native navigation ribbon.
+
+- Keep conversation titles synchronized across lists, tabs, resumes, and delayed notifications using a persisted title revision. Retry automatic naming for untitled conversations after later successful turns while preserving saved manual titles.
+
+- Recover automatically when a Responses WebSocket reaches its connection lifetime limit during a reply, reconnecting with the full request while preserving tool replay safeguards and retry limits.
+
+- Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.
+
+- Restore composer hints to the same quiet gray as aggregated tool-call summaries in both light and dark themes.
+
+- Keep remote loop-driver callbacks in their selected generation, propagate preparation cancellation, and reject invalid driver identities, checkpoint bindings, and terminal statuses before accepting state.
+
+- Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
+
+- Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
+
+- Balance sidebar icons with their labels at default and large text sizes, apply the shared text alignment to extension navigation, and optically center folder artwork beside uppercase labels while preserving shared text baselines.
+
+- Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
+
+- Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
+
+- Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.
+- Use lowercase `worktree` for the English composer toggle label.
+
+- Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text.
+
+- Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
+
+- Keep the input width and toolbar layout stable when attachment drawers open in conversation and document composers, and when conversation drafts grow to multiple lines.
+
+- Align the browser toolbar and native navigation ribbon at one header boundary so hovered sidebars fully cover the page without an exposed strip.
+
+- Keep website headers clickable in the embedded browser when a page declares native window drag regions, including ChatGPT's transparent top bar.
+
+- Draw the selected sidebar row with an even edge on every side instead of a shadow that faded at the top.
+
+- Keep running conversations in a stable order in the Recent sidebar when switching sessions or refreshing live output.
+
+- Keep opening sidebar content clipped so the moving resize divider remains clickable.
+
+- Prevent a queued native ribbon blur from opening an error dialog when its window closes.
+
+- Preserve the rendered sidebar width when a drag interrupts its opening animation, then settle to normal width constraints on release.
+
+- Keep native browser bounds and occlusion tracking active through CSS transitions,
+  ancestor motion, and overlapping animations. Reverse closing workspace sheets
+  continuously and release panel dragging when the window loses focus.
+- Retain deferred scroll recovery until all overlapping panel animations finish.
+
+- Keep the empty-workbench greeting readable beside both side panels at narrow widths and large text sizes, without clipping fixed grid gutters.
+
+- Restore a website selected during inactive-tab cleanup and prevent Agent operations from attaching to a native page already closing.
+- Keep closing workspace tabs in place through unrelated renders and rapid sequential closes until their exit motion finishes.
+
+- Keep the expanded browser navigation ribbon's header above the toolbar, with continuous hover behavior across its native page overlay.
+
+- Restore desktop startup and browser download history persistence by passing the history path to the download manager instead of the chrome overlay host.
+
+- Align browser fallback icons with the other navigation ribbon icons in both the main window and native overlay.
+- Give plugin website destinations the same full-width ribbon layout as browser tabs, without a duplicate plugin sidebar or page title row.
+- Keep the expanded workbench tab ribbon open when switching between websites and app pages while the pointer remains inside it.
+- Keep native tab context menus responsive when a title or favicon update crosses the right-click, while validating the current tab and menu actions.
+- Dismiss the live native hover ribbon on real pointer movement into the shell or page after reopening a tab, including when the reused overlay never received a pointer-enter event.
+- Keep tab-close focus inside the native ribbon instead of moving to its duplicate shell controls.
+- Keep floating tab ribbon reversals continuous during page-title updates and let clicks reach browser controls beneath the saved sidebar footprint.
+
+- Keep website contents live under browser toolbar panels and retain the selected native page when hiding or restoring the window.
+- Keep newly restored browser tabs from taking focus while hidden by the navigation rail.
+
+- Keep contextual sidebar controls beneath the expanded macOS navigation rail while preserving traffic-light access and restoring the controls after hover.
+- Dismiss native browser tooltips when the workbench renderer reloads or crashes.
+
+- Honor Shift-click's separate website window and keep context-menu links in background tabs in the experimental browser workbench.
+- Keep user-requested separate website windows open when their source tab navigates or closes, while preserving managed popup cleanup and website permission prompts.
+
+- Preserve native browser text and image sharpness behind account and browser menus on high-density displays.
+- Restore window dragging from empty browser toolbar space while keeping its address field and buttons interactive.
+- Center the compact account control with settings and the other ribbon icons.
+- Restore pointer-following eyes on the browser start page without background animation work.
+- Avoid remeasuring covered conversation inputs during website window resizing, and refit retained drafts when their workspace becomes visible again.
+- Keep full-workspace websites attached to the native window edges during live resizing, including when the shell renderer is busy.
+- Keep explicit workbench sidebar collapse separate from hover previews, and remove the redundant settings breadcrumb root.
+- Stabilize PDF fit-width layout when a non-overlay scrollbar would otherwise alternate between appearing and disappearing.
+
+- Keep the account menu above browser pages while preserving native website visibility on dismissal.
+
+- Show local, theme-aware Notion, Feishu, and ChatGPT marks for saved website shortcuts and browser tabs without requiring their optional integrations.
+
 - Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
 - Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
 - Allow background task and question notifications on Linux desktops with native notification support.

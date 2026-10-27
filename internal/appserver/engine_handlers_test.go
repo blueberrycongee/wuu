@@ -4,17 +4,168 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
+
+// engine/list must expose the selected provider's tri-state declaration, not
+// infer a credential requirement from the engine.wuu service identity.
+func TestEngineInventorySelectedHostModelRequirement(t *testing.T) {
+	for _, value := range []string{"omitted", "false", "true"} {
+		t.Run(value, func(t *testing.T) {
+			provider := &engineRequirementFixture{value: value}
+			factory := runtime.NativeProviderFactory{ID: provider.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}
+			cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"wuu.engines.native": false, provider.ID(): true}, Services: []composition.Binding{{Service: "engine.wuu", Major: 1, Provider: provider.ID()}}}}}}
+			rt := newEngineAdminRuntimeAt(t, t.TempDir(), cfg, factory)
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			binding, err := rt.RetainState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer binding.Close()
+			descriptor, err := srv.engineDescriptorForState(context.Background(), binding, "wuu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (descriptor.RequiresHostModel == nil) != (value == "omitted") || descriptor.RequiresHostModel != nil && *descriptor.RequiresHostModel != (value == "true") {
+				t.Fatalf("retained selected descriptor lost requirement %s: %+v", value, descriptor)
+			}
+			inventory := srv.engineInventory()
+			if len(inventory) != 1 || inventory[0].ID != "wuu" || !inventory[0].Enabled || !inventory[0].BinaryOK {
+				t.Fatalf("selected engine inventory = %+v", inventory)
+			}
+			raw, err := json.Marshal(inventory[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if value == "omitted" {
+				if _, present := fields["requires_host_model"]; present {
+					t.Fatalf("legacy declaration invented: %s", raw)
+				}
+			} else if string(fields["requires_host_model"]) != value {
+				t.Fatalf("selected requirement lost: %s, want %s", raw, value)
+			}
+		})
+	}
+}
+
+type engineRequirementFixture struct {
+	embeddedModelConsumer
+	value string
+}
+
+func (*engineRequirementFixture) ID() string { return "fixture.engine-requirement" }
+func (p *engineRequirementFixture) Status() pluginhost.Status {
+	status := p.embeddedModelConsumer.Status()
+	status.ID = p.ID()
+	return status
+}
+func (*engineRequirementFixture) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (*engineRequirementFixture) ProvidedServices() []pluginhost.ServiceDescriptor {
+	methods := []pluginhost.ServiceMethodDescriptor{}
+	for _, method := range []string{"descriptor", "describe", "models"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: "engine." + method + ".input.v1", OutputSchema: "engine." + method + ".output.v1"})
+	}
+	return []pluginhost.ServiceDescriptor{{Name: "engine.wuu", Version: "1.0.0", Methods: methods}}
+}
+func (p *engineRequirementFixture) InvokeService(_ context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	switch in.Method {
+	case "descriptor":
+		value := map[string]any{"id": "wuu", "version": "1.0.0", "enabled": true}
+		if p.value != "omitted" {
+			value["requires_host_model"] = p.value == "true"
+		}
+		return json.Marshal(value)
+	case "describe":
+		return json.RawMessage(`{"binary_ok":true,"enabled":true}`), nil
+	case "models":
+		return json.RawMessage(`{"models":[]}`), nil
+	default:
+		return nil, fmt.Errorf("unexpected engine method %s", in.Method)
+	}
+}
+
+// Disabling a selected implementation must reject admission before it creates
+// a durable thread or dispatches inference, including the native engine.
+func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {
+	for _, id := range []string{"wuu", "codex", "claude"} {
+		t.Run(id, func(t *testing.T) {
+			client := &fakeClient{}
+			rt := newTestRuntime(t, client)
+			settings := map[string]any{"default_engine": id}
+			for _, engine := range []string{"codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"} {
+				settings[engine] = map[string]bool{"enabled": false}
+			}
+			data, err := json.Marshal(map[string]any{
+				"default_provider": "fake-provider",
+				"providers":        map[string]any{"fake-provider": map[string]string{"type": "openai-compatible", "model": "fake-model", "base_url": "https://example.invalid/v1"}},
+				"engines":          settings,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if id == "wuu" {
+				rt.SetEnginesForTest(agentengine.NewRegistry())
+			}
+			bindConfigSourceForTest(t, rt)
+			if err := rt.RefreshEngineSettings(); err != nil {
+				t.Fatal(err)
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			for _, engine := range srv.engineInventory() {
+				if engine.ID == id && engine.Enabled {
+					t.Fatalf("unavailable engine advertised as enabled: %+v", engine)
+				}
+			}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start","params":{}}`)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "start")
+			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), id) {
+				t.Fatalf("unavailable selection did not produce its diagnostic: %+v", response)
+			}
+			threads, err := rt.Sessions.List(100)
+			if err != nil || len(threads) != 0 {
+				t.Fatalf("rejected selection created threads: %+v, %v", threads, err)
+			}
+			client.mu.Lock()
+			calls := len(client.requests)
+			client.mu.Unlock()
+			if calls != 0 {
+				t.Fatalf("unavailable engine dispatched %d model requests", calls)
+			}
+		})
+	}
+}
 
 func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "fakeclaude")
@@ -22,12 +173,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
-	rt := newTestRuntime(t, &fakeClient{})
-	registry := agentengine.NewRegistry()
-	if err := registry.Register(claudeengine.NewEngine(binary, rt.RootDir)); err != nil {
-		t.Fatal(err)
-	}
-	rt.SetEnginesForTest(registry)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Claude: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -63,7 +209,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if terminals != 1 {
 		t.Fatalf("completed notifications = %d, want one", terminals)
 	}
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +225,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if !found {
 		t.Fatalf("final summary absent from durable history: %+v", history)
 	}
-	metas, err := loadMetaMessages(rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,12 +253,7 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 	}
 	for _, scenario := range []string{"provider_error", "provider_error_partial", "provider_error_close"} {
 		t.Run(scenario, func(t *testing.T) {
-			rt := newTestRuntime(t, &fakeClient{})
-			registry := agentengine.NewRegistry()
-			if err := registry.Register(claudeengine.NewEngine(binary, rt.RootDir)); err != nil {
-				t.Fatal(err)
-			}
-			rt.SetEnginesForTest(registry)
+			rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Claude: &config.EngineBinaryConfig{BinaryPath: binary}}})
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -153,7 +294,7 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 			if liveText.String() != want || failures != 1 {
 				t.Fatalf("live assistant text = %q, failures = %d", liveText.String(), failures)
 			}
-			history, err := loadChatMessages(rt.SessionDir, threadID)
+			history, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,34 +346,6 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 	}
 }
 
-func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {
-	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
-	entry := &engineModelCatalogCacheEntry{
-		binaryPath: "/usr/local/bin/codex",
-		models: []EngineModelInfo{{
-			ID:               "gpt-test",
-			SupportedEfforts: []string{"low", "high"},
-		}},
-		expiresAt: now.Add(engineModelCatalogTTL),
-	}
-
-	models, ok := entry.load("/usr/local/bin/codex", now.Add(time.Minute))
-	if !ok || len(models) != 1 || models[0].ID != "gpt-test" {
-		t.Fatalf("fresh matching cache = (%+v, %v), want cached model", models, ok)
-	}
-	models[0].SupportedEfforts[0] = "changed"
-	if entry.models[0].SupportedEfforts[0] != "low" {
-		t.Fatal("cache returned mutable model effort storage")
-	}
-
-	if _, ok := entry.load("/opt/codex", now.Add(time.Minute)); ok {
-		t.Fatal("cache matched a different binary path")
-	}
-	if _, ok := entry.load("/usr/local/bin/codex", entry.expiresAt); ok {
-		t.Fatal("cache remained fresh at its expiration boundary")
-	}
-}
-
 // Exercise per-turn ownership through the actual server binding and child
 // process, including failure, a second conversation, and native resumption.
 func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
@@ -242,6 +355,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
+	t.Run("cancellation receipt", func(t *testing.T) { testCodexCancellationReceipt(t, binary) })
 	t.Run("warm host ownership", func(t *testing.T) { testCodexWarmHostOwnership(t, binary) })
 	t.Run("workspace fidelity", func(t *testing.T) { testCodexWorkspaceFidelity(t, binary) })
 	t.Run("concurrent host replacement", func(t *testing.T) { testCodexConcurrentHostReplacement(t, binary) })
@@ -251,10 +365,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
 	t.Setenv("WUU_TEST_CODEX_FAIL_TURN_ONCE", filepath.Join(root, "turn-failed"))
-	rt := newTestRuntime(t, &fakeClient{})
-	registry := agentengine.NewRegistry()
-	rt.SetEnginesForTest(registry)
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -328,8 +439,12 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 }
 
 func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.SetEnginesForTest(agentengine.NewRegistry())
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{DefaultEngine: "codex", Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Toolkit = kit
 	settings := map[string]any{
 		"default_engine": "codex",
 		"codex":          map[string]any{"binary_path": binary},
@@ -351,12 +466,18 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
+	journal, err := rt.Sessions.NewInferenceJournalRuntime("engine-refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.InferenceJournalRuntime = journal
+	t.Cleanup(func() { _ = journal.Close() })
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := rt.RefreshEngineSettings(); err != nil {
 		t.Fatal(err)
 	}
-	srv.retainCodexHost()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	var threadID string
@@ -445,7 +566,7 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("thread creation waited for an unrelated engine version probe")
 	}
 	admitted := responseByID(t, parseOutput(t, out.String()), "gated-thread")
@@ -456,11 +577,10 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 	select {
 	case err := <-update:
 		if err != nil {
-			t.Error(err)
+			t.Fatal(err)
 		}
-		t.Error("settings update completed before the older refresh released its config snapshot")
-	case <-time.After(100 * time.Millisecond):
-		// The explicit update is serialized behind the gated refresh.
+	case <-time.After(5 * time.Second):
+		t.Fatal("settings update waited for an unrelated engine version probe")
 	}
 	release()
 	if response := waitForResponseByID(t, out, "gated-refresh"); response["error"] != nil {
@@ -484,9 +604,7 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	requests := filepath.Join(root, "requests.jsonl")
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var servers []*Server
@@ -575,7 +693,8 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	// A catalog acquisition may race the EOF notification; it is safe to
 	// retry this read without submitting/replaying any turn.
 	for {
-		if _, err := rt.CodexHost().ListModels(ctx); err == nil {
+		var result pluginprotocol.EngineQuotaResult
+		if err := rt.CallEngine(ctx, "codex", "quota", struct{}{}, &result); err == nil && result.ErrorCode != "network" {
 			break
 		}
 		select {
@@ -593,7 +712,9 @@ func testCodexWarmHostOwnership(t *testing.T, binary string) {
 	}
 	// Settings install a new Host. The next binding transfers this server's
 	// lifetime ownership and closes the now-idle previous process.
-	rt.RebuildCodexEngine(true, binary)
+	if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+		t.Error(err)
+	}
 	run(1)
 	counts = readCounts()
 	if counts["initialize"] != 3 || counts["turn/start"] != 6 || counts["thread/resume"] != 4 {
@@ -621,9 +742,7 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
 	t.Setenv("WUU_TEST_CODEX_INITIALIZE_GATE", gate)
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -680,8 +799,9 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 			case <-settingsStop:
 				return
 			case <-tick.C:
-				rt.RebuildCodexEngine(true, binary)
-				srv.retainCodexHost()
+				if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+					t.Error(err)
+				}
 			}
 		}
 	}()
@@ -696,8 +816,9 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 	stopSettings()
 	// Force the final replacement after the native child has started, while
 	// its acquisition still owns the pending initialization.
-	rt.RebuildCodexEngine(true, binary)
-	srv.retainCodexHost()
+	if err := rt.CallEngine(context.Background(), "codex", "refresh", struct{}{}, nil); err != nil {
+		t.Error(err)
+	}
 	if err := os.WriteFile(gate, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -714,4 +835,367 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 		t.Fatalf("host replacement left subprocesses alive: started=%d, exited=%d", starts, exits)
 	}
 	t.Log("concurrent settings preserved the admitted turn; three subsequent turns reused one replacement; both native processes exited")
+}
+
+// Failure cases: selected-state I/O holding the stream projection lock, losing
+// native items during that stall, settings prepending or renumbering the admitted
+// user row, and clearing admission before durable settlement.
+func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
+	binary := os.Getenv("WUU_E2E_CODEX")
+	if binary == "" {
+		binary = filepath.Join(t.TempDir(), "fakecodex")
+		build := exec.Command("go", "build", "-o", binary, "../codexengine/testdata/fakecodex")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture: %v\n%s", err, output)
+		}
+	}
+	for _, scenario := range []struct {
+		name                       string
+		reset, noPrompt, priorTurn bool
+	}{
+		{name: "boundary_io"},
+		{name: "settings_prepend", reset: true, noPrompt: true},
+		{name: "settings_after_prior_turn", reset: true, priorTurn: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("WUU_TEST_CODEX_HISTORY", filepath.Join(root, "native.json"))
+			control := filepath.Join(root, "control.json")
+			t.Setenv("WUU_TEST_CODEX_HISTORY_CONTROL", control)
+			blocked := &nativeBoundaryDocuments{entered: make(chan struct{}), release: make(chan struct{}), progress: make(chan struct{})}
+			storeDir := filepath.Join(t.TempDir(), "documents")
+			var selectedDocuments *nativeBoundaryProvider
+			factory := runtime.NativeProviderFactory{ID: "fixture.boundary-documents", DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+				selectedDocuments = &nativeBoundaryProvider{Service: persistence.NewService("fixture.boundary-documents", storeDir, "sqlite"), gate: blocked}
+				return selectedDocuments, nil
+			}}
+			rt := newEngineAdminRuntimeAt(t, t.TempDir(), config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}, Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{persistence.SQLiteModule: false, factory.ID: true}}}}}, factory)
+			// Observe the selected fixture's committed snapshot without waiting for
+			// the intentionally stalled authority writer. Runtime operations still
+			// use the selected authority; the observer cannot commit mutations.
+			observer := session.NewStore(context.Background(), persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+				if method != "read" {
+					return nil, fmt.Errorf("fixture observer cannot %s", method)
+				}
+				return selectedDocuments.Service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: "state.documents", Method: method, Params: params})
+			}))
+			if scenario.noPrompt {
+				rt.StreamRunner.SystemPrompt = ""
+			}
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(blocked.release) }) }
+			defer release()
+			outputAck := filepath.Join(root, "projected-tool")
+			out := &nativeBurstOutput{documents: blocked, terminal: make(chan Turn, 1), outputAck: outputAck}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := srv.handleLine(ctx, []byte(`{"id":"native-burst-thread","method":"thread/start","params":{"engine":"codex"}}`)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.buffer.String()), "native-burst-thread")
+			if response["error"] != nil {
+				t.Fatalf("thread/start: %+v", response)
+			}
+			threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+			startTurn := func(prompt string) {
+				t.Helper()
+				request, _ := json.Marshal(map[string]any{"id": prompt, "method": "turn/start", "params": TurnStartParams{ThreadID: threadID, Prompt: prompt}})
+				if err := srv.handleLine(ctx, request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario.priorTurn {
+				startTurn("first prompt")
+				select {
+				case turn := <-out.terminal:
+					if turn.Status != TurnStatusCompleted {
+						t.Fatalf("prior native turn: %+v", turn)
+					}
+				case <-ctx.Done():
+					t.Fatal("prior native turn did not settle")
+				}
+			}
+			streamGate := filepath.Join(root, "stream-ready")
+			controlData, err := json.Marshal(map[string]string{"mode": "long-turn", "gate": streamGate, "outputAck": outputAck})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(control, controlData, 0600); err != nil {
+				t.Fatal(err)
+			}
+			blocked.armed.Store(true)
+			startTurn("many-large-tool-results")
+			select {
+			case <-blocked.entered:
+			case <-ctx.Done():
+				t.Fatal("native boundary persistence was not reached")
+			}
+			// The burst must begin while the selected commit is blocked. Otherwise
+			// fast native output can finish before the boundary writer is scheduled,
+			// leaving this progress assertion waiting for output that already arrived.
+			if err := os.WriteFile(streamGate, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			stalled := false
+			started := time.Now()
+			select {
+			case <-blocked.progress:
+			case <-time.After(2 * time.Second):
+				stalled = true
+				release()
+			}
+			th := srv.thread(threadID)
+			th.mu.Lock()
+			admittedSeq := 0
+			for _, msg := range th.History {
+				if msg.Role == "user" && !msg.Steered {
+					admittedSeq = msg.Seq
+				}
+			}
+			if scenario.noPrompt && th.History[0].Role != "user" {
+				t.Error("fixture did not reach native admission without a base system prompt")
+			}
+			th.mu.Unlock()
+			if scenario.reset {
+				before, err := observer.LoadHistoryRecords(threadID, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				srv.resetThreadRuntimesForGeneralSettings("updated runtime system prompt")
+				after, err := observer.LoadHistoryRecords(threadID, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(before, after) {
+					t.Error("runtime settings changed durable history while native admission was pending")
+				}
+			}
+			boundaryWait := time.Since(started)
+			release()
+			var terminal Turn
+			select {
+			case terminal = <-out.terminal:
+			case <-ctx.Done():
+				t.Fatal("native turn did not settle")
+			}
+			tools, completedTools, largeResults := 0, 0, 0
+			for _, item := range terminal.Items {
+				if item.Type == ThreadItemToolCall {
+					tools++
+					if item.Status == ThreadItemStatusCompleted {
+						completedTools++
+					}
+					if item.Result == strings.Repeat("native-output-", 1024) {
+						largeResults++
+					}
+				}
+			}
+			t.Logf("boundary_wait=%s through_terminal=%s stream_stalled=%v terminal=%s visible_tools=%d error=%+v", boundaryWait, time.Since(started), stalled, terminal.Status, tools, terminal.Error)
+			if stalled {
+				t.Error("selected Documents persistence blocked stream projection")
+			}
+			if terminal.Status != TurnStatusCompleted || tools != 302 {
+				t.Errorf("long native turn lost output: status=%s tools=%d want completed/302 error=%+v", terminal.Status, tools, terminal.Error)
+			}
+			if completedTools != 302 || largeResults != 300 {
+				t.Errorf("long native turn lost tool results: completed=%d large_results=%d want 302/300", completedTools, largeResults)
+			}
+			history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range history {
+				if record.Role != "user" {
+					continue
+				}
+				if record.EngineTurnID == "" || record.EngineTurnPending {
+					t.Errorf("native completion not durably settled: seq=%d native=%q pending=%v", record.Seq, record.EngineTurnID, record.EngineTurnPending)
+				}
+				if record.Content == "many-large-tool-results" && record.Seq != admittedSeq {
+					t.Errorf("settings changed durable prompt identity: seq=%d want %d", record.Seq, admittedSeq)
+				}
+			}
+			th.mu.Lock()
+			defer th.mu.Unlock()
+			for _, msg := range th.History {
+				if msg.Role == "system" && (msg.EngineTurnID != "" || msg.EngineTurnPending) {
+					t.Errorf("native user boundary moved to runtime system prompt: native=%q pending=%v", msg.EngineTurnID, msg.EngineTurnPending)
+				}
+			}
+		})
+	}
+}
+
+type nativeBoundaryDocuments struct {
+	entered, release, progress chan struct{}
+	once, progressOnce         sync.Once
+	armed, active              atomic.Bool
+}
+
+type nativeBoundaryProvider struct {
+	*persistence.Service
+	gate *nativeBoundaryDocuments
+}
+
+func (p *nativeBoundaryProvider) InvokeService(ctx context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if in.Method == "commit" {
+		var tx persistence.Transaction
+		if err := json.Unmarshal(in.Params, &tx); err != nil {
+			return nil, err
+		}
+		for _, write := range tx.Writes {
+			if write.Namespace != "wuu.session_messages.v1" {
+				continue
+			}
+			var record session.HistoryRecord
+			if err := json.Unmarshal(write.Value, &record); err != nil {
+				return nil, err
+			}
+			if p.gate.armed.Load() && record.EngineTurnID != "" && record.EngineTurnPending {
+				p.gate.once.Do(func() { p.gate.active.Store(true); close(p.gate.entered); <-p.gate.release; p.gate.active.Store(false) })
+			}
+		}
+	}
+	return p.Service.InvokeService(ctx, in)
+}
+
+type nativeBurstOutput struct {
+	buffer    lockedBuffer
+	documents *nativeBoundaryDocuments
+	terminal  chan Turn
+	outputAck string
+}
+
+func (w *nativeBurstOutput) Write(data []byte) (int, error) {
+	var envelope struct {
+		Method string
+		Params json.RawMessage
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return 0, err
+	}
+	n, err := w.buffer.Write(data)
+	if err != nil {
+		return n, err
+	}
+	if envelope.Method == NotificationItemCompleted {
+		var params ItemCompletedNotification
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			return n, err
+		}
+		if params.Item.Type == ThreadItemToolCall {
+			// Acknowledge only output that crossed the real app-server projection.
+			// The fixture bounds its next burst without relaxing completion counts.
+			if err := os.WriteFile(w.outputAck, []byte(params.Item.SourceID), 0600); err != nil {
+				return n, err
+			}
+			if w.documents.active.Load() {
+				w.documents.progressOnce.Do(func() { close(w.documents.progress) })
+			}
+		}
+	}
+	if envelope.Method == NotificationTurnCompleted || envelope.Method == NotificationTurnError {
+		var params struct{ Turn Turn }
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			return 0, err
+		}
+		w.terminal <- params.Turn
+	}
+	return n, nil
+}
+
+// Admin contract tests use the production selected graph with fixture binaries;
+// no model turns or real account requests are admitted by this helper.
+func newEngineAdminRuntime(t *testing.T, cfg config.Config) *runtime.Session {
+	t.Helper()
+	return newEngineAdminRuntimeAt(t, t.TempDir(), cfg)
+}
+
+func newEngineAdminRuntimeAt(t *testing.T, root string, cfg config.Config, factories ...runtime.NativeProviderFactory) *runtime.Session {
+	t.Helper()
+	// Native engine turns can trigger background titles. Keep that entire model
+	// path on a deterministic loopback fixture, never an external endpoint.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Fixture title\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(upstream.Close)
+	if len(cfg.Providers) == 0 {
+		cfg.DefaultProvider = "fixture"
+		cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", APIKey: "fixture", Model: "fixture"}}
+	}
+	for name, provider := range cfg.Providers {
+		provider.BaseURL = upstream.URL + "/v1"
+		cfg.Providers[name] = provider
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(root, ".wuu.json")
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := runtime.NewSession(runtime.Options{RootDir: root, WuuHome: t.TempDir(), HomeDir: home, Config: cfg, ConfigPath: path, ConfigLoadMode: runtime.ConfigLoadFile, NonInteractive: true, NativeProviders: factories})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	return rt
+}
+
+// Cancellation must settle the already-admitted native identity through the
+// captured provider's cleanup channel, never leave a replayable pending turn.
+func testCodexCancellationReceipt(t *testing.T, binary string) {
+	rt := newEngineAdminRuntime(t, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.handleLine(ctx, []byte(`{"id":"thread","method":"thread/start","params":{"engine":"codex"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "thread")
+	if response["error"] != nil {
+		t.Fatalf("thread: %+v", response)
+	}
+	threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"e2e:pending"}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	waitForMethod(t, out, NotificationAgentMessageDelta)
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	messages := waitForMethod(t, out, NotificationTurnError)
+	terminal := remarshal[TurnErrorNotification](t, notificationByMethod(t, messages, NotificationTurnError)["params"])
+	if terminal.Turn.Status != TurnStatusInterrupted {
+		t.Fatalf("cancellation terminal: %+v", terminal)
+	}
+	history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range history {
+		if record.Role == "user" {
+			found = true
+			if record.EngineTurnID == "" || record.EngineTurnPending {
+				t.Fatalf("canceled native input not settled: %+v", record)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("native input was not durably admitted")
+	}
+	t.Log("interrupted native process turn durably cleared pending identity via captured cleanup gateway")
 }

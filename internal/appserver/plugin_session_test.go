@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -119,25 +121,25 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 2)}
 	other := &pluginTurnLifecycleClient{id: "other", calls: make(chan pluginhost.AgentTurnLifecycleInput, 1)}
-	rt.PluginHost = pluginhost.New(owner, other)
+	attachTestModelGeneration(t, rt, owner, other)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	if _, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	if _, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "wrong-workspace", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: "workspace-two", WorkspaceRoot: rt.RootDir,
 	}); err == nil {
 		t.Fatal("session creation accepted a different target workspace")
 	}
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create-1", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir,
 	})
 	if err != nil || created.SessionID == "" || !created.Created {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
-	result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+	result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 		RequestID: "request-1", SessionID: created.SessionID,
 		Input:        pluginhost.SessionInput{Prompt: "internal inspect prompt", ContextBlocks: []pluginhost.SessionContextBlock{{Kind: "TRIGGER", Source: "schedule", Content: "fired at 09:00"}}},
 		Presentation: &pluginhost.SessionInputPresentation{Kind: pluginhost.SessionPresentationQueryBubble, Text: "后台任务已唤醒 Agent"}, Cause: "schedule:daily",
@@ -161,11 +163,11 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	default:
 	}
 
-	persisted, ok, err := session.Find(rt.SessionDir, result.SessionID)
+	persisted, ok, err := rt.Sessions.Find(result.SessionID)
 	if err != nil || !ok || persisted.Source != "plugin:schedule" || persisted.Owner != "plugin:schedule" || persisted.Visibility != pluginhost.SessionVisibilityUser {
 		t.Fatalf("persisted thread = %+v, %t, %v", persisted, ok, err)
 	}
-	records, err := session.LoadHistoryRecords(rt.SessionDir, result.SessionID, true)
+	records, err := rt.Sessions.LoadHistoryRecords(result.SessionID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	if !providerHasGeneratedQuery || !providerHasRequestContext {
 		t.Fatalf("provider request missing plugin context: %+v", requests)
 	}
-	loaded, err := srv.ensureThreadLoaded(result.SessionID)
+	loaded, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), result.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,10 +221,10 @@ func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
 	rt.WorkspaceID = "workspace-one"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 4)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create-instructions", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir, Instructions: instructions,
 	})
@@ -231,7 +233,7 @@ func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
 	}
 	send := func(requestID string, out *lockedBuffer) {
 		t.Helper()
-		result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+		result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 			RequestID: requestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: requestID},
 		})
 		if err != nil {
@@ -271,7 +273,7 @@ func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
 	rt.StreamRunner.Client = providers.AdaptStreamClient(client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "subagent", calls: make(chan pluginhost.AgentTurnLifecycleInput, 1)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -283,14 +285,14 @@ func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
 		srv.Close()
 	})
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	callCtx, cancelCall := context.WithCancel(context.Background())
-	result, err := rt.PluginSessionRouter.Send(callCtx, owner.id, pluginhost.SessionSendParams{
+	result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, callCtx), owner.id, pluginhost.SessionSendParams{
 		RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
 	})
 	if err != nil || result.State != pluginhost.TurnLifecycleRunning {
@@ -341,11 +343,11 @@ func TestPluginSessionListAndCancelAreOwnerScoped(t *testing.T) {
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { close(release); srv.Close() })
-	created, err := rt.PluginSessionRouter.Create(context.Background(), "subagent", pluginhost.SessionCreateParams{RequestID: "owned", Name: "review_parser", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{RequestID: "owned", Name: "review_parser", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.PluginSessionRouter.Send(context.Background(), "subagent", pluginhost.SessionSendParams{RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}}); err != nil {
+	if _, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionSendParams{RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -353,18 +355,18 @@ func TestPluginSessionListAndCancelAreOwnerScoped(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("turn did not start")
 	}
-	listed, err := rt.PluginSessionRouter.List(context.Background(), "subagent", pluginhost.SessionListParams{})
+	listed, err := rt.PluginSessionRouter.List(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionListParams{})
 	if err != nil || len(listed.Sessions) != 1 || listed.Sessions[0].SessionID != created.SessionID || listed.Sessions[0].Name != "review_parser" || listed.Sessions[0].State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("list = %+v, %v", listed, err)
 	}
-	other, err := rt.PluginSessionRouter.List(context.Background(), "other", pluginhost.SessionListParams{})
+	other, err := rt.PluginSessionRouter.List(pluginInvocationContext(t, rt, context.Background()), "other", pluginhost.SessionListParams{})
 	if err != nil || len(other.Sessions) != 0 {
 		t.Fatalf("other list = %+v, %v", other, err)
 	}
-	if _, err := rt.PluginSessionRouter.Cancel(context.Background(), "other", pluginhost.SessionCancelParams{SessionID: created.SessionID}); err == nil {
+	if _, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), "other", pluginhost.SessionCancelParams{SessionID: created.SessionID}); err == nil {
 		t.Fatal("another plugin cancelled an owned session")
 	}
-	cancelled, err := rt.PluginSessionRouter.Cancel(context.Background(), "subagent", pluginhost.SessionCancelParams{SessionID: created.SessionID})
+	cancelled, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCancelParams{SessionID: created.SessionID})
 	if err != nil || !cancelled.Cancelled {
 		t.Fatalf("cancel = %+v, %v", cancelled, err)
 	}
@@ -376,17 +378,17 @@ func TestPluginSessionCancelIsTurnScopedAndBroadcastsInterruption(t *testing.T) 
 	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done"), onChat: func(_ int, _ providers.ChatRequest) { close(chatStarted); <-release }})
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	observer := &pluginTurnInterruptedClient{id: "orchestrator", calls: make(chan pluginhost.AgentTurnInterruptedInput, 1)}
-	rt.PluginHost = pluginhost.New(observer)
+	attachTestModelGeneration(t, rt, observer)
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { close(release); srv.Close() })
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), observer.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCreateParams{
 		RequestID: "owned-turn", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := rt.PluginSessionRouter.Send(context.Background(), observer.id, pluginhost.SessionSendParams{
+	started, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionSendParams{
 		RequestID: "run-turn", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
 	})
 	if err != nil || started.TurnID == "" {
@@ -397,22 +399,22 @@ func TestPluginSessionCancelIsTurnScopedAndBroadcastsInterruption(t *testing.T) 
 	case <-time.After(3 * time.Second):
 		t.Fatal("turn did not start")
 	}
-	queued, err := rt.PluginSessionRouter.Send(context.Background(), observer.id, pluginhost.SessionSendParams{
+	queued, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionSendParams{
 		RequestID: "queued-turn", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "later"},
 	})
 	if err != nil || queued.QueueID == "" {
 		t.Fatalf("queued send = %+v, %v", queued, err)
 	}
-	queuedCancel, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID})
+	queuedCancel, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID})
 	if err != nil || !queuedCancel.Cancelled || queuedCancel.QueueID != queued.QueueID {
 		t.Fatalf("queued cancel = %+v, %v", queuedCancel, err)
 	}
 
-	mismatch, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: "not-current"})
+	mismatch, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: "not-current"})
 	if err != nil || mismatch.Cancelled {
 		t.Fatalf("mismatched cancel = %+v, %v", mismatch, err)
 	}
-	cancelled, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: started.TurnID})
+	cancelled, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: started.TurnID})
 	if err != nil || !cancelled.Cancelled || cancelled.TurnID != started.TurnID {
 		t.Fatalf("exact cancel = %+v, %v", cancelled, err)
 	}
@@ -433,7 +435,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 	rt.StreamRunner.Client = providers.AdaptStreamClient(stream)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	lifecycle := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: make(chan struct{})}
-	rt.PluginHost = pluginhost.New(lifecycle)
+	attachTestModelGeneration(t, rt, lifecycle)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -441,13 +443,13 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 		srv.Close()
 	})
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), lifecycle.ID(), pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionCreateParams{
 		RequestID: "create", Name: "child", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := rt.PluginSessionRouter.Send(context.Background(), lifecycle.ID(), pluginhost.SessionSendParams{
+	started, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionSendParams{
 		RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"},
 	})
 	if err != nil || started.State != pluginhost.TurnLifecycleRunning {
@@ -458,7 +460,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 	case <-time.After(2 * time.Second):
 		t.Fatal("child turn did not start")
 	}
-	queued, err := rt.PluginSessionRouter.Send(context.Background(), lifecycle.ID(), pluginhost.SessionSendParams{
+	queued, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionSendParams{
 		RequestID: "second", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "second"},
 	})
 	if err != nil || queued.State != pluginhost.TurnLifecycleQueued || queued.QueueID == "" {
@@ -467,7 +469,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 
 	cancelled := make(chan error, 1)
 	go func() {
-		_, cancelErr := rt.PluginSessionRouter.Cancel(context.Background(), lifecycle.ID(), pluginhost.SessionCancelParams{SessionID: created.SessionID})
+		_, cancelErr := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionCancelParams{SessionID: created.SessionID})
 		cancelled <- cancelErr
 	}()
 	select {
@@ -491,19 +493,19 @@ func TestPluginSessionCreateIsIdempotentAndPrivateSessionsStayOutOfSearch(t *tes
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	params := pluginhost.SessionCreateParams{Speed: "fast", RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
-	first, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
+	first, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "dream", params)
 	if err != nil || !first.Created {
 		t.Fatalf("first create = %+v, %v", first, err)
 	}
-	saved, found, err := session.Find(rt.SessionDir, first.SessionID)
+	saved, found, err := rt.Sessions.Find(first.SessionID)
 	if err != nil || !found || saved.Speed != "fast" {
 		t.Fatalf("plugin speed selection was lost: %+v, %v", saved, err)
 	}
-	second, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
+	second, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "dream", params)
 	if err != nil || second.Created || second.SessionID != first.SessionID {
 		t.Fatalf("idempotent create = %+v, %v", second, err)
 	}
-	sources, err := srv.threadSearchSources()
+	sources, err := srv.threadSearchSources(testRuntimeState(t, rt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,16 +531,16 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 	rt := newTestRuntime(t, client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"}})
+	first, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"}})
 	if err != nil || first.State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("first submit = %+v, %v", first, err)
 	}
@@ -547,7 +549,7 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 	case <-time.After(3 * time.Second):
 		t.Fatal("first turn did not start")
 	}
-	second, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+	second, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 		RequestID: "second", SessionID: first.SessionID, Input: pluginhost.SessionInput{Prompt: "second"},
 	})
 	if err != nil || second.State != pluginhost.TurnLifecycleQueued || second.QueueID == "" {
@@ -578,29 +580,39 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 
 func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.T) {
 	chatStarted := make(chan struct{})
+	steerRequest := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	unblockFirst := sync.OnceFunc(func() { close(releaseFirst) })
+	unblockSecond := sync.OnceFunc(func() { close(releaseSecond) })
 	client := &fakeClient{
-		responses: []providers.ChatResponse{providersResponse("first"), providersResponse("second")},
+		// Keep a real next step in this turn: a final response instead retains
+		// the unconsumed steer for a follow-up, covered by the Peers tests.
+		responses: []providers.ChatResponse{{Content: "working", FinishReason: providers.FinishReasonContinue}, providersResponse("second")},
 		onChat: func(call int, _ providers.ChatRequest) {
 			if call == 1 {
 				close(chatStarted)
 				<-releaseFirst
+			}
+			if call == 2 {
+				close(steerRequest)
+				<-releaseSecond
 			}
 		},
 	}
 	rt := newTestRuntime(t, client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "subagent", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { unblockFirst(); unblockSecond(); srv.Close() })
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}})
+	first, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}})
 	if err != nil || first.State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("first submit = %+v, %v", first, err)
 	}
@@ -614,11 +626,11 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 		RequestID: "steer", SessionID: created.SessionID,
 		Input: pluginhost.SessionInput{Prompt: "summarize now"}, IfRunning: pluginhost.SessionIfRunningSteer,
 	}
-	steered, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, params)
+	steered, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, params)
 	if err != nil || !steered.Steered || steered.State != pluginhost.TurnLifecycleRunning || steered.TurnID != first.TurnID || steered.QueueID != "" {
 		t.Fatalf("steer = %+v, %v", steered, err)
 	}
-	replayed, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, params)
+	replayed, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, params)
 	if err != nil || !replayed.Steered || replayed.TurnID != first.TurnID {
 		t.Fatalf("idempotent steer = %+v, %v", replayed, err)
 	}
@@ -637,14 +649,55 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 		t.Fatalf("pending steers = %d, want 1", pendingSteers)
 	}
 
-	close(releaseFirst)
+	unblockFirst()
+	select {
+	case <-steerRequest:
+	case <-time.After(3 * time.Second):
+		t.Fatal("steer was not submitted to the provider")
+	}
+	client.mu.Lock()
+	requests := append([]providers.ChatRequest(nil), client.requests...)
+	client.mu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("provider requests = %d, want 2", len(requests))
+	}
+	consumed := 0
+	for _, message := range requests[1].Messages {
+		if message.Role == "user" && message.Content == params.Input.Prompt {
+			consumed++
+		}
+	}
+	if consumed != 1 {
+		t.Fatalf("second provider request consumed %d steers, want 1", consumed)
+	}
+	unblockSecond()
 	waitForTurnCompletedForThread(t, out, created.SessionID)
+	waitPluginGenerationWatchTest(t, func() bool {
+		thread.mu.Lock()
+		idle := !thread.running && !thread.admissionReserved && thread.executionLease == nil
+		thread.mu.Unlock()
+		return idle && !srv.hasQueuedUserWork(created.SessionID)
+	})
 	thread.mu.Lock()
 	turns := len(thread.Turns)
 	thread.mu.Unlock()
 	if turns != 1 {
 		t.Fatalf("steer created %d turns, want 1", turns)
 	}
+	history, err := loadChatMessages(rt.Sessions, created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedSteers := 0
+	for _, message := range history {
+		if message.ClientID == pluginSessionRequestClientID(owner.id, "steer") && message.Content == params.Input.Prompt && message.Steered {
+			persistedSteers++
+		}
+	}
+	if persistedSteers != 1 {
+		t.Fatalf("persisted steer identity count=%d, want 1", persistedSteers)
+	}
+
 }
 
 func TestQueuedUserWorkHasPriorityOverPluginWakeups(t *testing.T) {
@@ -681,13 +734,13 @@ func TestPluginTurnLifecycleOutboxDropsInactivePluginEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.PutPluginTurnLifecycleOutbox(rt.SessionDir, "ghost", input.RequestID, payload); err != nil {
+	if err := rt.Sessions.PutPluginTurnLifecycleOutbox("ghost", input.RequestID, payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.notifyPluginTurnLifecycle(context.Background(), "ghost", input); err != nil {
+	if err := srv.notifyPluginTurnLifecycle(testRuntimeState(t, rt), context.Background(), "ghost", input); err != nil {
 		t.Fatalf("notifyPluginTurnLifecycle: %v", err)
 	}
-	entries, err := session.ListPluginTurnLifecycleOutbox(rt.SessionDir)
+	entries, err := rt.Sessions.ListPluginTurnLifecycleOutbox()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,6 +776,8 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 		response: providersResponse("# Handoff brief\nContinue from the verified performance fix."),
 	}
 	rt := newTestRuntime(t, client)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
 	rt.StreamRunner.CompactionRegistry.Register(handoffBriefProvider{})
@@ -734,7 +789,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 		t.Fatalf("source thread/start: %v", err)
 	}
 	sourceID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "source")["result"]).Thread.ID
-	if err := session.AppendHistoryRecords(rt.SessionDir, sourceID, []session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecords(sourceID, []session.HistoryRecord{
 		{Role: "user", Content: "SENTINEL-SOURCE-ONLY"},
 		{Role: "assistant", Content: "investigation notes"},
 	}); err != nil {
@@ -767,7 +822,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 	}
 	waitForTurnCompletedForThread(t, out, started.ID)
 
-	page, err := session.ReadHistoryPage(context.Background(), rt.SessionDir, started.ID, 1, 20)
+	page, err := rt.Sessions.ReadHistoryPage(started.ID, 1, 20)
 	if err != nil {
 		t.Fatalf("read target history: %v", err)
 	}
@@ -786,7 +841,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 	if sawSentinel || !sawSeed || !sawIntent {
 		t.Fatalf("target history = %+v", page.Records)
 	}
-	metadata, ok, err := session.Find(rt.SessionDir, started.ID)
+	metadata, ok, err := rt.Sessions.Find(started.ID)
 	if err != nil || !ok || metadata.Owner != "user" || metadata.Provider != "fake-provider" || metadata.Model != "fake-model" {
 		t.Fatalf("target metadata = %+v ok=%v err=%v", metadata, ok, err)
 	}
@@ -847,13 +902,13 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
 			ctx := context.Background()
-			created, err := rt.PluginSessionRouter.Create(ctx, "workspace-test", pluginhost.SessionCreateParams{
+			created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.SessionCreateParams{
 				RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh, Workspace: "worktree",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata, found, err := session.Find(rt.SessionDir, created.SessionID)
+			metadata, found, err := rt.Sessions.Find(created.SessionID)
 			if err != nil || !found {
 				t.Fatalf("session lookup: found=%t err=%v", found, err)
 			}
@@ -881,7 +936,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			if mode == "untracked" {
 				write(metadata.WorktreePath, "untracked.txt", "keep me\n")
 			}
-			status, statusErr := rt.PluginSessionRouter.WorkspaceStatus(ctx, "workspace-test", pluginhost.WorkspaceStatusParams{SessionID: created.SessionID})
+			status, statusErr := rt.PluginSessionRouter.WorkspaceStatus(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.WorkspaceStatusParams{SessionID: created.SessionID})
 			if statusErr != nil {
 				t.Fatal(statusErr)
 			}
@@ -892,14 +947,14 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 				if !reflect.DeepEqual(status.ChangedFiles, wantFiles) || !status.CanApply {
 					t.Errorf("status=%+v, want files %v", status, wantFiles)
 				}
-				inspected, err := rt.PluginSessionRouter.Inspect(ctx, "workspace-test", pluginhost.SessionInspectParams{SessionID: created.SessionID})
+				inspected, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.SessionInspectParams{SessionID: created.SessionID})
 				if err != nil || inspected.Workspace == nil || !inspected.Workspace.Dirty || !reflect.DeepEqual(inspected.Workspace.ChangedFiles, wantFiles) {
 					t.Errorf("inspect=%+v err=%v", inspected, err)
 				}
 			} else if status.CanApply {
 				t.Errorf("unsafe workspace advertised as applicable: %+v", status)
 			}
-			result, err := rt.PluginSessionRouter.WorkspaceApply(ctx, "workspace-test", pluginhost.WorkspaceApplyParams{SessionID: created.SessionID})
+			result, err := rt.PluginSessionRouter.WorkspaceApply(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.WorkspaceApplyParams{SessionID: created.SessionID})
 			if mode == "conflict" || mode == "untracked" {
 				if err == nil {
 					t.Fatalf("unsafe apply succeeded: %+v", result)
@@ -907,7 +962,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 				if _, err := os.Stat(metadata.WorktreePath); err != nil {
 					t.Fatalf("workspace lost: %v", err)
 				}
-				stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+				stored, found, err := rt.Sessions.Find(created.SessionID)
 				if err != nil || !found || stored.WorktreePath != metadata.WorktreePath {
 					t.Fatalf("binding lost: %+v %v", stored, err)
 				}
@@ -940,7 +995,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			if _, err := os.Stat(metadata.WorktreePath); !os.IsNotExist(err) {
 				t.Fatalf("applied worktree remains: %v", err)
 			}
-			stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+			stored, found, err := rt.Sessions.Find(created.SessionID)
 			if err != nil || !found || stored.WorktreePath != "" {
 				t.Fatalf("workspace not rebound: %+v %v", stored, err)
 			}
@@ -954,13 +1009,13 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			parent, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+			parent, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 				RequestID: "parent", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			child, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+			child, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 				RequestID: "child", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, ParentSessionID: parent.SessionID,
 			})
 			if err != nil {
@@ -970,7 +1025,7 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			var release func()
 			switch activity {
 			case "durable_lease":
-				lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, child.SessionID)
+				lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, child.SessionID)
 				if err != nil || !acquired {
 					t.Fatalf("reserve child execution: %v, %v", acquired, err)
 				}
@@ -997,12 +1052,12 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			var once sync.Once
 			releaseOnce := func() { once.Do(release) }
 			t.Cleanup(releaseOnce)
-			id, closed, err := srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			id, closed, err := srv.resolvePluginProcessSession(pluginInvocationContext(t, rt, context.Background()), child.SessionID, true)
 			if err != nil || closed || id != child.SessionID {
 				t.Fatalf("active child recipient = %q, closed=%v, err=%v", id, closed, err)
 			}
 			releaseOnce()
-			id, closed, err = srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			id, closed, err = srv.resolvePluginProcessSession(pluginInvocationContext(t, rt, context.Background()), child.SessionID, true)
 			if err != nil || closed || id != parent.SessionID {
 				t.Fatalf("completed child recipient = %q, closed=%v, err=%v", id, closed, err)
 			}
@@ -1021,13 +1076,13 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 				if strings.HasPrefix(manager, "plugin:") {
 					visibility = pluginhost.SessionVisibilityPlugin
 				}
-				created, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+				created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 					RequestID: "recipient", Visibility: visibility, ContextSource: pluginhost.SessionContextFresh,
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				control, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, state, 0)
+				control, err := rt.Sessions.ChangeControl(created.SessionID, manager, state, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1040,11 +1095,11 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 					RequestID: "observation", SessionID: created.SessionID, IfRunning: pluginhost.SessionIfRunningSteer,
 					Input: pluginhost.SessionInput{Prompt: "The monitored command completed."},
 				}
-				if _, err := srv.sendPluginSession(context.Background(), "monitor", params); err == nil {
+				if _, err := srv.sendPluginSession(pluginInvocationContext(t, rt, context.Background()), "monitor", params); err == nil {
 					t.Fatal("ordinary plugin send bypassed recipient ownership or control")
 				}
 				ctx := pluginhost.WithProcessSessionDelivery(context.Background(), created.SessionID)
-				result, err := srv.sendPluginSession(ctx, "monitor", params)
+				result, err := srv.sendPluginSession(pluginInvocationContext(t, rt, ctx), "monitor", params)
 				if state != session.ControlActive {
 					if err == nil {
 						t.Fatalf("process event bypassed %s control: %+v", state, result)
@@ -1060,7 +1115,7 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 				if captured != control {
 					t.Fatalf("delivery control = %+v, want %+v", captured, control)
 				}
-				if _, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, session.ControlPaused, control.Revision); err != nil {
+				if _, err := rt.Sessions.ChangeControl(created.SessionID, manager, session.ControlPaused, control.Revision); err != nil {
 					t.Fatal(err)
 				}
 				th.mu.Lock()
@@ -1072,5 +1127,135 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Replacement may happen before handoff admission or while plugin planning
+// yields. Neither boundary may send an old transcript to the successor client.
+func TestHandoffBriefDoesNotCrossCapturedState(t *testing.T) {
+	for _, replaceAt := range []string{"before-admission", "during-plan"} {
+		t.Run(replaceAt, func(t *testing.T) {
+			oldClient := &fakeClient{response: providersResponse("# Original brief")}
+			newClient := &fakeClient{response: providersResponse("# Successor brief")}
+			original := newTestRuntime(t, oldClient)
+			successor := newTestRuntime(t, newClient)
+			original.Model, original.StreamRunner.Model = "original-model", "original-model"
+			successor.Model, successor.StreamRunner.Model = "successor-model", "successor-model"
+			var plannedModel string
+			successorPlans := 0
+			planner := handoffBriefPlanningProvider{plan: func(model string) { plannedModel = model }}
+			original.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
+			original.StreamRunner.CompactionRegistry.Register(planner)
+			successor.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
+			successor.StreamRunner.CompactionRegistry.Register(handoffBriefPlanningProvider{plan: func(string) { successorPlans++ }})
+			if _, err := original.Sessions.CreateWithMetadata("source", original.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := original.Sessions.AppendHistoryRecords("source", []session.HistoryRecord{{Role: "user", Content: "ORIGINAL-TRANSCRIPT"}}); err != nil {
+				t.Fatal(err)
+			}
+			binding, err := original.RetainState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer binding.Close()
+			srv := &Server{rt: original}
+			if replaceAt == "before-admission" {
+				srv.rt = successor
+			} else {
+				// This embedded runtime replaces its root runner during the callback,
+				// matching publication's in-place client/model update after admission.
+				planner.plan = func(model string) {
+					plannedModel = model
+					original.Model = successor.Model
+					original.StreamRunner = successor.StreamRunner
+				}
+				original.StreamRunner.CompactionRegistry.Register(planner)
+			}
+			params := pluginhost.SessionCreateParams{RequestID: "captured-handoff", Visibility: pluginhost.SessionVisibilityPlugin, Provider: "fake-provider", Model: "original-model", ContextSource: pluginhost.SessionContextSourceSeed, Seed: &pluginhost.SessionContextSeed{Source: pluginhost.SessionHistorySnapshot{SessionID: "source"}}}
+			var result pluginhost.SessionCreateParams
+			if replaceAt == "before-admission" {
+				_, err = srv.createPluginSession(runtime.WithInvocationState(context.Background(), binding), "handoff-test", params)
+			} else {
+				result, err = srv.prepareHandoffSeed(binding, context.Background(), params)
+			}
+			newClient.mu.Lock()
+			newerCalls := len(newClient.requests)
+			newClient.mu.Unlock()
+			if newerCalls != 0 || successorPlans != 0 {
+				t.Fatalf("captured transcript reached successor client: calls=%d result=%+v err=%v", newerCalls, result.Seed, err)
+			}
+			oldClient.mu.Lock()
+			originalRequests := append([]providers.ChatRequest(nil), oldClient.requests...)
+			oldClient.mu.Unlock()
+			if replaceAt == "before-admission" {
+				if !errors.Is(err, runtime.ErrStateGenerationChanged) || plannedModel != "" || len(originalRequests) != 0 {
+					t.Fatalf("stale handoff was not rejected before effects: planned=%q calls=%d err=%v", plannedModel, len(originalRequests), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(originalRequests) != 1 || originalRequests[0].Model != "original-model" {
+				t.Fatalf("fork lost captured model: %+v", originalRequests)
+			}
+			if result.Seed.Body != "# Original brief" || result.Seed.Provenance.SourceModel != "original-model" || plannedModel != "original-model" {
+				t.Fatalf("mixed handoff: seed=%+v plannedModel=%q", result.Seed, plannedModel)
+			}
+		})
+	}
+}
+
+type handoffBriefPlanningProvider struct {
+	handoffBriefProvider
+	plan func(string)
+}
+
+func (p handoffBriefPlanningProvider) PlanHandoffBrief(_ context.Context, model string, _ []providers.ChatMessage, _ agent.CompactionNote, _, _ string, _ int) (agent.CompactionNotePlan, error) {
+	p.plan(model)
+	return agent.CompactionNotePlan{Prompt: "write the brief", MaxBytes: 24000}, nil
+}
+
+func TestHandoffPreservesSelectedUnlimitedPlan(t *testing.T) {
+	body := strings.Repeat("x", 25*1024)
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse(body)})
+	attempts := 0
+	rt.StreamRunner.SelectedCompaction = compactionservice.NewClient(func(_ context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		switch method {
+		case "describe":
+			return json.Marshal(compactionservice.Policy{Key: "external", Guidance: []providers.ChatMessage{}})
+		case "handoff":
+			return json.Marshal(compactionservice.HandoffPlan{Prompt: "selected plan", MaxBytes: 0})
+		case "note-attempt":
+			attempts++
+			var in compactionservice.NoteAttemptRequest
+			if err := json.Unmarshal(raw, &in); err != nil {
+				return nil, err
+			}
+			if in.Plan.MaxBytes != 0 {
+				t.Errorf("host changed selected limit to %d", in.Plan.MaxBytes)
+			}
+			return json.Marshal(compactionservice.NoteAttemptPlan{Invoke: true, Messages: []providers.ChatMessage{{Role: "user", Content: "selected inference"}}, Prompt: "selected inference", MaxBytes: 0})
+		default:
+			t.Fatalf("unexpected policy method %s", method)
+			return nil, nil
+		}
+	})
+	if _, err := rt.Sessions.CreateWithMetadata("source", rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecords("source", []session.HistoryRecord{{Role: "user", Content: "source"}}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	srv := &Server{rt: rt}
+	result, err := srv.prepareHandoffSeed(binding, context.Background(), pluginhost.SessionCreateParams{ContextSource: pluginhost.SessionContextSourceSeed, Seed: &pluginhost.SessionContextSeed{Source: pluginhost.SessionHistorySnapshot{SessionID: "source"}}})
+	if err != nil || result.Seed.Body != body || attempts != 1 {
+		t.Fatalf("selected unlimited handoff rejected: bytes=%d attempts=%d err=%v", len(result.Seed.Body), attempts, err)
 	}
 }

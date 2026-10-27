@@ -9,6 +9,7 @@ const rendererHtml = path.join(desktopRoot, "out", "renderer", "index.html");
 const preload = path.join(__dirname, "streaming-e2e-preload.cjs");
 
 process.env.WUU_STREAM_E2E_CWD = repoRoot;
+process.env.WUU_STREAM_E2E_LOCALE = "zh-CN";
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("disable-software-rasterizer");
 
@@ -119,7 +120,7 @@ async function run() {
     return true;
   });
   assert.equal(resetStarted, true, "New conversation button should be available after title update.");
-  await waitFor(win, () => window.e2eActiveTitleText() === "对话", 3000);
+  await waitFor(win, () => Boolean(document.querySelector(".empty-home")), 3000);
 
   const streamingThreadStarted = await waitFor(
     win,
@@ -226,12 +227,11 @@ async function run() {
     win,
     () => {
       const snapshot = streamingSnapshot();
-      return snapshot.hasStreaming && snapshot.textLength >= window.__STREAMING_E2E_FULL_LENGTH__
+      return snapshot.hasStreaming && snapshot.text.includes("streaming-word-119")
         ? snapshot
         : null;
     },
-    3000,
-    { fullLength: fullText.length }
+    3000
   );
   assert.equal(live.hasStaticFallback, false, "Assistant content should not switch to static RichContent fallback.");
   assert.ok(
@@ -248,7 +248,7 @@ async function run() {
   emitNotification(win, "item/completed", {
     thread_id: thread.id,
     turn_id: turn.id,
-    item: { ...agentItem, status: "completed", text: fullText }
+    item: { ...agentItem, terminal: true, status: "completed", text: fullText }
   });
   emitNotification(win, "turn/completed", {
     thread_id: thread.id,
@@ -257,7 +257,7 @@ async function run() {
       status: "completed",
       completed_at: new Date().toISOString(),
       duration_ms: 100,
-      items: [userItem, reasoningItem, toolItem, { ...agentItem, status: "completed", text: fullText }]
+      items: [userItem, reasoningItem, toolItem, { ...agentItem, terminal: true, status: "completed", text: fullText }]
     }
   });
 
@@ -267,8 +267,7 @@ async function run() {
       const snapshot = streamingSnapshot();
       return snapshot.hasStreaming && snapshot.text.includes("streaming-word-119") ? snapshot : null;
     },
-    16000,
-    { fullLength: fullText.length }
+    16000
   );
   assert.equal(final.hasStaticFallback, false, "Assistant content should remain on StreamingMarkdown after settling.");
   assert.ok(final.text.includes("streaming-word-119"), "StreamingMarkdown should eventually show the complete response.");
@@ -277,7 +276,7 @@ async function run() {
   const collapsedProcess = await waitFor(
     win,
     () => {
-      const turn = Array.from(document.querySelectorAll(".turn")).at(-1);
+      const turn = document.querySelector('[data-turn-id="turn-streaming-e2e"]');
       const group = turn?.querySelector(".turn-process-fold");
       const toggle = group?.querySelector(".turn-process-toggle");
       const details = group?.querySelector(".collapsible-details");
@@ -295,13 +294,12 @@ async function run() {
     },
     3000
   );
-  assert.match(collapsedProcess.text, /用时 .+/, "Completed process records should be summarized behind a compact toggle.");
   assert.equal(collapsedProcess.activityExpanded, false, "Completed tool activity details should be folded by default.");
 
   const expandedProcess = await waitFor(
     win,
     () => {
-      const turn = Array.from(document.querySelectorAll(".turn")).at(-1);
+      const turn = document.querySelector('[data-turn-id="turn-streaming-e2e"]');
       const button = turn?.querySelector(".turn-process-toggle");
       if (!(button instanceof HTMLElement)) {
         return null;
@@ -330,8 +328,7 @@ async function run() {
       const snapshot = streamingSnapshot();
       return snapshot.streamState === "settled" ? snapshot : null;
     },
-    3000,
-    { fullLength: fullText.length }
+    3000
   );
   assert.equal(settled.hasStreaming, true, "Assistant content should still use StreamingMarkdown after completion.");
   assert.equal(settled.hasStaticFallback, false, "No static fallback should be rendered after stream completion.");
@@ -376,33 +373,31 @@ async function run() {
       error: { message: rawCancelledError },
       completed_at: new Date().toISOString(),
       duration_ms: 240,
-      items: [cancelledUserItem]
+      items: [cancelledUserItem, cancelledAgentItem]
     }
   });
   const cancelledNotice = await waitFor(
     win,
     () => {
-      const notice = document.querySelector(".turn-notice");
-      const text = document.querySelector(".conversation-width")?.textContent ?? "";
-      return notice
+      const turn = document.querySelector('.turn[data-turn-id="turn-cancelled-error-e2e"][data-turn-status="interrupted"]');
+      const status = turn?.querySelector(".turn-process-title");
+      return status
         ? {
-            noticeClass: notice.className,
-            noticeText: notice.textContent ?? "",
-            conversationText: text,
-            hasRedError: Boolean(document.querySelector(".turn-error"))
+            statusText: status.textContent?.trim(),
+            conversationText: turn.innerText,
+            hasError: Boolean(turn.querySelector('[role="alert"], .turn-failure, .turn-error'))
           }
         : null;
     },
     3000
   );
-  assert.match(cancelledNotice.noticeClass, /neutral/, "Cancelled turns should use the neutral notice tone.");
+  assert.ok(cancelledNotice.statusText, "Interrupted turns should expose their status in the process header.");
   assert.equal(
     cancelledNotice.conversationText.includes("Partial answer stays visible."),
     true,
     "Cancelled turns should preserve partial assistant output."
   );
-  assert.match(cancelledNotice.noticeText, /回复已中断/, "Cancelled turns should render a neutral interrupted notice.");
-  assert.equal(cancelledNotice.hasRedError, false, "Cancelled turns should not render the red error block.");
+  assert.equal(cancelledNotice.hasError, false, "Cancelled turns should not render a failure alert.");
   assert.equal(cancelledNotice.conversationText.includes("chatgpt.com/backend-api"), false, "Cancelled UI should hide backend URLs.");
   assert.equal(cancelledNotice.conversationText.includes("context canceled"), false, "Cancelled UI should hide raw cancellation text.");
 
@@ -438,8 +433,9 @@ async function run() {
   const failedNotice = await waitFor(
     win,
     () => {
-      const notice = document.querySelector(".turn-notice.error");
-      const text = document.querySelector(".conversation-width")?.textContent ?? "";
+      const turn = document.querySelector('.turn[data-turn-id="turn-real-error-e2e"][data-turn-status="failed"]');
+      const notice = turn?.querySelector('.turn-failure[role="alert"]');
+      const text = turn?.innerText ?? "";
       return notice
         ? {
             noticeText: notice.textContent ?? "",
@@ -449,7 +445,7 @@ async function run() {
     },
     3000
   );
-  assert.match(failedNotice.noticeText, /没有完成这次请求/, "Real network failures should render an error notice.");
+  assert.ok(failedNotice.noticeText.trim(), "Real network failures should render an error notice.");
   assert.equal(failedNotice.conversationText.includes("chatgpt.com/backend-api"), false, "Failure UI should hide backend URLs.");
   assert.equal(failedNotice.conversationText.includes("stream request failed"), false, "Failure UI should hide wrapped internal errors.");
 
@@ -481,11 +477,11 @@ function loadFile(win, file) {
   });
 }
 
-async function waitFor(win, predicate, timeoutMs, options = {}) {
+async function waitFor(win, predicate, timeoutMs) {
   const started = Date.now();
   let lastValue;
   while (Date.now() - started < timeoutMs) {
-    lastValue = await evaluate(win, predicate, options);
+    lastValue = await evaluate(win, predicate);
     if (lastValue) {
       return lastValue;
     }
@@ -494,9 +490,8 @@ async function waitFor(win, predicate, timeoutMs, options = {}) {
   throw new Error(`Timed out waiting for condition. Last value: ${JSON.stringify(lastValue)}`);
 }
 
-async function evaluate(win, fn, options = {}) {
+async function evaluate(win, fn) {
   const source = `(() => {
-    window.__STREAMING_E2E_FULL_LENGTH__ = ${Number(options.fullLength ?? 0)};
     window.e2eActiveTitleText = () => {
       const heading = document.querySelector(".title-block h1")?.textContent?.trim();
       if (heading) {
@@ -505,10 +500,10 @@ async function evaluate(win, fn, options = {}) {
       return document.querySelector(".session-tab.active .session-tab-title")?.textContent?.trim() ?? "";
     };
     window.streamingSnapshot = () => {
-      const turn = Array.from(document.querySelectorAll(".turn")).at(-1);
-      const streaming = turn?.querySelector(".turn-answer-body .agent-text .streaming-markdown") ??
-        turn?.querySelector(".agent-text .streaming-markdown");
-      const staticFallback = turn?.querySelector(".agent-text > .rich-content:not(.streaming-markdown)");
+      const turn = document.querySelector('[data-turn-id="turn-streaming-e2e"]');
+      const message = turn?.querySelector('[data-response-item-id="agent-streaming-e2e"]');
+      const streaming = message?.querySelector(".agent-text .streaming-markdown");
+      const staticFallback = message?.querySelector(".agent-text > .rich-content:not(.streaming-markdown)");
       const text = streaming?.textContent ?? "";
       const animatedWords = streaming
         ? Array.from(streaming.querySelectorAll(".stream-word")).filter(

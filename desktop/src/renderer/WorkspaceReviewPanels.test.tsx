@@ -1,9 +1,18 @@
-import { act, lazy, Suspense } from "react";
+import { act, lazy, Suspense, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
+import { ApplicationEnvironment } from "./plugins/ApplicationEnvironment";
+import { WorkspaceReviewPanel as PublicWorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
 import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
+
+function WorkspaceReviewPanel({ gitStatus, workspaceRoot, onOpenFile }: { gitStatus?: GitStatusResult; workspaceRoot?: string; onOpenFile?: (path: string) => void }) {
+  const environment = useMemo(() => new ApplicationEnvironment({
+    getSource: () => ({ contextKey: "test", root: workspaceRoot, status: gitStatus }),
+    publishStatus: () => {}, assertActive: () => {}, reportError: () => {},
+  }), [gitStatus, workspaceRoot]);
+  return <PublicWorkspaceReviewPanel environment={environment} onOpenFile={onOpenFile} />;
+}
 
 vi.mock("./WorkspaceMonacoDiffEditor", () => ({
   WorkspaceMonacoDiffEditor: ({ path }: { path: string }) => (

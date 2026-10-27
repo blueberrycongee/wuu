@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"image/png"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -21,7 +22,10 @@ import (
 
 	"github.com/blueberrycongee/wuu/clients/native/testsupport"
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
@@ -29,18 +33,46 @@ import (
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type provider struct{ release chan struct{} }
 
-func (p *provider) Chat(ctx context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
-	select {
-	case <-p.release:
-		return providers.ChatResponse{Content: "native transport verified"}, nil
-	case <-ctx.Done():
-		return providers.ChatResponse{}, ctx.Err()
+func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+		http.NotFound(w, r)
+		return
 	}
+	if r.Header.Get("Authorization") != "Bearer native-fixture-only" {
+		http.Error(w, "synthetic fixture credential required", http.StatusUnauthorized)
+		return
+	}
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch request.Model {
+	case "native-fixture-title":
+	case "native-test", "alternate":
+		select {
+		case <-p.release:
+		case <-r.Context().Done():
+			return
+		}
+	default:
+		http.Error(w, "unexpected fixture model", http.StatusBadRequest)
+		return
+	}
+	if !request.Stream {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"native-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"native transport verified"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprint(w, "data: {\"id\":\"native-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"native transport verified\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"native-fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n")
 }
 
 func must(err error) {
@@ -54,6 +86,7 @@ func main() {
 	must(err)
 	defer os.RemoveAll(root)
 	must(os.Setenv("HOME", root))
+	must(os.Setenv("WUU_HOME", filepath.Join(root, ".wuu")))
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	registry, err := relay.OpenRegistry("")
@@ -67,17 +100,22 @@ func main() {
 	b64 := base64.RawURLEncoding.EncodeToString
 	must(store.AddDevice(phone.Public(), "Native test phone", time.Now()))
 	must(registry.AddDevice(b64(store.Identity().Public()), b64(phone.Public()), "Native test phone", time.Now()))
-	kit, err := tools.New(root)
-	must(err)
 	gate := &provider{release: make(chan struct{}, 8)}
-	must(testsupport.WriteConfig(filepath.Join(root, "config.json"), "native-test"))
-	rt := &runtime.Session{
-		ProviderName: "native-test", Model: "native-test", RootDir: root,
-		WuuHome: root, StateDir: filepath.Join(root, "workspaces", "fixture"),
-		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
-		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
-		StreamRunner: &agent.StreamRunner{Client: providers.AdaptStreamClient(gate), Model: "native-test", SystemPrompt: "test"},
-	}
+	modelServer := httptest.NewServer(gate)
+	defer modelServer.Close()
+	must(testsupport.WriteLoopbackConfig(filepath.Join(root, "config.json"), "native-test", modelServer.URL+"/v1"))
+	cfg, _, err := config.LoadPath(filepath.Join(root, "config.json"))
+	must(err)
+	bindings := appserver.NewRuntimeBindings()
+	factories := append(bindings.NativeProviders(), runtime.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+		return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) {
+			return credentialstore.NewFileStore(filepath.Join(root, "credentials.json")), nil
+		}), nil
+	}})
+	rt, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: root, ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg, NativeProviders: factories})
+	must(err)
+	defer rt.Cleanup()
+
 	ready := make(chan struct{}, 1)
 	// Persisted history uses the same reconstruction and paging as an old conversation.
 	var records []session.HistoryRecord
@@ -89,16 +127,16 @@ func main() {
 		records = append(records, session.HistoryRecord{Role: "user", Content: fmt.Sprintf("message %d", i)},
 			session.HistoryRecord{Role: "assistant", Content: reply})
 	}
-	paged, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: session.NewID(), CWD: root, Title: "Long history"}, records)
+	paged, err := rt.Sessions.CreateInitialized(session.Session{ID: session.NewID(), CWD: root, Title: "Long history"}, records)
 	must(err)
-	toolHistory, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: session.NewID(), CWD: root, Title: "Tool history"}, []session.HistoryRecord{
+	toolHistory, err := rt.Sessions.CreateInitialized(session.Session{ID: session.NewID(), CWD: root, Title: "Tool history"}, []session.HistoryRecord{
 		{Role: "user", Content: "inspect fixture"},
 		{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"large-tool","name":"read_file","arguments":"{\"path\":\"fixture.txt\"}"}]`)},
 		{Role: "tool", Name: "read_file", ToolCallID: "large-tool", Content: strings.Repeat("工具结果🌱\n", 20_000)},
 		{Role: "assistant", Content: "inspected"},
 	})
 	must(err)
-	h, err := host.New(host.Options{Runtime: rt, Store: store,
+	h, err := host.New(host.Options{Runtime: rt, Store: store, AppServerOptions: []appserver.ServerOption{appserver.WithRuntimeBindings(bindings)},
 		RelayURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/connect",
 		Pairing: &host.PairingConfig{Once: true, OnURI: func(string) {
 			select {
@@ -133,12 +171,13 @@ func main() {
 	must(os.WriteFile(filepath.Join(root, "published.png"), imageData.Bytes(), 0600))
 	artifactRuntime, err := rt.NewThreadRuntimeForRoot(artifactID, root)
 	must(err)
-	published, err := artifactRuntime.StreamRunner.Tools.(agent.RichToolExecutor).ExecuteResult(ctx,
+	artifactContext := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: artifactID, ExecutionID: "publish-fixture"})
+	published, err := artifactRuntime.StreamRunner.Tools.(agent.RichToolExecutor).ExecuteResult(artifactContext,
 		providers.ToolCall{ID: "publish", Name: "present_artifact", Arguments: `{"path":"published.png"}`})
 	must(err)
 	publishedJSON, err := json.Marshal(published)
 	must(err)
-	_, err = session.CreateInitialized(rt.SessionDir, session.Session{ID: artifactID, CWD: root, Title: "Published image"}, []session.HistoryRecord{
+	_, err = rt.Sessions.CreateInitialized(session.Session{ID: artifactID, CWD: root, Title: "Published image"}, []session.HistoryRecord{
 		{Role: "user", Content: "publish the fixture"},
 		{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"publish","name":"present_artifact","arguments":"{\"path\":\"published.png\"}"}]`)},
 		{Role: "tool", Name: "present_artifact", ToolCallID: "publish", ToolResult: publishedJSON},

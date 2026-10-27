@@ -15,7 +15,9 @@ func TestTextPolishUsesConfiguredBYOKRuntime(t *testing.T) {
 	rt.StreamRunner.Effort = "low"
 	rt.StreamRunner.ProviderOptions = map[string]any{"thinking": "disabled"}
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(
 		`{"id":"polish","method":"text/polish","params":{"text":"这是 原始 文本"}}`,

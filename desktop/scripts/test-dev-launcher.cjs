@@ -55,6 +55,8 @@ assert.equal(devHome({ WUU_HOME: sharedHome }, "/repo"), sharedHome);
 assert.ok(launchEnvironment({ WUU_HOME: sharedHome }, "shared", "/repo")
   .includes(`WUU_HOME=${sharedHome}`));
 assert.equal(devHome({ WUU_HOME: " " }, "/repo"), devHome({}, "/repo"));
+assert.ok(launchEnvironment({ WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: "1" }, "cache-preservation")
+  .includes("WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP=1"));
 
 assert.ok(environment.includes("WUU_ENABLE_CUA_MAC=1"));
 assert.ok(environment.includes("WUU_CUA_MAC_HELPER=/repo/desktop/build/bin/wuu-cua-mac"));
@@ -103,6 +105,30 @@ for (const [name, value] of Object.entries(proxyEnvironment)) {
   assert.ok(proxyLaunch.includes(`${name}=${value}`));
 }
 assert.ok(!launchEnvironment({}, "no-proxy-token").some((entry) => /^\w*proxy=/i.test(entry)));
+
+const runtimeEnvironment = {
+  GOMEMLIMIT: "14GiB",
+  GOGC: "50",
+  GOMAXPROCS: "4",
+  PATH: "/tools/bin:/usr/bin",
+  WUU_CODEX_BINARY: "/tools/codex",
+  HTTPS_PROXY: "http://proxy.example:8080",
+};
+const runtimeLaunch = launchEnvironment({
+  ...runtimeEnvironment,
+  PRIVATE_TOKEN: "do-not-forward",
+  GOFLAGS: "-mod=mod",
+}, "runtime-token");
+for (const [name, value] of Object.entries(runtimeEnvironment)) {
+  assert.ok(runtimeLaunch.includes(`${name}=${value}`), `Preserve explicit ${name}`);
+}
+assert.ok(!runtimeLaunch.some((entry) => /^(PRIVATE_TOKEN|GOFLAGS)=/.test(entry)));
+assert.ok(!environment.some((entry) => /^(GOMEMLIMIT|GOGC|GOMAXPROCS)=/.test(entry)));
+assert.deepEqual(
+  launchEnvironment({ GOGC: "off" }, "runtime-partial-token")
+    .filter((entry) => /^(GOMEMLIMIT|GOGC|GOMAXPROCS)=/.test(entry)),
+  ["GOGC=off"],
+);
 
 const processList = [
   "  41 /path/Electron Helper WUU_DEV_LAUNCH_TOKEN=token-1",

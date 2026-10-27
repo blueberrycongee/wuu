@@ -1,4 +1,4 @@
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -10,7 +10,11 @@ import {
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
+import { ApplicationSearch } from "./plugins/ApplicationSearch";
+import type { ConversationSearchApplication } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { initialState } from "./AppState";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 
 function makeLongTurns(): Turn[] {
   return [
@@ -789,15 +793,20 @@ describe("split conversation scroll ownership", () => {
   let host: HTMLDivElement;
   let root: Root;
   let current: ReturnType<typeof useConversationScrollState>;
-  let navigate: ReturnType<typeof useConversationSearchNavigation>;
+  let navigate: (result: { thread: Thread; message_seq: number; snippet: string }, query: string) => Promise<void>;
+  let search: ApplicationSearch;
+  let publicSearch: ConversationSearchApplication;
+  let stopSearch: () => void;
   let activation: Promise<void> | undefined;
   let searchThread: Thread;
   let remotePreview = false;
   let completeItem: ThreadItem | undefined;
+  let searchApplication: ApplicationController;
   const layouts = new Map<string, StubbedLayout>();
   const nodes = new Map<string, HTMLDivElement>();
   const turns = makeLongTurns();
   function SplitProbe({ pane }: { pane: "primary" | "secondary" }): ReactNode {
+    const searchState = useSyncExternalStore(searchApplication.subscribeState, searchApplication.getState);
     current = useConversationScrollState({
       activeThreadID: pane === "primary" ? "thread-A" : "thread-B",
       primaryThreadID: "thread-A", secondaryThreadID: "thread-B",
@@ -812,11 +821,11 @@ describe("split conversation scroll ownership", () => {
         remote_content_ref: remotePreview ? "remote:answer" : undefined,
       }] }],
     };
-    navigate = useConversationSearchNavigation({
-      thread: searchThread, switching: false, activateThread: () => activation ?? Promise.resolve(),
+    useConversationSearchNavigation({
+      application: publicSearch,
+      thread: searchState.thread?.id === searchThread.id ? searchState.thread : searchThread, switching: false,
       captureConversationScrollIntent: current.captureConversationScrollIntent,
       jumpToConversationMessage: current.jumpToConversationMessage,
-      setAppState: () => {},
     });
     return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
       key: id, className: "conversation-split-body", "data-pane": id,
@@ -836,11 +845,53 @@ describe("split conversation scroll ownership", () => {
   });
   beforeEach(() => {
     activation = undefined; remotePreview = false; completeItem = undefined;
+    searchApplication = new ApplicationController({ ...initialState, activeContext: { kind: "no_project", cwd: "/fixture" } });
+    const listeners = new Set<() => void>();
+    search = new ApplicationSearch({ getState: searchApplication.getState, updateState: searchApplication.updateState,
+      subscribeState: searchApplication.subscribeState, cacheThreads: () => {},
+      changed: () => { snapshot = { search: search.getSnapshot() }; listeners.forEach(listener => listener()); },
+      activateThread: () => activation ?? Promise.resolve(), getNavigation: () => ({ revision: 0, pending: false }) });
+    let snapshot = { search: search.getSnapshot() };
+    publicSearch = { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke: search.invoke.bind(search) };
+    stopSearch = search.start();
+    navigate = async (result, query) => {
+      searchApplication.updateState(current => ({ ...current, thread: result.thread }));
+      if (!window.wuu) window.wuu = {} as typeof window.wuu;
+      window.wuu.searchThreads = vi.fn(async () => ({ results: [result] }));
+      await search.invoke("search.run", { query });
+      void search.invoke("search.locate", { resultId: search.getSnapshot().results[0].resultId });
+    };
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
   afterEach(() => {
-    act(() => root.unmount()); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
+    act(() => { root.unmount(); stopSearch(); }); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
     Reflect.deleteProperty(window, "wuu");
+  });
+  it.each([false, true])("preserves reader cancellation across remount before hydration returns (wheel=%s)", async (wheel) => {
+    vi.useFakeTimers();
+    remotePreview = true;
+    const reads: Array<(item: ThreadItem) => void> = [];
+    const read = vi.fn(() => new Promise<ThreadItem>(resolve => reads.push(resolve)));
+    window.wuu = { readRemoteItem: read } as unknown as typeof window.wuu;
+    render("primary");
+    await act(async () => navigate({ thread: searchThread, message_seq: 7, snippet: "needle" }, "needle"));
+    expect(read).toHaveBeenCalledOnce();
+    if (wheel) act(() => nodes.get("primary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true })));
+    act(() => root.render(null));
+    nodes.clear(); layouts.clear();
+    render("primary");
+    expect(read).toHaveBeenCalledOnce();
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    const before = nodes.get("primary")!.scrollTop;
+    const full: ThreadItem = { id: "late-item", type: "agent_message", seq: 7, text: "needle" };
+    await act(async () => reads[0](full));
+    completeItem = full;
+    render("primary");
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(wheel ? before : before - 64);
   });
   it("keeps inactive native layout clamping out of the active thread's follow state and restore snapshot", () => {
     render("secondary"); act(() => current.disableConversationAutoFollow()); scroll("secondary", 1800);

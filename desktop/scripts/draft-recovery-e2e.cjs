@@ -113,7 +113,9 @@ async function inspectSettings() {
       document.documentElement.style.setProperty("--appearance-scale", "1");
     });
   }
-  await click(".settings-back-button"); await ready();
+  await click('[data-wuu-component="conversations-section"]');
+  await until(() => !document.querySelector('.app-shell[data-settings-open]'));
+  await ready();
 }
 async function select(label) {
   await evaluate(label => [...document.querySelectorAll(".thread-row-main")].find(node => node.textContent.includes(label)).click(), label);

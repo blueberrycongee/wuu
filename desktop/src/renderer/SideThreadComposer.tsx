@@ -1,3 +1,5 @@
+import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
+import { showActionErrorToast } from "./Toast";
 import { useMemo, useRef } from "react";
 import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
@@ -141,4 +143,28 @@ export function SideThreadComposer({
       queryHistorySessionID={queryHistorySessionID}
       queryHistory={queryHistory}
     />;
+}
+
+
+export type ApplicationSideThreadComposerProps = Pick<SideThreadComposerProps, "variant" | "placeholder" | "onOpenFile"> & {
+  snapshot: ApplicationSideConversationViewV1;
+  invoke: <A extends keyof ApplicationSideConversationActionMapV1>(action: A, input: ApplicationSideConversationActionMapV1[A]["input"]) => Promise<ApplicationSideConversationActionMapV1[A]["result"]>;
+};
+
+export function ApplicationSideThreadComposer({ snapshot, invoke, ...presentation }: ApplicationSideThreadComposerProps): JSX.Element | null {
+  const { parentThreadId, entry } = snapshot;
+  const selection = useMemo(() => structuredClone(entry?.draftSelection) as SideThreadSelection | undefined, [entry?.draftSelection]);
+  if (!parentThreadId || !entry) return null;
+  const report = (error: unknown) => showActionErrorToast(error instanceof Error ? error.message : String(error));
+  return <SideThreadComposer {...presentation}
+    draft={entry.draft} selection={selection} running={entry.streaming} disabledReason={snapshot.disabledReason}
+    mainThreadId={parentThreadId} sideThreadId={entry.summary?.side_thread_id}
+    queryHistorySessionID={entry.summary?.side_thread_id ?? `side:${parentThreadId}`}
+    queryHistory={entry.messages.filter(message => message.role === "user").map(message => message.text)}
+    onChangeDraft={text => { void invoke("side.set-draft", { parentThreadId, text }).catch(report); }}
+    onRemoveSelection={() => { void invoke("side.set-selection", { parentThreadId }).catch(report); }}
+    onSend={text => { void invoke("side.send", { parentThreadId, text }).catch(report); }}
+    onInterrupt={() => { void invoke("side.interrupt", { parentThreadId }).catch(report); }}
+    onReset={() => { void invoke("side.reset", { parentThreadId }).catch(report); }}
+  />;
 }

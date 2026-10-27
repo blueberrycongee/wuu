@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 // Remote protocol: a loop driver that runs inside a plugin process. The
@@ -15,6 +19,9 @@ import (
 // declaring the methods below; the kernel stays the execution gateway and
 // only ever exchanges these DTOs across the wire.
 const (
+	DriverServiceVersion = "2.0.0"
+	DriverServiceMajor   = 2
+
 	RemoteMethodDescriptor = "descriptor"
 	RemoteMethodCreate     = "create"
 	RemoteMethodResume     = "resume"
@@ -22,16 +29,15 @@ const (
 	RemoteMethodShutdown   = "shutdown"
 )
 
-// RemoteInvoker is the kernel-side transport the RemoteDriver delegates to.
-// The runtime adapts the plugin service registry to this interface; the
-// executionID rides the invoke frame so cross-process cancellation works
-// through the execution plane.
+// RemoteInvoker is the transport the RemoteDriver delegates to. The runtime
+// binds each call to a declared consumer and carries ctx cancellation across
+// the service transport. Driver execution IDs remain in the domain payload.
 type RemoteInvoker interface {
-	InvokeDriver(ctx context.Context, executionID string, method string, params json.RawMessage) (json.RawMessage, error)
+	InvokeDriver(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 }
 
 // RemoteGatewayRegistry exposes per-execution kernel gateways so the
-// plugin's gateway callbacks (model loop, checkpoint writes) reach the
+// plugin's turn-resource callbacks and checkpoint writes reach the
 // runner that owns the execution. Register returns an unregister func.
 type RemoteGatewayRegistry interface {
 	RegisterGateway(executionID string, gateway KernelGateway) (unregister func(), err error)
@@ -63,9 +69,10 @@ type remoteRunParams struct {
 }
 
 type remoteRunResult struct {
-	Status     TerminalStatus `json:"status"`
-	ReceiptID  string         `json:"receipt_id,omitempty"`
-	Checkpoint Checkpoint     `json:"checkpoint"`
+	Status     TerminalStatus                `json:"status"`
+	ReceiptID  string                        `json:"receipt_id,omitempty"`
+	Checkpoint Checkpoint                    `json:"checkpoint"`
+	Failure    *pluginprotocol.DriverFailure `json:"failure,omitempty"`
 }
 
 type remoteShutdownParams struct {
@@ -88,35 +95,55 @@ type RemoteDriver struct {
 // Descriptor resolves the remote descriptor once and caches it; the
 // checkpoint compatibility check in the runner depends on a stable ID and
 // version for the lifetime of the driver.
-func (d *RemoteDriver) Descriptor() Descriptor {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.descriptor != nil {
-		return *d.descriptor
+func (d *RemoteDriver) Descriptor(ctx context.Context) (Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return Descriptor{}, err
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), "", RemoteMethodDescriptor, nil)
+	d.mu.Lock()
+	cached := d.descriptor
+	d.mu.Unlock()
+	if cached != nil {
+		return cloneDescriptor(*cached), nil
+	}
+	result, err := d.Invoker.InvokeDriver(ctx, RemoteMethodDescriptor, nil)
 	if err != nil {
-		// Descriptor must not fail the runner before Create/Resume can
-		// produce a typed error; degrade to the profile identity.
-		return Descriptor{ID: d.fallbackID(), Version: "0.0.0"}
+		return Descriptor{}, fmt.Errorf("remote driver descriptor: %w", err)
 	}
 	var descriptor Descriptor
-	if err := json.Unmarshal(result, &descriptor); err != nil || strings.TrimSpace(descriptor.ID) == "" {
-		return Descriptor{ID: d.fallbackID(), Version: "0.0.0"}
+	if err := json.Unmarshal(result, &descriptor); err != nil {
+		return Descriptor{}, fmt.Errorf("decode remote driver descriptor: %w", err)
 	}
-	d.descriptor = &descriptor
+	if descriptor.ID == "" || descriptor.ID != strings.TrimSpace(descriptor.ID) {
+		return Descriptor{}, errors.New("remote driver descriptor requires a non-empty, trimmed id")
+	}
+	if _, err := semver.StrictNewVersion(descriptor.Version); err != nil {
+		return Descriptor{}, fmt.Errorf("remote driver descriptor version: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return Descriptor{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.descriptor != nil && (d.descriptor.ID != descriptor.ID || d.descriptor.Version != descriptor.Version) {
+		return Descriptor{}, errors.New("remote driver changed identity within its generation")
+	}
+	if d.descriptor == nil {
+		d.descriptor = &descriptor
+	}
+	return cloneDescriptor(*d.descriptor), nil
+}
+
+func cloneDescriptor(descriptor Descriptor) Descriptor {
+	descriptor.Capabilities = slices.Clone(descriptor.Capabilities)
 	return descriptor
 }
 
-func (d *RemoteDriver) fallbackID() string {
-	if trimmed := strings.TrimSpace(d.ServiceID); trimmed != "" {
-		return trimmed
-	}
-	return "remote:" + strings.TrimSpace(d.Profile)
-}
-
-func (d *RemoteDriver) Create(execution ExecutionContext, input PersistedInput) (Instance, error) {
+func (d *RemoteDriver) Create(ctx context.Context, execution ExecutionContext, input PersistedInput) (Instance, error) {
 	if err := requireExecutionID(execution); err != nil {
+		return nil, err
+	}
+	descriptor, err := d.Descriptor(ctx)
+	if err != nil {
 		return nil, err
 	}
 	params, err := json.Marshal(remoteCreateParams{
@@ -126,15 +153,22 @@ func (d *RemoteDriver) Create(execution ExecutionContext, input PersistedInput) 
 	if err != nil {
 		return nil, fmt.Errorf("encode remote driver create params: %w", err)
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), execution.ExecutionID, RemoteMethodCreate, params)
+	result, err := d.Invoker.InvokeDriver(ctx, RemoteMethodCreate, params)
 	if err != nil {
 		return nil, fmt.Errorf("remote driver create: %w", err)
 	}
-	return d.decodeInstance(execution, input, result)
+	return d.decodeInstance(ctx, execution, descriptor, result)
 }
 
-func (d *RemoteDriver) Resume(execution ExecutionContext, input PersistedInput, checkpoint Checkpoint) (Instance, error) {
+func (d *RemoteDriver) Resume(ctx context.Context, execution ExecutionContext, input PersistedInput, checkpoint Checkpoint) (Instance, error) {
 	if err := requireExecutionID(execution); err != nil {
+		return nil, err
+	}
+	descriptor, err := d.Descriptor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCheckpoint(descriptor, checkpoint); err != nil {
 		return nil, err
 	}
 	params, err := json.Marshal(remoteResumeParams{
@@ -145,14 +179,14 @@ func (d *RemoteDriver) Resume(execution ExecutionContext, input PersistedInput, 
 	if err != nil {
 		return nil, fmt.Errorf("encode remote driver resume params: %w", err)
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), execution.ExecutionID, RemoteMethodResume, params)
+	result, err := d.Invoker.InvokeDriver(ctx, RemoteMethodResume, params)
 	if err != nil {
 		return nil, fmt.Errorf("remote driver resume: %w", err)
 	}
-	return d.decodeInstance(execution, input, result)
+	return d.decodeInstance(ctx, execution, descriptor, result)
 }
 
-func (d *RemoteDriver) decodeInstance(execution ExecutionContext, input PersistedInput, result json.RawMessage) (*RemoteInstance, error) {
+func (d *RemoteDriver) decodeInstance(ctx context.Context, execution ExecutionContext, descriptor Descriptor, result json.RawMessage) (Instance, error) {
 	var decoded remoteInstanceResult
 	if err := json.Unmarshal(result, &decoded); err != nil {
 		return nil, fmt.Errorf("decode remote driver instance: %w", err)
@@ -160,13 +194,22 @@ func (d *RemoteDriver) decodeInstance(execution ExecutionContext, input Persiste
 	if strings.TrimSpace(decoded.InstanceID) == "" {
 		return nil, errors.New("remote driver returned an empty instance id")
 	}
-	return &RemoteInstance{
+	instance := &RemoteInstance{
 		driver:     d,
+		descriptor: descriptor,
 		execution:  execution,
-		input:      input,
 		instanceID: decoded.InstanceID,
 		checkpoint: decoded.Checkpoint,
-	}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		instance.Shutdown()
+		return nil, err
+	}
+	if err := validateCheckpoint(descriptor, decoded.Checkpoint); err != nil {
+		instance.Shutdown()
+		return nil, fmt.Errorf("remote driver instance checkpoint: %w", err)
+	}
+	return instance, nil
 }
 
 func requireExecutionID(execution ExecutionContext) error {
@@ -180,13 +223,13 @@ func requireExecutionID(execution ExecutionContext) error {
 // the plugin process.
 type RemoteInstance struct {
 	driver     *RemoteDriver
+	descriptor Descriptor
 	execution  ExecutionContext
-	input      PersistedInput
 	instanceID string
 
 	mu         sync.Mutex
 	checkpoint Checkpoint
-	cancel     context.CancelCauseFunc
+	cancel     func(string)
 }
 
 func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (TerminalOutcome, error) {
@@ -202,7 +245,7 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	i.mu.Lock()
-	i.cancel = cancel
+	i.cancel = func(reason string) { cancel(CancellationCause(ctx, reason)) }
 	i.mu.Unlock()
 	defer cancel(nil)
 
@@ -210,11 +253,12 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 	if err != nil {
 		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("encode remote driver run params: %w", err)
 	}
-	result, err := i.driver.Invoker.InvokeDriver(runCtx, i.execution.ExecutionID, RemoteMethodRun, params)
+	result, err := i.driver.Invoker.InvokeDriver(runCtx, RemoteMethodRun, params)
 	if err != nil {
 		status := TerminalFailed
 		if runCtx.Err() != nil {
 			status = TerminalCanceled
+			err = errors.Join(err, runCtx.Err(), context.Cause(runCtx))
 		}
 		return TerminalOutcome{Status: status, Checkpoint: i.Checkpoint()}, fmt.Errorf("remote driver run: %w", err)
 	}
@@ -222,8 +266,27 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 	if uErr := json.Unmarshal(result, &decoded); uErr != nil {
 		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("decode remote driver run result: %w", uErr)
 	}
+	if err := validateCheckpoint(i.descriptor, decoded.Checkpoint); err != nil {
+		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("remote driver terminal checkpoint: %w", err)
+	}
+	switch decoded.Status {
+	case TerminalSucceeded:
+	case TerminalFailed:
+		if decoded.Failure != nil {
+			err = &FailureError{Failure: *decoded.Failure}
+		} else {
+			err = errors.New("remote driver reported failure")
+		}
+	case TerminalCanceled:
+		err = context.Canceled
+	default:
+		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("remote driver returned unknown terminal status %q", decoded.Status)
+	}
+	if runCtx.Err() != nil {
+		return TerminalOutcome{Status: TerminalCanceled, Checkpoint: i.Checkpoint()}, errors.Join(runCtx.Err(), context.Cause(runCtx))
+	}
 	i.setCheckpoint(decoded.Checkpoint)
-	return TerminalOutcome{Status: decoded.Status, ReceiptID: decoded.ReceiptID, Checkpoint: decoded.Checkpoint}, nil
+	return TerminalOutcome{Status: decoded.Status, ReceiptID: decoded.ReceiptID, Checkpoint: decoded.Checkpoint}, err
 }
 
 func (i *RemoteInstance) Checkpoint() Checkpoint {
@@ -239,7 +302,7 @@ func (i *RemoteInstance) Cancel(reason string) {
 	cancel := i.cancel
 	i.mu.Unlock()
 	if cancel != nil {
-		cancel(errors.New(reason))
+		cancel(reason)
 	}
 }
 
@@ -251,7 +314,7 @@ func (i *RemoteInstance) Shutdown() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), remoteShutdownTimeout)
 	defer cancel()
-	_, _ = i.driver.Invoker.InvokeDriver(ctx, i.execution.ExecutionID, RemoteMethodShutdown, params)
+	_, _ = i.driver.Invoker.InvokeDriver(ctx, RemoteMethodShutdown, params)
 }
 
 func (i *RemoteInstance) setCheckpoint(checkpoint Checkpoint) {
@@ -271,8 +334,8 @@ type FailClosedDriver struct {
 	Reason  string
 }
 
-func (d FailClosedDriver) Descriptor() Descriptor {
-	return Descriptor{ID: "fail-closed:" + strings.TrimSpace(d.Profile), Version: "0.0.0"}
+func (d FailClosedDriver) Descriptor(context.Context) (Descriptor, error) {
+	return Descriptor{}, d.err()
 }
 
 func (d FailClosedDriver) err() error {
@@ -287,10 +350,10 @@ func (d FailClosedDriver) err() error {
 	return fmt.Errorf("loop driver profile %q is unavailable (%s); the session is read-only until the driver plugin is restored", profile, reason)
 }
 
-func (d FailClosedDriver) Create(ExecutionContext, PersistedInput) (Instance, error) {
+func (d FailClosedDriver) Create(context.Context, ExecutionContext, PersistedInput) (Instance, error) {
 	return nil, d.err()
 }
 
-func (d FailClosedDriver) Resume(ExecutionContext, PersistedInput, Checkpoint) (Instance, error) {
+func (d FailClosedDriver) Resume(context.Context, ExecutionContext, PersistedInput, Checkpoint) (Instance, error) {
 	return nil, d.err()
 }

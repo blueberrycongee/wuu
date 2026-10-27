@@ -93,6 +93,7 @@ export type ConversationHistoryActionsDeps = {
   ) => Promise<boolean>;
   unadmittedComposerMessage?: (id: string) => QueuedComposerMessage | undefined;
   worktreeForkNonGitReason: string;
+  onError?: (error: unknown, fallback: string) => void;
 };
 
 export type ConversationHistoryActions = {
@@ -250,7 +251,7 @@ export function createConversationHistoryActions(
         }),
       );
     } catch (error) {
-      showErrorToast(error, t("thread.forkFailed"));
+      (deps.onError ?? showErrorToast)(error, t("thread.forkFailed"));
       throw error;
     }
   }
@@ -371,6 +372,7 @@ deps.rememberConversationScrollForEdit();
       media_type: file.media_type,
       data: file.data,
       filename: file.filename,
+      remote_ref: file.remote_ref,
     }));
     const localTurn = turnID.startsWith(OPTIMISTIC_TURN_ID_PREFIX);
     const unchangedInput = text === (item.input_text ?? item.text ?? "")
@@ -507,7 +509,7 @@ deps.rememberConversationScrollForEdit();
           ? { ...current, submitting: false }
           : current,
       );
-      showErrorToast(error, t("history.editFailed"));
+      (deps.onError ?? showErrorToast)(error, t("history.editFailed"));
     }
   }
 

@@ -73,6 +73,38 @@ describe("useTabExitRetention", () => {
     expect(byTestID("c")).toBeTruthy();
   });
 
+  it("keeps a closing tab in place across unrelated renders until its exit ends", () => {
+    const a = { id: "a", label: "A" };
+    const b = { id: "b", label: "B" };
+    const c = { id: "c", label: "C" };
+    renderStrip([a, b, c]);
+    renderStrip([a, c]);
+    act(() => { vi.advanceTimersByTime(60); });
+    renderStrip([a, { ...c, label: "C updated" }]);
+
+    expect(byTestID("closing-b")?.textContent).toBe("B");
+    expect(byTestID("closing-b")?.nextElementSibling?.textContent).toBe("C updated");
+    act(() => { vi.advanceTimersByTime(60); });
+    expect(byTestID("closing-b")).toBeNull();
+  });
+
+  it("retains independently closing tabs in visual order through staggered exits", () => {
+    const items = ["a", "b", "c", "d"].map((id) => ({ id, label: id }));
+    const [a, , , d] = items;
+    renderStrip(items);
+    renderStrip([a, items[2], d]);
+    act(() => { vi.advanceTimersByTime(60); });
+    renderStrip([a, d]);
+    expect([...container.querySelectorAll("span")].map((node) => node.textContent)).toEqual(["a", "b", "c", "d"]);
+
+    act(() => { vi.advanceTimersByTime(60); });
+    expect(byTestID("closing-b")).toBeNull();
+    expect(byTestID("closing-c")?.textContent).toBe("c");
+    expect(byTestID("closing-c")?.nextElementSibling?.textContent).toBe("d");
+    act(() => { vi.advanceTimersByTime(60); });
+    expect(byTestID("closing-c")).toBeNull();
+  });
+
   it("revives a tab that reappears while its ghost is still collapsing", () => {
     const a = { id: "a", label: "A" };
     const b = { id: "b", label: "B" };

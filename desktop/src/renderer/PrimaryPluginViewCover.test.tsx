@@ -27,8 +27,11 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div data-testid="mock-monaco-editor" />,
 }));
 
-import { App } from "./App";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
+import type { PluginHost } from "./plugins/PluginHost";
+const desktopPluginHost = new Proxy({} as PluginHost, { get: (_target, key) => { const host = getDesktopApplication().contributions as PluginHost; const value = Reflect.get(host, key); return typeof value === "function" ? value.bind(host) : value; } });
+const desktopWorkbenchController = new Proxy({} as import("../../../packages/plugin-sdk/src/ui-contributions").ApplicationWorkbenchV1, { get: (_target, key) => { const workbench = getDesktopApplication().workbench; const value = Reflect.get(workbench, key); return typeof value === "function" ? value.bind(workbench) : value; } });
 
 const pluginId = "test:primary-cover";
 let container: HTMLDivElement;
@@ -92,6 +95,7 @@ function installWuuApi(): void {
     },
   });
   const api = {
+    reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
@@ -157,15 +161,15 @@ describe("primary plugin view covers the conversation", () => {
   it("drops the empty-session greeting and dock composer while Automations is open", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
     expect(container.querySelector(".empty-home")).not.toBeNull();
-    expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
+    expect(container.querySelector(".conversation-pane .dock-composer-wrap")).not.toBeNull();
 
     await act(async () => {
-      await desktopPluginHost.activateGeneration({
+      await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
         pluginId,
         generation: "one",
         register(api) {

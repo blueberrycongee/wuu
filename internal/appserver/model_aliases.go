@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,21 +9,45 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
 func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResolutionResult {
-	alias = strings.TrimSpace(alias)
-	if alias == "" {
+	if strings.TrimSpace(alias) == "" {
 		return agentcontrol.AliasResolutionResult{}
 	}
 	if s == nil || s.rt == nil {
 		return agentcontrol.AliasResolutionResult{Err: fmt.Errorf("runtime is not initialized")}
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return agentcontrol.AliasResolutionResult{Err: err}
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		return agentcontrol.AliasResolutionResult{Err: err}
+	}
+	models, err := binding.Models()
+	if err != nil {
+		return agentcontrol.AliasResolutionResult{Err: err}
+	}
+	result := s.resolveSubagentModelAliasWithServices(services, models, alias)
+	// This convenience path only resolves project-work metadata. Inference
+	// callers use the admitted services variant and own its generation lifetime.
+	result.Runtime.Client = nil
+	return result
+}
+
+func (s *Server) resolveSubagentModelAliasWithServices(services *runtime.StateServices, models runtime.StateModels, alias string) agentcontrol.AliasResolutionResult {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return agentcontrol.AliasResolutionResult{}
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return agentcontrol.AliasResolutionResult{Err: fmt.Errorf("load effective config: %w", err)}
 	}
@@ -41,9 +66,9 @@ func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResol
 			return agentcontrol.AliasResolutionResult{Err: err}
 		}
 	} else if alias == "@verification" {
-		selection = s.rt.ModelRoles.Verification
+		selection = models.Roles.Verification
 	}
-	client, err := providerfactory.BuildStreamClient(selection.RuleProviderConfig, selection.Provider)
+	client, err := services.ModelClient(selection.RuleProviderConfig, selection.Provider)
 	if err != nil {
 		return agentcontrol.AliasResolutionResult{
 			Err: fmt.Errorf("build provider %q client: %w", selection.Provider, err),
@@ -63,16 +88,14 @@ func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResol
 		CompactThresholdTokens: budget.CompactThresholdTokens,
 		Client:                 client,
 	}
-	if s.rt.StreamRunner != nil {
-		resolved.Temperature = s.rt.StreamRunner.Temperature
-		resolved.CompactThresholdPct = s.rt.StreamRunner.CompactThresholdPct
-		resolved.CompactKeepRecentTokens = s.rt.StreamRunner.CompactKeepRecentTokens
-		resolved.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
-	}
+	resolved.Temperature = models.Temperature
+	resolved.CompactThresholdPct = models.CompactThresholdPct
+	resolved.CompactKeepRecentTokens = models.CompactKeepRecentTokens
+	resolved.DisableAutoCompact = models.DisableAutoCompact
 	return agentcontrol.AliasResolutionResult{Found: true, Runtime: resolved}
 }
 
-func (s *Server) resolveSubagentProviderClient(providerName string) (providers.StreamClient, error) {
+func (s *Server) resolveSubagentProviderClientWithServices(services *runtime.StateServices, providerName string) (providers.StreamClient, error) {
 	providerName = strings.TrimSpace(providerName)
 	if providerName == "" {
 		return nil, fmt.Errorf("provider is required")
@@ -80,7 +103,8 @@ func (s *Server) resolveSubagentProviderClient(providerName string) (providers.S
 	if s == nil || s.rt == nil {
 		return nil, fmt.Errorf("runtime is not initialized")
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return nil, fmt.Errorf("load effective config: %w", err)
 	}
@@ -89,7 +113,7 @@ func (s *Server) resolveSubagentProviderClient(providerName string) (providers.S
 		return nil, fmt.Errorf("provider %q is not configured", providerName)
 	}
 	providerCfg = s.withCachedCodexModels(providerName, providerCfg)
-	client, err := providerfactory.BuildStreamClient(providerCfg, providerName)
+	client, err := services.ModelClient(providerCfg, providerName)
 	if err != nil {
 		return nil, fmt.Errorf("build provider %q client: %w", providerName, err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -26,6 +27,7 @@ import (
 //   - a worktree session's changes reach the workspace before anyone delivers
 //     them;
 //   - turns the user runs in a member session leave no report;
+//   - an intervention shared with the coordinator is answered on the wrong session;
 //   - a message the user writes into a managed session silently takes it
 //     from the project, or reaches the coordinator without the user's words;
 //   - stopping a member removes membership, preserves stale admitted input,
@@ -47,9 +49,12 @@ import (
 //   - a remote executor's unfinished history is mistaken for completion, or
 //     a later execution prevents reading an earlier completed result.
 
-func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
+func newProjectFixture(t *testing.T, promptHooks ...hooks.HookConfig) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
 	rt := newTestRuntime(t, &fakeClient{})
+	if len(promptHooks) > 0 {
+		rt.HookDispatcher = hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{hooks.UserPromptSubmit: promptHooks}))
+	}
 	initAppserverGitRepo(t, rt.RootDir)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
@@ -60,29 +65,30 @@ func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runti
 	provider := newGatedProvider(16)
 	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProjectProviderTestServer(t, rt, out)
+	rt = srv.rt
 	t.Cleanup(srv.Close)
 	return srv, &rpcClient{server: srv, out: out}, &projectCalls{provider: provider}, rt
 }
 
-// projectCalls routes concurrent model calls to the conversation whose user
-// messages contain a marker, so each conversation is answered in order.
+// projectCalls routes calls by their actual thread and a user-message marker.
+// Project notifications can copy the same user text into another conversation.
 type projectCalls struct {
 	provider *gatedProvider
 	stash    []*gatedCall
 }
 
-func (calls *projectCalls) next(t *testing.T, marker string) *gatedCall {
+func (calls *projectCalls) next(t *testing.T, threadID, marker string) *gatedCall {
 	t.Helper()
 	for index, call := range calls.stash {
-		if requestHasUserText(call.request, marker) {
+		if call.request.CacheHint.PromptCacheKey == threadID && requestHasUserText(call.request, marker) {
 			calls.stash = append(calls.stash[:index], calls.stash[index+1:]...)
 			return call
 		}
 	}
 	for {
 		call := calls.provider.next(t)
-		if requestHasUserText(call.request, marker) {
+		if call.request.CacheHint.PromptCacheKey == threadID && requestHasUserText(call.request, marker) {
 			return call
 		}
 		calls.stash = append(calls.stash, call)
@@ -178,7 +184,7 @@ func projectManagedSessions(t *testing.T, client *rpcClient, projectID string) [
 
 func deliveredClientIDs(t *testing.T, rt *runtime.Session, threadID, prefix string) []string {
 	t.Helper()
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +211,7 @@ func TestProjectPersistentSideDispatchesAndReplays(t *testing.T) {
 	if side.Workspace != "shared" {
 		t.Fatalf("side workspace = %q", side.Workspace)
 	}
-	call := calls.next(t, request.Prompt)
+	call := calls.next(t, side.SessionID, request.Prompt)
 	request.Prompt = "Correct the implementation boundary"
 	second, err := handler(context.Background(), "correct-side", request)
 	if err != nil || second.(projectSessionView).SessionID != side.SessionID {
@@ -215,7 +221,7 @@ func TestProjectPersistentSideDispatchesAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	call.response <- providersResponse("First pass")
-	correction := calls.next(t, request.Prompt)
+	correction := calls.next(t, side.SessionID, request.Prompt)
 	correction.response <- providersResponse("Corrected implementation")
 	waitForThread(t, srv, side.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, side.SessionID, "project:"+lead.ID+":correct-side"); len(ids) != 1 {
@@ -236,9 +242,9 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker := created.(projectSessionView)
-			calls.next(t, "Initial worker brief").response <- providersResponse("Initial work complete")
+			calls.next(t, worker.SessionID, "Initial worker brief").response <- providersResponse("Initial work complete")
 			completed := waitForThread(t, srv, worker.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
 			if err != nil || !acquired {
 				t.Fatalf("lease = %v, %v", acquired, err)
 			}
@@ -248,7 +254,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 				t.Fatalf("queued = %+v, %v", queued, err)
 			}
 			if stop {
-				if err := srv.takeSessionControl(worker.SessionID, session.ControlPaused); err != nil {
+				if err := srv.takeSessionControl(testRuntimeState(t, srv.rt), worker.SessionID, session.ControlPaused); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -256,11 +262,11 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			if err := lease.Release(); err != nil {
 				t.Fatal(err)
 			}
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
-			reopened.recoverProjectInbox()
+			reopened.projectTestRecoverInbox()
 			if stop {
-				pending, err := session.PendingInbox(rt.SessionDir, worker.SessionID)
+				pending, err := rt.Sessions.PendingInbox(worker.SessionID)
 				if err != nil || len(pending) != 0 {
 					t.Fatalf("stopped dispatch pending = %+v, %v", pending, err)
 				}
@@ -269,11 +275,11 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 				}
 				return
 			}
-			calls.next(t, "Durable follow-up brief").response <- providersResponse("Recovered work complete")
+			calls.next(t, worker.SessionID, "Durable follow-up brief").response <- providersResponse("Recovered work complete")
 			waitForThread(t, reopened, worker.SessionID, func(th Thread) bool {
 				return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != completed.LatestCompletedTurnID
 			})
-			reopened.recoverProjectInbox()
+			reopened.projectTestRecoverInbox()
 			if ids := deliveredClientIDs(t, rt, worker.SessionID, "project:"+lead.ID+":queued-followup"); len(ids) != 1 {
 				t.Fatalf("recovered deliveries = %v", ids)
 			}
@@ -285,11 +291,11 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 	srv, client, calls, _ := newProjectFixture(t)
 	lead := startProject(t, client, "Nonblocking correction")
 	handler := srv.projectSessionHandler(lead.ID)
-	_, err := handler(context.Background(), "start-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Initial blocking work"})
+	created, err := handler(context.Background(), "start-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Initial blocking work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := calls.next(t, "Initial blocking work")
+	initial := calls.next(t, created.(projectSessionView).SessionID, "Initial blocking work")
 	yes := true
 	value, err := handler(context.Background(), "correct-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Requested correction output", Block: &yes})
 	if err != nil || value.(projectSessionView).TurnID != "" {
@@ -297,8 +303,8 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 	}
 	side := projectManagedSessions(t, client, lead.ID)[0]
 	initial.response <- providersResponse("Prior output is not the correction")
-	calls.next(t, "Requested correction output").response <- providersResponse("Requested correction completed")
-	project, _ := srv.projectCoordinator(lead.ID)
+	calls.next(t, side.ID, "Requested correction output").response <- providersResponse("Requested correction completed")
+	project, _ := srv.projectTestCoordinator(lead.ID)
 	value, err = srv.waitProjectSession(context.Background(), project, project, tools.ProjectSessionRequest{SessionID: side.ID}, "project:"+lead.ID+":correct-side")
 	if err != nil || value.(projectSessionView).FinalOutput != "Requested correction completed" {
 		t.Fatalf("host receipt: %+v %v", value, err)
@@ -309,7 +315,7 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 // tool surface, which deliberately rejects waits.
 func hostProjectWait(srv *Server, projectID string) tools.ProjectSessionHandler {
 	return func(ctx context.Context, _ string, r tools.ProjectSessionRequest) (any, error) {
-		project, _ := srv.projectCoordinator(projectID)
+		project, _ := srv.projectTestCoordinator(projectID)
 		return srv.waitProjectSession(ctx, project, project, r, "")
 	}
 }
@@ -324,7 +330,7 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	side := created.(projectSessionView)
-	call := calls.next(t, "Implementation to wait for")
+	call := calls.next(t, side.SessionID, "Implementation to wait for")
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TurnID: side.TurnID, TimeoutMS: 1}
 	waited, err := hostProjectWait(srv, lead.ID)(context.Background(), "timeout", request)
 	if err != nil || !waited.(projectSessionView).TimedOut {
@@ -370,12 +376,12 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	side := created.(projectSessionView)
-	held := calls.next(t, "First remote task")
+	held := calls.next(t, side.SessionID, "First remote task")
 	active, err := session.ThreadExecutionActive(rt.SessionDir, side.SessionID)
 	if err != nil || !active {
 		t.Fatalf("owner execution lease = %v, %v", active, err)
 	}
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
 	handler := hostProjectWait(observer, lead.ID)
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TimeoutMS: 1}
@@ -394,7 +400,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	waitForThread(t, owner, side.SessionID, func(th Thread) bool {
 		return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID == side.TurnID
 	})
-	records, err := session.LoadActiveHistoryRecords(rt.SessionDir, side.SessionID, true)
+	records, err := rt.Sessions.LoadActiveHistoryRecords(side.SessionID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +412,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 			checkpoint = append(checkpoint, record)
 		}
 	}
-	if err := session.RewriteHistoryRecordsAtBaseline(rt.SessionDir, side.SessionID, checkpoint, records[len(records)-1].Seq); err != nil {
+	if err := rt.Sessions.RewriteHistoryRecordsAtBaseline(side.SessionID, checkpoint, records[len(records)-1].Seq); err != nil {
 		t.Fatal(err)
 	}
 	request.TimeoutMS = 1000
@@ -424,7 +430,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := calls.next(t, "Next remote task")
+	next := calls.next(t, side.SessionID, "Next remote task")
 	defer func() { next.response <- providersResponse("Next remote result") }()
 	value, err = handler(context.Background(), "previous-remote-wait", request)
 	if err != nil {
@@ -448,7 +454,7 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := created.(projectSessionView)
-	calls.next(t, "Work held in the remote provider")
+	calls.next(t, worker.SessionID, "Work held in the remote provider")
 	if worker.TurnID == "" {
 		t.Fatal("dispatch did not identify its admitted turn")
 	}
@@ -456,11 +462,11 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 		t.Fatalf("remote execution lease = %v, %v", active, err)
 	}
 
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
-	observer.recoverProjectInbox()
+	observer.projectTestRecoverInbox()
 	resultID := projectResultClientID(worker.SessionID, worker.TurnID)
-	if found, err := session.InboxHas(rt.SessionDir, resultID); err != nil || found {
+	if found, err := rt.Sessions.InboxHas(resultID); err != nil || found {
 		t.Fatalf("unfinished remote turn was reported as a project result: found=%v, err=%v", found, err)
 	}
 }
@@ -468,7 +474,7 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Unsettled result")
-	member, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+	member, err := srv.createHostSessionThread(testRuntimeState(t, srv.rt), projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
 		RequestID: "unsettled-member", Name: "Unsettled worker", ParentSessionID: lead.ID,
 		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
 		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
@@ -478,10 +484,10 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	}
 	// A process can exit after admitting the user input and before persisting
 	// a terminal record. An absent lease does not make that turn successful.
-	if _, err := session.ChangeControl(rt.SessionDir, member.ID, lead.ID, session.ControlActive, 0); err != nil {
+	if _, err := rt.Sessions.ChangeControl(member.ID, lead.ID, session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, member.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(member.ID, session.HistoryRecord{
 		Role: "user", Content: "Admitted but not settled", At: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -503,7 +509,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := calls.next(t, "Next local task")
+	next := calls.next(t, member.ID, "Next local task")
 	defer func() { next.response <- providersResponse("Next local result") }()
 	value, err = hostProjectWait(srv, lead.ID)(context.Background(), "unsettled-local-wait", tools.ProjectSessionRequest{
 		Action: "wait", SessionID: member.ID, TurnID: oldTurnID, TimeoutMS: 1,
@@ -520,7 +526,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Atomic launch")
-	th, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+	th, err := srv.createHostSessionThread(testRuntimeState(t, srv.rt), projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
 		RequestID: "atomic-launch", Name: "Atomic worker", ParentSessionID: lead.ID,
 		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
 		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
@@ -529,20 +535,20 @@ func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, found, err := session.ReadControl(rt.SessionDir, th.ID)
+	control, found, err := rt.Sessions.ReadControl(th.ID)
 	if err != nil || !found || control.State != session.ControlActive {
 		t.Fatalf("initial control = %+v, %v", control, err)
 	}
-	pending, err := session.PendingInbox(rt.SessionDir, th.ID)
+	pending, err := rt.Sessions.PendingInbox(th.ID)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("initial dispatch = %+v, %v", pending, err)
 	}
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	calls.next(t, "Recover initial dispatch").response <- providersResponse("Initial dispatch recovered")
+	calls.next(t, th.ID, "Recover initial dispatch").response <- providersResponse("Initial dispatch recovered")
 	waitForThread(t, reopened, th.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, th.ID, "atomic-launch"); len(ids) != 1 {
 		t.Fatalf("initial dispatch deliveries = %v", ids)
 	}
@@ -557,11 +563,6 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := startProject(t, client, "Role model choices")
-	cfg, _, err := rt.LoadEffectiveConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt.ProjectModels = cfg.Agent.ProjectModels
 	handler := srv.projectSessionHandler(lead.ID)
 	for _, tc := range []struct{ role, alias, model string }{
 		{"side", "", "side-model"}, {"worker", "", "worker-model"}, {"worker", "override", "override-model"},
@@ -570,12 +571,12 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		child, found, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+		child, found, err := rt.Sessions.Find(result.(projectSessionView).SessionID)
 		if err != nil || !found || child.Provider != "fake-provider" || child.Model != tc.model {
 			t.Fatalf("child = %+v, %v", child, err)
 		}
 	}
-	current, _, err := session.Find(rt.SessionDir, lead.ID)
+	current, _, err := rt.Sessions.Find(lead.ID)
 	if err != nil || current.Model != "fake-model" {
 		t.Fatalf("lead changed = %+v, %v", current, err)
 	}
@@ -586,7 +587,7 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, _, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+	child, _, err := rt.Sessions.Find(result.(projectSessionView).SessionID)
 	if err != nil || child.Model != "side-model" {
 		t.Fatalf("persistent side switched = %+v, %v", child, err)
 	}
@@ -601,32 +602,33 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan catalog pagination"}, &turn)
 
-	plan := calls.next(t, "Plan catalog pagination")
+	plan := calls.next(t, coordinator.ID, "Plan catalog pagination")
 	visible := requestToolNames(plan.request)
 	if !visible["session"] {
 		t.Fatalf("coordinator cannot manage sessions: %v", visible)
 	}
 	plan.response <- toolCallResponse("create-pagination", "session", `{"action":"create","title":"Pagination","prompt":"Implement page-size 50 in search.go"}`)
 
-	brief := calls.next(t, "Implement page-size 50")
-	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || isHumanUserMessage(message) ||
-		message.Cause != "project" || message.RelatedSessionID != coordinator.ID {
-		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
-	}
-	brief.response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
-	calls.next(t, "Plan catalog pagination").response <- providersResponse("Started a session for pagination.")
-	calls.next(t, "Implement page-size 50").response <- providersResponse("Set PageSize to 50 in search.go.")
-
-	wake := calls.next(t, "Plan catalog pagination")
+	started := calls.next(t, coordinator.ID, "Plan catalog pagination")
 	managed := projectManagedSessions(t, client, coordinator.ID)
 	if len(managed) != 1 || managed[0].Source != projectSessionSource || managed[0].Worktree == nil {
 		t.Fatalf("managed sessions = %+v", managed)
 	}
+	brief := calls.next(t, managed[0].ID, "Implement page-size 50")
+	if message := lastPersistedProjectInputForRequest(t, srv, brief.request); message.Origin != "host" || isHumanUserMessage(message) ||
+		message.Cause != "project" || message.RelatedSessionID != coordinator.ID {
+		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
+	}
+	brief.response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
+	started.response <- providersResponse("Started a session for pagination.")
+	calls.next(t, managed[0].ID, "Implement page-size 50").response <- providersResponse("Set PageSize to 50 in search.go.")
+
+	wake := calls.next(t, coordinator.ID, "Plan catalog pagination")
 	worker := waitForThread(t, srv, managed[0].ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
 	if worker.SessionControl == nil || worker.SessionControl.ManagerID != coordinator.ID || worker.SessionControl.State != session.ControlActive {
 		t.Fatalf("worker control = %+v", worker.SessionControl)
 	}
-	result := lastUserRequestMessage(wake.request)
+	result := lastPersistedProjectInputForRequest(t, srv, wake.request)
 	if result.ClientID != "project-result:"+worker.ID+":"+worker.LatestCompletedTurnID || result.RelatedSessionID != worker.ID ||
 		result.Origin != "host" || result.PresentationKind != "session_message" || !strings.Contains(result.Content, "Set PageSize to 50 in search.go.") || !strings.Contains(result.Content, "search.go") {
 		t.Fatalf("delivered result = %+v", result)
@@ -642,26 +644,26 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	}
 
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, "project-result:"+worker.ID); len(ids) != 1 {
 		t.Fatalf("result deliveries after restart = %v", ids)
 	}
 	calls.assertIdle(t)
 }
 
-// poll returns a stashed or arriving call carrying marker within wait.
-func (calls *projectCalls) poll(marker string, wait time.Duration) *gatedCall {
+// poll returns a stashed or arriving call for this thread and marker within wait.
+func (calls *projectCalls) poll(threadID, marker string, wait time.Duration) *gatedCall {
 	for index, call := range calls.stash {
-		if requestHasUserText(call.request, marker) {
+		if call.request.CacheHint.PromptCacheKey == threadID && requestHasUserText(call.request, marker) {
 			calls.stash = append(calls.stash[:index], calls.stash[index+1:]...)
 			return call
 		}
 	}
 	select {
 	case call := <-calls.provider.calls:
-		if requestHasUserText(call.request, marker) {
+		if call.request.CacheHint.PromptCacheKey == threadID && requestHasUserText(call.request, marker) {
 			return call
 		}
 		calls.stash = append(calls.stash, call)
@@ -677,7 +679,7 @@ func settleCoordinator(t *testing.T, srv *Server, calls *projectCalls, coordinat
 	t.Helper()
 	deadline := time.Now().Add(gatedProviderTimeout)
 	for time.Now().Before(deadline) {
-		if call := calls.poll(marker, 20*time.Millisecond); call != nil {
+		if call := calls.poll(coordinatorID, marker, 20*time.Millisecond); call != nil {
 			call.response <- providersResponse(answer)
 			continue
 		}
@@ -717,29 +719,40 @@ func TestProjectReportsUserTurns(t *testing.T) {
 	coordinator := startProject(t, client, "Notes")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the notes"}, &turn)
-	calls.next(t, "Plan the notes").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft notes.md"}`)
-	calls.next(t, "Draft notes.md").response <- toolCallResponse("write-notes", "write_file", `{"path":"notes.md","content":"draft\n"}`)
-	calls.next(t, "Plan the notes").response <- providersResponse("Started.")
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
-	calls.next(t, "Draft notes.md").response <- providersResponse("Drafted.")
-	calls.next(t, "Plan the notes").response <- providersResponse("Draft ready.")
+	calls.next(t, coordinator.ID, "Plan the notes").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft notes.md"}`)
+	started := calls.next(t, coordinator.ID, "Plan the notes")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
+	calls.next(t, worker.ID, "Draft notes.md").response <- toolCallResponse("write-notes", "write_file", `{"path":"notes.md","content":"draft\n"}`)
+	started.response <- providersResponse("Started.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	calls.next(t, worker.ID, "Draft notes.md").response <- providersResponse("Drafted.")
+	draftReady := calls.next(t, coordinator.ID, "Plan the notes")
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool {
 		return thread.LatestCompletedTurnID != "" && thread.SessionControl != nil
 	})
 
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will rewrite the notes"}, &userTurn)
-	calls.next(t, "rewrite the notes").response <- toolCallResponse("rewrite-notes", "write_file", `{"path":"notes.md","content":"final\n"}`)
-	calls.next(t, "rewrite the notes").response <- providersResponse("Rewritten.")
+	rewrite := calls.next(t, worker.ID, "rewrite the notes")
+	// The same user input reaches both sessions. Hold the worker's tool call
+	// until the coordinator has requested its answer, fixing this interleaving.
+	srv.drainSessionInbox(coordinator.ID)
+	draftReady.response <- providersResponse("Draft ready.")
+	coordinatorNotice := calls.next(t, coordinator.ID, "Plan the notes")
+	if !requestHasUserText(coordinatorNotice.request, "rewrite the notes") {
+		t.Fatal("coordinator did not receive the user's intervention")
+	}
+	calls.stash = append(calls.stash, coordinatorNotice)
+	rewrite.response <- toolCallResponse("rewrite-notes", "write_file", `{"path":"notes.md","content":"final\n"}`)
+	calls.next(t, worker.ID, "rewrite the notes").response <- providersResponse("Rewritten.")
 	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
 	settleCoordinator(t, srv, calls, coordinator.ID, "Plan the notes", "I will inspect the notes.",
 		projectResultClientID(worker.ID, userTurn.Turn.ID))
 
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 1 {
 		t.Fatalf("user result was lost or duplicated on restart: %v", ids)
 	}
@@ -751,20 +764,24 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	coordinator := startProject(t, client, "Release")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the release note"}, &turn)
-	calls.next(t, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
-	calls.next(t, "Plan the release note").response <- providersResponse("Started.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("Started.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
-	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
-	calls.next(t, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
+	calls.next(t, worker.ID, "Draft release note text").response <- providersResponse("Drafted the notes.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
+	// A non-waking notice can join a running turn, so this scenario requires an idle coordinator.
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 
+	const userClientID = "migration-input"
 	var userTurn TurnStartResult
-	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
-	held := calls.next(t, "mention the migration")
+	client.rpc(t, MethodTurnStart, TurnStartParams{ClientID: userClientID, ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
+	held := calls.next(t, worker.ID, "mention the migration")
 	srv.drainSessionInbox(coordinator.ID)
-	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
-	if err != nil || len(pending) != 1 || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
+	noticeClientID := "project-user-message:" + worker.ID + ":" + userClientID
+	pending, err := srv.rt.Sessions.PendingInbox(coordinator.ID)
+	if err != nil || len(pending) != 1 || pending[0].ClientID != noticeClientID || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
 		t.Fatalf("direct user notice must persist without waking: %+v, %v", pending, err)
 	}
 	calls.assertIdle(t)
@@ -773,20 +790,38 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	if joined.SessionControl == nil || joined.SessionControl.State != session.ControlActive || joined.SessionControl.Revision != worker.SessionControl.Revision {
 		t.Fatalf("a user message changed the session's control: %+v", joined.SessionControl)
 	}
-	result := calls.next(t, "Plan the release note")
-	if last := lastUserRequestMessage(result.request); last.ClientID != projectResultClientID(worker.ID, userTurn.Turn.ID) ||
-		last.Cause != projectCauseResult || !strings.Contains(last.Content, "The user wrote to this session") || !strings.Contains(last.Content, "Also mention the migration") {
+	result := calls.next(t, coordinator.ID, "Plan the release note")
+	// The earlier notice can start the request before the result joins its steering queue.
+	if last := lastUserRequestMessage(result.request); last.Cause == projectCauseUserMessage {
+		if last.Cause != projectCauseUserMessage || last.Content != pending[0].Content {
+			t.Fatalf("direct user notice delivered to coordinator = %+v", last)
+		}
+		result.response <- providersResponse("Waiting for the session result.")
+		result = calls.next(t, coordinator.ID, "Plan the release note")
+	}
+	if last := lastUserRequestMessage(result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "The user wrote to this session") || !strings.Contains(last.Content, "Also mention the migration") {
 		t.Fatalf("result of a turn the user joined = %+v", last)
 	}
 	result.response <- providersResponse("Noted.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	// Steering reaches the model before its transcript checkpoint is committed.
+	// Verify private delivery identity after settlement, without weakening the
+	// public input checks performed while the model call was held.
+	durable := lastPersistedProjectInputForRequest(t, srv, result.request)
+	if durable.ClientID != projectResultClientID(worker.ID, userTurn.Turn.ID) {
+		t.Fatalf("settled result lost its delivery identity: %+v", durable)
+	}
+	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, noticeClientID); len(ids) != 1 {
+		t.Fatalf("direct user notice delivered %d times, want 1", len(ids))
+	}
+
 	// The project still manages the session.
 	handler := srv.projectSessionHandler(coordinator.ID)
 	if _, err := handler(context.Background(), "send-issues", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Add the known issues"}); err != nil {
 		t.Fatalf("send after the user wrote to the session: %v", err)
 	}
-	calls.next(t, "Add the known issues").response <- providersResponse("Added known issues.")
-	calls.next(t, "Plan the release note").response <- providersResponse("Done.")
+	calls.next(t, worker.ID, "Add the known issues").response <- providersResponse("Added known issues.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("Done.")
 }
 
 func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T) {
@@ -794,18 +829,18 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 	coordinator := startProject(t, client, "Release")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the release note"}, &turn)
-	calls.next(t, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
-	calls.next(t, "Plan the release note").response <- providersResponse("Started.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("Started.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
-	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
-	calls.next(t, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
+	calls.next(t, worker.ID, "Draft release note text").response <- providersResponse("Drafted the notes.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will finish the notes"}, &userTurn)
-	calls.next(t, "I will finish the notes")
+	calls.next(t, worker.ID, "I will finish the notes")
 	handler := srv.projectSessionHandler(coordinator.ID)
 	if _, err := handler(context.Background(), "old-advice", tools.ProjectSessionRequest{Action: "message", SessionID: worker.ID, Prompt: "Stale automatic advice", Wake: true}); err != nil {
 		t.Fatal(err)
@@ -822,7 +857,7 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 		t.Fatalf("stopped member cannot collaborate: %v", err)
 	}
 	// Recovery must neither wake the lead nor replay an old automatic input.
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	srv.drainSessionInbox(worker.ID)
 	calls.assertIdle(t)
 	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 0 {
@@ -831,7 +866,7 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 	if ids := deliveredClientIDs(t, srv.rt, worker.ID, "project-message:"+coordinator.ID+":old-advice"); len(ids) != 0 {
 		t.Fatalf("stopped work consumed stale input: %v", ids)
 	}
-	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
+	pending, err := srv.rt.Sessions.PendingInbox(coordinator.ID)
 	if err != nil || len(pending) < 2 {
 		t.Fatalf("intervention/result not retained: %+v, %v", pending, err)
 	}
@@ -843,8 +878,8 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 	if _, err := handler(context.Background(), "send-after-stop", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Add the known issues"}); err != nil {
 		t.Fatalf("send after stop: %v", err)
 	}
-	calls.next(t, "Add the known issues").response <- providersResponse("Added known issues.")
-	calls.next(t, "Plan the release note").response <- providersResponse("Done.")
+	calls.next(t, worker.ID, "Add the known issues").response <- providersResponse("Added known issues.")
+	calls.next(t, coordinator.ID, "Plan the release note").response <- providersResponse("Done.")
 }
 
 func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
@@ -855,7 +890,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	conversation := started.Thread
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: conversation.ID, Prompt: "Summarize the README"}, &turn)
-	calls.next(t, "Summarize the README").response <- providersResponse("The README explains setup.")
+	calls.next(t, conversation.ID, "Summarize the README").response <- providersResponse("The README explains setup.")
 	waitForThread(t, srv, conversation.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
 
 	adopt := func(sessionID string) *ResponseError {
@@ -866,7 +901,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	}
 	var other ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &other)
-	if _, err := session.SetWorkspaceID(rt.SessionDir, other.Thread.ID, "workspace-two"); err != nil {
+	if _, err := rt.Sessions.SetWorkspaceID(other.Thread.ID, "workspace-two"); err != nil {
 		t.Fatal(err)
 	}
 	if failure := adopt(other.Thread.ID); failure == nil {
@@ -874,7 +909,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	}
 	var managed ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &managed)
-	if _, err := session.ChangeControl(rt.SessionDir, managed.Thread.ID, "plugin:reviewer", session.ControlActive, 0); err != nil {
+	if _, err := rt.Sessions.ChangeControl(managed.Thread.ID, "plugin:reviewer", session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
 	if failure := adopt(managed.Thread.ID); failure == nil {
@@ -887,8 +922,8 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 		adopted.Thread.SessionControl == nil || adopted.Thread.SessionControl.ManagerID != coordinator.ID || adopted.Thread.SessionControl.State != session.ControlActive {
 		t.Fatalf("adopted conversation = %+v", adopted.Thread)
 	}
-	notice := calls.next(t, "added the conversation")
-	if last := lastUserRequestMessage(notice.request); last.Cause != projectCauseAdopted || last.RelatedSessionID != conversation.ID ||
+	notice := calls.next(t, coordinator.ID, "added the conversation")
+	if last := lastPersistedProjectInputForRequest(t, srv, notice.request); last.Cause != projectCauseAdopted || last.RelatedSessionID != conversation.ID ||
 		!strings.Contains(last.Content, "The README explains setup.") {
 		t.Fatalf("adoption notice = %+v", last)
 	}
@@ -898,9 +933,9 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	if _, err := handler(context.Background(), "send-adopted", tools.ProjectSessionRequest{Action: "send", SessionID: conversation.ID, Prompt: "List the setup steps"}); err != nil {
 		t.Fatalf("send to an adopted conversation: %v", err)
 	}
-	calls.next(t, "List the setup steps").response <- providersResponse("Install, then run make dev.")
-	result := calls.next(t, "added the conversation")
-	if last := lastUserRequestMessage(result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "run make dev") {
+	calls.next(t, conversation.ID, "List the setup steps").response <- providersResponse("Install, then run make dev.")
+	result := calls.next(t, coordinator.ID, "added the conversation")
+	if last := lastPersistedProjectInputForRequest(t, srv, result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "run make dev") {
 		t.Fatalf("adopted conversation result = %+v", last)
 	}
 	result.response <- providersResponse("Steps listed.")
@@ -923,8 +958,8 @@ func TestProjectCoordinatorCannotExecuteImplementationTools(t *testing.T) {
 	lead := startProject(t, client, "Direct work")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Write a small change"}, &turn)
-	calls.next(t, "Write a small change").response <- toolCallResponse("write-direct", "write_file", `{"path":"direct.txt","content":"done"}`)
-	calls.next(t, "Write a small change").response <- providersResponse("Done.")
+	calls.next(t, lead.ID, "Write a small change").response <- toolCallResponse("write-direct", "write_file", `{"path":"direct.txt","content":"done"}`)
+	calls.next(t, lead.ID, "Write a small change").response <- providersResponse("Done.")
 	waitForThread(t, srv, lead.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
 	if _, err := os.Stat(filepath.Join(rt.RootDir, "direct.txt")); !os.IsNotExist(err) {
 		t.Fatalf("coordinator wrote directly: %v", err)
@@ -933,8 +968,8 @@ func TestProjectCoordinatorCannotExecuteImplementationTools(t *testing.T) {
 	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Read-only project"}, PermissionMode: config.PermissionModeReadOnly}, &restricted)
 	lead = restricted.Thread
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Try a restricted change"}, &turn)
-	calls.next(t, "Try a restricted change").response <- toolCallResponse("write-restricted", "write_file", `{"path":"restricted.txt","content":"no"}`)
-	calls.next(t, "Try a restricted change").response <- providersResponse("Read-only.")
+	calls.next(t, restricted.Thread.ID, "Try a restricted change").response <- toolCallResponse("write-restricted", "write_file", `{"path":"restricted.txt","content":"no"}`)
+	calls.next(t, restricted.Thread.ID, "Try a restricted change").response <- providersResponse("Read-only.")
 	waitForThread(t, srv, lead.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
 	if _, err := os.Stat(filepath.Join(rt.RootDir, "restricted.txt")); !os.IsNotExist(err) {
 		t.Fatalf("lead bypassed read-only permissions: %v", err)
@@ -958,13 +993,15 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			lead := startProject(t, client, "Team")
 			var turn TurnStartResult
 			client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Build the team feature"}, &turn)
-			calls.next(t, "Build the team feature").response <- toolCallResponse("create-side", "session", `{"action":"create","role":"side","title":"Implementation","prompt":"Implement the team feature","workspace":"`+workspace+`"}`)
-			sideCall := calls.next(t, "Implement the team feature")
+			calls.next(t, lead.ID, "Build the team feature").response <- toolCallResponse("create-side", "session", `{"action":"create","role":"side","title":"Implementation","prompt":"Implement the team feature","workspace":"`+workspace+`"}`)
+			leadProgress := calls.next(t, lead.ID, "Build the team feature")
+			calls.stash = append(calls.stash, leadProgress)
+			side := projectManagedSessions(t, client, lead.ID)[0]
+			sideCall := calls.next(t, side.ID, "Implement the team feature")
 			if !requestToolNames(sideCall.request)["session"] {
 				t.Fatal("side has no session communication tool")
 			}
 			sideCall.response <- providersResponse("Implementation ready.")
-			side := projectManagedSessions(t, client, lead.ID)[0]
 			if side.ProjectRole != "side" {
 				t.Fatalf("listed side role = %q", side.ProjectRole)
 			}
@@ -988,17 +1025,17 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			workerID := workerView.(projectSessionView).SessionID
-			workerCall := calls.next(t, "Verify the team feature")
+			workerCall := calls.next(t, workerID, "Verify the team feature")
 			if !requestToolNames(workerCall.request)["session"] {
 				t.Fatal("worker has no session communication tool")
 			}
-			if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID ||
+			if msg := lastPersistedProjectInputForRequest(t, srv, workerCall.request); msg.RelatedSessionID != side.ID ||
 				msg.Origin != "host" || msg.Cause != "project" || isHumanUserMessage(msg) {
 				t.Fatalf("worker lost its delegator: %+v", msg)
 			}
 			workerCall.response <- providersResponse("Verified.")
-			sideResult := calls.next(t, "Implement the team feature")
-			if msg := lastUserRequestMessage(sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
+			sideResult := calls.next(t, side.ID, "Implement the team feature")
+			if msg := lastPersistedProjectInputForRequest(t, srv, sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
 				t.Fatalf("side did not receive worker completion: %+v", msg)
 			}
 			sideResult.response <- providersResponse("Worker verified implementation.")
@@ -1012,13 +1049,13 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			}
 
 			srv.Close()
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
 			reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
 			if err != nil || reused.(projectSessionView).SessionID != side.ID {
 				t.Fatalf("reloaded side = %+v, %v", reused, err)
 			}
-			metadata, found, err := session.Find(rt.SessionDir, side.ID)
+			metadata, found, err := rt.Sessions.Find(side.ID)
 			if err != nil || !found || metadata.ProjectRole != "side" {
 				t.Fatalf("persisted side = %+v, %v", metadata, err)
 			}
@@ -1032,7 +1069,7 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 	lead := startProject(t, client, "Peers")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Coordinate peer work"}, &turn)
-	calls.next(t, "Coordinate peer work").response <- providersResponse("Ready.")
+	calls.next(t, lead.ID, "Coordinate peer work").response <- providersResponse("Ready.")
 	waitForThread(t, srv, lead.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	create := func(id, prompt string) Thread {
 		t.Helper()
@@ -1040,7 +1077,7 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		calls.next(t, prompt).response <- providersResponse("Ready.")
+		calls.next(t, view.(projectSessionView).SessionID, prompt).response <- providersResponse("Ready.")
 		th := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 		settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Ready.", projectResultClientID(th.ID, th.LatestCompletedTurnID))
 		return th
@@ -1058,8 +1095,8 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 	if _, err := handler(context.Background(), "peer-question", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Does total count filtered rows?", Wake: true}); err != nil {
 		t.Fatal(err)
 	}
-	reply := calls.next(t, "Does total count filtered rows?")
-	msg := lastUserRequestMessage(reply.request)
+	reply := calls.next(t, receiver.ID, "Does total count filtered rows?")
+	msg := lastPersistedProjectInputForRequest(t, srv, reply.request)
 	if msg.RelatedSessionID != sender.ID || msg.Cause != "project_message" || msg.Origin != "host" {
 		t.Fatalf("peer provenance lost: %+v", msg)
 	}
@@ -1089,7 +1126,7 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "Prepare recovery work").response <- providersResponse("Ready.")
+	calls.next(t, view.(projectSessionView).SessionID, "Prepare recovery work").response <- providersResponse("Ready.")
 	member := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	resultID := projectResultClientID(member.ID, member.LatestCompletedTurnID)
 	settleCoordinator(t, srv, calls, lead.ID, "Ready.", "Noted.", resultID)
@@ -1100,20 +1137,20 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	if ids := deliveredClientIDs(t, rt, lead.ID, "project-message:"+member.ID+":information"); len(ids) != 0 {
 		t.Fatal("information woke idle lead")
 	}
-	control, _, err := session.ReadControl(rt.SessionDir, member.ID)
+	control, _, err := rt.Sessions.ReadControl(member.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	clientID := "project-message:" + member.ID + ":persisted-question"
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: clientID, SessionID: lead.ID, RelatedSessionID: member.ID, Cause: "project_message", Content: "Recovered peer question", Wake: true, Controls: []session.Control{control}}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{ClientID: clientID, SessionID: lead.ID, RelatedSessionID: member.ID, Cause: "project_message", Content: "Recovered peer question", Wake: true, Controls: []session.Control{control}}); err != nil {
 		t.Fatal(err)
 	}
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	settleCoordinator(t, reopened, calls, lead.ID, "Ready.", "Recovered.", clientID, "project-message:"+member.ID+":information")
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, lead.ID, clientID); len(ids) != 1 {
 		t.Fatalf("recovered message occurrences: %v", ids)
 	}
@@ -1130,7 +1167,7 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 	sideID := view.(projectSessionView).SessionID
-	calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
+	calls.next(t, sideID, "Prepare side").response <- providersResponse("Side ready.")
 	side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
 	view, err = srv.projectSessionHandler(sideID)(context.Background(), "worker", tools.ProjectSessionRequest{Action: "create", Prompt: "Hold worker", Workspace: "shared"})
@@ -1138,13 +1175,13 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 	workerID := view.(projectSessionView).SessionID
-	calls.next(t, "Hold worker")
+	calls.next(t, workerID, "Hold worker")
 	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: workerID}, nil)
 	waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" && th.Status == ThreadStatusIdle })
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	calls.assertIdle(t)
 	for _, target := range []string{lead.ID, sideID} {
-		pending, err := session.PendingInbox(rt.SessionDir, target)
+		pending, err := rt.Sessions.PendingInbox(target)
 		if err != nil || len(pending) == 0 {
 			t.Fatalf("missing stopped report for %s: %v", target, err)
 		}
@@ -1162,8 +1199,8 @@ func TestProjectNonWakingNoticeConsumptionIsIdempotent(t *testing.T) {
 	lead := startProject(t, client, "Notice retry")
 	var started TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Hold current work"}, &started)
-	held := calls.next(t, "Hold current work")
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: "notice-retry", SessionID: lead.ID, Cause: projectCauseUserMessage, Content: "User intervention", Wake: false}); err != nil {
+	held := calls.next(t, lead.ID, "Hold current work")
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{ClientID: "notice-retry", SessionID: lead.ID, Cause: projectCauseUserMessage, Content: "User intervention", Wake: false}); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(lead.ID)
@@ -1201,7 +1238,7 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 				t.Fatal(err)
 			}
 			sideID := sideView.(projectSessionView).SessionID
-			calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
+			calls.next(t, sideID, "Prepare side").response <- providersResponse("Side ready.")
 			side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 			settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
 			view, err := srv.projectSessionHandler(sideID)(context.Background(), "member", tools.ProjectSessionRequest{Action: "create", Prompt: "Prepare legacy work", Workspace: "shared"})
@@ -1209,19 +1246,22 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 				t.Fatal(err)
 			}
 			memberID := view.(projectSessionView).SessionID
-			held := calls.next(t, "Prepare legacy work")
-			active, _, err := session.ReadControl(rt.SessionDir, memberID)
+			held := calls.next(t, memberID, "Prepare legacy work")
+			active, _, err := rt.Sessions.ReadControl(memberID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			control, err := session.ChangeControl(rt.SessionDir, memberID, lead.ID, state, active.Revision)
+			control, err := rt.Sessions.ChangeControl(memberID, lead.ID, state, active.Revision)
 			if err != nil {
 				t.Fatal(err)
 			}
 			held.response <- providersResponse("Ready.")
 			member := waitForThread(t, srv, memberID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 			calls.assertIdle(t)
-			plugin, err := session.ChangeControl(rt.SessionDir, "plugin-member", "plugin:example", state, 0)
+			if _, err := rt.Sessions.CreateInitialized(session.Session{ID: "plugin-member", Source: "plugin", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil); err != nil {
+				t.Fatal(err)
+			}
+			plugin, err := rt.Sessions.ChangeControl("plugin-member", "plugin:example", state, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1239,26 +1279,30 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(otherRuntime.WuuHome, "projects.json"), registry, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			otherHost := New(otherRuntime, &lockedBuffer{})
+			otherHost := newProjectProviderTestServer(t, otherRuntime, &lockedBuffer{})
+			// Scheduler readiness precedes recovery; complete the native startup
+			// pass before checking its migration effects in either workspace.
+			projectFixtureProvider(otherHost).startProjectRecovery()
 			otherHost.Close()
-			foreign, _, err := session.ReadControl(rt.SessionDir, memberID)
+			foreign, _, err := rt.Sessions.ReadControl(memberID)
 			if err != nil || foreign != control {
 				t.Fatalf("foreign host migrated member: %+v, %v", foreign, err)
 			}
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
-			reopened.recoverProjectInbox()
+			projectFixtureProvider(reopened).startProjectRecovery()
+			reopened.projectTestRecoverInbox()
 			for _, resultID := range []string{projectResultClientID(memberID, member.LatestCompletedTurnID), projectResultClientID(memberID, member.LatestCompletedTurnID) + ":" + sideID} {
-				settled, err := session.InboxHas(rt.SessionDir, resultID)
+				settled, err := rt.Sessions.InboxHas(resultID)
 				if err != nil || !settled {
 					t.Fatalf("legacy result not settled: %s, %v", resultID, err)
 				}
 			}
-			restored, ok, err := session.ReadControl(rt.SessionDir, memberID)
+			restored, ok, err := rt.Sessions.ReadControl(memberID)
 			if err != nil || !ok || restored.State != session.ControlActive || restored.Revision <= control.Revision {
 				t.Fatalf("legacy member stranded: %+v, %v", restored, err)
 			}
-			unchanged, _, err := session.ReadControl(rt.SessionDir, plugin.SessionID)
+			unchanged, _, err := rt.Sessions.ReadControl(plugin.SessionID)
 			if err != nil || unchanged != plugin {
 				t.Fatalf("plugin control changed: %+v, %v", unchanged, err)
 			}
@@ -1266,8 +1310,8 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			if _, err := reopened.projectSessionHandler(lead.ID)(context.Background(), "new-work", tools.ProjectSessionRequest{Action: "send", SessionID: memberID, Prompt: "New work after migration"}); err != nil {
 				t.Fatal(err)
 			}
-			calls.next(t, "New work after migration").response <- providersResponse("New work done.")
-			calls.next(t, "New work done.").response <- providersResponse("Received new result.")
+			calls.next(t, memberID, "New work after migration").response <- providersResponse("New work done.")
+			calls.next(t, lead.ID, "New work done.").response <- providersResponse("Received new result.")
 		})
 	}
 }
@@ -1281,12 +1325,12 @@ func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "Inspect steering").response <- providersResponse("Sender ready.")
+	calls.next(t, view.(projectSessionView).SessionID, "Inspect steering").response <- providersResponse("Sender ready.")
 	sender := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Ready.", projectResultClientID(sender.ID, sender.LatestCompletedTurnID))
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Wait for the current model response"}, &turn)
-	held := calls.next(t, "Wait for the current model response")
+	held := calls.next(t, lead.ID, "Wait for the current model response")
 	if _, err := srv.projectSessionHandler(sender.ID)(context.Background(), "revoked-steer", tools.ProjectSessionRequest{Action: "message", SessionID: lead.ID, Prompt: "Revoked peer input"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1311,14 +1355,14 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	side := value.(projectSessionView)
-	calls.next(t, "side stays busy")
+	calls.next(t, side.SessionID, "side stays busy")
 	var ordinary ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &ordinary)
 	var adopted ProjectSessionResult
 	client.rpc(t, MethodProjectSession, ProjectSessionParams{Action: "adopt", ProjectID: lead.ID, SessionID: ordinary.Thread.ID}, &adopted)
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: ordinary.Thread.ID, Prompt: "adopted worker busy"}, &turn)
-	calls.next(t, "adopted worker busy")
+	calls.next(t, ordinary.Thread.ID, "adopted worker busy")
 	result, err := srv.projectSessionHandler(side.SessionID)(context.Background(), "wait-adopted", tools.ProjectSessionRequest{Action: "wait", SessionID: ordinary.Thread.ID, TurnID: turn.Turn.ID, TimeoutMS: 1})
 	if err != nil {
 		t.Fatalf("side cannot wait for adopted worker: %v", err)
@@ -1326,4 +1370,34 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 	if !result.(projectSessionView).TimedOut {
 		t.Fatalf("expected in-flight wait timeout: %+v", result)
 	}
+}
+
+// The model wire carries conversational content and attribution, not private
+// delivery identities. Check its last input against the selected durable record
+// before inspecting ClientID, presentation, and related-session metadata.
+func lastPersistedProjectInputForRequest(t *testing.T, srv *Server, request providers.ChatRequest) providers.ChatMessage {
+	t.Helper()
+	if request.CacheHint == nil || request.CacheHint.PromptCacheKey == "" {
+		t.Fatal("request lacks thread identity")
+	}
+	history, err := loadChatMessages(srv.rt.Sessions, request.CacheHint.PromptCacheKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := lastUserRequestMessage(request)
+	var matching []providers.ChatMessage
+	for _, message := range history {
+		if message.Role == wire.Role && message.Content == wire.Content {
+			matching = append(matching, message)
+		}
+	}
+	if len(matching) != 1 {
+		t.Fatalf("model input matches %d durable records, want exactly one: wire=%+v history=%+v", len(matching), wire, history)
+	}
+	// A non-waking notice may already follow this admitted request in history.
+	durable := matching[0]
+	if wire.Role != durable.Role || wire.Content != durable.Content || wire.Name != durable.Name || wire.Origin != durable.Origin || wire.Cause != durable.Cause || wire.ReadOnly != durable.ReadOnly {
+		t.Fatalf("model input differs from admitted durable input: wire=%+v durable=%+v", wire, durable)
+	}
+	return durable
 }

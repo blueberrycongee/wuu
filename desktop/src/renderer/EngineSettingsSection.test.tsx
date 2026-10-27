@@ -1,9 +1,11 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineListResult, EngineUpdateParams } from "../shared/protocol";
 import { readDraftEngineMemory, writeDraftEngineMemory } from "./DraftEngineMemory";
-import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
+import { EngineSettingsSection } from "./EngineSettingsSection";
 
 const inventory: EngineListResult = {
   engines: [
@@ -30,16 +32,7 @@ afterEach(() => {
   container.remove();
 });
 
-function defaultPicker(): HTMLButtonElement {
-  return container.querySelector<HTMLButtonElement>('[data-testid="settings-default-engine"]')!;
-}
-
-async function openDefaultPicker(): Promise<HTMLButtonElement[]> {
-  await act(async () => defaultPicker().click());
-  return [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")];
-}
-
-// The parent owns list/detail navigation while both settings share inventory.
+// The parent owns list/detail navigation.
 function Harness({ result, onUpdate, onRefresh }: {
   result?: EngineListResult;
   onUpdate: (params: EngineUpdateParams) => Promise<EngineListResult>;
@@ -47,7 +40,6 @@ function Harness({ result, onUpdate, onRefresh }: {
 }) {
   const [selectedEngineID, setSelectedEngineID] = useState<string>();
   return <>
-    <DefaultEngineRow result={result} onUpdate={onUpdate} />
     <EngineSettingsSection result={result} onRefresh={onRefresh} onUpdate={onUpdate}
       selectedEngineID={selectedEngineID} onSelectEngine={setSelectedEngineID}
       onCloseEngine={() => setSelectedEngineID(undefined)} />
@@ -55,7 +47,7 @@ function Harness({ result, onUpdate, onRefresh }: {
 }
 
 function render(result: EngineListResult | undefined, onUpdate = vi.fn(), onRefresh = vi.fn()) {
-  act(() => root.render(<Harness result={result} onUpdate={onUpdate} onRefresh={onRefresh} />));
+  act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<Harness result={result} onUpdate={onUpdate} onRefresh={onRefresh} />}</SettingsControlsProvider>));
   return { onUpdate, onRefresh };
 }
 
@@ -64,19 +56,19 @@ describe("EngineSettingsSection", () => {
     const onSelectEngine = vi.fn();
     const onCloseEngine = vi.fn();
     const props = { result: inventory, embedded: true, onUpdate: vi.fn(), onRefresh: vi.fn(), onSelectEngine, onCloseEngine };
-    act(() => root.render(<EngineSettingsSection {...props} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());
     expect(onSelectEngine).toHaveBeenCalledWith("codex");
     expect(container.querySelector('[data-testid="subscription-engine-codex"]')).toBeNull();
 
-    await act(async () => root.render(<EngineSettingsSection {...props} selectedEngineID="codex" />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} selectedEngineID="codex" />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="subscription-engine-codex"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="settings-engine-connections"]')).toBeNull();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-connection-back"]')!.click());
     expect(onCloseEngine).toHaveBeenCalledOnce();
 
-    act(() => root.render(<EngineSettingsSection {...props} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="subscription-engine-codex"]')).toBeNull();
   });
@@ -85,8 +77,8 @@ describe("EngineSettingsSection", () => {
     let resolveSave: ((value: EngineListResult) => void) | undefined;
     const onUpdate = vi.fn(() => new Promise<EngineListResult>(resolve => { resolveSave = resolve; }));
     const onCloseEngine = vi.fn();
-    await act(async () => root.render(<EngineSettingsSection result={inventory} selectedEngineID="codex"
-      onSelectEngine={vi.fn()} onCloseEngine={onCloseEngine} onRefresh={vi.fn()} onUpdate={onUpdate} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection result={inventory} selectedEngineID="codex"
+      onSelectEngine={vi.fn()} onCloseEngine={onCloseEngine} onRefresh={vi.fn()} onUpdate={onUpdate} />}</SettingsControlsProvider>));
     const input = container.querySelector<HTMLInputElement>('[data-testid="settings-engine-codex-path"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "/custom/codex");
@@ -107,16 +99,13 @@ describe("EngineSettingsSection", () => {
     await act(async () => resolveSave?.(inventory));
     expect(back.disabled).toBe(false);
   });
-  it("saves defaults and disables engines discovered outside the native pair", async () => {
+  it("disables engines discovered outside the native pair", async () => {
     const live: EngineListResult = {
       engines: [{ id: "devin", display_name: "Devin", enabled: true, binary_ok: true }],
       settings: { devin: { binary_path: "/opt/devin" } },
     };
     const onUpdate = vi.fn().mockResolvedValue(live);
     render(live, onUpdate);
-    const devin = (await openDefaultPicker()).find((item) => item.dataset.value === "devin")!;
-    await act(async () => devin.click());
-    expect(onUpdate).toHaveBeenLastCalledWith({ default_engine: "devin" });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-status"]')!.click());
     expect(document.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-path"]')!.value).toBe("/opt/devin");
     await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-enabled"]')!.click());
@@ -127,7 +116,6 @@ describe("EngineSettingsSection", () => {
     const onRefresh = vi.fn();
     render(inventory, vi.fn(), onRefresh);
 
-    expect(defaultPicker().textContent).toContain("Wuu");
     expect(container.querySelector('[data-testid="settings-engine-codex-status"]')?.getAttribute("aria-label")).toContain("已就绪");
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -146,7 +134,6 @@ describe("EngineSettingsSection", () => {
 
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(refresh.disabled).toBe(true);
-    expect(defaultPicker()).not.toBeNull();
 
     await act(async () => {
       resolveRefresh?.(inventory);
@@ -158,11 +145,10 @@ describe("EngineSettingsSection", () => {
     render(undefined);
 
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(defaultPicker().disabled).toBe(true);
     expect(container.querySelector('[data-testid="settings-engine-refresh"]')).not.toBeNull();
   });
 
-  it("hides absent default-enabled catalog engines and keeps them out of the default picker", async () => {
+  it("hides absent default-enabled catalog engines", async () => {
     const missingClaude: EngineListResult = {
       engines: [
         { id: "wuu", enabled: true, binary_ok: true },
@@ -173,26 +159,7 @@ describe("EngineSettingsSection", () => {
     };
     render(missingClaude);
 
-    const options = await openDefaultPicker();
-    expect(options.map((item) => item.dataset.value)).toEqual(["wuu", "codex"]);
     expect(container.querySelector('[data-testid="settings-engine-claude-status"]')).toBeNull();
-  });
-
-  it("lists a switched-off agent in the default picker without letting it be picked", async () => {
-    const onUpdate = vi.fn();
-    render({
-      engines: [
-        { id: "wuu", enabled: true, binary_ok: true },
-        { id: "codex", enabled: false, binary_ok: true },
-      ],
-      settings: { default_engine: "wuu", codex: { enabled: false } },
-    }, onUpdate);
-
-    const codex = (await openDefaultPicker()).find((item) => item.dataset.value === "codex")!;
-    expect(codex.disabled).toBe(true);
-    expect(codex.textContent).toContain("已停用");
-    await act(async () => codex.click());
-    expect(onUpdate).not.toHaveBeenCalled();
   });
 
   it("shows a detected binary path only in the override field", async () => {
@@ -246,16 +213,16 @@ describe("EngineSettingsSection", () => {
         account: { id: "other-account", label: "Other account" } } },
     ] });
     const props = { embedded: true, showAll: true, onUpdate: vi.fn(), onRefresh: vi.fn(), onSelectEngine: vi.fn(), onCloseEngine: vi.fn() };
-    await act(async () => root.render(<EngineSettingsSection {...props} result={active} selectedEngineID="codex" />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={active} selectedEngineID="codex" />}</SettingsControlsProvider>));
     expect(container.textContent).toContain("First account");
     expect(container.textContent).not.toContain("Other account");
     const disabled: EngineListResult = { ...active,
       engines: [{ ...active.engines[0], enabled: false }],
       settings: { codex: { enabled: false, binary_path: "/first/codex" } },
     };
-    act(() => root.render(<EngineSettingsSection {...props} result={disabled} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={disabled} />}</SettingsControlsProvider>));
     expect(container.querySelector<HTMLMeterElement>('[data-testid="settings-engine-codex-status"] meter')?.value).toBe(75);
-    act(() => root.render(<EngineSettingsSection {...props} result={disabled} quotaFailed />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={disabled} quotaFailed />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="settings-engine-codex-status"] meter')).toBeNull();
     expect(container.querySelector('[data-testid="settings-engine-codex-status"]')?.textContent).toContain("75");
     const overview: EngineListResult = { ...disabled, engines: [{ ...disabled.engines[0], quota: {
@@ -263,25 +230,25 @@ describe("EngineSettingsSection", () => {
       checked_at: new Date(observedAt - 60_000).toISOString(),
       windows: [{ id: "weekly", label: "Weekly", used_percent: 10, window_minutes: 10080 }],
     } }] };
-    act(() => root.render(<EngineSettingsSection {...props} result={overview} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={overview} />}</SettingsControlsProvider>));
     expect(container.querySelector<HTMLMeterElement>('[data-testid="settings-engine-codex-status"] meter')?.value).toBe(75);
     overview.engines[0].quota!.observed_at = undefined;
     overview.engines[0].quota!.checked_at = "";
-    act(() => root.render(<EngineSettingsSection {...props} result={{ ...overview }} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={{ ...overview }} />}</SettingsControlsProvider>));
     expect(container.querySelector<HTMLMeterElement>('[data-testid="settings-engine-codex-status"] meter')?.value).toBe(75);
     overview.engines[0].quota!.observed_at = new Date(observedAt + 60_000).toISOString();
-    act(() => root.render(<EngineSettingsSection {...props} result={{ ...overview }} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={{ ...overview }} />}</SettingsControlsProvider>));
     expect(container.querySelector<HTMLMeterElement>('[data-testid="settings-engine-codex-status"] meter')?.value).toBe(90);
-    await act(async () => root.render(<EngineSettingsSection {...props} result={disabled} selectedEngineID="codex" />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={disabled} selectedEngineID="codex" />}</SettingsControlsProvider>));
     expect(container.textContent).toContain("First account");
     expect(window.wuu.listEngines).toHaveBeenCalledOnce();
     const changed: EngineListResult = { ...disabled,
       engines: [{ ...disabled.engines[0], binary_path: "/second/codex" }],
       settings: { codex: { enabled: false, binary_path: "/second/codex" } },
     };
-    act(() => root.render(<EngineSettingsSection {...props} result={changed} />));
+    act(() => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={changed} />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="settings-engine-codex-status"] meter')).toBeNull();
-    await act(async () => root.render(<EngineSettingsSection {...props} result={changed} selectedEngineID="codex" />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} result={changed} selectedEngineID="codex" />}</SettingsControlsProvider>));
     expect(container.textContent).not.toContain("First account");
     expect(window.wuu.listEngines).toHaveBeenCalledOnce();
   });
@@ -289,7 +256,7 @@ describe("EngineSettingsSection", () => {
   it("opens a hidden catalog engine by selection and retains a failed path draft for retry", async () => {
     const missing: EngineListResult = { engines: [{ id: "codex", enabled: false, binary_ok: false }] };
     const onUpdate = vi.fn().mockRejectedValueOnce(new Error("Cannot save path")).mockResolvedValue(missing);
-    await act(async () => root.render(<EngineSettingsSection result={missing} embedded selectedEngineID="codex" onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onUpdate={onUpdate} onRefresh={vi.fn()} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection result={missing} embedded selectedEngineID="codex" onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onUpdate={onUpdate} onRefresh={vi.fn()} />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="settings-connection-back"]')).not.toBeNull();
     const input = document.querySelector<HTMLInputElement>('[data-testid="settings-engine-codex-path"]')!;
     await act(async () => {
@@ -316,8 +283,8 @@ it("opens an official update guide without changing engine configuration or star
   const openExternal = vi.fn().mockResolvedValue(undefined);
   const onUpdate = vi.fn();
   window.wuu = { ...window.wuu, openExternal, listEngines: vi.fn().mockResolvedValue(live), authenticateEngine: vi.fn() };
-  await act(async () => root.render(<EngineSettingsSection result={live} selectedEngineID="claude"
-    onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onRefresh={vi.fn()} onUpdate={onUpdate} />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection result={live} selectedEngineID="claude"
+    onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onRefresh={vi.fn()} onUpdate={onUpdate} />}</SettingsControlsProvider>));
   expect(container.textContent).toContain("2.1.302");
   await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="engine-update-guide"]')!.click());
   expect(openExternal).toHaveBeenCalledExactlyOnceWith(live.engines[0].update_url);
@@ -333,14 +300,14 @@ it("keeps disabled models recoverable and preserves model selection while reorde
   writeDraftEngineMemory({ engine: "claude", model: "sonnet", effort: "high" });
   const onUpdate = vi.fn();
   const props = { result: live, selectedEngineID: "claude", onSelectEngine: vi.fn(), onCloseEngine: vi.fn(), onRefresh: vi.fn(), onUpdate };
-  await act(async () => root.render(<EngineSettingsSection {...props} />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
   await act(async () => container.querySelector<HTMLButtonElement>('[data-model-id="opus"] [role="switch"]')!.click());
   expect(container.querySelector('[data-model-id="opus"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
   await act(async () => container.querySelector<HTMLButtonElement>('[data-model-id="opus"] .connection-model-order button')!.click());
   expect([...container.querySelectorAll('[data-model-id]')].map(row => row.getAttribute("data-model-id"))).toEqual(["opus", "sonnet"]);
   expect(readDraftEngineMemory()).toMatchObject({ engine: "claude", model: "sonnet", effort: "high" });
   expect(onUpdate).not.toHaveBeenCalled();
-  await act(async () => root.render(<EngineSettingsSection {...props} selectedEngineID={undefined} />));
-  await act(async () => root.render(<EngineSettingsSection {...props} />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} selectedEngineID={undefined} />}</SettingsControlsProvider>));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-model-id="opus"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
 });

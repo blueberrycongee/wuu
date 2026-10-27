@@ -93,6 +93,12 @@ func exactContextWindowOverride(lower, stripped string) (int, bool) {
 var exactContextWindowOverrides = []contextWindowEntry{
 	{"claude-opus-5-5", 1_000_000},
 	{"claude-fable-5-1", 1_000_000},
+	// Gemini 4 has a unified input/output window. Keep the exact override
+	// because older catalog snapshots do not know the model yet.
+	{"gemini-4-argon", 1_048_576},
+	// MiniMax official docs list MiniMax-M3.1-Flash at 1M context. Keep
+	// this exact override for gateways whose catalog lags the vendor.
+	{"minimax-m3.1-flash", 1_000_000},
 	// MiniMax official docs list MiniMax-M3 at 1M context and M2-series
 	// text models at 204,800. Keep these exact overrides ahead of the
 	// embedded catalog because older catalog snapshots have reported
@@ -179,6 +185,7 @@ var contextWindowRegistry = []contextWindowEntry{
 	{"grok-4", 500_000},
 
 	// --- Google Gemini ----------------------------------------------
+	{"gemini-4", 1_048_576},
 	{"gemini-2.5-pro", 2_000_000},
 	{"gemini-2.0", 2_000_000},
 	{"gemini-2", 2_000_000},
@@ -187,6 +194,12 @@ var contextWindowRegistry = []contextWindowEntry{
 	{"gemini-1.5", 1_000_000},
 	{"gemini-1", 32_000},
 	{"gemini", 32_000},
+
+	// --- MiniMax ----------------------------------------------------
+	// MiniMax-M3.1-Flash and M3 share the 1M context window; the exact
+	// override above wins for the canonical ID.
+	{"minimax-m3.1", 1_000_000},
+	{"minimax-m3", 1_000_000},
 
 	// --- Mistral ----------------------------------------------------
 	{"mistral-large", 128_000},
@@ -274,9 +287,13 @@ var maxOutputTokensRegistry = []contextWindowEntry{
 	// not as a fixed model-level output ceiling.
 	{"grok-4.7", 128_000},
 	{"grok-4.6", 128_000},
-	// MiniMax-M3 documents 128K as the recommended Chat Completions output
+	// MiniMax-M3.1-Flash and M3 document 128K as the recommended output
 	// cap, with larger values allowed by explicit request.
+	{"minimax-m3.1", 131_072},
 	{"minimax-m3", 131_072},
+	// Gemini 4 generates 65,536 output tokens per synchronous streaming
+	// request unless the caller explicitly continues a long decode.
+	{"gemini-4", 65_536},
 	// Gemini
 	{"gemini-2.5-pro", 65_536},
 	{"gemini-2", 8_192},

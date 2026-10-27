@@ -404,3 +404,30 @@ func TestProviderLeaseTransportFallbackDoesNotOpenAccountCircuit(t *testing.T) {
 		t.Fatalf("coordinator=%+v submission=%+v", coordinatorState, submission)
 	}
 }
+
+func TestProviderCoordinatorCloseStopsQueuedAdmission(t *testing.T) {
+	coordinator := NewProviderCoordinator(ProviderCoordinatorConfig{MaxInFlight: 1})
+	lease, err := coordinator.Acquire(context.Background(), "account", ProviderPriorityInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := make(chan error, 1)
+	go func() {
+		_, err := coordinator.Acquire(context.Background(), "account", ProviderPriorityInteractive)
+		queued <- err
+	}()
+	waitForProviderCoordinator(t, func() bool { return coordinator.Snapshot("account").Waiting == 1 }, "queued admission")
+	coordinator.Close()
+	select {
+	case err := <-queued:
+		if err == nil {
+			t.Fatal("closed coordinator admitted queued request")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close stranded queued admission")
+	}
+	lease.Release()
+	if _, err := coordinator.Acquire(context.Background(), "account", ProviderPriorityInteractive); err == nil {
+		t.Fatal("closed coordinator accepted new request")
+	}
+}

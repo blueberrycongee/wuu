@@ -13,14 +13,20 @@ if (args.some((arg) => arg !== "--check" && !arg.startsWith("--plugin="))) {
   throw new Error("usage: node scripts/build-bundled-plugins.mjs [--plugin=<id>] [--check]");
 }
 const pluginsRoot = join(root, "plugins");
-const pluginIDs = (await readdir(pluginsRoot, { withFileTypes: true }))
+const bundledRoot = join(root, "internal/plugin/bundled");
+const sourceIDs = (await readdir(pluginsRoot, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules")
   .map((entry) => entry.name).sort();
-if (selected && !pluginIDs.includes(selected)) throw new Error(`unknown bundled plugin: ${selected}`);
+const bundledIDs = (await readdir(bundledRoot, { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+const pluginIDs = sourceIDs.filter((id) => bundledIDs.includes(id));
+if (selected && !sourceIDs.includes(selected)) throw new Error(`unknown plugin: ${selected}`);
 
 for (const id of selected ? [selected] : pluginIDs) {
-  const packageRoot = join(root, "internal/plugin/bundled", id);
+  // Optional packages are built only when explicitly selected, never embedded.
+  const packageRoot = bundledIDs.includes(id) ? join(bundledRoot, id) : join(pluginsRoot, id, "package");
   const manifest = JSON.parse(await readFile(join(packageRoot, "plugin.json"), "utf8"));
+  if (!manifest.runtime) continue;
   const result = await build({
     absWorkingDir: root,
     stdin: {
@@ -57,7 +63,7 @@ await runJSONLRuntime(plugin, { input: process.stdin, output: process.stdout });
   }
   await writeChanged(runtime, output);
 
-  // The canonical package stays beside the embedded assets. A generated local
+  // The canonical package contains its runtime and assets. A generated local
   // manifest and dist copy let the ordinary public directory watcher rebuild
   // this same package without duplicating its author-maintained metadata.
   const developmentRoot = join(pluginsRoot, id);

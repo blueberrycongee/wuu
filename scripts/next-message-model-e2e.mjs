@@ -4,14 +4,13 @@
 // Exercises the real plugin process, Go host/model service and HTTP transport.
 // Only the model provider is synthetic; all requests stay on loopback.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -21,6 +20,28 @@ await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state");
 await mkdir(home);
+await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
+const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
+if (!process.env.WUU_E2E_SESSION_FIXTURE) {
+  const build = spawnSync("go", ["build", "-o", fixtureBinary, "./scripts/session-fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(build.status, 0, build.stderr);
+}
+function fixture(input) {
+  const reply = spawnSync(fixtureBinary, [], { input: JSON.stringify({ home, workdir: scratch, ...input }),
+    encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(reply.status, 0, reply.stderr);
+  return reply.stdout;
+}
+function journal() {
+  const { documents } = JSON.parse(fixture({ op: "inspect",
+    domains: ["inference_operations", "inference_submissions", "inference_workflows"] }));
+  return {
+    operations: documents.inference_operations.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+    submissions: documents.inference_submissions.map(document => document.value).sort((a, b) => Date.parse(a.StartedAt) - Date.parse(b.StartedAt) || a.Ordinal - b.Ordinal),
+    workflows: documents.inference_workflows.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+  };
+}
+
 const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [];
 const releases = new Map();
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed" };
@@ -58,7 +79,7 @@ async function rpc(method, params = {}) {
 }
 
 const clientParams = (method, input = {}, request_id = `client-${sequence + 1}`) => ({
-  id: item.id, fingerprint: item.fingerprint, request_id, method, input,
+  id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation, request_id, method, input,
 });
 const call = async (method, input, requestID) =>
   (await rpc("plugin/client/request", clientParams(method, input, requestID))).result;
@@ -316,7 +337,8 @@ try {
     ...turn("gated-cancel-survivor"), threadId: "cancel-survivor-thread",
   });
   await waitFor("provider", providerCalls, call => call.tag === "gated-cancel-survivor", "cancel survivor started");
-  const identity = { id: item.id, fingerprint: item.fingerprint, request_id: cancelledParams.request_id };
+  const identity = { id: cancelledParams.id, fingerprint: cancelledParams.fingerprint,
+    graph_generation: cancelledParams.graph_generation, request_id: cancelledParams.request_id };
   assert.equal((await rpc("plugin/client/cancel", { ...identity, request_id: "unrelated" })).cancelled, false);
   assert(!closed.some(entry => entry.tag === "hold-cancel"));
   const cancelStarted = Date.now();
@@ -343,29 +365,23 @@ try {
   const disableClosed = await waitFor("closed", closed, entry => entry.tag === "hold-disable", "disable disconnect");
   result.disable_transport_ms = disableClosed.at - disableStarted;
   assert(result.disable_transport_ms < 2500, `disable waited for the request deadline: ${result.disable_transport_ms}ms`);
-  assert.deepEqual((await rpc("plugin/executions/list")).executions, []);
+  assert.deepEqual((await rpc("plugin/executions/list")).executions.filter(execution => execution.plugin_id === "next-message"), []);
   assert.deepEqual(await rpc("thread/list"), beforeThreads);
-  result.checks.push("package disable revokes in-flight inference and leaves no live execution or hidden thread");
+  result.checks.push("package disable revokes in-flight inference and leaves no live next-message execution or hidden thread");
 
   await stopChild();
-  const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
-  try {
-    result.accounting = {
-      operations: db.prepare("SELECT owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
-      submissions: db.prepare("SELECT cost_state, reported_input_tokens, reported_output_tokens, has_reported_usage FROM inference_submissions ORDER BY started_at").all(),
-      workflows: db.prepare("SELECT owner_id, status FROM inference_workflows ORDER BY created_at").all(),
-      sessions: db.prepare("SELECT count(*) AS count FROM sessions").get().count,
-      messages: db.prepare("SELECT count(*) AS count FROM session_messages").get().count,
-    };
-  } finally { db.close(); }
+  const historyJSON = fixture({ op: "read" });
+  const persisted = JSON.parse(historyJSON).sessions;
+  result.accounting = { ...journal(), sessions: persisted.length,
+    messages: persisted.flatMap(thread => thread.history).length };
   const accounting = result.accounting;
   assert.equal(accounting.operations.length, providerCalls.length);
   assert.equal(accounting.submissions.length, providerCalls.length);
-  assert(accounting.operations.every(operation => operation.owner_id === "plugin:next-message" && operation.kind === "auxiliary" && operation.status !== "active"));
-  assert(accounting.workflows.every(workflow => workflow.status !== "active"));
-  const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
+  assert(accounting.operations.every(operation => operation.OwnerID === "plugin:next-message" && operation.Kind === "auxiliary" && operation.Status !== "active"));
+  assert(accounting.workflows.every(workflow => workflow.Status !== "active"));
+  const reported = accounting.submissions.filter(submission => submission.ReportedUsage);
   assert.equal(reported.length, 15);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 150);
+  assert.equal(reported.reduce((total, usage) => total + usage.ReportedUsage.InputTokens + usage.ReportedUsage.OutputTokens, 0), 150);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable plugin-owned terminal accounting and reported usage; zero sessions/messages persisted");

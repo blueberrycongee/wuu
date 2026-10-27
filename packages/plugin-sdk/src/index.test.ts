@@ -1,11 +1,8 @@
 import {
   CAPABILITY_PROTOCOL_V2,
-  COMPOSER_ACTIONS,
   CONVERSATION_ITEM_ACTIONS,
   FILE_PREVIEW_ACTIONS,
   HEADER_ACTIONS,
-  NAVIGATION_ACTIONS,
-  PRESENTATION_TARGETS,
   PUBLIC_SYNTAX_TOKEN_NAMES,
   PUBLIC_THEME_TOKEN_NAMES,
   REQUEST_TRANSFORM_CAPABILITY,
@@ -29,8 +26,6 @@ import {
   type PresenterDefinition,
   type SettingsSnapshotV1,
   type StatusSnapshotV1,
-  type ToolActivityPresenterDefinition,
-  type ToolActivitySnapshot,
   type ViewPlacementContribution,
 } from "./index.js";
 
@@ -51,9 +46,6 @@ const steerDelivery: HostServiceContracts["host.session.send"]["params"] = {
   if_running: "steer",
 };
 
-if (!PRESENTATION_TARGETS.includes("conversation.tool-activity") || !PRESENTATION_TARGETS.includes("settings")) {
-  throw new Error("presentation target contract failed");
-}
 if (!PUBLIC_THEME_TOKEN_NAMES.includes("--wuu-color-canvas") || !PUBLIC_SYNTAX_TOKEN_NAMES.includes("--wuu-syntax-keyword")) {
   throw new Error("theme token contract failed");
 }
@@ -138,28 +130,12 @@ const settings: SettingsSnapshotV1 = Object.freeze({
 
 const actionIds = [
   CONVERSATION_ITEM_ACTIONS.copy,
-  COMPOSER_ACTIONS.submit,
   HEADER_ACTIONS.selectTab,
-  NAVIGATION_ACTIONS.activateNode,
   STATUS_ACTIONS.activateItem,
   FILE_PREVIEW_ACTIONS.open,
   SETTINGS_ACTIONS.openPage,
 ];
 if (actionIds.some((action) => !action.includes("."))) throw new Error("presentation action ID contract failed");
-
-const snapshot: ToolActivitySnapshot = Object.freeze({
-  contractVersion: 1,
-  id: "call",
-  toolName: "echo",
-  status: "running",
-  argumentsText: '{"partial":',
-});
-const presenter: ToolActivityPresenterDefinition = {
-  id: "echo",
-  key: "tool.echo",
-  render: ({ activity, fallback }) => activity.id === "call" ? activity.argumentsText : fallback,
-};
-presenter.render({ activity: snapshot, host: {} as never, fallback: "native" });
 
 const plugin: RuntimePlugin = {
   initialize(params) {

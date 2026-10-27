@@ -172,16 +172,6 @@ requires no system-wide Codex installation; it does not test upstream login or
 inference. Use `open --env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output` to keep
 separate evidence folders.
 
-On macOS, `npm --prefix desktop run test:e2e:desktop-update` exercises the production
-update button, preload, menu and polling callbacks with the real MacUpdater and
-a local HTTP release feed. It checks newer releases, failed checks, withdrawal,
-serialized downloads and version changes during consent, verifying downloaded
-ZIP hashes. Consent is scripted and installation is never requested. It uses
-temporary profiles and caches; screenshots and request/state evidence are saved
-under `desktop/out/e2e/desktop-update/` (`WUU_UPDATE_E2E_OUTPUT` overrides this).
-The macOS CI job runs it and uploads the evidence. It does not validate GitHub
-availability, release signing, or installed-app replacement.
-
 ## Choose the relevant checks
 
 | Command | What it checks or builds |
@@ -235,6 +225,107 @@ the same self-started fixture server across both themes, 1000/420px windows and
 15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
 (`WUU_CODE_CURSOR_OUTPUT` overrides this).
 
+### First-message continuity acceptance
+
+After building the desktop and core, run `npm --prefix desktop run test:e2e:first-send`.
+`WUU_DESKTOP_CORE` selects the tested core. The fixture uses a fresh temporary
+profile and a loopback scripted provider, with real Electron input, preload,
+main process and Go admission. It gates thread creation, turn admission and
+notifications separately; `WUU_FIRST_SEND_ORDER=event-first|ack-first|rejected`
+selects the delivery order or an explicit rejection. Repeated Enter must admit
+one message, and its bubble must remain visible in every sampled frame without
+restarting its entrance. Later draft edits must survive admission and failures.
+Set `WUU_FIRST_SEND_ATTACHMENT=1` for an attached file, and
+`WUU_FIRST_SEND_THEME`, `WUU_FIRST_SEND_FONT`, and `WUU_FIRST_SEND_WIDTH` for the
+visual matrix. Chinese input uses native text insertion, not OS IME candidates.
+
+Desktop session CI runs all three orders plus rapid identity adoption during the
+entrance, including dark/narrow/large-text attachment coverage, and uploads `report.json`, per-frame `frames.json`, logs,
+screenshots and core/renderer hashes. `WUU_FIRST_SEND_OUTPUT` chooses the evidence
+directory; `WUU_FIRST_SEND_DESKTOP` can select an already-built baseline for a
+repeatable RED comparison. Linux headless rendering is not physical macOS
+acceptance; use the documented disposable Electron test rig.
+
+### Error message appearance and recovery acceptance
+
+After building the desktop and core, run:
+
+```sh
+WUU_ERROR_STYLE_FONT=15 npm --prefix desktop run test:e2e:error-message-style
+WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
+```
+
+`WUU_DESKTOP_CORE` selects the built core. Each run uses isolated application
+and user profiles with a loopback synthetic provider, exercising real Electron
+input, preload, main and Go. It checks light/dark themes, 1280/640px windows,
+IM/regular bubbles, readable text, clipping, native disclosure and keyboard
+focus, manual continuation after HTTP 401, and automatic recovery after HTTP 503.
+The details must preserve the core's diagnostic; raw provider error bodies may
+be normalized before reaching the renderer.
+
+Session CI runs both font sizes against its existing renderer/core builds and
+uploads synthetic screenshots, geometry, logs and build hashes. Evidence defaults
+to `desktop/out/e2e/error-message-style-15/` or `error-message-style-20/`;
+`WUU_ERROR_STYLE_OUTPUT` overrides it, and `WUU_ERROR_STYLE_DESKTOP` selects an
+already-built comparison desktop. Review the rendered frames for bubble-family
+consistency; automated checks do not pin CSS declarations or replace visual
+acceptance. Linux results are not physical macOS acceptance.
+
+### Confirmed archive acceptance
+
+After building the desktop and core, run each disposable scenario:
+
+```sh
+for mode in running stale-completed workspace-switched provider-replaced; do
+  WUU_ARCHIVE_MODE="$mode" npm --prefix desktop run test:e2e:confirmed-archive
+done
+```
+
+`WUU_DESKTOP_CORE` selects the core. The fixture uses native sidebar and notice
+clicks, a loopback streaming provider and a public local plugin; no real accounts
+or conversations are used. It checks one explicitly confirmed force request
+under repeated clicks, stale running presentation, workspace switching, provider
+replacement, durable user/assistant history and the archive catalog. The running
+case also queues input and opens the selected storage in an independent process
+to prove that the exact input remains held without starting another model turn.
+It builds `scripts/session-fixture` unless `WUU_SESSION_FIXTURE` selects an existing
+helper. Durable previews are inspected without resuming or activating a session.
+
+Session CI runs all four scenarios, including dark/narrow/20px confirmation.
+`WUU_ARCHIVE_THEME`, `WUU_ARCHIVE_FONT`, and `WUU_ARCHIVE_WIDTH` select visual
+variants. Reports include native-input observations, request dispositions, durable
+history, synthetic screenshots and build hashes under
+`desktop/out/e2e/confirmed-archive/<mode>/`; `WUU_ARCHIVE_OUTPUT` overrides that
+path and `WUU_ARCHIVE_DESKTOP` selects an already-built comparison desktop.
+Review the screenshots as well as assertions. Linux Electron is not physical
+macOS acceptance.
+
+### Composer footer acceptance
+
+After building the desktop and core, run the font-size and name-length matrix:
+
+```sh
+for font in 15 20; do
+  for long_names in 0 1; do
+    WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names" \
+      npm --prefix desktop run test:e2e:composer-footer
+  done
+done
+```
+
+Each disposable Git project exercises light/dark themes, wide and narrow panes,
+and expanded/collapsed tool rails through production main/preload/core. Native
+panel dragging reproduces a 240–320px composer. Checks cover footer geometry,
+unchanged control font sizes, clipping, trusted clicks, focus and editable draft
+input. Message submission and inference are forbidden by the fixture.
+
+Session CI runs all four combinations using its existing renderer/core builds.
+`WUU_DESKTOP_CORE` selects the core; `WUU_FOOTER_DESKTOP` selects an already-built
+desktop. Reports, geometry, screenshots and build hashes default to
+`desktop/out/e2e/composer-footer-<font>/` (with `-long` for long names);
+`WUU_FOOTER_OUTPUT` overrides the evidence directory. Review the synthetic
+screenshots as well as assertions. Linux Electron is not physical macOS acceptance.
+
 ### Next-message suggestion acceptance
 
 `make test-plugins` includes the shipped next-message JSONL runtime and desktop
@@ -256,7 +347,7 @@ suggestion quality or provider billing.
 
 ### Live activity preview acceptance
 
-Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies independent targets in one session, the five-card visible limit and overflow replacement, promotion, session visibility, dialog suppression, individual dismissal, automatic-preview preference, native authority updates across retained targets, stale callbacks, frame acknowledgement, capture-error recovery, and teardown. Results, transport logs, appearance frame samples, stack geometry and screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. macOS also records composed stack screenshots in light/default-text and dark/large-text layouts. Headless Linux uses software rendering and a synthetic display automatically.
+Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies independent targets in one session, the five-card visible limit and overflow replacement, promotion, session visibility, dialog suppression, individual dismissal and reopening, native authority updates across retained targets, stale callbacks, frame acknowledgement, capture-error recovery, and teardown. Results, transport logs, appearance frame samples, stack geometry and screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. macOS also records composed stack screenshots in light/default-text and dark/large-text layouts. Headless Linux uses software rendering and a synthetic display automatically.
 
 Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
 
@@ -451,6 +542,37 @@ Without a graphical session, run
 same PDF bytes with real Node PDF.js. This checks parsing, named/page-reference
 resolution, and unsafe action data, but does not verify rendering or clicks.
 
+### Native browser layout and motion
+
+Workbench websites use retained Electron `WebContentsView` instances. Selecting
+another destination hides the page; it does not navigate or recreate it. Explicit
+closure, resource reclamation, and renderer recovery have separate lifecycle rules.
+Agent Browser attaches to the same page under its existing turn ownership.
+
+Main owns native view bounds in device-independent pixels. Window-filling pages
+report chrome insets so native window resizing can update them without waiting
+for a renderer frame. Embedded extension surfaces report their DOM rectangle.
+That fallback follows CSS transitions and animations on the surface and its
+ancestors, including cancellation, reversal, and overlapping effects. It also
+tracks moving occluders, deduplicates geometry reports, and stops sampling when
+motion settles. Scroll-driven effects follow scroll events rather than keeping a
+continuous timer while stationary. A native sibling does not inherit a React element's transform or
+clip; renderer-to-main bounds messages are not an atomic presentation transaction.
+
+Do not independently animate a native page while its React chrome follows another
+timeline. Any native animation change must verify composed pixels, intermediate
+viewport size, native hit testing, focus/IME, interruption, and retained page
+identity. A smooth compositor transform alone does not establish these contracts.
+
+After building core and desktop, run
+`desktop/node_modules/.bin/electron desktop/scripts/browser-workspace-switch-e2e.cjs`
+in a graphical session. It exercises the production main, preload, renderer, and
+real webpages, checking retained state, native bounds during CSS motion, overlay
+occlusion, cancellation, and sampling at rest. Artifacts are written under
+`desktop/out/e2e/browser-workspace-switch/`; `WUU_BROWSER_SWITCH_OUTPUT` selects a
+different directory. These geometry checks permit asynchronous sampling skew and
+do not measure presentation FPS or prove that every frame is aligned.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`
@@ -462,6 +584,7 @@ browser-host bounds. It does not exercise a real Go process or embedded browser.
 The JSON artifact at `desktop/out/e2e/resize-live-layout.json` records public
 theme/syntax tokens, host geometry, intermediate message widths and text line
 counts during left/right drags and collapse/expand animations. It also checks
+reversing an exiting workspace sheet, ending a drag on window deactivation,
 stream-following, paused-reader endpoint anchoring, and submitted-query placement
 and holding during reflow. Continuous samples establish live rewrapping; endpoint
 checks alone do not prove every painted frame keeps an identical scroll offset.
@@ -534,6 +657,53 @@ necessarily a cold process start; keep those measurements separate. The fixture
 also saves `subscription-navigation.png`. The held response tests navigation
 independence, not a database lock or an account-service outage.
 
+### Core RPC phase timing
+
+Start a diagnostic core with `WUU_RPC_TIMING=1` to add `rpc_timing` JSON records
+to `WUU_HOME/log/debug.log`. Normal core startup initializes this metadata log;
+verbose logging and `WUU_DEBUG_WIRE` are not needed. Do not enable wire logging
+for latency tests: it can contain request and response text. The default timing
+path has no recorder, hashing, clock samples or diagnostic allocations. After
+changing the Go instrumentation, rebuild the core; rebuilding the renderer is
+not needed when the test already selects that core with `WUU_DESKTOP_CORE`.
+
+Records contain a core PID, a whitelisted method (`other` for unknown methods),
+hashed request/thread IDs, phase, monotonic milliseconds and a write outcome.
+They omit prompts, history, attachments, paths, credentials and error messages.
+Correlate the stdin wrapper's request ID with
+`SHA256(JSON.stringify(id)).slice(0, 16)` in hexadecimal. Thread hashes use the
+UTF-8 ID bytes instead. Group by PID and request hash; sort by `at_ms`, which is
+relative to that core's timing recorder, not the renderer or main-process clock.
+Critical-section measurements are captured in memory and written after unlock,
+so log-line order need not equal event order. Response records use a bounded
+metadata buffer, drained when a handler or owned background task returns, or at
+server close. `response_records_dropped` makes overflow explicit; such a capture
+is incomplete. Timing-enabled samples have probe
+overhead and must remain separate from uninstrumented wall-clock baselines.
+
+- `stdin_read`, `handler_start`, `response_written`, `handler_end` distinguish
+  request processing from work after the reply. `stdin_read` means the serial
+  scanner consumed a complete frame, not when bytes first reached the pipe.
+  Existing asynchronous handlers can return before their eventual response.
+- `resume_*` separates persisted-history loading, child/worktree inspection,
+  metadata/held-input reads, process recovery, cache detach and detached cleanup.
+- `queue_*` separates input preparation, permission/control checks, actual mutex
+  acquisition waits and durable acceptance. `queue_persist` includes the selected
+  storage service; it is not a separately measured SQL or filesystem duration.
+- `admission_*`, `answer_ready_handoff` and `turn_launch_committed` separate
+  previous-turn settlement, plugin refresh, execution lease, history refresh,
+  runtime preparation, hooks and the durable user append. Launch is **not** a
+  provider request: keep the local provider/HTTP wrapper's dispatch timestamps.
+- `interrupt_*` separates session control, held-input persistence, cancellation,
+  worker freeze, managed-process stop and lifecycle bookkeeping. The interrupt
+  response and the later terminal notification/UI update are distinct events.
+
+If a queue RPC's wrapper round trip is long but its handler is short, inspect
+the preceding handler's response-to-end interval before blaming a lock. A long
+aggregate stage is not proof of lock contention; only `*_mutex_wait` directly
+measures acquisition. Retain the exact core/UI hashes, fixture sizes and both
+instrumented and uninstrumented results.
+
 ### End-to-end journey diagnostics
 
 The same fixture always records startup through a restored conversation and a
@@ -592,6 +762,54 @@ Do not pool initial opens with repeats or traced runs with untraced runs.
 Headless Linux can use `--no-sandbox --ozone-platform=headless`; its frame cadence
 is a property of that rig. Two frames are paint opportunities, not physical
 presentation or a claim of 120 Hz. Wall-clock timings remain informational.
+
+### Message-only navigation presentation
+
+Set `WUU_SWITCH_PRESENTATION=1`, `WUU_SWITCH_STABLE_PRESENTATION=1`, `WUU_SWITCH_TURNS=12` and
+`WUU_SWITCH_ROUNDS=1` on the session-switch fixture for a separate product
+regression journey. It drives the shipped sidebar and composer with native
+input through ordinary sessions, split panes, new drafts and browser-to-workspace
+navigation via the visible Conversations ribbon, under normal and reduced motion.
+Workspace-picker navigation also preserves a multiline unsent draft and its taller
+composer; returning to the source workspace preserves its original draft too.
+The 1380×860 window is not reduced
+to make capture pass; CI repeats at 1× and 2× device scale, then separately
+checks an 820px dark window with the saved 20px UI preference.
+
+The gate checks each observed frame for shell animation, input/status overlap,
+retired-frame leakage into live chrome, and unexpected full-window recovery.
+It verifies native composer input after every transition and injects a stalled
+capture to verify bounded dispatch and no late replay. Stable mode (the default and
+CI/npm gate) requires one message action capture, no whole-window raster or recovery,
+and unchanged shell/sidebar/composer/footer/tool-rail DOM during ordinary same-surface
+business rebinds. Split and browser routes may intentionally replace their composer.
+`WUU_SWITCH_STABLE_PRESENTATION=0` is only for old-build baseline comparisons, which
+require the legacy second retirement capture; it is not the current product gate.
+Evidence includes
+`presentation-results.json`, compositor PNG frames, final screenshots and logs.
+These are synthetic Chromium compositor observations, not physical-display proof.
+Presentation capture retains pixels only, never retired provider services. Opted-in
+UI registrations and DOM survive business rebinds with newly scoped actions; legacy
+modules and intentional code/surface replacement still use bounded capture/recovery.
+
+Workspace business handoffs synchronously stop the previous controller and revoke
+its concrete workbench callbacks before activating a successor. Captured native
+PTY IDs may finish cleanup afterward: the renderer document retains those joins,
+reports failures, and drains them at native shutdown. `flushCleanup()` remains a
+full explicit drain. Web-resource cleanup still blocks handoff because destination
+IDs can be reused across controllers; this is not a general asynchronous-disposal
+policy and does not cancel managed agent processes.
+
+The desktop `session` CI suite runs `terminal-handoff-e2e.cjs` against its existing
+build in four isolated modes: held PTY start, held PTY stop, the web ownership
+barrier, and native shutdown while an old PTY is still pending. It uses native
+input and real IPC/PTYs, checks retained sidebar nodes and successor editability,
+and saves build hashes, event records and screenshots without sending inference.
+To repeat locally, set `WUU_HANDOFF_COMMIT`, select the existing binary with
+`WUU_DESKTOP_CORE`, and run `npm --prefix desktop run test:e2e:terminal-handoff`
+with `WUU_HANDOFF_MODE=start|stop|web|quit`. `WUU_HANDOFF_OUTPUT` selects an evidence
+directory outside the source tree; the default is under the system temporary
+directory. No test command rebuilds the product.
 
 ### Fresh-process startup diagnostics
 

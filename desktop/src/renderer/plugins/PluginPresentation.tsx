@@ -8,8 +8,8 @@ import {
 } from "react";
 
 import type { PresentationTarget } from "../../shared/workbench";
-import type { PluginHost, RegisteredPresenter } from "./PluginHost";
-import type { WorkbenchController } from "./Workbench";
+import type { UIContributionRegistryV1 as PluginHost, RegisteredPresenterV1 as RegisteredPresenter } from "../../../../packages/plugin-sdk/src/ui-contributions";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 export interface PluginPresentationProps {
   host: PluginHost;

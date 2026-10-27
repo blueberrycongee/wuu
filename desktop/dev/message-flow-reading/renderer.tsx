@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { TurnView } from "../../src/renderer/TurnView";
-import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "../../src/renderer/TurnNotice";
+import { createFixtureApplication, FixtureServices } from "../preview-services";
 import type { Turn } from "../../src/shared/protocol";
 import { ThreadItemView } from "../../src/renderer/ThreadItemView";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -217,14 +217,6 @@ function FailureSurface(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [stage]);
   const retry = () => new Promise<void>(resolve => window.setTimeout(resolve, 600));
-  useEffect(() => {
-    const resume = (event: Event): void => {
-      event.preventDefault();
-      window.setTimeout(() => (event as CustomEvent<ContinueTurnDetail>).detail.done(true), 600);
-    };
-    window.addEventListener(CONTINUE_TURN_EVENT, resume);
-    return () => window.removeEventListener(CONTINUE_TURN_EVENT, resume);
-  }, []);
   return <WuuUIRoot>
     <button type="button" className="fixture-replay" onClick={() => setStage(0)}>回放：发送 → 重试 → 失败</button>
     {stage !== undefined ? <div className="fixture-failure-case" data-case="live"><TurnView turn={liveFailureTurn(stage)} isLatestTurn onStreamFrame={() => {}}
@@ -301,4 +293,9 @@ function Fixture(): JSX.Element {
   </ImagePreviewProvider>;
 }
 
-if (import.meta.env.DEV) createRoot(document.getElementById("root")!).render(<Fixture />);
+const fixtureApplication = createFixtureApplication();
+const application = { ...fixtureApplication, invoke: ((action, input, options) => {
+  if (action === "conversation.continue") return new Promise<{ accepted: boolean }>(resolve => window.setTimeout(() => resolve({ accepted: true }), 600));
+  return fixtureApplication.invoke(action, input, options);
+}) as typeof fixtureApplication.invoke };
+if (import.meta.env.DEV) createRoot(document.getElementById("root")!).render(<FixtureServices application={application}><Fixture /></FixtureServices>);

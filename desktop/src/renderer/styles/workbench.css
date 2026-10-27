@@ -1,6 +1,6 @@
 :root {
-  --plugin-ui-panel-bg: var(--wuu-color-canvas, var(--paper));
-  --plugin-ui-card-bg: var(--wuu-color-canvas, var(--paper));
+  --plugin-ui-panel-bg: var(--theme-override-color-canvas, var(--paper));
+  --plugin-ui-card-bg: var(--theme-override-color-canvas, var(--paper));
 }
 
 .plugin-workbench-view {
@@ -12,7 +12,7 @@
   min-height: 0;
   flex-direction: column;
   color: var(--ink);
-  background: var(--wuu-color-canvas, var(--paper));
+  background: var(--theme-override-color-canvas, var(--paper));
 }
 
 .plugin-workbench-view-overlay {
@@ -102,18 +102,16 @@
   min-height: 0;
   height: 100%;
   overflow: auto;
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-canvas, var(--paper));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-canvas, var(--paper));
 }
 
 /* Public Plugin UI Kit. The host owns layout rhythm and interaction states;
  * appearance plugins style the coarse data-wuu-component boundaries or the
  * public tokens instead of chasing each feature plugin's private DOM.
  *
- * The kit speaks the same language as the native settings surface: quiet
- * 12px group labels instead of boxed headings, hairline enclosures on the
- * canvas, and the shared 32px control family (borderless buttons, filled
- * inputs, pill switches). */
+ * The kit shares the host's readable heading scale, softly elevated cards
+ * and controls, and spacing that follows the user's saved text size. */
 .plugin-ui-page {
   box-sizing: border-box;
   width: min(100%, var(--wuu-content-max-width, calc(var(--content-column-width) + var(--page-padding) * 2)));
@@ -123,7 +121,7 @@
   margin: 0 auto;
   padding: var(--page-padding);
   overflow-wrap: anywhere;
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-family: var(--wuu-font-family-ui, inherit);
   font-size: var(--wuu-font-size-body, var(--font-body));
   line-height: var(--wuu-line-height-body, var(--line-body));
@@ -134,42 +132,43 @@
 .settings-page > .plugin-view-content {
   height: auto;
   overflow: visible;
+  background: transparent;
 }
 
-.settings-scroll .plugin-ui-page {
+.settings-page .plugin-ui-page {
   width: 100%;
   min-height: 0;
   padding: 0;
 }
 
-.settings-scroll .plugin-ui-stack[data-wuu-gap="large"] {
+.settings-page .plugin-ui-stack[data-wuu-gap="large"] {
   gap: var(--section-gap);
 }
 
 /* In Settings a kit section reads like a native settings section: the
- * semibold title, the quieter scope line, the same heading gap. */
-.settings-scroll .plugin-ui-section {
+ * medium-weight title, the quieter scope line, the same heading gap. */
+.settings-page .plugin-ui-section {
   gap: var(--space-3);
 }
 
-.settings-scroll .plugin-ui-section-header {
+.settings-page .plugin-ui-section-header {
   gap: 2px;
 }
 
-.settings-scroll .plugin-ui-section-header h2 {
+.settings-page .plugin-ui-section-header h2 {
   color: var(--ink-strong);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-title);
+  font-weight: var(--weight-medium);
 }
 
-.settings-scroll .plugin-ui-section-header p {
+.settings-page .plugin-ui-section-header p {
   color: var(--ink-soft);
   font-size: var(--font-sm);
 }
 
 /* An empty section there is one quiet line at a row's height, like a
  * settings group with nothing in it, not a centred poster. */
-.settings-scroll .plugin-ui-state {
+.settings-page .plugin-ui-state {
   min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   place-content: center start;
   justify-items: start;
@@ -177,7 +176,7 @@
   text-align: start;
 }
 
-.settings-scroll .plugin-ui-state strong {
+.settings-page .plugin-ui-state strong {
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
@@ -187,13 +186,11 @@
   --wuu-space-density: 0.75;
 }
 
-/* Panel and card are quiet enclosures: one hairline on the canvas, no fill
- * shift. Grouping reads from the edge line and whitespace, not from a
- * heavier box. */
+/* Extension panels use the host's soft card material and shared spacing. */
 .plugin-ui-panel,
 .plugin-ui-card {
   min-width: 0;
-  border: var(--wuu-border-subtle, 1px solid var(--wuu-color-border-subtle, var(--hairline)));
+  border: var(--wuu-border-subtle, 1px solid var(--theme-override-color-border-subtle, var(--hairline-soft)));
   border-radius: var(--wuu-radius-panel, var(--radius-md));
 }
 
@@ -211,7 +208,7 @@
 
 .plugin-ui-card {
   padding: var(--card-padding);
-  box-shadow: var(--wuu-elevation-panel, none);
+  box-shadow: var(--shadow-card);
 }
 
 .plugin-ui-section {
@@ -233,8 +230,8 @@
 
 /* Section headings share the host's reading hierarchy. */
 .plugin-ui-section-header h2 {
-  color: var(--wuu-color-text, var(--ink));
-  font-size: var(--font-ui);
+  color: var(--theme-override-color-text, var(--ink));
+  font-size: var(--font-title);
   font-weight: var(--weight-medium);
   line-height: 1.4;
 }
@@ -274,8 +271,8 @@
   gap: var(--space-2);
 }
 
-/* Buttons join the shared 32px control family: no border, filled with the
- * secondary-control ramp, a scale press, and a halo focus ring. The primary
+/* Buttons join the shared control family: softly lifted surfaces, a scale
+ * press, and a visible keyboard focus ring. The primary
  * action is the strongest contrast pair in the ramp, not the accent — the
  * accent stays reserved for live state and navigation. */
 .plugin-ui-button {
@@ -284,8 +281,9 @@
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--control-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-control-secondary-background, var(--surface-2));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--control-secondary-bg);
+  box-shadow: var(--shadow-soft);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-ui);
@@ -298,30 +296,32 @@
 }
 
 .plugin-ui-button[data-wuu-variant="primary"] {
-  color: var(--wuu-color-canvas, var(--paper));
-  background: var(--wuu-color-text, var(--gray-900));
+  color: var(--theme-override-color-canvas, var(--paper));
+  background: var(--theme-override-color-text, var(--gray-900));
 }
 
 .plugin-ui-button[data-wuu-variant="ghost"] {
-  color: var(--wuu-color-text-muted, var(--ink-soft));
+  box-shadow: none;
+  color: var(--theme-override-color-text-muted, var(--ink-soft));
   background: transparent;
 }
 
 .plugin-ui-button[data-wuu-variant="danger"] {
+  box-shadow: none;
   color: var(--wuu-color-danger, var(--danger));
   background: transparent;
 }
 
 .plugin-ui-button:not(:disabled):hover {
-  background: var(--wuu-control-secondary-background, var(--surface-3));
+  background: var(--control-secondary-hover-bg);
 }
 
 .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover {
-  background: color-mix(in srgb, var(--wuu-color-text, var(--gray-900)) 88%, var(--wuu-color-canvas, var(--paper)));
+  background: color-mix(in srgb, var(--theme-override-color-text, var(--gray-900)) 88%, var(--theme-override-color-canvas, var(--paper)));
 }
 
 .plugin-ui-button[data-wuu-variant="ghost"]:not(:disabled):hover {
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
 }
 
 .plugin-ui-button[data-wuu-variant="danger"]:not(:disabled):hover {
@@ -357,13 +357,13 @@
 }
 
 .plugin-ui-toolbar-toggle:not(:disabled):hover {
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-surface-muted, var(--surface-2));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-surface-muted, var(--surface-2));
 }
 
 .plugin-ui-toolbar-toggle[aria-pressed="true"] {
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-surface-elevated, var(--surface-3));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-surface-elevated, var(--surface-3));
 }
 
 .plugin-ui-toolbar-toggle:not(:disabled):active {
@@ -389,7 +389,7 @@
 }
 
 .plugin-ui-field-label {
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: 1.4;
@@ -409,7 +409,7 @@
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--control-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
   font-size: var(--font-ui);
@@ -434,7 +434,7 @@
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--compact-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
   font-size: var(--font-ui);
@@ -453,7 +453,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-6);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   cursor: pointer;
 }
 
@@ -479,8 +479,8 @@
 .plugin-ui-state-spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid var(--wuu-color-border-subtle, var(--hairline));
-  border-top-color: var(--wuu-color-text, var(--ink-strong));
+  border: 2px solid var(--theme-override-color-border-subtle, var(--hairline));
+  border-top-color: var(--theme-override-color-text, var(--ink-strong));
   border-radius: var(--radius-circle);
   animation: wuu-spin var(--motion-spin) linear infinite;
 }

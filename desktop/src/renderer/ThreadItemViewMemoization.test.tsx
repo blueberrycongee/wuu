@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,13 +39,13 @@ describe("ThreadItemView memoization", () => {
     const onStreamFrame = vi.fn();
     const render = (nextItem: ThreadItem): void => {
       root?.render(
-        <ThreadItemView
+        <ConversationControlsTestProvider>{<ThreadItemView
           turnID="turn-1"
           turnStatus="in_progress"
           item={nextItem}
           streaming={false}
           onStreamFrame={onStreamFrame}
-        />,
+        />}</ConversationControlsTestProvider>,
       );
     };
 

@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -58,7 +60,22 @@ type StepResult struct {
 	// ToolRuntime owns any tool calls that were started while the provider
 	// was still streaming. The loop uses it to wait for those same runs
 	// instead of issuing duplicate executions.
-	ToolRuntime *TurnToolRuntime
+	ToolRuntime ToolBatchRuntime
+}
+
+// ToolBatchRuntime joins the effects owned by a model round. Local execution
+// and service receipts implement the same boundary without replaying tools.
+type ToolBatchRuntime interface {
+	Join(context.Context, []providers.ToolCall, int, func(providers.ToolCall, toolresult.Result), func(providers.ToolCall, string), func(ToolBatchRejectionInfo)) ([]providers.ChatMessage, error)
+	TakeRequestContextSegments() []ContextSegment
+	HasAcceptedCalls() bool
+}
+
+func asToolBatchRuntime(runtime *TurnToolRuntime) ToolBatchRuntime {
+	if runtime == nil {
+		return nil
+	}
+	return runtime
 }
 
 // Step performs exactly one model round-trip and returns the result
@@ -154,55 +171,18 @@ type ToolBatchRejectionInfo struct {
 
 // RequestContextInfo summarizes request-only model context assembled before a
 // provider call. It intentionally excludes raw prompt text.
-type RequestContextInfo struct {
-	StepIndex                int
-	TransientMessages        int
-	ContentBytes             int
-	BlockKinds               []string
-	BlockKindCounts          map[string]int
-	BlockKindBytes           map[string]int
-	SegmentLifecycleCounts   map[string]int
-	SegmentPlacementCounts   map[string]int
-	SegmentCachePolicyCounts map[string]int
-	MessageCount             int
-	SystemMessages           int
-	HiddenMessages           int
-	ToolCount                int
-	StablePrefix             int
-	TurnPrefix               int
-	DynamicBytes             int
-	SystemBytes              int
-	StablePrefixBytes        int
-	TurnPrefixBytes          int
-	MessageBytes             int
-	ToolSchemaBytes          int
-	LoadableToolCount        int
-	LoadableToolSchemaBytes  int
-	LoadableToolSurfaceHash  string
-	SystemHash               string
-	StablePrefixHash         string
-	TurnPrefixHash           string
-	ToolSurfaceHash          string
-	PromptCacheKey           string
-	InputTokens              int
-	OutputTokens             int
-	CacheCreationTokens      int
-	CacheReadTokens          int
-	SystemSections           []SystemPromptSectionInfo
-}
+type RequestContextInfo = providers.RequestContextSummary
 
-// SystemPromptSectionInfo describes one section of the assembled system prompt
-// without exposing the raw prompt text.
-type SystemPromptSectionInfo struct {
-	Key    string
-	Static bool
-	Bytes  int
-	Hash   string
-}
+type SystemPromptSectionInfo = providers.SystemPromptSectionSummary
 
 // LoopConfig bundles every knob the shared loop needs. All callbacks
 // are optional. Tools is required if the model is allowed to call any.
 type LoopConfig struct {
+	ModelSelectionRevision uint64
+	// ReadModelStep refreshes the admitted model before any request assembly.
+	// A zero revision retains the legacy whole-turn configuration.
+	ReadModelStep  func(context.Context) (providers.ChatRequest, pluginprotocol.DriverTurnSettings, error)
+	EvaluatePolicy loopdriver.PolicyEvaluator
 	ResumeSampling bool
 	// Tools is the executor used to run model-requested tool calls.
 	// May be nil if the caller knows the model has no tools available.
@@ -287,6 +267,9 @@ type LoopConfig struct {
 	ArchiveHistory     HistoryArchiveFunc
 	FreshContextTokens int
 	AcceptFreshContext func(context.Context, []providers.ChatMessage, int) ([]providers.ChatMessage, int, error)
+	// AcceptContext commits non-speculative compaction, repair or trim results
+	// before another operation can observe the replacement.
+	AcceptContext func(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error)
 	// ContextWindowStatus supplies a read-only checkpoint snapshot without
 	// waiting for generation or asking the main model to manage background work.
 	ContextWindowStatus func(context.Context, []providers.ChatMessage) string
@@ -312,6 +295,8 @@ type LoopConfig struct {
 	// BeforeModelStep is the context-aware extension boundary for durable,
 	// append-only messages. The input is an immutable snapshot of live history.
 	BeforeModelStep func(context.Context, int, []providers.ChatMessage) ([]providers.ChatMessage, error)
+	// DecideStep consumes the decision from this step's input admission.
+	DecideStep func(context.Context) (loopdriver.StepDecision, error)
 	// BeforeRequestContext, when set, is called after live-history updates
 	// and before each provider request. Returned segments are assembled into
 	// the provider request without being appended to live or durable history.
@@ -419,6 +404,7 @@ type LoopConfig struct {
 
 // LoopResult is what RunToolLoop returns on success.
 type LoopResult struct {
+	ModelSteps []providers.ModelStepUsage
 	// Content is the model's final assistant message for this run.
 	Content string
 	// NewMessages is the slice of messages produced during this run
@@ -459,6 +445,9 @@ type LoopResult struct {
 	FinishReason  providers.FinishReason
 	StopReason    string
 	Truncated     bool
+	// ReceiptDiagnostic records post-run accounting failures independently
+	// of a successful reply. It belongs in diagnostics, not conversation errors.
+	ReceiptDiagnostic string
 	// Driver metadata is the versioned policy identity and terminal checkpoint
 	// associated with this result. The checkpoint is opaque to callers.
 	DriverID              string

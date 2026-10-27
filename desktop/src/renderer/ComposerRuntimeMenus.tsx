@@ -1,5 +1,7 @@
-import { connectionDisplayPreferences, useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
-import { chatGPTConnectionModels, isChatGPTProvider } from "./RuntimeHelpers";
+import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
+import { useComposerServices, useComposerConnectionDisplay } from "./ComposerServicesContext";
+import type { SettingsConnectionDisplayV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
+import { chatGPTConnectionModels, engineRequiresHostModel, isChatGPTProvider } from "./RuntimeHelpers";
 import { hostSupports } from "./HostCapabilities";
 import {
   Bug,
@@ -44,11 +46,9 @@ import {
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import type {
   CodexModelSummary,
-  DesktopProject,
   EngineInfo,
   EngineModelInfo,
   EnginePermissionModeInfo,
-  InitializeResult,
   PermissionSummary,
   ProviderModelSummary,
   ProviderSummary,
@@ -87,6 +87,7 @@ import {
 } from "./RuntimeHelpers";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
 import { isTouchWebShell } from "./ComposerFocus";
 
@@ -103,13 +104,14 @@ export type EngineOption = {
 // even when it just became unavailable, so the selection stays visible.
 function availableEngineOptions(
   engines: EngineInfo[] | undefined,
-  activeEngine: string
+  activeEngine: string,
+  display: Pick<SettingsConnectionDisplayV1, "label">
 ): EngineOption[] {
   const options: EngineOption[] = [{ id: "wuu", label: engineLabel("wuu") }];
   for (const engine of engines ?? []) {
     if (engine.id === "wuu") continue;
     if ((!engine.enabled || !engine.binary_ok) && engine.id !== activeEngine) continue;
-    options.push({ id: engine.id, label: connectionDisplayPreferences.label(`engine:${engine.id}`, engineLabel(engine.id, engine)) });
+    options.push({ id: engine.id, label: display.label(`engine:${engine.id}`, engineLabel(engine.id, engine)) });
   }
   if (activeEngine && activeEngine !== "wuu" && !options.some((option) => option.id === activeEngine)) {
     options.push({ id: activeEngine, label: engineLabel(activeEngine) });
@@ -266,7 +268,7 @@ function RuntimePanelSummary({
   const fastModeHint = `${t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")} · ${t("runtime.fastModeHint")}`;
   // A saving toggle stays focusable; native disabled would blur keyboard input.
   const changeSpeed = async (next: string): Promise<void> => {
-    if (!onSelectSpeed || speedSaving) return;
+    if (!onSelectSpeed || speedSaving || speedDisabled) return;
     setSpeedCharging(next === "fast");
     setPendingSpeed(next);
     setSpeedSaving(true);
@@ -281,7 +283,8 @@ function RuntimePanelSummary({
     if (!effortSaving) setPreviewEffort(selectedEffort);
   }, [selectedEffort, effortSaving]);
 
-  const engineName = connectionDisplayPreferences.label(`engine:${engineId}`, engineLabel(engine));
+  const display = useComposerConnectionDisplay();
+  const engineName = display.label(`engine:${engineId}`, engineLabel(engine));
   // A bound conversation cannot switch engines, so the engine is a label that
   // says why rather than a way into a list of choices it cannot take.
   const engineItem = engineLocked ? (
@@ -293,20 +296,16 @@ function RuntimePanelSummary({
       </span>
     </Tooltip>
   ) : (
-    <Tooltip content={t("runtime.engineNamed", { engine: engineName })}>
-      <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
-        <EngineIcon engine={engineId} />
-        <span>{engineName}</span>
-      </button>
-    </Tooltip>
+    <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
+      <EngineIcon engine={engineId} />
+      <span>{engineName}</span>
+    </button>
   );
   const providerItem = provider ? (onOpenProviders ? (
-    <Tooltip content={t("runtime.providerNamed", { provider })}>
-      <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
-        <span>{provider}</span>
-        <ChevronDown aria-hidden="true" />
-      </button>
-    </Tooltip>
+    <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
+      <span>{provider}</span>
+      <ChevronDown aria-hidden="true" />
+    </button>
   ) : (
     <span className="runtime-panel-context-item"><span>{provider}</span></span>
   )) : null;
@@ -328,8 +327,8 @@ function RuntimePanelSummary({
                 aria-label={t("runtime.fastMode")}
                 aria-description={fastModeHint}
                 aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-                disabled={speedDisabled}
-                aria-disabled={speedSaving || undefined}
+                disabled={speedDisabled && !speedSaving}
+                aria-disabled={speedDisabled || speedSaving || undefined}
                 aria-busy={speedSaving || undefined}
                 onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
               >
@@ -349,11 +348,11 @@ function RuntimePanelSummary({
       ) : null}
       <div className="runtime-panel-selection">
         <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-          <span className="runtime-panel-model-name">{model}</span>
+          <TruncatedText className="runtime-panel-model-name" text={model} />
           <ChevronRight aria-hidden="true" />
         </button>
         {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort-value" title={variantLabel(previewEffort)}>{variantLabel(previewEffort)}</div>
+          <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
         ) : null}
       </div>
       {effortOptions.length > 1 ? (
@@ -516,6 +515,8 @@ export type HandoffRuntimePicker = {
 };
 
 export function RuntimePicker({
+  inToolRail = false,
+  compact = inToolRail,
   initialized,
   state,
   openMenu,
@@ -538,7 +539,7 @@ export function RuntimePicker({
   onSelectEffort,
   handoff
 }: {
-  initialized: InitializeResult;
+  initialized: ComposerConfiguration;
   state: CodexModelLoadState;
   openMenu: CodexRuntimeMenu;
   anchorRef: RefObject<HTMLDivElement | null>;
@@ -559,9 +560,11 @@ export function RuntimePicker({
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   handoff?: HandoffRuntimePicker;
+  inToolRail?: boolean;
+  compact?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const targetProvider = handoff?.provider ?? initialized.provider;
   const targetModel = handoff?.model ?? initialized.model;
   const targetVariant = handoff?.variant ?? (initialized.variant || initialized.effort || "");
@@ -576,18 +579,16 @@ export function RuntimePicker({
   // whichever column holds the level instead of letting "" shadow a real
   // effort.
   const currentVariant = targetVariant;
-  // Empty sessions still dock the composer at the bottom of the pane. Opening
-  // the model card below that trigger leaves it in the greeting once a phone
-  // keyboard has lifted the input, so keep it attached above the selector.
-  const placement: FloatingMenuPlacement = "above";
-  const externalEngine = handoff ? "" : activeEngine && activeEngine !== "wuu" ? activeEngine : "";
+  const placement: FloatingMenuPlacement = inToolRail ? "below" : "above";
+  const selectedEngine = handoff ? "wuu" : activeEngine || "wuu";
+  const selectedEngineInfo = engines?.find(engine => engine.id === selectedEngine);
+  const externalEngine = handoff || engineRequiresHostModel(selectedEngine, selectedEngineInfo) ? "" : selectedEngine;
   const engineOptions = handoff
     ? [{ id: "wuu", label: engineLabel("wuu") }]
-    : availableEngineOptions(engines, externalEngine);
-  const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
+    : availableEngineOptions(engines, selectedEngine, display);
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
   const externalModelInfo = externalEngineInfo?.models?.find((model) => engineModel ? model.id === engineModel : model.is_default);
-  const triggerEngineName = display.label(`engine:${selectedEngine}`, engineLabel(selectedEngine, externalEngineInfo));
+  const triggerEngineName = display.label(`engine:${selectedEngine}`, engineLabel(selectedEngine, selectedEngineInfo));
   const triggerLabel = handoff
     ? handoff.model
       ? runtimeTriggerLabel(handoff.model, codexProvider, currentProviderModel, currentCodexModel)
@@ -636,10 +637,10 @@ export function RuntimePicker({
 
   return (
     <div className="codex-runtime-anchor" ref={anchorRef}>
-      <Tooltip content={running ? t("runtime.modelSwitchWhileRunning") : undefined}>
+      <Tooltip content={compact ? [triggerAccessibleName, running ? t("runtime.modelSwitchWhileRunning") : ""].filter(Boolean).join(" · ") : running ? t("runtime.modelSwitchWhileRunning") : undefined}>
         <button
           ref={triggerRef}
-          className="codex-runtime-trigger"
+          className={`codex-runtime-trigger${compact ? " icon-button is-compact" : ""}`}
           type="button"
           disabled={running}
           aria-haspopup="menu"
@@ -655,22 +656,24 @@ export function RuntimePicker({
           }}
         >
           <EngineIcon engine={selectedEngine} />
-          <span
+          {compact ? null : <><span
             key={labelKey}
             className={`codex-runtime-label${labelKey === initialLabelKey.current ? "" : " is-changed"}`}
           >
             <span className="codex-runtime-model">{triggerLabel}</span>
             {effortLabelText ? <span className="codex-runtime-effort">{effortLabelText}</span> : null}
           </span>
-          <ChevronDown className="icon" />
+          <ChevronDown className="icon" /></>}
         </button>
       </Tooltip>
       {open ? (
         <FloatingMenuPortal
           anchorRef={anchorRef}
           owner="codex-runtime"
+          onDismiss={() => onToggleMenu("model")}
           placement={placement}
           align="right"
+          crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
           width={panelWidth}
           flip
           mobileSheet={{ label: t("runtime.selectModel"), onClose: () => onToggleMenu("model") }}
@@ -785,7 +788,7 @@ function EngineRuntimeMenu({
     setView("summary");
   };
 
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const catalogModels = engine?.models ?? [];
   const models = display.visibleModels(`engine:${engine?.id}`, catalogModels, [selectedModel || catalogModels.find(model => model.is_default)?.id || ""]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -939,7 +942,6 @@ function EngineRuntimeMenu({
                         role="menuitemradio"
                         type="button"
                         key={model.id}
-                        title={model.display_name || model.id}
                         disabled={disabled || saving}
                         aria-checked={selected}
                         onClick={() => { void selectModel(model.id); }}
@@ -980,7 +982,7 @@ export function RuntimeModelMenu({
   width,
   autoFocus = false,
 }: {
-  initialized: InitializeResult;
+  initialized: ComposerConfiguration;
   state: CodexModelLoadState;
   selectedProvider: string;
   selectedModel: string;
@@ -1035,7 +1037,7 @@ export function RuntimeModelMenu({
     setView("summary");
   };
 
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const providers = initialized.providers ?? [];
   const groups: RuntimeModelGroup[] = providers.map(provider => {
     const catalog = runtimeModelsForProvider(provider, state);
@@ -1350,8 +1352,8 @@ function EffortSelector({
         max={orderedOptions.length - 1}
         step={1}
         value={displayIndex}
-        disabled={disabled}
-        aria-disabled={busy || undefined}
+        disabled={disabled && !busy}
+        aria-disabled={disabled || busy || undefined}
         aria-busy={busy || undefined}
         aria-label={translate("runtime.reasoningEffort")}
         aria-valuetext={variantLabel(orderedOptions[displayIndex] ?? selectedVariant)}
@@ -1557,24 +1559,23 @@ export function ComposerPlusButton({
         setOpen(false);
       }
     }
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
 
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
-      <button
+      <Tooltip asChild content={t("composer.plusMenu")}><button
         ref={buttonRef}
         className="composer-tool-button composer-plus-button"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("composer.plusMenu")}
-        title={t("composer.plusMenu")}
         disabled={disabled}
         onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
         onClick={() => {
@@ -1589,7 +1590,7 @@ export function ComposerPlusButton({
         }}
       >
         <Plus aria-hidden="true" />
-      </button>
+      </button></Tooltip>
       {open ? (
         <FloatingMenuPortal
           anchorRef={isTouchWebShell() ? triggerRef : menuAnchorRef}
@@ -1835,7 +1836,7 @@ export function WorkspacePickerMenu({
   onOpenWorkspace,
   onKeyDown,
 }: {
-  projects: DesktopProject[];
+  projects: ComposerWorkspace[];
   activeContext?: RuntimeContext;
   query: string;
   setQuery: (value: string) => void;
@@ -1848,6 +1849,8 @@ export function WorkspacePickerMenu({
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   useFloatingMenuFocus(menuRef);
+  const services = useComposerServices();
+  const capabilities = services?.view.workspaceCapabilities;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
@@ -1868,7 +1871,7 @@ export function WorkspacePickerMenu({
       <div className="project-picker-list">
         {showConversation ? (
           <button type="button" role="menuitemradio" aria-checked={noProject}
-            disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
+            disabled={!(capabilities?.create ?? hostSupports("createBlankProject"))} onClick={onSelectNoProject}>
             <MessageSquare />
             <span>{conversationLabel}</span>
             {noProject ? <Check /> : null}
@@ -1877,9 +1880,9 @@ export function WorkspacePickerMenu({
         {filteredWorkspaces.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
-            <button key={project.id} type="button" role="menuitemradio" aria-checked={selected} title={project.name} onClick={() => onSelectWorkspace(project.id)}>
+            <button key={project.id} type="button" role="menuitemradio" aria-label={project.name} aria-checked={selected} onClick={() => onSelectWorkspace(project.id)}>
               <Folder />
-              <span>{project.name}</span>
+              <TruncatedText text={project.name} />
               {selected ? <Check /> : null}
             </button>
           );
@@ -1887,11 +1890,11 @@ export function WorkspacePickerMenu({
         {!showConversation && filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
       </div>
       <div className="project-picker-divider" />
-      <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspace}>
+      <button type="button" role="menuitem" disabled={!(capabilities?.open ?? hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspace}>
         <FolderOpen />
         <span>{t("runtime.openFolder")}</span>
       </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
+      <button type="button" role="menuitem" disabled={!(capabilities?.create ?? hostSupports("createBlankProject"))} onClick={onCreateWorkspace}>
         <FolderPlus />
         <span>{t("runtime.createBlankWorkspace")}</span>
       </button>

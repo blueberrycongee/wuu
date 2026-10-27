@@ -17,7 +17,8 @@ import (
 
 func TestChatHistoryRoundTripKeepsRichToolResult(t *testing.T) {
 	sessDir := t.TempDir()
-	sess, err := sessionstore.CreateWithMetadata(sessDir, "rich-tool-result", t.TempDir())
+	sessDirStore := newAppserverTestStore(t, sessDir)
+	sess, err := sessDirStore.CreateWithMetadata("rich-tool-result", t.TempDir())
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -33,10 +34,10 @@ func TestChatHistoryRoundTripKeepsRichToolResult(t *testing.T) {
 		{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-rich", Name: "mcp_rich"}}},
 		{Role: "tool", Name: "mcp_rich", ToolCallID: "call-rich", Content: detail.TextProjection(), ToolResult: &detail},
 	}
-	if err := rewriteChatHistory(sessDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(sessDirStore, sess.ID, history); err != nil {
 		t.Fatalf("rewrite history: %v", err)
 	}
-	loaded, err := loadChatMessages(sessDir, sess.ID)
+	loaded, err := loadChatMessages(sessDirStore, sess.ID)
 	if err != nil {
 		t.Fatalf("load history: %v", err)
 	}
@@ -54,7 +55,8 @@ func TestChatHistoryRoundTripKeepsRichToolResult(t *testing.T) {
 
 func TestRewriteChatHistoryKeepsCompactSummary(t *testing.T) {
 	sessDir := t.TempDir()
-	sess, err := sessionstore.CreateWithMetadata(sessDir, "compact-summary", t.TempDir())
+	sessDirStore := newAppserverTestStore(t, sessDir)
+	sess, err := sessDirStore.CreateWithMetadata("compact-summary", t.TempDir())
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -62,10 +64,10 @@ func TestRewriteChatHistoryKeepsCompactSummary(t *testing.T) {
 		{Role: "system", Content: compact.BuildSummaryContent("Recovered task state")},
 		{Role: "assistant", Content: "continued"},
 	}
-	if err := rewriteChatHistory(sessDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(sessDirStore, sess.ID, history); err != nil {
 		t.Fatalf("rewrite history: %v", err)
 	}
-	loaded, err := loadChatMessages(sessDir, sess.ID)
+	loaded, err := loadChatMessages(sessDirStore, sess.ID)
 	if err != nil {
 		t.Fatalf("load history: %v", err)
 	}
@@ -95,14 +97,15 @@ func TestReplaceBaseSystemPromptPreservesDurableContext(t *testing.T) {
 
 func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 	sessDir := t.TempDir()
-	sess, err := sessionstore.CreateWithMetadata(sessDir, "fresh-context-history", t.TempDir())
+	sessDirStore := newAppserverTestStore(t, sessDir)
+	sess, err := sessDirStore.CreateWithMetadata("fresh-context-history", t.TempDir())
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := appendChatMessage(sessDir, sess.ID, providers.ChatMessage{Role: "user", Content: "original request"}); err != nil {
+	if _, err := appendChatMessage(sessDirStore, sess.ID, providers.ChatMessage{Role: "user", Content: "original request"}); err != nil {
 		t.Fatalf("append user: %v", err)
 	}
-	_, archivedHead, err := appendChatMessagesReturningRange(sessDir, sess.ID, []providers.ChatMessage{
+	_, archivedHead, err := appendChatMessagesReturningRange(sessDirStore, sess.ID, []providers.ChatMessage{
 		{Role: "assistant", Content: "pre-switch reasoning"},
 		{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "switch", Name: "new_context", Arguments: `{}`}}},
 		{Role: "tool", ToolCallID: "switch", Name: "new_context", Content: `{"requested":true}`},
@@ -115,7 +118,7 @@ func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 		{Role: "assistant", Content: "post-switch answer"},
 	}
 	server := &Server{rt: &runtime.Session{SessionDir: sessDir}}
-	thread := &threadState{ID: sess.ID, PersistHistory: true, History: cloneHistory(replacement)}
+	thread := &threadState{ID: sess.ID, state: &runtime.State{Sessions: sessDirStore}, PersistHistory: true, History: cloneHistory(replacement)}
 	result := agent.LoopResult{
 		NewMessages:            cloneHistory(replacement),
 		DurableNewMessages:     []providers.ChatMessage{{Role: "assistant", Content: "post-switch answer"}},
@@ -127,7 +130,7 @@ func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 		t.Fatalf("persist fresh context: %v", err)
 	}
 
-	originals, err := sessionstore.LoadHistoryRecords(sessDir, sess.ID, false)
+	originals, err := sessDirStore.LoadHistoryRecords(sess.ID, false)
 	if err != nil {
 		t.Fatalf("load physical transcript: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 	if len(originals) != 6 || originals[1].Content != "pre-switch reasoning" || originals[4].Content != "post-switch answer" || postSwitchAnswers != 1 {
 		t.Fatalf("physical transcript = %+v", originals)
 	}
-	active, err := loadChatMessages(sessDir, sess.ID)
+	active, err := loadChatMessages(sessDirStore, sess.ID)
 	if err != nil {
 		t.Fatalf("load active history: %v", err)
 	}
@@ -155,13 +158,14 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 	for _, scenario := range []string{"plain", "checkpoint", "tail_checkpoint", "empty_checkpoint", "edited_branch", "execution_owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
+			binding := testRuntimeState(t, rt)
 			const id = "resume-fork"
-			if _, err := sessionstore.CreateForkWithMetadata(rt.SessionDir, id, rt.RootDir, sessionstore.ForkMetadata{
+			if _, err := rt.Sessions.CreateForkWithMetadata(id, rt.RootDir, sessionstore.ForkMetadata{
 				ForkedFromID: "source-thread", ForkedFromTurnID: "source-turn", ForkedFromItemID: "source-item",
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := sessionstore.SetRuntimeSelection(rt.SessionDir, id, sessionstore.RuntimeSelection{
+			if _, err := rt.Sessions.SetRuntimeSelection(id, sessionstore.RuntimeSelection{
 				Provider: "pinned-provider", Model: "pinned-model", Variant: "high", PermissionMode: "read_only",
 			}); err != nil {
 				t.Fatal(err)
@@ -179,10 +183,10 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 				{Role: "meta", Content: "token_usage", InputTokens: 22, OutputTokens: 4, ContextTokens: 30, Model: "second-usage-model", At: at.Add(time.Second)},
 				{Role: "meta", Content: "turn_terminal", ClientID: id + "-turn-0002", StopReason: "completed", At: at.Add(time.Second)},
 			}
-			if err := sessionstore.AppendHistoryRecords(rt.SessionDir, id, records); err != nil {
+			if err := rt.Sessions.AppendHistoryRecords(id, records); err != nil {
 				t.Fatal(err)
 			}
-			raw, err := sessionstore.LoadHistoryRecords(rt.SessionDir, id, true)
+			raw, err := rt.Sessions.LoadHistoryRecords(id, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -190,48 +194,48 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			case "checkpoint":
 				// Model context can omit process records even while retaining the
 				// first prompt; the visible transcript must keep those records.
-				if err := sessionstore.RewriteHistoryRecordsAtBaseline(rt.SessionDir, id, []sessionstore.HistoryRecord{raw[0], raw[3], raw[6], raw[7]}, 10); err != nil {
+				if err := rt.Sessions.RewriteHistoryRecordsAtBaseline(id, []sessionstore.HistoryRecord{raw[0], raw[3], raw[6], raw[7]}, 10); err != nil {
 					t.Fatal(err)
 				}
 			case "tail_checkpoint":
-				if err := sessionstore.RewriteHistoryRecordsAtBaseline(rt.SessionDir, id, raw[6:8], 10); err != nil {
+				if err := rt.Sessions.RewriteHistoryRecordsAtBaseline(id, raw[6:8], 10); err != nil {
 					t.Fatal(err)
 				}
 			case "empty_checkpoint":
-				if err := sessionstore.RewriteHistoryRecordsAtBaseline(rt.SessionDir, id, nil, 10); err != nil {
+				if err := rt.Sessions.RewriteHistoryRecordsAtBaseline(id, nil, 10); err != nil {
 					t.Fatal(err)
 				}
 			case "edited_branch":
-				if err := sessionstore.RewriteHistoryRecordsForEdit(rt.SessionDir, id, raw[:6], 7, 10); err != nil {
+				if err := rt.Sessions.RewriteHistoryRecordsForEdit(id, raw[:6], 7, 10); err != nil {
 					t.Fatal(err)
 				}
 			case "execution_owned":
-				if err := sessionstore.AppendHistoryRecord(rt.SessionDir, id, sessionstore.HistoryRecord{
+				if err := rt.Sessions.AppendHistoryRecord(id, sessionstore.HistoryRecord{
 					Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"unfinished","name":"read_file","arguments":"{}"}]`), At: at,
 				}); err != nil {
 					t.Fatal(err)
 				}
-				lease, acquired, err := sessionstore.TryAcquireThreadExecutionLease(rt.SessionDir, id)
+				lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, id)
 				if err != nil || !acquired {
 					t.Fatalf("acquire execution ownership: acquired=%v err=%v", acquired, err)
 				}
 				t.Cleanup(func() { _ = lease.Release() })
 			}
-			before, err := sessionstore.LoadHistoryRecords(rt.SessionDir, id, true)
+			before, err := rt.Sessions.LoadHistoryRecords(id, true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			providerBefore, err := sessionstore.LoadProviderHistorySnapshot(rt.SessionDir, id)
+			providerBefore, err := rt.Sessions.LoadProviderHistorySnapshot(id)
 			if err != nil {
 				t.Fatal(err)
 			}
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			loaded, err := srv.loadPersistedThreadSnapshot(id)
+			loaded, err := srv.loadPersistedThreadSnapshot(binding, id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			metas, err := loadMetaMessages(rt.SessionDir, id)
+			metas, err := loadMetaMessages(rt.Sessions, id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,17 +245,18 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			// Reconstruct the prior load path independently of its optimized
 			// constructor and meta selection, then compare the complete state.
 			want := newThreadState(id, loaded.history, rt.ProviderName, rt.Model, firstNonEmpty(loaded.metadata.CWD, rt.RootDir), true, at)
+			want.state = binding
 			want.historyHeadSeq = loaded.baselineSeq
-			want.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, at, srv.resolveParticipantSummary)
-			srv.restorePluginToolLabels(want.Turns)
+			want.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, at, srv.participantResolver(binding))
+			restorePluginToolLabels(want.state.Host, want.Turns)
 			want.Turns = applyTokenUsageMetasToTurns(want.Turns, metas)
 			want.WorkspaceKind = workspaceKindForCWD(rt.WuuHome, want.CWD)
 			applySessionMetadata(want, loaded.metadata)
-			want.SessionControl, err = srv.readThreadSessionControl(id)
+			want.SessionControl, err = srv.readThreadSessionControl(binding, id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := srv.loadPersistedThreadState(id, at)
+			got, err := srv.loadPersistedThreadState(binding, id, at)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -288,11 +293,11 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 					t.Fatal("snapshot aliases retained turn items")
 				}
 			}
-			after, err := sessionstore.LoadHistoryRecords(rt.SessionDir, id, true)
+			after, err := rt.Sessions.LoadHistoryRecords(id, true)
 			if err != nil || !reflect.DeepEqual(after, before) {
 				t.Fatalf("loading modified physical history: %v", err)
 			}
-			providerAfter, err := sessionstore.LoadProviderHistorySnapshot(rt.SessionDir, id)
+			providerAfter, err := rt.Sessions.LoadProviderHistorySnapshot(id)
 			if err != nil || !reflect.DeepEqual(providerAfter, providerBefore) {
 				t.Fatalf("loading modified the provider checkpoint: %v", err)
 			}

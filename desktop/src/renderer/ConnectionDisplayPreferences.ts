@@ -10,14 +10,14 @@ export type ConnectionDisplayPreference = {
   hiddenModels: string[];
 };
 
-function snapshot(): string {
+export function connectionDisplaySnapshot(): string {
   try { return localStorage.getItem(storageKey) ?? "{}"; }
   catch { return "{}"; }
 }
 
 function read(): Record<string, ConnectionDisplayPreference> {
   try {
-    const value: unknown = JSON.parse(snapshot());
+    const value: unknown = JSON.parse(connectionDisplaySnapshot());
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry && typeof entry === "object").map(([key, entry]) => [key, {
       alias: typeof entry.alias === "string" ? entry.alias : undefined,
@@ -75,7 +75,7 @@ export const connectionDisplayPreferences = {
   },
 };
 
-function subscribe(callback: () => void): () => void {
+export function subscribeConnectionDisplay(callback: () => void): () => void {
   const storage = (event: StorageEvent): void => {
     if (event.key === storageKey || event.key === null) callback();
   };
@@ -88,6 +88,6 @@ function subscribe(callback: () => void): () => void {
 }
 
 export function useConnectionDisplayPreferences(): typeof connectionDisplayPreferences {
-  useSyncExternalStore(subscribe, snapshot, () => "{}");
+  useSyncExternalStore(subscribeConnectionDisplay, connectionDisplaySnapshot, () => "{}");
   return { ...connectionDisplayPreferences };
 }

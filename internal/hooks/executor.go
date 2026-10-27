@@ -57,6 +57,13 @@ func (h *HookedExecutor) Definitions() []providers.ToolDefinition {
 	return h.inner.Definitions()
 }
 
+func (h *HookedExecutor) DefinitionsContext(ctx context.Context) ([]providers.ToolDefinition, error) {
+	if contextual, ok := h.inner.(agent.ContextualToolDefinitions); ok {
+		return contextual.DefinitionsContext(ctx)
+	}
+	return h.inner.Definitions(), nil
+}
+
 func (h *HookedExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
 	if finalizer, ok := h.inner.(agent.ToolResultFinalizer); ok {
 		return finalizer.FinalizeToolResult(call, result)
@@ -235,13 +242,16 @@ func (h *HookedExecutor) LastAdditionalContext() string {
 		return ""
 	}
 	h.contextMu.Lock()
-	defer h.contextMu.Unlock()
-	context := h.lastAdditionalCtx
+	additional := h.lastAdditionalCtx
 	h.lastAdditionalCtx = ""
-	return context
+	h.contextMu.Unlock()
+	if provider, ok := h.inner.(agent.ToolContextProvider); ok {
+		return joinAdditionalContext(provider.LastAdditionalContext(), additional)
+	}
+	return additional
 }
 
-// TakeAdditionalContext returns and clears PostToolUse context for one tool
+// TakeAdditionalContext returns and clears provider and PostToolUse context for one tool
 // call. Keying context by provider call ID keeps concurrent results isolated
 // even when they finish out of order. Implements agent.ToolCallContextProvider.
 func (h *HookedExecutor) TakeAdditionalContext(call providers.ToolCall) string {
@@ -249,10 +259,26 @@ func (h *HookedExecutor) TakeAdditionalContext(call providers.ToolCall) string {
 		return ""
 	}
 	h.contextMu.Lock()
-	defer h.contextMu.Unlock()
-	context := h.additionalByCall[call.ID]
+	additional := h.additionalByCall[call.ID]
 	delete(h.additionalByCall, call.ID)
-	return context
+	h.contextMu.Unlock()
+	if provider, ok := h.inner.(agent.ToolCallContextProvider); ok {
+		return joinAdditionalContext(provider.TakeAdditionalContext(call), additional)
+	}
+	if provider, ok := h.inner.(agent.ToolContextProvider); ok {
+		return joinAdditionalContext(provider.LastAdditionalContext(), additional)
+	}
+	return additional
+}
+
+func joinAdditionalContext(provider, hook string) string {
+	if provider == "" {
+		return hook
+	}
+	if hook == "" {
+		return provider
+	}
+	return provider + "\n\n" + hook
 }
 
 func (h *HookedExecutor) clearAdditionalContext(call providers.ToolCall) {

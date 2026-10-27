@@ -728,7 +728,7 @@ func TestBrowserDiscoverySurvivesRuntimeRebuild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runner := agent.StreamRunner{Client: client, Tools: resumed, Model: "kimi-k3", NativeDeferredToolDiscovery: true, MaxSteps: 3}
+			runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Tools: resumed, Model: "kimi-k3", NativeDeferredToolDiscovery: true, MaxSteps: 3}
 			run, err := runner.RunWithCallback(context.Background(), history, nil)
 			if err != nil {
 				t.Fatal(err)

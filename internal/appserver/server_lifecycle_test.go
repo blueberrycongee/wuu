@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ func TestServerCloseReleasesConnectionOwnedResources(t *testing.T) {
 
 	cancelled := make(chan struct{})
 	th := newThreadState("thread-close", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.running = true
 	th.cancel = func() { close(cancelled) }
 	sub := &threadRuntimeSubscription{done: make(chan struct{})}
@@ -78,5 +80,44 @@ func TestRunStdioClosesServerResourcesOnEOF(t *testing.T) {
 	}
 	if got := out.String(); got != "" {
 		t.Fatalf("RunStdio retained its activity subscription after EOF: %s", got)
+	}
+}
+
+// Both transport entrypoints apply connection options before subscriptions or
+// output, and must join option-owned work before returning a registration error.
+func TestRunStdioOptionFailureClosesConnectionWork(t *testing.T) {
+	for _, device := range []bool{false, true} {
+		name := "local"
+		if device {
+			name = "device"
+		}
+		t.Run(name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			done := make(chan struct{})
+			rejected := errors.New("registration rejected")
+			option := func(s *Server) error {
+				if s.nativeHistoryCtx == nil || s.presenceLease != nil {
+					t.Fatal("connection options must receive a cancellation scope before presence subscriptions")
+				}
+				if !s.startBackground(func() { <-s.nativeHistoryCtx.Done(); close(done) }) {
+					t.Fatal("startup work was rejected")
+				}
+				return rejected
+			}
+			var err error
+			if device {
+				err = RunStdioForDevice(context.Background(), rt, strings.NewReader(""), &lockedBuffer{}, nil, option)
+			} else {
+				err = RunStdio(context.Background(), rt, strings.NewReader(""), &lockedBuffer{}, option)
+			}
+			if !errors.Is(err, rejected) {
+				t.Fatalf("startup error=%v", err)
+			}
+			select {
+			case <-done:
+			default:
+				t.Fatal("startup failure returned before connection cleanup")
+			}
+		})
 	}
 }

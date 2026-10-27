@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
@@ -37,7 +37,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/version"
@@ -63,7 +62,9 @@ func (s *Server) handleInitialize(req Request) error {
 		status = "needs_setup"
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
+	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
+		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
 		Status:          status,
 		Issues:          issues,
 		ProtocolVersion: ProtocolVersion,
@@ -367,7 +368,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 	}
 	packageActivationIssues := make(map[string][]pluginpkg.ActivationIssue)
 	packageDependencies := make(map[string][]string)
-	if plan, err := runtime.ResolvePluginActivationPlan(cfg, snapshot.Plugins); err == nil {
+	if plan, err := s.rt.ResolveExtensionPlan(cfg, snapshot.Plugins); err == nil {
 		packageActivationIssues = plan.Issues
 		packageDependencies = plan.Dependencies
 	}
@@ -456,31 +457,27 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			})
 		}
 		sort.Slice(themes, func(i, j int) bool { return themes[i].ID < themes[j].ID })
+		skins := make([]ExtensionSkinDescriptor, 0, len(item.Skins))
+		for _, skin := range item.Skins {
+			skins = append(skins, ExtensionSkinDescriptor{
+				ID: skin.ID, Name: skin.Name,
+				Light: ExtensionSkinVariant(skin.Light), Dark: ExtensionSkinVariant(skin.Dark),
+			})
+		}
 		settingIDs := sortedMapKeys(item.Settings)
 		settings := make([]ExtensionSettingDescriptor, 0, len(settingIDs))
 		for _, id := range settingIDs {
 			definition := item.Settings[id]
 			settings = append(settings, ExtensionSettingDescriptor{
-				ID:          id,
-				Type:        ExtensionSettingType(definition.Type),
-				Title:       definition.Title,
-				Description: definition.Description,
-				Default:     definition.Default,
-				Enum:        append([]string(nil), definition.Enum...),
-				Scope:       ExtensionSettingScope(definition.Scope),
-				Apply:       ExtensionSettingApplyMode(definition.Apply),
-			})
-		}
-		slots := make([]ExtensionSlotContributionDescriptor, 0, len(item.Slots))
-		for _, contribution := range item.Slots {
-			slots = append(slots, ExtensionSlotContributionDescriptor{
-				ID: contribution.ID, Target: contribution.Target, Order: contribution.Order, Title: contribution.Title,
-			})
-		}
-		surfaces := make([]ExtensionSurfaceContributionDescriptor, 0, len(item.Surfaces))
-		for _, contribution := range item.Surfaces {
-			surfaces = append(surfaces, ExtensionSurfaceContributionDescriptor{
-				ID: contribution.ID, Target: contribution.Target, Mode: string(contribution.Mode), Order: contribution.Order, Title: contribution.Title,
+				ID:                id,
+				Type:              ExtensionSettingType(definition.Type),
+				Title:             definition.Title,
+				Description:       definition.Description,
+				Default:           definition.Default,
+				Enum:              append([]string(nil), definition.Enum...),
+				Scope:             ExtensionSettingScope(definition.Scope),
+				Apply:             ExtensionSettingApplyMode(definition.Apply),
+				CredentialOrigins: append([]string(nil), definition.CredentialOrigins...),
 			})
 		}
 		presenters := make([]ExtensionPresenterContributionDescriptor, 0, len(item.Presenters))
@@ -549,10 +546,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		if item.Desktop != nil {
 			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry}
 		}
-		if len(commands) > 0 || len(themes) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
+		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
 			packageRecord.Contributions = &ExtensionContributions{
-				Commands: commands, Themes: themes, Settings: settings,
-				Slots: slots, Surfaces: surfaces, Presenters: presenters,
+				Commands: commands, Themes: themes, Skins: skins, Settings: settings,
+				Presenters: presenters,
 				Navigation: navigation, WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
 			}
 		}
@@ -651,6 +648,52 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		}
 	}
 
+	for _, module := range snapshot.NativeRendererModules() {
+		enabled := true
+		records = append(records, ExtensionInventoryRecord{
+			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
+			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
+			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
+			RuntimeState: ExtensionRuntimeActive, Enabled: &enabled,
+			Desktop: &ExtensionDesktopDescriptor{Entry: module.Entry},
+		})
+	}
+
+	// Renderer ordering and failure propagation consume the same committed graph
+	// as the runtime. Native non-renderer services already execute in the Go host.
+	if snapshot.PluginHost != nil {
+		visible := make(map[string]bool)
+		for _, record := range records {
+			if record.Kind == extensions.KindPlugin {
+				visible[record.Provenance.PluginID] = true
+			}
+		}
+		dependencies := snapshot.PluginHost.Dependencies()
+		for index := range records {
+			record := &records[index]
+			if record.Kind != extensions.KindPlugin {
+				continue
+			}
+			edges, admitted := dependencies[record.Provenance.PluginID]
+			if !admitted {
+				continue
+			}
+			var resolved, required []string
+			for _, edge := range edges {
+				if !visible[edge.Provider] {
+					continue
+				}
+				resolved = append(resolved, edge.Provider)
+				if edge.Required {
+					required = append(required, edge.Provider)
+				}
+			}
+			record.ResolvedDependencies = cloneSortedStrings(resolved)
+			record.ResolvedRequiredDependencies = cloneSortedStrings(required)
+		}
+	}
+
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Kind != records[j].Kind {
 			return records[i].Kind < records[j].Kind
@@ -660,6 +703,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		}
 		return records[i].ID < records[j].ID
 	})
+	for i := range records {
+		if records[i].Kind == extensions.KindPlugin {
+			records[i].GraphGeneration = snapshot.GenerationID
+		}
+	}
 	return records
 }
 
@@ -909,6 +957,39 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	var fields map[string]json.RawMessage
+	if err := decodeParams(req.Params, &fields); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	_, batch := fields["updates"]
+	updates := params.Updates
+	if batch {
+		for _, field := range []string{"id", "fingerprint", "action"} {
+			if _, present := fields[field]; present {
+				return s.writeResponse(req.ID, nil, errors.New("updates cannot be combined with single-package fields"))
+			}
+		}
+		if len(updates) == 0 {
+			return s.writeResponse(req.ID, nil, errors.New("updates must be a non-empty array"))
+		}
+		seen := make(map[string]bool, len(updates))
+		for index := range updates {
+			update := &updates[index]
+			update.ID = strings.TrimSpace(update.ID)
+			if update.ID == "" {
+				return s.writeResponse(req.ID, nil, errors.New("each update requires an extension package id"))
+			}
+			if seen[update.ID] {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("duplicate extension package %q in updates", update.ID))
+			}
+			seen[update.ID] = true
+			if update.Action != ExtensionPackageEnable && update.Action != ExtensionPackageDisable {
+				return s.writeResponse(req.ID, nil, errors.New("updates only supports enable and disable actions"))
+			}
+		}
+	} else {
+		updates = []ExtensionPackageEnablementUpdate{{ID: strings.TrimSpace(params.ID), Fingerprint: params.Fingerprint, Action: params.Action}}
+	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
@@ -917,62 +998,88 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
+	services, releaseServices, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseServices()
+	// Package management targets the installed catalog; captured services still
+	// own configuration writes and never replace retained execution inventory.
 	snapshot := s.rt.ExtensionSnapshot()
-	var selected *pluginpkg.Plugin
-	for index := range snapshot.Plugins {
-		if snapshot.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
-			selected = &snapshot.Plugins[index]
-			break
+	selected := make([]pluginpkg.Plugin, len(updates))
+	for index, update := range updates {
+		found := false
+		for _, item := range snapshot.Plugins {
+			if item.SubjectID == update.ID {
+				selected[index], found = item, true
+				break
+			}
+		}
+		if !found {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", update.ID))
+		}
+		item := selected[index]
+		if update.Action == ExtensionPackagePromoteUpdate || update.Action == ExtensionPackageRejectUpdate {
+			return s.handlePendingPluginUpdate(req, params, item, services, releaseMutation)
+		}
+		providedFingerprint := strings.TrimSpace(update.Fingerprint)
+		if providedFingerprint != "" && providedFingerprint != item.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("extension package changed; refresh inventory before updating policy"))
+		}
+		if (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) && providedFingerprint == "" {
+			return s.writeResponse(req.ID, nil, errors.New("fingerprint is required for grant and reject actions"))
+		}
+		if item.Official && (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) {
+			return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
 		}
 	}
-	if selected == nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", params.ID))
-	}
-	if params.Action == ExtensionPackagePromoteUpdate || params.Action == ExtensionPackageRejectUpdate {
-		return s.handlePendingPluginUpdate(req, params, *selected, releaseMutation)
-	}
-	providedFingerprint := strings.TrimSpace(params.Fingerprint)
-	if providedFingerprint != "" && providedFingerprint != selected.Fingerprint {
-		return s.writeResponse(req.ID, nil, errors.New("extension package changed; refresh inventory before updating policy"))
-	}
-	if (params.Action == ExtensionPackageGrant || params.Action == ExtensionPackageReject) && providedFingerprint == "" {
-		return s.writeResponse(req.ID, nil, errors.New("fingerprint is required for grant and reject actions"))
-	}
-	if selected.Official && (params.Action == ExtensionPackageGrant || params.Action == ExtensionPackageReject) {
-		return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
-	}
 
-	userConfigPath, err := statepath.ConfigPath(s.rt.HomeDir)
+	view, err := services.Config.Read(context.Background())
 	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("resolve user config: %w", err))
+		return s.writeResponse(req.ID, nil, err)
+	}
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	approvedAt := time.Now().UTC()
-	preparedSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
-	if err := applyExtensionPackageAction(&preparedSettings, params.Action, *selected, approvedAt); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	cfg := s.currentExtensionConfig()
-	cfg.Extensions = &preparedSettings
-	candidate, err := s.rt.PreflightExtensionPolicy(cfg)
+	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error {
+		for index, update := range updates {
+			if err := applyExtensionPackageAction(settings, update.Action, selected[index], approvedAt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	var persistedSettings extensions.Settings
+	cfg := view.Config
+	cfg.Extensions = &preparedSettings
+	var requiredIDs []string
+	for index, update := range updates {
+		if update.Action == ExtensionPackageEnable {
+			requiredIDs = append(requiredIDs, selected[index].ID)
+		}
+	}
+	candidate, err := s.rt.PreflightExtensionPolicy(cfg, requiredIDs...)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var committedView config.SourceView
 	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
-		updated, updateErr := config.UpdateExtensionSettings(userConfigPath, func(settings *extensions.Settings) error {
-			return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
-		})
+		var updateErr error
+		committedView, updateErr = services.Config.CompareExchange(context.Background(), view.Revision, next)
 		if updateErr != nil {
 			return fmt.Errorf("persist extension policy: %w", updateErr)
 		}
-		persistedSettings = updated
 		return nil
 	})
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
-	s.rt.SetExtensionSettings(&persistedSettings)
-	s.schedulePluginTurnLifecycleReplay()
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
+	s.scheduleCurrentPluginTurnLifecycleReplay()
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
 
@@ -1019,7 +1126,11 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
-	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.rt.RefreshExtensions(cfg); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	inventory, skills := s.currentExtensionState()
@@ -1065,25 +1176,25 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if err := config.UpdateAdvancedRuntime(s.rt.ConfigPath, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
-		MaxSteps:                params.MaxSteps,
-		MaxContextTokens:        params.MaxContextTokens,
-		Temperature:             params.Temperature,
-		CompactThresholdPct:     params.CompactThresholdPct,
-		CompactKeepRecentTokens: params.CompactKeepRecentTokens,
-		DisableAutoCompact:      params.DisableAutoCompact,
-		ProviderContextWindow:   params.ProviderContextWindow,
-		ModelAliases:            modelAliases,
-		VerificationModel:       verificationModel,
-		ProjectModels:           params.ProjectModels,
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateAdvancedRuntimeSource(source, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
+			MaxSteps:                params.MaxSteps,
+			MaxContextTokens:        params.MaxContextTokens,
+			Temperature:             params.Temperature,
+			CompactThresholdPct:     params.CompactThresholdPct,
+			CompactKeepRecentTokens: params.CompactKeepRecentTokens,
+			DisableAutoCompact:      params.DisableAutoCompact,
+			ProviderContextWindow:   params.ProviderContextWindow,
+			ModelAliases:            modelAliases,
+			VerificationModel:       verificationModel,
+			ProjectModels:           params.ProjectModels,
+		})
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+
+	cfg := view.Config
 	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1118,7 +1229,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
 		s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
 	}
-	s.updateRootAgentControlWorkerDefaults()
 	s.updateIdleThreadAdvancedRuntime(cfg)
 	if s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
@@ -1190,19 +1300,22 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	if err := config.UpdateGeneralSettings(s.rt.ConfigPath, config.GeneralSettingsUpdate{
-		PTC:                   params.PTC,
-		ExecutionEnvironments: params.ExecutionEnvironments,
-		GitAttributionEnabled: params.GitAttributionEnabled,
-		MCPEnabledToggles:     params.MCPEnabledToggles,
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateGeneralSettingsSource(source, config.GeneralSettingsUpdate{
+			PTC:                   params.PTC,
+			ExecutionEnvironments: params.ExecutionEnvironments,
+			GitAttributionEnabled: params.GitAttributionEnabled,
+			MCPEnabledToggles:     params.MCPEnabledToggles,
+		})
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	systemPrompt := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
+	cfg := view.Config
+	systemPrompt, err := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	s.resetThreadRuntimesForGeneralSettings(systemPrompt)
 	return s.writeResponse(req.ID, ConfigGeneralUpdateResult{
 		GeneralSettings: s.currentGeneralSettingsSummary(),
@@ -1210,9 +1323,19 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 }
 
 func (s *Server) handleConfigModelUpdate(req Request) error {
+	return s.handleConfigModelUpdateWithServices(req, nil)
+}
+
+func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runtime.StateServices) error {
 	var params ConfigModelUpdateParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.ApplyAt != "" && params.ApplyAt != "next_step" {
+		return s.writeResponse(req.ID, nil, errors.New("unsupported model selection boundary"))
+	}
+	if params.ApplyAt == "next_step" && (params.ThreadID == "" || params.PermissionMode != nil || params.ApproveForMe != nil || params.ResetModel || params.ModelOptions != nil || params.BaseURL != nil || params.APIKey != nil || params.AuthToken != nil || params.Type != nil || params.CreateProvider || params.RemoveModel != "" || params.AddModel != "" || params.ChatGPTAccountID != nil || params.ReuseCodexCredentials != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("next-step selection accepts only a conversation model, variant, effort, and speed; permissions and connections remain turn-bound"))
 	}
 	providerName := strings.TrimSpace(params.Provider)
 	model := strings.TrimSpace(params.Model)
@@ -1240,10 +1363,25 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if model == "" && (params.CreateProvider || (threadID == "" && !keepSelection)) {
 		return s.writeResponse(req.ID, nil, errors.New("model is required"))
 	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if providerName == "" {
 		providerName = s.rt.ProviderName
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if services == nil {
+		var err error
+		var release func()
+		services, release, err = s.modelServices()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer release()
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1257,7 +1395,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	creatingProvider := params.CreateProvider
 	autoDiscoveredGrokBuild := false
 	if !creatingProvider {
-		if _, discovered := localGrokBuildProvider(cfg, providerName, os.Getenv("HOME")); discovered {
+		if _, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials); discovered {
 			creatingProvider = true
 			autoDiscoveredGrokBuild = true
 		}
@@ -1406,7 +1544,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("ChatGPT model choices are managed by the selected account"))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := s.validateChatGPTModel(ctx, providerCfg)
+		err := s.validateChatGPTModel(ctx, providerCfg, services.ChatGPT)
 		cancel()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1421,7 +1559,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("reuse_codex_credentials is only valid for openai-codex providers"))
 		}
 		if *params.ReuseCodexCredentials {
-			if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
+			if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
 				return s.writeResponse(req.ID, nil, err)
 			}
 		}
@@ -1520,26 +1658,14 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		effortForConfig, variantForConfig = nil, nil
 	}
 
-	var client providers.StreamClient
 	if resolvedName != s.rt.ProviderName || connectionChanged || providerClientChanged {
-		if ruleProviderCfg.Type == "chatgpt" {
-			var direct *chatgpt.Client
-			direct, err = s.chatGPTClient(ruleProviderCfg.ChatGPTAccountID)
-			if err == nil {
-				client = providers.AdaptStreamClient(direct)
-			}
-		} else {
-			client, err = providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
-		}
+		err = s.validateModelConfigurationWithServices(services, ruleProviderCfg, resolvedName)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
 	if authKeyForStore != "" {
-		store, storeErr := authstorage.ForHome(os.Getenv("HOME"))
-		if storeErr != nil {
-			return s.writeResponse(req.ID, nil, storeErr)
-		}
+		store := authstorage.NewBound(context.Background(), services.Credentials)
 		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
 			credentials.Type = "api_key"
 			credentials.APIKey = authKeyForStore
@@ -1550,10 +1676,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		}
 	}
 	if authTokenForStore != "" {
-		store, storeErr := authstorage.ForHome(os.Getenv("HOME"))
-		if storeErr != nil {
-			return s.writeResponse(req.ID, nil, storeErr)
-		}
+		store := authstorage.NewBound(context.Background(), services.Credentials)
 		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
 			credentials.Type = "auth_token"
 			credentials.AuthToken = authTokenForStore
@@ -1563,11 +1686,6 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	// Serialize the persisted write with the config watcher. Otherwise the
-	// watcher can observe this interactive model/effort change and hot-apply it
-	// again while (or just after) this handler is applying it itself.
-	s.configRefreshMu.Lock()
-	defer s.configRefreshMu.Unlock()
 	change := config.ProviderChange{
 		Create:                creatingProvider,
 		Type:                  providerTypeValue,
@@ -1600,21 +1718,22 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if addedModel != "" {
 		change.AddedModels = []string{addedModel}
 	}
-	if err := config.UpdateProvider(s.rt.ConfigPath, resolvedName, change); err != nil {
+	if _, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) { return config.UpdateProviderSource(source, resolvedName, change) }); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if keepSelection && resolvedName != s.rt.ProviderName {
 		// The default runtime keeps its client; roles and idle conversations
 		// that use the edited provider pick up the saved connection.
-		if err := s.refreshRuntimeAfterProviderEdit(connectionChanged); err != nil {
+		if err := s.refreshRuntimeAfterProviderEdit(services, connectionChanged); err != nil {
 			return s.writeResponse(req.ID, nil, err)
-		}
-		if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
-			s.configFingerprint = fingerprint
 		}
 		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 	}
-	previousRuntimeProvider := s.rt.ProviderName
+	view, err = services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg = view.Config
 	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
 		ProviderName:   resolvedName,
 		ProviderConfig: providerCfg,
@@ -1632,17 +1751,8 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			runtime.ConfigureToolkitPermissions(s.rt.Toolkit, s.rt.Permissions)
 		}
 	}
-	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousRuntimeProvider, client, explicitSelection); err != nil {
+	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, explicitSelection); err != nil {
 		return s.writeResponse(req.ID, nil, err)
-	}
-	// The RPC response is the notification path for this in-process mutation.
-	// Mark the just-applied file revision as observed so the periodic watcher
-	// does not rebuild the runtime and notify the renderer again on its next
-	// 500 ms tick.
-	if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
-		s.configFingerprint = fingerprint
-	} else {
-		providers.DebugLogf("record model update config fingerprint: %v", fingerprintErr)
 	}
 
 	if keepSelection {
@@ -1669,8 +1779,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 
 // refreshRuntimeAfterProviderEdit re-resolves model roles for the unchanged
 // workspace selection after another provider's saved configuration changed.
-func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+func (s *Server) refreshRuntimeAfterProviderEdit(services *runtime.StateServices, connectionChanged bool) error {
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return err
 	}
@@ -1691,7 +1802,7 @@ func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
 	if err != nil {
 		return err
 	}
-	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false, s.rt.ProviderName, nil, false)
+	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false)
 }
 
 // applyModelSelectionToRuntime swaps the workspace runtime onto a resolved
@@ -1707,40 +1818,22 @@ func (s *Server) applyModelSelectionToRuntime(
 	selection modelvariant.Selection,
 	roleSelections modelroles.Set,
 	connectionChanged bool,
-	providerClientChanged bool,
-	previousRuntimeProvider string,
-	client providers.StreamClient,
 	explicitSelection bool,
 ) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
+	if err := s.rt.RefreshModelConfiguration(cfg, resolvedName, model); err != nil {
+		return err
+	}
 	if explicitSelection {
 		s.rt.ProviderName = resolvedName
 		s.rt.Model = model
 	}
-	if client != nil || len(s.rt.ReadinessIssues) == 0 {
-		s.rt.ReadinessIssues = nil
-	}
+
 	s.rt.ModelRoles = roleSelections
 	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
-	if roleSelections.Title.Inherited && client != nil {
-		s.rt.TitleClient = client
-	} else if !roleSelections.Title.Inherited || connectionChanged {
-		titleClient, err := providerfactory.BuildStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
-		if err != nil {
-			return fmt.Errorf("build title client: %w", err)
-		}
-		s.rt.TitleClient = titleClient
-	}
-	if s.rt.Toolkit != nil && (!roleSelections.Worker.Inherited || connectionChanged || providerClientChanged || resolvedName != previousRuntimeProvider) {
-		workerClient, err := providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
-		if err != nil {
-			return fmt.Errorf("build worker client: %w", err)
-		}
-		s.rt.WorkerClient = workerClient
-	}
 	if explicitSelection && s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
 	}
@@ -1749,11 +1842,10 @@ func (s *Server) applyModelSelectionToRuntime(
 			return fmt.Errorf("reconfigure tool loading: %w", err)
 		}
 	}
-	if s.rt.StreamRunner != nil && client != nil {
-		s.rt.StreamRunner.UpdateProviderConnection(client, agent.BuildProviderObservationKey(resolvedName, ruleProviderCfg.BaseURL, ruleProviderCfg.Type, ruleProviderCfg.API, ruleProviderCfg.WireAPI, ruleProviderCfg.StreamTransport, agent.ProviderUsageNormalizationKey(ruleProviderCfg.CacheCreationInputTokensOmitted, ruleProviderCfg.InputTokensIncludeCacheRead)))
-	}
 	if explicitSelection {
-		s.rt.RefreshSystemPrompt(resolvedName, apiModel)
+		if _, err := s.rt.RefreshSystemPrompt(resolvedName, apiModel); err != nil {
+			return err
+		}
 		modelBudget := runtime.ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 		s.rt.ModelBudget = modelBudget
 		s.rt.WorkerModelBudget = runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1778,14 +1870,13 @@ func (s *Server) applyModelSelectionToRuntime(
 			s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
 		}
 	}
-	s.updateRootAgentControlWorkerDefaults()
 	if connectionChanged {
 		// Connection credentials/endpoints are workspace configuration, so every
 		// cached runtime must rebuild before its next turn. Running turns keep
 		// their admitted snapshot until they settle.
 		s.resetThreadRuntimesForGeneralSettings("")
 	}
-	return nil
+	return s.recordPublishedConfig(cfg)
 }
 
 func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
@@ -1836,14 +1927,34 @@ func (s *Server) handleConfigCodexCredentials(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
+	services, release, err := s.modelServices()
+	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.refreshConfigIfChanged(); err != nil {
+	defer release()
+	if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	before, err := services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	committed, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
+		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// An explicit write must publish even before the watcher has a baseline.
+	if committed.Revision != before.Revision {
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	// Explicitly discard idle snapshots even when reuse was already enabled.
 	// In-flight turns retain their admitted configuration until completion.
@@ -1862,7 +1973,13 @@ func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error
 	if providerName == "" {
 		providerName = s.rt.ProviderName
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1874,6 +1991,7 @@ func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error
 		return s.writeResponse(req.ID, nil, fmt.Errorf("provider %s uses type %s; Codex models require openai-codex", resolvedName, providerCfg.Type))
 	}
 	client, err := codex.New(codex.ClientConfig{
+		Credentials:           services.Credentials,
 		BaseURL:               providerCfg.BaseURL,
 		APIKey:                explicitProviderAPIKey(providerCfg),
 		Headers:               providerCfg.Headers,
@@ -1917,7 +2035,18 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if providerName == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider is required"))
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1966,15 +2095,12 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		// Validate the replacement before touching the removed connection's
 		// credentials. An invalid or unauthenticated fallback must be a no-op.
 		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
-		if _, err := providerfactory.BuildStreamClient(ruleCfg, fallbackName); err != nil {
+		if err := s.validateModelConfigurationWithServices(services, ruleCfg, fallbackName); err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
 		}
 		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
 	}
-	authStore, authErr := authstorage.ForHome(os.Getenv("HOME"))
-	if authErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("prepare credential cleanup: %w", authErr))
-	}
+	authStore := authstorage.NewBound(context.Background(), services.Credentials)
 	// This account-level sign-in may be used by other connections or
 	// workspaces. Removing a provider is not an account sign-out.
 	removeCredential := !config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID
@@ -1983,29 +2109,32 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if authErr != nil && !errors.Is(authErr, authstorage.ErrNotFound) {
 		return s.writeResponse(req.ID, nil, authErr)
 	}
-	// Config and credentials are separate atomic files. Restore only the
-	// affected credential entries if either part of removal fails.
-	restoreCredentials := func(cause error) error {
-		if previous, ok := credentials.Providers[resolvedName]; ok && removeCredential {
-			if err := authStore.Set(resolvedName, previous); err != nil {
-				cause = errors.Join(cause, fmt.Errorf("restore provider credential %q: %w", resolvedName, err))
-			}
-		}
-		return cause
+	// Remove configuration first. A failed or uncertain credential cleanup
+	// must not replay a stale value over a concurrent credential rotation.
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	if removeCredential {
-		if err := authStore.DeleteProvider(resolvedName); err != nil {
-			return s.writeResponse(req.ID, nil, restoreCredentials(fmt.Errorf("remove provider credential: %w", err)))
-		}
+	next, newDefault, err := config.RemoveProviderSource(source, providerName, params.FallbackProvider, params.FallbackModel)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	newDefault, removeErr := config.RemoveProvider(s.rt.ConfigPath, providerName, params.FallbackProvider, params.FallbackModel)
+	committedView, removeErr := services.Config.CompareExchange(context.Background(), view.Revision, next)
 	if removeErr != nil {
-		return s.writeResponse(req.ID, nil, restoreCredentials(removeErr))
+		return s.writeResponse(req.ID, nil, removeErr)
+	}
+	if err := configActivationError(committedView); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, exists := credentials.Providers[resolvedName]; removeCredential && exists {
+		if err := authStore.DeleteProvider(resolvedName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("provider was removed from configuration, but credential cleanup failed: %w", err))
+		}
 	}
 	if !removedWasDefault {
 		// Keep the main selection, but rebuild roles and idle snapshots that
 		// could still refer to the removed provider.
-		if err := s.refreshRuntimeAfterProviderEdit(true); err != nil {
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
@@ -2023,28 +2152,15 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 			AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		}, nil)
 	}
-	// Default provider changed — reload the config and rebuild the
-	// runtime for the validated replacement selection.
-	fallbackName := strings.TrimSpace(newDefault)
-	if fallbackName == "" {
+	// The committed removal already selected and saved its fallback. Rebuild
+	// under the same admission fence rather than reentering the update handler.
+	if strings.TrimSpace(newDefault) == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider removal left no default_provider configured"))
 	}
-	fallbackModel := strings.TrimSpace(params.FallbackModel)
-	if fallbackModel == "" {
-		if fb, ok := cfg.Providers[fallbackName]; ok {
-			fallbackModel = fb.Model
-		}
+	if err := s.applyExternalConfigChangeLocked(committedView.Config); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	synthetic := req
-	synthetic.Method = MethodConfigModelUpdate
-	synthetic.Params, err = json.Marshal(ConfigModelUpdateParams{
-		Provider: fallbackName,
-		Model:    fallbackModel,
-	})
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("marshal fallback params: %w", err))
-	}
-	return s.handleConfigModelUpdate(synthetic)
+	return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 }
 
 func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
@@ -2094,24 +2210,54 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 		}
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
-	th, err := s.ensureThreadLoaded(threadID)
-	if err != nil {
-		return nil, "", err
+	var binding *runtime.State
+	var threadRuntime *runtime.ThreadRuntime
+	var engineID agentengine.EngineID
+	var root, baseRepo string
+	// Native skill availability during admitted work uses that work's binding. Loading
+	// a new state projection would collide with its execution lease after reload.
+	// Retain the state before releasing the thread lock so retirement cannot close
+	// the catalog's provider while discovery is in progress.
+	s.mu.Lock()
+	if s.closed.Load() {
+		s.mu.Unlock()
+		return nil, "", errServerClosed
 	}
-	threadRuntime, err := s.ensureThreadRuntime(th)
-	if err != nil {
-		return nil, "", err
+	if th := s.threads[threadID]; th != nil {
+		th.mu.Lock()
+		if th.execRuntime != nil && (threadAdmissionProjectionBusyLocked(th) || s.activeExecutionRunID(threadID) != "") {
+			binding = th.state.Retain()
+			threadRuntime = th.execRuntime
+			engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		}
+		th.mu.Unlock()
 	}
-	th.mu.Lock()
-	engineID := agentengine.NormalizeEngineID(th.EngineID)
-	th.mu.Unlock()
+	s.mu.Unlock()
+	if threadRuntime == nil {
+		var err error
+		binding, err = s.rt.RetainState()
+		if err != nil {
+			return nil, "", err
+		}
+		defer binding.Close()
+		th, err := s.ensureThreadLoaded(binding, threadID)
+		if err != nil {
+			return nil, "", err
+		}
+		threadRuntime, err = s.ensureThreadRuntime(th)
+		if err != nil {
+			return nil, "", err
+		}
+		th.mu.Lock()
+		engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		th.mu.Unlock()
+	} else {
+		defer binding.Close()
+	}
 	// The external host toolkit describes only browser/CUA capabilities, not
 	// the engine's native tools or its ability to use explicitly selected skills.
 	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
-		root := threadRuntime.Toolkit.RootDir()
-		th.mu.Lock()
-		baseRepo := th.WorktreeBaseRepo
-		th.mu.Unlock()
+		root = threadRuntime.Toolkit.RootDir()
 		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
 			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
 			root = ""
@@ -2122,9 +2268,6 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 		}
 		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
 	}
-	th.mu.Lock()
-	root := th.CWD
-	th.mu.Unlock()
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
@@ -2169,7 +2312,17 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 	if threadID == "" {
 		return nil, func() {}, nil
 	}
-	th, err := s.ensureThreadLoaded(threadID)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	owned := true
+	defer func() {
+		if owned {
+			_ = binding.Close()
+		}
+	}()
+	th, err := s.ensureThreadLoaded(binding, threadID)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -2184,9 +2337,9 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 	persist := th.PersistHistory
 	th.mu.Unlock()
 
-	var mutationLease *session.ThreadExecutionLease
+	var mutationLease *session.DocumentThreadExecutionLease
 	if persist {
-		mutationLease, err = s.tryAcquireThreadMutationLease(threadID)
+		mutationLease, err = s.tryAcquireThreadMutationLease(binding, threadID)
 		if err != nil {
 			th.mu.Lock()
 			th.runtimeSelectionMutation = false
@@ -2197,7 +2350,9 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 			return nil, func() {}, err
 		}
 	}
+	owned = false
 	release := func() {
+		defer binding.Close()
 		releaseThreadMutationLease(threadID, mutationLease)
 		th.mu.Lock()
 		th.runtimeSelectionMutation = false
@@ -2207,7 +2362,11 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 }
 
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
-	th, release, err := s.beginThreadRuntimeSelectionMutation(params.ThreadID)
+	begin := s.beginThreadRuntimeSelectionMutation
+	if params.ApplyAt == "next_step" {
+		begin = s.beginNextStepModelSelection
+	}
+	th, release, err := begin(params.ThreadID)
 	if err != nil {
 		if errors.Is(err, errThreadRuntimeSelectionBusy) {
 			return s.writeRunError(req.ID, "thread_busy", err)
@@ -2237,7 +2396,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
+	if params.ApplyAt != "next_step" && agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
 		if params.Provider != "" && params.Provider != provider {
 			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
 		}
@@ -2280,13 +2439,20 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if strings.TrimSpace(params.Model) != "" {
 		model = strings.TrimSpace(params.Model)
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, err := th.state.Services()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	cfg, err = s.registerDiscoveredProvider(cfg, provider)
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.ApplyAt != "next_step" {
+		cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
@@ -2297,7 +2463,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		selected := providerCfg
 		selected.Model = model
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := s.validateChatGPTModel(ctx, selected)
+		err := s.validateChatGPTModel(ctx, selected, services.ChatGPT)
 		cancel()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -2351,15 +2517,22 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	} else if !approvefor.EnabledForMode(permission) {
 		approveForMe = false
 	}
+	if params.ApplyAt == "next_step" {
+		intent, err := s.commitNextStepModelSelection(th, session.RuntimeSelection{Provider: resolvedName, Model: model, Variant: selection.Variant, Effort: selection.LegacyEffort, Speed: speed, PermissionMode: permission, ApproveForMe: approveForMe})
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeThreadModelSelectionResponse(req, th, &intent)
+	}
 	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeThreadModelSelectionResponse(req, th)
 }
 
-func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState) error {
+func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
-	return s.writeResponse(req.ID, ConfigModelUpdateResult{
+	result := ConfigModelUpdateResult{
 		ModelAliases: s.currentModelAliasSummaries(), ProjectModels: s.rt.ProjectModels,
 		Provider: s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
@@ -2367,7 +2540,12 @@ func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState)
 		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,
 		ToolSurface: toolSurface, ModelRoles: s.currentModelRoleSummaries(),
 		Providers: s.providerSummaries(), AdvancedSettings: s.currentAdvancedSettingsSummary(),
-	}, nil)
+	}
+	if len(intents) != 0 {
+		intent := intents[0]
+		result.ModelSelection = &ModelSelectionIntentSummary{Revision: intent.ModelSelectionRevision, ApplyAt: intent.ModelSelectionApplyAt, Provider: intent.Provider, Model: intent.Model}
+	}
+	return s.writeResponse(req.ID, result, nil)
 }
 
 func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool, modelOptions map[string]string) error {
@@ -2385,7 +2563,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 		ApproveForMe:   approveForMe,
 	}
 	if th.PersistHistory {
-		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, th.ID, selection); err != nil {
+		if _, err := th.state.Sessions.SetRuntimeSelection(th.ID, selection); err != nil {
 			return err
 		}
 	}
@@ -2404,7 +2582,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	if detached.runtime != nil || detached.subscription != nil {
 		s.releaseDetachedThreadRuntime(detached)
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(th.state, thread)
 }
 
 func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
@@ -2416,12 +2594,9 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	for _, th := range s.threads {
 		th.mu.Lock()
 		if strings.TrimSpace(systemPrompt) != "" {
+			// The runtime prompt is ephemeral. Rewriting durable history here
+			// would renumber rows and race an active native turn's admission.
 			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
-			if th.PersistHistory {
-				if err := rewriteChatHistory(s.rt.SessionDir, th.ID, th.History); err != nil {
-					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)
-				}
-			}
 		}
 		if th.execRuntime == nil {
 			th.pendingRuntimeReset = false
@@ -2508,8 +2683,7 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 
 // workerManagerOptionsForDerivation builds worker manager options from a
 // thread's own derived worker role, layering the workspace behavior knobs
-// (temperature, compaction cadence) that apply uniformly. It is the per-thread
-// analogue of currentWorkerManagerOptions, which serves the workspace runtime.
+// (temperature, compaction cadence) that apply uniformly.
 func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadModelDerivation) subagent.ManagerOptions {
 	temperature := 0.0
 	compactPct := 0.0
@@ -2529,46 +2703,6 @@ func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadMode
 		MaxInputTokens:          derivation.WorkerModelBudget.InputLimitTokens,
 		OutputReserveTokens:     derivation.WorkerModelBudget.OutputReserveTokens,
 		CompactThresholdTokens:  derivation.WorkerModelBudget.CompactThresholdTokens,
-		Temperature:             temperature,
-		CompactThresholdPct:     compactPct,
-		CompactKeepRecentTokens: keepRecent,
-		DisableAutoCompact:      disableCompact,
-	}
-}
-
-func (s *Server) updateRootAgentControlWorkerDefaults() {
-	if s == nil || s.rt == nil || s.rt.AgentControl == nil {
-		return
-	}
-	s.rt.AgentControl.UpdateWorkerDefaults(
-		s.rt.WorkerClient,
-		s.rt.ModelRoles.Worker.APIModel,
-		s.currentWorkerManagerOptions(),
-	)
-}
-
-func (s *Server) currentWorkerManagerOptions() subagent.ManagerOptions {
-	if s == nil || s.rt == nil {
-		return subagent.ManagerOptions{}
-	}
-	compactPct := 0.0
-	keepRecent := 0
-	disableCompact := false
-	temperature := 0.0
-	if s.rt.StreamRunner != nil {
-		compactPct = s.rt.StreamRunner.CompactThresholdPct
-		keepRecent = s.rt.StreamRunner.CompactKeepRecentTokens
-		disableCompact = s.rt.StreamRunner.DisableAutoCompact
-		temperature = s.rt.StreamRunner.Temperature
-	}
-	return subagent.ManagerOptions{
-		DefaultProviderName:     workerProviderName(s.rt),
-		DefaultEffort:           s.rt.ModelRoles.Worker.LegacyEffort,
-		DefaultProviderOptions:  s.rt.ModelRoles.Worker.ProviderOptions,
-		ContextWindowOverride:   s.rt.WorkerModelBudget.ContextWindowTokens,
-		MaxInputTokens:          s.rt.WorkerModelBudget.InputLimitTokens,
-		OutputReserveTokens:     s.rt.WorkerModelBudget.OutputReserveTokens,
-		CompactThresholdTokens:  s.rt.WorkerModelBudget.CompactThresholdTokens,
 		Temperature:             temperature,
 		CompactThresholdPct:     compactPct,
 		CompactKeepRecentTokens: keepRecent,
@@ -2618,7 +2752,19 @@ func (s *Server) pinLegacyRuntimeSelections() {
 	if s == nil || s.rt == nil {
 		return
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("capture state to pin legacy runtime selections: %v", err)
+		return
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		providers.DebugLogf("capture services to pin legacy runtime selections: %v", err)
+		return
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		providers.DebugLogf("load config to pin legacy runtime selections: %v", err)
 		return
@@ -2640,7 +2786,7 @@ func (s *Server) pinLegacyRuntimeSelections() {
 	}
 	// Strict workspace scoping: DM and group sessions of other workspaces
 	// must keep their own defaults, so the DM-inclusive listing is wrong here.
-	sessions, err := session.ListForCWD(s.rt.SessionDir, s.rt.RootDir, s.rt.WorkspaceID, 0)
+	sessions, err := binding.Sessions.ListForCWD(s.rt.RootDir, s.rt.WorkspaceID, 0)
 	if err != nil {
 		providers.DebugLogf("list sessions to pin legacy runtime selections: %v", err)
 		return
@@ -2669,7 +2815,7 @@ func (s *Server) pinLegacyRuntimeSelections() {
 			changed = true
 		}
 		if changed {
-			if _, err := session.SetRuntimeSelection(s.rt.SessionDir, sess.ID, selection); err != nil {
+			if _, err := binding.Sessions.SetRuntimeSelection(sess.ID, selection); err != nil {
 				providers.DebugLogf("pin runtime selection for session %q: %v", sess.ID, err)
 			}
 		}
@@ -2698,14 +2844,22 @@ func selectionConfigPointers(selection modelvariant.Selection, touched bool, pre
 func (s *Server) providerSummaries() []ProviderSummary {
 	s.providerSummariesMu.Lock()
 	defer s.providerSummariesMu.Unlock()
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.lastProviderSummaries
+	}
+	defer release()
+	if s.chatGPTManager != nil {
+		services.ChatGPT = s.chatGPTManager
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		// Presentation only: execution and mutations still load and validate config.
 		return s.lastProviderSummaries
 	}
-	home := os.Getenv("HOME")
 	autoDiscovered := false
-	if provider, ok := localGrokBuildProvider(cfg, "grok-build", home); ok {
+	if provider, ok := selectedGrokBuildProvider(cfg, "grok-build", services.Credentials); ok {
 		providers := make(map[string]config.ProviderConfig, len(cfg.Providers)+1)
 		for name, configured := range cfg.Providers {
 			providers[name] = configured
@@ -2721,7 +2875,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 		enriched[name] = s.withCachedCodexModels(name, provider)
 	}
 	cfg.Providers = enriched
-	summaries := providerSummariesFromConfig(cfg, home)
+	summaries := selectedProviderSummariesFromConfig(cfg, services.Credentials)
 	if autoDiscovered {
 		for index := range summaries {
 			if summaries[index].Name == "grok-build" {
@@ -2730,7 +2884,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
-	s.enrichChatGPTSummaries(summaries, cfg)
+	s.enrichChatGPTSummaries(summaries, cfg, services.ChatGPT)
 	s.lastProviderSummaries = summaries
 	return summaries
 }
@@ -2739,19 +2893,30 @@ func (s *Server) providerSummaries() []ProviderSummary {
 // picker. Save only the connection so subsequent runtime builds and restarts
 // resolve the pin without changing workspace defaults or other conversations.
 func (s *Server) registerDiscoveredProvider(cfg config.Config, providerName string) (config.Config, error) {
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return cfg, err
+	}
+	defer release()
+	return s.registerDiscoveredProviderFromServices(cfg, providerName, services)
+}
+
+func (s *Server) registerDiscoveredProviderFromServices(cfg config.Config, providerName string, services *runtime.StateServices) (config.Config, error) {
 	providerName = strings.TrimSpace(providerName)
-	provider, discovered := localGrokBuildProvider(cfg, providerName, os.Getenv("HOME"))
+	provider, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials)
 	if !discovered {
 		return cfg, nil
 	}
-	if err := config.AddProviderIfMissing(s.rt.ConfigPath, providerName, provider); err != nil {
+	view, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
+		return config.AddProviderIfMissingSource(source, providerName, provider)
+	})
+	if err != nil {
 		return cfg, err
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
-	return cfg, err
+	return view.Config, nil
 }
 
-func localGrokBuildProvider(cfg config.Config, providerName, home string) (config.ProviderConfig, bool) {
+func selectedGrokBuildProvider(cfg config.Config, providerName string, selected credentialstore.Store) (config.ProviderConfig, bool) {
 	if strings.TrimSpace(providerName) != "grok-build" {
 		return config.ProviderConfig{}, false
 	}
@@ -2763,13 +2928,14 @@ func localGrokBuildProvider(cfg config.Config, providerName, home string) (confi
 			return config.ProviderConfig{}, false
 		}
 	}
-	if _, err := grokbuild.LocalOAuthStatus(home); err != nil {
+	record, err := authstorage.ReadCLI(context.Background(), selected, "grok")
+	if err != nil || strings.TrimSpace(record.AccessToken) == "" {
 		return config.ProviderConfig{}, false
 	}
 	return config.ApplyGrokBuildProviderDefaults(config.ProviderConfig{Type: "grok-build"}), true
 }
 
-func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSummary {
+func selectedProviderSummariesFromConfig(cfg config.Config, selected credentialstore.Store) []ProviderSummary {
 	names := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
 		names = append(names, name)
@@ -2784,7 +2950,7 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			Type:             provider.Type,
 			Model:            provider.Model,
 			BaseURL:          provider.BaseURL,
-			APIKeyConfigured: providerHasAuth(name, provider, home),
+			APIKeyConfigured: providerHasSelectedAuth(name, provider, selected),
 			ConnectionLocked: provider.Type == "chatgpt" || isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
 			Models:           providerModelSummaries(name, provider),
 		}
@@ -2801,8 +2967,15 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
 			if explicitProviderAPIKey(provider) != "" {
 				summary.CodexCredentialSource = "explicit"
-			} else if source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials); err == nil {
-				summary.CodexCredentialSource = source
+			} else {
+				source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
+				if err != nil && !provider.ReuseCodexCredentials {
+					// Discovery advertises an available account without authorizing reuse.
+					source, err = codex.OAuthStatus(context.Background(), selected, true)
+				}
+				if err == nil {
+					summary.CodexCredentialSource = source
+				}
 			}
 		}
 		out = append(out, summary)
@@ -2810,7 +2983,7 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 	return out
 }
 
-func providerHasAuth(name string, provider config.ProviderConfig, home string) bool {
+func providerHasSelectedAuth(name string, provider config.ProviderConfig, selected credentialstore.Store) bool {
 	if provider.Type == "chatgpt" {
 		return false
 	}
@@ -2818,11 +2991,11 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
 		}
-		source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials)
+		source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
 		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
 	}
 	if config.IsXAISubscriptionProvider(provider.Type) {
-		_, err := xaisub.LocalOAuthStatus(home)
+		_, err := xaisub.OAuthStatus(context.Background(), selected)
 		return err == nil
 	}
 	if config.IsGrokBuildProvider(provider.Type) {
@@ -2832,32 +3005,30 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if !provider.ReuseGrokCredentials {
 			return false
 		}
-		_, err := grokbuild.LocalOAuthStatus(home)
+		_, err := grokbuild.OAuthStatus(context.Background(), selected)
 		return err == nil
 	}
 
-	if _, err := providerfactory.ResolveAPIKeyWithHome(provider, name, home); err == nil {
+	// Explicit bearer configuration is independent of saved model credentials.
+	if providerUsesAnthropicAuth(provider) && (strings.TrimSpace(provider.AuthToken) != "" || configuredEnvValue(provider.AuthTokenEnv) != "") {
 		return true
+	}
+	if _, err := providerfactory.ResolveAPIKey(provider, name, selected); err == nil {
+		return true
+	} else if !strings.Contains(err.Error(), "no API key found") {
+		return false
 	}
 	if !providerUsesAnthropicAuth(provider) {
 		return false
 	}
-	if strings.TrimSpace(provider.AuthToken) != "" {
-		return true
-	}
-	authTokenEnv := strings.TrimSpace(provider.AuthTokenEnv)
-	if authTokenEnv == "" {
-		authTokenEnv = "ANTHROPIC_AUTH_TOKEN"
-	}
-	if configuredEnvValue(authTokenEnv) != "" {
-		return true
-	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
+	credentials, err := authstorage.NewBound(context.Background(), selected).Get(name)
+	if err != nil && !errors.Is(err, authstorage.ErrNotFound) {
 		return false
 	}
-	credentials, err := store.Get(name)
-	return err == nil && strings.TrimSpace(credentials.AuthToken) != ""
+	if strings.TrimSpace(credentials.AuthToken) != "" {
+		return true
+	}
+	return strings.TrimSpace(provider.AuthTokenEnv) == "" && configuredEnvValue("ANTHROPIC_AUTH_TOKEN") != ""
 }
 
 func configuredEnvValue(name string) string {

@@ -10,7 +10,7 @@ import (
 
 func TestHandleInstructionsListEmpty(t *testing.T) {
 	var buf bytes.Buffer
-	srv := &Server{out: &buf, rt: &runtime.Session{}}
+	srv := newOwnerHandlerFixture(&runtime.Session{}, &buf)
 	if err := srv.handleInstructionsList(Request{ID: json.RawMessage(`1`)}); err != nil {
 		t.Fatalf("handleInstructionsList: %v", err)
 	}
