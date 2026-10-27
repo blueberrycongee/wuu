@@ -41,6 +41,8 @@ Settings and plugin storage are preserved by default. Removal does not erase all
 
 ## Recovery and troubleshooting
 
+An optional add-on that fails initialization, preparation, or activation does not block CLI disable/remove operations in the default composition. Failed runtimes remain unavailable and appear in `wuu plugin describe` diagnostics. `wuu plugin list --json` lists discovered packages without starting their runtimes; it is not a live activation-status report. Explicit composition modules and selected service bindings remain required, and invalid configuration is never replaced with defaults to perform a recovery write.
+
 If an operation reports that the change was committed but runtime activation failed, the settings or package change has already taken effect. Read the new inventory's failure diagnostics before retrying; the old runtime is not automatically restored. See the [generation lifecycle](plugin-system.md#runtime-generations).
 
 The detail page distinguishes pending trust, disabled, starting, active, failed, and update states. Read the actual error instead of treating every missing feature as an installation failure. A package may also be blocked by a missing requirement or an incompatible peer package.
