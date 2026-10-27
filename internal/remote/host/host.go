@@ -126,6 +126,7 @@ type Host struct {
 
 	sessMu   sync.Mutex
 	sessions map[string]*deviceSession
+	appWG    sync.WaitGroup
 
 	pairMu  sync.Mutex
 	pairing *pairingState
@@ -579,6 +580,10 @@ func (h *Host) shutdownSessions() {
 	for _, s := range sessions {
 		s.shutdown()
 	}
+	// Closing pipes requests shutdown; the app-server still owns runtime
+	// resources until its deferred cleanup returns. Include replaced connections
+	// as well as the currently attached ones, and wait outside session locks.
+	h.appWG.Wait()
 }
 
 // sendFrame ships an opaque payload to a device through the relay.

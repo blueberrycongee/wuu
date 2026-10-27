@@ -129,7 +129,9 @@ func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 		running: map[string]wire.RunningTurn{},
 	}
 	output := &deviceOutput{session: s, app: app, fallback: serverOutW}
+	s.h.appWG.Add(2)
 	go func() {
+		defer s.h.appWG.Done()
 		if s.h.appServer != nil {
 			if err := s.h.appServer(ctx, serverInR, output); err != nil && ctx.Err() == nil {
 				s.h.logf("remote app-server connection: %v", err)
@@ -139,7 +141,10 @@ func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 		}
 		_ = serverOutW.Close()
 	}()
-	go s.pumpAppOutput(app, serverOutR)
+	go func() {
+		defer s.h.appWG.Done()
+		s.pumpAppOutput(app, serverOutR)
+	}()
 	return app
 }
 
