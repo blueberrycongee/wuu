@@ -9,6 +9,8 @@ import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate } from "./DefaultConversationSurface";
 import { activate as activatePreview, DefaultPreviewSurface } from "./DefaultPreviewSurface";
 import * as Notices from "../Toast";
+// @ts-expect-error Independently distributable JavaScript plugin; checked against the packed SDK separately.
+import { activatePresentation as activateMetrics } from "../../../../examples/plugins/conversation-metrics/desktop.js";
 import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { activate as activateComposer } from "./DefaultComposerSurface";
 import { ApplicationComposerPresentation } from "../plugins/ApplicationComposerPresentation";
@@ -19,14 +21,14 @@ import { mockAnimationFrames } from "../AnimationFrameTestHarness";
 let root: Root | undefined, container: HTMLDivElement | undefined, host: PluginHost | undefined;
 afterEach(() => {
   act(() => root?.unmount()); container?.remove(); root = undefined;
-  host?.unload("wuu.default-preview"); host?.unload("wuu.default-composer"); host?.unload("side-extension"); host?.unload("alternate-conversation"); host?.unload("wuu.default-conversation"); host?.unload("wuu.default-shell"); host = undefined;
+  host?.unload("conversation-metrics"); host?.unload("peer-addon"); host?.unload("broken-addon"); host?.unload("wuu.default-preview"); host?.unload("wuu.default-composer"); host?.unload("side-extension"); host?.unload("alternate-conversation"); host?.unload("wuu.default-conversation"); host?.unload("wuu.default-shell"); host = undefined;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 async function mountConversation(items: ThreadItem[]) {
   const base = createConversationTestApplication();
-  const thread: Thread = { id: "source", title: "Source", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items_view: "full", items }] };
+  const thread: Thread = { id: "source", title: "Source", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items_view: "full", duration_ms: 1200, input_tokens: 8, output_tokens: 0, items }] };
   const snapshot = { ...base.getSnapshot(), phase: "ready" as const, conversation: { loading: false, threadId: thread.id, turns: [] }, conversationWorkspace: { ...base.getSnapshot().conversationWorkspace, primaryThreadId: thread.id, threads: [thread] } };
   const openURL = vi.fn().mockResolvedValue(undefined);
   const openFile = vi.fn().mockResolvedValue(undefined);
@@ -69,7 +71,7 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   const frames = mockAnimationFrames();
   vi.stubGlobal("wuu", { unsupportedMethods: [] });
   const base = createConversationTestApplication();
-  const side = { ...base.getSnapshot().sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "side-turn", status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
+  const side = { ...base.getSnapshot().sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "side-turn", duration_ms: 0, input_tokens: 3, status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
   const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), sideConversation: side,
     tabs: { ...base.getSnapshot().tabs, items: [{ ...base.getSnapshot().tabs.items[0], id: "thread:parent", threadId: "parent" }] },
     previewWorkspace: { ...base.getSnapshot().previewWorkspace, tabs: [{ kind: "side-thread", id: "side-thread" }], activeTabId: "side-thread", conversationSelected: false } };
@@ -84,6 +86,7 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   await host.activateGeneration({ pluginId: "alternate-conversation", generation: "test", register: api => { api.registerUIContribution({ id: "conversation", target: "wuu.default-shell/application.conversation", render: () => <div>Alternate conversation</div> }); } });
   await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "test", register: activatePreview });
   await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "test", register: activateComposer });
+  await host.activateGeneration({ pluginId: "conversation-metrics", generation: "test", register: activateMetrics });
   const presented = vi.fn(({ context }: { context: Readonly<Record<string, unknown>> }) => <span data-side-message>{String(context.itemId)}</span>);
   await host.activateGeneration({ pluginId: "side-extension", generation: "test", register: api => { api.registerUIContribution({ id: "side-message", target: "wuu.default-preview/conversation.message.after", render: presented }); } });
   await host.activateGeneration({ pluginId: "wuu.default-shell", generation: "test", register: api => {
@@ -96,6 +99,7 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   expect(host.getUISlot("wuu.default-conversation/conversation.turn")).toBeUndefined();
   expect(container.textContent).toContain("Alternate conversation");
   expect(container.textContent).toContain("Independent side answer");
+  expect(container.querySelector('[data-conversation-metrics-turn="side-turn"]')?.textContent).toBe("0 ms · 3 input tokens");
   await frames.flush();
   const sideComposer = container.querySelector(".side-thread-panel textarea");
   expect(sideComposer).not.toBeNull();
@@ -105,9 +109,11 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   expect(presented.mock.calls.at(-1)?.[0].context).toMatchObject({ threadId: "side:parent", turnId: "side-turn", itemId: "side-answer" });
   await act(async () => host!.unload("alternate-conversation"));
   expect(container.textContent).toContain("Independent side answer");
+  expect(container.querySelector('[data-conversation-metrics-turn="side-turn"]')?.textContent).toBe("0 ms · 3 input tokens");
   await act(async () => host!.unload("side-extension"));
   expect(container.querySelector("[data-side-message]")).toBeNull();
   expect(container.textContent).toContain("Independent side answer");
+  expect(container.querySelector('[data-conversation-metrics-turn="side-turn"]')?.textContent).toBe("0 ms · 3 input tokens");
   await act(async () => root!.unmount()); root = undefined;
   expect(setPreviewVisibility).toHaveBeenLastCalledWith(false, expect.any(AbortSignal));
   presentation.dispose();
@@ -130,4 +136,70 @@ it("does not report retired preview cleanup as an error when its presentation st
   expect(signal.aborted).toBe(false);
   expect(next.invoke).toHaveBeenCalledWith("preview.set-visibility", { open: false });
   expect(notice).not.toHaveBeenCalled();
+});
+
+
+// Public addon failure cases: absent slots, wrapper-induced native remount,
+// one addon hiding another, mutable payloads, error propagation, and stale UI
+// after disable/re-enable. These exercise the selected production surface.
+it.each([1, 2])("adds independent turn and tool contributions without remounting native content with %i tool calls", async count => {
+  await mountConversation([user,
+    ...Array.from({ length: count }, (_, index): ThreadItem => ({ id: `tool-${index}`, type: "tool_call", name: "exec", arguments: '{"command":"echo result"}', result: "reported result", status: "completed" })),
+    { id: "answer", type: "agent_message", text: "The answer remains mounted.", status: "completed", terminal: true },
+  ]);
+  const nativeTurn = container!.querySelector(".turn");
+  await act(async () => { container!.querySelector<HTMLButtonElement>(".turn-process-toggle")!.click(); });
+  const fold = container!.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
+  expect(fold, container!.textContent).not.toBeNull();
+  await act(async () => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
+  if (count > 1) {
+    await act(async () => {
+      const tool = container!.querySelector<HTMLDetailsElement>(".program-tool-record")!;
+      tool.open = true; tool.dispatchEvent(new Event("toggle"));
+    });
+  }
+  const nativeDetails = container!.querySelector(".program-tool-details");
+  expect(nativeDetails).not.toBeNull();
+  await act(async () => { await host!.activateGeneration({ pluginId: "conversation-metrics", generation: "one", register: activateMetrics }); });
+  expect(container!.querySelector("[data-conversation-metrics-turn]")?.textContent).toBe("1200 ms · 8 input tokens · 0 output tokens");
+  expect(container!.querySelector("[data-conversation-metrics-tool]")).not.toBeNull();
+  expect(container!.querySelector(".turn")).toBe(nativeTurn);
+  expect(container!.querySelector(".program-tool-details")).toBe(nativeDetails);
+  expect(fold.open).toBe(true);
+  const action = container!.querySelector<HTMLButtonElement>("[data-conversation-metrics-tool] button")!;
+  await act(async () => action.click());
+  expect(action.getAttribute("aria-expanded")).toBe("true");
+  expect(container!.querySelector("[data-conversation-metrics-tool] pre")?.textContent).toBe("reported result");
+  await act(async () => { await host!.activateGeneration({ pluginId: "peer-addon", generation: "one", register: api => {
+    for (const target of ["turn", "tool-activity"]) api.registerUIContribution({ id: target, order: 10,
+      target: `wuu.default-conversation/conversation.${target}.after`, render: ({ context }) => {
+        expect(Object.isFrozen(context)).toBe(true);
+        expect(Object.isFrozen(context.snapshot)).toBe(true);
+        return <span data-peer={target}>Peer annotation</span>;
+      } });
+  } }); });
+  expect(container!.querySelector('[data-peer="turn"]')!.compareDocumentPosition(container!.querySelector("[data-conversation-metrics-turn]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(container!.querySelector('[data-peer="tool-activity"]')!.compareDocumentPosition(container!.querySelector("[data-conversation-metrics-tool]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const peer = container!.querySelector('[data-peer="turn"]');
+  const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await act(async () => { await host!.activateGeneration({ pluginId: "broken-addon", generation: "one", register: api => {
+      api.registerUIContribution({ id: "broken", target: "wuu.default-conversation/conversation.turn.after", render: () => { throw new Error("Synthetic addon render failure"); } });
+    } }); });
+    expect(host!.getGenerationDiagnostics("broken-addon", "one").some(row => row.kind === "render")).toBe(true);
+    expect(container!.querySelector(".turn")).toBe(nativeTurn);
+    expect(container!.querySelector('[data-peer="turn"]')).toBe(peer);
+    expect(action.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => { host!.unload("conversation-metrics"); });
+    expect(container!.querySelector("[data-conversation-metrics-turn]")).toBeNull();
+    expect(container!.querySelector("[data-conversation-metrics-tool]")).toBeNull();
+    expect(container!.querySelector('[data-peer="turn"]')).toBe(peer);
+    expect(container!.querySelector(".turn")).toBe(nativeTurn);
+    expect(container!.querySelector(".program-tool-details")).toBe(nativeDetails);
+    expect(fold.open).toBe(true);
+    await act(async () => { await host!.activateGeneration({ pluginId: "conversation-metrics", generation: "two", register: activateMetrics }); });
+    expect(container!.querySelectorAll("[data-conversation-metrics-turn]")).toHaveLength(1);
+    expect(container!.querySelector("[data-conversation-metrics-tool] button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(container!.querySelector(".program-tool-details")).toBe(nativeDetails);
+  } finally { logging.mockRestore(); }
 });

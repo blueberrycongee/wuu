@@ -278,11 +278,12 @@ func TestProjectBackgroundFinalReferenceDoesNotWaitOnItself(t *testing.T) {
 	registry := pluginhost.NewServiceRegistry()
 	closed := make(chan error, 1)
 	observed := &projectCloseResultProbe{ProjectCoordinationProvider: provider, result: closed}
-	conflicts := registry.RegisterClients(observed)
+	consumer := NewProjectCoordinationConsumer()
+	conflicts := registry.RegisterClients(observed, consumer)
 	if len(conflicts) != 0 {
 		t.Fatalf("graph: %v", conflicts)
 	}
-	host := pluginhost.New(observed)
+	host := pluginhost.New(observed, consumer)
 	host.AttachServiceRegistry(registry, conflicts)
 	provider.registry = registry
 	// Capture the fixture graph before its first State, rather than redirecting

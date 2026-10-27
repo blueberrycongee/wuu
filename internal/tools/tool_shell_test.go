@@ -10,6 +10,7 @@ func TestShellCommandEnvDropsLauncherGOROOT(t *testing.T) {
 		"PATH=/usr/bin",
 		"GOROOT=/tmp/launcher-toolchain",
 		"HOME=/home/test",
+		"WUU_CLI_EXECUTABLE=/old-host/wuu",
 	})
 
 	values := make(map[string]string, len(env))
@@ -21,6 +22,9 @@ func TestShellCommandEnvDropsLauncherGOROOT(t *testing.T) {
 	}
 	if _, ok := values["GOROOT"]; ok {
 		t.Fatalf("shell environment leaked launcher GOROOT: %q", values["GOROOT"])
+	}
+	if _, ok := values["WUU_CLI_EXECUTABLE"]; ok {
+		t.Fatalf("library host advertised an inherited authoring CLI: %q", values["WUU_CLI_EXECUTABLE"])
 	}
 	if values["PATH"] != "/usr/bin" || values["HOME"] != "/home/test" {
 		t.Fatalf("shell environment lost inherited user values: %+v", values)

@@ -836,6 +836,39 @@ func (r *ServiceRegistry) ProviderPluginIDFor(consumer, name string, major int) 
 	return provider.pluginID, true
 }
 
+// ProviderInChainFor reports whether a provider belongs to the consumer's
+// selected delegation chain for one service major. Only declared dependencies
+// of that same service participate; only runtime requirements continue the
+// chain after its first provider. Renderer-only and unrelated dependencies do
+// not delegate backend policy.
+// The query uses this generation's live routes, grants no invocation authority,
+// and rejects missing, retiring or cyclic chains rather than trying a fallback.
+func (r *ServiceRegistry) ProviderInChainFor(consumer, name string, major int, providerID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.open {
+		return false
+	}
+	declaration := serviceKey{name: strings.TrimSpace(name), major: major}
+	seen := make(map[string]bool)
+	found, delegating := false, false
+	for {
+		if seen[consumer] || r.retiringProviders[consumer] {
+			return false
+		}
+		seen[consumer] = true
+		if consumption, declared := r.consumers[consumer][declaration]; !declared || (delegating && !consumption.runtime) {
+			return found
+		}
+		provider, ok := r.providers[r.providerKeyLocked(consumer, declaration)]
+		if !ok || !capabilityStateReady(provider.invoker.Status().State) {
+			return false
+		}
+		found = found || provider.pluginID == providerID
+		consumer, delegating = provider.pluginID, true
+	}
+}
+
 // ServiceDescriptorFor returns an owned copy of the selected route's contract.
 // Diagnostic snapshots may also contain other consumers' explicit routes.
 func (r *ServiceRegistry) ServiceDescriptorFor(consumer, name string, major int) (ServiceDescriptor, bool) {

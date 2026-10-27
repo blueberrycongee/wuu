@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/cliidentity"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
@@ -39,6 +40,10 @@ import (
 func main() {
 	if handled, exitCode := gitattribution.Dispatch(os.Args[1:]); handled {
 		os.Exit(exitCode)
+	}
+	if err := cliidentity.RegisterCurrentExecutable(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve Wuu CLI executable: %v\n", err)
+		os.Exit(1)
 	}
 	// Keep the caller's umask for workspace tools and child processes.
 	// Private state writers request owner-only modes explicitly.

@@ -1,6 +1,7 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import type { ConversationTurnSlotContextV1 } from "../../../packages/plugin-sdk/src/ui";
 import type {
   SessionLocatorV1,
   InputFile,
@@ -77,6 +78,15 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
+  const context: ConversationTurnSlotContextV1 = Object.freeze({
+    threadId: props.threadID, turnId: projectedTurn.id,
+    snapshot: Object.freeze({ id: projectedTurn.id, status: projectedTurn.status,
+      started_at: projectedTurn.started_at, answer_ready_at: projectedTurn.answer_ready_at,
+      completed_at: projectedTurn.completed_at, duration_ms: projectedTurn.duration_ms,
+      input_tokens: projectedTurn.input_tokens, output_tokens: projectedTurn.output_tokens,
+      cache_creation_tokens: projectedTurn.cache_creation_tokens, cache_read_tokens: projectedTurn.cache_read_tokens,
+      usage_model: projectedTurn.usage_model }),
+  });
   return (
     <ArtifactThreadContext.Provider value={props.threadID}>
     <ArtifactLocatorContext.Provider value={props.sessionLocator}>
@@ -84,7 +94,8 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
       <slots.Slot
         name={`${slotOwner}/conversation.turn`}
         context={{ threadId: props.threadID, turnId: projectedTurn.id }}
-        fallback={<TurnContent {...props} turn={projectedTurn} />}
+        fallback={<TurnContent {...props} turn={projectedTurn}
+          after={<slots.Slot name={`${slotOwner}/conversation.turn.after`} context={context} />} />}
       />
     </ConversationTurnIdentityProvider>
     </ArtifactLocatorContext.Provider>
@@ -119,7 +130,8 @@ function TurnContent({
   onOpenFileDiff,
   streamStatus,
   isLatestTurn,
-}: TurnViewProps): JSX.Element {
+  after,
+}: TurnViewProps & { after: ReactNode }): JSX.Element {
   const { application } = useConversationControls();
   const turnElementRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -348,6 +360,8 @@ function TurnContent({
         ? <TurnFailureNotice {...failureProps} arriving={animateCompletionActions} />
         : <TurnEventNotice event={event} />) : null}
       {incomplete ? outputSummary : null}
+      {/* Include addons in the native turn bounds used by reading anchors. */}
+      {after}
     </section>
   );
 }

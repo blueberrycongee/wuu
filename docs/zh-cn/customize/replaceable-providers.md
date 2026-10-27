@@ -75,13 +75,20 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 上游调用者、转移调用者的工具权限，或让不同 provider 的资源句柄可以互换。
 这类方法仍须遵循各自契约明确的所有权和委托机制。
 
+在启用 `project_agent` 的开发构建中，[项目装饰器](../../../examples/plugins/project-decorator.ts)
+只修改指令，并启用 `concurrentServices`，因为托管会话创建可能在返回前重入协调服务。
+将其选为 `project.coordination@1` 提供者，再把它的同服务依赖绑定到
+`wuu.project-coordination`（或另一个委托提供者）。原生协调器处于所选协调服务委托链中时，
+仍拥有自己的调度器，也支持多层装饰器；无关服务依赖不会启动协调调度。移除或禁用
+所选装饰器不会回退到原生协调器。停止自主派发后，已获准入的回合仍保留原服务图。
+
 每个组合中的 `state.documents@1` 只有一个逻辑数据集和权限边界。局部路由可以连接
 被选中 provider 的适配链，普通消费者不能绕过该边界直接选择基础实现。
 独立数据集应使用隔离的[运行时组合](plugin-compositions.md)。整块替换 provider
 和经验证的状态迁移要求不变。
 
 安装仓库依赖后运行 `node scripts/provider-delegation-e2e.mjs`。它使用打包后的公共 SDK
-编译独立适配插件，验证原生和外部委托链、持久设置、拒绝及清理路径，并将
+编译独立适配插件，验证原生和外部委托链、持久设置、项目委托调度、保留回合结算、拒绝及清理路径，并将
 `report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
 
 
