@@ -213,6 +213,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.
+
 - Keep experimental project scheduling active through explicitly selected coordination decorators, while preserving stopped-generation completion and rejecting unreachable native fallback.
 - Expose the running Wuu CLI to agent authoring commands without replacing the user's `PATH`, preventing older installed CLIs from selecting a mismatched SDK. Remote Wuu workers identify their own CLI; embedded library hosts omit unavailable authoring hints.
 

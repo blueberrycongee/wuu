@@ -85,7 +85,7 @@ func (j *failAfterFirstSubmissionJournal) PrepareRecoveryAttempt(context.Context
 func (j *failAfterFirstSubmissionJournal) CompleteOperation(InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (j *failAfterFirstSubmissionJournal) CompleteWorkflow(InferenceWorkflowTerminalRecord) error {
+func (j *failAfterFirstSubmissionJournal) CompleteWorkflow(context.Context, InferenceWorkflowTerminalRecord) error {
 	return nil
 }
 

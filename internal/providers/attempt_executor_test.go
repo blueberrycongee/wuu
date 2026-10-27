@@ -70,7 +70,7 @@ func (j *recordingInferenceJournal) CompleteOperation(record InferenceOperationT
 	j.record("operation:" + string(record.Outcome))
 	return nil
 }
-func (j *recordingInferenceJournal) CompleteWorkflow(record InferenceWorkflowTerminalRecord) error {
+func (j *recordingInferenceJournal) CompleteWorkflow(ctx context.Context, record InferenceWorkflowTerminalRecord) error {
 	j.record("complete_workflow")
 	return nil
 }
