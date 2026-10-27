@@ -13,13 +13,92 @@ const ready = (): ReviewSnapshot => ({ schema:"personal-review.v1", kind:"ready"
 let root:Root | undefined;
 let container:HTMLDivElement;
 afterEach(()=>{if(root)React.act(()=>root?.unmount());container?.remove();root=undefined;vi.useRealTimers()});
-async function render(service:ReviewService){
+async function render(service:ReviewService, variant: "settings" | "conversation" = "settings"){
   container=document.createElement("div");document.body.append(container);root=createRoot(container);
   const Panel=createPersonalReviewPanel(React,createPluginUIKit(React));
-  await React.act(async()=>{root?.render(<Panel service={service} locale="en"/>)});
+  await React.act(async()=>{root?.render(<Panel service={service} locale="en" variant={variant}/>)});
 }
 function button(selector:string){const value=container.querySelector<HTMLButtonElement>(selector);if(!value)throw new Error(`missing ${selector}`);return value}
 describe("Personal action approval component",()=>{
+  it("can turn AutoReview off after the last registered handler disappears",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.settings={auto_review_enabled:true,revision:4,policy_version:"personal.v1",scope:[]};
+    const settings=vi.fn(async()=>snapshot);await render({list:async()=>snapshot,resolve:async()=>snapshot,revoke:async()=>snapshot,settings});
+    expect(button('[role="switch"]').disabled).toBe(false);
+    await React.act(async()=>button('[role="switch"]').click());expect(settings).toHaveBeenCalledWith({enabled:false,expected_revision:4});
+  });
+
+  it("keeps an unavailable initial review service from interrupting ordinary conversation",async()=>{
+    await render({list:async()=>{throw new Error("review service unavailable")},resolve:async()=>ready(),revoke:async()=>ready()},"conversation");
+    expect(container.querySelector('[data-personal-action-review]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("accepts the host context digest without permitting a client context override",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.requests[0].action.scope.context_digest="c".repeat(64);
+    const resolve=vi.fn(async()=>snapshot);await render({list:async()=>snapshot,resolve,revoke:async()=>snapshot});
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());
+    expect(resolve).toHaveBeenCalledWith({space_id:"synthetic",id:"synthetic-1",digest:"a".repeat(64),expected_revision:2,choice:"approve_once"});
+  });
+  it("displays a bounded host receipt without changing pending authorization",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.requests.push({...structuredClone(snapshot.requests[0]),status:"succeeded",receipt_json:JSON.stringify({summary:"x".repeat(60_000),target:"synthetic-file",sha256:"e".repeat(64)}),action:{...structuredClone(snapshot.requests[0].action),id:"completed"}});
+    await render({list:async()=>snapshot,resolve:async()=>snapshot,revoke:async()=>snapshot});
+    expect(container.querySelector('[data-review-receipt] pre')?.textContent).toContain("synthetic-file");
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
+  });
+
+  it("keeps ordinary conversational questions and unconnected state out of approval cards",async()=>{
+    await render({list:async()=>({schema:"personal-review.v1",kind:"ready",requests:[]}),resolve:async()=>ready(),revoke:async()=>ready()},"conversation");
+    expect(container.querySelector('[data-personal-action-review]')).toBeNull();
+  });
+  it("shows consequential action cards in chat, never a read-only approval or the settings toggle",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.settings={auto_review_enabled:false,revision:1,policy_version:"personal.v1",scope:["synthetic.send"]};
+    snapshot.requests.push({...structuredClone(snapshot.requests[0]),action:{...structuredClone(snapshot.requests[0].action),id:"read-only",effect:"read_only"}});
+    await render({list:async()=>snapshot,resolve:async()=>ready(),revoke:async()=>ready(),settings:async()=>ready()},"conversation");
+    expect(container.querySelector('[data-review-id="synthetic-1"]')).not.toBeNull();
+    expect(container.querySelector('[data-review-id="read-only"]')).toBeNull();
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+  });
+  it("polls saved action outcomes without replaying the approval and stops after unmount",async()=>{
+    vi.useFakeTimers();
+    let snapshot=ready();const list=vi.fn(async()=>snapshot),resolve=vi.fn(async()=>ready());
+    await render({list,resolve,revoke:async()=>ready()},"conversation");
+    snapshot=ready();if(snapshot.kind==="ready"){snapshot.requests[0].status="succeeded";snapshot.requests[0].receipt_json='{ "receipt_id": "synthetic-only" }';}
+    await React.act(async()=>vi.advanceTimersByTimeAsync(5000));
+    expect(list).toHaveBeenCalledTimes(2);expect(resolve).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-review-state="succeeded"]')).not.toBeNull();
+    expect(container.textContent).toContain("synthetic-only");
+    React.act(()=>root?.unmount());root=undefined;
+    await React.act(async()=>vi.advanceTimersByTimeAsync(5000));expect(list).toHaveBeenCalledTimes(2);
+  });
+  it("opts in only after a saved settings revision and never double submits",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.settings={auto_review_enabled:false,revision:4,policy_version:"personal.v1",scope:["synthetic.send"]};
+    let save:((value:ReviewSnapshot)=>void)|undefined;const settings=vi.fn(()=>new Promise<ReviewSnapshot>(done=>{save=done}));
+    await render({list:async()=>snapshot,resolve:async()=>ready(),revoke:async()=>ready(),settings});
+    const toggle=button('[role="switch"]');expect(toggle.getAttribute("aria-checked")).toBe("false");
+    React.act(()=>{toggle.click();toggle.click()});
+    expect(settings).toHaveBeenCalledTimes(1);expect(settings).toHaveBeenCalledWith({enabled:true,expected_revision:4});
+    expect(toggle.getAttribute("aria-checked")).toBe("false");expect(toggle.disabled).toBe(true);
+    const saved=structuredClone(snapshot);saved.settings!.auto_review_enabled=true;saved.settings!.revision++;
+    await React.act(async()=>save?.(saved));expect(button('[role="switch"]').getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("synthetic.send");
+  });
+  it("locks all mutations after a lost acknowledgement until a read verifies the state",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.settings={auto_review_enabled:false,revision:4,policy_version:"personal.v1",scope:["synthetic.send"]};
+    const resolve=vi.fn(async()=>{throw new Error("Response lost; check saved state")}),settings=vi.fn(async()=>snapshot);
+    await render({list:async()=>snapshot,resolve,revoke:async()=>ready(),settings});
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());
+    React.act(()=>{button('[data-review-choice="approve_once"]').click();button('[role="switch"]').click()});
+    expect(resolve).toHaveBeenCalledTimes(1);expect(settings).not.toHaveBeenCalled();
+    await React.act(async()=>button('[data-review-refresh]').click());
+    expect(button('[role="switch"]').disabled).toBe(false);
+  });
+
   it("displays canonical parameter text without rounding integers or overflowing exponents",async()=>{
     const snapshot=ready();
     if(snapshot.kind!=="ready")throw new Error("fixture must be ready");
@@ -77,6 +156,8 @@ describe("Personal action approval component",()=>{
     await React.act(async()=>button('[data-review-choice="approve_once"]').click());
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Revision changed");
     expect(container.querySelector('[data-review-state="awaiting_confirmation"]')).not.toBeNull();
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(true);
+    await React.act(async()=>button('[data-review-refresh]').click());
     expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
   });
   it("disables expired cards without sending a decision",async()=>{

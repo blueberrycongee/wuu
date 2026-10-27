@@ -2,6 +2,7 @@ package personalreview
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -15,13 +16,15 @@ type OwnerView struct {
 	Schema   string       `json:"schema"`
 	Kind     string       `json:"kind"`
 	Requests []ViewRecord `json:"requests"`
+	Settings *Settings    `json:"settings,omitempty"`
 }
 type ViewRecord struct {
-	Revision int64      `json:"revision"`
-	Status   Status     `json:"status"`
-	Outcome  string     `json:"outcome"`
-	Reason   string     `json:"reason"`
-	Action   ViewAction `json:"action"`
+	Revision    int64      `json:"revision"`
+	Status      Status     `json:"status"`
+	Outcome     string     `json:"outcome"`
+	Reason      string     `json:"reason"`
+	Action      ViewAction `json:"action"`
+	ReceiptJSON string     `json:"receipt_json,omitempty"`
 }
 type ViewAction struct {
 	ID            string    `json:"id"`
@@ -55,8 +58,21 @@ func (e *Engine) OwnerSnapshot(ctx context.Context) (OwnerView, error) {
 		if record.Revision < 1 || record.Revision > maxExactInteger || action.Scope.RequirementsRevision < 1 || action.Scope.RequirementsRevision > maxExactInteger {
 			return OwnerView{}, errors.New("owner view revision exceeds exact transport range")
 		}
+		// Production results retain rich tool payloads for continuation. Show
+		// only their bounded receipt, preserving JSON numbers without decoding
+		// into floats. Oversized legacy results are omitted, never truncated.
+		receipt := record.Result
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal(record.Result, &envelope) == nil {
+			if value, present := envelope["receipt"]; present {
+				receipt = value
+			}
+		}
+		if len(receipt) > 64*1024 {
+			receipt = nil
+		}
 		view.Requests = append(view.Requests, ViewRecord{
-			Revision: record.Revision, Status: record.Status, Outcome: record.Outcome, Reason: record.Reason,
+			Revision: record.Revision, Status: record.Status, Outcome: record.Outcome, Reason: record.Reason, ReceiptJSON: string(receipt),
 			Action: ViewAction{ID: action.ID, Digest: action.Digest, Operation: action.Operation, Scope: action.Scope,
 				Effect: action.Effect, Summary: action.Summary, ArgumentsJSON: string(action.Arguments), ExpiresAt: action.ExpiresAt},
 		})

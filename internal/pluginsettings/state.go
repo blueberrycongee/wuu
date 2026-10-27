@@ -205,3 +205,23 @@ func validateStateDocument(document StateDocument, pluginID string) error {
 	}
 	return nil
 }
+
+// InspectState holds the same store lock as all mutations and transfers while
+// a host checks authority and dispatches its bounded operation. The snapshot is
+// read-only; callbacks must not call storage mutators or plugin RPCs.
+func InspectState(wuuHome, workspaceRoot, pluginID string, scope Scope, inspect func(StateDocument) error) error {
+	path, storeDir, err := stateDocumentPath(wuuHome, workspaceRoot, pluginID, scope)
+	if err != nil {
+		return err
+	}
+	lock, err := storelock.Acquire(storeDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	record, err := readStateRecord(path, pluginID)
+	if err != nil {
+		return err
+	}
+	return inspect(visibleStateDocument(record))
+}

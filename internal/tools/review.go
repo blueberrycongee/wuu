@@ -18,7 +18,7 @@ type Reviewer interface {
 }
 
 func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
-	if t == nil || !t.approveForMe || t.env == nil {
+	if t == nil || !t.approveForMe || t.env == nil || (t.fileActionGate != nil && fileMutation(call.Name)) {
 		return nil
 	}
 	req := approvefor.Request{

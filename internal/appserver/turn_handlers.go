@@ -2778,6 +2778,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	reviewIntent.append(history)
 	if threadRuntime != nil && threadRuntime.Toolkit != nil {
 		runtime.ConfigureToolkitPermissions(threadRuntime.Toolkit, turnPermissions)
+		if s.personalActions != nil {
+			threadRuntime.Toolkit.SetFileActionGate(s.personalActions.gate)
+		}
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
 		th.mu.Unlock()

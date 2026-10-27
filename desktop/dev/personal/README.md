@@ -37,3 +37,26 @@ Use `?routineHistory=paged|error|pending|empty` or
 
 Use `?routineStopped=1` to inspect a stopped routine: history remains available,
 but editing is disabled because stopped routines cannot accept updates.
+
+### Personal action approval cards
+
+Use `?review=ready` to show the current compiled main-chat action card with a
+synthetic `write_file` proposal. `empty`, `expired`, `blocked`, `stale`, `denied`,
+`revoked`, `uncertain`, `succeeded`, `long`, `lost-ack`, and `stale-response` cover
+interrupted and terminal UI states. The preview's Auto Review settings button
+opens the actual Personal settings contribution; changes affect memory only.
+No native host gate, file handler, model, account, or external service is called.
+
+`node desktop/scripts/personal-approval-ui-e2e.cjs` checks this compiled fixture
+in a sandbox-enabled Chromium with a fresh context per scenario. Set
+`WUU_REVIEW_PLAYWRIGHT_PATH` to an available Playwright module and
+`WUU_REVIEW_CHROMIUM` to an installed Chromium executable when necessary.
+`WUU_REVIEW_UI_OUTPUT` selects a result directory. The runner rejects network
+requests, verifies version-bound decisions, lost-response read-only recovery,
+explicit Auto Review opt-in, terminal states, and main-chat availability, and
+captures wide/narrow, light/dark, and large-text screenshots. Its results do not
+establish backend authorization, execution or durable restart correctness.
+
+When pixel rendering is unavailable, `node desktop/scripts/personal-approval-dom-e2e.cjs`
+checks the same compiled fixture in jsdom and writes a distinctly labeled DOM-only
+report. It does not satisfy rendered visual acceptance.

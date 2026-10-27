@@ -30,6 +30,8 @@ type Calendar interface {
 	Close() error
 }
 type Options struct {
+	// Review is the host-owned durable action coordinator, never a plugin callback.
+	Review func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Leave nil until an approved OAuth client and secure store are configured.
 	Calendar Calendar
 	// Opens the provider URL in the trusted host. Never return that URL to UI.
@@ -64,6 +66,37 @@ func (h *Host) Close() error {
 // Call's verifiedSession is resolved from host session metadata before dispatch.
 // Control operations derive their actor from the separate owner admission.
 func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, verifiedSession string) (json.RawMessage, error) {
+
+	if strings.HasPrefix(operation, "review.") {
+		h.mu.Lock()
+		closed, handler := h.closed, h.options.Review
+		h.mu.Unlock()
+		if closed || ctx.Err() != nil {
+			return nil, errors.New("Personal host is closed")
+		}
+		if h.binding.Validate() != nil || !h.binding.IsUser() || h.binding.Domain() != "personal" {
+			return nil, errors.New("Personal host binding is required")
+		}
+		if operation == "review.execution.status" {
+			if verifiedSession == "" {
+				return nil, errors.New("host-resolved execution is required")
+			}
+		} else if err := clientauthority.RequireOwner(ctx, h.binding); err != nil {
+			return nil, err
+		}
+		// The coordinator holds its own dispatch boundary, not the calendar
+		// mutex. Model calls cannot block unrelated owner controls.
+		if handler != nil {
+			return handler(ctx, operation, raw, verifiedSession)
+		}
+		if operation == "review.list" {
+			if err := decode(raw, &struct{}{}); err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]string{"schema": "personal-review.v1", "kind": "unavailable", "reason": "动作审批当前不可用。"})
+		}
+		return nil, errors.New("action review is unavailable")
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed || ctx.Err() != nil {
@@ -91,17 +124,6 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 			return nil, err
 		}
 		return json.Marshal(map[string]bool{"ok": true})
-	}
-	if operation == "review.list" {
-		if err := decode(raw, &struct{}{}); err != nil {
-			return nil, err
-		}
-		return json.Marshal(map[string]string{"schema": "personal-review.v1", "kind": "unavailable", "reason": "尚未配置审核服务，动作审批当前不可用。"})
-	}
-	// The execution engine remains an internal API. No resolve/revoke endpoint
-	// becomes active until production authority and serialization are installed.
-	if strings.HasPrefix(operation, "review.") {
-		return nil, errors.New("action review is unavailable")
 	}
 	var input struct {
 		ConnectionID string                      `json:"connection_id,omitempty"`

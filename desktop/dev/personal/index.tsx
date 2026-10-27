@@ -17,6 +17,28 @@ import { activate } from "../../../internal/plugin/bundled/personal/desktop.js";
 // @ts-expect-error Bundled desktop contributions are runtime JavaScript.
 import { activate as activateCalendar } from "../../../internal/plugin/bundled/personal-calendar/desktop.js";
 const now = "2026-10-18T10:00:00Z";
+// Explicit opt-in fixture for the registered Personal file action gate. All
+// changes below are in memory; this preview cannot access files or model APIs.
+const reviewScenario = new URLSearchParams(location.search).get("review") || "unavailable";
+const reviewSnapshot = {
+  schema:"personal-review.v1",kind:"ready",
+  settings:{auto_review_enabled:false,revision:1,policy_version:"personal-file-actions.v1",scope:["write_file","edit_file"]},
+  requests: reviewScenario === "empty" ? [] : [{
+    revision:2,status:"awaiting_confirmation",outcome:"ask",reason:"内容已整理好；保存到这个文件还需要你确认。",
+    action:{id:"synthetic-file-1",digest:"a".repeat(64),operation:"write_file",scope:{space_id:"local",session_id:"synthetic-worker",task_id:"reading",requirements_revision:1},effect:"data_write",summary:{title:"保存整理好的阅读清单",account:"当前 Personal 文件空间",target:reviewScenario === "long" ? "notes/"+"本周阅读材料与整理要点-".repeat(10)+".md" : "notes/weekly-reading.md",consequence:"创建或替换此文件；不会发信、共享文件或访问其他账号。"},arguments_json:'{"content":"# 本周阅读清单\\n这是一份合成预览内容。","path":"notes/weekly-reading.md"}',expires_at:reviewScenario === "expired" ? "2000-01-01T00:00:00Z" : new Date(Date.now()+9*60_000).toISOString()},
+    receipt_json:undefined as string | undefined,
+  }],
+};
+// Omit absent optional fields, matching the production JSON transport.
+const reviewValue = () => JSON.parse(JSON.stringify(reviewSnapshot));
+const reviewCalls: Array<{method:string;input:unknown}> = [];
+Object.assign(window,{__reviewFixture:{snapshot:reviewSnapshot,calls:reviewCalls}});
+if (["blocked","stale","denied","revoked","uncertain","succeeded"].includes(reviewScenario)) {
+  reviewSnapshot.requests[0].status=reviewScenario;
+  reviewSnapshot.requests[0].reason=reviewScenario === "uncertain" ? "结果未知；先核对，绝不会自动重放。" : "合成的已保存动作状态。";
+  if (reviewScenario === "succeeded") reviewSnapshot.requests[0].receipt_json='{"receipt_id":"synthetic-file-receipt","path":"notes/weekly-reading.md","verified":true}';
+}
+
 const sendRecoveryFixture = { accepted: 0, refreshFailures: 0, failNextRefresh: false, requests: [] as unknown[] };
 Object.assign(window, { __sendRecoveryFixture: sendRecoveryFixture });
 const agents = [
@@ -269,7 +291,23 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       const stale=++calendarReads>1;
       return {state:stale?"error":"ready",freshness:stale?"stale":"fresh",error_code:stale?"provider_unavailable":undefined,source:{...data,provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"fixture-event",status:"confirmed",summary:"合成日程 · 上次读取结果",all_day:true}],cancelled_events:[]};
     }
-    case "review.list":return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"尚未配置审核服务，动作审批当前不可用。"}};
+    case "review.list":return {ok:true,value:reviewScenario === "unavailable" ? {schema:"personal-review.v1",kind:"unavailable",reason:"尚未配置审核服务，动作审批当前不可用。"} : reviewValue()};
+    case "review.settings": {
+      reviewCalls.push({method,input:structuredClone(data)});
+      if (data.expected_revision!==reviewSnapshot.settings.revision) throw new Error("设置版本已变化，请刷新。");
+      reviewSnapshot.settings.auto_review_enabled=data.enabled;reviewSnapshot.settings.revision++;
+      return {ok:true,value:reviewValue()};
+    }
+    case "review.resolve":case "review.revoke": {
+      reviewCalls.push({method,input:structuredClone(data)});
+      const item=reviewSnapshot.requests.find(value=>value.action.id===data.id);
+      if (!item||item.revision!==data.expected_revision||item.action.digest!==data.digest)throw new Error("动作版本已变化，请刷新。");
+      if (reviewScenario === "stale-response") { item.status="stale";item.revision++;throw new Error("任务已变更；此动作没有执行，请刷新核对。"); }
+      item.status=method === "review.revoke" ? "revoked" : data.choice === "reject" ? "denied" : "approved";item.revision++;
+      item.reason=item.status === "approved" ? "合成批准已保存；此预览不运行真实动作。" : "合成决定已保存，没有执行。";
+      if (reviewScenario === "lost-ack")throw new Error("响应丢失；请刷新核对已保存的状态，不要重复提交。");
+      return {ok:true,value:reviewValue()};
+    }
     case "settings.get":return {settings};
     case "settings.update":settings={...settings,...data,revision:settings.revision+1};return {settings};
     default:throw new Error(`Unsupported synthetic operation: ${method}`);
@@ -304,6 +342,10 @@ if (params.get("attachments") === "reference") {
   files.set(`mosaic:2:${video.sha256}`, {"data": "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAN0bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAp90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAEAAABAAAAAAIXbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAACgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABwm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAYJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABFUxhdmM2MS4xOS4xMDEgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2UlsBEAAAAMAQAAADIPEiWWAAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAHcQAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAFAAACAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAOGN0dHMAAAAAAAAABQAAAAEAAAQAAAAAAQAACgAAAAABAAAEAAAAAAEAAAAAAAAAAQAAAgAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAUAAAABAAAAKHN0c3oAAAAAAAAAAAAAAAUAAALKAAAADAAAAAwAAAAMAAAADAAAABRzdGNvAAAAAAAAAAEAAAOkAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS43LjEwMwAAAAhmcmVlAAADAm1kYXQAAAKuBgX//6rcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMTA4IDMxZTE5ZjkgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIzIC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49MjUgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAUZYiEADP//vbsvgU1/Z/QlnnHF8EAAAAIQZokbEK//lYAAAAIQZ5CeIX/VcEAAAAIAZ5hdEK/WsAAAAAIAZ5jakK/WsE=", "name": "synthetic-preview.mp4", "mime": "video/mp4"});
   for (const file of [html, archive]) files.set(`mosaic:3:${file.sha256}`,files.get(`mosaic:4:${file.sha256}`)!);
 }
+if (reviewScenario !== "unavailable") histories.mosaic = [
+  {seq:1,role:"user",at:now,content:"把阅读资料整理成一个简洁的清单，先让我看看。"},
+  {seq:2,role:"assistant",at:now,content:"清单已整理好。若要保存到 Personal 文件空间，请确认下面的具体动作；你也可以继续聊别的事情。"},
+];
 const motionScale = Math.min(8, Math.max(1, Number(params.get("motionScale")) || 1));
 if (params.get("replies") === "1") histories.mosaic = [
   {seq:1,role:"assistant",at:now,content:"DISCUSSION ROOT: original authorization"},
@@ -320,8 +362,9 @@ if(params.has("receipts")) histories.mosaic[3].attachments = undefined;
 applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
+if (params.get("font")==="20") { document.documentElement.style.setProperty("--font-ui","20px");document.documentElement.style.fontSize="20px"; }
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label" style={{flexWrap:"wrap"}}><span>{reviewScenario !== "unavailable" ? "动作审批 · 当前实际桌面组件 · 合成数据 · 不执行文件写入或模型调用" : "twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览"}{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div hidden={reviewScenario !== "unavailable"}><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div>{reviewScenario !== "unavailable" && <div><button data-review-open-settings onClick={()=>window.dispatchEvent(new CustomEvent("wuu:open-settings",{detail:{page:"plugin-view:personal:personal-preferences"}}))}>Auto Review 设置</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><select aria-label="合成审批场景" value={reviewScenario} onChange={event=>{const url=new URL(location.href);url.searchParams.set("review",event.target.value);location.href=url.href;}}>{["ready","empty","expired","blocked","stale","denied","revoked","uncertain","succeeded","long","lost-ack","stale-response"].map(value=><option key={value} value={value}>{value}</option>)}</select></div>}</div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {

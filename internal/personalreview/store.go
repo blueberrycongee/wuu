@@ -30,7 +30,9 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
 CREATE TABLE IF NOT EXISTS personal_review_actions (space TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,body BLOB NOT NULL,PRIMARY KEY(space,id));
-CREATE TABLE IF NOT EXISTS personal_review_events (space TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,body BLOB NOT NULL,PRIMARY KEY(space,id,revision));`)
+CREATE TABLE IF NOT EXISTS personal_review_events (space TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,body BLOB NOT NULL,PRIMARY KEY(space,id,revision));
+CREATE TABLE IF NOT EXISTS personal_review_settings (space TEXT PRIMARY KEY,revision INTEGER NOT NULL,policy_version TEXT NOT NULL,auto_review_enabled INTEGER NOT NULL CHECK(auto_review_enabled IN (0,1)));
+CREATE TABLE IF NOT EXISTS personal_review_settings_events (space TEXT NOT NULL,revision INTEGER NOT NULL,body BLOB NOT NULL,PRIMARY KEY(space,revision));`)
 	if err != nil {
 		_ = db.Close()
 		return nil, err

@@ -9,7 +9,7 @@
 // Run against source in an isolated JSONL subprocess; fixture implements only host services.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -19,14 +19,15 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const { build } = createRequire(join(root, 'plugins/package.json'))('esbuild');
 const scratch = await mkdtemp(join(tmpdir(), 'wuu-personal-'));
 const evidencePath = resolve(process.env.WUU_PERSONAL_E2E_OUTPUT ?? join(root, '.tmp/e2e/personal-runtime'));
-const evidence = { scenarios: [], frames: [], node: process.version, started_at: new Date().toISOString() };
-const runtimePath = join(scratch, 'runtime.mjs');
+const bundled = process.env.WUU_PERSONAL_E2E_BUNDLED === '1';
+const evidence = { runtime: bundled ? 'bundled' : 'source', scenarios: [], frames: [], node: process.version, started_at: new Date().toISOString() };
+const runtimePath = bundled ? join(root, 'internal/plugin/bundled/personal/runtime.mjs') : join(scratch, 'runtime.mjs');
 const calendarRuntimePath = join(scratch, 'calendar-runtime.mjs');
 const active = new Set();
 let UserRoutineScheduler;
 class Host {
   bindings = new Map(); storage = new Map(); sessions = new Map(); turns = new Map(); histories = new Map(); calls = []; intercept;
-  userInputs = new Map();
+  userInputs = new Map(); reviews = new Map();
   async call(frame) {
     assert.equal(frame.method, 'host.service.call');
     const { service, method, params: p = {} } = frame.params;
@@ -34,6 +35,7 @@ class Host {
     if (this.intercept) { const result = await this.intercept(service, p); if (result !== undefined) return result; }
     const key = `${p.scope}:${p.key}`;
     switch (service) {
+      case 'host.personal': assert.equal(method, 'call'); if (p.operation === 'review.execution.status') return { ok: true, value: { requests: this.reviews?.get(p.session_id) ?? [] } }; assert.equal(p.operation, 'owner.check'); return { ok: true, value: {} };
       case 'host.file-lock': return method === 'acquire' ? { lock_id: 'personal-fixture-lock' } : { released: true };
       case 'calendar.personal': if (this.calendar) return this.calendar.call('service.invoke', { service, method, caller: 'personal', params: p }); throw new Error('calendar service unavailable');
       case 'automation.routines': {
@@ -95,7 +97,8 @@ class Host {
         return { data: encoded.slice(offset, offset + 8), offset, total: encoded.length, content_type: attachment.mime_type, name: attachment.name, sha256: attachment.sha256 };
       }
       case 'host.session.cancel': {
-        const turns = [...this.turns.values()].filter(t => t.session_id === p.session_id && (!p.turn_id || p.turn_id === t.turn_id) && (!p.queue_id || p.queue_id === t.queue_id) && !['completed', 'failed', 'discarded', 'interrupted'].includes(t.state));
+        assert(!(p.turn_id && p.queue_id), 'host cancellation accepts exactly one turn or queue identity');
+        const turns = [...this.turns.values()].filter(t => t.session_id === p.session_id && (!p.turn_id || p.turn_id === t.turn_id) && (!p.queue_id || p.queue_id === t.queue_id && t.state === 'queued') && !['completed', 'failed', 'discarded', 'interrupted'].includes(t.state));
         for (const turn of turns) if (!['completed', 'failed', 'discarded', 'interrupted'].includes(turn.state)) turn.state = 'interrupted';
         return { session_id: p.session_id, cancelled: turns.some(turn => turn.state === 'interrupted') };
       }
@@ -120,7 +123,7 @@ class Runtime {
   send(frame) {
     // Shutdown can finish before an in-flight recovery host reply settles.
     // The closed fixture transport no longer accepts those response frames.
-    if (this.process.stdin.writableEnded && !frame.method) return;
+    if ((this.process.stdin.destroyed || this.process.stdin.writableEnded) && !frame.method) return;
     this.process.stdin.write(`${JSON.stringify(frame)}\n`);
   }
   call(method, params) {
@@ -149,12 +152,142 @@ class Runtime {
 }
 async function scenario(name, fn) { await fn(); evidence.scenarios.push({ name, passed: true }); console.log(`PASS ${name}`); }
 try {
-  await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
+  if (!bundled) await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
   await build({ stdin: { contents: `import {PersonalCalendarPlugin} from '${join(root, 'plugins/personal-calendar/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; let host; class CalendarFixture extends PersonalCalendarPlugin { initialize(params,value,lifecycle){host=value;return super.initialize(params,value,lifecycle)} } const plugin=new CalendarFixture({reader:{async read(space,query){const {value}=await host.call('host.storage.get',{scope:'user',key:'fixture.calendar.snapshot'});const data=JSON.parse(value);return {source:{...query,provider:'google-calendar',account_id:'integration-account',user_space_id:space,fetched_at:new Date().toISOString(),read_only:true},events:data.events,cancelled_events:data.cancelled_events||[]}}}}); await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: calendarRuntimePath });
   const schedulerPath = join(scratch, 'scheduler.mjs');
   await build({ entryPoints: [join(root, 'plugins/automation/src/user-routines.ts')], alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', format: 'esm', outfile: schedulerPath });
   ({ UserRoutineScheduler } = await import(schedulerPath));
   const host = new Host(); let runtime = await new Runtime(host).start(); let main, specialist, task;
+  // Host review records below are authoritative fixture responses, not a model's
+  // claimed receipt. These scenarios test plugin wiring, never native file I/O.
+  const actionRecord = (task, status = 'awaiting_confirmation') => ({
+    action: { id: `action-${task.task_id}`, digest: 'a'.repeat(64), scope: { task_id: task.task_id, requirements_revision: task.requirements_revision, session_id: task.execution.session_id } },
+    status, reason: `Synthetic ${status} review`,
+    ...(status === 'succeeded' ? { result: { receipt: { summary: 'Synthetic local artifact saved' }, tool_result: { content: [{ type: 'text', text: 'Synthetic local artifact saved' }], is_error: false } } } : {}),
+  });
+  const actionSends = host => host.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.review.outcome');
+  await scenario('pending action card waits for its owner without a conversational question or result delivery', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-pending', title: 'Save artifact', goal: 'Save the requested local artifact' })).task;
+    const record = actionRecord(task); h.reviews.set(task.execution.session_id, [record]);
+    const sendsBefore = h.calls.filter(call => call.service === 'host.session.send').length;
+    await r.client('actions.sync', { session_id: task.execution.session_id, action_id: record.action.id });
+    h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed');
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.state, 'waiting_user'); assert.equal(task.review_wait, true); assert.equal(task.waiting_reason, 'user');
+    assert.equal(task.question, undefined); assert.equal(task.delivery, undefined); assert.equal(task.result, undefined);
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send').length, sendsBefore);
+    await assert.rejects(r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Forged pending completion', evidence: [{ action_id: record.action.id, description: 'Claimed save' }] }, task.execution.session_id), /unresolved host action/);
+    // Host shutdown can interrupt a waiting worker without cancelling its saved
+    // action. Only an explicit task cancel may discard that durable owner wait.
+    assert.equal(task.cancel_requested, false); assert.equal(record.status, 'awaiting_confirmation');
+    h.turns.get(task.execution.request_id).state = 'interrupted'; await r.lifecycle(task, 'interrupted');
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.state, 'waiting_user', 'host shutdown interruption must retain the pending owner approval');
+    assert.equal(task.cancel_requested, false); assert.equal(task.review_wait, true);
+    assert.equal(task.question, undefined); assert.equal(task.delivery, undefined);
+    await r.close(); const restarted = await new Runtime(h).start();
+    const restored = (await restarted.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(restored.state, 'waiting_user'); assert.equal(restored.question, undefined); assert.equal(restored.delivery, undefined);
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send').length, sendsBefore); await restarted.close();
+  });
+  await scenario('successful action receipt resumes the exact task and session once and supplies authoritative completion evidence', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-success', title: 'Save artifact', goal: 'Save exactly this artifact' })).task;
+    const original = task, pending = actionRecord(task); h.reviews.set(task.execution.session_id, [pending]);
+    await r.client('actions.sync', { session_id: task.execution.session_id, action_id: pending.action.id });
+    h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed');
+    const record = actionRecord(task, 'succeeded'); h.reviews.set(task.execution.session_id, [record]);
+    const input = { session_id: task.execution.session_id, action_id: record.action.id };
+    assert.deepEqual(await r.client('actions.resume', input), { accepted: true });
+    assert.deepEqual(await r.client('actions.resume', input), { accepted: true });
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.task_id, original.task_id); assert.equal(task.requirements_revision, original.requirements_revision);
+    assert.equal(task.execution.session_id, original.execution.session_id); assert.equal(task.state, 'running'); assert.equal(task.question, undefined);
+    assert.equal(task.review_resume_pending, undefined); assert.deepEqual(task.review_resumed, [record.action.id]);
+    assert.equal(actionSends(h).length, 1); assert.equal(actionSends(h)[0].params.session_id, original.execution.session_id);
+    assert.equal(actionSends(h)[0].params.request_id, task.execution.request_id); assert.notEqual(actionSends(h)[0].params.disable_tools, true);
+    const completed = (await r.tool('complete_task', { task_id: task.task_id, requirements_revision: task.requirements_revision, summary: 'Local artifact saved', evidence: [{ action_id: record.action.id, action_digest: 'forged-client-digest', description: 'Host save receipt' }] }, task.execution.session_id)).task;
+    assert.deepEqual(completed.result.evidence, [{ action_id: record.action.id, action_digest: record.action.digest, session_id: original.execution.session_id, description: 'Host save receipt' }]);
+    h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed'); await r.lifecycle(task, 'completed');
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.state, 'completed');
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.task.result').length, 1);
+    await r.close(); const restarted = await new Runtime(h).start();
+    assert.deepEqual(await restarted.client('actions.resume', input), { suppressed: true }); assert.equal(actionSends(h).length, 1); await restarted.close();
+  });
+  await scenario('denied revoked expired stale and uncertain actions never resume a tool-enabled worker', async () => {
+    for (const status of ['denied', 'revoked', 'expired', 'stale', 'uncertain']) {
+      const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: `action-${status}`, title: 'Save artifact', goal: 'Do not replace a rejected action' })).task;
+      const record = actionRecord(task, status); h.reviews.set(task.execution.session_id, [record]);
+      const input = { session_id: task.execution.session_id, action_id: record.action.id };
+      await r.client('actions.resume', input); await r.client('actions.resume', input);
+      assert.equal(actionSends(h).length, 1); assert.equal(actionSends(h)[0].params.session_id, a.main_session_id); assert.equal(actionSends(h)[0].params.disable_tools, true);
+      task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      assert.equal(task.state, 'waiting_external'); assert.equal(task.result, undefined); assert.equal(task.delivery, undefined);
+      assert.equal(task.reconciliation_required, status === 'uncertain'); await r.close();
+    }
+  });
+  await scenario('stopped superseded and paused task owners suppress late successful action continuation', async () => {
+    for (const fence of ['stop', 'supersede', 'pause']) {
+      const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: `action-${fence}`, title: 'Save artifact', goal: 'Original request' })).task;
+      const record = actionRecord(task, 'succeeded'), input = { session_id: task.execution.session_id, action_id: record.action.id }; h.reviews.set(task.execution.session_id, [record]);
+      if (fence === 'stop') task = (await r.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
+      if (fence === 'supersede') task = (await r.client('tasks.update', { task_id: task.task_id, expected_revision: task.revision, goal: 'Replacement request' })).task;
+      if (fence === 'pause') await r.client('agents.pause', { agent_id: a.agent_id, expected_revision: a.revision });
+      assert.deepEqual(await r.client('actions.resume', input), { suppressed: true }); assert.equal(actionSends(h).length, 0);
+      if (fence !== 'pause') assert.deepEqual(await r.client('actions.sync', input), { suppressed: true });
+      await r.close(); const restarted = await new Runtime(h).start();
+      assert.deepEqual(await restarted.client('actions.resume', input), { suppressed: true }); assert.equal(actionSends(h).length, 0); await restarted.close();
+    }
+  });
+  await scenario('action evidence rejects unknown forged stale wrong-session malformed-digest and failed host receipts', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    const task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-evidence', title: 'Verify artifact', goal: 'Only authoritative success may complete' })).task;
+    const valid = actionRecord(task, 'succeeded');
+    const invalid = [
+      [], [{ ...valid, status: 'denied' }], [{ ...valid, status: 'uncertain' }],
+      [{ ...valid, action: { ...valid.action, scope: { ...valid.action.scope, task_id: 'another-task' } } }],
+      [{ ...valid, action: { ...valid.action, scope: { ...valid.action.scope, requirements_revision: 2 } } }],
+      [{ ...valid, action: { ...valid.action, scope: { ...valid.action.scope, session_id: a.main_session_id } } }],
+      [{ ...valid, action: { ...valid.action, digest: 'not-a-digest' } }],
+      [{ ...valid, result: { tool_result: { content: [], is_error: true } } }], [{ ...valid, result: undefined }],
+    ];
+    for (const records of invalid) {
+      h.reviews.set(task.execution.session_id, records);
+      await assert.rejects(r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Not proven', evidence: [{ action_id: valid.action.id, description: 'Untrusted claim' }] }, task.execution.session_id), /unverified_evidence|unresolved host action/);
+      assert.equal((await r.client('tasks.get', { task_id: task.task_id })).task.result, undefined);
+    }
+    h.reviews.set(task.execution.session_id, [valid]);
+    for (const selector of [{ action_id: 'forged-action', description: 'Unknown id' }, { action_id: valid.action.id, seq: 1, description: 'Ambiguous source' }, { action_id: valid.action.id, tool_call_id: 'forged-tool', description: 'Ambiguous source' }]) {
+      await assert.rejects(r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Not proven', evidence: [selector] }, task.execution.session_id), /unverified_evidence/);
+    }
+    assert.equal(actionSends(h).length, 0); await r.close();
+  });
+  await scenario('lost action-continuation acknowledgement recovers durably with one stable receipt request and no duplicate turn', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-lost-ack', title: 'Save artifact', goal: 'Continue from the already executed native result' })).task;
+    h.turns.get(task.execution.request_id).state = 'completed';
+    const record = actionRecord(task, 'succeeded'), input = { session_id: task.execution.session_id, action_id: record.action.id }; h.reviews.set(task.execution.session_id, [record]);
+    let lost = false;
+    h.intercept = (service, p) => {
+      if (service === 'host.session.send' && p.cause === 'personal.review.outcome' && !lost) {
+        lost = true; h.turns.set(p.request_id, { request_id: p.request_id, session_id: p.session_id, turn_id: `t-${p.request_id}`, state: 'running' }); throw new Error('action continuation acknowledgement lost');
+      }
+    };
+    await assert.rejects(r.client('actions.resume', input), /acknowledgement lost/); h.intercept = undefined;
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.review_resume_pending, record.action.id);
+    const requestID = task.execution.request_id, turnsBefore = h.turns.size;
+    await r.close(); const restarted = await new Runtime(h).start();
+    task = (await restarted.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.execution.request_id, requestID); assert.equal(task.execution.session_id, input.session_id); assert.equal(task.review_resume_pending, undefined);
+    assert.deepEqual(task.review_resumed, [record.action.id]); assert.equal(task.execution.status, 'submitted'); assert.equal(h.turns.size, turnsBefore);
+    assert.equal(actionSends(h).length, 2); assert.equal(new Set(actionSends(h).map(call => call.params.request_id)).size, 1);
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.task').length, 1);
+    await restarted.client('actions.resume', input); await restarted.client('tasks.reconcile', { task_id: task.task_id });
+    assert.equal(actionSends(h).length, 2); assert.equal(h.turns.size, turnsBefore); await restarted.close();
+  });
   await scenario('trusted message sources, quoted output, task selection and mutation retries retain one matter', async () => {
     const h = new Host(), r = await new Runtime(h).start();
     const a = (await r.client('agents.ensure_default')).agent, sid = a.main_session_id;
@@ -237,6 +370,180 @@ try {
       ]);
       assert.equal(replay.task.requirements_revision, 2);
       assert.equal(stopped.task.state, state === 'completed' ? 'completed' : 'stopped');
+      await r.close();
+    }
+  });
+  await scenario('cancellation survives process loss before a delayed dispatch admission', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const a = (await r.client('agents.ensure_default')).agent;
+    let enter, release, admitted;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const admission = new Promise(resolve => { admitted = resolve; });
+    h.intercept = async (service, params) => {
+      if (service !== 'host.session.send' || params.cause !== 'personal.task') return;
+      enter(params); await held;
+      const turn = { request_id: params.request_id, session_id: params.session_id, turn_id: 'late-admitted-turn', state: 'running' };
+      h.turns.set(params.request_id, turn); admitted(); return turn;
+    };
+    const creating = r.client('tasks.create', { agent_id: a.agent_id, request_id: 'late-admission', title: 'Delayed task', goal: 'Synthetic work' }).catch(error => ({ error: error.message }));
+    const sending = await entered;
+    let task = (await r.client('tasks.list')).tasks[0];
+    task = (await r.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
+    assert.equal(task.state, 'waiting_external', 'absence of a receipt is not confirmed termination during admission');
+    assert.equal(task.reconciliation_required, true);
+    const exited = new Promise(resolve => r.process.once('exit', resolve)); r.process.kill(); await exited; await creating;
+    release(); await admission; h.intercept = undefined;
+    const restarted = await new Runtime(h).start();
+    task = (await restarted.client('tasks.reconcile', { task_id: task.task_id })).task;
+    assert.equal(task.state, 'stopped'); assert.equal(h.turns.get(sending.request_id).state, 'interrupted');
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === sending.request_id).length, 1);
+    await restarted.lifecycle(task, 'completed');
+    assert.equal((await restarted.client('tasks.get', { task_id: task.task_id })).task.delivery, undefined);
+    await restarted.close();
+  });
+  await scenario('stop and requirement replacement cancel promoted queued executions by current turn identity', async () => {
+    for (const action of ['stop', 'update']) {
+      const h = new Host(), r = await new Runtime(h).start();
+      const a = (await r.client('agents.ensure_default')).agent;
+      h.intercept = (service, params) => {
+        if (service !== 'host.session.send' || params.cause !== 'personal.task') return;
+        const turn = { request_id: params.request_id, session_id: params.session_id, queue_id: 'queued-original', state: 'queued' };
+        h.turns.set(params.request_id, turn); return turn;
+      };
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: action, title: 'Queued work', goal: 'Original' })).task;
+      const old = h.turns.get(task.execution.request_id);
+      old.turn_id = 'promoted-turn'; old.state = 'running'; h.intercept = undefined;
+      task = (await r.client(`tasks.${action}`, { task_id: task.task_id, expected_revision: task.revision, ...(action === 'update' ? { goal: 'Replacement' } : {}) })).task;
+      assert.equal(old.state, 'interrupted', 'stale queue identity cannot stand in for the promoted running turn');
+      assert.equal(task.state, action === 'stop' ? 'stopped' : 'running');
+      const cancelled = h.calls.filter(call => call.service === 'host.session.cancel').at(-1).params;
+      assert.equal(cancelled.turn_id, 'promoted-turn'); assert.equal(cancelled.queue_id, undefined);
+      await r.close();
+    }
+  });
+  await scenario('stopping undelivered terminal updates preserves the result and cancels only their reply', async () => {
+    for (const outcome of ['completed', 'failed']) {
+      const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: outcome, title: 'Terminal work', goal: 'Synthetic lookup' })).task;
+      if (outcome === 'completed') {
+        h.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'verified result' }]);
+        await r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Saved result', evidence: [{ seq: 1, description: 'Source' }] }, task.execution.session_id);
+      }
+      h.turns.get(task.execution.request_id).state = outcome; await r.lifecycle(task, outcome);
+      task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      const deliveryID = task.delivery.request_id, result = task.result;
+      await r.client('agents.send', { agent_id: a.agent_id, request_id: 'unrelated', prompt: 'Another subject' });
+      const unrelated = [...h.turns.values()].at(-1);
+      task = (await r.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
+      assert.equal(task.state, outcome); assert.deepEqual(task.result, result); assert.equal(task.delivery.status, 'suppressed');
+      assert.equal(h.turns.get(deliveryID).state, 'interrupted'); assert.equal(unrelated.state, 'running');
+      await r.close(); const restarted = await new Runtime(h).start();
+      assert.equal((await restarted.client('tasks.reconcile', { task_id: task.task_id })).task.delivery.status, 'suppressed');
+      assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === deliveryID).length, 1);
+      await restarted.close();
+    }
+  });
+  await scenario('delivery lifecycle is session-bound and late running callbacks cannot erase a terminal failure', async () => {
+    const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+    let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'callback-fence', title: 'Question', goal: 'Ask first' })).task;
+    task = (await r.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Proceed?' }, task.execution.session_id)).task;
+    const input = { request_id: task.delivery.request_id, state: 'completed', final_output: 'Proceed?' };
+    await r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { ...input, thread_id: task.execution.session_id } });
+    assert.equal((await r.client('tasks.get', { task_id: task.task_id })).task.delivery.status, 'submitted');
+    await r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { ...input, thread_id: a.main_session_id, state: 'failed', error: 'Synthetic failure' } });
+    await r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { ...input, thread_id: a.main_session_id, state: 'running' } });
+    assert.equal((await r.client('tasks.get', { task_id: task.task_id })).task.delivery.status, 'failed');
+    const sent = h.calls.find(call => call.service === 'host.session.send' && call.params.request_id === input.request_id).params;
+    assert.equal(sent.disable_tools, true, 'notification synthesis cannot repeat task side effects');
+    await r.close();
+  });
+  await scenario('a question wins over concurrent completion and requires a main-chat answer', async () => {
+    for (const order of ['completion-in-flight', 'completion-saved']) {
+      const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: order, title: 'Concurrent controls', goal: 'Ask before finishing' })).task;
+      h.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'prepared result' }]);
+      let release, enter; const held = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { enter = resolve; });
+      if (order === 'completion-in-flight') h.intercept = async (service, params) => {
+        if (service === 'host.session.history.read' && params.session_id === task.execution.session_id) { enter(); await held; }
+      };
+      const completion = r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Premature result', evidence: [{ seq: 1, description: 'Preparation' }] }, task.execution.session_id);
+      const observed = completion.then(value => ({ value }), error => ({ error }));
+      if (order === 'completion-in-flight') await entered; else await completion;
+      await r.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Do you approve this plan?' }, task.execution.session_id);
+      release(); const completed = await observed; h.intercept = undefined;
+      if (order === 'completion-in-flight') assert.match(completed.error?.message ?? '', /waiting.*user/);
+      h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed');
+      task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      assert.equal(task.state, 'waiting_user'); assert.equal(task.result, undefined); assert.equal(task.completion_intent, undefined);
+      assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.task.result').length, 0);
+      await r.close();
+    }
+  });
+  await scenario('a task cancelled behind another agent send never crosses the host admission boundary', async () => {
+    const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+    let enter, release; const entered = new Promise(resolve => { enter = resolve; }), held = new Promise(resolve => { release = resolve; });
+    h.intercept = async (service, params) => { if (service === 'host.session.send' && params.cause === 'personal.task') { enter(); await held; } };
+    const first = r.client('tasks.create', { agent_id: a.agent_id, request_id: 'blocking-task', title: 'First', goal: 'Hold admission' }); await entered;
+    let created; const sessionCreated = new Promise(resolve => { created = resolve; });
+    const intercept = h.intercept;
+    h.intercept = async (service, params) => { if (service === 'host.session.create' && params.parent_session_id) created(); return intercept(service, params); };
+    const creating = r.client('tasks.create', { agent_id: a.agent_id, request_id: 'cancel-before-send', title: 'Not admitted', goal: 'Do not start if cancelled' });
+    await sessionCreated;
+    let task = (await r.client('tasks.list')).tasks.find(task => task.request_id === 'cancel-before-send');
+    task = (await r.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
+    release(); await first; await creating;
+    assert.equal((await r.client('tasks.get', { task_id: task.task_id })).task.state, 'stopped');
+    assert.equal(h.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === task.execution.request_id).length, 0);
+    await r.close();
+  });
+  await scenario('durable result receipt recovers after a crash before marking delivery without a second reply', async () => {
+    const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+    let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'result-crash', title: 'Result recovery', goal: 'Return exactly one verified result' })).task;
+    h.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'verified synthetic result' }]);
+    await r.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Verified result', evidence: [{ seq: 1, description: 'Source' }] }, task.execution.session_id);
+    h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed');
+    task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+    const receipt = h.turns.get(task.delivery.request_id); receipt.state = 'completed'; receipt.final_output = 'Verified result for the user';
+    h.intercept = (service, params) => {
+      if (service === 'host.storage.compare-exchange' && params.key.endsWith(`task.${task.task_id}`) && JSON.parse(params.value).delivery?.status === 'delivered') throw new Error('crash before delivery write');
+    };
+    const input = { ...receipt, thread_id: a.main_session_id };
+    await assert.rejects(r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input }), /crash before delivery write/);
+    const snapshotPath = join(scratch, 'durable-result-host.json');
+    await writeFile(snapshotPath, JSON.stringify(Object.fromEntries(['storage', 'sessions', 'turns', 'histories'].map(key => [key, [...h[key]]]))));
+    const exited = new Promise(resolve => r.process.once('exit', resolve)); r.process.kill(); await exited;
+    const restored = new Host(), snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+    for (const [key, entries] of Object.entries(snapshot)) restored[key] = new Map(entries);
+    const restarted = await new Runtime(restored).start();
+    task = (await restarted.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.delivery.status, 'delivered');
+    await restarted.call('capability.invoke', { capability: 'agent.turn.lifecycle', input });
+    await restarted.client('tasks.reconcile', { task_id: task.task_id });
+    assert.equal(restored.calls.filter(call => call.service === 'host.session.send').length, 0, 'persisted host receipts are inspected, never replayed');
+    const before = (await restarted.client('tasks.get', { task_id: task.task_id })).task;
+    const stopped = (await restarted.client('tasks.stop', { task_id: task.task_id, expected_revision: before.revision })).task;
+    assert.deepEqual(stopped, before, 'stop does not erase an already delivered result');
+    await restarted.close();
+  });
+  await scenario('explicit delivery retry rechecks the durable original receipt before creating another reply', async () => {
+    for (const outcome of ['completed', 'running', 'missing', 'timed-out']) {
+      const h = new Host(), r = await new Runtime(h).start(); const a = (await r.client('agents.ensure_default')).agent;
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: outcome, title: 'Retry receipt', goal: 'Ask exactly once' })).task;
+      task = (await r.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Which date?' }, task.execution.session_id)).task;
+      const requestID = task.delivery.request_id, receipt = h.turns.get(requestID);
+      await r.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: a.main_session_id, request_id: requestID, state: 'failed', error: 'Unconfirmed earlier reply' } });
+      task = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      receipt.state = outcome === 'completed' || outcome === 'timed-out' ? 'completed' : 'running';
+      if (outcome === 'completed') receipt.final_output = 'Which date?';
+      if (outcome === 'missing') h.turns.delete(requestID);
+      if (outcome === 'timed-out') h.intercept = (service, params) => service === 'host.session.inspect' && params.request_id === requestID ? { session: h.sessions.get(a.main_session_id), turn: receipt, timed_out: true } : undefined;
+      const before = h.calls.filter(call => call.service === 'host.session.send').length;
+      const retry = r.tool('retry_task_delivery', { task_id: task.task_id, expected_revision: task.revision }, a.main_session_id);
+      if (outcome === 'completed') {
+        task = (await retry).task; assert.equal(task.delivery.request_id, requestID); assert.equal(task.delivery.status, 'delivered');
+      } else await assert.rejects(retry, /unconfirmed|outcome/);
+      assert.equal(h.calls.filter(call => call.service === 'host.session.send').length, before, 'unknown or already delivered receipts never create another notification or worker');
       await r.close();
     }
   });
@@ -680,7 +987,7 @@ try {
     const oldRequest = 'personal-result-legacy-pending';
     legacy = { ...legacy, agent_id: specialist.agent_id, state: 'completed', execution: { ...legacy.execution, finished_state: 'completed' }, result: { summary: 'Historical result', evidence: [], requirements_revision: 1, verified_at: new Date().toISOString() }, delivery: { request_id: oldRequest, status: 'submitted' } };
     host.storage.set(key, JSON.stringify(legacy));
-    host.turns.set(oldRequest, { request_id: oldRequest, session_id: specialist.main_session_id, turn_id: 'legacy-delivery-turn', state: 'queued' });
+    host.turns.set(oldRequest, { request_id: oldRequest, session_id: specialist.main_session_id, queue_id: 'legacy-delivery-queue', state: 'queued' });
     legacy = (await runtime.client('tasks.reconcile', { task_id: legacy.task_id })).task;
     assert.equal(host.turns.get(oldRequest).state, 'interrupted'); assert.equal(legacy.previous_deliveries[0].session_id, specialist.main_session_id);
     assert.notEqual(legacy.delivery.request_id, oldRequest); assert.equal(host.turns.get(legacy.delivery.request_id).session_id, main.main_session_id);
@@ -725,7 +1032,7 @@ try {
     let queued = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'queued-result', title: 'Queued result', goal: 'Verify result delivery recovery' })).task;
     host.histories.set(queued.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'verified outcome' }]);
     await runtime.tool('complete_task', { task_id: queued.task_id, requirements_revision: 1, summary: 'Verified result', evidence: [{ seq: 1, description: 'Outcome' }] }, queued.execution.session_id);
-    host.intercept = (service, p) => { if (service === 'host.session.send' && p.cause === 'personal.task.result') { const turn = { request_id: p.request_id, session_id: p.session_id, state: 'queued' }; host.turns.set(p.request_id, turn); return turn; } };
+    host.intercept = (service, p) => { if (service === 'host.session.send' && p.cause === 'personal.task.result') { const turn = { request_id: p.request_id, session_id: p.session_id, state: 'queued', queue_id: `q-${p.request_id}` }; host.turns.set(p.request_id, turn); return turn; } };
     await runtime.lifecycle(queued, 'completed'); host.intercept = undefined;
     queued = (await runtime.client('tasks.get', { task_id: queued.task_id })).task;
     const deliveryID = queued.delivery.request_id; host.turns.set(deliveryID, { request_id: deliveryID, session_id: main.main_session_id, state: 'discarded', retryable: true });
@@ -948,7 +1255,7 @@ try {
     let task = (await runtime.client('tasks.list')).tasks.find(t => t.routine_id === routine.routine_id);
     host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'New result confirmed' }]);
     await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Important new result', evidence: [{ seq: 1, description: 'Changed source' }] }, task.execution.session_id);
-    host.intercept = (service, p) => { if (service === 'host.session.send' && p.cause === 'personal.task.result') { const turn = { request_id: p.request_id, session_id: p.session_id, state: 'queued' }; host.turns.set(p.request_id, turn); return turn; } };
+    host.intercept = (service, p) => { if (service === 'host.session.send' && p.cause === 'personal.task.result') { const turn = { request_id: p.request_id, session_id: p.session_id, state: 'queued', queue_id: `q-${p.request_id}` }; host.turns.set(p.request_id, turn); return turn; } };
     await runtime.lifecycle(task, 'completed'); host.intercept = undefined; task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
     const delivery = task.delivery.request_id; host.turns.set(delivery, { request_id: delivery, session_id: main.main_session_id, state: 'discarded', retryable: true });
     host.intercept = (service, p) => { if (service === 'host.session.send' && p.request_id === delivery) { const turn = { request_id: delivery, session_id: p.session_id, state: 'running' }; host.turns.set(delivery, turn); return turn; } };

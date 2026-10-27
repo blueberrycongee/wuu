@@ -196,6 +196,7 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
+	personalActions  *personalActions
 	clientInputMu    sync.Mutex
 	clientInputOwner string
 	clientInputLease *session.ThreadExecutionLease

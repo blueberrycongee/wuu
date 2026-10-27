@@ -620,14 +620,14 @@ func NewSession(opts Options) (*Session, error) {
 				ToolInput: json.RawMessage(call.Arguments),
 			})
 			return err
-		})
+		}, func() bool { return !hookDispatcher.HasHooks(hooks.PermissionRequest) })
 		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, binding))
 		kit.SetOnFileChanged(func(absPath string) {
 			_, _ = hookDispatcher.Dispatch(context.Background(), hooks.FileChanged, &hooks.Input{
 				CWD:      rootDir,
 				FilePath: absPath,
 			})
-		})
+		}, func() bool { return !hookDispatcher.HasHooks(hooks.FileChanged) })
 		toolkit = kit
 		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, hookDispatcher, "", "", rootDir)
 		if !binding.IsUser() {

@@ -120,7 +120,7 @@ func (e *Engine) Assess(ctx context.Context, key Key) (Record, error) {
 	if needsConfirmation(r.Action.Effect) {
 		decision, reviewErr := e.review(ctx, reviewInput(r, authority, consent))
 		status, outcome, reason = reviewStatus(decision, reviewErr)
-		if status == Ready && consent == nil && !validApproval(r) {
+		if status == Ready && consent == nil && !validApproval(r) && !canReviewIntent(authority) {
 			status = AwaitingConfirmation
 			outcome = "ask"
 			reason = "Owner confirmation required for this exact action"
@@ -133,6 +133,8 @@ func (e *Engine) Assess(ctx context.Context, key Key) (Record, error) {
 	err = e.withAuthority(ctx, r.Action.Scope, func(current Authority) error {
 		if s, why := e.check(r, current); s != "" {
 			status, outcome, reason = s, "deny", why
+		} else if status == Ready && needsConfirmation(r.Action.Effect) && consent == nil && !validApproval(r) && !canReviewIntent(current) {
+			status, outcome, reason = AwaitingConfirmation, "ask", "Exact owner confirmation is required; automatic intent review is unavailable"
 		}
 		r.Status, r.Outcome, r.Reason = status, outcome, reason
 		if status != Ready && status != Blocked {
@@ -174,6 +176,9 @@ func (e *Engine) Resolve(ctx context.Context, key Key, resolution Resolution) (R
 		}
 		var saved Record
 		err = e.withAuthority(ctx, r.Action.Scope, func(current Authority) error {
+			if _, err := e.owner(ctx, r); err != nil {
+				return err
+			}
 			if status, reason := e.check(r, current); status != "" {
 				r.Status, r.Outcome, r.Reason = status, "deny", reason
 				if _, err := e.store.save(ctx, r, r.Revision, "host", e.clock()); err != nil {
@@ -217,7 +222,7 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 		return stopped, nil
 	}
 	if needsConfirmation(r.Action.Effect) {
-		if !validApproval(r) && r.ConsentID == "" {
+		if !validApproval(r) && r.ConsentID == "" && !canReviewIntent(authority) {
 			return Record{}, ErrUnauthorized
 		}
 		decision, reviewErr := e.review(ctx, reviewInput(r, authority, e.matchConsent(r.Action, authority, r.ConsentID)))
@@ -241,6 +246,14 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 		}
 		if status, reason := e.check(r, current); status != "" {
 			r.Status, r.Outcome, r.Reason = status, "deny", reason
+			var err error
+			claimed, err = e.store.save(ctx, r, r.Revision, "host", e.clock())
+			return err
+		}
+		// Opt-in and complete original source evidence must still exist at the
+		// dispatch boundary, even if a host forgot to advance its policy revision.
+		if needsConfirmation(r.Action.Effect) && !validApproval(r) && r.ConsentID == "" && !canReviewIntent(current) {
+			r.Status, r.Outcome, r.Reason = AwaitingConfirmation, "ask", "Exact owner confirmation is required; automatic intent review is unavailable"
 			var err error
 			claimed, err = e.store.save(ctx, r, r.Revision, "host", e.clock())
 			return err
@@ -299,8 +312,18 @@ func (e *Engine) Revoke(ctx context.Context, key Key, binding ActionBinding) (Re
 		}
 		switch r.Status {
 		case Proposed, Ready, AwaitingConfirmation, Approved, Blocked:
-			r.Status, r.Outcome, r.Reason = Revoked, "deny", "Owner revoked the pending action"
-			saved, err := e.store.save(ctx, r, r.Revision, identity.UserID, e.clock())
+			var saved Record
+			err = e.withAuthority(ctx, r.Action.Scope, func(Authority) error {
+				// Revocation and dispatch share the host authority boundary. An
+				// owner transport that expired while waiting cannot change state.
+				if _, err := e.owner(ctx, r); err != nil {
+					return err
+				}
+				r.Status, r.Outcome, r.Reason = Revoked, "deny", "Owner revoked the pending action"
+				var err error
+				saved, err = e.store.save(ctx, r, r.Revision, identity.UserID, e.clock())
+				return err
+			})
 			if errors.Is(err, ErrConflict) {
 				continue
 			}
@@ -313,6 +336,90 @@ func (e *Engine) Revoke(ctx context.Context, key Key, binding ActionBinding) (Re
 	}
 	return Record{}, ErrConflict
 }
+
+// CancelExecution invalidates unclaimed actions of one already verified owning
+// execution. It is an internal host lifecycle operation, not a client endpoint
+// or owner confirmation. The caller must verify cancellation ownership first.
+// Started and uncertain effects are retained for reconciliation, never revoked.
+func (e *Engine) CancelExecution(ctx context.Context, spaceID, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return errors.New("Personal action cancellation requires an execution session")
+	}
+	records, err := e.Records(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.Action.Scope.SessionID != sessionID {
+			continue
+		}
+		switch record.Status {
+		case Proposed, Ready, Approved, AwaitingConfirmation, Blocked:
+		default:
+			continue
+		}
+		for attempt := 0; attempt < 8; attempt++ {
+			err = e.withAuthority(ctx, record.Action.Scope, func(Authority) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				// Dispatch may have claimed this action while cancellation was
+				// waiting for the authority boundary. Read the durable state again.
+				current, err := e.store.get(ctx, record.Action.Key())
+				if err != nil {
+					return err
+				}
+				switch current.Status {
+				case Proposed, Ready, Approved, AwaitingConfirmation, Blocked:
+					current.Status, current.Outcome, current.Reason = Revoked, "deny", "Owning execution was cancelled; pending action was not executed"
+					_, err = e.store.save(ctx, current, current.Revision, "host", e.clock())
+					return err
+				default:
+					return nil
+				}
+			})
+			if !errors.Is(err, ErrConflict) {
+				break
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetExecution reads a durable action for the trusted host coordinator. It is
+// not an owner endpoint: exposing it requires a separately verified session or
+// owner scope. A record is evidence, never a dispatch authorization token.
+func (e *Engine) GetExecution(ctx context.Context, key Key) (Record, error) {
+	return e.store.get(ctx, key)
+}
+
+// Records lists one space for host lifecycle recovery, without authenticating
+// a client. Hosts must not expose this method as a broad plugin/client route.
+func (e *Engine) Records(ctx context.Context, spaceID string) ([]Record, error) {
+	if strings.TrimSpace(spaceID) == "" {
+		return nil, errors.New("Personal execution listing requires a space")
+	}
+	keys, err := e.store.keys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records := []Record{}
+	for _, key := range keys {
+		if key.SpaceID != spaceID {
+			continue
+		}
+		record, err := e.store.get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
 func (e *Engine) Get(ctx context.Context, key Key) (Record, error) {
 	r, err := e.store.get(ctx, key)
 	if err != nil {
@@ -447,6 +554,18 @@ func (e *Engine) check(r Record, a Authority) (Status, string) {
 	}
 	return "", ""
 }
+func canReviewIntent(authority Authority) bool {
+	if !authority.AllowIntentReview || strings.TrimSpace(authority.Scope.ContextDigest) == "" || len(authority.UserMessages) == 0 {
+		return false
+	}
+	for _, message := range authority.UserMessages {
+		if strings.TrimSpace(message.ID) == "" || strings.TrimSpace(message.Text) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func validApproval(r Record) bool {
 	return r.Approval != nil && r.Approval.Choice == ApproveOnce && r.Approval.OwnerID == r.Action.OwnerID && r.Approval.Digest == r.Action.Digest
 }

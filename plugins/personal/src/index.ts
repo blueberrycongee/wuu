@@ -52,15 +52,15 @@ export interface NamedAgent extends Versioned {
 interface Execution {
   request_id: string; create_request_id: string; requirements_revision: number;
   status: "pending" | "submitted" | "unknown"; finished_state?: string; cancel_pending?: boolean; cancel_error?: string; session_id?: string; turn_id?: string; queue_id?: string;
-  control_call_ids?: string[];
+  control_call_ids?: string[]; dispatch_pending?: boolean;
 }
 interface TaskLink { task_id: string; requirements_revision: number; execution_session_id?: string; question_request_id?: string }
 interface InputReceipt extends Versioned { fingerprint: string }
-interface Evidence { seq: number; description: string; session_id: string }
+interface Evidence { seq?: number; action_id?: string; action_digest?: string; description: string; session_id: string }
 interface CompletionIntent {
   execution_request_id: string; session_id: string; requirements_revision: number; turn_id?: string;
   summary: string; meaningful?: boolean; submitted_at: string;
-  evidence: Array<{ seq?: number; tool_call_id?: string; description: string }>;
+  evidence: Array<{ seq?: number; tool_call_id?: string; action_id?: string; description: string }>;
 }
 export interface PersonalTask extends Versioned {
   task_id: string; agent_id: string; user_space_id: string; request_id: string;
@@ -70,6 +70,7 @@ export interface PersonalTask extends Versioned {
   state: "queued" | "running" | "waiting_user" | "waiting_external" | "completed" | "failed" | "stopped";
   execution: Execution; previous_executions: Execution[]; previous_deliveries?: Execution[];
   input_mutations?: Array<{ key: string; fingerprint: string; requirements_revision: number }>;
+  review_wait?: boolean; review_resumed?: string[]; review_resume_pending?: string;
   cancel_requested: boolean; reconciliation_required: boolean; waiting_reason?: "user" | "external"; progress?: string; error?: string;
   result?: { summary: string; evidence: Evidence[]; requirements_revision: number; verified_at: string; meaningful?: boolean };
   completion_intent?: CompletionIntent;
@@ -88,7 +89,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
@@ -151,7 +152,7 @@ export class PersonalPlugin implements RuntimePlugin {
         { id: "stop_task", description: "Stop only the identified delegated matter. If the user's target is ambiguous, ask which matter in the main conversation before calling this tool. A cancellation request is distinct from confirmed termination.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "retry_task_delivery", description: "Retry only a failed question, result, or failure update to this main conversation when the user asks. Does not rerun task execution or repeat external actions. Requires the latest task revision.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "report_task", description: "From the bound task executor, report progress or that user input/external conditions are needed. For waiting_user, progress must be the specific question for the user; it is durably delivered to the main conversation. Then end your turn and wait; only the main conversation can resume this task. Does not mark completion.", input_schema: schema({ task_id: string, requirements_revision: integer, state: { type: "string", enum: ["running", "waiting_user", "waiting_external"] }, progress: string }, "task_id", "requirements_revision", "state", "progress"), activity: { concurrency_safe: true } },
-        { id: "complete_task", description: "Submit a completion intent from the bound executor. For work in this turn, provide the exact tool_call_id of each successful executed tool call; its result is verified only after the turn is persisted. Alternatively seq may reference already persisted evidence. Never cite complete_task or report_task themselves. The task stays pending until the successful turn and authoritative evidence are verified.", input_schema: schema({ task_id: string, requirements_revision: integer, summary: string, meaningful: { type: "boolean", description: "For routine work only, false when there is no meaningful change or need to notify." }, evidence: { type: "array", minItems: 1, items: schema({ seq: integer, tool_call_id: string, description: string }, "description") } }, "task_id", "requirements_revision", "summary", "evidence"), activity: { concurrency_safe: true } },
+        { id: "complete_task", description: "Submit a completion intent from the bound executor. For work in this turn, provide the exact tool_call_id of each successful executed tool call; its result is verified only after the turn is persisted. Alternatively seq may reference already persisted evidence, or action_id may reference a succeeded host approval receipt bound to this exact task version. Never cite complete_task or report_task themselves. The task stays pending until the successful turn and authoritative evidence are verified.", input_schema: schema({ task_id: string, requirements_revision: integer, summary: string, meaningful: { type: "boolean", description: "For routine work only, false when there is no meaningful change or need to notify." }, evidence: { type: "array", minItems: 1, items: schema({ seq: integer, tool_call_id: string, action_id: string, description: string }, "description") } }, "task_id", "requirements_revision", "summary", "evidence"), activity: { concurrency_safe: true } },
       ],
     };
   }
@@ -310,7 +311,16 @@ export class PersonalPlugin implements RuntimePlugin {
   private async sendForAgent(agentID: string, params: HostServiceContracts["host.session.send"]["params"], task?: PersonalTask) {
     return this.transition(`agent:${agentID}`, async () => {
       await this.agent(agentID);
-      if (task && !await this.routines.canExecute(task)) throw new Error("owning routine no longer permits this task revision");
+      if (task) {
+        if (!await this.routines.canExecute(task)) throw new Error("owning routine no longer permits this task revision");
+        // The agent send queue may outlive a task stop or requirements edit.
+        // Mark uncertainty only at admission, never while waiting in that queue.
+        const current = await this.change<PersonalTask>("task", task.task_id, current => {
+          if (!current || current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) return current!;
+          return { ...current, execution: { ...current.execution, dispatch_pending: true } };
+        });
+        if (current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) throw new Error("task dispatch is no longer current");
+      }
       return this.host.call("host.session.send", params);
     });
   }
@@ -648,11 +658,11 @@ export class PersonalPlugin implements RuntimePlugin {
       this.assertActive();
       task = await this.change<PersonalTask>("task", task.task_id, current => {
         if (!current || current.requirements_revision !== original.requirements_revision) return current!;
-        if (terminalTask(current) || current.execution.finished_state) return current;
-        return { ...current, execution: { ...current.execution, status: "submitted", turn_id: sent.turn_id, queue_id: sent.queue_id }, state: current.cancel_requested ? "waiting_external" : current.waiting_reason ? current.state : "running", reconciliation_required: false, error: undefined };
+        if (terminalTask(current) || current.execution.finished_state) return { ...current, execution: { ...current.execution, dispatch_pending: false } };
+        return { ...current, execution: { ...current.execution, status: "submitted", dispatch_pending: false, turn_id: sent.turn_id, queue_id: sent.queue_id }, state: current.cancel_requested ? "waiting_external" : current.waiting_reason ? current.state : "running", reconciliation_required: false, error: undefined };
       });
       if (task.requirements_revision !== original.requirements_revision) {
-        if (dispatchedSession) return this.retireExecution(task, { ...original.execution, turn_id: sent.turn_id, queue_id: sent.queue_id }, dispatchedSession);
+        if (dispatchedSession) return this.retireExecution(task, { ...original.execution, dispatch_pending: false, turn_id: sent.turn_id, queue_id: sent.queue_id }, dispatchedSession);
         return task;
       }
       if (task.cancel_requested) return this.cancelExecution(task);
@@ -676,12 +686,15 @@ export class PersonalPlugin implements RuntimePlugin {
   private async cancelExecution(task: PersonalTask): Promise<PersonalTask> {
     if (!task.execution.session_id) return this.change<PersonalTask>("task", task.task_id, current => current?.execution.request_id === task.execution.request_id ? { ...current, state: "stopped", reconciliation_required: false } : current!);
     try {
-      await this.host.call("host.session.cancel", { session_id: task.execution.session_id, turn_id: task.execution.turn_id, queue_id: task.execution.queue_id });
+      const before = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
+      const turnID = before.turn?.state === "queued" ? undefined : before.turn?.turn_id || task.execution.turn_id;
+      const queueID = before.turn?.queue_id || task.execution.queue_id;
+      await this.host.call("host.session.cancel", { session_id: task.execution.session_id, ...(turnID ? { turn_id: turnID } : queueID ? { queue_id: queueID } : {}) });
       const inspected = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
-      const ended = !inspected.turn || terminal.has(inspected.turn.state);
+      const ended = inspected.turn ? terminal.has(inspected.turn.state) : !task.execution.dispatch_pending;
       return this.change<PersonalTask>("task", task.task_id, current => {
         if (!current || current.requirements_revision !== task.requirements_revision) return current!;
-        return { ...current, execution: { ...current.execution, ...(ended ? { finished_state: inspected.turn?.state ?? "discarded" } : {}) }, state: ended ? "stopped" : "waiting_external", reconciliation_required: !ended, progress: ended ? "Stopped" : "Cancellation requested; waiting for execution to end" };
+        return { ...current, execution: { ...current.execution, ...(ended ? { finished_state: inspected.turn?.state ?? "discarded", dispatch_pending: false } : {}) }, state: ended ? "stopped" : "waiting_external", reconciliation_required: !ended, progress: ended ? "Stopped" : "Cancellation requested; waiting for execution to end" };
       });
     } catch (error) {
       return this.change<PersonalTask>("task", task.task_id, current => current?.execution.request_id === task.execution.request_id && !terminalTask(current) ? { ...current, state: "waiting_external", reconciliation_required: true, error: String(error) } : current!);
@@ -724,14 +737,14 @@ export class PersonalPlugin implements RuntimePlugin {
     for (const execution of [...task.previous_executions, ...task.previous_deliveries ?? []].filter(e => e.cancel_pending && e.session_id)) {
       try {
         const delivery = task.previous_deliveries?.some(item => item.request_id === execution.request_id);
-        const before = delivery ? await this.host.call("host.session.inspect", { session_id: execution.session_id!, request_id: execution.request_id }) : undefined;
+        const before = await this.host.call("host.session.inspect", { session_id: execution.session_id!, request_id: execution.request_id });
         if (!delivery || before?.turn && !terminal.has(before.turn.state)) {
-          const turn_id = before?.turn?.turn_id || execution.turn_id, queue_id = before?.turn?.queue_id || execution.queue_id;
+          const turn_id = before.turn?.state === "queued" ? undefined : before.turn?.turn_id || execution.turn_id, queue_id = before.turn?.queue_id || execution.queue_id;
           if (delivery && !turn_id && !queue_id) throw new Error("Obsolete result delivery has no cancellable turn or queue identity");
-          await this.host.call("host.session.cancel", { session_id: execution.session_id!, turn_id, queue_id });
+          await this.host.call("host.session.cancel", { session_id: execution.session_id!, ...(turn_id ? { turn_id } : queue_id ? { queue_id } : {}) });
         }
         const inspected = await this.host.call("host.session.inspect", { session_id: execution.session_id!, request_id: execution.request_id });
-        const ended = !inspected.turn || terminal.has(inspected.turn.state);
+        const ended = inspected.turn ? terminal.has(inspected.turn.state) : !execution.dispatch_pending;
         updates.set(execution.request_id, { ...execution, cancel_pending: !ended, cancel_error: ended ? undefined : "Previous execution is still stopping" });
       } catch (error) { updates.set(execution.request_id, { ...execution, cancel_pending: true, cancel_error: String(error) }); }
     }
@@ -742,7 +755,7 @@ export class PersonalPlugin implements RuntimePlugin {
       const deliveries = current.previous_deliveries?.map(e => updates.get(e.request_id) ?? e);
       const pending = [...previous, ...deliveries ?? []].some(e => e.cancel_pending);
       const waiting = current.progress?.startsWith("Previous execution") ?? false;
-      const restored: PersonalTask["state"] = current.cancel_requested && (current.execution.finished_state || current.state === "stopped") ? "stopped" : current.result && current.execution.finished_state === "completed" ? "completed" : current.execution.status === "pending" ? "queued" : current.waiting_reason === "user" ? "waiting_user" : current.waiting_reason === "external" || current.execution.finished_state === "completed" ? "waiting_external" : "running";
+      const restored: PersonalTask["state"] = current.cancel_requested && (current.execution.finished_state || current.state === "stopped") ? "stopped" : current.result && current.execution.finished_state === "completed" ? "completed" : current.execution.finished_state === "failed" ? "failed" : current.execution.status === "pending" ? "queued" : current.waiting_reason === "user" ? "waiting_user" : current.waiting_reason === "external" || current.execution.finished_state === "completed" ? "waiting_external" : "running";
       return { ...current, previous_executions: previous, previous_deliveries: deliveries,
         state: pending ? "waiting_external" : waiting ? restored : current.state,
         reconciliation_required: pending ? true : waiting ? current.execution.finished_state === "completed" && !current.result && !current.waiting_reason : current.reconciliation_required,
@@ -754,9 +767,11 @@ export class PersonalPlugin implements RuntimePlugin {
     const destination = await this.deliverySession(await this.task(text(input, "task_id", true)), main);
     const task = await this.change<PersonalTask>("task", text(input, "task_id", true), current => {
       if (!current) throw new Error("task not found");
-      if (terminalTask(current)) return current;
-      return { ...current, cancel_requested: true, state: "waiting_external",
-        previous_deliveries: [...current.previous_deliveries ?? [], ...(current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])], delivery: undefined };
+      const pendingDelivery = current.delivery && ["pending", "submitted"].includes(current.delivery.status);
+      if (terminalTask(current) && !pendingDelivery) return current;
+      return { ...current, ...(terminalTask(current) ? {} : { cancel_requested: true, state: "waiting_external" as const }),
+        previous_deliveries: [...current.previous_deliveries ?? [], ...(pendingDelivery ? [{ request_id: current.delivery!.request_id, create_request_id: "", session_id: current.delivery!.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
+        delivery: terminalTask(current) && current.delivery ? { ...current.delivery, status: "suppressed" } : undefined };
     }, input.expected_revision === undefined ? undefined : number(input, "expected_revision"));
     const stopped = terminalTask(task) ? task : await this.cancelExecution(task);
     return { task: pendingCancellation(stopped) ? await this.settlePrevious(stopped) : stopped };
@@ -789,6 +804,7 @@ export class PersonalPlugin implements RuntimePlugin {
     if (terminalTask(task)) return task;
     if (task.cancel_requested) return this.cancelExecution(task);
     if (!task.execution.session_id) return this.dispatch(task);
+    if (task.review_resume_pending) { await this.resumeAction({ session_id: task.execution.session_id, action_id: task.review_resume_pending }); return this.task(task.task_id); }
     try {
       const inspection = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
       if (!inspection.turn) return this.dispatch(task);
@@ -806,11 +822,65 @@ export class PersonalPlugin implements RuntimePlugin {
       return this.change<PersonalTask>("task", task.task_id, current => current?.execution.request_id === task.execution.request_id && !terminalTask(current) ? { ...current, reconciliation_required: true, state: "waiting_external", error: String(error) } : current!);
     }
   }
+  private async actionReviews(sessionID: string): Promise<Array<{ action: { id: string; digest: string; scope: { task_id: string; requirements_revision: number; session_id: string } }; status: string; reason: string; result?: { receipt?: unknown; tool_result?: { is_error?: boolean; content?: unknown[] } } }>> {
+    const value = object(await callPersonalHost(this.host, "review.execution.status", {}, sessionID));
+    if (!Array.isArray(value.requests)) throw new Error("Action review state unavailable; do not mark the task complete");
+    return value.requests as Awaited<ReturnType<PersonalPlugin["actionReviews"]>>;
+  }
+  private async syncAction(input: Record<string, unknown>) {
+    const sessionID = text(input, "session_id", true), actionID = text(input, "action_id", true);
+    const record = (await this.actionReviews(sessionID)).find(record => record.action.id === actionID);
+    if (!record) throw new Error("Host action not found");
+    const task = (await this.list<PersonalTask>("task")).find(task => task.execution.session_id === sessionID);
+    if (!task || task.task_id !== record.action.scope.task_id || task.requirements_revision !== record.action.scope.requirements_revision || task.cancel_requested || terminalTask(task)) return { suppressed: true };
+    const pending = ["proposed", "awaiting_confirmation", "approved", "ready", "blocked"].includes(record.status);
+    const unknown = ["executing", "uncertain"].includes(record.status);
+    await this.change<PersonalTask>("task", task.task_id, current => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== task.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== task.execution.request_id) return current!;
+      return { ...current, review_wait: pending || unknown, state: pending ? "waiting_user" : unknown ? "waiting_external" : "running", waiting_reason: pending ? "user" : unknown ? "external" : undefined, question: undefined, delivery: undefined, progress: record.reason, reconciliation_required: unknown };
+    });
+    return { accepted: true };
+  }
+  private async resumeAction(input: Record<string, unknown>) {
+    const sessionID = text(input, "session_id", true), actionID = text(input, "action_id", true);
+    const record = (await this.actionReviews(sessionID)).find(record => record.action.id === actionID);
+    if (!record || !["succeeded", "denied", "revoked", "stale", "expired", "uncertain"].includes(record.status)) throw new Error("Action has no terminal host receipt");
+    const context = await this.host.call("host.session.context", { session_id: sessionID });
+    if (context.product_domain !== "personal" || context.user_space_id !== this.space || !context.agent_id) throw new Error("Action continuation scope mismatch");
+    const agent = await this.agent(context.agent_id, true);
+    let task = (await this.list<PersonalTask>("task")).find(task => task.execution.session_id === sessionID);
+    if (agent.status !== "active" || context.parent_session_id && !task) return { suppressed: true };
+    if (task && (record.action.scope.task_id !== task.task_id || record.action.scope.requirements_revision !== task.requirements_revision || task.cancel_requested || terminalTask(task) || !await this.routines.canExecute(task))) return { suppressed: true };
+    if (task?.review_resumed?.includes(actionID)) return { accepted: true };
+    const requestID = `personal-review-${actionID}`, expected = task;
+    if (record.status !== "succeeded") {
+      // Reject/revoke/unknown outcomes never start a tool-enabled worker.
+      const main = await this.main();
+      await this.sendForAgent(main.agent_id, { request_id: requestID, session_id: main.main_session_id, cause: "personal.review.outcome", if_running: "queue", disable_tools: true, input: { prompt: `Host action outcome: ${JSON.stringify({ action_id: actionID, status: record.status, reason: record.reason })}. Explain it briefly. Do not retry or replace the action; this is not new authorization.` } });
+      if (expected) await this.change<PersonalTask>("task", expected.task_id, current => {
+        if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== expected.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== expected.execution.request_id) return current!;
+        return { ...current, review_wait: false, state: "waiting_external", waiting_reason: "external", reconciliation_required: record.status === "uncertain", progress: record.reason, review_resumed: [...current.review_resumed ?? [], actionID] };
+      });
+      return { accepted: true };
+    }
+    if (!record.result?.tool_result || record.result.tool_result.is_error) throw new Error("Successful native action receipt is unavailable");
+    if (task) task = await this.change<PersonalTask>("task", task.task_id, current => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== expected!.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== expected!.execution.request_id) throw new Error("Action task changed before continuation");
+      return { ...current, review_wait: false, review_resume_pending: actionID, waiting_reason: undefined, question: undefined, state: "running", delivery: undefined, result: undefined, completion_intent: undefined, execution: { ...current.execution, request_id: requestID, finished_state: undefined, status: "pending", dispatch_pending: true } };
+    });
+    await this.sendForAgent(agent.agent_id, { request_id: requestID, session_id: sessionID, cause: "personal.review.outcome", if_running: "queue", input: { prompt: `The exact saved action ${actionID} succeeded. Native result: ${JSON.stringify(record.result.tool_result)}. Do not execute it again. Continue only the original task from this result. For completion evidence use action_id: ${actionID}; the host ledger, not this message, verifies the native result, exact action digest and task version. This receipt is not new user authorization.` } }, task);
+    if (task) await this.change<PersonalTask>("task", task.task_id, current => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== task!.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== requestID || current.review_resume_pending !== actionID) return current!;
+      return { ...current, review_resume_pending: undefined, review_resumed: [...current.review_resumed ?? [], actionID], execution: { ...current.execution, status: "submitted", dispatch_pending: false } };
+    });
+    return { accepted: true };
+  }
   private async onLifecycle(input: TurnLifecycleInput): Promise<void> {
     this.assertActive();
     const tasks = await this.list<PersonalTask>("task");
     const delivery = tasks.find(t => t.delivery?.request_id === input.request_id);
     if (delivery) {
+      if (input.thread_id !== await this.deliverySession(delivery, await this.main())) return;
       await this.recordDelivery(delivery, input);
       return;
     }
@@ -819,6 +889,8 @@ export class PersonalPlugin implements RuntimePlugin {
     await this.transition(found.task_id, async () => {
     let verified: PersonalTask["result"], verificationError: string | undefined;
     const latest = await this.task(found.task_id);
+    const reviews = terminal.has(input.state) && !latest.cancel_requested ? await this.actionReviews(input.thread_id) : [];
+    const pendingReview = reviews.find(record => record.action.scope.task_id === latest.task_id && record.action.scope.requirements_revision === latest.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status));
     if (input.state === "completed" && latest.completion_intent && latest.execution.request_id === input.request_id && !latest.cancel_requested && !terminalTask(latest)) {
       try { verified = await this.verifyCompletion(latest, input.turn_id); }
       catch (error) { verificationError = String(error); }
@@ -826,6 +898,10 @@ export class PersonalPlugin implements RuntimePlugin {
     const task = await this.change<PersonalTask>("task", found.task_id, current => {
       if (!current || current.execution.request_id !== input.request_id || terminalTask(current)) return current!;
       if (!terminal.has(input.state)) return current.state === "queued" ? { ...current, state: "running" } : current;
+      // An interrupted process is not an owner cancellation. Keep a durable
+      // unrevoked action waiting across host shutdown; explicit task/turn cancel
+      // either sets cancel_requested or revokes its actions before interrupting.
+      if (pendingReview && !current.cancel_requested) return { ...current, execution: { ...current.execution, status: "submitted", finished_state: input.state }, review_wait: true, state: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "waiting_external" : "waiting_user", waiting_reason: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "external" : "user", question: undefined, delivery: undefined, result: undefined, completion_intent: undefined, reconciliation_required: pendingReview.status === "uncertain", progress: "Waiting for the exact action review in the main conversation" };
       if (input.state === "discarded" && input.retryable && !current.cancel_requested) {
         if (current.execution.status === "pending" && current.reconciliation_required) return current;
         return { ...current, execution: { ...current.execution, status: "pending", finished_state: undefined }, state: "queued", reconciliation_required: true };
@@ -834,6 +910,7 @@ export class PersonalPlugin implements RuntimePlugin {
       const execution: Execution = { ...current.execution, status: "submitted", finished_state: input.state };
       if (current.cancel_requested || input.state === "interrupted" || input.state === "discarded") return { ...current, execution, state: "stopped", reconciliation_required: false, delivery: undefined };
       if (input.state === "failed") return { ...current, execution, state: "failed", error: input.error || "Execution failed", reconciliation_required: false, delivery: { kind: "failure", request_id: `personal-failure-${id(current.task_id, String(current.requirements_revision))}`, status: "pending" } };
+      if (current.waiting_reason === "user") return { ...current, execution, result: undefined, completion_intent: undefined, reconciliation_required: false };
       if (current.completion_intent) {
         if (!verified || current.completion_intent.submitted_at !== latest.completion_intent?.submitted_at) return { ...current, execution, state: "waiting_external", reconciliation_required: true, error: verificationError || "Completion evidence is not yet persisted; reconciliation required" };
         current = { ...current, result: verified, completion_intent: undefined, error: undefined, progress: undefined };
@@ -889,7 +966,7 @@ export class PersonalPlugin implements RuntimePlugin {
       : kind === "failure"
         ? `Personal task ${current.task_id} (${current.title}), requirements revision ${current.requirements_revision}, failed. Explain the failure once in this main conversation and the useful next step. Do not claim completion or silently retry actions needing approval.\nFailure: ${current.error}`
         : `Personal task ${current.task_id} (${current.title}) has a verified submission for requirements revision ${current.requirements_revision}. Review the result and respond to the user once. Persisted evidence establishes attribution, not external truth.\n${current.result!.summary}\nEvidence: ${JSON.stringify(current.result!.evidence)}`;
-    await this.sendForAgent(main.agent_id, { request_id: current.delivery.request_id, session_id: main.main_session_id, cause: `personal.task.${kind}`, if_running: "queue",
+    await this.sendForAgent(main.agent_id, { request_id: current.delivery.request_id, session_id: main.main_session_id, cause: `personal.task.${kind}`, if_running: "queue", disable_tools: true,
       input: { prompt }, relation: this.sourceRelation(current, main.main_session_id), presentation: { kind: "query_bubble", text: current.title, name: main.name, related_session_id: current.execution.session_id } });
     this.assertActive();
     await this.change<PersonalTask>("task", task.task_id, latest => latest?.delivery?.request_id === current.delivery!.request_id && latest.delivery.status === "pending" ? { ...latest, delivery: { ...latest.delivery, status: "submitted" } } : latest!);
@@ -900,6 +977,9 @@ export class PersonalPlugin implements RuntimePlugin {
     const updated = await this.change<PersonalTask>("task", task.task_id, current => {
       if (!current) throw new Error("task_not_found");
       if (current.delivery?.request_id !== task.delivery?.request_id || ["delivered", "suppressed"].includes(current.delivery!.status)) return current;
+      // A late nonterminal callback must not revive a failed notification.
+      // A durable completed output may still correct an earlier empty receipt.
+      if (current.delivery!.status === "failed" && status !== "delivered") return current;
       if (current.delivery!.status === status && current.delivery!.error === error) return current;
       return { ...current, delivery: { ...current.delivery!, status, error }, ...(current.state !== "failed" ? { error: error ?? (current.error === current.delivery?.error ? undefined : current.error) } : {}) };
     });
@@ -916,7 +996,13 @@ export class PersonalPlugin implements RuntimePlugin {
       if (!page.has_more || !page.next_cursor) break;
       cursor = page.next_cursor;
     }
+    const actions = intent.evidence.some(selector => selector.action_id) ? await this.actionReviews(intent.session_id) : [];
     const evidence: Evidence[] = intent.evidence.map(selector => {
+      if (selector.action_id) {
+        const action = actions.find(record => record.action.id === selector.action_id);
+        if (!action || action.status !== "succeeded" || action.action.scope.session_id !== intent.session_id || action.action.scope.task_id !== task.task_id || action.action.scope.requirements_revision !== task.requirements_revision || !action.result?.tool_result || action.result.tool_result.is_error || !/^[a-f0-9]{64}$/.test(action.action.digest)) throw new Error("unverified_evidence: action receipt is missing, unsuccessful or stale");
+        return { action_id: action.action.id, action_digest: action.action.digest, session_id: intent.session_id, description: selector.description };
+      }
       const record = records.find(record => selector.tool_call_id ? record.tool_call_id === selector.tool_call_id : record.seq === selector.seq);
       if (!record || (record.tool_call_id && task.execution.control_call_ids?.includes(record.tool_call_id))) throw new Error("unverified_evidence: missing or control-tool evidence");
       if (record.tool_result) {
@@ -939,7 +1025,7 @@ export class PersonalPlugin implements RuntimePlugin {
         if (current.question && (state !== "waiting_user" || current.question.text !== progress)) throw new Error("task is waiting for the user's answer in the main conversation");
         const requestID = `personal-question-${id(current.task_id, String(current.requirements_revision))}`;
         return { ...current, execution: { ...current.execution, control_call_ids: [...current.execution.control_call_ids ?? [], call.call_id] }, state: state as PersonalTask["state"], waiting_reason: state === "waiting_user" ? "user" : state === "waiting_external" ? "external" : undefined, progress,
-          ...(state === "waiting_user" ? { question: { text: progress, requirements_revision: current.requirements_revision, request_id: requestID }, delivery: current.delivery ?? { kind: "question" as const, request_id: requestID, status: "pending" as const } } : {}) };
+          ...(state === "waiting_user" ? { result: undefined, completion_intent: undefined, question: { text: progress, requirements_revision: current.requirements_revision, request_id: requestID }, delivery: current.delivery ?? { kind: "question" as const, request_id: requestID, status: "pending" as const } } : {}) };
       });
       if (state === "waiting_user") {
         try { await this.transition(task.task_id, () => this.deliver(updated)); }
@@ -947,11 +1033,14 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       return { task: await this.task(task.task_id) };
     }
+    if ((await this.actionReviews(sessionID)).some(record => record.action.scope.task_id === task.task_id && record.action.scope.requirements_revision === task.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status))) throw new Error("Task has an unresolved host action; wait for its action card and receipt");
     if (task.waiting_reason === "user") throw new Error("task is waiting for the user's answer in the main conversation");
     if (!Array.isArray(input.evidence) || input.evidence.length === 0 || input.evidence.length > 20) throw new Error("persisted result evidence is required");
     const evidence: CompletionIntent["evidence"] = [];
     for (const entry of input.evidence) {
       const raw = object(entry), toolCallID = text(raw, "tool_call_id");
+      const actionID = text(raw, "action_id");
+      if (actionID) { if (toolCallID || raw.seq !== undefined) throw new Error("unverified_evidence: choose exactly one evidence identity"); evidence.push({ action_id: actionID, description: text(raw, "description", true) }); continue; }
       if (toolCallID) {
         if (raw.seq !== undefined || toolCallID === call.call_id || task.execution.control_call_ids?.includes(toolCallID)) throw new Error("unverified_evidence: specify one non-control tool call ID");
         evidence.push({ tool_call_id: toolCallID, description: text(raw, "description", true) }); continue;
@@ -964,9 +1053,10 @@ export class PersonalPlugin implements RuntimePlugin {
     }
     const intent: CompletionIntent = { execution_request_id: task.execution.request_id, session_id: sessionID, requirements_revision: task.requirements_revision, turn_id: call.turn_id || task.execution.turn_id, summary: text(input, "summary", true), evidence, submitted_at: now(), ...(typeof input.meaningful === "boolean" ? { meaningful: input.meaningful } : {}) };
     const execution = { ...task.execution, control_call_ids: [...task.execution.control_call_ids ?? [], call.call_id] };
-    const verified = evidence.every(item => item.seq !== undefined) ? await this.verifyCompletion({ ...task, execution, completion_intent: intent }) : undefined;
+    const verified = evidence.every(item => item.seq !== undefined || item.action_id !== undefined) ? await this.verifyCompletion({ ...task, execution, completion_intent: intent }) : undefined;
     return { task: await this.change<PersonalTask>("task", task.task_id, current => {
       if (!current || current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) throw new Error("stale_task_revision");
+      if (current.waiting_reason === "user") throw new Error("task is waiting for the user's answer in the main conversation");
       return { ...current, execution: { ...current.execution, control_call_ids: [...current.execution.control_call_ids ?? [], call.call_id] }, waiting_reason: undefined, result: verified, completion_intent: verified ? undefined : intent };
     }) };
   }
@@ -1126,6 +1216,8 @@ export class PersonalPlugin implements RuntimePlugin {
       return response;
     }
     switch (method) {
+      case "actions.resume": return this.resumeAction(input);
+      case "actions.sync": return this.syncAction(input);
       case "genui.sync": case "genui.action": case "genui.read": case "genui.retry": {
         if (!ownerClient) throw new Error("GenUI requires the authenticated owner client capability");
         exactGenUI(genuiRecord(input), ["agent_id", (method === "genui.action" || method === "genui.sync") ? "request" : "surface_id", ...(method === "genui.retry" ? ["receipt_id"] : [])]);
@@ -1314,12 +1406,26 @@ export class PersonalPlugin implements RuntimePlugin {
         if (input.retry_delivery === true) {
           const main = await this.main();
           const destination = await this.deliverySession(await this.task(taskID), main);
-          await this.transition(taskID, () => this.change<PersonalTask>("task", taskID, current => {
-            if (!current || current.cancel_requested || current.delivery?.status !== "failed") throw new Error("task has no failed delivery to retry");
-            const attempt = (current.delivery.attempt ?? 0) + 1, kind = current.delivery.kind ?? "result";
-            return { ...current, error: current.state !== "failed" && current.error === current.delivery.error ? undefined : current.error, previous_deliveries: [...current.previous_deliveries ?? [], { request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", finished_state: "failed", cancel_pending: false }],
-              delivery: { kind, attempt, session_id: main.main_session_id, request_id: `personal-${kind}-${id(taskID, String(current.requirements_revision), "retry", String(attempt))}`, status: "pending" } };
-          }, number(input, "expected_revision")));
+          await this.transition(taskID, async () => {
+            const failed = await this.change<PersonalTask>("task", taskID, current => {
+              if (!current || current.cancel_requested || current.delivery?.status !== "failed") throw new Error("task has no failed delivery to retry");
+              return current;
+            }, number(input, "expected_revision"));
+            // A late durable reply may outlive a failed local delivery marker.
+            // Never change request identity until its original outcome is known.
+            const receipt = await this.host.call("host.session.inspect", { session_id: destination, request_id: failed.delivery!.request_id, wait: "terminal", timeout_ms: 1000 });
+            if (receipt.timed_out || !receipt.turn || !terminal.has(receipt.turn.state)) throw new Error("delivery outcome is unconfirmed; reconcile the original reply before retrying");
+            if (receipt.turn.state === "completed" && receipt.turn.final_output?.trim()) {
+              await this.recordDelivery(failed, receipt.turn);
+              return;
+            }
+            await this.change<PersonalTask>("task", taskID, current => {
+              if (!current || current.cancel_requested || current.delivery?.status !== "failed" || current.delivery.request_id !== failed.delivery!.request_id) throw new Error("task has no failed delivery to retry");
+              const attempt = (current.delivery.attempt ?? 0) + 1, kind = current.delivery.kind ?? "result";
+              return { ...current, error: current.state !== "failed" && current.error === current.delivery.error ? undefined : current.error, previous_deliveries: [...current.previous_deliveries ?? [], { request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", finished_state: "failed", cancel_pending: false }],
+                delivery: { kind, attempt, session_id: main.main_session_id, request_id: `personal-${kind}-${id(taskID, String(current.requirements_revision), "retry", String(attempt))}`, status: "pending" } };
+            }, number(input, "expected_revision"));
+          });
         }
         return { task: await this.reconcile(await this.task(taskID)) };
       }

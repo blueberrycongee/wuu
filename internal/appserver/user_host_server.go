@@ -31,6 +31,7 @@ var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconn
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
+	actions             *personalActions
 	personal            *personalhost.Host
 	unbindPersonal      func()
 	runtime             *runtime.Session
@@ -101,9 +102,27 @@ func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHos
 	if len(options) > 0 {
 		personalOptions = options[0]
 	}
+
+	if rt.UserBinding().Domain() == "personal" {
+		var err error
+		h.actions, err = newPersonalActions(h.server)
+		if err != nil {
+			h.attentionCancel()
+			h.server.Close()
+			return nil, err
+		}
+		h.server.personalActions = h.actions
+		personalOptions.Review = h.actions.Call
+		if rt.Toolkit != nil {
+			rt.Toolkit.SetFileActionGate(h.actions.gate)
+		}
+	}
 	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
 	if rt.PluginSessionRouter != nil {
 		h.unbindPersonal = rt.PluginSessionRouter.BindPersonalHost(h.personal.Call)
+	}
+	if h.actions != nil {
+		h.actions.start()
 	}
 	go h.runAttentionPolicy()
 	return h, nil
@@ -135,6 +154,9 @@ func (h *UserHost) Close() error {
 		h.unbindPersonal()
 	}
 	h.closeErr = h.personal.Close()
+	if h.actions != nil {
+		h.closeErr = errors.Join(h.closeErr, h.actions.close())
+	}
 	h.server.Close()
 	<-h.attentionDone
 	close(h.closeDone)

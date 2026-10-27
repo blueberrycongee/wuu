@@ -1100,3 +1100,42 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 	}
 	return result, roots, nil
 }
+
+// WithLocalFileAuthority serializes a short host-owned file effect with plugin catalog
+// transitions and revocation. Unlike retention, this is not permission to keep
+// doing background business work after a product is disabled. The callback must
+// not invoke plugin RPCs, create runtimes, or mutate the plugin catalog.
+func (s *Session) WithLocalFileAuthority(pluginID string, use func(pluginpkg.Plugin, bool) error) error {
+	s.pluginTransitionMu.Lock()
+	defer s.pluginTransitionMu.Unlock()
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	var selected pluginpkg.Plugin
+	available := !s.SafeMode && s.PluginHost != nil
+	// This first local-file adapter deliberately excludes extension callbacks.
+	// They can reenter host storage/catalog state and cannot safely run inside
+	// the atomic authority/commit section. Do not skip their security checks:
+	// decline the action instead until a preflight/commit extension API exists.
+	if s.HookDispatcher != nil && (s.HookDispatcher.HasHooks(hooks.PermissionRequest) || s.HookDispatcher.HasHooks(hooks.FileChanged)) {
+		available = false
+	}
+	if s.PluginHost != nil && s.PluginHost.ServiceRegistry() != nil && s.PluginHost.ServiceRegistry().HasProvider(pluginhost.SecurityAuthorizeService, pluginhost.SecurityServiceMajor) {
+		available = false
+	}
+	for _, item := range s.ActivePlugins {
+		if item.ID == pluginID {
+			selected = item
+			break
+		}
+	}
+	available = available && selected.ID != ""
+	if s.pluginGeneration != nil {
+		s.pluginGeneration.revokedMu.Lock()
+		defer s.pluginGeneration.revokedMu.Unlock()
+		available = available && !s.pluginGeneration.revokedPlugins[pluginID]
+	}
+	if available {
+		_, available = s.PluginHost.Capability(pluginID, pluginhost.CapabilityPluginClientRequest)
+	}
+	return use(selected, available)
+}

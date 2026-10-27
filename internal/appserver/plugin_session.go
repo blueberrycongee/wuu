@@ -609,7 +609,7 @@ func (s *Server) requirePluginWorkspaceIdle(sessionID string) error {
 	return nil
 }
 
-func (s *Server) cancelPluginSession(_ context.Context, pluginID string, params pluginhost.SessionCancelParams) (pluginhost.SessionCancelResult, error) {
+func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionCancelParams) (pluginhost.SessionCancelResult, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	sessionID := strings.TrimSpace(params.SessionID)
 	turnID := strings.TrimSpace(params.TurnID)
@@ -646,6 +646,12 @@ func (s *Server) cancelPluginSession(_ context.Context, pluginID string, params 
 				return pluginhost.SessionCancelResult{}, errors.New("plugin does not own the turn")
 			}
 		}
+	}
+	if s.personalActions != nil && metadata.Owner == "plugin:"+pluginID {
+		if err := s.personalActions.engine.CancelExecution(ctx, s.rt.UserBinding().UserSpaceID, sessionID); err != nil {
+			return pluginhost.SessionCancelResult{}, err
+		}
+		s.personalActions.signal()
 	}
 	if queueID != "" {
 		if s.clientInputReceiptsEnabled() {

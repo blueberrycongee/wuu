@@ -140,7 +140,13 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 
 	var result toolresult.Result
 	var err error
-	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+	frozen, resumed := ctx.Value(fileActionContextKey{}).(FileAction)
+	if resumed && (frozen.Operation != call.Name || string(frozen.Arguments) != call.Arguments) {
+		return toolresult.Result{}, errors.New("reviewed file action binding mismatch")
+	}
+	if t.fileActionGate != nil && fileMutation(call.Name) && !resumed {
+		result, err = t.fileActionGate(ctx, t, call)
+	} else if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
 		if len(t.env.ProtectedPaths) > 0 {
 			return toolresult.Result{}, errors.New("remote execution cannot enforce this runtime's protected read/write paths")
 		}

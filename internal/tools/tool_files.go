@@ -933,6 +933,9 @@ func (t *WriteFileTool) executeResolvedWrite(ctx context.Context, resolved, disp
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return "", fmt.Errorf("read existing file: %w", readErr)
 	}
+	if err := checkFileActionPrecondition(ctx, resolved, oldContent, fileExists); err != nil {
+		return "", err
+	}
 	if createOnly && fileExists {
 		return "", fmt.Errorf("file already exists: %s", displayPath)
 	}
@@ -1356,6 +1359,9 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	content, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
+	}
+	if err := checkFileActionPrecondition(ctx, resolved, content, true); err != nil {
+		return "", err
 	}
 	oldSHA := sha256Hex(content)
 

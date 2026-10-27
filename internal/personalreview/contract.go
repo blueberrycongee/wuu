@@ -1,6 +1,5 @@
 // Package personalreview implements an opt-in Personal execution boundary.
-// It is not registered with production tools or client capabilities yet. Hosts
-// must supply authenticated identity, serialized task authority, and vetted
+// Hosts must supply authenticated identity, serialized task authority, and vetted
 // operation handlers; none of these may come from model or GenUI input.
 package personalreview
 
@@ -50,6 +49,9 @@ type Scope struct {
 	SessionID            string `json:"session_id"`
 	TaskID               string `json:"task_id"`
 	RequirementsRevision int64  `json:"requirements_revision"`
+	// ContextDigest binds the host-resolved original human source and execution
+	// context. It is never supplied as an authorization assertion by a model.
+	ContextDigest string `json:"context_digest,omitempty"`
 }
 
 // Proposal contains no consent, effect, policy, identity, or executable callback.
@@ -119,6 +121,10 @@ type Authority struct {
 	BoundaryReason string
 	UserMessages   []HumanMessage
 	Consents       []Consent
+	// AllowIntentReview is host-owned, explicitly opted-in policy for this
+	// registered action. It allows fresh review of bound human intent, not an
+	// unconditional effect or permission expansion.
+	AllowIntentReview bool
 }
 
 const OwnerUI = "owner_ui"

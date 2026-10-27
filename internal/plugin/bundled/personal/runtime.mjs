@@ -2047,7 +2047,7 @@ var result = (value) => ({ result: { content: [{ type: "text", text: JSON.string
 var schema = (properties, ...required2) => ({ type: "object", properties, required: required2 });
 var string = { type: "string" };
 var integer = { type: "integer", minimum: 0 };
-var methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 var PersonalPlugin = class {
   concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
   concurrentServices = [service, "automation.trigger", PERSONAL_MEMORY_SERVICE];
@@ -2114,7 +2114,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
         { id: "stop_task", description: "Stop only the identified delegated matter. If the user's target is ambiguous, ask which matter in the main conversation before calling this tool. A cancellation request is distinct from confirmed termination.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "retry_task_delivery", description: "Retry only a failed question, result, or failure update to this main conversation when the user asks. Does not rerun task execution or repeat external actions. Requires the latest task revision.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "report_task", description: "From the bound task executor, report progress or that user input/external conditions are needed. For waiting_user, progress must be the specific question for the user; it is durably delivered to the main conversation. Then end your turn and wait; only the main conversation can resume this task. Does not mark completion.", input_schema: schema({ task_id: string, requirements_revision: integer, state: { type: "string", enum: ["running", "waiting_user", "waiting_external"] }, progress: string }, "task_id", "requirements_revision", "state", "progress"), activity: { concurrency_safe: true } },
-        { id: "complete_task", description: "Submit a completion intent from the bound executor. For work in this turn, provide the exact tool_call_id of each successful executed tool call; its result is verified only after the turn is persisted. Alternatively seq may reference already persisted evidence. Never cite complete_task or report_task themselves. The task stays pending until the successful turn and authoritative evidence are verified.", input_schema: schema({ task_id: string, requirements_revision: integer, summary: string, meaningful: { type: "boolean", description: "For routine work only, false when there is no meaningful change or need to notify." }, evidence: { type: "array", minItems: 1, items: schema({ seq: integer, tool_call_id: string, description: string }, "description") } }, "task_id", "requirements_revision", "summary", "evidence"), activity: { concurrency_safe: true } }
+        { id: "complete_task", description: "Submit a completion intent from the bound executor. For work in this turn, provide the exact tool_call_id of each successful executed tool call; its result is verified only after the turn is persisted. Alternatively seq may reference already persisted evidence, or action_id may reference a succeeded host approval receipt bound to this exact task version. Never cite complete_task or report_task themselves. The task stays pending until the successful turn and authoritative evidence are verified.", input_schema: schema({ task_id: string, requirements_revision: integer, summary: string, meaningful: { type: "boolean", description: "For routine work only, false when there is no meaningful change or need to notify." }, evidence: { type: "array", minItems: 1, items: schema({ seq: integer, tool_call_id: string, action_id: string, description: string }, "description") } }, "task_id", "requirements_revision", "summary", "evidence"), activity: { concurrency_safe: true } }
       ]
     };
   }
@@ -2312,7 +2312,14 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
   async sendForAgent(agentID, params, task) {
     return this.transition(`agent:${agentID}`, async () => {
       await this.agent(agentID);
-      if (task && !await this.routines.canExecute(task)) throw new Error("owning routine no longer permits this task revision");
+      if (task) {
+        if (!await this.routines.canExecute(task)) throw new Error("owning routine no longer permits this task revision");
+        const current = await this.change("task", task.task_id, (current2) => {
+          if (!current2 || current2.execution.request_id !== task.execution.request_id || current2.cancel_requested || terminalTask(current2)) return current2;
+          return { ...current2, execution: { ...current2.execution, dispatch_pending: true } };
+        });
+        if (current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) throw new Error("task dispatch is no longer current");
+      }
       return this.host.call("host.session.send", params);
     });
   }
@@ -2723,11 +2730,11 @@ These references do not grant broader permission. Ask before external actions la
       this.assertActive();
       task = await this.change("task", task.task_id, (current) => {
         if (!current || current.requirements_revision !== original.requirements_revision) return current;
-        if (terminalTask(current) || current.execution.finished_state) return current;
-        return { ...current, execution: { ...current.execution, status: "submitted", turn_id: sent.turn_id, queue_id: sent.queue_id }, state: current.cancel_requested ? "waiting_external" : current.waiting_reason ? current.state : "running", reconciliation_required: false, error: void 0 };
+        if (terminalTask(current) || current.execution.finished_state) return { ...current, execution: { ...current.execution, dispatch_pending: false } };
+        return { ...current, execution: { ...current.execution, status: "submitted", dispatch_pending: false, turn_id: sent.turn_id, queue_id: sent.queue_id }, state: current.cancel_requested ? "waiting_external" : current.waiting_reason ? current.state : "running", reconciliation_required: false, error: void 0 };
       });
       if (task.requirements_revision !== original.requirements_revision) {
-        if (dispatchedSession) return this.retireExecution(task, { ...original.execution, turn_id: sent.turn_id, queue_id: sent.queue_id }, dispatchedSession);
+        if (dispatchedSession) return this.retireExecution(task, { ...original.execution, dispatch_pending: false, turn_id: sent.turn_id, queue_id: sent.queue_id }, dispatchedSession);
         return task;
       }
       if (task.cancel_requested) return this.cancelExecution(task);
@@ -2751,12 +2758,15 @@ These references do not grant broader permission. Ask before external actions la
   async cancelExecution(task) {
     if (!task.execution.session_id) return this.change("task", task.task_id, (current) => current?.execution.request_id === task.execution.request_id ? { ...current, state: "stopped", reconciliation_required: false } : current);
     try {
-      await this.host.call("host.session.cancel", { session_id: task.execution.session_id, turn_id: task.execution.turn_id, queue_id: task.execution.queue_id });
+      const before = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
+      const turnID = before.turn?.state === "queued" ? void 0 : before.turn?.turn_id || task.execution.turn_id;
+      const queueID = before.turn?.queue_id || task.execution.queue_id;
+      await this.host.call("host.session.cancel", { session_id: task.execution.session_id, ...turnID ? { turn_id: turnID } : queueID ? { queue_id: queueID } : {} });
       const inspected = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
-      const ended = !inspected.turn || terminal.has(inspected.turn.state);
+      const ended = inspected.turn ? terminal.has(inspected.turn.state) : !task.execution.dispatch_pending;
       return this.change("task", task.task_id, (current) => {
         if (!current || current.requirements_revision !== task.requirements_revision) return current;
-        return { ...current, execution: { ...current.execution, ...ended ? { finished_state: inspected.turn?.state ?? "discarded" } : {} }, state: ended ? "stopped" : "waiting_external", reconciliation_required: !ended, progress: ended ? "Stopped" : "Cancellation requested; waiting for execution to end" };
+        return { ...current, execution: { ...current.execution, ...ended ? { finished_state: inspected.turn?.state ?? "discarded", dispatch_pending: false } : {} }, state: ended ? "stopped" : "waiting_external", reconciliation_required: !ended, progress: ended ? "Stopped" : "Cancellation requested; waiting for execution to end" };
       });
     } catch (error) {
       return this.change("task", task.task_id, (current) => current?.execution.request_id === task.execution.request_id && !terminalTask(current) ? { ...current, state: "waiting_external", reconciliation_required: true, error: String(error) } : current);
@@ -2817,14 +2827,14 @@ User answered the task question (${old.question?.text || old.progress || "additi
     for (const execution of [...task.previous_executions, ...task.previous_deliveries ?? []].filter((e) => e.cancel_pending && e.session_id)) {
       try {
         const delivery = task.previous_deliveries?.some((item) => item.request_id === execution.request_id);
-        const before = delivery ? await this.host.call("host.session.inspect", { session_id: execution.session_id, request_id: execution.request_id }) : void 0;
+        const before = await this.host.call("host.session.inspect", { session_id: execution.session_id, request_id: execution.request_id });
         if (!delivery || before?.turn && !terminal.has(before.turn.state)) {
-          const turn_id = before?.turn?.turn_id || execution.turn_id, queue_id = before?.turn?.queue_id || execution.queue_id;
+          const turn_id = before.turn?.state === "queued" ? void 0 : before.turn?.turn_id || execution.turn_id, queue_id = before.turn?.queue_id || execution.queue_id;
           if (delivery && !turn_id && !queue_id) throw new Error("Obsolete result delivery has no cancellable turn or queue identity");
-          await this.host.call("host.session.cancel", { session_id: execution.session_id, turn_id, queue_id });
+          await this.host.call("host.session.cancel", { session_id: execution.session_id, ...turn_id ? { turn_id } : queue_id ? { queue_id } : {} });
         }
         const inspected = await this.host.call("host.session.inspect", { session_id: execution.session_id, request_id: execution.request_id });
-        const ended = !inspected.turn || terminal.has(inspected.turn.state);
+        const ended = inspected.turn ? terminal.has(inspected.turn.state) : !execution.dispatch_pending;
         updates.set(execution.request_id, { ...execution, cancel_pending: !ended, cancel_error: ended ? void 0 : "Previous execution is still stopping" });
       } catch (error) {
         updates.set(execution.request_id, { ...execution, cancel_pending: true, cancel_error: String(error) });
@@ -2837,7 +2847,7 @@ User answered the task question (${old.question?.text || old.progress || "additi
       const deliveries = current.previous_deliveries?.map((e) => updates.get(e.request_id) ?? e);
       const pending = [...previous, ...deliveries ?? []].some((e) => e.cancel_pending);
       const waiting = current.progress?.startsWith("Previous execution") ?? false;
-      const restored = current.cancel_requested && (current.execution.finished_state || current.state === "stopped") ? "stopped" : current.result && current.execution.finished_state === "completed" ? "completed" : current.execution.status === "pending" ? "queued" : current.waiting_reason === "user" ? "waiting_user" : current.waiting_reason === "external" || current.execution.finished_state === "completed" ? "waiting_external" : "running";
+      const restored = current.cancel_requested && (current.execution.finished_state || current.state === "stopped") ? "stopped" : current.result && current.execution.finished_state === "completed" ? "completed" : current.execution.finished_state === "failed" ? "failed" : current.execution.status === "pending" ? "queued" : current.waiting_reason === "user" ? "waiting_user" : current.waiting_reason === "external" || current.execution.finished_state === "completed" ? "waiting_external" : "running";
       return {
         ...current,
         previous_executions: previous,
@@ -2853,13 +2863,13 @@ User answered the task question (${old.question?.text || old.progress || "additi
     const destination = await this.deliverySession(await this.task(text3(input, "task_id", true)), main);
     const task = await this.change("task", text3(input, "task_id", true), (current) => {
       if (!current) throw new Error("task not found");
-      if (terminalTask(current)) return current;
+      const pendingDelivery = current.delivery && ["pending", "submitted"].includes(current.delivery.status);
+      if (terminalTask(current) && !pendingDelivery) return current;
       return {
         ...current,
-        cancel_requested: true,
-        state: "waiting_external",
-        previous_deliveries: [...current.previous_deliveries ?? [], ...current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", cancel_pending: true }] : []],
-        delivery: void 0
+        ...terminalTask(current) ? {} : { cancel_requested: true, state: "waiting_external" },
+        previous_deliveries: [...current.previous_deliveries ?? [], ...pendingDelivery ? [{ request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", cancel_pending: true }] : []],
+        delivery: terminalTask(current) && current.delivery ? { ...current.delivery, status: "suppressed" } : void 0
       };
     }, input.expected_revision === void 0 ? void 0 : number(input, "expected_revision"));
     const stopped = terminalTask(task) ? task : await this.cancelExecution(task);
@@ -2901,6 +2911,10 @@ User answered the task question (${old.question?.text || old.progress || "additi
     if (terminalTask(task)) return task;
     if (task.cancel_requested) return this.cancelExecution(task);
     if (!task.execution.session_id) return this.dispatch(task);
+    if (task.review_resume_pending) {
+      await this.resumeAction({ session_id: task.execution.session_id, action_id: task.review_resume_pending });
+      return this.task(task.task_id);
+    }
     try {
       const inspection = await this.host.call("host.session.inspect", { session_id: task.execution.session_id, request_id: task.execution.request_id });
       if (!inspection.turn) return this.dispatch(task);
@@ -2918,11 +2932,64 @@ User answered the task question (${old.question?.text || old.progress || "additi
       return this.change("task", task.task_id, (current) => current?.execution.request_id === task.execution.request_id && !terminalTask(current) ? { ...current, reconciliation_required: true, state: "waiting_external", error: String(error) } : current);
     }
   }
+  async actionReviews(sessionID) {
+    const value = object3(await callPersonalHost(this.host, "review.execution.status", {}, sessionID));
+    if (!Array.isArray(value.requests)) throw new Error("Action review state unavailable; do not mark the task complete");
+    return value.requests;
+  }
+  async syncAction(input) {
+    const sessionID = text3(input, "session_id", true), actionID = text3(input, "action_id", true);
+    const record3 = (await this.actionReviews(sessionID)).find((record4) => record4.action.id === actionID);
+    if (!record3) throw new Error("Host action not found");
+    const task = (await this.list("task")).find((task2) => task2.execution.session_id === sessionID);
+    if (!task || task.task_id !== record3.action.scope.task_id || task.requirements_revision !== record3.action.scope.requirements_revision || task.cancel_requested || terminalTask(task)) return { suppressed: true };
+    const pending = ["proposed", "awaiting_confirmation", "approved", "ready", "blocked"].includes(record3.status);
+    const unknown = ["executing", "uncertain"].includes(record3.status);
+    await this.change("task", task.task_id, (current) => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== task.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== task.execution.request_id) return current;
+      return { ...current, review_wait: pending || unknown, state: pending ? "waiting_user" : unknown ? "waiting_external" : "running", waiting_reason: pending ? "user" : unknown ? "external" : void 0, question: void 0, delivery: void 0, progress: record3.reason, reconciliation_required: unknown };
+    });
+    return { accepted: true };
+  }
+  async resumeAction(input) {
+    const sessionID = text3(input, "session_id", true), actionID = text3(input, "action_id", true);
+    const record3 = (await this.actionReviews(sessionID)).find((record4) => record4.action.id === actionID);
+    if (!record3 || !["succeeded", "denied", "revoked", "stale", "expired", "uncertain"].includes(record3.status)) throw new Error("Action has no terminal host receipt");
+    const context = await this.host.call("host.session.context", { session_id: sessionID });
+    if (context.product_domain !== "personal" || context.user_space_id !== this.space || !context.agent_id) throw new Error("Action continuation scope mismatch");
+    const agent = await this.agent(context.agent_id, true);
+    let task = (await this.list("task")).find((task2) => task2.execution.session_id === sessionID);
+    if (agent.status !== "active" || context.parent_session_id && !task) return { suppressed: true };
+    if (task && (record3.action.scope.task_id !== task.task_id || record3.action.scope.requirements_revision !== task.requirements_revision || task.cancel_requested || terminalTask(task) || !await this.routines.canExecute(task))) return { suppressed: true };
+    if (task?.review_resumed?.includes(actionID)) return { accepted: true };
+    const requestID = `personal-review-${actionID}`, expected = task;
+    if (record3.status !== "succeeded") {
+      const main = await this.main();
+      await this.sendForAgent(main.agent_id, { request_id: requestID, session_id: main.main_session_id, cause: "personal.review.outcome", if_running: "queue", disable_tools: true, input: { prompt: `Host action outcome: ${JSON.stringify({ action_id: actionID, status: record3.status, reason: record3.reason })}. Explain it briefly. Do not retry or replace the action; this is not new authorization.` } });
+      if (expected) await this.change("task", expected.task_id, (current) => {
+        if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== expected.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== expected.execution.request_id) return current;
+        return { ...current, review_wait: false, state: "waiting_external", waiting_reason: "external", reconciliation_required: record3.status === "uncertain", progress: record3.reason, review_resumed: [...current.review_resumed ?? [], actionID] };
+      });
+      return { accepted: true };
+    }
+    if (!record3.result?.tool_result || record3.result.tool_result.is_error) throw new Error("Successful native action receipt is unavailable");
+    if (task) task = await this.change("task", task.task_id, (current) => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== expected.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== expected.execution.request_id) throw new Error("Action task changed before continuation");
+      return { ...current, review_wait: false, review_resume_pending: actionID, waiting_reason: void 0, question: void 0, state: "running", delivery: void 0, result: void 0, completion_intent: void 0, execution: { ...current.execution, request_id: requestID, finished_state: void 0, status: "pending", dispatch_pending: true } };
+    });
+    await this.sendForAgent(agent.agent_id, { request_id: requestID, session_id: sessionID, cause: "personal.review.outcome", if_running: "queue", input: { prompt: `The exact saved action ${actionID} succeeded. Native result: ${JSON.stringify(record3.result.tool_result)}. Do not execute it again. Continue only the original task from this result. For completion evidence use action_id: ${actionID}; the host ledger, not this message, verifies the native result, exact action digest and task version. This receipt is not new user authorization.` } }, task);
+    if (task) await this.change("task", task.task_id, (current) => {
+      if (!current || current.cancel_requested || terminalTask(current) || current.requirements_revision !== task.requirements_revision || current.execution.session_id !== sessionID || current.execution.request_id !== requestID || current.review_resume_pending !== actionID) return current;
+      return { ...current, review_resume_pending: void 0, review_resumed: [...current.review_resumed ?? [], actionID], execution: { ...current.execution, status: "submitted", dispatch_pending: false } };
+    });
+    return { accepted: true };
+  }
   async onLifecycle(input) {
     this.assertActive();
     const tasks = await this.list("task");
     const delivery = tasks.find((t) => t.delivery?.request_id === input.request_id);
     if (delivery) {
+      if (input.thread_id !== await this.deliverySession(delivery, await this.main())) return;
       await this.recordDelivery(delivery, input);
       return;
     }
@@ -2931,6 +2998,8 @@ User answered the task question (${old.question?.text || old.progress || "additi
     await this.transition(found.task_id, async () => {
       let verified, verificationError;
       const latest = await this.task(found.task_id);
+      const reviews = terminal.has(input.state) && !latest.cancel_requested ? await this.actionReviews(input.thread_id) : [];
+      const pendingReview = reviews.find((record3) => record3.action.scope.task_id === latest.task_id && record3.action.scope.requirements_revision === latest.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record3.status));
       if (input.state === "completed" && latest.completion_intent && latest.execution.request_id === input.request_id && !latest.cancel_requested && !terminalTask(latest)) {
         try {
           verified = await this.verifyCompletion(latest, input.turn_id);
@@ -2941,6 +3010,7 @@ User answered the task question (${old.question?.text || old.progress || "additi
       const task = await this.change("task", found.task_id, (current) => {
         if (!current || current.execution.request_id !== input.request_id || terminalTask(current)) return current;
         if (!terminal.has(input.state)) return current.state === "queued" ? { ...current, state: "running" } : current;
+        if (pendingReview && !current.cancel_requested) return { ...current, execution: { ...current.execution, status: "submitted", finished_state: input.state }, review_wait: true, state: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "waiting_external" : "waiting_user", waiting_reason: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "external" : "user", question: void 0, delivery: void 0, result: void 0, completion_intent: void 0, reconciliation_required: pendingReview.status === "uncertain", progress: "Waiting for the exact action review in the main conversation" };
         if (input.state === "discarded" && input.retryable && !current.cancel_requested) {
           if (current.execution.status === "pending" && current.reconciliation_required) return current;
           return { ...current, execution: { ...current.execution, status: "pending", finished_state: void 0 }, state: "queued", reconciliation_required: true };
@@ -2949,6 +3019,7 @@ User answered the task question (${old.question?.text || old.progress || "additi
         const execution = { ...current.execution, status: "submitted", finished_state: input.state };
         if (current.cancel_requested || input.state === "interrupted" || input.state === "discarded") return { ...current, execution, state: "stopped", reconciliation_required: false, delivery: void 0 };
         if (input.state === "failed") return { ...current, execution, state: "failed", error: input.error || "Execution failed", reconciliation_required: false, delivery: { kind: "failure", request_id: `personal-failure-${id(current.task_id, String(current.requirements_revision))}`, status: "pending" } };
+        if (current.waiting_reason === "user") return { ...current, execution, result: void 0, completion_intent: void 0, reconciliation_required: false };
         if (current.completion_intent) {
           if (!verified || current.completion_intent.submitted_at !== latest.completion_intent?.submitted_at) return { ...current, execution, state: "waiting_external", reconciliation_required: true, error: verificationError || "Completion evidence is not yet persisted; reconciliation required" };
           current = { ...current, result: verified, completion_intent: void 0, error: void 0, progress: void 0 };
@@ -3005,6 +3076,7 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
       session_id: main.main_session_id,
       cause: `personal.task.${kind}`,
       if_running: "queue",
+      disable_tools: true,
       input: { prompt },
       relation: this.sourceRelation(current, main.main_session_id),
       presentation: { kind: "query_bubble", text: current.title, name: main.name, related_session_id: current.execution.session_id }
@@ -3018,6 +3090,7 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
     const updated = await this.change("task", task.task_id, (current) => {
       if (!current) throw new Error("task_not_found");
       if (current.delivery?.request_id !== task.delivery?.request_id || ["delivered", "suppressed"].includes(current.delivery.status)) return current;
+      if (current.delivery.status === "failed" && status !== "delivered") return current;
       if (current.delivery.status === status && current.delivery.error === error) return current;
       return { ...current, delivery: { ...current.delivery, status, error }, ...current.state !== "failed" ? { error: error ?? (current.error === current.delivery?.error ? void 0 : current.error) } : {} };
     });
@@ -3034,7 +3107,13 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
       if (!page.has_more || !page.next_cursor) break;
       cursor = page.next_cursor;
     }
+    const actions = intent.evidence.some((selector) => selector.action_id) ? await this.actionReviews(intent.session_id) : [];
     const evidence = intent.evidence.map((selector) => {
+      if (selector.action_id) {
+        const action = actions.find((record4) => record4.action.id === selector.action_id);
+        if (!action || action.status !== "succeeded" || action.action.scope.session_id !== intent.session_id || action.action.scope.task_id !== task.task_id || action.action.scope.requirements_revision !== task.requirements_revision || !action.result?.tool_result || action.result.tool_result.is_error || !/^[a-f0-9]{64}$/.test(action.action.digest)) throw new Error("unverified_evidence: action receipt is missing, unsuccessful or stale");
+        return { action_id: action.action.id, action_digest: action.action.digest, session_id: intent.session_id, description: selector.description };
+      }
       const record3 = records.find((record4) => selector.tool_call_id ? record4.tool_call_id === selector.tool_call_id : record4.seq === selector.seq);
       if (!record3 || record3.tool_call_id && task.execution.control_call_ids?.includes(record3.tool_call_id)) throw new Error("unverified_evidence: missing or control-tool evidence");
       if (record3.tool_result) {
@@ -3066,7 +3145,7 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
           state,
           waiting_reason: state === "waiting_user" ? "user" : state === "waiting_external" ? "external" : void 0,
           progress,
-          ...state === "waiting_user" ? { question: { text: progress, requirements_revision: current.requirements_revision, request_id: requestID }, delivery: current.delivery ?? { kind: "question", request_id: requestID, status: "pending" } } : {}
+          ...state === "waiting_user" ? { result: void 0, completion_intent: void 0, question: { text: progress, requirements_revision: current.requirements_revision, request_id: requestID }, delivery: current.delivery ?? { kind: "question", request_id: requestID, status: "pending" } } : {}
         };
       });
       if (state === "waiting_user") {
@@ -3077,11 +3156,18 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
       }
       return { task: await this.task(task.task_id) };
     }
+    if ((await this.actionReviews(sessionID)).some((record3) => record3.action.scope.task_id === task.task_id && record3.action.scope.requirements_revision === task.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record3.status))) throw new Error("Task has an unresolved host action; wait for its action card and receipt");
     if (task.waiting_reason === "user") throw new Error("task is waiting for the user's answer in the main conversation");
     if (!Array.isArray(input.evidence) || input.evidence.length === 0 || input.evidence.length > 20) throw new Error("persisted result evidence is required");
     const evidence = [];
     for (const entry of input.evidence) {
       const raw = object3(entry), toolCallID = text3(raw, "tool_call_id");
+      const actionID = text3(raw, "action_id");
+      if (actionID) {
+        if (toolCallID || raw.seq !== void 0) throw new Error("unverified_evidence: choose exactly one evidence identity");
+        evidence.push({ action_id: actionID, description: text3(raw, "description", true) });
+        continue;
+      }
       if (toolCallID) {
         if (raw.seq !== void 0 || toolCallID === call.call_id || task.execution.control_call_ids?.includes(toolCallID)) throw new Error("unverified_evidence: specify one non-control tool call ID");
         evidence.push({ tool_call_id: toolCallID, description: text3(raw, "description", true) });
@@ -3095,9 +3181,10 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
     }
     const intent = { execution_request_id: task.execution.request_id, session_id: sessionID, requirements_revision: task.requirements_revision, turn_id: call.turn_id || task.execution.turn_id, summary: text3(input, "summary", true), evidence, submitted_at: now2(), ...typeof input.meaningful === "boolean" ? { meaningful: input.meaningful } : {} };
     const execution = { ...task.execution, control_call_ids: [...task.execution.control_call_ids ?? [], call.call_id] };
-    const verified = evidence.every((item) => item.seq !== void 0) ? await this.verifyCompletion({ ...task, execution, completion_intent: intent }) : void 0;
+    const verified = evidence.every((item) => item.seq !== void 0 || item.action_id !== void 0) ? await this.verifyCompletion({ ...task, execution, completion_intent: intent }) : void 0;
     return { task: await this.change("task", task.task_id, (current) => {
       if (!current || current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) throw new Error("stale_task_revision");
+      if (current.waiting_reason === "user") throw new Error("task is waiting for the user's answer in the main conversation");
       return { ...current, execution: { ...current.execution, control_call_ids: [...current.execution.control_call_ids ?? [], call.call_id] }, waiting_reason: void 0, result: verified, completion_intent: verified ? void 0 : intent };
     }) };
   }
@@ -3276,6 +3363,10 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
       return response;
     }
     switch (method) {
+      case "actions.resume":
+        return this.resumeAction(input);
+      case "actions.sync":
+        return this.syncAction(input);
       case "genui.sync":
       case "genui.action":
       case "genui.read":
@@ -3501,16 +3592,28 @@ ${t.result?.summary ?? ""}`.toLocaleLowerCase().includes(query))).sort((a, b) =>
         if (input.retry_delivery === true) {
           const main = await this.main();
           const destination = await this.deliverySession(await this.task(taskID), main);
-          await this.transition(taskID, () => this.change("task", taskID, (current) => {
-            if (!current || current.cancel_requested || current.delivery?.status !== "failed") throw new Error("task has no failed delivery to retry");
-            const attempt = (current.delivery.attempt ?? 0) + 1, kind = current.delivery.kind ?? "result";
-            return {
-              ...current,
-              error: current.state !== "failed" && current.error === current.delivery.error ? void 0 : current.error,
-              previous_deliveries: [...current.previous_deliveries ?? [], { request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", finished_state: "failed", cancel_pending: false }],
-              delivery: { kind, attempt, session_id: main.main_session_id, request_id: `personal-${kind}-${id(taskID, String(current.requirements_revision), "retry", String(attempt))}`, status: "pending" }
-            };
-          }, number(input, "expected_revision")));
+          await this.transition(taskID, async () => {
+            const failed = await this.change("task", taskID, (current) => {
+              if (!current || current.cancel_requested || current.delivery?.status !== "failed") throw new Error("task has no failed delivery to retry");
+              return current;
+            }, number(input, "expected_revision"));
+            const receipt = await this.host.call("host.session.inspect", { session_id: destination, request_id: failed.delivery.request_id, wait: "terminal", timeout_ms: 1e3 });
+            if (receipt.timed_out || !receipt.turn || !terminal.has(receipt.turn.state)) throw new Error("delivery outcome is unconfirmed; reconcile the original reply before retrying");
+            if (receipt.turn.state === "completed" && receipt.turn.final_output?.trim()) {
+              await this.recordDelivery(failed, receipt.turn);
+              return;
+            }
+            await this.change("task", taskID, (current) => {
+              if (!current || current.cancel_requested || current.delivery?.status !== "failed" || current.delivery.request_id !== failed.delivery.request_id) throw new Error("task has no failed delivery to retry");
+              const attempt = (current.delivery.attempt ?? 0) + 1, kind = current.delivery.kind ?? "result";
+              return {
+                ...current,
+                error: current.state !== "failed" && current.error === current.delivery.error ? void 0 : current.error,
+                previous_deliveries: [...current.previous_deliveries ?? [], { request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted", finished_state: "failed", cancel_pending: false }],
+                delivery: { kind, attempt, session_id: main.main_session_id, request_id: `personal-${kind}-${id(taskID, String(current.requirements_revision), "retry", String(attempt))}`, status: "pending" }
+              };
+            }, number(input, "expected_revision"));
+          });
         }
         return { task: await this.reconcile(await this.task(taskID)) };
       }

@@ -47,16 +47,18 @@ var personalDesktop = (() => {
     }
   }
   function reviewRecord(value) {
-    if (!exactObject(value, ["revision", "status", "outcome", "reason", "action"]) || !exactRevision(value.revision) || typeof value.status !== "string" || !Object.hasOwn(copy.en.states, value.status) || typeof value.outcome !== "string" || !["allow", "ask", "deny"].includes(value.outcome) || typeof value.reason !== "string") return false;
+    if (!exactObject(value, ["revision", "status", "outcome", "reason", "action", ...typeof value === "object" && value !== null && Object.hasOwn(value, "receipt_json") ? ["receipt_json"] : []]) || value.receipt_json !== void 0 && !parametersText(value.receipt_json) || !exactRevision(value.revision) || typeof value.status !== "string" || !Object.hasOwn(copy.en.states, value.status) || typeof value.outcome !== "string" || !["allow", "ask", "deny"].includes(value.outcome) || typeof value.reason !== "string") return false;
     const action = value.action;
     if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy.en.effects, action.effect) || !parametersText(action.arguments_json) || typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at))) return false;
     const scope = action.scope, summary = action.summary;
-    return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision"]) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence"]) && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
+    return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision", ...typeof scope === "object" && scope !== null && Object.hasOwn(scope, "context_digest") ? ["context_digest"] : []]) && (scope.context_digest === void 0 || typeof scope.context_digest === "string" && /^[a-f0-9]{64}$/.test(scope.context_digest)) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence"]) && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
   }
   function decodeReviewSnapshot(value) {
     if (exactObject(value, ["schema", "kind", "reason"]) && value.schema === "personal-review.v1" && value.kind === "unavailable" && typeof value.reason === "string") return { schema: value.schema, kind: value.kind, reason: value.reason };
-    if (exactObject(value, ["schema", "kind", "requests"]) && value.schema === "personal-review.v1" && value.kind === "ready" && Array.isArray(value.requests) && value.requests.every(reviewRecord)) {
-      return { schema: value.schema, kind: value.kind, requests: structuredClone(value.requests) };
+    if (exactObject(value, ["schema", "kind", "requests", ...typeof value === "object" && value !== null && Object.hasOwn(value, "settings") ? ["settings"] : []]) && value.schema === "personal-review.v1" && value.kind === "ready" && Array.isArray(value.requests) && value.requests.every(reviewRecord)) {
+      const settings = value.settings;
+      if (settings !== void 0 && (!exactObject(settings, ["auto_review_enabled", "revision", "policy_version", "scope"]) || typeof settings.auto_review_enabled !== "boolean" || !exactRevision(settings.revision) || !nonempty(settings.policy_version) || !Array.isArray(settings.scope) || !settings.scope.every(nonempty))) throw new ReviewContractError("Invalid Personal review settings");
+      return { schema: value.schema, kind: value.kind, requests: structuredClone(value.requests), ...settings === void 0 ? {} : { settings: structuredClone(settings) } };
     }
     throw new ReviewContractError("Action data could not be verified. Refresh to check the saved state.");
   }
@@ -65,7 +67,20 @@ var personalDesktop = (() => {
       title: "Action approvals",
       description: "Checks each action against your request before it runs.",
       mode: "Auto Review",
-      scope: "Applies to twin actions in this personal space.",
+      scope: "Only the registered actions listed below are covered, in this Personal space. Coding is unchanged.",
+      enabled: "On",
+      disabled: "Off",
+      enable: "Enable Auto Review",
+      disable: "Disable Auto Review",
+      manual: "Off does not disable protection: consequential actions still ask you first.",
+      coverage: "Covered actions",
+      fileWrite: "Create or replace a Personal file",
+      fileEdit: "Edit a Personal file",
+      excluded: "Email, calendar changes, payments, account security and new permissions are not covered.",
+      noCoverage: "No action handlers registered",
+      policy: "Policy version",
+      receipt: "Execution receipt",
+      recentResults: "Recent action results",
       automatic: "Actions covered by a current, specific instruction can proceed after review. Missing or unclear authorization asks you first.",
       pending: "Waiting for you",
       recent: "Recent activity",
@@ -95,7 +110,20 @@ var personalDesktop = (() => {
       title: "\u52A8\u4F5C\u5BA1\u6279",
       description: "\u6267\u884C\u524D\u68C0\u67E5\u5177\u4F53\u52A8\u4F5C\u662F\u5426\u5728\u4F60\u7684\u6388\u6743\u8303\u56F4\u5185\u3002",
       mode: "Auto Review",
-      scope: "\u4EC5\u7528\u4E8E\u5F53\u524D\u4E2A\u4EBA\u7A7A\u95F4\u4E2D\u7684 twin \u52A8\u4F5C\u3002",
+      scope: "\u4EC5\u8986\u76D6\u4E0B\u5217\u5DF2\u6CE8\u518C\u52A8\u4F5C\uFF0C\u4F5C\u7528\u4E8E\u5F53\u524D Personal \u7A7A\u95F4\uFF0C\u4E0D\u6539\u53D8 Coding\u3002",
+      enabled: "\u5DF2\u5F00\u542F",
+      disabled: "\u672A\u5F00\u542F",
+      enable: "\u5F00\u542F Auto Review",
+      disable: "\u5173\u95ED Auto Review",
+      manual: "\u5173\u95ED\u4E0D\u7B49\u4E8E\u5173\u95ED\u4FDD\u62A4\uFF1A\u6709\u5B9E\u9645\u5F71\u54CD\u7684\u52A8\u4F5C\u4ECD\u9700\u4F60\u786E\u8BA4\u3002",
+      coverage: "\u8986\u76D6\u52A8\u4F5C",
+      fileWrite: "\u521B\u5EFA\u6216\u66FF\u6362 Personal \u6587\u4EF6",
+      fileEdit: "\u4FEE\u6539 Personal \u6587\u4EF6",
+      excluded: "\u4E0D\u8986\u76D6\u53D1\u4FE1\u3001\u65E5\u5386\u4FEE\u6539\u3001\u652F\u4ED8\u3001\u8D26\u53F7\u5B89\u5168\u4E0E\u65B0\u589E\u6743\u9650\u3002",
+      noCoverage: "\u5C1A\u672A\u6CE8\u518C\u52A8\u4F5C\u6267\u884C\u5668",
+      policy: "\u7B56\u7565\u7248\u672C",
+      receipt: "\u6267\u884C\u56DE\u6267",
+      recentResults: "\u6700\u8FD1\u52A8\u4F5C\u7ED3\u679C",
       automatic: "\u5DF2\u6709\u660E\u786E\u4E14\u6709\u6548\u6388\u6743\u7684\u52A8\u4F5C\uFF0C\u7ECF\u5BA1\u6838\u540E\u7EE7\u7EED\u3002\u6388\u6743\u7F3A\u5931\u6216\u4E0D\u6E05\u695A\u65F6\uFF0C\u518D\u8BF7\u4F60\u786E\u8BA4\u3002",
       pending: "\u7B49\u4F60\u51B3\u5B9A",
       recent: "\u6700\u8FD1\u8BB0\u5F55",
@@ -142,18 +170,27 @@ var personalDesktop = (() => {
 .personal-review-parameters pre { white-space:pre-wrap;overflow-wrap:anywhere;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3);background:var(--surface-2);border-radius:var(--radius-sm,6px); }
 .personal-review-actions { display:flex;gap:var(--space-3);flex-wrap:wrap;margin-top:var(--space-4); }
 .personal-review-error { color:var(--danger-text,var(--ink));margin-top:var(--space-3)!important; }
+.personal-review-conversation { margin:var(--space-5) 0; }
+.personal-review-history { margin-top:var(--space-5); }
+.personal-review-history>summary { cursor:pointer;color:var(--ink-muted); }
+.personal-review-coverage { margin:0;padding-inline-start:1.3em;overflow-wrap:anywhere; }
 .personal-review-footnote { margin-top:var(--space-5)!important;color:var(--ink-muted); }
 @media(max-width:480px){.personal-review-fields { grid-template-columns:1fr;gap:var(--space-1); }.personal-review-fields dd { margin-bottom:var(--space-2); }.personal-review-actions>* { flex:1; }}
 `;
   function createPersonalReviewPanel(react, ui) {
     const h = react.createElement;
-    return function PersonalReviewPanel({ service, locale = "en" }) {
+    return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }) {
+      const conversation = variant === "conversation";
       const words = locale.startsWith("zh") ? copy.zh : copy.en;
+      const hadActions = react.useRef(false);
       const [loaded, setLoaded] = react.useState();
       const [failure2, setFailure] = react.useState();
       const snapshot2 = loaded?.service === service ? loaded.snapshot : void 0;
       const error = failure2?.service === service ? failure2.message : "";
-      const setSnapshot = (next) => setLoaded(next ? { service, snapshot: next } : void 0);
+      const setSnapshot = (next) => {
+        if (next?.kind === "ready" && next.requests.some((record2) => ["data_write", "external_write"].includes(record2.action.effect))) hadActions.current = true;
+        setLoaded(next ? { service, snapshot: next } : void 0);
+      };
       const setError = (message) => setFailure(message ? { service, message } : void 0);
       const showFailure = (cause) => {
         if (cause instanceof ReviewContractError) {
@@ -161,35 +198,52 @@ var personalDesktop = (() => {
           setError(words.invalidData);
         } else setError(cause instanceof Error ? cause.message : words.failed);
       };
+      const [unverified, setUnverified] = react.useState(false);
       const [busy, setBusy] = react.useState();
       const [now, setNow] = react.useState(Date.now);
-      const active = react.useRef(true), epoch = react.useRef(0), submitting = react.useRef(false);
+      const active = react.useRef(true), epoch = react.useRef(0), submitting = react.useRef(false), refreshing = react.useRef(false);
       const refresh = async () => {
-        if (submitting.current) return;
+        if (submitting.current || refreshing.current) return;
+        refreshing.current = true;
         const generation = ++epoch.current;
-        setError("");
         try {
           const next = decodeReviewSnapshot(await service.list());
-          if (active.current && generation === epoch.current) setSnapshot(next);
+          if (active.current && generation === epoch.current) {
+            setSnapshot(next);
+            setUnverified(false);
+            setError("");
+          }
         } catch (cause) {
-          if (active.current && generation === epoch.current) showFailure(cause);
+          if (active.current && generation === epoch.current) {
+            setUnverified(true);
+            showFailure(cause);
+          }
+        } finally {
+          if (active.current && generation === epoch.current) refreshing.current = false;
         }
       };
       react.useEffect(() => {
         active.current = true;
+        hadActions.current = false;
         submitting.current = false;
+        refreshing.current = false;
         setBusy(void 0);
+        setUnverified(false);
         setSnapshot(void 0);
         void refresh();
         const timer = setInterval(() => setNow(Date.now()), 1e3);
+        const poll = setInterval(() => {
+          void refresh();
+        }, 5e3);
         return () => {
           active.current = false;
           epoch.current++;
           clearInterval(timer);
+          clearInterval(poll);
         };
       }, [service]);
       const decide = async (record2, choice) => {
-        if (submitting.current || !Number.isFinite(Date.parse(record2.action.expires_at)) || Date.now() >= Date.parse(record2.action.expires_at)) return;
+        if (submitting.current || unverified || !Number.isFinite(Date.parse(record2.action.expires_at)) || Date.now() >= Date.parse(record2.action.expires_at)) return;
         submitting.current = true;
         setBusy(record2.action.id);
         setError("");
@@ -197,12 +251,44 @@ var personalDesktop = (() => {
         const command = { space_id: record2.action.scope.space_id, id: record2.action.id, digest: record2.action.digest, expected_revision: record2.revision };
         try {
           const next = decodeReviewSnapshot(choice === "revoke" ? await service.revoke(command) : await service.resolve({ ...command, choice }));
-          if (active.current && generation === epoch.current) setSnapshot(next);
+          if (active.current && generation === epoch.current) {
+            setSnapshot(next);
+            setUnverified(false);
+          }
         } catch (cause) {
-          if (active.current && generation === epoch.current) showFailure(cause);
+          if (active.current && generation === epoch.current) {
+            setUnverified(true);
+            showFailure(cause);
+          }
         } finally {
           if (active.current && generation === epoch.current) {
             submitting.current = false;
+            refreshing.current = false;
+            setBusy(void 0);
+          }
+        }
+      };
+      const changeSettings = async () => {
+        if (submitting.current || unverified || snapshot2?.kind !== "ready" || !snapshot2.settings || !service.settings) return;
+        submitting.current = true;
+        setBusy("settings");
+        setError("");
+        const generation = ++epoch.current;
+        try {
+          const next = decodeReviewSnapshot(await service.settings({ enabled: !snapshot2.settings.auto_review_enabled, expected_revision: snapshot2.settings.revision }));
+          if (active.current && generation === epoch.current) {
+            setSnapshot(next);
+            setUnverified(false);
+          }
+        } catch (cause) {
+          if (active.current && generation === epoch.current) {
+            setUnverified(true);
+            showFailure(cause);
+          }
+        } finally {
+          if (active.current && generation === epoch.current) {
+            submitting.current = false;
+            refreshing.current = false;
             setBusy(void 0);
           }
         }
@@ -222,33 +308,53 @@ var personalDesktop = (() => {
           h("p", null, action.summary.consequence),
           h("p", { className: "personal-review-muted" }, record2.reason),
           h("details", { className: "personal-review-parameters" }, h("summary", null, words.parameters), h("pre", null, action.arguments_json), h("p", { className: "personal-review-muted", style: { overflowWrap: "anywhere" } }, `${words.digest}: ${action.digest}`)),
+          record2.receipt_json && h("details", { className: "personal-review-parameters", "data-review-receipt": true }, h("summary", null, words.receipt), h("pre", null, record2.receipt_json)),
           (canConfirm || canRevoke) && h(
             "div",
             { className: "personal-review-actions" },
-            canConfirm && h(ui.Button, { variant: "primary", disabled: Boolean(busy) || expired, "data-review-choice": "approve_once", onClick: () => void decide(record2, "approve_once") }, busy === action.id ? words.working : words.approve),
-            canConfirm && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || expired, "data-review-choice": "reject", onClick: () => void decide(record2, "reject") }, words.reject),
-            canRevoke && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || expired, "data-review-choice": "revoke", onClick: () => void decide(record2, "revoke") }, record2.status === "blocked" ? words.withdraw : words.revoke)
+            canConfirm && h(ui.Button, { variant: "primary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "approve_once", onClick: () => void decide(record2, "approve_once") }, busy === action.id ? words.working : words.approve),
+            canConfirm && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "reject", onClick: () => void decide(record2, "reject") }, words.reject),
+            canRevoke && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "revoke", onClick: () => void decide(record2, "revoke") }, record2.status === "blocked" ? words.withdraw : words.revoke)
           )
         );
       };
-      const records = snapshot2?.kind === "ready" ? snapshot2.requests : [];
-      const pending = records.filter((record2) => record2.status === "awaiting_confirmation");
-      const history = records.filter((record2) => record2.status !== "awaiting_confirmation");
+      const records = snapshot2?.kind === "ready" ? snapshot2.requests.filter((record2) => !conversation || ["data_write", "external_write"].includes(record2.action.effect)) : [];
+      const pending = records.filter((record2) => ["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record2.status));
+      const history = records.filter((record2) => !pending.includes(record2)).sort((a, b) => Date.parse(b.action.expires_at) - Date.parse(a.action.expires_at));
+      const settings = snapshot2?.kind === "ready" ? snapshot2.settings : void 0;
+      if (conversation && !records.length && (!error || !hadActions.current)) return null;
       return h(
         "div",
-        { className: "personal-review", "data-personal-action-review": true },
+        { className: `personal-review${conversation ? " personal-review-conversation" : ""}`, "data-personal-action-review": true, "data-review-variant": variant },
         h("style", null, personalReviewStyles),
         h(
           ui.Section,
-          { title: words.title, description: words.description },
-          h("div", { className: "personal-review-overview" }, h("div", { className: "personal-review-heading" }, h("h3", null, words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), onClick: () => void refresh() }, words.refresh)), h("p", { className: "personal-review-muted" }, words.scope), snapshot2?.kind === "ready" && h("p", null, words.automatic)),
+          { title: words.title, description: conversation ? void 0 : words.description },
+          h(
+            "div",
+            { className: "personal-review-overview" },
+            h("div", { className: "personal-review-heading" }, !conversation && h("h3", null, words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
+            !conversation && h(
+              react.Fragment,
+              null,
+              h("p", { className: "personal-review-muted" }, words.scope),
+              settings && h(
+                react.Fragment,
+                null,
+                service.settings && h(ui.Button, { variant: "secondary", role: "switch", "aria-checked": settings.auto_review_enabled, "aria-label": words.mode, disabled: Boolean(busy) || unverified || !settings.auto_review_enabled && settings.scope.length === 0, onClick: () => void changeSettings() }, busy === "settings" ? words.working : settings.auto_review_enabled ? words.disable : words.enable),
+                h("p", { role: "status" }, `${words.mode}: ${settings.auto_review_enabled ? words.enabled : words.disabled}`),
+                h("p", { className: "personal-review-muted" }, settings.auto_review_enabled ? words.automatic : words.manual),
+                h("details", null, h("summary", null, words.coverage), settings.scope.length ? h("ul", { className: "personal-review-coverage" }, settings.scope.map((operation) => h("li", { key: operation }, operation === "write_file" ? words.fileWrite : operation === "edit_file" ? words.fileEdit : operation))) : h("p", null, words.noCoverage), h("p", { className: "personal-review-muted" }, words.excluded), h("p", { className: "personal-review-muted" }, `${words.policy}: ${settings.policy_version}`))
+              )
+            )
+          ),
           error && h("p", { role: "alert", className: "personal-review-error" }, error),
           !snapshot2 && !error && h("p", { role: "status" }, "\u2026"),
-          snapshot2?.kind === "unavailable" && h(ui.EmptyState, { title: words.unavailable, description: snapshot2.reason }),
-          snapshot2?.kind === "ready" && !records.length && h(ui.EmptyState, { title: words.noActions, description: words.noActionsBody }),
-          pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, h("h3", null, words.pending), pending.map(renderRecord)),
-          history.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.recent }, h("h3", null, words.recent), history.map(renderRecord)),
-          snapshot2?.kind === "ready" && h("p", { className: "personal-review-footnote" }, words.single)
+          !conversation && snapshot2?.kind === "unavailable" && h(ui.EmptyState, { title: words.unavailable, description: snapshot2.reason }),
+          !conversation && snapshot2?.kind === "ready" && !records.length && h(ui.EmptyState, { title: words.noActions, description: words.noActionsBody }),
+          pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, pending.map(renderRecord)),
+          history.length > 0 && (conversation ? h("details", { className: "personal-review-history" }, h("summary", null, words.recentResults), h("section", { className: "personal-review-list" }, history.slice(0, 5).map(renderRecord))) : h("section", { className: "personal-review-list", "aria-label": words.recent }, h("h3", null, words.recent), history.map(renderRecord))),
+          snapshot2?.kind === "ready" && !conversation && h("p", { className: "personal-review-footnote" }, words.single)
         )
       );
     };
@@ -628,7 +734,7 @@ var personalDesktop = (() => {
   function createSettingsPanels(react, ui, invoke) {
     const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui);
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
-    const reviewService = { list: () => host("review.list"), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input) };
+    const reviewService = { list: () => host("review.list"), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
     function Connections() {
       const root = react.useRef(null);
       react.useEffect(() => {
@@ -670,7 +776,7 @@ var personalDesktop = (() => {
       }, []);
       return h("section", { "data-personal-connections": true }, h("h2", null, "\u8FDE\u63A5\u4E0E\u5DE5\u5177"), h("div", { ref: root }), h("p", { className: "mosaic-eyebrow" }, "Twin \u7684 MCP \u5DE5\u5177\u5C1A\u672A\u63A5\u5165\u3002"));
     }
-    return { Connections, Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${connection_view_default}
+    return { Connections, ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${connection_view_default}
 ${personalReviewStyles}
 .mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
   }
@@ -2779,6 +2885,7 @@ ${personalReviewStyles}
           pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
           liveMessages.filter((message) => !records.some((record2) => record2.ui_parts?.length && (message.seq === record2.seq || message.source_id && message.source_id === record2.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
           !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+          h(settingsPanels.ReviewConversation, { locale }),
           pendingCalendarOperations.length > 0 && h(
             "section",
             { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },

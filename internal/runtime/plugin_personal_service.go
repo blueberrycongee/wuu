@@ -46,13 +46,16 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		return nil, err
 	}
 	verifiedSession := ""
-	if strings.HasPrefix(call.Operation, "calendar.read.") {
+	if strings.HasPrefix(call.Operation, "calendar.read.") || call.Operation == "review.execution.status" {
 		metadata, found, err := session.Find(s.sessionDir, call.SessionID)
 		if err != nil {
 			return nil, err
 		}
 		if !found || !s.binding.Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) || metadata.Visibility != "plugin" || !strings.HasPrefix(metadata.Owner, "plugin:") {
 			return nil, errors.New("Personal read requires a host-resolved plugin session")
+		}
+		if call.Operation == "review.execution.status" && metadata.Owner != "plugin:"+s.pluginID {
+			return nil, errors.New("review status requires the owning plugin session")
 		}
 		verifiedSession = metadata.ID
 	}

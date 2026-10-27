@@ -108,7 +108,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 				ToolInput: json.RawMessage(call.Arguments),
 			})
 			return err
-		})
+		}, func() bool { return !dispatcher.HasHooks(hooks.PermissionRequest) })
 	}
 	// Only Toolkit owns the exported implementations. Generation-owned hooks
 	// remain active, but runtime plugin tools cannot intercept a capability name.

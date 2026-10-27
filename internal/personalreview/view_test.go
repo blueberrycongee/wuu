@@ -3,6 +3,7 @@ package personalreview
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +70,33 @@ func TestOwnerSnapshotRejectsUntrustedOrUnrepresentableRecords(t *testing.T) {
 			}
 			if f.calls != 0 {
 				t.Fatal("view caused an effect")
+			}
+		})
+	}
+}
+
+func TestOwnerSnapshotProjectsOnlyBoundedReceiptNotToolPayload(t *testing.T) {
+	for _, scenario := range []string{"envelope", "oversized-legacy", "oversized-receipt"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newFixture(t)
+			var result json.RawMessage
+			want := ""
+			switch scenario {
+			case "envelope":
+				result = json.RawMessage(`{"receipt":{"sha256":"synthetic-hash","bytes":9007199254740993},"tool_result":{"text":"not an owner receipt"}}`)
+				want = `{"sha256":"synthetic-hash","bytes":9007199254740993}`
+			case "oversized-legacy":
+				result, _ = json.Marshal(map[string]string{"body": strings.Repeat("x", 65537)})
+			case "oversized-receipt":
+				result, _ = json.Marshal(map[string]any{"receipt": map[string]string{"body": strings.Repeat("x", 65537)}, "tool_result": "private result"})
+			}
+			op := f.engine.operations["synthetic.save"]
+			op.Execute = func(context.Context, Action) (json.RawMessage, error) { return result, nil }
+			f.engine.operations["synthetic.save"] = op
+			f.run(f.approve(f.propose("synthetic.save")))
+			view, err := f.engine.OwnerSnapshot(context.Background())
+			if err != nil || len(view.Requests) != 1 || view.Requests[0].ReceiptJSON != want {
+				t.Fatalf("unexpected owner receipt for %s: error=%v requests=%d", scenario, err, len(view.Requests))
 			}
 		})
 	}
