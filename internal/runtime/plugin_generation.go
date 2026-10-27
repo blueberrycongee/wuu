@@ -220,11 +220,44 @@ func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	required := make(map[string]bool, len(requiredIDs))
-	for _, id := range requiredIDs {
+	required := s.requiredPluginMutationConsumers(requiredIDs...)
+	return s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
+}
+
+// Explicit installation/update must preserve the healthy consumers affected by
+// its targets. Capture the committed graph before candidate dependency pruning:
+// declarative packages and service-only consumers need the same atomicity as
+// process runtimes. Unrelated and already unavailable addons remain optional.
+func (s *Session) requiredPluginMutationConsumers(targets ...string) map[string]bool {
+	required := make(map[string]bool, len(targets))
+	for _, id := range targets {
 		required[id] = true
 	}
-	return s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
+	if len(required) == 0 {
+		return required
+	}
+	current := s.retainPluginGeneration()
+	defer s.releasePluginGeneration(current)
+	if current == nil || current.host == nil {
+		return required
+	}
+	available := current.availableModuleIDs()
+	dependencies := current.host.Dependencies()
+	for changed := true; changed; {
+		changed = false
+		for id, edges := range dependencies {
+			if required[id] || !available[id] {
+				continue
+			}
+			for _, edge := range edges {
+				if edge.Required && required[edge.Provider] {
+					required[id], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	return required
 }
 
 // PreflightObservedExtensions prepares automatic catalog observations without
@@ -409,7 +442,10 @@ func (s *Session) PreflightPluginRemoval(cfg config.Config, id string) (*PluginG
 	if !found {
 		return nil, fmt.Errorf("installed user plugin %q was not found", id)
 	}
-	return s.buildPluginGeneration(cfg, discovered, s.requiredActivePluginRuntimes(), nil, startPluginClient)
+	// Removing an inferred addon intentionally retires its dependent closure.
+	// Explicit composition selections and native service roots remain required
+	// by host construction; unrelated catalog addons must not veto removal.
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
 }
 
 // PreflightPluginUpdate builds an exact approved pending package as part of a
@@ -462,7 +498,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	}
 	sort.Slice(discovered, func(i, j int) bool { return discovered[i].ID < discovered[j].ID })
 
-	required := map[string]bool{id: true}
+	required := s.requiredPluginMutationConsumers(id)
 	generation, err := s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 	if err != nil {
 		return nil, err

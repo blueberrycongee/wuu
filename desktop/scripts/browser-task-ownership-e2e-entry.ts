@@ -53,6 +53,27 @@ async function bounded<T>(label: string, promise: Promise<T>, timeout = 30_000):
   } finally { clearTimeout(timer); }
 }
 
+const SHELL_STARTUP_TIMEOUT_MS = 30_000;
+async function initializeFixtureShell(window: BrowserWindow, url: string, timeout = SHELL_STARTUP_TIMEOUT_MS): Promise<void> {
+  let onReady!: () => void;
+  let onClosed!: () => void;
+  const firstPaint = new Promise<void>((resolve, reject) => {
+    onReady = resolve;
+    onClosed = () => reject(new Error("Fixture shell closed before first paint"));
+    window.once("ready-to-show", onReady);
+    window.once("closed", onClosed);
+  });
+  try {
+    await bounded("fixture shell first paint", Promise.all([window.loadURL(url), firstPaint]), timeout);
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  } finally {
+    window.removeListener("ready-to-show", onReady);
+    window.removeListener("closed", onClosed);
+  }
+}
+
 const events: unknown[] = [];
 const calls: { id: string; method: string; params: Record<string, unknown> }[] = [];
 const providerRequests: unknown[] = [];
@@ -389,6 +410,27 @@ app.whenReady().then(async () => {
   const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
     ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}),
   }));
+  // A user starts Browser Use from a painted shell. Unlike the shipping
+  // shell, this main-process fixture used to issue turns without loading any
+  // shell document, charging cold Chromium/GL startup to the page's 5s frame
+  // budget. Establish native first paint independently; never show this window
+  // or navigate/capture an agent page before the hidden-capture assertions.
+  const shellStartedAt = Date.now();
+  let shellReady = false;
+  recordCaptureDiagnostic("shell-startup-start");
+  try {
+    await initializeFixtureShell(main, "data:text/html,<!doctype html><title>Browser ownership fixture shell</title><main>Browser ownership fixture</main>");
+    shellReady = true;
+  } finally {
+    const elapsedMs = Date.now() - shellStartedAt;
+    writeFileSync(join(output, "shell-startup.json"), JSON.stringify({ ready: shellReady, startedAt: shellStartedAt,
+      elapsedMs, timeoutMs: SHELL_STARTUP_TIMEOUT_MS, visible: !main.isDestroyed() && main.isVisible(),
+      browserPages: views.length, browserRequests: calls.length }, null, 2));
+    recordCaptureDiagnostic("shell-startup-settled", { ready: shellReady, elapsedMs });
+    console.log(`STARTUP: fixture shell first paint ${shellReady ? "ready" : "failed"} after ${elapsedMs}ms (budget ${SHELL_STARTUP_TIMEOUT_MS}ms)`);
+  }
+  check("fixture shell paints before browser pages or requests without presentation", views.length === 0 && calls.length === 0
+    && nativePresentations.length === 0 && !main.isVisible());
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
@@ -577,6 +619,29 @@ app.whenReady().then(async () => {
     check(`${label} cleans its temporary page`, host.tabSurfaceMeta(workdir, tabID) === undefined);
     check(`${label} never shows or focuses a native window`, nativePresentations.length === 0 && BrowserWindow.getAllWindows().every(window => !window.isVisible()), JSON.stringify(nativePresentations));
   }
+
+  // Startup failure coverage comes after the cold captures, so these extra
+  // native windows cannot prepare the compositor for the first hidden page.
+  const stalledShell = watchPresentation(new BrowserWindow({ show: false, paintWhenInitiallyHidden: false }));
+  const stalledShellReadyListeners = stalledShell.listenerCount("ready-to-show");
+  const stalledShellClosedListeners = stalledShell.listenerCount("closed");
+  const stalledShellResult = await initializeFixtureShell(stalledShell, "data:text/html,<title>Loaded but not painted</title>", 100)
+    .then(() => "ready", error => String(error));
+  check("shell startup has a bounded first-paint failure", stalledShellResult.includes("Timed out: fixture shell first paint"), stalledShellResult);
+  check("shell startup timeout destroys its window and removes readiness listeners", stalledShell.isDestroyed()
+    && stalledShell.listenerCount("ready-to-show") === stalledShellReadyListeners
+    && stalledShell.listenerCount("closed") === stalledShellClosedListeners);
+
+  const failedShell = watchPresentation(new BrowserWindow({ show: false }));
+  const failedShellReadyListeners = failedShell.listenerCount("ready-to-show");
+  const failedShellClosedListeners = failedShell.listenerCount("closed");
+  const failedShellResult = await initializeFixtureShell(failedShell, "not a valid URL")
+    .then(() => "ready", error => String(error));
+  check("shell startup reports navigation failure instead of waiting for paint", failedShellResult.includes("ERR_INVALID_URL"), failedShellResult);
+  check("shell navigation failure destroys its window and removes readiness listeners", failedShell.isDestroyed()
+    && failedShell.listenerCount("ready-to-show") === failedShellReadyListeners
+    && failedShell.listenerCount("closed") === failedShellClosedListeners);
+  check("shell readiness failures never present native windows", nativePresentations.length === 0, JSON.stringify(nativePresentations));
 
   const captureCancelled = await start("OWNERSHIP_CAPTURE_CANCEL");
   cancellations.set(captureCancelled, deferred());

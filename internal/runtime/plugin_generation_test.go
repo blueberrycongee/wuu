@@ -1393,3 +1393,92 @@ func TestPluginUpdateRetainsAdmittedPackagesAcrossRejectedAndIndependentUpdates(
 		}
 	}
 }
+
+// Explicit package mutation validates the healthy consumers it changes, rather
+// than promoting every unrelated catalog addon into a required application root.
+func TestExplicitPluginMutationPreservesRequiredConsumerClosure(t *testing.T) {
+	for _, preflight := range []string{"update", "discovered", "removal"} {
+		for _, version := range []string{"2.0.0", "1.1.0"} {
+			if preflight == "removal" && version == "2.0.0" {
+				continue
+			}
+			t.Run(preflight+"/"+version, func(t *testing.T) {
+				writePackage := func(id, version, extra string) pluginpkg.Plugin {
+					t.Helper()
+					root := t.TempDir()
+					path := filepath.Join(root, "plugin.json")
+					manifest := fmt.Sprintf(`{"id":%q,"version":%q,"desktop":{"entry":"desktop.js"}%s}`, id, version, extra)
+					if err := os.WriteFile(path, []byte(manifest), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(root, "desktop.js"), []byte("export {};"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					item, err := pluginpkg.LoadManifest(path, "user")
+					if err != nil {
+						t.Fatal(err)
+					}
+					return item
+				}
+				owner := writePackage("owner", "1.0.0", "")
+				bridge := writePackage("bridge", "1.0.0", `,"dependencies":[{"id":"owner","version":"^1"}]`)
+				consumer := writePackage("consumer", "1.0.0", `,"requires":["bridge"]`)
+				optional := writePackage("optional", "1.0.0", `,"dependencies":[{"id":"owner","version":"^1","optional":true}]`)
+				flaky := writePackage("unrelated-flaky", "1.0.0", fmt.Sprintf(`,"runtime":{"protocol":%q,"command":"/wuu-test-missing-optional-runtime"}`, pluginhost.ProtocolName))
+				cfg := config.Config{Extensions: &extensions.Settings{}}
+				grant := func(item pluginpkg.Plugin) {
+					t.Helper()
+					if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				packages := []pluginpkg.Plugin{owner, bridge, consumer, optional, flaky}
+				for _, item := range packages {
+					grant(item)
+				}
+				s := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
+				defer s.Cleanup()
+				initial, err := s.buildPluginGeneration(cfg, packages, nil, nil, func(_ context.Context, process pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					return &generationClient{id: process.ID}, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.ActivatePluginGeneration(initial, nil); err != nil {
+					t.Fatal(err)
+				}
+				next := writePackage("owner", version, "")
+				grant(next)
+				var candidate *PluginGeneration
+				if preflight == "update" {
+					candidate, err = s.PreflightPluginUpdate(cfg, next.ID, next.Fingerprint, next.Root, "plugin.json")
+				} else if preflight == "removal" {
+					candidate, err = s.PreflightPluginRemoval(cfg, owner.ID)
+				} else {
+					packages[0] = next
+					candidate, err = s.PreflightDiscoveredExtensions(cfg, packages, next.ID)
+				}
+				if candidate != nil {
+					defer candidate.close()
+				}
+				if version == "2.0.0" && preflight != "removal" {
+					if err == nil || !strings.Contains(err.Error(), "version_mismatch") {
+						t.Fatalf("incompatible provider update must reject atomically, got %v", err)
+					}
+				} else {
+					if err != nil {
+						t.Fatalf("unrelated optional startup failure blocked compatible mutation: %v", err)
+					}
+					available := candidate.availableModuleIDs()
+					requiredAvailable := preflight != "removal"
+					if available[bridge.ID] != requiredAvailable || available[consumer.ID] != requiredAvailable || !available[optional.ID] || available[flaky.ID] {
+						t.Fatalf("wrong candidate availability: %v", available)
+					}
+				}
+				if !s.IsCurrentPluginGeneration(initial) || !initial.availableModuleIDs()[consumer.ID] {
+					t.Fatal("preflight changed committed consumer graph")
+				}
+			})
+		}
+	}
+}

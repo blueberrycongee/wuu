@@ -179,7 +179,7 @@ import { runJSONLRuntime, requestModel, requireModelRequestService, reportExecut
 runJSONLRuntime({
   initialize() {
     const failed = existsSync(${JSON.stringify(initializeFailure)});
-    appendFileSync(${JSON.stringify(initializeAttempts)}, JSON.stringify({ at: Date.now(), failed }) + "\\n");
+    appendFileSync(${JSON.stringify(initializeAttempts)}, JSON.stringify({ at: Date.now(), pid: process.pid, failed }) + "\\n");
     if (failed) throw new Error("fixture candidate initialization refused");
     return {
       protocol_version: 3,
@@ -374,33 +374,68 @@ runJSONLRuntime({
   assert.deepEqual(during.map(row => [row.generation_id, row.id]),
     [...during].sort((a, b) => a.generation_id < b.generation_id ? -1 : a.generation_id > b.generation_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
       .map(row => [row.generation_id, row.id]));
-  // The watcher rejects a broken replacement while both current and retained
-  // foreground calls stay owned by their original processes. Unrelated home
-  // notifications must not turn retry backoff into a process-spawn loop.
+  // An optional broken replacement publishes a diagnosed, quarantined graph.
+  // Both admitted calls keep their exact old owners, now marked retained;
+  // fresh requests must not fall back to either old executable. Required
+  // composition rejection/backoff is covered by the real-process reload test.
+  const heldLifecycle = await lifecycle();
   await writeFile(initializeFailure, "fail candidate only\n");
   await publishUpdate();
-  let failedAttempts = [];
-  const retryDeadline = Date.now() + 15_000;
+  const failedPublication = await waitFor("message", transcript, message => message.method === "plugin/inventory/changed"
+    && message.params.extension_inventory.some(plugin => plugin.id === item.id
+      && plugin.runtime_state === "failed" && plugin.fingerprint !== item.fingerprint), "optional replacement quarantined");
+  const failedItem = failedPublication.params.extension_inventory.find(plugin => plugin.id === item.id);
+  assert.equal(failedItem.enabled, true, "quarantine silently disabled the selected package");
+  assert.match(failedItem.last_error, /fixture candidate initialization refused/);
+  assert.notEqual(failedItem.graph_generation, item.graph_generation);
+  assert.equal((await rpc("plugin/registry/introspect")).graph_generation, failedItem.graph_generation,
+    "failure inventory did not describe the current graph");
+  const retained = during.map(row => ({ ...row, retained: true }));
+  assert.deepEqual(await snapshots(), retained, "quarantine changed admitted execution ownership");
+  const readFailedAttempts = async () => (await readFile(initializeAttempts, "utf8")).trim().split("\n")
+    .map(line => JSON.parse(line)).filter(attempt => attempt.failed);
+  const failedAttempts = await readFailedAttempts();
+  assert.equal(failedAttempts.length, 1, "optional replacement was initialized more than once");
+  assert(!retained.some(row => row.detail.pid === failedAttempts[0].pid), "replacement reused an admitted process");
+  const rejectedRequests = [];
+  for (const [identity, expected] of [
+    [secondHold.identity, /graph generation is no longer active/],
+    [failedItem, /runtime is no longer active/],
+  ]) {
+    const rejected = await rpcRaw("plugin/client/request", {
+      id: identity.id, fingerprint: identity.fingerprint, graph_generation: identity.graph_generation,
+      request_id: "diagnostics-shared", method: "model",
+      input: { messages: [{ role: "user", content: "quarantined-must-not-dispatch" }], max_output_tokens: 32 },
+    });
+    assert.match(rejected.error?.message ?? "", expected, "fresh request reached a quarantined or retained executable");
+    rejectedRequests.push(rejected);
+  }
+  // Cover the former one- and two-second retry boundaries while generating
+  // unrelated home notifications. Sticky quarantine must not spawn again.
+  const noiseStarted = Date.now(), noiseDeadline = noiseStarted + 3_200;
   do {
-    failedAttempts = (await readFile(initializeAttempts, "utf8")).trim().split("\n")
-      .map(line => JSON.parse(line)).filter(attempt => attempt.failed);
-    if (failedAttempts.length >= 3) break;
     await writeFile(join(home, "unrelated-refresh-noise"), String(Date.now()));
-    assert.deepEqual(await snapshots(), during, "failed refresh changed live generation ownership");
+    assert.deepEqual(await snapshots(), retained, "home notifications changed retained ownership");
+    assert.deepEqual(await readFailedAttempts(), failedAttempts, "home notifications restarted the quarantined implementation");
     await new Promise(resolve => setTimeout(resolve, 50));
-  } while (Date.now() < retryDeadline);
-  assert.equal(failedAttempts.length, 3, "watcher did not retry the unchanged failed candidate");
-  const retryGaps = failedAttempts.slice(1).map((attempt, index) => attempt.at - failedAttempts[index].at);
-  assert(retryGaps[0] >= 900 && retryGaps[1] >= 1800,
-    `unrelated notifications bypassed candidate backoff: ${JSON.stringify(retryGaps)}`);
-  assert.deepEqual(await snapshots(), during, "failed candidate retired a healthy foreground process");
-  result.refresh_backoff = { failed_attempts: failedAttempts, retry_gaps_ms: retryGaps,
-    executions_during_failure: await snapshots() };
-  // A new source publication is the repair signal, not a wait for the old
-  // candidate's next delay. Remove only the fixture's synthetic failure flag.
+  } while (Date.now() < noiseDeadline);
+  const quarantined = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "model-service-e2e" } });
+  assert.deepEqual(quarantined.extension_inventory.find(plugin => plugin.id === item.id), failedItem,
+    "unchanged quarantine lost its current generation or diagnostic");
+  assert.deepEqual(await readFailedAttempts(), failedAttempts);
+  assert(!initialHold.finished && !secondHold.finished, "quarantine settled an admitted client request");
+  assert.deepEqual(await lifecycle(), heldLifecycle, "quarantine cancelled or dispatched work in an old process");
+  assert.equal(providerCalls.length, 0, "quarantined or stale request reached the model provider");
+  result.optional_quarantine = { item: failedItem, failed_attempts: failedAttempts, rejected_requests: rejectedRequests,
+    noise_observation_ms: Date.now() - noiseStarted, executions_during_failure: await snapshots() };
+  item = failedItem;
+  // A new source publication retries the failed implementation. Remove only
+  // the fixture's synthetic failure flag; accepted old calls still keep owners.
   await unlink(initializeFailure);
   await reload();
-  result.checks.push("failed refresh backs off across home notifications and preserves current/retained calls until repaired publication");
+  assert.notEqual(item.graph_generation, failedItem.graph_generation);
+  assert.deepEqual(await snapshots(), retained, "repaired publication changed admitted execution ownership");
+  result.checks.push("optional quarantine publishes diagnostics, rejects fresh work without fallback, preserves retained owners across home noise, and repairs on source publication");
   const thirdHold = hold("diagnostics-third");
   const thirdRow = await waitForExecution("diagnostics-third");
   assert.equal(thirdRow.generation_id, thirdHold.identity.graph_generation);

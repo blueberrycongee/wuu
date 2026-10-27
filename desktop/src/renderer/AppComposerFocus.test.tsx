@@ -1302,12 +1302,23 @@ describe("main composer focus continuity", () => {
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
     expect(mainComposer("dock").value).toBe(cleared ? "first retained" : "second retained");
-    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
-    if (cleared) expect(recovery).toBeNull();
-    else {
-      expect(recovery).not.toBeNull();
+    const notices = document.querySelectorAll('[role="alert"][data-wuu-component="notice"]');
+    expect(notices).toHaveLength(1);
+    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(".archive-tip-action")];
+    expect(actions).toHaveLength(1);
+    const recovery = actions.find(button => button.textContent?.trim() === translateCurrent("composer.openFailedDraft"));
+    const retry = actions.find(button => button.textContent?.trim() === translateCurrent("appState.retryAction"));
+    // An empty editor restores the original in place; a newer draft needs a
+    // separate recovery tab. These are different actions, not duplicate notices.
+    if (cleared) {
+      expect(recovery).toBeUndefined();
+      expect(retry).toBeDefined();
+    } else {
+      expect(recovery).toBeDefined();
+      expect(retry).toBeUndefined();
       await act(async () => { recovery!.click(); });
       expect(mainComposer("dock").value).toBe("first retained");
+      expect(document.querySelector('[role="alert"][data-wuu-component="notice"]')).toBeNull();
     }
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
