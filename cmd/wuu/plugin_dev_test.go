@@ -30,8 +30,18 @@ func TestPluginCreateProducesDistinctStandaloneTemplates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(packageData), "workspace:") || !strings.Contains(string(packageData), `"@wuu/plugin-sdk": "^0.1.0"`) {
-				t.Fatalf("package is not standalone-installable:\n%s", packageData)
+			var project struct {
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if err := json.Unmarshal(packageData, &project); err != nil {
+				t.Fatal(err)
+			}
+			sdkPath, local := strings.CutPrefix(project.DevDependencies["@wuu/plugin-sdk"], "file:")
+			if !local || filepath.IsAbs(sdkPath) {
+				t.Fatalf("scaffold must carry its matching SDK rather than require a registry release or checkout: %s", packageData)
+			}
+			if _, err := os.Stat(filepath.Join(dir, sdkPath, "package.json")); err != nil {
+				t.Fatalf("local SDK dependency is missing: %v", err)
 			}
 			for _, relative := range map[string][]string{
 				"agent": {"src/index.ts"}, "desktop": {"src/index.ts"}, "full": {"src/runtime.ts", "src/renderer.ts"},
@@ -42,6 +52,63 @@ func TestPluginCreateProducesDistinctStandaloneTemplates(t *testing.T) {
 				}
 				if !strings.Contains(string(data), `from "@wuu/plugin-sdk"`) {
 					t.Fatalf("%s does not use the public SDK", relative)
+				}
+			}
+		})
+	}
+}
+
+// Exercise the generated build and the packaged runtime, without a registry or
+// checkout dependency. CI installs these public build tools before Go tests.
+func TestPluginCreateBuildsSelfContainedArtifacts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses dependency symlinks")
+	}
+	dependencies, err := filepath.Abs("../../packages/plugin-sdk/node_modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dependencies, "typescript")); err != nil {
+		t.Skip("install packages/plugin-sdk dependencies to exercise scaffold builds")
+	}
+	for _, pluginType := range []string{"agent", "desktop", "full"} {
+		t.Run(pluginType, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "sample")
+			if err := runPluginCreate([]string{"--type", pluginType, "--output", dir, "sample"}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var project struct {
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if err := json.Unmarshal(data, &project); err != nil {
+				t.Fatal(err)
+			}
+			for name, spec := range project.DevDependencies {
+				target := filepath.Join(dependencies, filepath.FromSlash(name))
+				if local, ok := strings.CutPrefix(spec, "file:"); ok {
+					target = filepath.Join(dir, local)
+				}
+				link := filepath.Join(dir, "node_modules", filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(filepath.Join(dependencies, ".bin"), filepath.Join(dir, "node_modules", ".bin")); err != nil {
+				t.Fatal(err)
+			}
+			if err := runPluginBuild([]string{dir}); err != nil {
+				t.Fatalf("generated build failed: %v", err)
+			}
+			for _, diagnostic := range testPluginPackage(dir, 10*time.Second) {
+				if diagnostic.Level == "fail" {
+					t.Fatalf("package without development dependencies failed: %+v", diagnostic)
 				}
 			}
 		})
