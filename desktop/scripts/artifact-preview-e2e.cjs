@@ -145,7 +145,9 @@ app.whenReady().then(async () => {
     if (event.level === "error" && !event.message.startsWith("Blocked script execution")) console.error(event.message);
   });
   await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
-  // Hidden windows need focused-page emulation to paint keyboard focus rings.
+  // Keep compositor frames running through narrow-window focus and media checks.
+  win.showInactive();
+  // Inactive windows need focused-page emulation to paint keyboard focus rings.
   win.webContents.debugger.attach('1.3');
   await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
   await waitFor(win, () => Boolean(document.querySelector(".composer textarea")));
@@ -223,7 +225,7 @@ app.whenReady().then(async () => {
       // Panel, tab and theme changes animate geometry and colour; sample the
       // resting state.
       await evaluate(win, () => document.getAnimations()
-        .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
+        .filter((animation) => animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect?.getComputedTiming().endTime))
         .forEach((animation) => animation.finish()));
       await settle(win);
       const layout = await evaluate(win, () => {
@@ -309,9 +311,11 @@ app.whenReady().then(async () => {
       for (const theme of ['light', 'dark']) {
         for (const size of [15, 20]) {
           await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui','${size}px')`);
-          await evaluate(win, () => Promise.all(document.getAnimations()
-            .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
-            .map(animation => animation.finished.catch(() => {}))));
+          // Scrolling can retire message transitions; inspect live animation state
+          // rather than retaining their pending finished promises.
+          await waitFor(win, () => document.getAnimations()
+            .filter(animation => animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect.getComputedTiming().endTime))
+            .every(animation => animation.playState !== "running"));
           await settle(win);
           fs.writeFileSync(path.join(output, `image-viewer-${index}-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
         }
@@ -441,9 +445,9 @@ app.whenReady().then(async () => {
             toggle.focus();
           });
           await settle(win);
-          await evaluate(win, () => Promise.all(document.getAnimations()
-            .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
-            .map(animation => animation.finished.catch(() => {}))));
+          await waitFor(win, () => document.getAnimations()
+            .filter(animation => animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect.getComputedTiming().endTime))
+            .every(animation => animation.playState !== "running"));
           const controls = await evaluate(win, () => {
             const group = document.querySelector('[data-turn-id="image-controls-turn"]');
             const button = group.querySelector('[data-gallery-toggle]');
@@ -616,9 +620,9 @@ app.whenReady().then(async () => {
           return fold.open && image?.complete && image.naturalWidth > 0;
         });
         assert.equal(await evaluate(win, () => document.querySelectorAll('[data-turn-id="image-inspection-turn"] .turn-artifact-inline-list img').length), 4);
-        await evaluate(win, () => Promise.all(document.querySelector('[data-turn-id="image-inspection-turn"]').getAnimations({ subtree: true })
-          .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
-          .map(animation => animation.finished.catch(() => {}))));
+        await waitFor(win, () => document.querySelector('[data-turn-id="image-inspection-turn"]').getAnimations({ subtree: true })
+          .filter(animation => animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect.getComputedTiming().endTime))
+          .every(animation => animation.playState !== "running"));
         await settle(win);
         fs.writeFileSync(path.join(output, `inspection-expanded-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
         await evaluate(win, () => {
