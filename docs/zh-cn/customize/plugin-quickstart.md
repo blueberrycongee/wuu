@@ -56,25 +56,20 @@ Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证�
 
 ## 扩展为插件包
 
-需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用与 CLI 匹配的 Wuu 源码目录获取 SDK。
+需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用 CLI 内嵌的匹配版本 SDK。
 
 ## 准备 SDK 和插件包
 
-使用源码目录中的 SDK，不依赖 npm registry 是否已发布对应版本。将第一行改成源码目录的绝对路径，然后在准备存放插件项目的目录中执行：
+在准备存放插件项目的目录中执行以下命令。无需 Wuu 源码目录，也不依赖 npm registry 发布 `@wuu/plugin-sdk`：
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create hello-plugin
 cd hello-plugin
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
-npm install --save-dev esbuild
-npm pkg set 'scripts.build=tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js'
+npm run build
 ```
 
-生成器会创建 `plugin.json`、`package.json`、`tsconfig.json` 和 `src/index.ts`。manifest 使用 `wuu-plugin-v1` 运行时传输协议启动 `node dist/index.js`。上面的构建命令会把 SDK 打进同一个文件：Wuu 准备安装包时会排除 `node_modules`，仅做 TypeScript 编译会让安装后的包缺少运行时依赖。
+生成器会创建 `plugin.json`、`package.json`、`tsconfig.json`、`src/index.ts` 和本地 `sdk/` 源码包。`@wuu/plugin-sdk` 指向该快照，npm 只需安装常规 TypeScript、类型定义和打包工具依赖。manifest 使用 `wuu-plugin-v1` 运行时传输协议启动 `node dist/index.js`。生成的构建命令会检查源代码类型，并将 SDK 打进运行时文件：Wuu 准备安装包时会排除 `node_modules`，安装后的插件不依赖开发目录。`--type desktop` 和 `--type full` 还会生成面向浏览器的桌面 bundle。
 
 ## 添加工具
 
