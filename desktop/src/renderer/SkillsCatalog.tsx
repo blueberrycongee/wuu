@@ -33,6 +33,7 @@ import { Modal } from "./Modal";
 import { PluginIcon } from "./PublicIcon";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
+import { MCPServices, MCPServicesProvider, useMCPServices } from "./MCPServices";
 import { RichContent } from "./RichContent";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
@@ -83,7 +84,7 @@ function useCatalog(): ApplicationCatalogV1 {
 }
 
 export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><SkillsCatalogView {...props} /></CatalogContext.Provider></SettingsControlsProvider>;
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={props.application.catalog.getSnapshot().contextKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
@@ -536,6 +537,8 @@ function SkillsCatalogView({
         </div>
       ) : null}
 
+      {activeTab === "plugins" ? <MCPServices filter={filter} /> : null}
+
       {/* A plugin that needs a decision shows the reason instead of its
        * tagline; the decision is made on its page. */}
       {activeTab === "plugins" && attentionPlugins.length > 0 ? (
@@ -947,6 +950,7 @@ function PluginDetailPage({
       ) : null}
 
       <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
+      <MCPServices pluginID={record.provenance.plugin_id ?? record.id} enabled={toggle.on && !deciding} />
 
       {record.long_description ? (
         <SettingsSection title={t("skills.pluginAbout")}>
@@ -1020,6 +1024,8 @@ function PluginRow({
 }): JSX.Element {
   const { t } = useI18n();
   const toggle = pluginToggle(record);
+  const { servers } = useMCPServices();
+  const needsMCPAuth = toggle.on && servers.some(server => server.plugin_id === (record.provenance.plugin_id ?? record.id) && ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state));
   // A grant or change needs the fingerprint it approves.
   const toggleUnavailable = toggle.action === "grant" && !toggle.review && !record.fingerprint;
   const showSwitch = !attention && Boolean(onToggle);
@@ -1043,7 +1049,7 @@ function PluginRow({
             {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
             {attention.label}
           </span>
-        ) : record.description ? (
+        ) : needsMCPAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone="warning">{t("mcp.needsAuth")}</span> : record.description ? (
           <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
         <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />

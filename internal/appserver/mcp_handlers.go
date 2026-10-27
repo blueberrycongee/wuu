@@ -12,11 +12,8 @@ import (
 )
 
 func (s *Server) handleMCPList(req Request) error {
-	mgr, err := s.mcpManager()
-	if err != nil {
-		return s.writeResponse(req.ID, MCPListResult{Servers: []MCPServerStatus{}}, nil)
-	}
-	return s.writeResponse(req.ID, MCPListResult{Servers: mcpStatusList(mgr.Status())}, nil)
+	result, err := s.mcpServerList(context.Background())
+	return s.writeResponse(req.ID, result, err)
 }
 
 func (s *Server) handleMCPConnect(ctx context.Context, req Request) error {

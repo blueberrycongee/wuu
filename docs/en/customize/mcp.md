@@ -4,7 +4,11 @@ MCP connects the Wuu engine to tools provided by a local process or remote servi
 
 ## Add a server
 
-Add definitions to `mcp_servers` in the user configuration, normally `~/.wuu/config.json`, and restart Wuu. The desktop manages existing definitions but does not provide a definition editor.
+Open **Plugins → MCP services → Add MCP**. Enter a server URL or a local executable with its arguments, or choose **Import JSON** to paste an `mcpServers` or `mcp_servers` object. Advanced options accept headers, environment variables, transport, OAuth registration values, and tool timeouts as JSON.
+
+Saved definitions use the selected configuration provider and apply immediately when Wuu has no running turns or background work. Editing and removal check the configuration revision; reopen the editor if another window has changed it. Imports reject duplicate names and unsupported connection fields. Imported values are literal, including `${VAR}` placeholders.
+
+You can also add definitions to `mcp_servers` in the user configuration, normally `~/.wuu/config.json`, and restart Wuu after editing on disk.
 
 This fragment configures a local server and a remote one. Replace the executable, script path, and URL with your server's values:
 
@@ -91,9 +95,11 @@ not reread configuration files.
 
 ## Manage the connection
 
-Open **Settings → MCP servers** to see connection state, tool count, and errors. Connect, disconnect, or refresh a server there. Disconnect ends the current connection without deleting its definition; refresh reconnects with the already-loaded configuration and discovers tools again.
+Open **Plugins** to manage standalone MCP services. A plugin's MCP services appear on that plugin's detail page; a plugin requiring MCP authorization also shows a notice in the catalog. Disabling the plugin disables its services. Plugin and project definitions retain their original source and are not editable as standalone definitions.
 
-The enable toggle saves the startup preference. Use the connection controls when you need an immediate connection change, and restart Wuu after editing definitions on disk. Refresh is not a configuration-file reload.
+Connection controls show state, tool count, and errors. Disconnect ends the current connection without deleting its definition; Refresh reconnects with the already-loaded configuration and discovers tools again. Edit changes the saved definition, including its startup preference. Remove deletes the standalone definition; a same-named project definition may become visible again. Removing a definition keeps its saved OAuth credentials; use **Remove OAuth login** first when you also want to sign out.
+
+Restart Wuu after editing definitions on disk. Refresh is not a configuration-file reload. The older Settings MCP deep link remains available for compatibility; the main management entry is Plugins.
 
 Tools receive model-visible names such as `mcp_docs_search`, with normalization for unsupported characters and long names. Large or infrequently used tool definitions can be deferred and found through tool search. The current tool surface and permission policy can still limit availability or execution.
 
@@ -147,9 +153,11 @@ Unlike native definitions, `.mcp.json` expands `${VAR}` and `${VAR:-default}` in
 
 ## Remote OAuth
 
-Remote URL servers can use OAuth discovery, PKCE, scopes, and dynamic client registration. An ordinary definition does not need an `oauth` section in advance: after an authentication challenge, use the login action in settings.
+Remote URL servers can use OAuth discovery, PKCE, scopes, and dynamic client registration. An ordinary definition does not need an `oauth` section in advance: after an authentication challenge, choose **OAuth login** on the service.
 
-The current desktop flow opens the authorization URL and requires you to paste the returned authorization code into settings. It does not start an automatic callback listener. Tokens go to Wuu's credential store rather than the server definition.
+Desktop Wuu opens the authorization page and listens on an HTTP loopback callback. After authorization it saves credentials and connects automatically. The listener uses an available port unless the definition specifies a fixed loopback redirect URI. The callback validates the state and stays bound to the initiating window and app-server across workspace changes. Canceling, closing the login dialog, closing the window, or reaching the ten-minute limit closes the listener and invalidates the pending attempt.
+
+Browser clients and services with a non-loopback callback use manual completion: paste the callback URL or authorization code into the dialog. Fixed clients must register the actual callback URI with their service. Tokens go to Wuu's credential store rather than the server definition.
 
 Saved credentials are bound to the resource URL used for login. Reusing a server name with a different URL requires another login; a path or query change also counts. Credentials from older versions without a saved resource URL require login again. Wuu keeps mismatched credentials until you explicitly replace or remove them. Logging in to the new resource replaces the credentials for that server name.
 

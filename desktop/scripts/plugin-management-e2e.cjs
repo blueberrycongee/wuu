@@ -1,4 +1,5 @@
 // Run with wuu-e2e --core: real Electron, preload and Go; disposable data and no model calls.
+// Pass --mcp-only to run the MCP management and OAuth journey independently.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -22,6 +23,7 @@ process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = "1";
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({
   default_provider: "fixture",
+  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
   providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:9/v1", api_key: "fixture-only", model: "fixture" } },
   engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
 }));
@@ -31,9 +33,9 @@ fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({
   active_context: { kind: "project", project_id: "repo", cwd: project },
 }));
 fs.writeFileSync(path.join(home, "desktop-settings.json"), JSON.stringify({ onboarding_version: 100, language: "zh-CN", theme: "light" }));
-let win;
+let win, mcpFixture;
 const windowCreated = new Promise(resolve => app.once("browser-window-created", (_event, window) => { win = window; resolve(window); }));
-const timeout = setTimeout(() => { console.error("Plugin management journey timed out"); app.exit(1); }, 180000);
+const timeout = setTimeout(() => { console.error("Plugin management journey timed out"); app.exit(1); }, 300000);
 const evaluate = (fn, arg) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`);
 const until = (fn, arg) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
   const test = (${fn});
@@ -41,7 +43,7 @@ const until = (fn, arg) => win.webContents.executeJavaScript(`new Promise((resol
   const observer = new MutationObserver(check);
   const timer = setTimeout(() => { observer.disconnect(); reject(new Error("UI condition timed out")); }, 30000);
   function check() { if (test(argument)) { observer.disconnect(); clearTimeout(timer); resolve(); } }
-  observer.observe(document, { childList: true, subtree: true, attributes: true });
+  observer.observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
   check();
 })`);
 const capture = async name => {
@@ -62,6 +64,7 @@ async function selectPlugin(record) {
 }
 async function openAutomations(origin) {
   console.log(`Opening Automations from ${origin}`);
+  await until(() => document.querySelector('.plugin-navigation-item[aria-label="Automations"]'));
   await evaluate(() => document.querySelector('.plugin-navigation-item[aria-label="Automations"]').click());
   await until(() => document.querySelector('.conversation-pane[data-primary-plugin-view] .plugin-automation'));
   await capture(`automations-from-${origin}`);
@@ -89,14 +92,23 @@ async function checkCompactRibbon(name) {
   assert.equal(geometry.toggleReachable, true);
 }
 async function run() {
+  mcpFixture = await require("./fixtures/mcp-management.cjs")({ fixture, output });
   await import(pathToFileURL(path.join(desktop, "out/main/index.js")).href);
   await windowCreated;
   if (win.webContents.isLoadingMainFrame()) await new Promise(resolve => win.webContents.once("did-finish-load", resolve));
   win.setSize(1280, 900);
   await until(() => document.querySelector('[data-ribbon-id="catalog"]:not(:disabled)'));
+  await mcpFixture.run({ evaluate, until, capture, win });
+  if (process.argv.includes("--mcp-only")) {
+    clearTimeout(timeout);
+    mcpFixture.close();
+    app.quit();
+    return;
+  }
+  await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
   const initialized = await evaluate(() => window.wuu.initialize());
   const modules = initialized.extension_inventory.filter(record => record.desktop?.entry.startsWith("wuu-builtin:"));
-  assert.equal(modules.length, 6);
+  assert.equal(modules.length, 7);
   assert.equal(new Set(modules.map(module => module.name)).size, modules.length, "Built-in interface modules must be distinguishable");
   const automation = initialized.extension_inventory.filter(record => ["automation", "automation-client"].includes(record.provenance.plugin_id));
   assert.equal(automation.length, 2);
@@ -166,6 +178,14 @@ async function run() {
   await capture("renderer-failure-visible");
   fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, modules: modules.map(({ id, name }) => ({ id, name })), automation: automation.map(({ id, name }) => ({ id, name })), scope: "Plugin list, plugin details and skill management omit the composer; multiline draft survives navigation back to chat; light/wide/default and dark/narrow/large font; real IPC diagnostics, stale identity rejected and renderer failure visible" }, null, 2));
   clearTimeout(timeout);
+  mcpFixture.close();
   app.quit();
 }
-run().catch(async error => { console.error(error); if (win) await capture("failure").catch(() => {}); app.exit(1); });
+run().catch(async error => {
+  console.error(error);
+  if (win) {
+    await capture("failure").catch(() => {});
+    await evaluate(() => window.wuu.initialize()).then(result => fs.writeFileSync(path.join(output, "failure-inventory.json"), JSON.stringify(result.extension_inventory, null, 2))).catch(() => {});
+  }
+  mcpFixture?.close(); app.exit(1);
+});

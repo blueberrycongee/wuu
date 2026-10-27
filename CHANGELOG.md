@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Manage MCP services in the Plugins catalog: add, edit, import and remove standalone definitions, and connect plugin-owned services from their parent plugin's page. Complete desktop OAuth through a validated loopback callback with automatic connection, cancellation and expiry; retain manual completion for browser clients and custom callback URLs.
+
 - Add GPT-6.1 Terra and its Fast option with official pricing, context and output limits, image input, all six reasoning efforts, and Responses tool calling. Codex subscription catalogs reuse the metadata and Fast alias when Terra is available to the account.
 
 - Add opt-in, metadata-only RPC phase timing for conversation resume, queued input, turn admission and interruption, with request correlation and no hashing, clock samples or diagnostic allocations when disabled.

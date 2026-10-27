@@ -116,6 +116,9 @@ const (
 	MethodProcessStop                     = "process/stop"
 	MethodProcessCancelNotifications      = "process/cancel-notifications"
 	MethodMCPList                         = "mcp/list"
+	MethodMCPDefinitionRead               = "mcp/definition/read"
+	MethodMCPConfigure                    = "mcp/configure"
+	MethodMCPAuthCancel                   = "mcp/auth/cancel"
 	MethodMCPConnect                      = "mcp/connect"
 	MethodMCPDisconnect                   = "mcp/disconnect"
 	MethodMCPRefresh                      = "mcp/refresh"
@@ -576,16 +579,40 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	Name       string `json:"name"`
-	State      string `json:"state"`
-	AuthStatus string `json:"auth_status,omitempty"`
-	Connected  bool   `json:"connected"`
-	ToolCount  int    `json:"tool_count"`
-	Error      string `json:"error,omitempty"`
+	PluginID         string `json:"plugin_id,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Editable         bool   `json:"editable,omitempty"`
+	OAuthRedirectURI string `json:"oauth_redirect_uri,omitempty"`
+	Name             string `json:"name"`
+	State            string `json:"state"`
+	AuthStatus       string `json:"auth_status,omitempty"`
+	Connected        bool   `json:"connected"`
+	ToolCount        int    `json:"tool_count"`
+	Error            string `json:"error,omitempty"`
 }
 
 type MCPListResult struct {
 	Servers []MCPServerStatus `json:"servers"`
+}
+
+type MCPConfigureParams struct {
+	Servers  map[string]*config.MCPServerConfig `json:"servers"`
+	Revision string                             `json:"revision,omitempty"`
+}
+
+type MCPDefinitionResult struct {
+	Config   config.MCPServerConfig `json:"config"`
+	Revision string                 `json:"revision"`
+}
+
+type MCPAuthStartParams struct {
+	Name        string `json:"name"`
+	RedirectURI string `json:"redirect_uri,omitempty"`
+}
+
+type MCPAuthCancelParams struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 type MCPServerActionParams struct {

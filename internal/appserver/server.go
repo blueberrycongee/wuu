@@ -1382,6 +1382,12 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return s.handleProcessCancelNotifications(req)
 	case MethodMCPList:
 		return s.handleMCPList(req)
+	case MethodMCPDefinitionRead:
+		return s.handleMCPDefinitionRead(ctx, req)
+	case MethodMCPConfigure:
+		return s.handleMCPConfigure(ctx, req)
+	case MethodMCPAuthCancel:
+		return s.handleMCPAuthCancel(ctx, req)
 	case MethodMCPConnect:
 		return s.handleMCPConnect(ctx, req)
 	case MethodMCPDisconnect:

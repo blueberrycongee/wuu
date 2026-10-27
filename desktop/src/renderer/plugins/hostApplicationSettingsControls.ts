@@ -38,6 +38,7 @@ export function createApplicationSettingsControls(options: {
       appContextChanges: typeof window.wuu?.onAppContextChanged === "function",
       appContextRecording: typeof window.wuu?.setAppContextShortcutRecording === "function",
 
+      mcpBrowserLogin: hostSupports("startMCPLogin"),
       chatGPTLogin: hostSupports("startChatGPTLogin"),
       engineLogin: window.wuu?.hostKind !== "web",
       platform: window.wuu?.platform,
@@ -239,6 +240,30 @@ export function createApplicationSettingsControls(options: {
     getPluginDiagnostics: async (...args) => {
       if (typeof window.wuu?.getPluginDiagnostics !== "function") throw new Error("Settings operation unavailable: getPluginDiagnostics");
       return window.wuu.getPluginDiagnostics(...args);
+    },
+    readMCPDefinition: async (...args) => {
+      if (typeof window.wuu?.readMCPDefinition !== "function") throw new Error("Settings operation unavailable: readMCPDefinition");
+      return window.wuu.readMCPDefinition(...args);
+    },
+    configureMCPServers: async (...args) => {
+      if (typeof window.wuu?.configureMCPServers !== "function") throw new Error("Settings operation unavailable: configureMCPServers");
+      return window.wuu.configureMCPServers(...args);
+    },
+    startMCPLogin: async (...args) => {
+      if (typeof window.wuu?.startMCPLogin !== "function") throw new Error("Settings operation unavailable: startMCPLogin");
+      return window.wuu.startMCPLogin(...args);
+    },
+    pollMCPLogin: async (...args) => {
+      if (typeof window.wuu?.pollMCPLogin !== "function") throw new Error("Settings operation unavailable: pollMCPLogin");
+      return window.wuu.pollMCPLogin(...args);
+    },
+    cancelMCPLogin: async (...args) => {
+      if (typeof window.wuu?.cancelMCPLogin !== "function") throw new Error("Settings operation unavailable: cancelMCPLogin");
+      return window.wuu.cancelMCPLogin(...args);
+    },
+    cancelMCPAuth: async (...args) => {
+      if (typeof window.wuu?.cancelMCPAuth !== "function") throw new Error("Settings operation unavailable: cancelMCPAuth");
+      return window.wuu.cancelMCPAuth(...args);
     },
     listMCPServers: async (...args) => {
       if (typeof window.wuu?.listMCPServers !== "function") throw new Error("Settings operation unavailable: listMCPServers");

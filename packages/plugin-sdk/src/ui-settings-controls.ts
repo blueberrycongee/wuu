@@ -16,6 +16,7 @@ export interface SettingsControlsCapabilitiesV1 {
   readonly appContextChanges: boolean;
   readonly appContextRecording: boolean;
 
+  readonly mcpBrowserLogin?: boolean;
   readonly chatGPTLogin: boolean;
   readonly engineLogin: boolean;
   readonly browser: boolean;
@@ -162,6 +163,12 @@ export interface ApplicationSettingsControlsV1 {
   getPluginSetting: (params: PluginSettingGetParams) => Promise<PluginSettingResult>;
   setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
+  readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
+  configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
+  startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
+  pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
+  cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
+  cancelMCPAuth: (name: string, state: string) => Promise<{ ok: boolean }>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
@@ -267,8 +274,29 @@ interface PluginContributionDiagnostic {
 type MCPListResult = {
   servers: MCPServerStatus[];
 };
+export type MCPServerConfig = {
+  command?: string;
+  args?: string[];
+  url?: string;
+  transport?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
+  enabled?: boolean;
+  tool_timeout_ms?: number;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+};
+export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
+export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
+export type MCPLoginStartResult = { login_id: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+
 type MCPServerStatus = {
   name: string;
+  plugin_id?: string;
+  display_name?: string;
+  editable?: boolean;
+  oauth_redirect_uri?: string;
   state: string;
   auth_status?: string;
   connected: boolean;

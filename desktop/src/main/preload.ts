@@ -342,6 +342,12 @@ const api: WuuDesktopApi = {
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
   getUsageOverview: (params: UsageOverviewParams) =>
     ipcRenderer.invoke("wuu:usage-overview", params),
+  readMCPDefinition: (name) => ipcRenderer.invoke("wuu:mcp-definition-read", name),
+  configureMCPServers: (params) => ipcRenderer.invoke("wuu:mcp-configure", params),
+  startMCPLogin: (name) => ipcRenderer.invoke("wuu:mcp-login-start", name),
+  pollMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-poll", loginId),
+  cancelMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-cancel", loginId),
+  cancelMCPAuth: (name, state) => ipcRenderer.invoke("wuu:mcp-auth-cancel", name, state),
   listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>

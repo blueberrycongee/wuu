@@ -27,6 +27,7 @@ import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { EngineLogin } from "./engineLogin";
 import { XAILoginCoordinator } from "./xaiLogin";
+import { MCPLoginCoordinator } from "./mcpLogin";
 import { authWindowReturn } from "./authWindowReturn";
 import { PhoneAccess } from "./phoneAccess";
 import {
@@ -92,6 +93,8 @@ import type {
   InitializeResult,
   InstructionsListResult,
   MCPListResult,
+  MCPConfigureParams,
+  MCPDefinitionResult,
   MCPAuthFinishResult,
   MCPAuthRemoveResult,
   MCPAuthStartResult,
@@ -2424,6 +2427,21 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
     appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
+  );
+  const mcpLogin = new MCPLoginCoordinator(url => shell.openExternal(url), returnToAuthWindow);
+  ipcMain.handle("wuu:mcp-login-start", (event, name: string) =>
+    mcpLogin.start(event.sender, name, () => appServerClientPool.bindContextRequest(runtimeContextForEvent(event))),
+  );
+  ipcMain.handle("wuu:mcp-login-poll", (event, loginId: string) => mcpLogin.poll(event.sender.id, loginId));
+  ipcMain.handle("wuu:mcp-login-cancel", (event, loginId: string) => mcpLogin.cancel(event.sender.id, loginId));
+  ipcMain.handle("wuu:mcp-definition-read", (event, name: string) =>
+    appServerRequest<MCPDefinitionResult>(event, "mcp/definition/read", { name }),
+  );
+  ipcMain.handle("wuu:mcp-configure", (event, params: MCPConfigureParams) =>
+    appServerRequest<MCPListResult>(event, "mcp/configure", params),
+  );
+  ipcMain.handle("wuu:mcp-auth-cancel", (event, name: string, state: string) =>
+    appServerRequest(event, "mcp/auth/cancel", { name, state }),
   );
   ipcMain.handle("wuu:mcp-list", (event) =>
     appServerRequest<MCPListResult>(event, "mcp/list"),

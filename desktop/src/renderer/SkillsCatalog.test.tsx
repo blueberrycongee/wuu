@@ -36,7 +36,7 @@ function SkillsCatalog(props: Omit<ComponentProps<typeof PublicSkillsCatalog>, "
    install:async()=>props.onInstallPluginPackage?.(),remove:async id=>props.onRemovePluginPackage?.(id),
    loadIcon:async(id,fingerprint,path)=>(await window.wuu.loadPluginIcon({id,fingerprint,path})).url,
   };
-  return {catalog,getSnapshot:props.draftApplication?.getSnapshot ?? (()=>({tabs:{activeTabId:"test-source",navigationRevision:7}})),settingsControls:{capabilities:{diagnostics:false},subscribe:()=>()=>{},getConflicts:()=>empty,getDiagnostics:()=>empty},subscribe:()=>()=>{},invoke:props.draftApplication?.invoke ?? (async(action:string,input:unknown)=>{
+  return {catalog,getSnapshot:props.draftApplication?.getSnapshot ?? (()=>({tabs:{activeTabId:"test-source",navigationRevision:7}})),settingsControls:{capabilities:{diagnostics:false},listMCPServers:async()=>({servers:[]}),subscribeRemote:()=>()=>{},subscribe:()=>()=>{},getConflicts:()=>empty,getDiagnostics:()=>empty},subscribe:()=>()=>{},invoke:props.draftApplication?.invoke ?? (async(action:string,input:unknown)=>{
    if(action === "draft.start-with-content") {
     const text=(input as {text:string}).text;
     const identity=JSON.parse(text.split("\n")[0].slice("/skill ".length));
@@ -297,7 +297,7 @@ describe("SkillsCatalog", () => {
         />,
       );
     });
-    const sectionRows = () => Array.from(container.querySelectorAll("section section")).map(
+    const sectionRows = () => Array.from(container.querySelectorAll("section section:not([data-testid=mcp-services])")).map(
       (section) => Array.from(section.querySelectorAll(".catalog-row")).map((row) => row.textContent ?? ""),
     );
     const search = async (query: string) => {

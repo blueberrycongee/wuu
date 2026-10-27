@@ -1056,8 +1056,29 @@ export type MessageImageReadParams = {
   sha256?: string;
 };
 
+export type MCPServerConfig = {
+  command?: string;
+  args?: string[];
+  url?: string;
+  transport?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
+  enabled?: boolean;
+  tool_timeout_ms?: number;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+};
+export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
+export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
+export type MCPLoginStartResult = { login_id: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+
 export type MCPServerStatus = {
   name: string;
+  plugin_id?: string;
+  display_name?: string;
+  editable?: boolean;
+  oauth_redirect_uri?: string;
   state: string;
   auth_status?: string;
   connected: boolean;
@@ -3231,6 +3252,12 @@ export type WuuDesktopApi = {
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
+  readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
+  configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
+  startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
+  pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
+  cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
+  cancelMCPAuth: (name: string, state: string) => Promise<{ ok: boolean }>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;

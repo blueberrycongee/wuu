@@ -12,15 +12,15 @@ import (
 )
 
 func (s *Server) handleMCPAuthStart(ctx context.Context, req Request) error {
-	params, err := parseMCPServerActionParams(req)
-	if err != nil {
+	var params MCPAuthStartParams
+	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	result, err := mgr.StartOAuth(ctx, params.Name)
+	result, err := mgr.StartOAuthWithRedirect(ctx, params.Name, params.RedirectURI)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -88,6 +88,18 @@ func (s *Server) handleMCPAuthRemove(ctx context.Context, req Request) error {
 	server := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(server)
 	return s.writeResponse(req.ID, MCPAuthRemoveResult{Auth: mcpAuthStatusResult(authStatus), Server: server}, nil)
+}
+
+func (s *Server) handleMCPAuthCancel(ctx context.Context, req Request) error {
+	var params MCPAuthCancelParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	mgr, err := s.mcpManager()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, map[string]bool{"ok": true}, mgr.CancelOAuth(ctx, params.Name, params.State))
 }
 
 func parseMCPAuthFinishParams(req Request) (MCPAuthFinishParams, error) {

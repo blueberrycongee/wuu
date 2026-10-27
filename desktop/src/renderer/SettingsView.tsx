@@ -187,7 +187,6 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean, capabilities: imp
       pages: [
         "providers",
         "advanced",
-        "mcp",
       ],
     },
     {
