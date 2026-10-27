@@ -48,6 +48,17 @@ In a Wuu-engine conversation, the deferred `plugin_manager` tool provides a scop
 3. Check the result, then finish the current turn. Its tool definitions stay pinned to the old generation.
 4. Once the host has activated the published generation, discover and call the new greeting tool in an idle turn. Use `{"action":"status"}` or status with an exact `id` to compare published state with the current conversation's generation. Check the actual tool result before calling it usable.
 
+For authoring through the local `bash` tool (Git Bash on Windows), use
+`"$WUU_CLI_EXECUTABLE" plugin create <name>` or
+`"$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory>`.
+Wuu supplies the absolute path of its running CLI, so an older `wuu` on `PATH`
+or another installed app cannot silently select the wrong SDK. The `describe`
+command inspects a new CLI composition, not the conversation's pinned generation.
+This hint does not change `PATH` or grant additional permissions. It is set by
+the execution host, not user configuration: a remote Wuu CLI worker supplies its
+own executable, while library hosts without an authoring CLI omit it rather than
+forwarding a host-only path.
+
 A new optional plugin may still be preparing while unrelated turns continue. Publication alone does not make its tools available; app-server clients can await the exact fingerprint in that server's committed inventory as described in the [generation contract](plugin-system.md#runtime-generations). Outstanding conversation workers and managed processes must settle before this conversation can adopt the update. Do not leave a `wuu plugin dev` watcher running as work owned by this turn; use the one-shot apply path above.
 
 Apply can execute module top-level code and package build scripts on the host. Before validation or import, it requires an `unconfined` session, or `standard` mode with an enabled, configured permission reviewer returning an allow decision. Read-only mode rejects mutations. Workspace write permission alone does not authorize host code execution. The host chooses the executable and plugin storage; this tool does not grant general filesystem access to `$WUU_HOME`. Remote-environment source paths are not supported.

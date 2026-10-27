@@ -48,6 +48,15 @@ wuu plugin dev ./hello.ts
 3. 检查结果，然后结束当前轮次。该轮次的工具定义仍绑定旧 generation。
 4. 宿主激活已发布的 generation 后，在空闲轮次中发现并调用新的问候工具。用 `{"action":"status"}` 或带准确 `id` 的 status 比较已发布状态与当前会话的 generation。确认实际工具结果后，才能判断它可用。
 
+通过本地 `bash` 工具（Windows 使用 Git Bash）编写插件时，使用
+`"$WUU_CLI_EXECUTABLE" plugin create <name>` 或
+`"$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory>`。
+Wuu 提供正在运行的 CLI 的绝对路径，避免 `PATH` 中的旧版 `wuu` 或另一份已安装应用
+悄悄选中错误的 SDK。`describe` 检查新建的 CLI 组合，不是当前会话绑定的 generation。
+这个提示不修改 `PATH`，也不增加权限。它由执行宿主设置，不是用户配置项：远程 Wuu CLI
+工作者提供自身的可执行程序；没有编写插件 CLI 的嵌入式宿主不提供此变量，不会转发
+仅在原宿主有效的路径。
+
 新增可选插件可能仍在准备，其他轮次则继续运行。发布本身不代表工具已可用；app-server 客户端可按照 [generation 契约](plugin-system.md#运行时-generation)，等待同一服务器已提交清单中的准确指纹。当前会话接入更新前，未完成的会话工作者和受管进程必须先结束。不要让当前轮次持有持续运行的 `wuu plugin dev` 监听器；请使用上面的一次性 apply 流程。
 
 Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证或导入之前，必须使用 `unconfined` 会话，或在 `standard` 模式下由已启用并配置的权限审核器返回允许决定。只读模式拒绝变更。工作区写入权限本身不授权宿主代码执行。可执行程序和插件存储由宿主选择；该工具不授予对 `$WUU_HOME` 的通用文件系统访问权限。不支持远程执行环境中的源码路径。

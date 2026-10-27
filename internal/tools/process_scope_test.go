@@ -27,6 +27,7 @@ func (a *processScopeAuthorizer) Authorize(_ context.Context, r AuthorizationReq
 }
 
 func TestHostProcessScopeRunsWithoutToolkit(t *testing.T) {
+	t.Setenv("WUU_CLI_EXECUTABLE", "/old-host/wuu")
 	root := t.TempDir()
 	manager, err := proc.NewManager(root, t.TempDir())
 	if err != nil {
@@ -34,7 +35,7 @@ func TestHostProcessScopeRunsWithoutToolkit(t *testing.T) {
 	}
 	auth := &processScopeAuthorizer{}
 	scope := NewProcessScope(ProcessScopeConfig{Manager: manager, RootDir: root, ThreadID: "thread", ActorID: "actor", PermissionMode: "unconfined", Boundary: UnconfinedBoundary(), Authorizer: auth})
-	process, gotManager, err := scope.Start(context.Background(), "printf 'host-owned-output'", "")
+	process, gotManager, err := scope.Start(context.Background(), `test -z "${WUU_CLI_EXECUTABLE+x}" && printf 'host-owned-output'`, "")
 	if err != nil {
 		t.Fatal(err)
 	}
