@@ -44,6 +44,12 @@ In a single conversation, opening a workspace file keeps the conversation visibl
 
 For a PDF delivered in the current conversation, the preview input sends that exact snapshot as a PDF attachment. Workspace-file previews instead identify the selected file by its workspace path. Switching to another tool removes the preview’s implicit file context from subsequent requests.
 
+### Agent directory listings
+
+`list_files` reads entries and metadata for the requested directory, not file contents or subdirectories. Its `workspace_revision` is an opaque token for those visible entries. Keep the same path and pass `page.next.offset` and `page.next.expected_revision` to continue. Changed entry names, types, or sizes invalidate continuation; unrelated files and content-only changes with the same size do not. Use `read_file` to inspect file contents before editing.
+
+Cancellation is checked before listing and between filesystem operations. It does not interrupt a stalled operating-system filesystem call. A canceled listing is recorded as interrupted rather than a successful read; stopping a program still waits for admitted side effects to settle.
+
 ### Agent file search
 
 The agent's `grep` and `glob` tools search current files when `offset` is omitted or `0`. This also applies after external edits or reopening a conversation; a previous search cache does not establish that files are unchanged.

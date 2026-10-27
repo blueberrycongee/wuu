@@ -1079,7 +1079,7 @@ func (t *ListFilesTool) IsConcurrencySafe() bool { return true }
 func (t *ListFilesTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "list_files",
-		Description: "List directory entries. Defaults to workspace root and returns workspace_revision, name, path, is_dir, size, and page.next for stable non-overlapping continuation.",
+		Description: "List directory entries without reading file contents or subdirectories. Defaults to workspace root and returns name, path, is_dir, size, and page.next for stable non-overlapping continuation. workspace_revision is an opaque snapshot token for the visible directory entries, not a whole-workspace content revision.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1101,6 +1101,9 @@ func (t *ListFilesTool) Definition() providers.ToolDefinition {
 }
 
 func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var args struct {
 		Path             string `json:"path"`
 		Offset           int    `json:"offset"`
@@ -1141,6 +1144,9 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 	visibleEntries := make([]map[string]any, 0, len(entries))
 	omittedProtected := 0
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		entryPath := filepath.Join(resolved, entry.Name())
 		displayPath := t.env.NormalizeDisplayPathExec(ctx, entryPath)
 		// The app's own credential files stay hidden in every mode,
@@ -1167,7 +1173,13 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 		}
 		visibleEntries = append(visibleEntries, item)
 	}
-	revision := continuationSnapshotRevision(workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome), "list_files", visibleEntries)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	// Pagination depends only on the entries being listed. A workspace digest
+	// would read file contents and unrelated subtrees without improving this
+	// cursor's protection against skipped or repeated entries.
+	revision := continuationResultRevision("list_files", visibleEntries)
 	if err := validateStableOffset("list_files", args.Offset, args.ExpectedRevision, revision); err != nil {
 		return "", err
 	}

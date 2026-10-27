@@ -1,9 +1,83 @@
 package host
 
 import (
+	"context"
+	"io"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+func TestHostShutdownWaitsForAppServerCleanup(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		name := "current connection"
+		if replace {
+			name = "superseded connection"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				store, pub := makeStore(t, "test-phone")
+				release := make(chan struct{})
+				finished := make(chan struct{}, 2)
+				var calls atomic.Int32
+				defer close(release)
+				h := &Host{
+					store: store, baseCtx: context.Background(),
+					sessions: make(map[string]*deviceSession),
+					appServer: func(ctx context.Context, _ io.Reader, _ io.Writer) error {
+						first := calls.Add(1) == 1
+						<-ctx.Done()
+						// The first connection still owns runtime resources during
+						// cleanup, even if a replacement is already serving traffic.
+						if first {
+							<-release
+						}
+						finished <- struct{}{}
+						return nil
+					},
+				}
+				session := h.ensureSession(pub)
+				start := func() {
+					session.mu.Lock()
+					if session.app != nil {
+						session.app.close()
+					}
+					session.app = session.newAppConnLocked("")
+					session.mu.Unlock()
+					synctest.Wait()
+				}
+				start()
+				connections := 1
+				if replace {
+					start()
+					connections++
+				}
+				done := make(chan struct{})
+				go func() {
+					h.shutdownSessions()
+					close(done)
+				}()
+				synctest.Wait()
+				select {
+				case <-done:
+					t.Fatal("host shutdown returned while app-server cleanup still used the runtime")
+				default:
+				}
+				release <- struct{}{}
+				synctest.Wait()
+				select {
+				case <-done:
+				default:
+					t.Fatal("host shutdown did not finish after connection cleanup")
+				}
+				if len(finished) != connections {
+					t.Fatal("host shutdown skipped a connection's cleanup")
+				}
+			})
+		})
+	}
+}
 
 func TestClassifyPushHintTurnCompleted(t *testing.T) {
 	line := []byte(`{"method":"turn/completed","params":{"thread_id":"thread-1","turn":{"id":"turn-1"}}}`)

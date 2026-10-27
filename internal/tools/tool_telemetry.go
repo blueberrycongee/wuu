@@ -112,13 +112,11 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	startedAt := time.Now()
 	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
 	revisionBefore := ""
-	if !remoteWorkspace {
-		revisionBefore = workspaceRevision(ctx, t.env.RootDir, t.env.RuntimeHome)
-	}
-	// Hand the freshly computed revision to the tool so read-only tools can
-	// reuse it instead of re-running git for the same root.
-	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
 	decision := ToolPolicyDecision{Action: ToolPolicyAllow, Reason: "workspace boundary"}
+	if err := ctx.Err(); err != nil {
+		t.recordToolExecution(ctx, call, info, decision, startedAt, "", "", "", "", "", false, err, nil)
+		return toolresult.Result{}, err
+	}
 
 	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
@@ -137,6 +135,22 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 		return toolresult.Result{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		t.recordToolExecution(ctx, call, info, decision, startedAt, "", "", "", "", "", false, err, nil)
+		return toolresult.Result{}, err
+	}
+
+	// Listings have their own entry-snapshot token. Fingerprinting the whole
+	// workspace would open unrelated files (and can hydrate cloud-backed files).
+	// An orchestrator's leaf calls own their evidence; its wrappers must not
+	// introduce additional workspace reads before or after those calls.
+	trackWorkspaceRevision := !remoteWorkspace && call.Name != "list_files" && call.Name != codeModeExecToolName
+	if trackWorkspaceRevision {
+		revisionBefore = workspaceRevision(ctx, t.env.RootDir, t.env.RuntimeHome)
+	}
+	// Read-only tools may reuse the revision for this root. Permission and
+	// argument validation happen before any optional evidence collection.
+	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
 
 	var result toolresult.Result
 	var err error
@@ -178,14 +192,24 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	}
 
 	revisionAfter := revisionBefore
-	if !info.ReadOnly && !remoteWorkspace {
+	if !info.ReadOnly && trackWorkspaceRevision {
 		// A mutating tool may have changed the workspace; recompute so the
 		// telemetry record shows the post-execution state. Read-only tools
 		// cannot mutate, so their before/after revisions are identical and
 		// the second git round-trip is pure overhead.
 		revisionAfter = workspaceRevision(ctx, t.env.RootDir, t.env.RuntimeHome)
 	}
-	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, err, projectionDiag)
+	telemetryErr := err
+	if telemetryErr == nil && result.IsError {
+		// Rich results can report failure without a Go error, including a
+		// canceled run_code receipt. Preserve its public return semantics while
+		// keeping telemetry consistent without copying output into diagnostics.
+		telemetryErr = ctx.Err()
+		if telemetryErr == nil {
+			telemetryErr = errors.New("tool returned an error result")
+		}
+	}
+	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, telemetryErr, projectionDiag)
 	return returned, err
 }
 

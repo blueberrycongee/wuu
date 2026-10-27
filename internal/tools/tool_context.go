@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -393,14 +392,17 @@ func (t *Toolkit) ToolResultSummaryContextBlock() (wuucontext.Block, bool) {
 	if len(records) > maxRenderedRecords {
 		start = len(records) - maxRenderedRecords
 	}
-	currentRevision := workspaceRevision(context.Background(), t.env.RootDir, t.env.RuntimeHome)
+	// Historical telemetry must not trigger new file reads. The latest call's
+	// observation can flag older evidence, but cannot establish current content.
+	// An operation without a revision leaves freshness unknown.
+	observedRevision := records[len(records)-1].RevisionAfter
 	if wuucontext.DynamicContextProjectionEnabled() {
 		return wuucontext.Block{
 			Kind:        wuucontext.BlockToolResultSummary,
 			Title:       "Recent tool result summary",
 			Source:      "tool_telemetry",
 			TokenBudget: 400,
-			Content:     t.compactToolResultSummary(records, start, currentRevision),
+			Content:     t.compactToolResultSummary(records, start, observedRevision),
 		}, true
 	}
 
@@ -422,7 +424,7 @@ func (t *Toolkit) ToolResultSummaryContextBlock() (wuucontext.Block, bool) {
 		if record.ResultAction != "" {
 			fmt.Fprintf(&b, " result_action=%s", compactContextLine(redactToolOutput(record.ResultAction)))
 		}
-		if evidenceStatus := toolEvidenceStatus(record, currentRevision); evidenceStatus != "" {
+		if evidenceStatus := toolEvidenceStatus(record, observedRevision); evidenceStatus != "" {
 			fmt.Fprintf(&b, " evidence_status=%s", evidenceStatus)
 		}
 		if record.ResultBudgeted {
@@ -470,7 +472,7 @@ func (t *Toolkit) ToolResultSummaryContextBlock() (wuucontext.Block, bool) {
 	}, true
 }
 
-func (t *Toolkit) compactToolResultSummary(records []ToolExecutionRecord, start int, currentRevision string) string {
+func (t *Toolkit) compactToolResultSummary(records []ToolExecutionRecord, start int, observedRevision string) string {
 	recent := records[start:]
 	var b strings.Builder
 	b.WriteString("tools: ")
@@ -491,7 +493,7 @@ func (t *Toolkit) compactToolResultSummary(records []ToolExecutionRecord, start 
 	b.WriteString("\n")
 
 	for _, record := range recent {
-		stale := toolEvidenceStatus(record, currentRevision) == "possibly_stale"
+		stale := toolEvidenceStatus(record, observedRevision) == "possibly_stale"
 		nonAllow := record.PolicyAction != "" && record.PolicyAction != ToolPolicyAllow
 		patchRisk := record.PatchRiskSummary != nil && record.PatchRiskSummary.RiskLevel != "low"
 		if record.Success && !record.ResultBudgeted && record.ResultRef == "" && !stale && !nonAllow && !patchRisk {
@@ -537,14 +539,11 @@ func (t *Toolkit) compactToolResultSummary(records []ToolExecutionRecord, start 
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func toolEvidenceStatus(record ToolExecutionRecord, currentRevision string) string {
-	currentRevision = strings.TrimSpace(currentRevision)
+func toolEvidenceStatus(record ToolExecutionRecord, observedRevision string) string {
+	observedRevision = strings.TrimSpace(observedRevision)
 	revisionAfter := strings.TrimSpace(record.RevisionAfter)
-	if currentRevision == "" || revisionAfter == "" {
+	if observedRevision == "" || revisionAfter == "" || revisionAfter == observedRevision {
 		return ""
-	}
-	if revisionAfter == currentRevision {
-		return "current"
 	}
 	return "possibly_stale"
 }
