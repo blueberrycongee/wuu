@@ -16,6 +16,7 @@ const adapterRequests: LogicalModelRequestV1[] = [];
 const phases: Array<{ phase: string; origin: unknown }> = [];
 const middlewareOrigins: Array<{ tag?: string; origin: unknown }> = [];
 let adapterCancelled = 0;
+let adapterUnaryHeld = 0;
 let adapterFinalReceiptHeld = 0;
 let observerFailures = 0;
 let automatic = "";
@@ -149,6 +150,7 @@ export default {
       adapterRequests.push(structuredClone(input.request));
       const mode = input.request.provider_options?.fixture_mode;
       if (mode === "hold") {
+        if (!input.stream) adapterUnaryHeld++;
         await new Promise<void>(resolve => {
           if (execution.signal.aborted) return resolve();
           execution.signal.addEventListener("abort", () => resolve(), { once: true });
@@ -201,7 +203,7 @@ export default {
     const { method, input } = params.input as { method: string; input: Record<string, unknown> };
     let result: unknown;
     switch (method) {
-      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, adapterFinalReceiptHeld, observerFailures, phases, middlewareOrigins, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure, unaryValidation }; break;
+      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, adapterUnaryHeld, adapterFinalReceiptHeld, observerFailures, phases, middlewareOrigins, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure, unaryValidation }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await compare(host, input as { request: LogicalModelRequestV1 }); break;
       case "inspect": result = await inspectBackground(host, input as { job_id: string }); break;

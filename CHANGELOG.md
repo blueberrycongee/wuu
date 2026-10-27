@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add opt-in, metadata-only `model.request.metrics` observations with exact request/turn correlation, host-observed first-output timing, explicit adapter-reported usage, and bounded nonblocking delivery across cancellation and plugin replacement.
+
 - Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
 - Compose explicit consumer-scoped service delegates so downstream packages can augment selected methods while reusing the remaining implementation, with the same dependency, cancellation, and retirement rules as complete provider replacements.
 - Verify independent public-SDK providers and additive service/UI cooperation through executable conformance gates, including disabled providers, rejected upgrades, retained tasks, revoked access, and uncertain delivery.
