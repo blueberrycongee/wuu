@@ -1480,6 +1480,7 @@ func TestCachedThreadRestoresPersistedModelSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 	th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), "persisted-model-thread")
 	if err != nil {
 		t.Fatal(err)

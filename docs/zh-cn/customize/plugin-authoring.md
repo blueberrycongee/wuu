@@ -422,10 +422,54 @@ async function requestText(host: RuntimeHost, content: string) {
 | --- | --- |
 | `model.request.transform` | 版本 1 的 `transform` capability，接收 `{ request, origin }`，在提供商调用前返回 `{ request? }`。 |
 | `model.request.observe` | 版本 1 的 `observe` capability，观察请求及终态响应或错误，并接收完整逻辑请求和宿主确认的来源。 |
+| `model.request.metrics` | 版本 1 的仅元数据 `observe` capability。以有界、非阻塞方式投递终态耗时和适配器报告的用量，不含请求或响应内容。 |
 | `model.middleware` | 版本 1 的 `decision` capability，错误策略为 `propagate`；可包装调用、返回替代响应，或执行一次性 continuation。 |
 | `model.adapter` | 版本 1 的 `decision` capability，错误策略为 `propagate`；提供显式选中的适配器实现。 |
 
 插件发起的独立请求绕过请求 hook 和 around-call middleware，因此观察普通请求后重放不会递归触发同一策略。`origin.kind`、`plugin_id`、operation ID 和可用的会话上下文由宿主填写；复制这些字段不能冒充普通代理请求。
+
+### 仅元数据的模型性能观察
+
+使用协议 2 或 3，声明 `MODEL_REQUEST_METRICS_CAPABILITY`
+（`model.request.metrics`），并设置 `kind: "observe", version: 1`，即可接收
+`ModelRequestMetricsInput`。它与包含内容的 `model.request.observe` 独立：不发送
+提示词、输出内容、工具参数、provider options 或原始错误，回调不会延迟或改变模型
+完成。性能展示和延迟诊断插件无需保留会话快照。
+
+每条终态记录对应一次选定适配器调用，在外层 middleware 改写响应之前采集。
+`request_id` 在每次调用中唯一；`origin.operation_id` 关联重试，`attempt_id`
+在可用时标识已准入的尝试。会话元数据和 `turn_id` 仅来自宿主确认的执行上下文；
+缺失时不推测。独立插件调用也会被观察，但从指标回调派生的推理除外，以防递归。
+仅由 middleware 缓存返回、或在进入适配器前被拒绝的请求不产生记录。
+这不是工具耗时或外部原生引擎的事件流。
+
+- `duration_ms` 使用宿主单调时钟，从适配器准入计时至终态，包含容量等待。
+  `started_at` 是用于展示的墙上时钟时间，不应用来计算耗时。
+- `first_output_ms` 是宿主观察到流中首个非空文本、思考、工具输出或图片的延迟，
+  只是首输出时间的近似指标，不是 provider 的首 token 时间戳。
+  非流式调用和空响应不包含此字段。
+- `text_delta_events` 和 `text_utf8_bytes` 统计非空文本增量，不是 token 数。
+  思考和替换事件不计入；流重置不会抹除已经观察到的传输量。
+- 可选的 `usage` 是适配器最后报告的用量，标注为
+  `usage_source: "adapter_reported"`。原生 provider 适配器转发 provider 用量，
+  自定义适配器也可提供自己的值；这不是独立验证的物理计费凭据。
+  缺失表示未知，不能当作零或用分块数估算；取消时可能只有部分用量。
+  输出 token 数除以总耗时只能得到请求平均速率，不能称为瞬时生成速度。
+- `status` 为 `completed`、`error`、`cancelled`（含超时），或流未发送终态就
+  关闭时的 `incomplete`。每次调用最多采集一条终态记录，也覆盖提前退出迭代器的取消。
+
+投递是尽力而为且不持久化。每个精确的插件注册拥有一个串行回调和最多 64 条记录的
+队列。队列满时丢弃新记录，`dropped_before` 报告自上次投递回调以来的溢出数量。
+回调期限为五秒，超时会取消回调。超时或未确认完成的执行取消都会丢弃队列，
+并暂停该注册的指标投递直至重新加载：
+取消信号不能证明远端处理函数已经停止。未确认停止的回调之后不会再启动新的指标回调，
+插件的其他 capability 仍可使用。移除插件或关闭代际时，宿主取消投递、丢弃排队记录，
+等待投递结束后进入插件的正常进程清理；旧记录不会转发到替代注册。
+投递失败被隔离，只留下固定的、
+不含内容的插件诊断（`error_policy: "ignore"` 除外）；溢出也留下诊断。
+失败不会变成会话提示或模型错误。不要将此事件流视为恰好一次的计费账本。
+回调应保持简短；如观察时还需处理本插件其他回调，可显式声明
+`concurrentCapabilities`。
 
 ### 独立调用与流式响应
 

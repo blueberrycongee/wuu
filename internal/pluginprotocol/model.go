@@ -2,7 +2,10 @@
 // It contains no plugin authoring or process runtime API.
 package pluginprotocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	KernelModelInvokeService        = "host.model.invoke"
@@ -10,6 +13,7 @@ const (
 	KernelBackgroundService         = "host.background"
 	CapabilityModelRequestTransform = "model.request.transform"
 	CapabilityModelRequestObserve   = "model.request.observe"
+	CapabilityModelRequestMetrics   = "model.request.metrics"
 	CapabilityModelAdapter          = "model.adapter"
 	CapabilityModelMiddleware       = "model.middleware"
 )
@@ -245,6 +249,30 @@ type ModelResponseObserveInput struct {
 }
 
 type ModelRequestObserveInput = ModelResponseObserveInput
+
+// ModelRequestMetricsInput is one metadata-only selected-adapter invocation.
+// Durations use the host monotonic clock; chunks and bytes are never tokens.
+// Delivery is bounded, best effort, and independent of the model execution.
+type ModelRequestMetricsInput struct {
+	Version         int                     `json:"version"`
+	RequestID       string                  `json:"request_id"`
+	Origin          ModelInvocationOriginV1 `json:"origin"`
+	TurnID          string                  `json:"turn_id,omitempty"`
+	AttemptID       string                  `json:"attempt_id,omitempty"`
+	Adapter         string                  `json:"adapter"`
+	Provider        string                  `json:"provider,omitempty"`
+	Model           string                  `json:"model"`
+	Streaming       bool                    `json:"streaming"`
+	Status          string                  `json:"status"`
+	StartedAt       time.Time               `json:"started_at"`
+	DurationMS      float64                 `json:"duration_ms"`
+	FirstOutputMS   *float64                `json:"first_output_ms,omitempty"`
+	TextDeltaEvents int                     `json:"text_delta_events"`
+	TextUTF8Bytes   int                     `json:"text_utf8_bytes"`
+	Usage           *ModelRequestUsage      `json:"usage,omitempty"`
+	UsageSource     string                  `json:"usage_source,omitempty"`
+	DroppedBefore   uint64                  `json:"dropped_before,omitempty"`
+}
 
 type ModelMiddlewareInput struct {
 	Version        int                     `json:"version"`

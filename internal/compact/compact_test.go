@@ -160,7 +160,7 @@ func (j *recordingCompactJournal) CompleteOperation(record providers.InferenceOp
 	return nil
 }
 
-func (*recordingCompactJournal) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error {
+func (*recordingCompactJournal) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
 	return nil
 }
 

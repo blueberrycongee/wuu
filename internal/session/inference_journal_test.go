@@ -521,7 +521,7 @@ func TestInferenceJournalCompletesWorkflowOnlyAfterOperationsAreTerminal(t *test
 		record := providers.InferenceWorkflowTerminalRecord{
 			WorkflowID: workflowID, Outcome: providers.InferenceOutcomeSucceeded, At: now.Add(time.Second),
 		}
-		if err := journal.CompleteWorkflow(record); err == nil {
+		if err := journal.CompleteWorkflow(context.Background(), record); err == nil {
 			t.Fatal("workflow completed while an operation was active")
 		}
 		if err := journal.CompleteOperation(providers.InferenceOperationTerminalRecord{
@@ -529,15 +529,15 @@ func TestInferenceJournalCompletesWorkflowOnlyAfterOperationsAreTerminal(t *test
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := journal.CompleteWorkflow(record); err != nil {
+		if err := journal.CompleteWorkflow(context.Background(), record); err != nil {
 			t.Fatal(err)
 		}
-		if err := journal.CompleteWorkflow(record); err != nil {
+		if err := journal.CompleteWorkflow(context.Background(), record); err != nil {
 			t.Fatalf("idempotent workflow completion: %v", err)
 		}
 		conflict := record
 		conflict.Outcome = providers.InferenceOutcomeFailed
-		if err := journal.CompleteWorkflow(conflict); err == nil {
+		if err := journal.CompleteWorkflow(context.Background(), conflict); err == nil {
 			t.Fatal("workflow terminal outcome changed")
 		}
 
@@ -590,7 +590,7 @@ func TestInferenceJournalSettlesLateUsageAfterWorkflowCompletion(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := journal.CompleteWorkflow(providers.InferenceWorkflowTerminalRecord{
+		if err := journal.CompleteWorkflow(context.Background(), providers.InferenceWorkflowTerminalRecord{
 			WorkflowID: workflowID, Outcome: providers.InferenceOutcomeSucceeded, At: now,
 		}); err != nil {
 			t.Fatal(err)
@@ -1926,7 +1926,7 @@ func TestInferenceJournalPrunesOnlyOldTerminalOperations(t *testing.T) {
 			if err := journal.CompleteOperation(providers.InferenceOperationTerminalRecord{OperationID: op.ID, Outcome: providers.InferenceOutcomeAbandoned, At: at}); err != nil {
 				t.Fatal(err)
 			}
-			if err := journal.CompleteWorkflow(providers.InferenceWorkflowTerminalRecord{
+			if err := journal.CompleteWorkflow(context.Background(), providers.InferenceWorkflowTerminalRecord{
 				WorkflowID: "iwf-" + op.ID, Outcome: providers.InferenceOutcomeAbandoned, At: at,
 			}); err != nil {
 				t.Fatal(err)
@@ -2013,7 +2013,7 @@ func TestInferenceRecoveryAndPruningUseBoundedScopeReads(t *testing.T) {
 		if err := journal.CompleteOperation(providers.InferenceOperationTerminalRecord{OperationID: operation.ID, Outcome: providers.InferenceOutcomeSucceeded, At: at}); err != nil {
 			t.Fatal(err)
 		}
-		if err := journal.CompleteWorkflow(providers.InferenceWorkflowTerminalRecord{WorkflowID: "iwf-" + operation.ID, Outcome: providers.InferenceOutcomeSucceeded, At: at}); err != nil {
+		if err := journal.CompleteWorkflow(context.Background(), providers.InferenceWorkflowTerminalRecord{WorkflowID: "iwf-" + operation.ID, Outcome: providers.InferenceOutcomeSucceeded, At: at}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := runtime.ReconcileOrphans(time.Now()); err != nil {

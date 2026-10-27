@@ -199,7 +199,10 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 		return nil, err
 	}
 	selection := productComposition(opts.Config.Composition, false, plugins, opts.NativeProviders)
-	host, kernel, err := buildPluginHost(plugins, root, workspaceID, home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, "", opts.NativeProviders...)
+	// An inferred product includes discovered add-ons for availability, not as
+	// required contracts. Keep the same selection provenance as Session.New so
+	// a broken optional add-on cannot prevent state access or plugin recovery.
+	host, kernel, err := buildPluginHostWithSelection(ctx, plugins, root, workspaceID, home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, opts.Config.Composition != nil, "", opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}
@@ -222,8 +225,24 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 			generation.Release()
 		}
 	}()
-	if err := host.Activate(ctx); err != nil {
-		return nil, fmt.Errorf("activate state composition: %w", err)
+	activationErr := host.Activate(ctx)
+	// Explicit service choices remain required even without a module list.
+	// Activation can retire a selected provider through a failed dependency.
+	if bindingErr := host.ServiceRegistry().ValidateBindings(); bindingErr != nil {
+		return nil, fmt.Errorf("activate state composition: %w", errors.Join(activationErr, bindingErr))
+	}
+	if err := activationErr; err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("activate state composition: %w", err)
+		}
+		for _, status := range host.Statuses() {
+			if kernel.requiredPlugins[status.ID] && (status.State == pluginhost.StateFailed || status.State == pluginhost.StateStopped) {
+				return nil, fmt.Errorf("activate state composition: %w", err)
+			}
+		}
+		// Optional failures remain in the host inventory; independent selected
+		// providers stay usable, including the configuration recovery path.
+		providers.DebugLogf("activate optional state plugin: %v", err)
 	}
 	if kernel.state == nil || kernel.state.Status().State != pluginhost.StateActive {
 		return nil, errors.New("selected composition has no active session state")

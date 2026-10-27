@@ -118,6 +118,12 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
+	metrics := beginModelRequestMetrics(ctx, c.host, req, false)
+	logicalCtx := ctx
+	defer func() {
+		metrics.usage(responseResult.Usage)
+		metrics.finishError(logicalCtx, resultErr)
+	}()
 	scope, err := c.host.OpenServiceScope(ctx, modelExecutionConsumer, capacityPolicyService, capacityResourceService)
 	if err != nil {
 		return providers.ChatResponse{}, err
@@ -138,7 +144,7 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 
 func (c *modelAdapterClient) OwnsStreamAccounting() bool { return true }
 
-func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatRequest) (result <-chan providers.StreamEvent, resultErr error) {
 	req, capability, err := c.selected(ctx, req)
 	if err != nil {
 		return nil, err
@@ -157,7 +163,14 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 	if err != nil {
 		return nil, err
 	}
+	metrics := beginModelRequestMetrics(ctx, c.host, req, true)
 	logicalCtx := ctx
+	streamOwnsMetrics := false
+	defer func() {
+		if !streamOwnsMetrics {
+			metrics.finishError(logicalCtx, resultErr)
+		}
+	}()
 	scope, err := c.host.OpenServiceScope(ctx, modelExecutionConsumer, capacityPolicyService, capacityResourceService)
 	if err != nil {
 		return nil, err
@@ -193,8 +206,16 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 	}
 	out := make(chan providers.StreamEvent, 32)
 	streamOwnsReceipt = true
+	streamOwnsMetrics = true
 	go func() {
 		defer close(out)
+		defer func() {
+			if logicalCtx.Err() != nil {
+				metrics.finish("cancelled")
+			} else {
+				metrics.finish("incomplete")
+			}
+		}()
 		for {
 			var event providers.StreamEvent
 			var open bool
@@ -212,6 +233,10 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 			observation.Usage = nil
 			if err := req.Attempt.ObserveStreamEvent(observation); err != nil {
 				event = providers.StreamEvent{Type: providers.EventError, Error: err}
+			}
+			metrics.observe(event)
+			if event.Type == providers.EventDone || event.Type == providers.EventError {
+				metrics.finishError(logicalCtx, event.Error)
 			}
 			select {
 			case out <- event:

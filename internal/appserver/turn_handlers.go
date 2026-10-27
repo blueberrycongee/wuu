@@ -3640,10 +3640,6 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	th.mu.Unlock()
 
-	completedObservation := pluginhost.AgentTurnCompletedInput{
-		ThreadID: th.ID, TurnID: turnID, StartedAt: startedAt, CompletedAt: now,
-		Succeeded: err == nil, InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
-	}
 	// Persist a terminal boundary for every user turn, including ordinary
 	// successes. History projection uses this durable timestamp to restore the
 	// elapsed duration after restart instead of fabricating a sub-second result.
@@ -3880,6 +3876,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// Observers are advisory and must not delay terminal state publication. In
 	// particular, a plugin helper can be blocked in a host service while core
 	// is trying to report the cancellation of that same service's child turn.
+	// Capture only the settled outcome: execution can succeed before a required
+	// terminal or Run write fails, and observers may schedule follow-up work.
+	completedObservation := pluginhost.AgentTurnCompletedInput{
+		ThreadID: th.ID, TurnID: turnID, StartedAt: startedAt, CompletedAt: now,
+		Succeeded: err == nil && durabilityErr == nil, InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
+	}
 	observer, observerErr := s.retainThreadExecutionState(binding, threadRuntime)
 	if observerErr != nil {
 		providers.DebugLogf("retain completed turn observer for %q: %v", th.ID, observerErr)

@@ -10,7 +10,8 @@ import (
 )
 
 type workflowRecordingJournal struct {
-	completed []providers.InferenceWorkflowTerminalRecord
+	completed     []providers.InferenceWorkflowTerminalRecord
+	completionErr error
 }
 
 func (*workflowRecordingJournal) PrepareOperation(providers.InferenceOperationJournalRecord) error {
@@ -34,9 +35,9 @@ func (*workflowRecordingJournal) PrepareRecoveryAttempt(context.Context, provide
 func (*workflowRecordingJournal) CompleteOperation(providers.InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (j *workflowRecordingJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
+func (j *workflowRecordingJournal) CompleteWorkflow(ctx context.Context, record providers.InferenceWorkflowTerminalRecord) error {
 	j.completed = append(j.completed, record)
-	return nil
+	return j.completionErr
 }
 
 type fakeStreamBackedClient struct {

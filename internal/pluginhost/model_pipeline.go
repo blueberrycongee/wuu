@@ -6,6 +6,7 @@ const (
 	KernelModelInvokeService        = pluginprotocol.KernelModelInvokeService
 	CapabilityModelRequestTransform = pluginprotocol.CapabilityModelRequestTransform
 	CapabilityModelRequestObserve   = pluginprotocol.CapabilityModelRequestObserve
+	CapabilityModelRequestMetrics   = pluginprotocol.CapabilityModelRequestMetrics
 	CapabilityModelMiddleware       = pluginprotocol.CapabilityModelMiddleware
 )
 
@@ -32,6 +33,7 @@ type ModelRequestMiddlewareInput = pluginprotocol.ModelRequestMiddlewareInput
 type ModelRequestMiddlewareOutput = pluginprotocol.ModelRequestMiddlewareOutput
 type ModelResponseObserveInput = pluginprotocol.ModelResponseObserveInput
 type ModelRequestObserveInput = pluginprotocol.ModelRequestObserveInput
+type ModelRequestMetricsInput = pluginprotocol.ModelRequestMetricsInput
 type ModelMiddlewareInput = pluginprotocol.ModelMiddlewareInput
 type ModelMiddlewareOutput = pluginprotocol.ModelMiddlewareOutput
 type ModelInvokeParams = pluginprotocol.ModelInvokeParams

@@ -1281,6 +1281,7 @@ export interface AgentTurnCompletedInput {
   turn_id: string;
   started_at: string;
   completed_at: string;
+  /** True only when execution and required durable settlement succeeded; not task-level acceptance. */
   succeeded: boolean;
   input_tokens: number;
   output_tokens: number;

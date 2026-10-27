@@ -633,6 +633,7 @@ type SessionContextBlock struct {
 }
 
 // AgentTurnCompletedInput is a product-neutral settled-turn observation.
+// Succeeded includes required durable settlement, not task-level acceptance.
 type AgentTurnCompletedInput struct {
 	ThreadID     string    `json:"thread_id"`
 	TurnID       string    `json:"turn_id"`
@@ -1004,7 +1005,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamTransform
 	case CapabilityAgentCompaction, CapabilityAgentStepPolicy:
 		requiredKind = SeamDecision
-	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve:
+	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve, CapabilityModelRequestMetrics:
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnLifecycle:
 		requiredKind = SeamObserve
@@ -1040,7 +1041,7 @@ func EffectiveErrorPolicy(c CapabilityDescriptor) ErrorPolicy {
 	if c.ErrorPolicy != "" {
 		return c.ErrorPolicy
 	}
-	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted || c.ID == CapabilityModelRequestObserve {
+	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted || c.ID == CapabilityModelRequestObserve || c.ID == CapabilityModelRequestMetrics {
 		return ErrorPolicyIsolate
 	}
 	return ErrorPolicyPropagate
@@ -1124,7 +1125,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelRequestMetrics, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}

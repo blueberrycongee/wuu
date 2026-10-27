@@ -8,41 +8,42 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
-	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// stuckPeersLifecycleClient simulates a peers helper whose single ordered
-// worker is blocked: lifecycle observations enter InvokeCapability and stay
-// there until released. Any synchronous re-entry from the turn drain into
-// this helper deadlocks, so the drain must never make that call inline.
-type stuckPeersLifecycleClient struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+// blockedPeersRegressionClient holds a capability until released or revoked,
+// making publication overlap an accepted callback without scheduling sleeps.
+type blockedPeersRegressionClient struct {
+	id         string
+	capability pluginhost.CapabilityDescriptor
+	entered    chan struct{}
+	release    chan struct{}
+	once       sync.Once
 }
 
-func (c *stuckPeersLifecycleClient) ID() string { return "peers" }
-func (c *stuckPeersLifecycleClient) Status() pluginhost.Status {
+func (c *blockedPeersRegressionClient) ID() string { return c.id }
+func (c *blockedPeersRegressionClient) Status() pluginhost.Status {
 	return pluginhost.Status{ID: c.ID(), State: pluginhost.StateActive}
 }
-func (c *stuckPeersLifecycleClient) Close(context.Context) error { return nil }
-func (c *stuckPeersLifecycleClient) ProtocolVersion() int {
+func (c *blockedPeersRegressionClient) Close(context.Context) error { return nil }
+func (c *blockedPeersRegressionClient) ProtocolVersion() int {
 	return pluginhost.CapabilityProtocolVersion
 }
-func (c *stuckPeersLifecycleClient) Capabilities() []pluginhost.CapabilityDescriptor {
-	return []pluginhost.CapabilityDescriptor{{ID: pluginhost.CapabilityAgentTurnLifecycle, Kind: pluginhost.SeamObserve, Version: 1}}
+func (c *blockedPeersRegressionClient) Capabilities() []pluginhost.CapabilityDescriptor {
+	return []pluginhost.CapabilityDescriptor{c.capability}
 }
-func (c *stuckPeersLifecycleClient) InvokeCapability(ctx context.Context, _ pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+func (c *blockedPeersRegressionClient) InvokeCapability(ctx context.Context, _ pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
 	c.once.Do(func() { close(c.entered) })
 	select {
 	case <-c.release:
-		return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 	case <-ctx.Done():
-		return pluginhost.CapabilityInvokeResult{}, ctx.Err()
 	}
+	if err := ctx.Err(); err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 }
 
 // TestDisablingPeersCannotBlockOrdinaryMessageSends is the end-to-end
@@ -59,19 +60,45 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	peers := &stuckPeersLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
+	peers := &blockedPeersRegressionClient{
+		id: "peers", capability: pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityAgentTurnLifecycle, Kind: pluginhost.SeamObserve, Version: 1},
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	preStep := &blockedPeersRegressionClient{
+		id: "goal", capability: pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityAgentPreStep, Kind: pluginhost.SeamTransform, Version: 1},
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	// Keep a foreground callback in flight across publication. A truncated
+	// catalog would incorrectly revoke this unrelated provider along with peers.
+	if outcome, found := rt.PluginHost.RetirePlugin(context.Background(), preStep.ID(), nil); outcome.Err != nil || !found {
+		t.Fatalf("replace foreground pre-step provider: found=%t err=%v", found, outcome.Err)
+	}
+	rt.PluginHost.Add(preStep)
+	releasePreStep := sync.OnceFunc(func() { close(preStep.release) })
+	t.Cleanup(releasePreStep)
 	// Replace the bundled observer so the queued turn reaches this blocked fixture.
 	if outcome, _ := rt.PluginHost.RetirePlugin(context.Background(), peers.ID(), nil); outcome.Err != nil {
 		t.Fatal(outcome.Err)
 	}
 	rt.PluginHost.Add(peers)
-	rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: peers.ID()}, SubjectID: "plugin:peers", Official: true}}
-	rt.ActivePlugins = rt.Plugins
+	// Preserve the complete discovered catalog and its real policy identity.
+	// Publication must disable only peers, not remove unrelated providers.
+	peersSubject := ""
+	for _, item := range rt.Plugins {
+		if item.ID == peers.ID() {
+			peersSubject = item.SubjectID
+			break
+		}
+	}
+	if peersSubject == "" {
+		t.Fatal("peers package is missing from the discovered catalog")
+	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	binding := testRuntimeState(t, rt)
 	t.Cleanup(func() {
 		close(peers.release)
+		releasePreStep()
 		srv.Close()
 	})
 
@@ -111,10 +138,19 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 		t.Fatal("turn drain synchronously re-entered the blocked peers helper")
 	}
 
+	select {
+	case <-preStep.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground pre-step callback was never invoked")
+	}
+
 	// Disable peers through the real publication boundary while its turn is
 	// active. Retained callback leases must not delay explicit revocation.
-	settings := &extensions.Settings{}
-	settings.SetEnabled("plugin:peers", false)
+	settings := cfg.Extensions
+	if settings == nil {
+		settings = &extensions.Settings{}
+	}
+	settings.SetEnabled(peersSubject, false)
 	cfg.Extensions = settings
 	candidate, err := rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
@@ -123,6 +159,14 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
+
+	if _, found := binding.Host.Capability(preStep.ID(), pluginhost.CapabilityAgentPreStep); !found {
+		t.Fatal("disabling peers retired an unrelated foreground pre-step provider")
+	}
+	if _, found := binding.Host.Capability(peers.ID(), pluginhost.CapabilityAgentTurnLifecycle); found {
+		t.Fatal("disabled peers retained its lifecycle callback")
+	}
+	releasePreStep()
 
 	// The peers-owned turn itself still completes; its terminal lifecycle
 	// event is undeliverable and must be dropped instead of replayed forever.

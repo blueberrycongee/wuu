@@ -188,7 +188,7 @@ function adoptInventory(inventory) {
   const generations = new Set(inventory.filter(item => item.graph_generation).map(item => item.graph_generation));
   assert.equal(generations.size, 1, "inventory must identify one admitted service graph");
   graphGeneration = [...generations][0];
-  for (const name of ["replay", "shadow"]) fixtures[name] = inventory.find(plugin => plugin.name === name);
+  for (const name of ["replay", "shadow", "metrics"]) fixtures[name] = inventory.find(plugin => plugin.name === name);
 }
 async function client(name, method, input = {}) {
   const item = fixtures[name];
@@ -228,7 +228,7 @@ async function normalTurn(threadID, prompt) {
 try {
   result.core_sha256 = createHash("sha256").update(await readFile(binary)).digest("hex");
   result.checkout = { revision: spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim(), sources: {} };
-  for (const path of ["scripts/plugin-model-pipeline-e2e.mjs", "scripts/fixtures/model-pipeline/replay.ts", "scripts/fixtures/model-pipeline/shadow.ts"]) {
+  for (const path of ["scripts/plugin-model-pipeline-e2e.mjs", "scripts/fixtures/model-pipeline/replay.ts", "scripts/fixtures/model-pipeline/shadow.ts", "scripts/fixtures/model-pipeline/metrics.ts"]) {
     result.checkout.sources[path] = createHash("sha256").update(await readFile(join(root, path))).digest("hex");
   }
   await writeFile(configPath, JSON.stringify({
@@ -245,7 +245,7 @@ try {
       comparison: { provider: "fixture", model: "claude-fixture-alias", effort: "high" },
     } }, skills: { enabled: false }, ptc: { enabled: false },
   }));
-  for (const name of ["replay", "shadow"]) {
+  for (const name of ["replay", "shadow", "metrics"]) {
     const path = join(scratch, `${name}.ts`);
     await cp(join(root, `scripts/fixtures/model-pipeline/${name}.ts`), path);
     await publish(path);
@@ -258,14 +258,14 @@ try {
   });
   const initialized = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "model-pipeline-e2e" } });
   adoptInventory(initialized.extension_inventory);
-  for (const name of ["replay", "shadow"]) {
+  for (const name of ["replay", "shadow", "metrics"]) {
     const item = initialized.extension_inventory.find(plugin => plugin.name === name);
     assert(item, `${name} single-file fixture missing`);
     assert.equal(item.runtime_state, "active", JSON.stringify(item));
     fixtures[name] = item;
   }
   result.plugins = fixtures;
-  result.checks.push("two manifest-free TypeScript extensions loaded with public SDK only");
+  result.checks.push("three manifest-free TypeScript extensions loaded with public SDK only");
   // The remaining journeys use only public app-server and extension contracts.
   const registry = await rpc("plugin/registry/introspect");
   for (const service of ["host.model.invoke", "host.model.emit", "host.background"]) {
@@ -274,8 +274,66 @@ try {
   result.checks.push("versioned invocation, streaming and background services registered");
   const { thread } = await rpc("thread/start", { model: "claude-fixture", provider: "fixture" });
   let normalTurns = 0;
-  const turn = async tag => { await normalTurn(thread.id, tag); normalTurns++; };
-  await turn("pipeline-seed");
+  const turn = async tag => { const value = await normalTurn(thread.id, tag); normalTurns++; return value; };
+  const seedTurn = await turn("pipeline-seed");
+  const seedMetrics = (await fixtureState("metrics", state => state.records.some(record => record.turn_id === seedTurn.id), "metadata-only request metrics")).records.find(record => record.turn_id === seedTurn.id);
+  assert.equal(seedMetrics.version, 1);
+  assert.equal(seedMetrics.origin.session_id, thread.id);
+  assert.equal(seedMetrics.origin.thread_id, thread.id);
+  assert(seedMetrics.origin.operation_id && seedMetrics.attempt_id && seedMetrics.request_id);
+  assert.equal(seedMetrics.status, "completed");
+  assert.equal(seedMetrics.text_delta_events, 1);
+  assert.equal(seedMetrics.text_utf8_bytes, Buffer.byteLength("fixture:pipeline-seed:normal"));
+  assert.equal(seedMetrics.usage.output_tokens, 5);
+  assert.equal(seedMetrics.usage_source, "adapter_reported");
+  assert(seedMetrics.first_output_ms >= 0 && seedMetrics.first_output_ms <= seedMetrics.duration_ms);
+  for (const key of ["request", "messages", "result", "error", "content"]) assert(!(key in seedMetrics), `content field leaked: ${key}`);
+  assert(!JSON.stringify(seedMetrics).includes("pipeline-seed"), "prompt/output text leaked into metrics");
+  result.metrics_seed = seedMetrics;
+  result.checks.push("public-SDK metadata observer correlates exact turn/request/attempt, distinguishes text chunks from adapter usage, and receives no content");
+
+  await client("metrics", "mode", { mode: "hold" });
+  await turn("pipeline-metrics-held");
+  await fixtureState("metrics", state => state.held === 1, "slow observer entered");
+  const parallelTurn = await turn("pipeline-metrics-parallel");
+  const blocked = await client("metrics", "state");
+  assert.equal(blocked.cancelled, 0, "model completion waited for the five-second observer timeout");
+  const afterTimeout = await fixtureState("metrics", state => state.cancelled === 1, "observer timeout cancellation signal");
+  assert.equal(afterTimeout.activeCallbacks, 1, "fixture must retain its uncooperative remote handler");
+  assert(!afterTimeout.records.some(record => record.turn_id === parallelTurn.id), "queued work launched behind an unacknowledged cancelled handler");
+  await turn("pipeline-metrics-suspended");
+  const suspended = await client("metrics", "state");
+  assert.equal(suspended.activeCallbacks, 1);
+  assert.equal(suspended.records.length, afterTimeout.records.length, "timed-out observer admitted additional callbacks");
+  const timeoutDiagnostics = await rpc("plugin/diagnostics/list", { id: fixtures.metrics.id, fingerprint: fixtures.metrics.fingerprint });
+  assert(JSON.stringify(timeoutDiagnostics).includes("delivery suspended until plugin reload"));
+  const timedOutSource = join(scratch, "metrics.ts");
+  await writeFile(timedOutSource, (await readFile(timedOutSource, "utf8")) + "\n// Explicit reload resumes suspended metrics delivery.\n");
+  await publish(timedOutSource);
+  adoptInventory((await rpc("extension/catalog/refresh")).extension_inventory);
+  const resumed = await client("metrics", "state");
+  assert.notEqual(resumed.generation, afterTimeout.generation);
+  assert.equal(resumed.activeCallbacks, 0);
+  await client("metrics", "mode", { mode: "fail" });
+  await turn("pipeline-metrics-failed");
+  await fixtureState("metrics", state => state.failures === 1, "faulty observer isolated");
+  await turn("pipeline-metrics-recovered");
+  const metricDiagnostics = await rpc("plugin/diagnostics/list", { id: fixtures.metrics.id, fingerprint: fixtures.metrics.fingerprint });
+  assert(JSON.stringify(metricDiagnostics).includes("metrics observer failed"));
+  assert(!JSON.stringify(metricDiagnostics).includes("private-metrics-observer-error"));
+  result.checks.push("slow/faulty observers never stall model completion; an unacknowledged timeout suspends dispatch without killing unrelated plugin capabilities");
+  await client("metrics", "mode", { mode: "infer" });
+  await turn("pipeline-metrics-parent");
+  const selfInference = await fixtureState("metrics", state => state.inferences === 1, "observer-owned model invocation");
+  assert.equal(providerCallsFor("pipeline-metrics-self").length, 1);
+  assert(!selfInference.records.some(record => record.origin.plugin_id === fixtures.metrics.id.split(":").at(-1)), "metrics callback inference recursively reached observers");
+  result.checks.push("host-authenticated metrics callback provenance suppresses observer-owned inference recursion");
+  await client("metrics", "mode", { mode: "background" });
+  await turn("pipeline-metrics-background-parent");
+  const backgroundInference = await fixtureState("metrics", state => state.inferences === 2, "observer-owned background inference");
+  assert.equal(providerCallsFor("pipeline-metrics-background").length, 1);
+  assert(!backgroundInference.records.some(record => record.origin.plugin_id === fixtures.metrics.id.split(":").at(-1)), "background boundary lost authenticated metrics suppression");
+  result.checks.push("generation-owned background model analysis preserves metrics suppression without borrowing foreground authority");
   await turn("pipeline-raw-json");
   await client("replay", "arm", { tag: "pipeline-context" });
   await turn("pipeline-context");
@@ -370,6 +428,12 @@ try {
   const aliasResult = await terminalJob("replay", aliasStart.job_id);
   assert.equal(aliasResult.state, "completed", JSON.stringify(aliasResult));
   assert.equal(aliasResult.result.response.content, "fixture:shadow-result");
+  const unarySuccess = (await fixtureState("metrics", state => state.records.some(record => record.origin.operation_id === aliasResult.result.origin.operation_id), "unary completion metrics")).records.find(record => record.origin.operation_id === aliasResult.result.origin.operation_id);
+  assert.equal(unarySuccess.streaming, false);
+  assert.equal(unarySuccess.status, "completed", "internal scope cleanup was misreported as caller cancellation");
+  assert.equal(unarySuccess.first_output_ms, undefined);
+  assert.equal(unarySuccess.text_delta_events, 0);
+  assert.equal(unarySuccess.usage.output_tokens, 2);
   const inheritedAlias = (await client("shadow", "state")).adapterRequests.at(-1);
   assert.equal(inheritedAlias.provider, "fixture");
   assert.equal(inheritedAlias.model, "claude-fixture-alias");
@@ -421,6 +485,11 @@ try {
   assert.equal(shadow.result.result.response.content, "fixture:shadow-result");
   assert.equal(shadow.result.result.response.usage.input_tokens, 3);
   assert.equal(shadow.result.result.response.usage.output_tokens, 2);
+  const shadowMetrics = (await fixtureState("metrics", state => state.records.some(record => record.origin.operation_id === shadow.result.result.origin.operation_id), "background descendant metrics correlation")).records.find(record => record.origin.operation_id === shadow.result.result.origin.operation_id);
+  assert(shadow.result.result.origin.parent_operation_id);
+  assert.equal(shadowMetrics.origin.parent_operation_id, shadow.result.result.origin.parent_operation_id);
+  assert.equal(shadowMetrics.origin.session_id, shadow.result.result.origin.session_id);
+  result.metrics_shadow = shadowMetrics;
   assert.equal(shadow.result.events.filter(event => event.type === "done").length, 1);
   assert.equal(shadow.result.events.at(-1).type, "done");
   assert.notEqual(shadowState.baseline.response.content, shadow.result.result.response.content);
@@ -473,6 +542,12 @@ try {
   assert(unaryValidation.filter(call => !call.failed).every(call => call.usage.input_tokens === 3 && call.usage.output_tokens === 2));
   const unaryReceipts = adapterSubmissions().filter(submission => !beforeUnaryValidation.includes(submission.OperationID));
   assert.equal(unaryReceipts.length, 5);
+  const unaryMetricsState = await fixtureState("metrics", state => unaryReceipts.every(receipt => state.records.some(record => record.origin.operation_id === receipt.OperationID)), "unary success and error metrics");
+  const unaryMetrics = unaryReceipts.map(receipt => unaryMetricsState.records.find(record => record.origin.operation_id === receipt.OperationID));
+  assert.deepEqual(unaryMetrics.map(record => record.status), ["error", "error", "completed", "error", "completed"]);
+  assert(unaryMetrics.every(record => record.streaming === false && record.first_output_ms === undefined));
+  result.metrics_unary = unaryMetrics;
+  result.checks.push("unary success and validation errors retain terminal truth after internal scope cleanup");
   assert(!providerCalls.some(call => call.tag === "pipeline-unary-validation"));
 
   const nativeErrorRequest = structuredClone(snapshot);
@@ -500,6 +575,20 @@ try {
   await fixtureState("shadow", state => state.adapterCancelled === cancellationsBeforeHold + 1, "custom adapter AbortSignal");
   result.checks.push("background cancellation delivers AbortSignal to custom adapter execution");
 
+  const beforeUnaryHold = new Set(adapterSubmissions().map(submission => submission.OperationID));
+  const unaryHold = await client("shadow", "start", { request: snapshot, mode: "hold", stream: false });
+  await fixtureState("shadow", state => state.adapterUnaryHeld === 1, "unary adapter entered before cancellation");
+  const unaryHoldReceipt = adapterSubmissions().find(submission => !beforeUnaryHold.has(submission.OperationID));
+  assert(unaryHoldReceipt);
+  await client("shadow", "cancel", { job_id: unaryHold.job_id });
+  assert.equal((await terminalJob("shadow", unaryHold.job_id)).state, "cancelled");
+  const unaryCancelled = (await fixtureState("metrics", state => state.records.some(record => record.origin.operation_id === unaryHoldReceipt.OperationID), "unary caller cancellation metrics")).records.find(record => record.origin.operation_id === unaryHoldReceipt.OperationID);
+  assert.equal(unaryCancelled.streaming, false);
+  assert.equal(unaryCancelled.status, "cancelled");
+  assert.equal(unaryCancelled.first_output_ms, undefined);
+  result.metrics_unary_cancelled = unaryCancelled;
+  result.checks.push("genuine unary caller cancellation remains cancelled rather than completed or error");
+
   const serviceResult = await client("replay", "service", { request: { ...snapshot, adapter: "fixture.shadow" }, stream: false });
   assert.equal(serviceResult.response.content, "fixture:shadow-result");
   assert.equal(serviceResult.origin.plugin_id, fixtures.shadow.id.split(":").at(-1));
@@ -509,6 +598,11 @@ try {
   const noUsage = await terminalJob("shadow", noUsageJob.job_id);
   assert.equal(noUsage.state, "completed", JSON.stringify(noUsage));
   assert.equal(noUsage.result.result.response.usage, undefined);
+  const unknownMetrics = (await fixtureState("metrics", state => state.records.some(record => record.origin.operation_id === noUsage.result.result.origin.operation_id), "unknown usage metrics")).records.find(record => record.origin.operation_id === noUsage.result.result.origin.operation_id);
+  assert.equal(unknownMetrics.usage, undefined);
+  assert.equal(unknownMetrics.usage_source, undefined);
+  assert(unknownMetrics.text_delta_events > 0, "unknown usage was replaced with chunk estimates");
+  result.checks.push("missing provider usage remains unknown despite visible output chunks");
 
   const beforeDelegate = providerCallsFor(native.tag).length;
   const delegated = await client("shadow", "start", { request: snapshot, mode: "native", stream: false });
@@ -528,13 +622,16 @@ try {
 
   await turn("pipeline-hold-break");
   const breakSnapshot = (await client("replay", "state")).snapshots.at(-1).request;
+  const beforeBreakIDs = new Set((await client("metrics", "state")).records.map(record => record.request_id));
   const breakJob = await client("replay", "start", { request: breakSnapshot, early_exit: true });
   const breakStatus = await terminalJob("replay", breakJob.job_id);
   assert.equal(breakStatus.state, "completed", JSON.stringify(breakStatus));
   assert.equal(breakStatus.result.early_exit, true);
   assert(breakStatus.result.events.some(event => event.content === "fixture:first-chunk"));
   await waitFor("closed", closed, call => call.replay && call.tag === "pipeline-hold-break", "early iterator exit provider disconnect");
-  result.checks.push("public streaming iterator early exit cancels its native transport");
+  const breakMetrics = await fixtureState("metrics", state => state.records.some(record => !beforeBreakIDs.has(record.request_id) && record.status === "cancelled"), "early-exit cancellation metrics");
+  assert.equal(breakMetrics.records.filter(record => !beforeBreakIDs.has(record.request_id) && record.status === "cancelled").length, 1);
+  result.checks.push("public streaming iterator early exit cancels native transport and emits exactly one cancelled metrics record");
 
   await turn("pipeline-retry");
   assert.equal(providerCalls.filter(call => call.tag === "pipeline-retry").length, 2);
@@ -572,7 +669,9 @@ try {
   await turn("pipeline-middleware-second");
   assert.equal(providerCallsFor("pipeline-middleware-second").length, beforeShortCircuit, "middleware short circuit reached provider");
   assert.equal((await client("shadow", "state")).middlewareHits, 1);
-  result.checks.push("around-call middleware can inspect result, rewrite output and short circuit provider");
+  const unrewritten = (await fixtureState("metrics", state => state.records.some(record => record.origin.operation_id === middlewareOperation), "adapter metrics before middleware rewrite")).records.find(record => record.origin.operation_id === middlewareOperation);
+  assert.equal(unrewritten.usage.output_tokens, 5, "middleware rewrote adapter metrics usage");
+  result.checks.push("around-call middleware can inspect result, rewrite output and short circuit provider", "adapter metrics remain independent of middleware usage rewrites");
 
   const failedStart = await rpc("turn/start", { thread_id: thread.id, prompt: "pipeline-physical-failure" });
   normalTurns++;
@@ -642,6 +741,23 @@ try {
     await waitFor("closed", closed, call => call.index === held.index, `${action} provider transport closed`);
     result.checks.push(`${action} stops generation-owned background inference and provider transport`);
   }
+
+  adoptInventory((await rpc("config/read")).extension_inventory);
+  await client("metrics", "mode", { mode: "hold" });
+  await turn("pipeline-metrics-retire");
+  const retiringMetrics = await fixtureState("metrics", state => state.held === 1, "observer pending before replacement");
+  const metricsSource = join(scratch, "metrics.ts");
+  await writeFile(metricsSource, (await readFile(metricsSource, "utf8")) + "\n// Replacement boundary acceptance.\n");
+  await publish(metricsSource);
+  adoptInventory((await rpc("extension/catalog/refresh")).extension_inventory);
+  const replacementMetrics = await client("metrics", "state");
+  assert.notEqual(replacementMetrics.generation, retiringMetrics.generation);
+  const observerAudit = (await readFile(join(scratch, "metrics-audit.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert(observerAudit.some(record => record.generation === retiringMetrics.generation && record.event === "cancelled"), "retired observer did not receive execution cancellation");
+  const oldIDs = new Set(retiringMetrics.records.map(record => record.request_id));
+  assert(!replacementMetrics.records.some(record => oldIDs.has(record.request_id)), "queued old-generation metrics redirected to replacement");
+  result.metrics_retirement = { old_generation: retiringMetrics.generation, new_generation: replacementMetrics.generation, audit: observerAudit };
+  result.checks.push("observer replacement cancels accepted work and never redirects queued metrics into the new generation");
 
   const enabled = await rpc("extension/package/update", { id: fixtures.replay.id, fingerprint: fixtures.replay.fingerprint, action: "enable" });
   adoptInventory(enabled.extension_inventory);

@@ -204,10 +204,35 @@ func (w *InferenceWorkflow) admitOperation(operation InferenceOperation) error {
 	return w.spend.AdmitOperation(operation)
 }
 
+// ErrInferenceWorkflowCompletion marks a workflow that could not settle within
+// its receipt owner's lifetime. It is not an ordinary receipt-tail diagnostic.
+var ErrInferenceWorkflowCompletion = errors.New("inference workflow completion failed")
+
 // CompleteInferenceWorkflow closes the outer workflow scope. A workflow with
 // no prepared operations is terminal only in memory and has no durable row to
 // update. Journal failures remain fail-closed in the process-local workflow.
 func CompleteInferenceWorkflow(workflow *InferenceWorkflow, journal InferenceJournal, outcome InferenceTerminalOutcome) error {
+	return completeInferenceWorkflow(context.Background(), workflow, journal, outcome)
+}
+
+// CompleteInferenceWorkflowAfterReceipts queues an owned workflow behind its
+// physical receipts. The receipt owner supplies settlement admission and its
+// cleanup deadline before releasing authority. Unscoped callers settle inline.
+func CompleteInferenceWorkflowAfterReceipts(ctx context.Context, workflow *InferenceWorkflow, journal InferenceJournal, outcome InferenceTerminalOutcome) error {
+	scope := ModelReceiptScopeFromContext(ctx)
+	if scope == nil {
+		return CompleteInferenceWorkflow(workflow, journal, outcome)
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.root.ended || scope.aborted {
+		return ErrModelReceiptScopeClosed
+	}
+	scope.workflows = append(scope.workflows, receiptWorkflowCompletion{workflow, journal, outcome})
+	return nil
+}
+
+func completeInferenceWorkflow(ctx context.Context, workflow *InferenceWorkflow, journal InferenceJournal, outcome InferenceTerminalOutcome) error {
 	if workflow == nil {
 		return nil
 	}
@@ -224,7 +249,7 @@ func CompleteInferenceWorkflow(workflow *InferenceWorkflow, journal InferenceJou
 	if journal == nil || workflow.spend.Snapshot().Operations == 0 {
 		return nil
 	}
-	err := journal.CompleteWorkflow(InferenceWorkflowTerminalRecord{
+	err := journal.CompleteWorkflow(ctx, InferenceWorkflowTerminalRecord{
 		WorkflowID: workflow.ID,
 		Outcome:    outcome,
 		At:         time.Now().UTC(),

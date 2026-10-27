@@ -1015,8 +1015,8 @@ func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mode := tc.mode
-			firstStarted, releaseFirst, secondStarted := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			var release sync.Once
+			firstStarted, releaseFirst, secondStarted, releaseSecond := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var release, releaseNext sync.Once
 			client := &fakeClient{responses: []providers.ChatResponse{providersResponse("interrupted"), providersResponse("next reply")}, onChat: func(call int, _ providers.ChatRequest) {
 				if call == 1 {
 					close(firstStarted)
@@ -1024,6 +1024,7 @@ func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
 				}
 				if call == 2 {
 					close(secondStarted)
+					<-releaseSecond
 				}
 			}}
 			rt := newTestRuntime(t, client)
@@ -1033,7 +1034,11 @@ func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
 			attachTestModelGeneration(t, rt, owner)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
-			t.Cleanup(func() { release.Do(func() { close(releaseFirst) }); srv.Close() })
+			t.Cleanup(func() {
+				release.Do(func() { close(releaseFirst) })
+				releaseNext.Do(func() { close(releaseSecond) })
+				srv.Close()
+			})
 			created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "persistent-main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, AgentID: "assistant"})
 			if err != nil {
 				t.Fatal(err)
@@ -1062,27 +1067,45 @@ func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
 			if mode == pluginhost.SessionIfRunningSteer {
 				wantState = pluginhost.TurnLifecycleRunning
 			}
-			if err != nil || queued.State != wantState {
+			if err != nil || queued.State != wantState || (mode == pluginhost.SessionIfRunningQueue && queued.QueueID == "") || (mode == pluginhost.SessionIfRunningSteer && (!queued.Steered || queued.TurnID != first.TurnID)) {
 				t.Fatalf("user send: %+v %v", queued, err)
 			}
 			cancelled, err := srv.cancelPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: first.TurnID})
 			if err != nil || !cancelled.Cancelled {
 				t.Fatalf("stop reply: %+v %v", cancelled, err)
 			}
-			retry, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params)
-			// The selected stream may finish cancellation before the synthetic
-			// transport callback returns. A preserved input can already be running;
-			// its stable queue/receipt identity, not a scheduling delay, is binding.
-			retained := retry.State == pluginhost.TurnLifecycleQueued || retry.State == pluginhost.TurnLifecycleRunning || retry.State == pluginhost.TurnLifecycleCompleted
-			if err != nil || !retained || retry.QueueID == "" || (mode == pluginhost.SessionIfRunningQueue && retry.QueueID != queued.QueueID) {
-				t.Fatalf("stop lost queued identity: %+v %+v %v", queued, retry, err)
-			}
+			// Hold the successor inside the provider so the retry deterministically
+			// observes queue promotion, not a scheduling-dependent pending entry.
 			release.Do(func() { close(releaseFirst) })
 			select {
 			case <-secondStarted:
 			case <-time.After(3 * time.Second):
 				t.Fatal("queued user message did not resume after stopped reply")
 			}
+			retry, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params)
+			// Live non-receipt lookup identifies an admitted turn by TurnID;
+			// QueueID is optional there, but the promotion and receipt retain it.
+			if err != nil || retry.State != pluginhost.TurnLifecycleRunning || retry.TurnID == "" || retry.TurnID == first.TurnID || retry.Steered || (mode == pluginhost.SessionIfRunningQueue && retry.QueueID != queued.QueueID) {
+				t.Fatalf("stop lost promoted identity: %+v %+v %v", queued, retry, err)
+			}
+			promotedQueueID := queued.QueueID
+			if mode == pluginhost.SessionIfRunningSteer {
+				promotedQueueID = pluginSessionRequestClientID(owner.id, params.RequestID)
+			}
+			promoted := false
+			for _, message := range parseOutput(t, out.String()) {
+				if message["method"] != NotificationTurnStarted {
+					continue
+				}
+				started := remarshal[TurnStartedNotification](t, message["params"])
+				if started.ThreadID == created.SessionID && started.Turn.ID == retry.TurnID && started.QueueID == promotedQueueID {
+					promoted = true
+				}
+			}
+			if !promoted {
+				t.Fatalf("queued identity %q did not promote into %q", promotedQueueID, retry.TurnID)
+			}
+			releaseNext.Do(func() { close(releaseSecond) })
 			deadline := time.After(5 * time.Second)
 			for {
 				select {
@@ -1095,6 +1118,9 @@ func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
 							t.Fatalf("user message discarded: %+v", receipt)
 						}
 						if receipt.State == pluginhost.TurnLifecycleCompleted {
+							if receipt.TurnID != retry.TurnID || receipt.QueueID != promotedQueueID {
+								t.Fatalf("completion lost promoted identity: %+v", receipt)
+							}
 							history, err := loadChatMessages(rt.Sessions, created.SessionID)
 							if err != nil {
 								t.Fatal(err)
