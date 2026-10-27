@@ -30,12 +30,15 @@ const broken = `export function activatePresentation(api) {
   api.registerUIContribution({ id: 'broken', target: 'wuu.default-conversation/conversation.turn.after',
     render() { throw new Error('Expected conversation addon failure'); } });
 }`;
-const report = { fixture: "production renderer with synthetic backend", checks: [], captures: [], errors: [],
+const report = { fixture: "production renderer with synthetic backend", checks: [], geometry: [], captures: [], errors: [],
   exampleSha256: crypto.createHash("sha256").update(fs.readFileSync(example)).digest("hex") };
 let win, watchdog;
 const save = () => fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(report, null, 2));
 const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
-const frames = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+const frames = (count = 2) => evaluate(count => new Promise(resolve => {
+  const tick = () => --count ? requestAnimationFrame(tick) : resolve();
+  requestAnimationFrame(tick);
+}), count);
 async function until(fn, value) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -129,6 +132,84 @@ app.whenReady().then(async () => {
     await preserved();
     assert.equal(await evaluate(() => [...document.querySelectorAll('[data-conversation-metrics-tool] button')].every(button => button.getAttribute('aria-expanded') === 'false')), true);
   });
+  await check("addons belong to native turn bounds and preserve a paused reader in bubble and IM", async () => {
+    for (const style of ["bubble", "im"]) {
+      await inventory([]);
+      await until(() => !document.querySelector('[data-peer-addon], [data-conversation-metrics-turn], [data-conversation-metrics-tool]'));
+      await evaluate(style => { document.documentElement.dataset.messageStyle = style; }, style);
+      await frames(20);
+      const bounds = await evaluate(() => {
+        const viewport = document.querySelector('.conversation-pane > .scroll-region');
+        const rect = viewport.getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width * 0.6), y: Math.round(rect.top + rect.height * 0.4) };
+      });
+      // Use real upward wheel input to relinquish following before positioning
+      // the reading point, rather than mutating a private scroll controller.
+      win.webContents.sendInputEvent({ type: "mouseWheel", ...bounds, deltaX: 0, deltaY: 120, canScroll: true });
+      await frames(12);
+      await evaluate(() => {
+        const viewport = document.querySelector('.conversation-pane > .scroll-region');
+        const answer = document.querySelector('[data-turn-id="multiple"] .agent-text p');
+        viewport.scrollTop += answer.getBoundingClientRect().top - viewport.getBoundingClientRect().top - 140;
+        viewport.dispatchEvent(new Event('scroll', { bubbles: true }));
+      });
+      await until(() => Boolean(document.querySelector('.jump-to-latest-pill')));
+      await frames(20);
+      const before = await evaluate(() => {
+        const viewport = document.querySelector('.conversation-pane > .scroll-region');
+        const first = document.querySelector('[data-turn-id="single"]');
+        const answer = document.querySelector('[data-turn-id="multiple"] .agent-text p');
+        window.__addonReadingPoint = { answer, first };
+        return { y: answer.getBoundingClientRect().top, firstHeight: first.getBoundingClientRect().height,
+          viewportTop: viewport.getBoundingClientRect().top, viewportHeight: viewport.clientHeight,
+          distanceFromLatest: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop };
+      });
+      assert.ok(before.firstHeight > before.viewportHeight * 1.5, 'the preceding native turn is genuinely tall');
+      assert.ok(before.y > before.viewportTop && before.y < before.viewportTop + before.viewportHeight, 'the saved answer is visible');
+      assert.ok(before.distanceFromLatest > before.viewportHeight, 'the reader is not clamped to latest');
+      for (const enabled of [true, false]) {
+        await inventory(enabled ? ["metrics", "peer"] : []);
+        await until(enabled => document.querySelectorAll('[data-conversation-metrics-turn]').length === (enabled ? 2 : 0)
+          && document.querySelectorAll('[data-peer-addon="turn"]').length === (enabled ? 2 : 0), enabled);
+        await frames(12);
+        const after = await evaluate(() => {
+          const { first, answer } = window.__addonReadingPoint;
+          return { y: answer.getBoundingClientRect().top, firstHeight: first.getBoundingClientRect().height,
+            sameNode: answer.isConnected && answer === document.querySelector('[data-turn-id="multiple"] .agent-text p')
+              && first === document.querySelector('[data-turn-id="single"]'),
+            paused: Boolean(document.querySelector('.jump-to-latest-pill')),
+            addons: [...document.querySelectorAll('[data-conversation-metrics-turn], [data-peer-addon="turn"]')].map(node => {
+              const expectedID = node.dataset.conversationMetricsTurn ?? JSON.parse(node.dataset.address)[1];
+              const turn = node.closest('[data-turn-id]');
+              const rect = node.getBoundingClientRect(), turnRect = turn?.getBoundingClientRect();
+              return { expectedID, nativeID: turn?.dataset.turnId, height: rect.height,
+                nativeMatch: turn === window.__addonNativeNodes.turns.find(node => node.dataset.turnId === expectedID),
+                inside: Boolean(turnRect && rect.top >= turnRect.top - 1 && rect.bottom <= turnRect.bottom + 1) };
+            }) };
+        });
+        report.geometry.push({ style, enabled, before, after }); save();
+        assert.equal(after.sameNode, true, 'the saved native answer and preceding turn are not remounted');
+        assert.equal(after.paused, true, 'inventory changes do not resume following');
+        assert.ok(Math.abs(after.y - before.y) <= 1, `${style}: inventory changed reading Y: ${before.y} -> ${after.y}`);
+        if (enabled) {
+          assert.equal(after.addons.length, 4);
+          for (const addon of after.addons) {
+            assert.equal(addon.nativeID, addon.expectedID, 'addon is inside its addressed native turn');
+            assert.equal(addon.nativeMatch, true, 'the containing turn is the original native element');
+            assert.equal(addon.inside, true, 'addon bottom is included in native turn bounds');
+          }
+          const footerHeight = after.addons.filter(addon => addon.expectedID === 'single').reduce((sum, addon) => sum + addon.height, 0);
+          assert.ok(footerHeight > 0 && after.firstHeight - before.firstHeight >= footerHeight - 1,
+            'native turn height accounts for enabled addon content');
+        } else {
+          assert.ok(Math.abs(after.firstHeight - before.firstHeight) <= 1, 'disabling addons releases their native turn height');
+        }
+      }
+    }
+    await inventory(["metrics", "peer"]);
+    await until(() => document.querySelectorAll('[data-conversation-metrics-turn]').length === 2);
+    await preserved();
+  });
   await check("bubble and IM layouts retain usable addons in light/dark wide/narrow views", async () => {
     for (const [style, theme, width, size] of [["bubble", "light", 1280, 15], ["im", "light", 1280, 15], ["bubble", "dark", 760, 20], ["im", "dark", 760, 20]]) {
       win.setContentSize(width, 900);
@@ -148,6 +229,48 @@ app.whenReady().then(async () => {
     await inventory([]);
     await until(() => !document.querySelector('[data-peer-addon], [data-conversation-metrics-turn], [data-conversation-metrics-tool]'));
     await preserved();
+  });
+  await check("the real side command routes addressed turn and tool addons through default-preview", async () => {
+    win.setContentSize(1280, 900);
+    await inventory(["metrics", "peer"]);
+    await evaluate(() => {
+      const input = document.querySelector('[data-main-conversation-composer] textarea');
+      input.focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/side');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await until(() => Boolean(document.querySelector('.slash-command-item[data-command-name="side"]')));
+    await evaluate(() => document.querySelector('.slash-command-item[data-command-name="side"]').click());
+    await until(() => Boolean(document.querySelector('.side-thread-panel [data-peer-addon="turn"]')));
+    await evaluate(() => {
+      const toggle = document.querySelector('.side-thread-panel .turn-process-toggle');
+      if (toggle.getAttribute('aria-expanded') === 'false') toggle.click();
+    });
+    await until(() => Boolean(document.querySelector('.side-thread-panel .process-surface-fold')));
+    await evaluate(() => {
+      const details = document.querySelector('.side-thread-panel .process-surface-fold');
+      details.open = true; details.dispatchEvent(new Event('toggle'));
+      window.__addonSideNative = { turn: document.querySelector('.side-thread-panel .turn'), details };
+    });
+    await until(() => Boolean(document.querySelector('.side-thread-panel [data-conversation-metrics-tool]')));
+    assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.side-thread-panel [data-peer-addon]')].map(node => ({
+      target: node.dataset.peerAddon, owner: node.dataset.owner, address: JSON.parse(node.dataset.address),
+      nativeTurn: node.closest('[data-turn-id]')?.dataset.turnId,
+    }))), [
+      { target: 'tool-activity', owner: 'wuu.default-preview', address: ['addon-side-thread', 'side-turn-addon-side-answer', 'addon-side-tool'], nativeTurn: 'side-turn-addon-side-answer' },
+      { target: 'turn', owner: 'wuu.default-preview', address: ['addon-side-thread', 'side-turn-addon-side-answer', null], nativeTurn: 'side-turn-addon-side-answer' },
+    ]);
+    await evaluate(() => document.querySelector('.side-thread-panel [data-conversation-metrics-tool] button').click());
+    await until(() => document.querySelector('.side-thread-panel [data-conversation-metrics-tool] pre')?.textContent === 'Reported preview result');
+    await frames(12);
+    const name = 'default-preview-side-addons.png';
+    fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG()); report.captures.push(name);
+    await inventory([]);
+    await until(() => !document.querySelector('[data-peer-addon], [data-conversation-metrics-turn], [data-conversation-metrics-tool]'));
+    assert.equal(await evaluate(() => window.__addonSideNative.turn.isConnected
+      && window.__addonSideNative.turn === document.querySelector('.side-thread-panel .turn')
+      && window.__addonSideNative.details.isConnected && window.__addonSideNative.details.open), true,
+    'disabling preview addons preserves its native turn and disclosure');
   });
   assert.deepEqual(report.errors, []); clearTimeout(watchdog); report.passed = true; save(); app.exit(0);
 }).catch(fail);
