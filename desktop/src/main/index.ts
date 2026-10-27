@@ -19,12 +19,14 @@ import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport
 import { BrowserExtensionManager, type BrowserExtensionConsent } from "./browserExtensions";
 import { BrowserExtensionWindows } from "./browserExtensionWindows";
 import { saveArtifactFile } from "./artifactSave";
+import { ArtifactSources } from "./artifactSources";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import { showContextMenu, dismissContextMenu } from "./contextMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
+import { requestTrustedRemote, bindRemoteEventAuthorization } from "./trustedRemoteTransport";
 import { EngineLogin } from "./engineLogin";
 import { XAILoginCoordinator } from "./xaiLogin";
 import { MCPLoginCoordinator } from "./mcpLogin";
@@ -652,6 +654,29 @@ async function initializeDesktopGraph(event: IpcMainInvokeEvent, owner: PluginDe
   event.sender.send("wuu:runtime-initialization-recovery", { phase: "completed", recoveryId, initialized });
 }
 
+const artifactSources = new ArtifactSources();
+const artifactDocumentRevisions = new Map<number, number>();
+
+async function acquireArtifactSource(event: IpcMainInvokeEvent, input: ArtifactItemMenuParams) {
+  const owner = windowRegistry.windowForID(event.sender.id);
+  const frame = event.senderFrame;
+  if (!owner || !frame || frame !== event.sender.mainFrame) throw new Error("Artifact source requires a Wuu document");
+  const senderID = event.sender.id;
+  if (!artifactDocumentRevisions.has(senderID)) {
+    artifactDocumentRevisions.set(senderID, 0);
+    const retire = () => { artifactDocumentRevisions.set(senderID, (artifactDocumentRevisions.get(senderID) ?? 0) + 1); artifactSources.releaseOwner(senderID); };
+    event.sender.once("destroyed", () => { retire(); artifactDocumentRevisions.delete(senderID); });
+    event.sender.on("render-process-gone", retire);
+    event.sender.on("did-start-navigation", (details: { isMainFrame: boolean; isSameDocument: boolean }) => { if (details.isMainFrame && !details.isSameDocument) retire(); });
+  }
+  const revision = artifactDocumentRevisions.get(senderID);
+  const context = structuredClone(runtimeContextForEvent(event));
+  const contextKey = JSON.stringify(context);
+  const current = () => artifactDocumentRevisions.get(senderID) === revision && !event.sender.isDestroyed() && !frame.isDestroyed() && event.sender.mainFrame === frame && JSON.stringify(runtimeContextForEvent(event)) === contextKey;
+  const request = appServerClientPool.bindSessionRequest({...context, ...(input.locator ? {session_locator:input.locator} : {})}, input.threadId);
+  return artifactSources.acquire(input, request, current, senderID);
+}
+
 function runtimeContextForEvent(event: IpcMainInvokeEvent): RuntimeContext {
   return (
     windowRegistry.runtimeContextForWindow(event.sender.id) ??
@@ -865,7 +890,7 @@ const pluginRuntimeRequests = new PluginRuntimeRequests(appServerClientPool);
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
-const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID, activations) => {
+const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID, activations, peer) => {
   const pluginOwner = `remote:${peerID}`;
   // Existing ownership is enough to cancel; the original workspace may no
   // longer be listed by the time the paired client disconnects or switches.
@@ -875,15 +900,17 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   if (method === "initialize") params = desktopInitializeParams();
   return requestRemoteWorkspace(projectManager, appServerClientPool, remoteTerminals, workdir, method, params, reply, peerID,
     (context, method, params) => {
-      if (method === "initialize") return activations.initialize(context.cwd, appServerClientPool.bindContextRequest(context), params);
-      return method === "plugin/client/request"
-        ? pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply)
-        : appServerClientPool.requestInContext(context, method, params, reply);
+      if (peer.owner && method === "initialize") return activations.initialize(context.cwd, appServerClientPool.bindContextRequest(context), params);
+      if (peer.owner && method === "plugin/client/request") return pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply);
+      if (!peer.owner && method.startsWith("plugin/")) throw new Error("Scoped plugin routing required");
+      // Core responses retain their exact policy receipt, including delegated
+      // model/tool ceilings. Never send a delegated call on the owner pipe raw.
+      return requestTrustedRemote(appServerClientPool, context, peer, method, params, reply);
     });
 }, (peerID) => {
   remoteTerminals.stopForOwner(peerID);
   pluginRuntimeRequests.closeOwner(`remote:${peerID}`);
-});
+}, (event, peer) => bindRemoteEventAuthorization(appServerClientPool, event, peer));
 
 const remoteHostManager = new RemoteHostManager({
   appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),
@@ -1597,7 +1624,7 @@ app.whenReady().then(async () => {
   await clearOversizedDevCaches();
   await removeLegacyDesktopCliLink().catch(() => false);
   projectManager.load();
-  registerRenderableFileProtocol(wuuHomePath());
+  registerRenderableFileProtocol(artifactSources);
   registerPluginModuleProtocol();
   // Sort permission/download traffic on the shared browser partition by
   // webContents ownership: only agent-driven views are denied sensitive
@@ -2019,9 +2046,14 @@ app.whenReady().then(async () => {
     if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) return;
     dismissContextMenu(event.sender, token);
   });
+  ipcMain.handle("wuu:artifact-acquire", acquireArtifactSource);
+  ipcMain.handle("wuu:artifact-release", (event, leaseId: string) => {
+    artifactSources.release(leaseId, event.sender.id);
+  });
   ipcMain.handle("wuu:artifact-save", async (event, name: string, source: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     if (!parent) throw new Error("Artifact window is no longer available");
+    if (source.startsWith("wuu-artifact:") && !artifactSources.owns(source, event.sender.id)) throw new Error("Artifact source does not belong to this document");
     await saveArtifactFile(parent, event.sender.session, name, source);
   });
   ipcMain.handle("wuu:artifact-show-menu", async (event, input: ArtifactItemMenuParams) => {
@@ -2043,24 +2075,11 @@ app.whenReady().then(async () => {
     event.sender.on("did-start-navigation", onNavigation);
     event.sender.on("render-process-gone", onProcessGone);
     try {
-      // Resolve the source session through its owning local core, not the active
-      // conversation's cwd. Remote/browser hosts do not expose this native IPC.
-      const { thread } = await appServerClientPool.requestForSession<ThreadResumeResult>(
-        runtimeContextForEvent(event), input.threadId, "thread/resume",
-        { session_id: input.threadId, response_only: true },
-      );
-      if (!isCurrentSource()) return { action: "none" };
-      const belongsToThread = thread.id === input.threadId && thread.turns.some(turn => turn.items.some(item =>
-        item.type === "tool_call" && item.result_detail?.content?.some(part => {
-          if (part.type === "text" || part.remote_ref) return false;
-          const resource = part.resource !== null && typeof part.resource === "object" && !Array.isArray(part.resource)
-            ? part.resource as Record<string, unknown> : undefined;
-          const uri = typeof part.uri === "string" && part.uri.trim() ? part.uri : resource?.uri;
-          return typeof uri === "string" && uri.trim() === input.uri;
-        }),
-      ));
-      if (!belongsToThread) throw new Error("Artifact is not available in the source conversation");
-      return await showArtifactItemMenu(parent, input, wuuHomePath(), isCurrentSource);
+      const lease = await acquireArtifactSource(event, input);
+      try {
+        if (!isCurrentSource()) return { action: "none" };
+        return await showArtifactItemMenu(parent, lease, artifactSources, isCurrentSource);
+      } finally { artifactSources.release(lease.leaseId); }
     } finally {
       event.sender.removeListener("did-start-navigation", onNavigation);
       event.sender.removeListener("render-process-gone", onProcessGone);

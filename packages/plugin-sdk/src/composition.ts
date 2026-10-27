@@ -9,7 +9,9 @@ export function requireCompositionService(): ServiceRequirement {
 export interface CompositionCreate {
   /** Capture the parent's actual modules and bindings before applying selection overrides. */
   readonly inherit?: boolean;
-  /** Required unless inherit is true. Inheritance cannot be combined with a profile. */
+  /** Required unless inherit is true. Inheritance cannot be combined with a profile.
+   * Version 4's minimal profile selects only a session host: select an engine
+   * explicitly for product turns; host-managed run also needs its loop services. */
   readonly selection?: ProductComposition;
   /** Omit to inherit the parent's model; empty fields in an explicit choice use connection defaults. */
   readonly model?: CompositionModel;

@@ -28,11 +28,13 @@ describe("application preview ownership", () => {
 
   it("reopens a cited PDF from its verified immutable URI when history is absent", async () => {
     const digest = "b".repeat(64);
-    const uri = `wuu-artifact://workspace/thread/${"a".repeat(32)}/report.pdf?sha256=${digest}`;
+    const uri = `cloud:opaque-pdf?version=${digest}`;
     const read = vi.fn().mockResolvedValue(new Response("%", { status: 206, headers: { "Content-Type": "application/pdf" } }));
     vi.stubGlobal("fetch", read);
     try {
-      const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn() });
+      const acquireSource = vi.fn(async ({threadId}: {threadId?:string}) => {if(threadId!=="thread") throw new Error("Artifact is unavailable"); return {url:"wuu-artifact://lease/test",leaseId:"test"};});
+      const releaseSource = vi.fn();
+      const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn(), artifacts: () => ({acquireSource, releaseSource}) as unknown as import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1 });
       await preview.invoke("preview.open-artifact", { threadId: "thread", artifactId: uri, sha256: digest, page: 3 });
       expect(preview.getSnapshot().tabs[0]).toMatchObject({ kind: "artifact", page: 3, artifact: { uri, sha256: digest } });
       await expect(preview.invoke("preview.open-artifact", { threadId: "other", artifactId: uri, sha256: digest })).rejects.toThrow("Artifact is unavailable");

@@ -4,7 +4,7 @@ import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions, type ComposerInlineSource } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
-import { effectiveModelSpeed } from "./RuntimeHelpers";
+import { effectiveModelSpeed, engineRequiresHostModel } from "./RuntimeHelpers";
 import {
   ChevronDown,
   Folder,
@@ -663,12 +663,14 @@ export function Composer({
     () => new Set(registeredPluginCommands.map((command) => `${command.pluginId}:${command.id}`)),
     [registeredPluginCommands],
   );
-  const fastModeModel = activeEngine && activeEngine !== "wuu"
-    ? engines?.find(engine => engine.id === activeEngine)?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
+  const selectedEngine = engines?.find(engine => engine.id === (activeEngine || "wuu"));
+  const hostModel = engineRequiresHostModel(activeEngine, selectedEngine);
+  const fastModeModel = !hostModel
+    ? selectedEngine?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
     : initialized?.providers?.find(provider => provider.name === initialized.provider)?.models?.find(model => model.id === initialized.model);
   const fastModeSupported = Boolean(onSelectSpeed && fastModeModel?.fast_mode);
   const fastModeEnabled = effectiveModelSpeed(
-    activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed,
+    !hostModel ? engineSpeed : initialized?.speed,
     fastModeModel?.default_speed,
   ) === "fast";
   const builtinSlashCommands = useMemo(

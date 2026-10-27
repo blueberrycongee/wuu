@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AppServerClientPool } from "./appServerClients";
+import type { AppServerClientPool, AppServerClient } from "./appServerClients";
 import type { AppServerResponse, PluginClientCancelParams, PluginClientCancelResult, PluginClientRequestParams, PluginClientRequestResult, RuntimeContext } from "../shared/protocol";
 
 /** Bind cancellation to the process that admitted a request, across relocation
@@ -16,7 +16,7 @@ export class PluginRuntimeRequests {
 
   async request(
     owner: string,
-    context: RuntimeContext | ReturnType<AppServerClientPool["bindContextRequest"]>,
+    context: RuntimeContext | AppServerClient["request"],
     params: PluginClientRequestParams,
     onResponse?: (response: AppServerResponse) => void,
     onOwnerCreated?: () => void,

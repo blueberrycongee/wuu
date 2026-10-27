@@ -72,6 +72,10 @@ type Descriptor struct {
 	ID           EngineID
 	Version      string
 	Capabilities []string
+	// RequiresHostModel declares client readiness and model-source metadata,
+	// not backend authorization. Nil preserves the legacy client contract;
+	// explicit false lets an independent engine own model access and auth.
+	RequiresHostModel *bool
 }
 
 // OpenRequest carries what a Factory needs to start a new engine-bound thread.

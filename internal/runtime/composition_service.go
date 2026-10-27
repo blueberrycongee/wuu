@@ -230,7 +230,7 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 					continue
 				}
 				major, _ := pluginhost.ServiceVersionMajor(binding.Version)
-				provider, found := authority.host.ServiceRegistry().ProviderPluginID(binding.Service, major)
+				provider, found := authority.host.ServiceRegistry().ProviderPluginIDFor(binding.Consumer, binding.Service, major)
 				if !found {
 					return nil, serviceError("service_unavailable", "imported state provider is unavailable")
 				}
@@ -255,12 +255,12 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 		}
 		overrides := make(map[composition.ServiceKey]bool, len(input.Selection.Services))
 		for _, binding := range input.Selection.Services {
-			overrides[composition.ServiceKey{Service: binding.Service, Major: binding.Major}] = true
+			overrides[composition.ServiceKey{Consumer: binding.Consumer, Service: binding.Service, Major: binding.Major}] = true
 		}
 		for _, binding := range parent.Services {
 			major, _ := pluginhost.ServiceVersionMajor(binding.Version)
-			if !overrides[composition.ServiceKey{Service: binding.Service, Major: major}] {
-				input.Selection.Services = append(input.Selection.Services, composition.Binding{Service: binding.Service, Major: major, Provider: binding.Provider})
+			if !overrides[composition.ServiceKey{Consumer: binding.Consumer, Service: binding.Service, Major: major}] {
+				input.Selection.Services = append(input.Selection.Services, composition.Binding{Consumer: binding.Consumer, Service: binding.Service, Major: major, Provider: binding.Provider})
 			}
 		}
 	}
@@ -277,9 +277,14 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 		// other override; native and process consumers see the bridge provider.
 		imported := map[string]bool{persistence.ServiceName: true, session.ServiceName: true, ArtifactServiceName: true}
 		modules := map[string]bool{parentStateModule: true}
+		var removeDelegates []composition.ServiceKey
 		parentServices := generation.host.ServiceRegistry().Snapshot(0).Services
 		for _, service := range parentServices {
 			if imported[service.Service] {
+				if service.Consumer != "" {
+					major, _ := pluginhost.ServiceVersionMajor(service.Version)
+					removeDelegates = append(removeDelegates, composition.ServiceKey{Consumer: service.Consumer, Service: service.Service, Major: major})
+				}
 				modules[service.Provider] = false
 			}
 		}
@@ -290,7 +295,8 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 		}
 		modules[parentStateModule] = true
 		input.Selection.Patches = append(input.Selection.Patches, composition.Patch{
-			Modules: modules,
+			Modules:        modules,
+			RemoveServices: removeDelegates,
 			Services: []composition.Binding{
 				{Service: persistence.ServiceName, Major: 1, Provider: parentStateModule},
 				{Service: session.ServiceName, Major: 1, Provider: parentStateModule},

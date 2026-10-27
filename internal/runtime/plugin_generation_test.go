@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1196,5 +1197,134 @@ func attachTestExecutionServices(t *testing.T, host *pluginhost.Host, extra ...p
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Package policy changes rebuild from admitted bytes, not another generation's
+// borrowed catalog path or an edited installation. Each reader owns its lifetime.
+func TestPluginUpdateRetainsAdmittedPackagesAcrossRejectedAndIndependentUpdates(t *testing.T) {
+	writePackage := func(root, id, version, extra string) pluginpkg.Plugin {
+		t.Helper()
+		if err := os.MkdirAll(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(fmt.Sprintf(`{"id":%q,"version":%q,"desktop":{"entry":"desktop.js"}%s}`, id, version, extra)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "desktop.js"), []byte("export const version = "+fmt.Sprintf("%q", version)+";"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		item, err := pluginpkg.LoadManifest(filepath.Join(root, "plugin.json"), "user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	cfg := config.Config{Extensions: &extensions.Settings{}}
+	grant := func(item pluginpkg.Plugin) {
+		t.Helper()
+		settings := *cfg.Extensions
+		settings.Grants = maps.Clone(settings.Grants)
+		cfg.Extensions = &settings
+		if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := writePackage(filepath.Join(t.TempDir(), "a"), "owner-a", "1", "")
+	b := writePackage(filepath.Join(t.TempDir(), "b"), "owner-b", "1", "")
+	grant(a)
+	grant(b)
+	s := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
+	defer s.Cleanup()
+	initial, err := s.PreflightDiscoveredExtensions(cfg, []pluginpkg.Plugin{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivatePluginGeneration(initial, nil); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(item pluginpkg.Plugin, installedRoot string) *PluginGeneration {
+		t.Helper()
+		grant(item)
+		next, err := s.PreflightPluginUpdate(cfg, item.ID, item.Fingerprint, item.Root, "plugin.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ActivatePluginGeneration(next, func() error {
+			if err := os.RemoveAll(installedRoot); err != nil {
+				return err
+			}
+			return os.CopyFS(installedRoot, os.DirFS(item.Root))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return next
+	}
+	a2 := writePackage(t.TempDir(), a.ID, "2", "")
+	first := publish(a2, a.Root)
+	snapshot, releaseReader := s.RetainExtensionSnapshot()
+	defer releaseReader()
+	var oldRoot string
+	for _, item := range snapshot.ActivePlugins {
+		if item.ID == a.ID {
+			oldRoot = item.Root
+		}
+	}
+	readVersion := func(root, version string) {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, "desktop.js"))
+		if err != nil || string(data) != "export const version = "+fmt.Sprintf("%q", version)+";" {
+			t.Fatalf("admitted desktop bytes at %s: %q, %v", root, data, err)
+		}
+	}
+	bad := writePackage(t.TempDir(), a.ID, "rejected", `,"requires":["unavailable-owner"]`)
+	grant(bad)
+	if rejected, err := s.PreflightPluginUpdate(cfg, bad.ID, bad.Fingerprint, bad.Root, "plugin.json"); err == nil {
+		rejected.close()
+		t.Fatal("incompatible candidate was admitted")
+	}
+	grant(a2)
+	if !s.IsCurrentPluginGeneration(first) {
+		t.Fatal("rejected update replaced the admitted generation")
+	}
+	readVersion(oldRoot, "2")
+	// A same-source edit is not an update. B's publication must copy the
+	// admitted A package, even when the installed A bytes are no longer valid.
+	writePackage(a.Root, a.ID, "unadmitted", "")
+	b2 := writePackage(t.TempDir(), b.ID, "2", "")
+	second := publish(b2, b.Root)
+	var newRoot string
+	for _, item := range second.active {
+		if item.ID == a.ID {
+			newRoot = item.Root
+		}
+	}
+	readVersion(newRoot, "2")
+	readVersion(oldRoot, "2")
+	for _, item := range second.plugins {
+		if item.ID == a.ID && item.Root != a.Root {
+			t.Fatalf("catalog lost installed provenance: %s != %s", item.Root, a.Root)
+		}
+	}
+	oldRoots := append([]string(nil), first.ownedRoots...)
+	releaseReader()
+	releaseReader() // reader release is idempotent
+	for _, root := range oldRoots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("retired snapshot retained: %s: %v", root, err)
+		}
+	}
+	if _, err := os.Stat(oldRoot); !os.IsNotExist(err) {
+		t.Fatalf("released reader retained old snapshot: %v", err)
+	}
+	readVersion(newRoot, "2")
+	roots := append([]string(nil), second.ownedRoots...)
+	if _, err := s.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range roots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("closed snapshot retained: %s: %v", root, err)
+		}
 	}
 }

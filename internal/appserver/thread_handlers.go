@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
@@ -71,6 +72,16 @@ func (s *Server) handleThreadStart(req Request) error {
 		}
 		threadCWD = canonical
 	}
+	actualWorkspace, workspaceErr := resolvedWorkspaceResource(threadCWD)
+	if workspaceErr != nil {
+		return s.writeResponse(req.ID, nil, workspaceErr)
+	}
+	// Keep the trusted local product's engine binding spelling (including
+	// symlinked project roots), while policy always sees the physical root.
+	// Delegated creation pins that physical root rather than a mutable alias.
+	if !s.Principal(s.requestAccessContext(req)).IsOwner() {
+		threadCWD = actualWorkspace.ID
+	}
 	workspaceID := strings.TrimSpace(params.WorkspaceID)
 	if workspaceID == "" {
 		workspaceID = s.rt.WorkspaceID
@@ -104,7 +115,7 @@ func (s *Server) handleThreadStart(req Request) error {
 	if strings.TrimSpace(params.Engine) == "" {
 		engineID = agentengine.NormalizeEngineID(string(s.rt.DefaultEngine()))
 	}
-	descriptorContext, cancelDescriptor := context.WithTimeout(context.Background(), 5*time.Second)
+	descriptorContext, cancelDescriptor := context.WithTimeout(s.requestAccessContext(req), 5*time.Second)
 	descriptor, descriptorErr := s.engineDescriptorForState(descriptorContext, binding, engineID)
 	cancelDescriptor()
 	if descriptorErr != nil {
@@ -166,6 +177,15 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && hostLoop && approvefor.EnabledForMode(selection.PermissionMode)
+	if _, err := s.requireRequestAccess(req, MethodThreadStart, executionEffects(selection.Provider, selection.Model, selection.PermissionMode, string(engineID)), actualWorkspace); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Compound project/handoff/worktree creation has its own admission semantics;
+	// it is not advertised as a generic delegated create operation.
+	if !s.Principal(s.requestAccessContext(req)).IsOwner() && (params.Project != nil || params.Handoff != nil || workspace == "worktree") {
+		return s.writeResponse(req.ID, nil, &access.Denied{Action: MethodThreadStart, Reason: "delegated-create-variant-unsupported"})
+	}
+
 	if params.Project != nil {
 		th, err := s.startProjectThread(binding, selection, engineID, params)
 		if err != nil {
@@ -228,6 +248,9 @@ func (s *Server) handleThreadStart(req Request) error {
 		}()
 		threadWorktree = session.WorktreeInfo{Path: created.Path, BaseHEAD: created.HEAD, BaseRepo: threadCWD}
 		threadCWD = created.Path
+	}
+	if _, err := s.requireRequestAccess(req, MethodThreadStart, nil); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if !params.Ephemeral {
 		if threadWorktree.Path != "" {
@@ -400,6 +423,9 @@ func (s *Server) handleThreadResume(req Request) error {
 		if id == "" {
 			return s.writeResponse(req.ID, nil, errors.New("no sessions found"))
 		}
+	}
+	if _, err := s.requireRequestAccess(req, MethodThreadResume, nil, access.Resource{Kind: "session", ID: id}); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	// Reads follow an accepted execution's captured authority until it settles.
 	// A plugin publication must not turn reopening its local owner into a new

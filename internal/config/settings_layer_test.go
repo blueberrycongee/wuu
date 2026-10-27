@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -779,4 +780,31 @@ func writeBaseConfigPath(t *testing.T, workdir, contents string) string {
 		t.Fatalf("write project config: %v", err)
 	}
 	return path
+}
+
+func TestFederationConfigurationIsUserOwnedAndExplicit(t *testing.T) {
+	home := isolatedHome(t)
+	workdir := t.TempDir()
+	writeBaseConfig(t, home, layerBaseConfigJSON)
+	for _, file := range []string{sharedSettingsFile, localSettingsFile} {
+		writeProjectSettings(t, workdir, file, `{"session_federation":{"enabled":true,"host_id":"repo-claimed-host","models":{"test":["test"]},"tool_allow":["read"]}}`)
+	}
+	cfg, _, err := LoadFrom(workdir, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionFederation != nil {
+		t.Fatal("project settings supplied host delegation ceiling")
+	}
+	var base map[string]any
+	if err = json.Unmarshal([]byte(layerBaseConfigJSON), &base); err != nil {
+		t.Fatal(err)
+	}
+	base["session_federation"] = map[string]any{"enabled": true, "host_id": "owner-host", "models": map[string]any{"test": []string{"test"}}, "tool_allow": []string{"read"}}
+	raw, _ := json.Marshal(base)
+	writeBaseConfig(t, home, string(raw))
+	cfg, _, err = LoadFrom(workdir, home)
+	if err != nil || cfg.SessionFederation == nil || cfg.SessionFederation.HostID != "owner-host" {
+		t.Fatalf("owner configuration=%+v err=%v", cfg.SessionFederation, err)
+	}
 }

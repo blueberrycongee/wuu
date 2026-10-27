@@ -6,17 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -24,6 +27,17 @@ import (
 	"github.com/blueberrycongee/wuu/internal/titleservice"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
+
+// Direct handler fixtures do not boot a session runtime. Select their trusted
+// embedding identity and owner-only policy explicitly instead of relying on a
+// zero-value Server to bypass the outbound resource boundary.
+func newOwnerHandlerFixture(rt *runtime.Session, out io.Writer) *Server {
+	return &Server{rt: rt, out: out, access: localOwnerTestAccess()}
+}
+
+func localOwnerTestAccess() connectionAccess {
+	return connectionAccess{principal: principal.LocalOwner(), policy: access.OwnerOnly{}}
+}
 
 // Embedded model fixtures still need a captured generation for receipt ownership.
 func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...pluginhost.Client) {
@@ -53,7 +67,7 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 			}
 		}
 	}
-	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	if len(conflicts) != 0 {
@@ -439,4 +453,16 @@ func TestEmbeddedModelFixtureCompletesNonStreamingRequests(t *testing.T) {
 			}
 		})
 	}
+}
+
+type embeddedAccessConsumer struct{ embeddedModelConsumer }
+
+func (*embeddedAccessConsumer) ID() string { return access.ConsumerModule }
+func (c *embeddedAccessConsumer) Status() pluginhost.Status {
+	status := c.embeddedModelConsumer.Status()
+	status.ID = c.ID()
+	return status
+}
+func (*embeddedAccessConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: access.ServiceName, MajorVersion: 1, Required: true}}
 }

@@ -1,5 +1,6 @@
 import { useArtifacts } from "./ArtifactsContext";
-import type { ApplicationArtifactsV1 } from "../../../packages/plugin-sdk/src/ui-artifacts";
+import type { SessionLocatorV1 } from "../shared/protocol";
+import type { ApplicationArtifactsV1, ArtifactResourceV1 } from "../../../packages/plugin-sdk/src/ui-artifacts";
 import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Archive, ChevronRight, Download, Ellipsis, FileDiff, FileText, Film, Images, LayoutGrid, X } from "./WuuIcons";
 
@@ -25,7 +26,7 @@ import { Tooltip } from "./Tooltip";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showErrorToast } from "./Toast";
 import { TruncatedText } from "./TruncatedText";
-import { ArtifactPreviewContext, ArtifactThreadContext, restoreArtifactPreviewFocus } from "./ArtifactPreviewContext";
+import { ArtifactPreviewContext, ArtifactThreadContext, ArtifactLocatorContext, restoreArtifactPreviewFocus } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
 import { videoMimeType } from "../shared/videoMimeType";
 
@@ -34,6 +35,7 @@ const WorkspacePdfPreview = lazy(async () => ({
 }));
 
 export type TurnArtifact = Readonly<{
+  locator?: SessionLocatorV1;
   id: string;
   itemId: string;
   index: number;
@@ -123,17 +125,17 @@ function useArtifactPreview(
   cwd?: string,
 ): (artifact: TurnArtifact, origin?: HTMLElement) => void {
   const service = useArtifacts();
-  const lifetime = useArtifactLifetime();
   const panel = useContext(ArtifactPreviewContext);
   const threadID = useContext(ArtifactThreadContext);
+  const locator = useContext(ArtifactLocatorContext);
+  const lifetime = useArtifactLifetime(JSON.stringify([locator,threadID,cwd]));
   const { openPreview } = useImagePreview();
   return (artifact, origin) => {
+    artifact = {...artifact, locator:artifact.locator ?? locator};
     if (artifact.mimeType.startsWith("image/")) {
       openPreview({
-        src: service.resolveSource({...artifact, cwd}) ?? "", alt: artifact.name, title: artifact.name,
-        loadSource: artifact.remoteRef && !artifact.data
-          ? async () => `data:${artifact.mimeType};base64,${await service.readAttachment({remoteRef: artifact.remoteRef!}, {signal: lifetime.current.signal})}`
-          : undefined,
+        src: service.resolveSource({...artifact, cwd, threadId: threadID}) ?? "", alt: artifact.name, title: artifact.name,
+        loadSource: async options => (await service.acquireSource({...artifact, cwd, threadId: threadID}, {signal: options?.signal ? AbortSignal.any([options.signal, lifetime.current.signal]) : lifetime.current.signal})).url,
       }, origin);
     } else if (panel && threadID) {
       panel({ threadID, cwd, artifact, origin: origin ? new WeakRef(origin) : undefined });
@@ -411,7 +413,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
-  const source = useArtifacts().resolveSource({...artifact, cwd});
+  const source = useArtifactPreviewSource(artifact, cwd, undefined, !artifact.remoteRef);
   const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
     ? { src: source, alt: artifact.name, title: artifact.name } : null);
   let image: ReactNode;
@@ -481,7 +483,7 @@ function openArtifactFile(
 }
 
 function nativeArtifactActionsAvailable(service: ApplicationArtifactsV1, artifact: TurnArtifact, threadID: string | undefined): boolean {
-  return Boolean(threadID && !artifact.remoteRef && /^wuu-artifact:/i.test(artifact.uri ?? "") && service.capabilities.nativeItemMenu);
+  return Boolean(threadID && !artifact.remoteRef && artifact.uri && artifact.sha256 && service.capabilities.nativeItemMenu);
 }
 
 function useArtifactLifetime(identity?: unknown) {
@@ -498,11 +500,13 @@ function useArtifactFileActions(cwd?: string, sourceThreadID?: string): {
   menu: ReactNode;
 } {
   const service = useArtifacts();
-  const lifetime = useArtifactLifetime(service);
+  const contextLocator = useContext(ArtifactLocatorContext);
+  const lifetime = useArtifactLifetime(JSON.stringify([contextLocator,sourceThreadID,cwd]));
   const contextThreadID = useContext(ArtifactThreadContext);
   const threadID = sourceThreadID ?? contextThreadID;
   const [menu, setMenu] = useState<{ artifact: TurnArtifact; x: number; y: number }>();
   const show = (artifact: TurnArtifact, event: MouseEvent<HTMLElement>): void => {
+    artifact = {...artifact,locator:artifact.locator ?? contextLocator};
     event.preventDefault();
     event.stopPropagation();
     if (nativeArtifactActionsAvailable(service, artifact, threadID)) {
@@ -527,7 +531,7 @@ function ArtifactDownloadMenu({ artifact, cwd, threadID, x, y, onClose }: {
   const { t } = useI18n();
   const service = useArtifacts();
   const lifetime = useArtifactLifetime(artifact);
-  const source = useArtifactPreviewSource(artifact, cwd);
+  const source = useArtifactPreviewSource(artifact, cwd, threadID);
   return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[{
     label: t("artifacts.download"),
     icon: <Download className="icon" aria-hidden="true" />,
@@ -573,7 +577,7 @@ function ArtifactCard({
 }
 
 export function ArtifactPreview({
-  artifact,
+  artifact: inputArtifact,
   threadID,
   active = true,
   cwd,
@@ -593,10 +597,12 @@ export function ArtifactPreview({
 }): JSX.Element {
   const { t } = useI18n();
   const service = useArtifacts();
+  const contextualLocator = useContext(ArtifactLocatorContext);
+  const artifact = useMemo(() => inputArtifact.locator || !contextualLocator ? inputArtifact : {...inputArtifact,locator:contextualLocator},[inputArtifact,contextualLocator]);
   const lifetime = useArtifactLifetime(artifact);
-  const source = useArtifactPreviewSource(artifact, cwd);
   const contextualThreadID = useContext(ArtifactThreadContext);
   const ownerThreadID = threadID ?? contextualThreadID;
+  const source = useArtifactPreviewSource(artifact, cwd, ownerThreadID);
   const fileActions = useArtifactFileActions(cwd, ownerThreadID);
   const nativeActions = nativeArtifactActionsAvailable(service, artifact, ownerThreadID);
   const [downloadError,setDownloadError] = useState("");
@@ -657,7 +663,7 @@ export function ArtifactPreview({
     body = (
       <Suspense fallback={<div className="artifact-preview-empty">{t("imagePreview.loading")}</div>}>
         <WorkspacePdfPreview url={source} title={artifact.name} active={active} initialPage={initialPage} pageRequest={pageRequest}
-          source={cwd && ownerThreadID && artifact.sha256 && artifact.uri?.startsWith("wuu-artifact:") ? {
+          source={cwd && ownerThreadID && artifact.sha256 && artifact.uri ? {
             workspace: cwd, path: artifact.name, revision: `sha256:${artifact.sha256}`,
             artifact: { artifact_uri: artifact.uri, artifact_sha256: artifact.sha256, artifact_thread_id: ownerThreadID },
           } : undefined} />
@@ -678,7 +684,7 @@ export function ArtifactPreview({
   } else if (artifact.mimeType.startsWith("video/")) {
     body = <VideoPreview src={source} title={artifact.name} active={active} />;
   } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined || isMarkdownDocument(artifact.name, artifact.mimeType)) {
-    body = <ArtifactTextPreview artifact={artifact} source={source} />;
+    body = <ArtifactTextPreview artifact={artifact} source={source} threadId={ownerThreadID} />;
   } else {
     body = <div className="artifact-preview-empty">{t("artifacts.previewUnavailable")}</div>;
   }
@@ -728,17 +734,17 @@ export function ArtifactPreview({
   );
 }
 
-function ArtifactTextPreview({ artifact, source }: { artifact: TurnArtifact; source: string }): JSX.Element {
+function ArtifactTextPreview({ artifact, source, threadId }: { artifact: TurnArtifact; source: string; threadId?: string }): JSX.Element {
   const { t } = useI18n();
   const service = useArtifacts();
   const [result, setResult] = useState<{ artifact: TurnArtifact; source: string; text?: string; failed?: boolean }>();
   useEffect(() => {
     const controller = new AbortController();
-    void service.readText({...artifact, uri: source}, {signal: controller.signal}).then(text => {
+    void service.readText({...artifact, threadId}, {signal: controller.signal}).then(text => {
       if (!controller.signal.aborted) setResult({artifact, source, text});
     }).catch(() => { if (!controller.signal.aborted) setResult({artifact, source, failed: true}); });
     return () => controller.abort();
-  }, [service, artifact, source]);
+  }, [service, artifact, source, threadId]);
   const current = result?.source === source && result.artifact === artifact ? result : undefined;
   if (current?.text === undefined) return <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
   return isMarkdownDocument(artifact.name, artifact.mimeType)
@@ -808,22 +814,37 @@ function defaultContentPartPlacement(part: ToolResultContentPart): "inline" | "t
   return mimeType.startsWith("image/") || part.type === "image" ? "inline" : "turn_end";
 }
 
-function useArtifactPreviewSource(artifact: TurnArtifact, cwd?: string): string | undefined {
+function useArtifactPreviewSource(artifact: TurnArtifact, cwd?: string, ownerThreadId?: string, enabled = true): string | undefined {
   const service = useArtifacts();
-  const direct = service.resolveSource({...artifact, cwd});
-  const [source, setSource] = useState<{artifact: TurnArtifact; cwd?: string; url: string}>();
+  const contextualThreadId = useContext(ArtifactThreadContext);
+  const threadId = ownerThreadId ?? contextualThreadId;
+  const contextLocator = useContext(ArtifactLocatorContext);
+  const locator = artifact.locator ?? contextLocator;
+  const locatorKey = JSON.stringify(locator);
+  // Turn snapshots reconstruct presentation objects while streaming. A lease
+  // belongs to the public resource identity, not that transient object, or an
+  // unchanged published image disappears and reloads on every commentary update.
+  const resource = useMemo<ArtifactResourceV1>(() => ({
+    id: artifact.id, ref: artifact.ref, name: artifact.name, mimeType: artifact.mimeType,
+    uri: artifact.uri, sha256: artifact.sha256, data: artifact.data,
+    text: artifact.text, remoteRef: artifact.remoteRef, cwd, threadId,
+    locator: locator && {...locator},
+  }), [artifact.id, artifact.ref, artifact.name, artifact.mimeType, artifact.uri,
+    artifact.sha256, artifact.data, artifact.text, artifact.remoteRef, cwd, threadId, locatorKey]);
+  const direct = service.resolveSource(resource);
+  const [source, setSource] = useState<{resource: ArtifactResourceV1; service: ApplicationArtifactsV1; url: string}>();
   useEffect(() => {
-    if (direct) return;
+    if (direct || !enabled) return;
     const abort = new AbortController();
     let leaseId: string | undefined;
-    void service.acquireSource({...artifact, cwd}, {signal: abort.signal}).then(source => {
+    void service.acquireSource(resource, {signal: abort.signal}).then(source => {
       if (abort.signal.aborted) { if (source.leaseId) service.releaseSource(source.leaseId); return; }
       leaseId = source.leaseId;
-      setSource({artifact, cwd, url: source.url});
+      setSource({resource, service, url: source.url});
     }).catch(() => { /* Missing sources keep the existing unavailable presentation. */ });
     return () => { abort.abort(); if (leaseId) service.releaseSource(leaseId); };
-  }, [service, artifact, cwd, direct]);
-  return direct ?? (source?.artifact === artifact && source.cwd === cwd ? source.url : undefined);
+  }, [service, resource, direct, enabled]);
+  return direct ?? (enabled && source?.resource === resource && source.service === service ? source.url : undefined);
 }
 
 function workspaceArtifactPath(uri: string | undefined, cwd?: string): string | undefined {

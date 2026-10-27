@@ -89,3 +89,48 @@ func artifactProviderClient(provider *artifactService) *ArtifactClient {
 		return provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ArtifactServiceName, Method: method, Params: raw})
 	})
 }
+
+// The range contract must preserve exact snapshot identity, reject changed bytes
+// and invalid bounds, honor cancellation, and never emulate ranges by returning
+// a full response from a provider that does not implement read-range.
+func TestArtifactProviderRangeContract(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	provider := NewArtifactService(ArtifactModule, home, filepath.Join(home, "workspaces", "workspace"))
+	if err := provider.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close(ctx)
+	client := artifactProviderClient(provider)
+	artifact, err := client.Import(ctx, ArtifactScope{ThreadID: "thread", PluginID: "test"}, pluginhost.ArtifactImportParams{Data: base64.StdEncoding.EncodeToString([]byte("0123456789")), Name: "report.pdf", MIMEType: "application/pdf"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ArtifactRangeRequest{ArtifactReadRequest: ArtifactReadRequest{ArtifactResolveRequest: ArtifactResolveRequest{ThreadID: "thread", URI: artifact.URI}, MaxBytes: 3}, Offset: 4, SHA256: artifact.SHA256}
+	result, err := client.ReadRange(ctx, request)
+	if err != nil || string(result.Data) != "456" || result.Offset != 4 || result.Total != 10 || result.SHA256 != artifact.SHA256 {
+		t.Fatalf("range=%+v err=%v", result, err)
+	}
+	wrong := request
+	wrong.SHA256 = strings.Repeat("0", 64)
+	if _, err := client.ReadRange(ctx, wrong); err == nil {
+		t.Fatal("wrong digest accepted")
+	}
+	wrong = request
+	wrong.Offset = 11
+	if _, err := client.ReadRange(ctx, wrong); err == nil {
+		t.Fatal("invalid bounds accepted")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := client.ReadRange(canceled, request); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation=%v", err)
+	}
+	path := filepath.Join(home, "workspaces", "workspace", "sessions", "thread", "artifacts", artifact.ID, artifact.Name)
+	if err := os.WriteFile(path, []byte("0123CHANGED"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ReadRange(ctx, request); err == nil {
+		t.Fatal("changed bytes accepted")
+	}
+}

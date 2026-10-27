@@ -183,7 +183,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		return len(strings.Fields(string(data)))
 	}
 	out := &lockedBuffer{}
-	srv := &Server{rt: rt, out: out, threads: map[string]*threadState{}}
+	srv := &Server{access: localOwnerTestAccess(), rt: rt, out: out, threads: map[string]*threadState{}}
 	defer srv.Close()
 	writePluginPackageFile(t, failurePath, "initialization refused")
 	epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)

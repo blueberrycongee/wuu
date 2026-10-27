@@ -32,6 +32,12 @@ func (r *ServiceRegistry) WrapServiceInvoker(service string, major int, wrap fun
 		return errors.New("service wrapper must retain the provider identity")
 	}
 	provider.invoker = wrapped
-	r.providers[key] = provider
+	// The selected implementation may also be explicitly addressed by a
+	// consumer-scoped route. Preserve this guard on every route to that identity.
+	for route, current := range r.providers {
+		if route.name == key.name && route.major == key.major && current.pluginID == provider.pluginID {
+			r.providers[route] = provider
+		}
+	}
 	return nil
 }

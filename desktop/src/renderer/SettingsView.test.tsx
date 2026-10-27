@@ -1630,6 +1630,107 @@ describe("SettingsView About section", () => {
     expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
   });
 
+  it("keeps failed MCP authentication in one actionable row with opt-in diagnostics", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const diagnostic = 'mcp initialize: HTTP 401 Unauthorized (transport "http" explicitly configured; not falling back to SSE)';
+    const server = { name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: diagnostic };
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [server] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'wuu:mcp-connect': Error: ${diagnostic}`));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="settings-mcp-enabled-docs"]')!.closest('.settings-row')!;
+    expect(row.textContent).not.toContain(diagnostic);
+    await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.connectMCPServer).toHaveBeenCalledWith("docs");
+    expect(row.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    expect(row.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.textContent).not.toContain(diagnostic);
+    const disclosure = row.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure.click());
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    expect(row.querySelector('pre')?.textContent).toContain(diagnostic);
+    expect(row.querySelector('pre')?.id).toBe(disclosure.getAttribute('aria-controls'));
+    act(() => disclosure.click());
+    expect(container.textContent).not.toContain(diagnostic);
+  });
+
+  it("reads authoritative MCP auth state after a rejected connect instead of guessing from IPC text", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn()
+      .mockResolvedValueOnce({ servers: [{ name: "docs", state: "stopped", connected: false, tool_count: 0 }] })
+      .mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "server rejected authorization" }] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error("Request failed"));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')?.getAttribute('data-tone')).toBe('warning');
+  });
+
+  it("keeps MCP failure recoverable when status refresh fails and clears diagnostics on retry success", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const server = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    api.listMCPServers = vi.fn().mockResolvedValueOnce({ servers: [server] }).mockRejectedValue(new Error('status unavailable'));
+    let resolveRetry!: (result: { status: typeof server }) => void;
+    api.connectMCPServer = vi.fn().mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRetry = resolve; }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const connect = container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!;
+    await act(async () => connect.click());
+    expect(container.querySelector('.settings-row [role="status"]')).not.toBeNull();
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('connect ECONNREFUSED');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => connect.click());
+    expect(connect.disabled).toBe(true);
+    expect(container.querySelector('pre')).toBeNull();
+    await act(async () => resolveRetry({ status: { ...server, state: "ready", connected: true, tool_count: 2 } }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+    expect(container.textContent).not.toContain('ECONNREFUSED');
+  });
+
+  it("keeps MCP list failures distinct from an empty configuration and supports retry", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockRejectedValueOnce(new Error('list transport unavailable')).mockResolvedValue({ servers: [] });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const section = container.querySelector('[data-testid="settings-mcp"]')!;
+    expect(section.querySelector('[role="status"]')).not.toBeNull();
+    expect(section.textContent).not.toContain('list transport unavailable');
+    const retry = section.querySelector<HTMLButtonElement>('button[data-testid="mcp-list-retry"]')!;
+    expect(retry).not.toBeNull();
+    await act(async () => retry.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(section.querySelector('[role="status"]')).toBeNull();
+    expect(section.querySelector('button[aria-expanded]')).toBeNull();
+  });
+
+  it("announces the failed MCP operation without claiming a live connection failed", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "ready", connected: true, tool_count: 2 }] });
+    api.disconnectMCPServer = vi.fn().mockRejectedValue(new Error('disconnect rejected'));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect docs"]')!.click());
+    const status = container.querySelector('.settings-row [role="status"]')!;
+    expect(status.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(status.textContent);
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+  });
+
   it("does not open a late MCP authorization URL after settings unmount", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
     const api = (window as unknown as GlobalWindow).wuu;
@@ -1643,6 +1744,49 @@ describe("SettingsView About section", () => {
     act(() => root!.render(null));
     await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
     expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("ignores a retired MCP failure refresh when settings controls change", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const stopped = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    let completeOld!: (result: { servers: typeof stopped[] }) => void;
+    const previous = { ...base,
+      listMCPServers: vi.fn().mockResolvedValueOnce({ servers: [stopped] }).mockImplementationOnce(() => new Promise(resolve => { completeOld = resolve; })),
+      connectMCPServer: vi.fn().mockRejectedValue(new Error('old connection failed')),
+    };
+    const next = { ...base, listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...stopped, state: "ready", connected: true, tool_count: 4 }] }) };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: previous }));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    // A slow status read must not hide the already-rejected operation.
+    expect(container.querySelector('.settings-row button[aria-expanded="false"]')).not.toBeNull();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: next }));
+    await act(async () => completeOld({ servers: [{ ...stopped, state: "auth_required" }] }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+  });
+
+  it("keeps a failed MCP login recoverable and removes stale diagnostics when code entry begins", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "initial auth failure" }] });
+    api.startMCPAuth = vi.fn().mockRejectedValueOnce(new Error('authorization service unavailable'))
+      .mockResolvedValueOnce({ authorization_url: "https://auth.example.test/authorize", state: "oauth-state" });
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const login = container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')!;
+    await act(async () => login.click());
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('authorization service unavailable');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => login.click());
+    expect(api.openExternal).toHaveBeenCalledOnce();
+    expect(container.querySelector('input[aria-label="docs authorization code"]')).not.toBeNull();
+    expect(container.querySelector('pre')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
   });
 
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {

@@ -270,11 +270,12 @@ func (p *nativeEngineProvider) InvokeService(ctx context.Context, in pluginhost.
 				descriptor.Capabilities = append(descriptor.Capabilities, "account-quota")
 			}
 			return json.Marshal(struct {
-				ID           agentengine.EngineID `json:"id"`
-				Version      string               `json:"version"`
-				Capabilities []string             `json:"capabilities"`
-				Enabled      bool                 `json:"enabled"`
-			}{descriptor.ID, descriptor.Version, descriptor.Capabilities, entry.enabled})
+				ID                agentengine.EngineID `json:"id"`
+				Version           string               `json:"version"`
+				Capabilities      []string             `json:"capabilities"`
+				RequiresHostModel *bool                `json:"requires_host_model,omitempty"`
+				Enabled           bool                 `json:"enabled"`
+			}{descriptor.ID, descriptor.Version, descriptor.Capabilities, descriptor.RequiresHostModel, entry.enabled})
 		}
 		if in.Method != "bind" {
 			raw, err := entry.admin.Invoke(ctx, in.Method, in.Params)
@@ -476,7 +477,8 @@ func (c *nativeEngineCallbacks) binding(in pluginprotocol.EngineBinding) agenten
 type nativeWuuEngineFactory struct{}
 
 func (*nativeWuuEngineFactory) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", Capabilities: []string{"native-tool-loop", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection"}}, nil
+	requiresHostModel := true
+	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", RequiresHostModel: &requiresHostModel, Capabilities: []string{"native-tool-loop", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection"}}, nil
 }
 func (*nativeWuuEngineFactory) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
 	return nil, errors.New("selected loop engine requires bound execution resources")

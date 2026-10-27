@@ -34,6 +34,57 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 
 渲染器消费者声明 `desktop.required_services`，通过 `api.invokeService({ service, method, params }, options)` 调用。宿主根据该消费者的依赖选择提供者，并绑定插件身份、generation 和 execution。Options 携带工作区选择和取消。`invokeRuntime` 仍是不透明地请求同一插件的运行时，不负责选择服务实现。将 UI 消费者与业务提供者保持为可独立选择的模块，才能让同一 UI 使用替代实现而不启动旧提供者的行为。
 
+## 局部扩展 provider
+
+整块替换 provider 仍然受支持。对于小范围行为变更，也可以用适配插件提供相同契约，
+在 `required_services` 中声明该契约，并转发未修改的方法；不需要复制默认实现，
+也不需要导入宿主内部代码。
+
+`delegateService(descriptor, overrides)` 会生成 `invokeService` 处理函数。
+只有指定的方法执行自定义逻辑，其余已声明的方法通过**当前回调的** `RuntimeHost`
+调用配置的委托目标。完整的[设置装饰示例](../../../examples/plugins/settings-decorator.ts)
+仅在设置读取视图中补充缺失的默认值，设置写入及不透明状态的读写仍由原 provider 完成。
+
+两条路由由组合配置的管理者选择。将以下示例 ID 换成已安装或发现的适配插件 ID；
+选择模块不会自动安装或授予信任。
+
+```json
+{
+  "version": 4,
+  "profile": "headless",
+  "patches": [{
+    "modules": {"example.settings-decorator": true},
+    "services": [
+      {"service": "state.plugin-settings", "major": 1, "provider": "example.settings-decorator"},
+      {"consumer": "example.settings-decorator", "service": "state.plugin-settings", "major": 1, "provider": "wuu.settings.local"}
+    ]
+  }]
+}
+```
+
+第一条是全局选择，第二条只改变适配插件已声明的依赖。委托目标既可以是原生 provider，
+也可以是外部插件。整条链仍使用同一个依赖图：目标不可用、消费者未声明依赖、
+同名方法的 schema 不兼容或出现依赖环时，准备阶段会拒绝候选组合。
+消费者模块也必须包含在组合中。
+
+显式委托目标缺失、禁用或失败时，不会回退到全局 provider；覆盖方法报错时，也不会
+补跑原方法。`remove_services` 通过相同的 `consumer`、`service` 和 `major`
+只移除这一条局部选择。服务诊断保留消费者和绑定来源，继承的运行时组合也保留这些路由。
+
+委托保留适配插件自身的身份、捕获的 generation、取消和清理依赖；它**不会**冒充
+上游调用者、转移调用者的工具权限，或让不同 provider 的资源句柄可以互换。
+这类方法仍须遵循各自契约明确的所有权和委托机制。
+
+每个组合中的 `state.documents@1` 只有一个逻辑数据集和权限边界。局部路由可以连接
+被选中 provider 的适配链，普通消费者不能绕过该边界直接选择基础实现。
+独立数据集应使用隔离的[运行时组合](plugin-compositions.md)。整块替换 provider
+和经验证的状态迁移要求不变。
+
+安装仓库依赖后运行 `node scripts/provider-delegation-e2e.mjs`。它使用打包后的公共 SDK
+编译独立适配插件，验证原生和外部委托链、持久设置、拒绝及清理路径，并将
+`report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
+
+
 ## 会话、工具与 agent 策略提供者
 
 `session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
@@ -148,6 +199,37 @@ export async function readNotes(host: RuntimeHost) {
 
 原生目录管理使用带显式目录的 `wuu state check/export/import/migrate`，见[文档存储命令](plugin-system.md)。外部提供者需要实现相应服务协议和迁移流程，不能依赖原生目录命令完成自身后端迁移。
 
+### 权威存储与部署拓扑
+
+被选中的 provider 可声明 `documentStoreDescriptor({ authority: true })`，并实现可在准备阶段调用的 `authority {}`。`documentStore(host).authority()` 返回 `StateAuthority`。它描述的是**已配置的部署方式**，不是数据库所支持的所有拓扑：
+
+```ts
+const authority: StateAuthority = {
+  version: 1,
+  mode: "provider",
+  store_id: "account/dataset-stable-identity",
+  storage_topology: "multi-host",
+  execution_topology: "single-host",
+  coordinator: "database-transaction-domain",
+  cas: "store",
+  durable_receipts: true,
+};
+```
+
+声明 authority 的外部 provider 要求宿主支持 `state.documents.authority.v1`。宿主在 initialize 的 `supported_host_features` 中列出精确名称；公共 SDK 发现 `state.documents` descriptor 含有 `authority` 时，会在返回 initialize 成功之前自动检查该声明，并在响应中添加 `required_host_features`。缺少声明、仅支持其他版本或缺少所需名称都会拒绝初始化，避免旧版 v3 宿主悄悄将本地日志用于 provider 自有权威。未知的宿主能力名称在未被显式要求时忽略，不能暗示已支持其他名称。没有 `authority` 的插件保留原有兼容性。不使用 SDK、直接实现协议的作者必须自行执行相同的宿主声明检查；仅返回 required 元数据不够，因为旧宿主会忽略它。初始化仍只负责声明，协商成功前不能产生业务效果。
+
+- **`host-journal`** 保留现有同机准入、待定写入恢复和已验证迁移语义；两种拓扑均须为 `single-host`。原生 SQLite/JSONL provider 显式声明此模式。为兼容已有 v1 provider，未声明 `authority` 方法仍表示这一已文档化的旧契约，不会选择另一个后端。已声明方法的 schema 不匹配、结果不完整、调用失败或语义不受支持时均拒绝继续，不回退到旧模式。
+- **`provider`** 由所选后端承担持久权威。宿主仅记录身份／拓扑元数据，不保存待定事务的业务载荷，也不建立完整文档镜像。普通调用和重开不会导出全部数据，也不与本机记住的修订号比较。其他获准的数据写入者可以推进远端修订号，由全库 CAS 和持久的相同操作 ID 回执处理冲突。空的 Wuu home 可以从所选远端权威启动。其他选定 provider 仍可能在本地保存各自的配置、产物或凭据；本契约不会迁移这些内容。
+- **`store_id`** 标识一个逻辑数据集，而不是插件、URL 或临时进程。准入前该身份必须已持久化，在捕获的 provider generation 内必须不变。数据集重置／替换后，provider 必须拒绝旧绑定的操作，不得悄悄转向新数据集。宿主跨重开固定该身份，遇到不同数据集则拒绝。字节相同的副本并不能证明它们是同一实时权威。
+- **`storage_topology: "multi-host"`** 要求 provider 控制的统一事务协调器，由 `coordinator` 标识；它必须原子比较全库修订号，并将全部写入与操作回执一起持久化。进程内锁、最终一致性、单独写入回执或后写覆盖都不满足条件。这是存储事务域，**不是执行租约**。
+- **`execution_topology`** 单独声明部署中的执行写入者安排。允许多读取者／数据客户端的云数据库可以服务一个执行主机。原生会话域允许这种部署，但会在准备阶段拒绝 `multi-host` 执行：它的 OS 租约不能约束不同机器上的进程。启用该拓扑前，替代会话域／协调器必须实现分布式执行 fencing。可信 provider 的错误拓扑声明不会因此变安全；远端会话路由也不提供这种协调器。
+
+从 host-journal 干净切换到 provider 模式，要求停止全部旧写入者、没有尚未解决的待定事务，并完整导出候选后端，确认文档**和回执**均匹配旧日志检查点。旧提交响应丢失／结果未知时，应先重新打开原 provider 完成对账；选择远端 provider 不是猜测结果的许可。切换保留旧数据与日志作为恢复材料，仅发布 provider 身份固定记录，不会清除既有本地副本。此后仅修改配置不能让旧日志在远端权威背后重新成为写入者。
+
+Provider 自有权威的迁移仍须走其显式管理流程：fence **全部**源写入者，转移文档、修订号、回执及逻辑身份，完整验证目标，再发布目标绑定。仅当该逻辑权威确实迁移时才保留 `store_id` 和协调器身份；独立新数据集必须使用新身份。宿主不会把导入确认或复制字节当作迁移成功。更换已固定的数据集、返回 host-journal 或改变部署拓扑都会被拒绝，不会自动重新绑定或删除固定记录；目前尚未提供宿主重新绑定管理 API。运行中的消费者不能通过 import 覆盖已准入的权威。
+
+运行 `node scripts/state-authority-acceptance/run.mjs` 可验证使用公共 SDK 的独立进程与 HTTP 后端。可复查日志覆盖：移除原生文档 provider 后创建／重开原生会话、持久提交响应丢失后的精确重试、冲突、空 home 启动、停止写入后验证迁移、禁用／离线失败，以及宿主不产生业务数据日志。该 fixture 是本机回环测试后端，不是生产数据库或分布式执行实现。
+
 ### 分页导出
 
 `store.export()` 仍发送 `export {}` 并返回完整 `StateSnapshot`。实现分页的提供者声明 `documentStoreDescriptor({ paged_export: true })`。只有显式启用才将原有 `export` 方法的输入/输出 schema 标识改为 `state.documents.export.input.v2` 和 `state.documents.export.output.v2`；服务仍为 `state.documents@1`。其他方法和旧 descriptor 保持 v1 schema。分页没有独立的线上方法，也不会自动回退为全量导出。
@@ -175,7 +257,7 @@ const page = await documentStore(host).exportPage({
 | 凭据 | `get`、`set`、`delete`、`compare-exchange`。字节使用标准 base64。`null` 表示不存在，`""` 表示存在且为空。CAS 比较字节；`value: null` 删除，`{ exchanged: false }` 表示确定不匹配。`set` 的值不能为 null。 |
 | 配置 | `read`、`compare-exchange`。`source` 用 base64 保留完整原始字节，字节缺失时为 `null`；`config` 是验证后的产品有效配置。`expected_revision` 比较源身份。响应可能包含 `committed: true` 和 `activation_error`；此时应报告写入已持久化，但应用失败。 |
 | 插件设置 | 对 `{ subject, scope: "user" \| "workspace" }` 执行 `read`、`update`、`read-state`、`update-state`。更新在 `expected_revision` 上替换完整值映射，设置还携带 fingerprint。收到 `settings_conflict` 后先重读，再构造更新。 |
-| 产物 | `import`、`resolve`、`read`、`fork`、`delete-thread`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
+| 产物 | `import`、`resolve`、`read`、`read-range`、`fork`、`delete-thread`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
 | 数据索引 | `host.data.query@2` 提供 `call` 查询、`latest-context` 有界最新请求元数据读取，以及 `append-turn` 完整回合原子追加。查询接收 thread、可选事件类型、turn 和 limit；未知类型名也可作为过滤条件。省略或零 limit 不设置显式上限；负数返回 `invalid_params`。事件不授予配置或凭据访问。 |
 
 原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
@@ -186,9 +268,34 @@ const page = await documentStore(host).exportPage({
 
 模型认证及登录/刷新状态使用捕获 generation 的凭据服务。原生 auth 适配器可以在不覆盖目标已有条目的前提下导入旧账号数据，该兼容行为属于原生实现。外部凭据提供者不会被悄悄包上原生文件查询。进行中的登录 ID 保持关联原 generation，直至清理结束。
 
+## 制品预览与下载
+
+`ARTIFACT_STORE_DESCRIPTOR` 当前声明版本 `1.2.0`。
+`artifactStore(host).readRange` 接收 `{ thread_id, uri, sha256, offset, max_bytes }`；
+偏移按解码后的字节计算，`max_bytes` 范围为 1 至 1,048,576。结果包含 base64
+`data`、`mime_type`、`offset`、快照总大小 `total` 和完整快照的 `sha256`。
+返回长度必须为 `min(max_bytes, total - offset)`；越界、摘要变化或快照不可用时失败。
+不支持 `read-range` 的提供者明确失败，宿主不会整份下载来模拟范围读取。
+
+制品 ID 与提供者 URI 都是不透明元数据。桌面端不从中推断本地路径、工作区、
+执行主机或权限。预览通过来源会话已认证的路由获取绑定到当前文档的临时读取凭据。
+核心验证已发布的制品元数据，在每次操作期间保留所选提供者，并用捕获的代次 ID
+防止切换到另一实现；每个范围请求重新检查会话权限。释放凭据、关闭来源文档或
+提供者代次变化都会停止后续读取。预览不创建云端载荷的本地缓存。
+
+浏览器适配器明确声明不同的 `bounded-memory` 来源能力：每个制品最多 8 MiB，
+全部活动凭据合计最多 32 MiB。它在公开临时 Blob URL 前验证完整摘要，不持久化
+字节，并在清理时撤销 URL。超大资源和不支持的 MIME 类型明确失败；这不等同于
+原生范围流式传输。调用方可通过 `application.artifacts.capabilities.source` 查询限制。
+
+原生桌面端仅在显式保存、外部打开或在文件管理器中显示操作时落地字节。外部应用收到私有、
+不可执行的临时副本，交付前验证完整摘要。取消或失败会删除副本；成功交付的副本
+由操作系统临时目录生命周期管理，避免退出 Wuu 时删除仍被其他应用打开的文档。
+HTML 不论由哪个提供者保存，都保持沙盒限制。
+
 ## 会话产物清理
 
-`ARTIFACT_STORE_DESCRIPTOR` 以 `1.1.0` 声明 `state.artifacts@1`，新增 `delete-thread`：输入 `{ thread_id }`，结果 `{ thread_id, deleted: true }`。获得准入的消费者使用捕获的 host 调用 `artifactStore(host).deleteThread({ thread_id })`。成功表示所选提供者已移除该会话当前的载荷及清单；会话不存在或已经为空也成功。其他会话、fork 副本、索引数据和会话文档不属于此操作范围。
+`ARTIFACT_STORE_DESCRIPTOR` 以 `1.2.0` 声明 `state.artifacts@1`；`1.1.0` 新增了 `delete-thread`：输入 `{ thread_id }`，结果 `{ thread_id, deleted: true }`。获得准入的消费者使用捕获的 host 调用 `artifactStore(host).deleteThread({ thread_id })`。成功表示所选提供者已移除该会话当前的载荷及清单；会话不存在或已经为空也成功。其他会话、fork 副本、索引数据和会话文档不属于此操作范围。
 
 删除前先停止产物生产者并等待其完成。该操作不会禁止同一 ID 之后再次导入。原生导入、fork 和删除按目标会话跨进程串行化，并保留锁文件 inode。清理仍是普通的已准入服务调用，不绕过生命周期准入。会话文档已移除但产物清理失败时，应报告部分完成，并保留同一提供者和会话以供显式重试清理；不要重建文档，也不要用删除原生路径代替所选提供者。调用结果不确定时，helper 不会自动重试；删除具有幂等性，调用者可以显式再次执行。
 
@@ -342,6 +449,15 @@ SDK，验证两个并行策略实现、子 Agent 继承及移除，证据保存�
 Wuu 循环及外部 CLI 适配器；`wuu.engine-execution` 消费所选服务。生产引擎注册表只是
 组合图的清单投影，不是第二套选择机制。替换插件可以提供 `engine.wuu`，无需继承原生
 实现或身份特权。所选提供方缺失或禁用时，不会生成替代实现。
+
+版本 1 的 `descriptor` 响应可声明 `requires_host_model: boolean`。原生 Wuu 循环
+声明 `true`；自行管理模型访问和凭据的引擎声明 `false`，包括不需要模型的
+`engine.wuu` 替换实现。`engine/list` 保留这项客户端就绪状态与模型来源元数据：
+`true` 让默认输入框选择宿主已配置的模型并检查凭据就绪状态，`false` 则使用引擎自己的
+模型选择。它不是凭据验证、后端授权或新增的服务端会话创建前提。提供方的执行和就绪
+检查独立于此声明，不能借它绕过模型认证或权限。旧描述符省略该字段时，
+客户端保留旧规则：`wuu` 需要宿主模型配置，其他引擎自行认证。显式 `false` 不会
+被当作省略。
 
 绑定一起传递模型、推理强度、速度、模型选项、指令、权限模式、MCP 端点和恢复引用。
 回调网关绑定具体提供方及捕获的代际，仅持有不透明令牌不能获得权限。公开的

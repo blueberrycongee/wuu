@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ThreadItem, Turn } from "../shared/protocol";
+import type { ArtifactSourceParams, ThreadItem, Turn } from "../shared/protocol";
 import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresentation";
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
@@ -29,6 +29,16 @@ let service = createConversationTestApplication();
 let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+
+function mockArtifactSources() {
+  const acquire = vi.fn(async ({requestId}: ArtifactSourceParams) => ({
+    url: `wuu-artifact://lease/${requestId}`, leaseId: requestId!,
+  }));
+  const release = vi.fn(async () => {});
+  vi.stubGlobal("wuu", {...window.wuu, acquireArtifactSource: acquire, releaseArtifactSource: release});
+  service = createConversationTestApplication();
+  return {acquire, release};
+}
 
 function makeTurn(
   status: Turn["status"],
@@ -471,21 +481,26 @@ describe("TurnView", () => {
     expect(source).toBe(`wuu-file://local/${btoa('/workspace/owning-thread/images/preview.png').replace(/=+$/, '')}`);
   });
 
-  it("keeps explicit artifact previews separate from the unchanged file-diff summary", () => {
-    const uri = "wuu-artifact://workspace/thread/artifact/chart.svg?sha256=old";
+  it("keeps explicit artifact previews separate from the unchanged file-diff summary", async () => {
+    const {acquire} = mockArtifactSources();
+    const sha256 = "a".repeat(64);
+    const uri = `wuu-artifact://workspace/thread/artifact/chart.svg?sha256=${sha256}`;
     const turn = makeTurn("completed", [
       { id: "write-chart", type: "tool_call", name: "write_file", status: "completed",
         result: JSON.stringify({ path: "chart.svg", diff: { new_file: true, lines: 68 } }) },
       { id: "present-chart", type: "tool_call", name: "present_artifact", status: "completed",
         result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: "chart.svg", uri,
-          artifact: { ref: "artifact", sha256: "old", placement: "inline" } }] } },
+          artifact: { ref: "artifact", sha256, placement: "inline" } }] } },
       makeFinalAnswer("图已生成。"),
     ]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView threadID="thread-1" turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    await act(async () => {});
     const preview = container.querySelector('[data-wuu-component="turn-artifacts-inline"]')!;
     const diff = container.querySelector(".turn-edit-summary-card")!;
-    expect(preview.querySelector("img")?.getAttribute("src")).toBe(uri);
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(acquire).toHaveBeenCalledWith({uri, sha256, threadId: "thread-1", requestId: expect.any(String)});
+    expect(preview.querySelector("img")?.getAttribute("src")).toBe(`wuu-artifact://lease/${acquire.mock.calls[0][0].requestId}`);
     expect(diff.textContent).toContain("本轮修改 1 个文件");
     expect(diff.textContent).toContain("chart.svg");
     expect(diff.textContent).toContain("68");
@@ -522,13 +537,14 @@ describe("TurnView", () => {
     expect(card?.textContent).not.toContain("video/mp4");
   });
 
-  it("keeps published images and streamed answers stable while folding commentary at handoff", () => {
+  it("keeps published images and streamed answers stable while folding commentary at handoff", async () => {
     vi.useFakeTimers();
+    const {acquire, release} = mockArtifactSources();
     const image = (id: string): ThreadItem => ({
       id, type: "tool_call", name: "present_artifact", status: "completed",
       result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: `${id}.svg`,
         uri: `wuu-artifact://workspace/thread/${id}/chart.svg`,
-        artifact: { ref: id, placement: "inline" } }] },
+        artifact: { ref: id, sha256: (id === "first" ? "a" : "b").repeat(64), placement: "inline" } }] },
     });
     const first = image("first"), second = image("second");
     const text: ThreadItem = { ...makeCommentary("Reading the chart"), status: "in_progress" };
@@ -546,8 +562,13 @@ describe("TurnView", () => {
     };
     const before = (a: Element, b: Element): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     update(makeTurn("in_progress", [first]));
+    await act(async () => {});
+    expect(acquire).toHaveBeenCalledTimes(1);
     const firstImage = container.querySelector("img")!;
+    expect(firstImage).not.toBeNull();
     update(makeTurn("in_progress", [first, text]));
+    expect(container.querySelector("img")).toBe(firstImage);
+    expect(acquire).toHaveBeenCalledTimes(1);
     const message = container.querySelector(".agent-block")!;
     expect(before(firstImage, message)).toBe(true);
     expect(message.closest(".turn-process-fold")).toBeNull();
@@ -571,6 +592,9 @@ describe("TurnView", () => {
     // A second output must not gather both images after all the commentary.
     const final = { ...makeFinalAnswer("The comparison"), terminal: false, status: "in_progress" as const };
     update(makeTurn("in_progress", [first, settledText, second, final]));
+    expect(container.querySelector("img")).toBe(firstImage);
+    await act(async () => {});
+    expect(acquire).toHaveBeenCalledTimes(2);
     const secondImage = container.querySelectorAll("img")[1];
     const finalMessage = container.querySelectorAll(".agent-block")[1];
     expect(before(message, secondImage)).toBe(true);
@@ -584,6 +608,10 @@ describe("TurnView", () => {
     expect(container.querySelectorAll(".turn-answer-body .agent-block")).toHaveLength(1);
     expect(container.querySelector(".turn-answer-body .agent-block")).toBe(finalMessage);
     expect(before(secondImage, finalMessage)).toBe(true);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(release).not.toHaveBeenCalled();
+    act(() => root!.unmount()); root = undefined;
+    expect(release.mock.calls).toEqual(acquire.mock.calls.map(([params]) => [params.requestId]));
   });
 
   it("buffers structural process changes briefly while keeping the current text visible", () => {

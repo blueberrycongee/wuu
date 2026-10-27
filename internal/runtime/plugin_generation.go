@@ -370,12 +370,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	if err != nil {
 		return nil, fmt.Errorf("snapshot plugin %q candidate: %w", id, err)
 	}
-	cleanupSnapshot := true
-	defer func() {
-		if cleanupSnapshot {
-			_ = os.RemoveAll(snapshot)
-		}
-	}()
+	defer os.RemoveAll(snapshot)
 
 	manifest, err := packageManifestPath(snapshot, manifestPath)
 	if err != nil {
@@ -390,6 +385,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	}
 
 	discovered := append([]pluginpkg.Plugin(nil), s.Plugins...)
+	var installedRoot string
 	found := false
 	for index := range discovered {
 		if discovered[index].ID != id {
@@ -398,6 +394,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 		if discovered[index].Source != "user" || discovered[index].SubjectID != candidate.SubjectID {
 			return nil, fmt.Errorf("plugin %q candidate does not replace the installed user package", id)
 		}
+		installedRoot = discovered[index].Root
 		discovered[index] = candidate
 		found = true
 		break
@@ -415,7 +412,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 			}
 		}
 	}
-	generation, err := s.buildPluginGeneration(cfg, discovered, required, []string{snapshot}, startPluginClient)
+	generation, err := s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 	if err != nil {
 		return nil, err
 	}
@@ -424,17 +421,38 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 		s.persistRevocationReport(generation)
 		return nil, fmt.Errorf("plugin %q candidate is not approved for its exact fingerprint", id)
 	}
-	cleanupSnapshot = false
+	// Catalog paths identify the durable installation; only generation.active
+	// owns executable snapshots. A later publication must never borrow this
+	// preparation directory after its owner has retired.
+	candidate.Root = installedRoot
+	candidate.ManifestPath = filepath.Join(installedRoot, manifestPath)
+	if candidate.RuntimePath != "" {
+		runtime := *candidate.Runtime
+		runtime.Command = filepath.Join(installedRoot, candidate.RuntimePath)
+		candidate.Runtime = &runtime
+	}
+	candidate.Commands = append([]pluginpkg.ResolvedCommand(nil), candidate.Commands...)
+	for index := range candidate.Commands {
+		if candidate.Commands[index].ResolvedPrompt != nil {
+			prompt := *candidate.Commands[index].ResolvedPrompt
+			prompt.Path = filepath.Join(installedRoot, prompt.RelPath)
+			candidate.Commands[index].ResolvedPrompt = &prompt
+		}
+	}
+	for index := range generation.plugins {
+		if generation.plugins[index].ID == id {
+			generation.plugins[index] = candidate
+			break
+		}
+	}
 	return generation, nil
 }
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
-	effectiveConfig := cfg
-	effectiveConfig.Composition = productComposition(cfg.Composition, s.DesktopExecutionDefaults, activatedPlugins(cfg, discovered), factories)
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(effectiveConfig, discovered, factories...)
+		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
 		}
@@ -449,6 +467,21 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 		active = activationPlan.Plugins
+	}
+	// Policy and unrelated-package updates reuse admitted bytes, not mutable
+	// installations. Pin their owner through copying; the replacement then owns
+	// independent snapshots and cannot prolong or delete its predecessor's files.
+	current := s.retainPluginGeneration()
+	defer s.releasePluginGeneration(current)
+	if current != nil {
+		for index, item := range active {
+			for _, admitted := range current.active {
+				if admitted.SubjectID == item.SubjectID && admitted.Fingerprint == item.Fingerprint && admitted.Source == item.Source && admitted.Official == item.Official {
+					active[index] = admitted
+					break
+				}
+			}
+		}
 	}
 	var snapshotRoots []string
 	var snapshotErr error
@@ -472,7 +505,8 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(effectiveConfig.Composition, s.SafeMode), s.DriverProfile, factories...)
+	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), s.DriverProfile, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
@@ -530,12 +564,8 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 // Tool listing can initialize provider-owned resources and belongs to activation.
 func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 	host := generation.host
-	selected := make(map[string]bool)
-	for _, status := range host.Statuses() {
-		selected[status.ID] = true
-	}
 	surface := activeSurface(nil)
-	if selected[toolExecutionConsumer] {
+	if selectsRuntimeModule(host, toolExecutionConsumer) {
 		executor := newSelectedToolExecutor(host, s.candidateToolScope(generation, generation.requiredPlugins), selectedToolIdentity{cwd: s.RootDir})
 		generation.tools = executor
 		if generation.hooks != nil {
@@ -547,7 +577,7 @@ func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 			return err
 		}
 	}
-	if selected[sessionExecutionConsumer] {
+	if selectsRuntimeModule(host, sessionExecutionConsumer) {
 		result, err := assembleSelectedPrompt(context.Background(), host, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: s.ProviderName, Model: s.Model, Surface: surface, Instructions: s.InstructionFiles, Skills: generation.skills}, generation.systemPrompts)
 		if err != nil {
 			return err

@@ -5,6 +5,7 @@ const { suites, entries } = JSON.parse(readFileSync(new URL('./desktop-ci-suites
 const desktopSuites = new Set();
 let fullDesktop = false;
 let relatedEligible = true;
+let desktopArchitecture = false;
 const relatedSources = [];
 const selected = { go: false, desktop: false, clients: false, native: false };
 const all = () => {
@@ -32,6 +33,9 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     // plugins, or fixtures can be executable input and is not ignored globally.
     if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
+    // Desktop transport and additive plugin fixtures consume these boundaries
+    // without Electron. Unrelated renderer edits do not rerun provider checks.
+    if (/^desktop\/(src\/(main|shared|renderer\/plugins)\/|src\/renderer\/test\/setup\.ts$|scripts\/trusted-desktop-|(?:package(?:-lock)?\.json|vitest\.config\.ts)$)/.test(path)) desktopArchitecture = true;
     // Only existing renderer modules use parsed import dependencies. Global inputs,
     // plugin loading, and additions/deletions retain the full suite.
     if (/^desktop\/src\/renderer\/(?!test\/|plugins\/).*\.(ts|tsx)$/.test(path) && !path.endsWith('.d.ts')) {
@@ -69,6 +73,7 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
 // Main pushes only check native packaging. PRs own validation and E2E suites.
 const outputs = {
   go: event !== 'push' && selected.go,
+  architecture: event !== 'push' && (selected.go || desktopArchitecture),
   desktop: event !== 'push' && selected.desktop,
   clients: event !== 'push' && selected.clients,
   native: selected.native,

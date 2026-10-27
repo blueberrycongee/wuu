@@ -86,7 +86,7 @@ func newSelectedConfigSourceServer(t *testing.T) (*Server, *observedConfigSource
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = host.Close(context.Background()) })
-	return &Server{rt: &runtime.Session{PluginHost: host, ConfigPath: path}}, provider
+	return newOwnerHandlerFixture(&runtime.Session{PluginHost: host, ConfigPath: path}, nil), provider
 }
 
 // Ordinary appserver writes must reach the selected provider even when its

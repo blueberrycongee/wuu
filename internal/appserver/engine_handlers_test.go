@@ -28,6 +28,88 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
+// engine/list must expose the selected provider's tri-state declaration, not
+// infer a credential requirement from the engine.wuu service identity.
+func TestEngineInventorySelectedHostModelRequirement(t *testing.T) {
+	for _, value := range []string{"omitted", "false", "true"} {
+		t.Run(value, func(t *testing.T) {
+			provider := &engineRequirementFixture{value: value}
+			factory := runtime.NativeProviderFactory{ID: provider.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}
+			cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"wuu.engines.native": false, provider.ID(): true}, Services: []composition.Binding{{Service: "engine.wuu", Major: 1, Provider: provider.ID()}}}}}}
+			rt := newEngineAdminRuntimeAt(t, t.TempDir(), cfg, factory)
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			binding, err := rt.RetainState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer binding.Close()
+			descriptor, err := srv.engineDescriptorForState(context.Background(), binding, "wuu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (descriptor.RequiresHostModel == nil) != (value == "omitted") || descriptor.RequiresHostModel != nil && *descriptor.RequiresHostModel != (value == "true") {
+				t.Fatalf("retained selected descriptor lost requirement %s: %+v", value, descriptor)
+			}
+			inventory := srv.engineInventory()
+			if len(inventory) != 1 || inventory[0].ID != "wuu" || !inventory[0].Enabled || !inventory[0].BinaryOK {
+				t.Fatalf("selected engine inventory = %+v", inventory)
+			}
+			raw, err := json.Marshal(inventory[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if value == "omitted" {
+				if _, present := fields["requires_host_model"]; present {
+					t.Fatalf("legacy declaration invented: %s", raw)
+				}
+			} else if string(fields["requires_host_model"]) != value {
+				t.Fatalf("selected requirement lost: %s, want %s", raw, value)
+			}
+		})
+	}
+}
+
+type engineRequirementFixture struct {
+	embeddedModelConsumer
+	value string
+}
+
+func (*engineRequirementFixture) ID() string { return "fixture.engine-requirement" }
+func (p *engineRequirementFixture) Status() pluginhost.Status {
+	status := p.embeddedModelConsumer.Status()
+	status.ID = p.ID()
+	return status
+}
+func (*engineRequirementFixture) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (*engineRequirementFixture) ProvidedServices() []pluginhost.ServiceDescriptor {
+	methods := []pluginhost.ServiceMethodDescriptor{}
+	for _, method := range []string{"descriptor", "describe", "models"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: "engine." + method + ".input.v1", OutputSchema: "engine." + method + ".output.v1"})
+	}
+	return []pluginhost.ServiceDescriptor{{Name: "engine.wuu", Version: "1.0.0", Methods: methods}}
+}
+func (p *engineRequirementFixture) InvokeService(_ context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	switch in.Method {
+	case "descriptor":
+		value := map[string]any{"id": "wuu", "version": "1.0.0", "enabled": true}
+		if p.value != "omitted" {
+			value["requires_host_model"] = p.value == "true"
+		}
+		return json.Marshal(value)
+	case "describe":
+		return json.RawMessage(`{"binary_ok":true,"enabled":true}`), nil
+	case "models":
+		return json.RawMessage(`{"models":[]}`), nil
+	default:
+		return nil, fmt.Errorf("unexpected engine method %s", in.Method)
+	}
+}
+
 // Disabling a selected implementation must reject admission before it creates
 // a durable thread or dispatches inference, including the native engine.
 func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {

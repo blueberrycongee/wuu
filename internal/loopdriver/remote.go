@@ -229,7 +229,7 @@ type RemoteInstance struct {
 
 	mu         sync.Mutex
 	checkpoint Checkpoint
-	cancel     context.CancelCauseFunc
+	cancel     func(string)
 }
 
 func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (TerminalOutcome, error) {
@@ -245,7 +245,7 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	i.mu.Lock()
-	i.cancel = cancel
+	i.cancel = func(reason string) { cancel(CancellationCause(ctx, reason)) }
 	i.mu.Unlock()
 	defer cancel(nil)
 
@@ -302,7 +302,7 @@ func (i *RemoteInstance) Cancel(reason string) {
 	cancel := i.cancel
 	i.mu.Unlock()
 	if cancel != nil {
-		cancel(errors.New(reason))
+		cancel(reason)
 	}
 }
 

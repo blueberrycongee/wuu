@@ -12,7 +12,7 @@ func (s *State) TitlePolicy() *titleservice.Client {
 		return titleservice.NewClient(titleservice.InvokeNative)
 	}
 	registry := s.Host.ServiceRegistry()
-	if registry == nil || !registry.HasProvider(titleservice.ServiceName, 1) {
+	if registry == nil || !registry.HasProviderFor(sessionExecutionConsumer, titleservice.ServiceName, 1) {
 		return nil
 	}
 	return titleservice.NewClient(boundServiceCall(s.Host, sessionExecutionConsumer, titleservice.ServiceName))

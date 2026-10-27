@@ -17,6 +17,7 @@ import { hasAuthenticatedProvider } from "../RuntimeHelpers";
 import { isRecord, recordValue, stringValue } from "../ToolActivity";
 
 export interface ApplicationSubmissionOptions {
+  artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1;
   getState(): AppState;
   updateState(update: (state: AppState) => AppState): void;
   changed(): void;
@@ -25,7 +26,7 @@ export interface ApplicationSubmissionOptions {
   resources: ApplicationDraftResources;
   getDraft(ownerTabId: string): ComposerDraftState;
   setDraft(ownerTabId: string, draft: ComposerDraftState): void;
-  getRuntime(ownerTabId: string): { pending: boolean; params: ThreadStartParams; worktree?: { startBranch?: string } };
+  getRuntime(ownerTabId: string): { pending: boolean; requiresHostModel: boolean; params: ThreadStartParams; worktree?: { startBranch?: string } };
   sidebarCache: ReturnType<typeof createSidebarThreadCache>;
   consumeOffer?(offerID: string): Promise<void>;
 }
@@ -116,7 +117,7 @@ export class ApplicationSubmission {
     if (this.disposed || signal?.aborted || this.options.isNavigationPending() || !source || source.kind === "skills" || !visible || !state.activeContext || !state.initialized) return { accepted: false };
     const thread = source.kind === "thread" ? threadForTab(state, source.threadID) : undefined;
     if (source.kind === "thread" && !thread || thread?.read_only || thread && this.stopRequests.has(thread.id) || !thread && this.options.getRuntime(source.id).pending) return { accepted: false };
-    if (!thread && this.options.getRuntime(source.id).params.engine === "wuu" && !hasAuthenticatedProvider(state.initialized.providers)) return { accepted: false };
+    if (!thread && this.options.getRuntime(source.id).requiresHostModel && !hasAuthenticatedProvider(state.initialized.providers)) return { accepted: false };
     if ([...this.operations.values()].some(operation => operation.view.draftPending && (operation.source.id === source.id || thread && operation.thread?.id === thread.id))) return { accepted: false };
     const draft = this.options.getDraft(source.id);
     const contentParts: MessageContentPart[] | undefined = input.contentParts ? structuredClone(input.contentParts) as MessageContentPart[] : input.text === undefined || input.text === draft.prompt ? readCollapsedPromptParts(thread?.id ?? source.id, draft.prompt) : undefined;
@@ -129,7 +130,9 @@ export class ApplicationSubmission {
       if (!thread || input.artifact.threadId !== thread.id) throw new Error("The artifact belongs to another conversation");
       const artifact = thread.turns.flatMap(collectTurnArtifacts).find(artifact => artifact.id === input.artifact!.id && artifact.sha256 === input.artifact!.sha);
       if (!artifact) throw new Error("The artifact snapshot is no longer available");
-      const file = createArtifactComposerFile({ threadID: thread.id, artifact }, thread.id);
+      const artifacts = this.options.artifacts?.();
+      if (!artifacts) throw new Error("Selected artifact loading is unavailable");
+      const file = createArtifactComposerFile({ threadID: thread.id, artifact }, thread.id, artifacts);
       implicitFileID = file.id;
       message = { ...message, files: [...message.files.filter(item => item.id !== file.id), file] };
     }
@@ -283,9 +286,9 @@ export class ApplicationSubmission {
     const { source, context, message, optimistic } = operation;
     const initial = this.options.getState(); const target = operation.thread;
     const runtime: ReturnType<ApplicationSubmissionOptions["getRuntime"]> = target
-      ? { pending: false, params: { engine: target.engine_id, permission_mode: target.permission_mode } }
+      ? { pending: false, requiresHostModel: false, params: { engine: target.engine_id, permission_mode: target.permission_mode } }
       : this.options.getRuntime(source.id);
-    if (!target && (runtime.pending || (runtime.params.engine ?? "wuu") === "wuu" && !hasAuthenticatedProvider(initial.initialized?.providers))) { forgetLocalTurnTiming(optimistic.id); return false; }
+    if (!target && (runtime.pending || runtime.requiresHostModel && !hasAuthenticatedProvider(initial.initialized?.providers))) { forgetLocalTurnTiming(optimistic.id); return false; }
     const key = target?.id ?? source.id;
     if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) { forgetLocalTurnTiming(optimistic.id); return false; }
     this.unadmitted.set(message.id, message);

@@ -22,7 +22,7 @@ export function isApplicationPreviewAction(action: string): action is keyof Appl
 export class ApplicationPreview {
   private state: WorkspaceViewTabsState = initialWorkspaceViewTabsState;
   private snapshot: PreviewTabs = Object.freeze({ tabs: Object.freeze([]), conversationSelected: false });
-  constructor(private readonly host: { getThreads: () => readonly Thread[]; changed: () => void }) {}
+  constructor(private readonly host: { artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1; getThreads: () => readonly Thread[]; changed: () => void }) {}
 
   getSnapshot(): PreviewTabs { return this.snapshot; }
 
@@ -76,19 +76,20 @@ export class ApplicationPreview {
         if (page !== undefined && (!Number.isSafeInteger(page) || page < 1)) throw new Error("Artifact page must be a positive integer");
         if (!artifact && validPdfSelectionReference({ start_page: page ?? 1, end_page: page ?? 1,
           artifact_uri: artifactId, artifact_sha256: sha256, artifact_thread_id: threadId })) {
-          // The managed protocol validates the persisted manifest and full digest;
-          // a range read avoids loading the PDF into application snapshot memory.
-          const response = await fetch(artifactId, { headers: { Range: "bytes=0-0" }, signal });
-          await response.body?.cancel();
-          signal?.throwIfAborted();
-          if (response.ok && response.headers.get("Content-Type")?.split(";")[0] === "application/pdf") {
-            artifact = { id: artifactId, itemId: "", index: 0, placement: "inline", type: "file", name: decodeURIComponent(new URL(artifactId).pathname.split("/").at(-1)!),
-              mimeType: "application/pdf", uri: artifactId, sha256, delivered: true };
-          }
+          const artifacts = this.host.artifacts?.();
+          if (!artifacts) throw new Error("Selected artifact loading is unavailable");
+          const candidate = { id: artifactId, itemId: "", index: 0, placement: "inline" as const, type: "file" as const,
+            name: "Document.pdf", mimeType: "application/pdf", uri: artifactId, sha256, locator:thread?.session_locator, delivered: true };
+          const source = await artifacts.acquireSource({...candidate, threadId}, {signal});
+          try {
+            const response = await fetch(source.url, { headers: { Range: "bytes=0-0" }, signal });
+            await response.body?.cancel(); signal?.throwIfAborted();
+            if (response.ok && response.headers.get("Content-Type")?.split(";")[0] === "application/pdf") artifact = candidate;
+          } finally { if (source.leaseId) artifacts.releaseSource(source.leaseId); }
         }
         if (!artifact || sha256 !== undefined && artifact.sha256 !== sha256) throw new Error("Artifact is unavailable or its snapshot changed");
         this.update(openViewTab(this.state, workspaceArtifactViewTab({ threadID: threadId, cwd: thread?.cwd,
-          artifact: structuredClone(artifact), page, pageRequest: page === undefined ? undefined : crypto.randomUUID() }))); break;
+          artifact: structuredClone({...artifact,locator:thread?.session_locator}), page, pageRequest: page === undefined ? undefined : crypto.randomUUID() }))); break;
       }
       case "preview.open-tool": {
         const { toolId, activate = true } = input as ApplicationPreviewActionMapV1["preview.open-tool"]["input"];

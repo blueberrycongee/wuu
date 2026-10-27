@@ -34,6 +34,67 @@ The host retains execution admission, cancellation, lifecycle order, OS locks, p
 
 Renderer consumers declare `desktop.required_services` and call `api.invokeService({ service, method, params }, options)`. The host chooses the provider from that consumer's dependency and binds plugin identity, generation and execution. Options carry workspace selection and cancellation. `invokeRuntime` remains an opaque request to the same plugin's runtime; it does not select a service implementation. Keeping a UI consumer independently selectable from its business provider lets the same UI use a replacement without starting the old provider's behavior.
 
+## Partially extending a provider
+
+Replacing a whole provider remains supported. For a small behavior change, an
+adapter can instead provide the same contract, declare it in `required_services`,
+and forward unchanged methods. It does not need to copy the supplied
+implementation or import host internals.
+
+`delegateService(descriptor, overrides)` creates an `invokeService` handler.
+Only named overrides run custom code; other declared methods call the configured
+delegate through the **current callback's** `RuntimeHost`. See the complete
+[settings decorator](../../../examples/plugins/settings-decorator.ts): it adds a
+missing default to the settings read view while leaving settings writes and
+opaque-state reads/writes with the existing provider.
+
+The composition administrator selects both routes. Replace the example ID below
+with the installed/discovered adapter ID; selection does not install or trust it.
+
+```json
+{
+  "version": 4,
+  "profile": "headless",
+  "patches": [{
+    "modules": {"example.settings-decorator": true},
+    "services": [
+      {"service": "state.plugin-settings", "major": 1, "provider": "example.settings-decorator"},
+      {"consumer": "example.settings-decorator", "service": "state.plugin-settings", "major": 1, "provider": "wuu.settings.local"}
+    ]
+  }]
+}
+```
+
+The first binding is the global choice. The second changes only the adapter's
+declared dependency. An external provider can be the delegate just as a native
+provider can. Chains use the same dependency graph: unavailable targets,
+undeclared consumers, incompatible shared method schemas and dependency cycles
+reject preparation. Consumer modules must be included in the composition.
+
+A scoped selection never falls back to the global provider when its target is
+missing, disabled or fails. Override errors also do not run the base method.
+`remove_services` includes the same `consumer`, `service` and `major` to remove
+only a scoped choice. Registry diagnostics retain that consumer and binding
+source; inherited runtime compositions retain those routes.
+
+Delegation preserves the adapter's own identity, captured generation,
+cancellation and cleanup dependencies. It does **not** impersonate the upstream
+caller, transfer a caller's tool authority, or make provider-owned resource
+handles interchangeable. Such methods still need their contract's explicit
+ownership/delegation mechanism.
+
+`state.documents@1` has one logical dataset and authority boundary per
+composition. Its scoped routes may connect the selected provider's adapter chain;
+an ordinary consumer cannot select a base around that authority. Use an isolated
+[runtime composition](plugin-compositions.md) for independent state. Normal
+provider replacement and verified state-migration requirements are unchanged.
+
+Run `node scripts/provider-delegation-e2e.mjs` after installing repository
+dependencies. It compiles the adapter against a packed public SDK and exercises
+native/external chains, durable settings, rejection and cleanup paths, recording
+`report.json` and `verification.log` under `.tmp/e2e/provider-delegation/`.
+
+
 ## Session, tool and agent policy providers
 
 `session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
@@ -187,6 +248,37 @@ Switching backend configuration alone is not a data transfer. Stop business cons
 
 For native directory administration, use `wuu state check/export/import/migrate` with explicit directories; see [the document-store commands](plugin-system.md). External providers must implement the corresponding service contract and transfer procedure rather than relying on native directory commands.
 
+### Authority and deployment topology
+
+A selected provider can advertise `documentStoreDescriptor({ authority: true })` and implement the preparation-safe `authority {}` method. `documentStore(host).authority()` returns `StateAuthority`. This is an explicit **configured deployment**, not a list of topologies a database could support:
+
+```ts
+const authority: StateAuthority = {
+  version: 1,
+  mode: "provider",
+  store_id: "account/dataset-stable-identity",
+  storage_topology: "multi-host",
+  execution_topology: "single-host",
+  coordinator: "database-transaction-domain",
+  cas: "store",
+  durable_receipts: true,
+};
+```
+
+Authority-aware external providers require the host feature `state.documents.authority.v1`. The host advertises exact names in initialize `supported_host_features`; the public SDK automatically checks that offer for any `state.documents` descriptor containing `authority`, before returning initialize success. It also declares `required_host_features` in the response. A missing offer, another version, or a missing required name rejects initialization: an older v3 host must never silently apply its local journal to provider-owned data. Unknown offered names are ignored unless explicitly required; they do not imply support for known names. Plugins without `authority` keep their previous compatibility. Authors implementing the wire protocol without the SDK must perform the same offer check themselves—required metadata alone is insufficient because old hosts ignore it. Initialization remains declaration-only; perform no business effects before negotiation succeeds.
+
+- **`host-journal`** preserves the existing same-host admission, pending-write recovery and verified migration semantics. Both topologies must be `single-host`. Native SQLite/JSONL providers declare this explicitly. For compatibility, a v1 provider without an `authority` method retains this documented legacy contract; it does not select another backend. An advertised method with wrong schemas, malformed results, failure or unsupported semantics fails closed, never falls back to legacy mode.
+- **`provider`** makes the selected backend the durable authority. The host records only identity/topology metadata, never pending transaction payloads or a full document mirror. Ordinary calls and reopen do not export all data or compare against a locally remembered revision. Another authorized storage writer may advance the remote revision; store-wide CAS and durable exact-ID receipts arbitrate conflicts. An empty Wuu home can bootstrap from that selected authority. Other selected providers may still store their own configuration, artifacts or credentials locally; this contract does not relocate them.
+- **`store_id`** identifies one logical dataset, not a plugin, URL or incidental process. It must be durable before admission and immutable throughout a captured provider generation. A provider must reject operations against a reset/replaced dataset rather than silently redirecting an old binding. The host pins identity across reopen and fails on a different dataset. Identical copied bytes do not prove one live authority.
+- **`storage_topology: "multi-host"`** requires one provider-controlled transaction coordinator, identified by `coordinator`, that atomically compares the entire store revision and stores every write plus its operation receipt. Per-process locks, eventual consistency, separate receipt writes and last-write-wins are insufficient. The coordinator is a storage transaction domain, **not an execution lease**.
+- **`execution_topology`** declares the deployment's execution-writer arrangement separately. A cloud database with many readers or data clients can serve a single execution host. The native session domain permits that arrangement but rejects `multi-host` execution during preparation: its OS leases cannot fence processes on different machines. A replacement domain/coordinator must implement distributed execution fencing before enabling that topology. A trusted provider's false topology claim cannot be made safe by this declaration, and remote session routing does not supply that coordinator.
+
+A clean host-journal → provider transition requires all old writers to stop, no unresolved pending transaction, and a complete candidate export matching the journal's document **and receipt** checkpoint. First reopen the original provider to reconcile a lost/uncertain local commit; selecting a remote provider is not permission to guess its outcome. The transition retains the old data and journal as recovery material and publishes only a provider identity pin. It does not erase existing local copies. Subsequent configuration-only changes cannot revive the old journal behind the remote authority.
+
+Provider-owned migrations remain the provider's explicit administration procedure: fence **all** source writers, transfer documents, revision, receipts and logical identity, verify the complete target, then publish the target binding. Preserve `store_id` and coordinator identity only when that logical authority genuinely moves; a new independent dataset must have a new identity. The host does not infer a successful migration from an import acknowledgement or copied bytes. Changing the pinned dataset, returning to host-journal mode, or changing configured topology is rejected rather than automatically re-binding or deleting the pin; a host re-binding administration API is not yet supplied. Runtime consumer calls cannot import over an admitted authority.
+
+Run `node scripts/state-authority-acceptance/run.mjs` for an independent public-SDK process that forwards to an HTTP backend. The repeatable acceptance log covers native session create/reopen without a native document provider, exact retry after a lost durable reply, conflicts, fresh-home bootstrap, stopped verified transfer, disabled/offline failures and absence of a host business-data journal. The fixture is a loopback test backend, not a production database or distributed execution implementation.
+
 ### Paged export
 
 `store.export()` still sends `export {}` and returns the complete `StateSnapshot`. A provider that implements paging declares `documentStoreDescriptor({ paged_export: true })`. Only that opt-in changes the existing `export` method's input/output schema identifiers to `state.documents.export.input.v2` and `state.documents.export.output.v2`; the service stays `state.documents@1`. Other methods and legacy descriptors keep their v1 schemas. There is no separate wire method or automatic full-export fallback.
@@ -214,7 +306,7 @@ Consume pages incrementally instead of accumulating another full snapshot. Host 
 | Credentials | `get`, `set`, `delete`, `compare-exchange`. Bytes use standard base64. `null` means absent, `""` means present and empty. CAS compares bytes; `value: null` deletes, and `{ exchanged: false }` is a definite mismatch. `set` requires a non-null value. |
 | Configuration | `read`, `compare-exchange`. `source` preserves complete raw bytes in base64 or `null` for absent bytes; `config` is the validated effective product configuration. `expected_revision` compares the source identity. A reply may contain `committed: true` and `activation_error`; report that the write persisted even though applying it failed. |
 | Plugin settings | `read`, `update`, `read-state`, `update-state` for `{ subject, scope: "user" \| "workspace" }`. Updates replace complete value maps at `expected_revision`; settings also carry a fingerprint. `settings_conflict` means reread before rebuilding an update. |
-| Artifacts | `import`, `resolve`, `read`, `fork`, `delete-thread`. Provider scope comes from an admitted consumer. Read requires a positive `max_bytes` and returns base64 data plus MIME type. Resolve reports whether the provider manages the artifact. Ordinary tool imports use the authenticated gateway. |
+| Artifacts | `import`, `resolve`, `read`, `read-range`, `fork`, `delete-thread`. Provider scope comes from an admitted consumer. Read requires a positive `max_bytes` and returns base64 data plus MIME type. Resolve reports whether the provider manages the artifact. Ordinary tool imports use the authenticated gateway. |
 | Data index | `host.data.query@2` supplies `call` for queries, `latest-context` for bounded latest-request metadata, and `append-turn` for atomic completed-turn batches. Queries accept a thread, optional event types, turn and limit. Unknown type names are valid filters. Omitted/zero limits have no explicit bound; negative limits fail with `invalid_params`. Events do not grant configuration or credential access. |
 
 A missing native config file reads as `source: null`; a present zero-byte file reads as `source: ""`. Check for `null` before decoding. These values must not be normalized into each other by the client. A config CAS with `source: null` supplies zero replacement bytes: native file mode writes an empty file, rather than deleting it; trusted project mode rejects empty JSON. The CAS response can retain `null` even though the empty file now exists, so it describes returned source bytes rather than file existence.
@@ -225,9 +317,42 @@ Native configuration modes preserve their source boundaries: explicit-file mode 
 
 Model authentication and login/refresh state use the captured generation's credential service. The native auth adapter can import legacy account data without overwriting the selected entry; that compatibility behavior belongs to the native implementation. An external credential provider is not silently wrapped with native-file lookups. In-flight login IDs remain associated with their original generation until cleanup.
 
+## Artifact preview and download
+
+`ARTIFACT_STORE_DESCRIPTOR` advertises version `1.2.0`. `artifactStore(host).readRange`
+uses `{ thread_id, uri, sha256, offset, max_bytes }`; offsets count decoded bytes,
+and `max_bytes` is between 1 and 1,048,576. The result contains base64 `data`,
+`mime_type`, `offset`, total snapshot size `total`, and the complete snapshot
+`sha256`. Return exactly `min(max_bytes, total - offset)` bytes. Reject an offset
+past the end, a changed digest, or an unavailable snapshot. A provider without
+`read-range` fails explicitly; the host does not emulate it with a full download.
+
+Artifact IDs and provider URIs are opaque. The desktop never infers storage paths,
+workspace roots, execution hosts, or authorization from their structure. A preview
+acquires a document-bound transport lease through the source session's authenticated
+route. The core matches published artifact metadata, retains the selected provider
+for each operation, and fences reads with its captured generation ID. Every range
+rechecks session access. Releasing the lease, retiring its renderer document, or
+changing the provider generation stops further reads. Previewing does not create
+a local cloud-payload cache.
+
+The browser adapter declares its distinct `bounded-memory` source capability:
+up to 8 MiB per artifact and 32 MiB across active leases. It verifies the complete
+digest before exposing a transient Blob URL, does not persist bytes, and revokes
+URLs on teardown. Larger resources and unsupported MIME types fail explicitly;
+this is not equivalent to native range streaming. Callers can inspect source
+limits through `application.artifacts.capabilities.source`.
+
+On native desktop, only an explicit save, external-open, or reveal action materializes bytes. External
+apps receive a private nonexecutable temporary copy; the complete digest is checked
+before handing it off. Canceled or failed actions remove their copy. A successful
+external handoff retains the copy for the operating system's temporary-directory
+lifecycle, so closing Wuu does not remove a document still open in another app.
+HTML remains sandboxed regardless of which provider stores it.
+
 ## Thread artifact cleanup
 
-`ARTIFACT_STORE_DESCRIPTOR` advertises `state.artifacts@1` version `1.1.0`, adding `delete-thread` with `{ thread_id }` and result `{ thread_id, deleted: true }`. An admitted consumer calls `artifactStore(host).deleteThread({ thread_id })` on its captured host. Success confirms the selected provider removed the thread's current payloads and manifests; an absent or already empty thread also succeeds. Other threads, fork copies, index data and session documents are outside this operation.
+`ARTIFACT_STORE_DESCRIPTOR` advertises `state.artifacts@1` version `1.2.0`; version `1.1.0` added `delete-thread` with `{ thread_id }` and result `{ thread_id, deleted: true }`. An admitted consumer calls `artifactStore(host).deleteThread({ thread_id })` on its captured host. Success confirms the selected provider removed the thread's current payloads and manifests; an absent or already empty thread also succeeds. Other threads, fork copies, index data and session documents are outside this operation.
 
 Stop and drain artifact producers before deletion. This operation does not prevent future imports under the same ID. Native import, fork and deletion serialize per destination thread across processes; the lock inode remains. Cleanup is an ordinary admitted service call, without a lifecycle cleanup bypass. If session documents were removed but artifact cleanup fails, report the partial result and retain the same provider/thread for an explicit cleanup retry. Never recreate those documents or delete native paths as a substitute. The helper does not automatically retry unknown outcomes; explicit repetition is safe because deletion is idempotent.
 
@@ -403,6 +528,18 @@ potentially completed rather than silently replayed or reported successful.
 registry is an inventory projection, not another provider selector. A replacement
 may provide `engine.wuu` without inheriting any native implementation or identity
 privileges. Missing or disabled selections never create a substitute engine.
+
+The version 1 `descriptor` response may declare `requires_host_model: boolean`.
+The native Wuu loop declares `true`; engines that own model access and credentials
+declare `false`, including a model-free replacement of `engine.wuu`. `engine/list`
+preserves this client readiness/model-source metadata: `true` selects configured
+host models and checks their credential readiness in the default composer;
+`false` uses engine-owned model selection. It is not credential validation,
+backend authorization, or a new server-side session-creation prerequisite.
+Providers retain execution/readiness checks independently of this declaration;
+it cannot bypass model authentication or permissions. For older descriptors that omit the field,
+clients retain the legacy rule that `wuu` requires host model configuration while
+other engines own authentication. Explicit `false` is never treated as omission.
 
 Binding transports model, effort, speed, model options, instructions, permission
 mode, MCP endpoints and resume reference together. The callback gateway is bound

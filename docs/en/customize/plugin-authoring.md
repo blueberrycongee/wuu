@@ -54,6 +54,32 @@ A missing, disabled, untrusted, or version-incompatible required dependency leav
 
 Package dependencies and runtime service requirements serve different purposes. A package dependency selects an installed package and its lifecycle order. `provided_services` / `required_services` negotiate a named API and service major version; they do not select by package ID or inherit that package's version. Declare both when a feature needs a specific package and its API. A service-only consumer can instead accept any eligible provider of that service.
 
+## Cooperating without replacing a provider
+
+A new plugin can consume an existing service and contribute UI to its owner's
+published slots without modifying that owner or selecting a replacement. For
+example, the [counter and controls packages](../../../examples/plugins/additive-counter/README.md)
+combine an external process state/action API, a typed public helper, cancellable
+subscriptions, and a nested desktop contribution. This is one testable example,
+not a limit on the combinations of services, hooks, capabilities and UI a plugin
+may use.
+
+Declare `desktop.required_services` before using `api.invokeService`; runtime
+consumers declare `required_services` during initialization. The host routes calls
+with the consumer's identity and captured generation. Publish an owned
+`registerUISlot` and let other packages add `registerUIContribution` entries.
+Use the public UI kit and contract context rather than private DOM or controller
+access. Registrations and invocation cancellation belong to the generation;
+stop domain subscriptions when their view unmounts as well.
+
+A missing required dependency rejects interactive installation. An update that
+would break an active required consumer is rejected before publication, keeping
+the last working graph. Optional dependencies do not guarantee availability:
+handle call failure and disable only the affected feature. A package version
+constraint and a service major version are separate checks. Installing an addon
+is not an implicit request to replace an existing provider; conflicting providers
+still need an explicit composition choice.
+
 ## Declarative contributions
 
 Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:
@@ -586,7 +612,7 @@ and durable history; handles do not survive a runtime restart. The bundled
 
 Return `provided_services` during initialization and implement `invokeService`. A descriptor contains a dotted lowercase name, strict `MAJOR.MINOR.PATCH` version, and methods with `input_schema` and `output_schema` identifiers. These identifiers name contracts; they are not inline JSON Schema definitions.
 
-Consumers declare the service name and major version, then call the gateway. The host supplies the caller identity and routes to the active provider. Do not address another plugin's process or depend on its private files. A package cannot provide and require the same service name in one initialization result. Missing required services block the consumer; duplicate providers for a name and major version produce diagnostics rather than merging their implementations.
+Consumers declare the service name and major version, then call the gateway. The host supplies the caller identity and routes to the active provider. Do not address another plugin's process or depend on its private files. An adapter may provide and require the same service with an explicit consumer binding to a different implementation; the resolved graph rejects self-routing and cycles. See [partial provider extension](replaceable-providers.md#partially-extending-a-provider). Missing required services block the consumer; duplicate providers for a name and major version produce diagnostics rather than merging their implementations.
 
 The [service composition example](../../../examples/plugins/service-composition/README.md) contains two buildable packages: a stateless text-analysis provider and a writing-report tool that consumes its version-1 API. It demonstrates both declarations and a real gateway call.
 

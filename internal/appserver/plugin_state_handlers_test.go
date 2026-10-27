@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -217,7 +218,7 @@ func TestPluginDiagnosticsAdmitInventoryRenderersAndKeepFailures(t *testing.T) {
 	}
 	// Admission retains the original graph even if Session publishes a new host.
 	srv.Close()
-	srv = &Server{rt: rt, out: out}
+	srv = &Server{access: localOwnerTestAccess(), rt: rt, out: out}
 	original := rt.PluginHost
 	rt.PluginHost = pluginhost.New()
 	defer func() { rt.PluginHost = original }()
@@ -261,7 +262,7 @@ func TestPluginDiagnosticsKeepAdmissionGeneration(t *testing.T) {
 	}
 	// Exercise dispatch deterministically without concurrent discovery watchers.
 	srv.Close()
-	srv = &Server{rt: srv.rt, out: out}
+	srv = &Server{access: localOwnerTestAccess(), rt: srv.rt, out: out}
 	original := srv.rt.PluginHost
 	replacement := pluginhost.New()
 	defer replacement.Close(context.Background())
@@ -363,7 +364,7 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 	credentials := credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) {
 		return credentialstore.NewFileStore(filepath.Join(rt.WuuHome, "test-credentials.json")), nil
 	})
-	clients = append(clients, settings, credentials, &stateHandlerConsumer{})
+	clients = append(clients, settings, credentials, &stateHandlerConsumer{}, access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{})
 	rt.PluginHost = pluginhost.New(clients...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	rt.PluginHost.AttachServiceRegistry(registry, conflicts)

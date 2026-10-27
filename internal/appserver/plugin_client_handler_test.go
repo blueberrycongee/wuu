@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -118,7 +119,11 @@ func TestDesktopServiceCancellationCannotCrossGraphs(t *testing.T) {
 	callPluginPackageRPC(t, srv, "request", MethodPluginClientRequest, PluginClientRequestParams{
 		ID: item.SubjectID, Fingerprint: item.Fingerprint, GraphGeneration: graph.GenerationID, Service: "example.catalog", Method: "list", RequestID: "same-request",
 	})
-	<-started
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("desktop request did not reach its selected provider: %s", out.String())
+	}
 	for _, generation := range []string{"old-graph-same-code", graph.GenerationID} {
 		callPluginPackageRPC(t, srv, generation, MethodPluginClientCancel, PluginClientCancelParams{
 			ID: item.SubjectID, Fingerprint: item.Fingerprint, GraphGeneration: generation, RequestID: "same-request",

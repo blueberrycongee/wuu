@@ -84,7 +84,7 @@ func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFun
 		if generation != nil && generation.driverGateways != nil {
 			driver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
 			if generation.host != nil && generation.host.ServiceRegistry() != nil {
-				providerID, _ = generation.host.ServiceRegistry().ProviderPluginID(DriverServicePrefix+profile, loopdriver.DriverServiceMajor)
+				providerID, _ = generation.host.ServiceRegistry().ProviderPluginIDFor(sessionExecutionConsumer, DriverServicePrefix+profile, loopdriver.DriverServiceMajor)
 			}
 		} else if s.StreamRunner != nil {
 			// Embedded callers own their explicit driver and its lifetime.
@@ -126,7 +126,7 @@ func resolveLoopDriver(profile string, host *pluginhost.Host, table *driverGatew
 	if registry == nil {
 		return loopdriver.FailClosedDriver{Profile: profile, Reason: "service registry is unavailable"}
 	}
-	ownerPluginID, found := registry.ProviderPluginID(service, loopdriver.DriverServiceMajor)
+	ownerPluginID, found := registry.ProviderPluginIDFor(sessionExecutionConsumer, service, loopdriver.DriverServiceMajor)
 	if !found {
 		return loopdriver.FailClosedDriver{Profile: profile, Reason: fmt.Sprintf("no provider for service %s major version %d", service, loopdriver.DriverServiceMajor)}
 	}

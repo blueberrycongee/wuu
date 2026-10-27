@@ -5,6 +5,7 @@ import { SelectMenu } from "./SelectMenu";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
+import { MCPFailure } from "./MCPDiagnostic";
 
 export function MCPServerEditor({ name: originalName, definition, onClose, onSaved }: {
   name: string;
@@ -26,7 +27,7 @@ export function MCPServerEditor({ name: originalName, definition, onClose, onSav
     return JSON.stringify(extra, null, 2);
   });
   const [importJSON, setImportJSON] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; diagnostic: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const inFlight = useRef(false);
   const title = t(definition ? "mcp.edit" : "mcp.add");
@@ -35,7 +36,8 @@ export function MCPServerEditor({ name: originalName, definition, onClose, onSav
     if (inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
-    setError("");
+    setError(null);
+    let writing = false;
     try {
       let servers: Record<string, MCPServerConfig>;
       if (mode === "import") {
@@ -54,9 +56,10 @@ export function MCPServerEditor({ name: originalName, definition, onClose, onSav
         else { next.command = command.trim(); next.args = JSON.parse(args); }
         servers = { [name.trim()]: normalizeDefinition(next) };
       }
+      writing = true;
       await controls.configureMCPServers({ servers, revision: definition?.revision });
       onSaved();
-    } catch (failure) { setError(toastErrorMessage(failure)); }
+    } catch (failure) { setError({ message: t(writing ? "mcp.saveFailed" : "mcp.configurationInvalid"), diagnostic: toastErrorMessage(failure) }); }
     finally { inFlight.current = false; setSaving(false); }
   }
 
@@ -84,7 +87,7 @@ export function MCPServerEditor({ name: originalName, definition, onClose, onSav
           <label className="mcp-field">{t("mcp.advancedJSON")}<textarea className="settings-input mcp-code-input" value={advanced} onChange={event => setAdvanced(event.target.value)} rows={7} spellCheck={false} /></label>
         </details>
       </>}
-      {error ? <p className="mcp-error" role="alert">{error}</p> : null}
+      {error ? <MCPFailure message={error.message} diagnostic={error.diagnostic} /> : null}
     </div>
   </Modal>;
 }

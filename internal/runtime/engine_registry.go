@@ -72,14 +72,15 @@ func newSelectedEngineRegistry(owner *Session) *agentengine.Registry {
 }
 
 type selectedEngineDescriptor struct {
-	ID           agentengine.EngineID `json:"id"`
-	Version      string               `json:"version"`
-	Capabilities []string             `json:"capabilities"`
-	Enabled      bool                 `json:"enabled"`
+	ID                agentengine.EngineID `json:"id"`
+	Version           string               `json:"version"`
+	Capabilities      []string             `json:"capabilities"`
+	RequiresHostModel *bool                `json:"requires_host_model,omitempty"`
+	Enabled           bool                 `json:"enabled"`
 }
 
 func (d selectedEngineDescriptor) descriptor() agentengine.Descriptor {
-	return agentengine.Descriptor{ID: d.ID, Version: d.Version, Capabilities: d.Capabilities}
+	return agentengine.Descriptor{ID: d.ID, Version: d.Version, Capabilities: d.Capabilities, RequiresHostModel: d.RequiresHostModel}
 }
 
 type selectedEngineFactory struct {
@@ -147,7 +148,7 @@ func (s *Session) bindSelectedEngine(ctx context.Context, rt *ThreadRuntime, bin
 	if generation == nil || generation.engineGateways == nil {
 		return nil, errors.New("engine callback generation is unavailable")
 	}
-	owner, ok := generation.host.ServiceRegistry().ProviderPluginID("engine."+string(id), 1)
+	owner, ok := generation.host.ServiceRegistry().ProviderPluginIDFor(engineExecutionConsumer, "engine."+string(id), 1)
 	if !ok {
 		return nil, fmt.Errorf("selected engine %s is unavailable", id)
 	}

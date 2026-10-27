@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -131,7 +133,9 @@ func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Sessio
 //  3. drop the phone mid-turn; the turn finishes while detached, the host
 //     spools the events and asks the relay for a content-free push
 //  4. reconnect: the session resumes and replays exactly the missed lines
-func TestRemoteControlEndToEnd(t *testing.T) {
+func TestRemoteControlEndToEnd(t *testing.T)              { testRemoteControlReplay(t, false) }
+func TestRemoteControlRevokesBufferedFrames(t *testing.T) { testRemoteControlReplay(t, true) }
+func testRemoteControlReplay(t *testing.T, revokeBeforeReplay bool) {
 	testCtx, cancelTest := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancelTest()
 
@@ -162,10 +166,25 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		t.Fatalf("SetRelayURL: %v", err)
 	}
 	uriCh := make(chan string, 1)
+	var revoked atomic.Bool
+	var options []appserver.ServerOption
+	if revokeBeforeReplay {
+		options = []appserver.ServerOption{appserver.WithAccessPolicy(access.PolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+			if revoked.Load() {
+				for _, resource := range request.Resources {
+					if resource.Kind == "session" {
+						return access.Decision{}, nil
+					}
+				}
+			}
+			return access.Decision{Allow: request.Owner}, nil
+		}))}
+	}
 	h, err := host.New(host.Options{
-		Runtime: rt,
-		Store:   store,
-		Logf:    t.Logf,
+		Runtime:          rt,
+		AppServerOptions: options,
+		Store:            store,
+		Logf:             t.Logf,
 		Pairing: &host.PairingConfig{
 			Once:  true,
 			OnURI: func(uri string) { uriCh <- uri },
@@ -297,6 +316,9 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	if revokeBeforeReplay {
+		revoked.Store(true)
+	}
 	// Reconnect with the same client state: the host resumes the session
 	// and replays the missed lines, including turn 2's completion.
 	phase2Ctx, cancelPhase2 := context.WithCancel(testCtx)
@@ -323,7 +345,34 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 	if client.Protocol() != proto {
 		t.Fatalf("resumed attach must keep the protocol client")
 	}
-	waitTurnCompleted(t, testCtx, proto.Notifications(), tid, "turn 2 (replayed)")
+	if !revokeBeforeReplay {
+		waitTurnCompleted(t, testCtx, proto.Notifications(), tid, "turn 2 (replayed)")
+		return
+	}
+	// A response after attach is a deterministic barrier behind spool replay.
+	if err := proto.Call(callCtx, appserver.MethodInitialize, nil, &init); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case note := <-proto.Notifications():
+			if note.Method == appserver.NotificationTurnCompleted {
+				var done appserver.TurnCompletedNotification
+				_ = json.Unmarshal(note.Params, &done)
+				if done.Turn.ID == turn2.Turn.ID {
+					t.Fatal("revoked completion leaked from replay spool")
+				}
+			}
+		default:
+			goto drained
+		}
+	}
+drained:
+	var resumed appserver.ThreadResumeResult
+	if err := proto.Call(callCtx, appserver.MethodThreadResume, appserver.ThreadResumeParams{SessionID: tid}, &resumed); err == nil {
+		t.Fatal("revoked session remained readable after reconnect")
+	}
+	t.Log("buffered completion and subsequent read denied by current policy without ending the accepted turn")
 }
 
 func waitTurnCompleted(t *testing.T, ctx context.Context, notes <-chan wuuexec.Notification, threadID, label string) {

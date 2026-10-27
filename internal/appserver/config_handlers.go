@@ -64,7 +64,7 @@ func (s *Server) handleInitialize(req Request) error {
 	}
 	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
-		ApplicationShell: shell, ApplicationSurfaces: surfaces,
+		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
 		Status:          status,
 		Issues:          issues,
 		ProtocolVersion: ProtocolVersion,
@@ -368,7 +368,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 	}
 	packageActivationIssues := make(map[string][]pluginpkg.ActivationIssue)
 	packageDependencies := make(map[string][]string)
-	if plan, err := runtime.ResolvePluginActivationPlan(cfg, snapshot.Plugins); err == nil {
+	if plan, err := s.rt.ResolveExtensionPlan(cfg, snapshot.Plugins); err == nil {
 		packageActivationIssues = plan.Issues
 		packageDependencies = plan.Dependencies
 	}
@@ -704,7 +704,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		return records[i].ID < records[j].ID
 	})
 	for i := range records {
-		if records[i].Desktop != nil {
+		if records[i].Kind == extensions.KindPlugin {
 			records[i].GraphGeneration = snapshot.GenerationID
 		}
 	}

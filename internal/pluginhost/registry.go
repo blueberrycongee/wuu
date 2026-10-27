@@ -14,9 +14,9 @@ import (
 )
 
 // The service registry is the only addressable layer for plugin-provided
-// services. Plugins cannot discover, connect to, or address one another; a
-// consumer emits one host-mediated frame (service.call) and the registry
-// resolves the provider by (service name, required major version), enforces
+// services. Plugins cannot choose provider identities or transports in calls;
+// a consumer emits one host-mediated frame (service.call) and the registry
+// resolves its configured (consumer, service name, required major) route, enforces
 // the consumer's explicit declaration, and routes the call. The registry is
 // built from one generation's initialize results. Preparation permits only
 // explicitly marked methods; active generations admit other calls. Closing it
@@ -44,6 +44,21 @@ type ServiceClient interface {
 	RequiredServices() []ServiceRequirement
 }
 
+// RuntimeServiceRequirements preserves declaration origin when a host-owned
+// mixed-transport client combines its process and renderer requirements. All
+// ordinary native/process declarations originate in the runtime. The optional
+// method is internal host metadata, never a field accepted from plugin wire data.
+func RuntimeServiceRequirements(client ServiceClient) []ServiceRequirement {
+	if mixed, ok := client.(interface{ RuntimeRequiredServices() []ServiceRequirement }); ok {
+		return mixed.RuntimeRequiredServices()
+	}
+	return client.RequiredServices()
+}
+
+type serviceConsumption struct {
+	runtime bool // False only for requirements originating exclusively in a renderer.
+}
+
 // ServiceConflict describes a rejected provider registration. An ambiguous
 // service stays unavailable unless the composition explicitly selects a provider.
 type ServiceConflict struct {
@@ -54,8 +69,9 @@ type ServiceConflict struct {
 }
 
 type serviceKey struct {
-	name  string
-	major int
+	consumer string // Empty for the default route and for requirement declarations.
+	name     string
+	major    int
 }
 
 type serviceProvider struct {
@@ -163,7 +179,7 @@ type ServiceRegistry struct {
 	bindingSources       map[serviceKey]string
 	ambiguous            map[serviceKey]string
 	invalidDeclarations  map[string]string
-	consumers            map[string]map[serviceKey]struct{}
+	consumers            map[string]map[serviceKey]serviceConsumption
 	requirements         map[string][]ServiceRequirement
 	notifiers            map[string]ServiceChangedNotifier
 	executions           map[string]*serviceExecution
@@ -186,7 +202,7 @@ func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
 		open: true, providers: make(map[serviceKey]serviceProvider),
 		bindings: make(map[serviceKey]string), bindingSources: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
-		consumers:    make(map[string]map[serviceKey]struct{}),
+		consumers:    make(map[string]map[serviceKey]serviceConsumption),
 		requirements: make(map[string][]ServiceRequirement),
 		notifiers:    make(map[string]ServiceChangedNotifier),
 		executions:   make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
@@ -201,7 +217,7 @@ func NewServiceRegistryWithBindings(bindings []composition.Binding) (*ServiceReg
 	}
 	registry := NewServiceRegistry()
 	for _, binding := range bindings {
-		key := serviceKey{name: binding.Service, major: binding.Major}
+		key := serviceKey{consumer: binding.Consumer, name: binding.Service, major: binding.Major}
 		registry.bindings[key] = binding.Provider
 		source := binding.Source
 		if source == "" {
@@ -222,9 +238,34 @@ func (r *ServiceRegistry) ValidateBindings() error {
 		failures = append(failures, message)
 	}
 	for key, selected := range r.bindings {
+		if key.consumer != "" {
+			declaration := serviceKey{name: key.name, major: key.major}
+			if _, declared := r.consumers[key.consumer][declaration]; !declared {
+				failures = append(failures, fmt.Sprintf("composition consumer %q does not declare service %s@%d", key.consumer, key.name, key.major))
+			}
+			if key.consumer == selected && r.consumers[key.consumer][declaration].runtime {
+				failures = append(failures, fmt.Sprintf("composition consumer %q delegates %s@%d to itself", key.consumer, key.name, key.major))
+			}
+		}
 		provider, ok := r.providers[key]
 		if !ok || provider.pluginID != selected {
-			failures = append(failures, fmt.Sprintf("composition selects unavailable provider %q for %s@%d", selected, key.name, key.major))
+			failures = append(failures, fmt.Sprintf("composition selects unavailable provider %q for %s@%d (consumer %q)", selected, key.name, key.major, key.consumer))
+		}
+		if ok && key.consumer != "" {
+			// A same-contract adapter cannot silently reinterpret the delegate's
+			// schemas or preparation/cleanup authority for a shared method.
+			for route, adapter := range r.providers {
+				if route.name != key.name || route.major != key.major || adapter.pluginID != key.consumer {
+					continue
+				}
+				for _, method := range adapter.descriptor.Methods {
+					for _, target := range provider.descriptor.Methods {
+						if method.Name == target.Name && method != target {
+							failures = append(failures, fmt.Sprintf("composition delegate %q has incompatible contract for %s@%d.%s consumed by %q", selected, key.name, key.major, method.Name, key.consumer))
+						}
+					}
+				}
+			}
 		}
 	}
 	for _, diagnostic := range r.ambiguous {
@@ -292,39 +333,58 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				continue
 			}
 			key := serviceKey{name: strings.TrimSpace(descriptor.Name), major: major}
-			if selected := registry.bindings[key]; selected != "" && selected != declared.ID() {
-				continue
-			}
-			if existing, duplicate := registry.providers[key]; duplicate || registry.ambiguous[key] != "" {
-				message := registry.ambiguous[key]
-				if message == "" {
-					message = fmt.Sprintf("service %s@%d is provided by both %q and %q; select a provider in composition.services", key.name, key.major, existing.pluginID, declared.ID())
+			routes := []serviceKey{key}
+			for route, selected := range registry.bindings {
+				if route.consumer != "" && route.name == key.name && route.major == key.major && selected == declared.ID() {
+					routes = append(routes, route)
 				}
-				registry.ambiguous[key] = message
-				delete(registry.providers, key)
-				conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: key.name, Major: key.major, Message: message})
-				continue
 			}
-			if invoker == nil {
-				conflicts = append(conflicts, ServiceConflict{
-					PluginID: declared.ID(),
-					Service:  key.name,
-					Major:    key.major,
-					Message:  fmt.Sprintf("service %s@%d cannot receive host-routed calls", key.name, key.major),
-				})
-				continue
+			for _, route := range routes {
+				if selected := registry.bindings[route]; selected != "" && selected != declared.ID() {
+					continue
+				}
+				if existing, duplicate := registry.providers[route]; duplicate || registry.ambiguous[route] != "" {
+					message := registry.ambiguous[route]
+					if message == "" {
+						message = fmt.Sprintf("service %s@%d is provided by both %q and %q; select a provider in composition.services", route.name, route.major, existing.pluginID, declared.ID())
+					}
+					registry.ambiguous[route] = message
+					delete(registry.providers, route)
+					conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: route.name, Major: route.major, Message: message})
+					continue
+				}
+				if invoker == nil {
+					conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: route.name, Major: route.major,
+						Message: fmt.Sprintf("service %s@%d cannot receive host-routed calls", route.name, route.major)})
+					continue
+				}
+				descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
+				registry.providers[route] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: invoker}
 			}
-			descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
-			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: invoker}
 		}
-		registry.consumers[declared.ID()] = make(map[serviceKey]struct{})
+		registry.consumers[declared.ID()] = make(map[serviceKey]serviceConsumption)
 		registry.requirements[declared.ID()] = append([]ServiceRequirement(nil), declared.RequiredServices()...)
 		for _, requirement := range registry.requirements[declared.ID()] {
 			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
-			registry.consumers[declared.ID()][key] = struct{}{}
+			registry.consumers[declared.ID()][key] = serviceConsumption{}
+		}
+		for _, requirement := range RuntimeServiceRequirements(declared) {
+			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
+			if _, declared := registry.consumers[client.ID()][key]; declared {
+				registry.consumers[client.ID()][key] = serviceConsumption{runtime: true}
+			}
 		}
 	}
 	return conflicts
+}
+
+// RuntimeConsumesService distinguishes backend delegation from a renderer using
+// its own package's runtime. Both remain authorized under the same package ID;
+// only runtime declarations can establish a provider delegation chain.
+func (r *ServiceRegistry) RuntimeConsumesService(consumer, service string, major int) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.consumers[consumer][serviceKey{name: strings.TrimSpace(service), major: major}].runtime
 }
 
 type servicePreparationKey struct{}
@@ -734,24 +794,58 @@ func (r *ServiceRegistry) cancelCallerScopes(provider string) {
 	}
 }
 
+// providerKeyLocked uses the consumer's explicit binding even when its target
+// was revoked. Only the absence of a scoped selection permits the global route.
+// The same key is captured by dispatch, admission, dependencies and scopes.
+func (r *ServiceRegistry) providerKeyLocked(consumer string, key serviceKey) serviceKey {
+	scoped := serviceKey{consumer: consumer, name: key.name, major: key.major}
+	if _, selected := r.bindings[scoped]; selected {
+		return scoped
+	}
+	return serviceKey{name: key.name, major: key.major}
+}
+
 // HasProvider reports whether a provider exists for (name, major).
 func (r *ServiceRegistry) HasProvider(name string, major int) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.providers[serviceKey{name: strings.TrimSpace(name), major: major}]
-	return ok
+	return r.HasProviderFor("", name, major)
+}
+
+// HasProviderFor probes the same binding used by this consumer's calls. A
+// missing explicit scoped target never probes the global implementation.
+func (r *ServiceRegistry) HasProviderFor(consumer, name string, major int) bool {
+	_, found := r.ProviderPluginIDFor(consumer, name, major)
+	return found
 }
 
 // ProviderPluginID reports which plugin provides one service major, so
 // callers can attribute resources to the selected implementation.
 func (r *ServiceRegistry) ProviderPluginID(name string, major int) (string, bool) {
+	return r.ProviderPluginIDFor("", name, major)
+}
+
+// ProviderPluginIDFor reports the same explicit route used by an authenticated
+// consumer's calls. This is attribution only; it grants no invocation authority.
+func (r *ServiceRegistry) ProviderPluginIDFor(consumer, name string, major int) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	provider, ok := r.providers[serviceKey{name: strings.TrimSpace(name), major: major}]
+	key := r.providerKeyLocked(consumer, serviceKey{name: strings.TrimSpace(name), major: major})
+	provider, ok := r.providers[key]
 	if !ok {
 		return "", false
 	}
 	return provider.pluginID, true
+}
+
+// ServiceDescriptorFor returns an owned copy of the selected route's contract.
+// Diagnostic snapshots may also contain other consumers' explicit routes.
+func (r *ServiceRegistry) ServiceDescriptorFor(consumer, name string, major int) (ServiceDescriptor, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	key := r.providerKeyLocked(consumer, serviceKey{name: name, major: major})
+	provider, found := r.providers[key]
+	descriptor := provider.descriptor
+	descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
+	return descriptor, found
 }
 
 // ProviderMajors returns the provided majors for one service name, for
@@ -762,7 +856,7 @@ func (r *ServiceRegistry) ProviderMajors(name string) []int {
 	name = strings.TrimSpace(name)
 	var majors []int
 	for key := range r.providers {
-		if key.name == name {
+		if key.consumer == "" && key.name == name {
 			majors = append(majors, key.major)
 		}
 	}
@@ -837,6 +931,7 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 	}
 	key.major = *declaredMajor
 	r.mu.RLock()
+	key = r.providerKeyLocked(consumerPluginID, key)
 	provider, found := r.providers[key]
 	nameExists := false
 	if !found {
@@ -926,6 +1021,7 @@ func (r *ServiceRegistry) RouteServiceCall(ctx context.Context, pluginID string,
 
 // ServiceRegistryEntry describes one provided service in a registry snapshot.
 type ServiceRegistryEntry struct {
+	Consumer      string            `json:"consumer,omitempty"`
 	Descriptor    ServiceDescriptor `json:"descriptor"`
 	Service       string            `json:"service"`
 	Version       string            `json:"version"`
@@ -1012,21 +1108,21 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		requirements[id] = append([]ServiceRequirement{}, declared...)
 	}
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))
-	for _, provider := range r.providers {
+	for route, provider := range r.providers {
 		methods := make([]string, 0, len(provider.descriptor.Methods))
 		for _, method := range provider.descriptor.Methods {
 			methods = append(methods, method.Name)
 		}
 		sort.Strings(methods)
 		source := "unique-provider"
-		major, _ := ServiceVersionMajor(provider.descriptor.Version)
-		if selectedSource := r.bindingSources[serviceKey{name: provider.descriptor.Name, major: major}]; selectedSource != "" {
+		if selectedSource := r.bindingSources[route]; selectedSource != "" {
 			source = selectedSource
 		}
 		descriptor := provider.descriptor
 		descriptor.Methods = append([]ServiceMethodDescriptor{}, descriptor.Methods...)
 		sort.Slice(descriptor.Methods, func(i, j int) bool { return descriptor.Methods[i].Name < descriptor.Methods[j].Name })
 		entries = append(entries, ServiceRegistryEntry{
+			Consumer:      route.consumer,
 			Descriptor:    descriptor,
 			Service:       provider.descriptor.Name,
 			Version:       provider.descriptor.Version,
@@ -1051,7 +1147,10 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		if entries[i].Service != entries[j].Service {
 			return entries[i].Service < entries[j].Service
 		}
-		return entries[i].Version < entries[j].Version
+		if entries[i].Version != entries[j].Version {
+			return entries[i].Version < entries[j].Version
+		}
+		return entries[i].Consumer < entries[j].Consumer
 	})
 	graph := make(map[string][]Dependency)
 	if dependencies != nil {
@@ -1066,7 +1165,10 @@ func (r *ServiceRegistry) notifyConsumers(ctx context.Context, key serviceKey, r
 	r.mu.RLock()
 	targets := make([]ServiceChangedNotifier, 0, len(r.consumers))
 	for consumerID, requirements := range r.consumers {
-		if _, ok := requirements[key]; !ok {
+		if r.providerKeyLocked(consumerID, key) != key {
+			continue
+		}
+		if _, ok := requirements[serviceKey{name: key.name, major: key.major}]; !ok {
 			continue
 		}
 		if notifier, ok := r.notifiers[consumerID]; ok {

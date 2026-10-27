@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/access"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,6 +114,9 @@ func (s *Server) handleWorkspaceGit(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if _, err := s.requireRequestAccess(req, req.Method, nil, access.Resource{Kind: "workspace", ID: root}); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	top, err := workspaceGitList(ctx, root, "rev-parse", "--show-toplevel")
@@ -133,6 +137,9 @@ func (s *Server) handleWorkspaceGit(ctx context.Context, req Request) error {
 	root = strings.TrimSuffix(string(top), "\n")
 	root, err = s.workspaceViewRoot(binding, root)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.requireRequestAccess(req, req.Method, nil, access.Resource{Kind: "workspace", ID: root}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	baseline, err := workspaceGitBaseline(ctx, root)

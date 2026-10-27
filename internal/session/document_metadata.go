@@ -114,9 +114,8 @@ func (store *documentStore) SetRuntimeSelection(id string, selection RuntimeSele
 		if err != nil {
 			return err
 		}
-		if selection.Model == "" && (current.EngineID == "" || current.EngineID == "wuu") {
-			return fmt.Errorf("model is required")
-		}
+		// Engine service identity does not imply a model contract. The selected
+		// execution provider validates its options before admitting a turn.
 		current.ModelSelectionRevision++
 		current.ModelSelectionApplyAt = ""
 		current.Provider, current.Model = selection.Provider, selection.Model

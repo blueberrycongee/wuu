@@ -116,6 +116,19 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServiceSessionRoute:
+		if s.turnRouter == nil {
+			return nil, serviceError("service_unavailable", "session service is unavailable")
+		}
+		var params pluginhost.SessionRouteRequest
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		result, err := s.turnRouter.Route(ctx, s.pluginID, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionControl:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")
@@ -469,10 +482,12 @@ func (k *kernelHostServices) InvokeService(ctx context.Context, params pluginhos
 }
 func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement {
 	return []pluginhost.ServiceRequirement{
-		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
-		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
+		// These adapters are lazy. Selected dependencies still participate in
+		// lifecycle ordering; invoking an omitted service fails at the router.
+		{Name: credentialstore.ServiceName, MajorVersion: 1},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1},
 		{Name: config.ServiceName, MajorVersion: 1, Required: true},
-		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1},
 		{Name: persistence.ServiceName, MajorVersion: 1},
 		{Name: session.ServiceName, MajorVersion: 1},
 	}
@@ -489,7 +504,7 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,
-		pluginhost.HostServiceSessionControl, pluginhost.HostServiceCredentialsRequest,
+		pluginhost.HostServiceSessionControl, pluginhost.HostServiceCredentialsRequest, pluginhost.HostServiceSessionRoute,
 	}
 	registrations := make([]nativeServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {

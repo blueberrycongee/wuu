@@ -33,6 +33,9 @@ function immutable<T>(value: T): SettingsReadonly<T> {
 /** Host-internal state access never crosses the public application handle. */
 export class ApplicationSettings {
   private engines?: { context: string; value: SettingsReadonly<EngineListResult> };
+  private engineConfiguration?: AppState["initialized"];
+  private engineConnectionGeneration?: number;
+  private engineRevision = 0;
   private configurationSource?: AppState["initialized"];
   private configuration?: ApplicationSettingsViewV1["configuration"];
   private snapshot?: ApplicationSettingsViewV1;
@@ -52,7 +55,9 @@ export class ApplicationSettings {
   private engineContext(): { key: string; cwd?: string } {
     const state = this.host.getState();
     const cwd = activeThreadForState(state)?.cwd || state.activeContext?.cwd;
-    return { key: JSON.stringify([state.activeContext, cwd]), cwd };
+    if (this.engineConfiguration?.extension_inventory !== state.initialized?.extension_inventory || this.engineConnectionGeneration !== state.runtimeConnectionGeneration) this.engineRevision++;
+    this.engineConfiguration = state.initialized; this.engineConnectionGeneration = state.runtimeConnectionGeneration;
+    return { key: JSON.stringify([state.activeContext, cwd, this.engineRevision]), cwd };
   }
 
   getSnapshot(): ApplicationSettingsViewV1 {

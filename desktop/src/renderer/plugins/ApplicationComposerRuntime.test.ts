@@ -22,7 +22,7 @@ function fixture(sharedInventory?: () => import("../../../../packages/plugin-sdk
   const runtime = new ApplicationComposerRuntime({ getState: () => state, updateState: update => { state = typeof update === "function" ? update(state) : update; }, changed, isNavigationPending: () => false, getEngineInventory: sharedInventory });
   return { runtime, changed, get: () => state, set: (next: AppState) => { state = next; }, view: (id = state.activeSessionTabID) => runtime.getSnapshot().owners.find(row => row.ownerTabId === id)! };
 }
-const inventory: EngineListResult = { settings: { default_engine: "wuu" }, engines: [{ id: "native", enabled: true, binary_ok: true, models: [
+const inventory: EngineListResult = { settings: { default_engine: "wuu" }, engines: [{ id: "wuu", enabled: true, binary_ok: true }, { id: "native", enabled: true, binary_ok: true, models: [
   { id: "native-default", is_default: true, default_effort: "medium", default_speed: "fast", supported_efforts: ["low", "medium"], options: [{ id: "mode", label: "Mode", type: "select", default_value: "normal", choices: [{ value: "normal", label: "Normal" }] }] },
   { id: "other", supported_efforts: ["high"] },
 ] }] };
@@ -180,8 +180,8 @@ it("targets the active split owner rather than the primary thread", async () => 
 
 it("adopts the existing settings inventory without another discovery request", () => {
   installEngineAPI(); let shared = inventory;
-  const h = fixture(() => shared);
-  expect(h.view().engines.map(engine => engine.id)).toEqual(["native"]);
+  installEngineAPI(); const h = fixture(() => shared);
+  expect(h.view().engines.map(engine => engine.id)).toEqual(["wuu", "native"]);
   shared = { engines: [{ id: "replacement", enabled: true, binary_ok: true }] };
   expect(h.view().engines.map(engine => engine.id)).toEqual(["replacement"]);
   expect(window.wuu.listEngines).not.toHaveBeenCalled();
@@ -197,14 +197,14 @@ it("reports a rejected thread selection without changing its chosen runtime", as
 
 it("projects submission parameters from the same owner without leaking builtin configuration into native engines", async () => {
   installEngineAPI(); const h = fixture();
-  expect(h.runtime.getSubmissionRuntime("missing")).toEqual({ pending: true, params: {} });
+  expect(h.runtime.getSubmissionRuntime("missing")).toEqual({ pending: true, requiresHostModel: true, params: {} });
   expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(true);
   await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
   expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine: "wuu", provider: "api", model: "a", effort: "high", permission_mode: "standard" });
   await h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "native" } });
   await h.runtime.invoke("composer.choose-worktree", { ownerTabId: "draft-a", enabled: true, startBranch: "feature" });
   const runtime = h.runtime.getSubmissionRuntime("draft-a");
-  expect(runtime).toEqual({ pending: false, params: { engine: "native", model: "", effort: "", speed: "", permission_mode: "unconfined" }, worktree: { startBranch: "feature" } });
+  expect(runtime).toEqual({ pending: false, requiresHostModel: false, params: { engine: "native", model: "", effort: "", speed: "", permission_mode: "unconfined" }, worktree: { startBranch: "feature" } });
   expect(runtime.params).not.toHaveProperty("provider"); expect(runtime.params).not.toHaveProperty("approve_for_me");
 });
 
@@ -273,4 +273,102 @@ it("distinguishes retired composer ownership from an unproven caller abort", asy
   const cause = new DOMException("signal is aborted without reason", "AbortError");
   caller.abort(cause);
   await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-b" }, caller.signal)).rejects.toBe(cause);
+});
+
+// A selected service identity is not its implementation's model dependency.
+it.each([false, true, undefined])("uses the selected wuu descriptor's host-model requirement (%s)", async requirement => {
+  let shared: EngineListResult = { settings: { default_engine: "wuu" }, engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: requirement }] };
+  installEngineAPI(); const h = fixture(() => shared);
+  h.set({ ...h.get(), initialized: { ...configuration(), providers: [] } });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: requirement !== false });
+  if (requirement === false) {
+    expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine: "wuu", model: "", effort: "" });
+    expect(h.runtime.getSubmissionRuntime("draft-a").params).not.toHaveProperty("provider");
+    window.wuu = { listEngines: vi.fn().mockResolvedValue(shared) } as unknown as typeof window.wuu;
+    await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).resolves.toMatchObject({ params: { engine: "wuu", model: "" } });
+  } else {
+    window.wuu = { listEngines: vi.fn().mockResolvedValue(shared) } as unknown as typeof window.wuu;
+    await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).rejects.toThrow(/Configure a model/);
+  }
+});
+
+it("observes requirement changes without replacing drafts or silently selecting another engine", async () => {
+  let shared: EngineListResult = { settings: { default_engine: "wuu" }, engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] };
+  installEngineAPI(); const h = fixture(() => shared);
+  h.set({ ...h.get(), sessionTabs: h.get().sessionTabs.map(tab => ({ ...tab, prompt: "keep this input" })) });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: false });
+  shared = { ...shared, engines: [{ ...shared.engines[0], requires_host_model: true }] };
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: true });
+  shared = { settings: { default_engine: "different" }, engines: [{ id: "different", enabled: true, binary_ok: true, requires_host_model: false }] };
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: true, params: { engine: "wuu" } });
+  expect(h.view().available).toBe(false);
+  expect(h.get().sessionTabs[0]).toMatchObject({ prompt: "keep this input" });
+  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "wuu" } })).resolves.toEqual({ accepted: false });
+  window.wuu = { listEngines: vi.fn().mockResolvedValue({ settings: { default_engine: "wuu" }, engines: [] }) } as unknown as typeof window.wuu;
+  await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).rejects.toThrow(/unavailable/);
+});
+
+it("honors host-model requirements for an unrelated external engine identity", async () => {
+  const shared: EngineListResult = { settings: { default_engine: "external" }, engines: [{ id: "external", enabled: true, binary_ok: true, requires_host_model: true }] };
+  installEngineAPI(); const h = fixture(() => shared);
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: true, params: { engine: "external", provider: "api", model: "a" } });
+  window.wuu = { listEngines: vi.fn().mockResolvedValue(shared) } as unknown as typeof window.wuu;
+  await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).rejects.toThrow(/Configure a model/);
+});
+
+it("fences cached inventory and in-flight catalogs across a provider generation without losing the draft", async () => {
+  installEngineAPI(); const h = fixture();
+  await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(false);
+  h.set({ ...h.get(), initialized: { ...h.get().initialized!, extension_inventory: [] } });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: true, params: { engine: "wuu" } });
+  vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] });
+  await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: false });
+  expect(window.wuu.listEngines).toHaveBeenCalledTimes(2);
+});
+
+it("keeps permission policy independent of a replacement's host-model requirement", async () => {
+  installEngineAPI();
+  const shared: EngineListResult = { engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] };
+  const h = fixture(() => shared);
+  h.set({ ...h.get(), initialized: { ...configuration(), permissions: { mode: "standard", approve_for_me: true } } });
+  await h.runtime.invoke("composer.choose-permission", { ownerTabId: "draft-a", mode: "read_only", approveForMe: false });
+  expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine: "wuu", permission_mode: "read_only", approve_for_me: false });
+  vi.mocked(window.wuu.listEngines).mockResolvedValue(shared);
+  await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).resolves.toMatchObject({ params: { engine: "wuu", permission_mode: "standard", approve_for_me: true } });
+});
+
+it.each([["wuu", false], ["external", true]] as const)("persists model choices from the declared %s model source", async (engine, requiresHostModel) => {
+  installEngineAPI(); const shared: EngineListResult = { settings: { default_engine: engine }, engines: [{ id: engine, enabled: true, binary_ok: true, requires_host_model: requiresHostModel, models: [{ id: "own-model" }] }] };
+  const h = fixture(() => shared);
+  const choice = requiresHostModel ? { kind: "provider-model" as const, provider: "api", model: "b", variant: "low" } : { kind: "native-model" as const, model: "own-model", effort: "" };
+  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: choice })).resolves.toEqual({ accepted: true });
+  expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine, model: requiresHostModel ? "b" : "own-model" });
+});
+
+it.each(["removed", "disabled"])("allows a deliberate target after discovery failure but still refuses a discovered %s engine", async availability => {
+  installEngineAPI(); const h = fixture();
+  vi.mocked(window.wuu.listEngines).mockRejectedValue(new Error("discovery unavailable"));
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" })).rejects.toThrow("discovery unavailable");
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: true, requiresHostModel: true });
+  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "wuu" } })).resolves.toEqual({ accepted: true });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: true, params: { engine: "wuu" } });
+  const engines = availability === "removed" ? [] : [{ id: "wuu", enabled: false, binary_ok: false, requires_host_model: false }];
+  vi.mocked(window.wuu.listEngines).mockResolvedValue({ settings: { default_engine: "another" }, engines });
+  await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a", force: true });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: true, params: { engine: "wuu" } });
+  await expect(h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "wuu" } })).resolves.toEqual({ accepted: false });
+});
+
+it("does not carry a discovery-failure selection across provider generations", async () => {
+  installEngineAPI(); const h = fixture();
+  vi.mocked(window.wuu.listEngines).mockRejectedValue(new Error("discovery unavailable"));
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" })).rejects.toThrow();
+  await h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "wuu" } });
+  expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(false);
+  h.set({ ...h.get(), initialized: { ...h.get().initialized!, extension_inventory: [] } });
+  expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: true, requiresHostModel: true, params: { engine: "wuu" } });
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" })).rejects.toThrow();
+  expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(true);
 });

@@ -105,6 +105,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("mcp-add-url");
       await click([".mcp-editor", "保存"]);
       await until(() => !document.querySelector(".mcp-editor") && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("需要认证"));
+      assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("HTTP 401")), false, "Authentication diagnostics stay out of the collapsed service row");
       await capture("mcp-auth-required");
       evidence.checks.push("URL definition added and activated through the catalog");
 
@@ -158,6 +159,10 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await click(['[role="dialog"]', "完成 OAuth 登录"]);
       await until(() => document.querySelector('[role="dialog"] [role="alert"]'));
       assert.equal(evidence.exchanges, 2);
+      assert.equal(await evaluate(() => document.querySelector('[role="dialog"] [role="alert"]')?.textContent.includes("HTTP 503")), false, "Login recovery presents a concise failure instead of raw transport text");
+      await evaluate(() => document.querySelector('[role="dialog"] button[aria-expanded="false"]').click());
+      assert.equal(await evaluate(() => document.querySelector('[role="dialog"] pre')?.textContent.includes("503")), true, "The original connection failure remains available on request");
+      assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"] pre') === null), true, "The active login dialog owns the diagnostic without a duplicate in its service row");
       await capture("mcp-manual-reconnect");
       await click(['[role="dialog"]', "连接"]);
       await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("1 个工具"));

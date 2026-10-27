@@ -70,6 +70,8 @@ it("keeps delivered snapshots separate from editable files, deduplicates repeats
   const input = { threadID: "thread", cwd: projectContext.cwd, artifact };
   const editable = workspaceFileViewTab({ context: projectContext, path: "report.html" });
   const first = workspaceArtifactViewTab(input);
+  const hosted = (execution_host:string) => workspaceArtifactViewTab({...input,artifact:{...artifact,locator:{version:1,execution_host,session_id:"thread"}}});
+  expect(hosted("host-a").id).not.toBe(hosted("host-b").id);
   let state = openViewTab(openViewTab(initialWorkspaceViewTabsState, editable), first);
   state = openViewTab(state, workspaceArtifactViewTab({ ...input, artifact: { ...artifact, id: "repeat" } }));
   expect(state.tabs).toHaveLength(2);

@@ -4239,7 +4239,7 @@ func TestServerProcessListRejectsUnknownParams(t *testing.T) {
 	attachTestProcessManager(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"process/list","params":{"extra":true}}`)); err != nil {
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"process/list","params":{"thread_id":"test","extra":true}}`)); err != nil {
 		t.Fatalf("process/list unknown params: %v", err)
 	}
 	got := responseByID(t, parseOutput(t, out.String()), "1")["error"]

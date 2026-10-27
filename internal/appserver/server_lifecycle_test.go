@@ -83,8 +83,8 @@ func TestRunStdioClosesServerResourcesOnEOF(t *testing.T) {
 	}
 }
 
-// Both transport entrypoints must release connection-owned work when a late
-// composition registration fails, before returning that startup error.
+// Both transport entrypoints apply connection options before subscriptions or
+// output, and must join option-owned work before returning a registration error.
 func TestRunStdioOptionFailureClosesConnectionWork(t *testing.T) {
 	for _, device := range []bool{false, true} {
 		name := "local"
@@ -96,8 +96,8 @@ func TestRunStdioOptionFailureClosesConnectionWork(t *testing.T) {
 			done := make(chan struct{})
 			rejected := errors.New("registration rejected")
 			option := func(s *Server) error {
-				if s.presenceLease == nil {
-					t.Fatal("registration ran before presence initialization")
+				if s.nativeHistoryCtx == nil || s.presenceLease != nil {
+					t.Fatal("connection options must receive a cancellation scope before presence subscriptions")
 				}
 				if !s.startBackground(func() { <-s.nativeHistoryCtx.Done(); close(done) }) {
 					t.Fatal("startup work was rejected")

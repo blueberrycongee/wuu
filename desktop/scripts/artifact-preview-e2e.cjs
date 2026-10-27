@@ -4,7 +4,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
+const { spawn } = require("node:child_process");
+const { createInterface } = require("node:readline");
 const { buildSync } = require("esbuild");
 
 const desktopRoot = path.resolve(__dirname, "..");
@@ -24,6 +26,53 @@ buildSync({
 });
 const { registerRenderableFileScheme, registerRenderableFileProtocol } = require(protocolModule);
 registerRenderableFileScheme();
+const sourceModule = path.join(output, "sources.cjs");
+buildSync({entryPoints:[path.join(desktopRoot,"src/main/artifactSources.ts")],outfile:sourceModule,bundle:true,platform:"node",format:"cjs"});
+const {ArtifactSources} = require(sourceModule);
+const artifactSources = new ArtifactSources();
+const published = new Map();
+let externalProvider;
+let providerCall;
+async function initializeArtifacts() {
+  const fixture = process.env.WUU_ARTIFACT_PROVIDER_FIXTURE;
+  if (fixture) {
+    const pending = new Map(); let sequence=0;
+    externalProvider = spawn(process.env.WUU_ARTIFACT_NODE || "node", [path.join(fixture,"provider.ts")], {cwd:fixture,stdio:["pipe","pipe","pipe"]});
+    externalProvider.stderr.on("data", data => fs.appendFileSync(path.join(output,"provider.log"),data));
+    createInterface({input:externalProvider.stdout}).on("line",line=>{const frame=JSON.parse(line);const waiter=pending.get(String(frame.id));if(waiter){pending.delete(String(frame.id));clearTimeout(waiter.timer);frame.error?waiter.reject(new Error(JSON.stringify(frame.error))):waiter.resolve(frame.result);}});
+    externalProvider.on("exit",()=>{for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(new Error("Selected artifact provider exited"));}pending.clear();});
+    const rpc=(method,params={})=>new Promise((resolve,reject)=>{const id=String(++sequence);const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`${method} timed out`));},10000);pending.set(id,{resolve,reject,timer});externalProvider.stdin.write(JSON.stringify({id,method,params})+"\n");});
+    await rpc("initialize",{protocol_version:3,lifecycle_version:2,supported_host_services:["host.service.call"]});await rpc("activate");
+    providerCall=(method,params)=>rpc("service.invoke",{service:"state.artifacts",method,params,execution_id:"fixture-renderer"});
+  } else {
+    // Lightweight existing renderer fixture. Independent SDK acceptance supplies
+    // the real external process above; neither path uses native directories.
+    const objects=new Map();
+    providerCall=async(method,input)=>{
+      if(method==="import") {const bytes=Buffer.from(input.input.data,"base64");const sha256=createHash("sha256").update(bytes).digest("hex");const id=`opaque object ${objects.size}`;const artifact={id,uri:`fixture:${encodeURIComponent(id)}`,name:input.input.name,mime_type:input.input.mime_type,size:bytes.length,sha256};objects.set(artifact.uri,{artifact,bytes});return artifact;}
+      const found=objects.get(input.uri);if(!found)throw new Error("Artifact unavailable");
+      if(method==="resolve")return {managed:true,artifact:found.artifact};
+      if(method!=="read-range" || input.sha256!==found.artifact.sha256)throw new Error("Unsupported artifact operation");
+      return {data:found.bytes.subarray(input.offset,input.offset+input.max_bytes).toString("base64"),mime_type:found.artifact.mime_type,sha256:found.artifact.sha256,offset:input.offset,total:found.bytes.length};
+    };
+  }
+  ipcMain.handle("test:artifact-acquire",async(event,input)=>artifactSources.acquire(input,async(method,params)=>{
+    const item=[...published.values()].find(artifact=>artifact.uri===params.uri && artifact.sha256===params.sha256);
+    if(params.thread_id!==threadID || !item)throw new Error("Artifact not in source conversation");
+    if(method==="thread/artifact/resolve")return {generation_id:"fixture-generation",artifact:(await providerCall("resolve",params)).artifact};
+    if(params.generation_id!=="fixture-generation")throw new Error("Artifact generation changed");
+    return providerCall("read-range",params);
+  },()=>!event.sender.isDestroyed(),event.sender.id));
+  ipcMain.handle("test:artifact-release",(_event,id)=>artifactSources.release(id));
+  for(let index=0;index<fixtures.length;index++)await publishFixture(index);
+}
+async function publishFixture(index) {
+  if(published.has(index))return;
+  const fixture=fixtures[index];
+  const artifact=await providerCall("import",{scope:{thread_id:threadID,plugin_id:"fixture",execution_id:"fixture"},input:{data:Buffer.from(fixture.bytes).toString("base64"),name:fixture.name,mime_type:fixture.mime}});
+  published.set(index,artifact);
+}
+app.on("will-quit",()=>externalProvider?.kill());
 
 const threadID = "thread-immediate-title-e2e";
 const html = "<!doctype html><style>body{font:18px system-ui;padding:24px}p{line-height:1.6}</style><h1>Delivered report</h1>"
@@ -40,20 +89,12 @@ const fixtures = [
 
 function delivery(index) {
   const fixture = fixtures[index];
-  const id = String(index + 1).padStart(32, "0");
-  const sha256 = createHash("sha256").update(fixture.bytes).digest("hex");
-  const directory = path.join(profile, "workspaces", "fixture", "sessions", threadID, "artifacts", id);
-  fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, fixture.name), fixture.bytes);
-  fs.writeFileSync(path.join(directory, ".artifact.json"), JSON.stringify({
-    version: 1, id, thread_id: threadID, plugin_id: "fixture", name: fixture.name,
-    sha256, size: Buffer.byteLength(fixture.bytes),
-  }));
+  const {id,sha256,uri} = published.get(index);
   return {
     id: `deliver-${index}`, type: "tool_call", name: "present_artifact", status: "completed",
     result_detail: { content: [{
       type: fixture.mime.startsWith("image/") ? "image" : "file", name: fixture.name, mime_type: fixture.mime,
-      uri: `wuu-artifact://fixture/${threadID}/${id}/${encodeURIComponent(fixture.name)}?sha256=${sha256}`,
+      uri,
       artifact: { placement: fixture.mime.startsWith("image/") ? "inline" : "turn_end", ref: id, sha256, size_bytes: Buffer.byteLength(fixture.bytes) },
     }] },
   };
@@ -77,6 +118,7 @@ async function settle(win) {
   await evaluate(win, () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function complete(win, index) {
+  await publishFixture(index);
   const turn = { id: `delivery-turn-${index}`, status: "in_progress", items_view: "full", items: [
     { id: `user-${index}`, type: "user_message", status: "completed", text: `Deliver report ${index}` },
   ] };
@@ -92,7 +134,8 @@ async function complete(win, index) {
 }
 
 app.whenReady().then(async () => {
-  registerRenderableFileProtocol(profile);
+  await initializeArtifacts();
+  registerRenderableFileProtocol(artifactSources);
   const win = new BrowserWindow({ width: 1440, height: 900, show: false,
     titleBarStyle: 'hiddenInset', webPreferences: {
     preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
@@ -251,7 +294,10 @@ app.whenReady().then(async () => {
         images[images.length - 1].closest('button').click();
       });
       await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
-      assert.equal(await evaluate(win, () => document.querySelector('.image-preview-image').src), source, 'Primary image clicks must still open the full viewer');
+      const viewerSource = await evaluate(win, () => document.querySelector('.image-preview-image').src);
+      const digests = await win.webContents.executeJavaScript(`Promise.all(${JSON.stringify([source, viewerSource])}.map(source=>fetch(source).then(response=>response.headers.get('x-artifact-sha256'))))`);
+      assert.ok(digests[0], 'Managed images must retain their source digest');
+      assert.equal(digests[1], digests[0], 'Primary image clicks preserve content identity through a new viewer lease');
       assert.equal(await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-panel'))), false);
       assert.equal(await evaluate(win, () => {
         const image = document.querySelector('.image-preview-image').getBoundingClientRect();
@@ -491,7 +537,8 @@ app.whenReady().then(async () => {
   await waitFor(win, () => window.closedVideo.paused);
   await evaluate(win, () => [...document.querySelectorAll('[data-wuu-component="turn-artifacts"] button')].find(button => button.textContent.includes('.webm')).click());
   await waitFor(win, () => document.querySelector('.artifact-preview-panel video')?.readyState >= 2);
-  assert.equal(await evaluate(win, () => document.querySelector('.artifact-preview-panel video').src), videoURL, 'Reopening must use the same delivered snapshot');
+  const reopenedURL=await evaluate(win, () => document.querySelector('.artifact-preview-panel video').src);
+  assert.equal((await win.webContents.executeJavaScript(`fetch(${JSON.stringify(reopenedURL)}).then(response=>response.headers.get('x-artifact-sha256'))`)),published.get(videoIndex).sha256,'Reopening preserves content identity through a new lease');
 
   // Exercise the local-file scheme and its CSP as well as managed deliveries.
   const localVideo = path.join(output, 'local-preview.webm');
@@ -526,6 +573,7 @@ app.whenReady().then(async () => {
       id: `inspection-${index}`, type: 'tool_call', name, status: 'completed',
       result_detail: { content: [{
         type: 'image', mime_type: 'image/svg+xml', uri: delivery(2).result_detail.content[0].uri,
+        artifact: {...delivery(2).result_detail.content[0].artifact, placement: undefined},
         name: index === 0 ? 'A very long inspected screenshot filename for checking narrow windows and large fonts.svg' : `${name}-inspection.svg`,
       }] },
     })),
@@ -592,7 +640,10 @@ app.whenReady().then(async () => {
   console.log('Video preview e2e passed: managed/local playback, no autoplay, seeking, range bytes, card reopen, failure fallback, light/dark, 15/20px, wide/narrow layout.');
   console.log("Artifact preview e2e passed: image viewer, completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 15/20px, wide/narrow geometry, portrait/panorama fit, gallery navigation, boundaries and focus restoration.");
   }
+  fs.writeFileSync(path.join(output,"provider-evidence.json"),JSON.stringify({external:Boolean(externalProvider),artifacts:[...published.values()],nativePayloadDirectoryExists:fs.existsSync(path.join(profile,"workspaces"))},null,2));
+  assert.equal(fs.existsSync(path.join(profile,"workspaces")),false,"Provider payloads must not be materialized in native artifact directories");
   win.destroy();
+  externalProvider?.kill();
   app.exit(0);
 }).catch(async (error) => {
   console.error(error);
@@ -601,5 +652,6 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
     fs.writeFileSync(path.join(output, "failure.html"), await evaluate(win, () => document.body.innerHTML));
   }
+  externalProvider?.kill();
   app.exit(1);
 });

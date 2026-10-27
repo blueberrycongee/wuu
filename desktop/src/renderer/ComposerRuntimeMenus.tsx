@@ -1,7 +1,7 @@
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
 import { useComposerServices, useComposerConnectionDisplay } from "./ComposerServicesContext";
 import type { SettingsConnectionDisplayV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
-import { chatGPTConnectionModels, isChatGPTProvider } from "./RuntimeHelpers";
+import { chatGPTConnectionModels, engineRequiresHostModel, isChatGPTProvider } from "./RuntimeHelpers";
 import { hostSupports } from "./HostCapabilities";
 import {
   Bug,
@@ -580,14 +580,15 @@ export function RuntimePicker({
   // effort.
   const currentVariant = targetVariant;
   const placement: FloatingMenuPlacement = inToolRail ? "below" : "above";
-  const externalEngine = handoff ? "" : activeEngine && activeEngine !== "wuu" ? activeEngine : "";
+  const selectedEngine = handoff ? "wuu" : activeEngine || "wuu";
+  const selectedEngineInfo = engines?.find(engine => engine.id === selectedEngine);
+  const externalEngine = handoff || engineRequiresHostModel(selectedEngine, selectedEngineInfo) ? "" : selectedEngine;
   const engineOptions = handoff
     ? [{ id: "wuu", label: engineLabel("wuu") }]
-    : availableEngineOptions(engines, externalEngine, display);
-  const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
+    : availableEngineOptions(engines, selectedEngine, display);
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
   const externalModelInfo = externalEngineInfo?.models?.find((model) => engineModel ? model.id === engineModel : model.is_default);
-  const triggerEngineName = display.label(`engine:${selectedEngine}`, engineLabel(selectedEngine, externalEngineInfo));
+  const triggerEngineName = display.label(`engine:${selectedEngine}`, engineLabel(selectedEngine, selectedEngineInfo));
   const triggerLabel = handoff
     ? handoff.model
       ? runtimeTriggerLabel(handoff.model, codexProvider, currentProviderModel, currentCodexModel)

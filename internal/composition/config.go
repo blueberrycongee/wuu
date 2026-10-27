@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = 3
+const Version = 4
 
 // Config selects implementations independently of discovery order. Profiles
 // compose ordered bundles from an empty module set. Inline choices and patches
@@ -52,13 +52,17 @@ type Patch struct {
 
 // ServiceKey addresses one major version independently of its provider.
 type ServiceKey struct {
-	Service string `json:"service"`
-	Major   int    `json:"major"`
+	// Consumer scopes a selection to this declared consumer; empty means global.
+	Consumer string `json:"consumer,omitempty"`
+	Service  string `json:"service"`
+	Major    int    `json:"major"`
 }
 
 // Binding selects one provider for a service major in the owning composition.
 // Removing or failing that provider never selects another implementation.
 type Binding struct {
+	// Consumer overrides only this consumer's declared dependency, not its authority.
+	Consumer string `json:"consumer,omitempty"`
 	Service  string `json:"service"`
 	Major    int    `json:"major"`
 	Provider string `json:"provider"`
@@ -192,7 +196,7 @@ func (c *Config) Resolve() (Resolved, error) {
 				resolved.ModuleSource = source
 			}
 			for _, key := range patch.RemoveServices {
-				delete(bindings, bindingKey(Binding{Service: key.Service, Major: key.Major}))
+				delete(bindings, bindingKey(Binding{Consumer: key.Consumer, Service: key.Service, Major: key.Major}))
 			}
 			for _, binding := range patch.Services {
 				binding.Source = source
@@ -241,6 +245,9 @@ func (c *Config) Resolve() (Resolved, error) {
 	}
 	for _, key := range slices.Sorted(maps.Keys(bindings)) {
 		binding := bindings[key]
+		if binding.Consumer != "" && !resolved.Includes(binding.Consumer) {
+			return Resolved{}, fmt.Errorf("composition consumer %q for %s is excluded from modules", binding.Consumer, bindingKey(binding))
+		}
 		if !resolved.Includes(binding.Provider) {
 			return Resolved{}, fmt.Errorf("composition provider %q for %s is excluded from modules", binding.Provider, bindingKey(binding))
 		}
@@ -289,10 +296,10 @@ func validatePatches(patches []Patch, owner string) error {
 			seen[bindingKey(binding)] = true
 		}
 		for _, key := range patch.RemoveServices {
-			if !serviceName.MatchString(key.Service) || key.Major < 0 {
+			if !serviceName.MatchString(key.Service) || key.Major < 0 || key.Consumer != strings.TrimSpace(key.Consumer) {
 				return fmt.Errorf("%s: invalid removed service %s@%d", source, key.Service, key.Major)
 			}
-			id := bindingKey(Binding{Service: key.Service, Major: key.Major})
+			id := bindingKey(Binding{Consumer: key.Consumer, Service: key.Service, Major: key.Major})
 			if seen[id] {
 				return fmt.Errorf("%s: duplicate or conflicting binding operation for %s", source, id)
 			}
@@ -317,13 +324,16 @@ func validateModules(modules []string) error {
 }
 
 func bindingKey(binding Binding) string {
+	if binding.Consumer != "" {
+		return fmt.Sprintf("consumer:%q:%s@%d", binding.Consumer, binding.Service, binding.Major)
+	}
 	return fmt.Sprintf("%s@%d", binding.Service, binding.Major)
 }
 
 func validateBindings(bindings []Binding) error {
 	seen := make(map[string]bool, len(bindings))
 	for _, binding := range bindings {
-		if !serviceName.MatchString(binding.Service) || binding.Major < 0 || strings.TrimSpace(binding.Provider) == "" || binding.Provider != strings.TrimSpace(binding.Provider) {
+		if binding.Consumer != strings.TrimSpace(binding.Consumer) || !serviceName.MatchString(binding.Service) || binding.Major < 0 || strings.TrimSpace(binding.Provider) == "" || binding.Provider != strings.TrimSpace(binding.Provider) {
 			return fmt.Errorf("invalid composition service binding: %s@%d -> %q", binding.Service, binding.Major, binding.Provider)
 		}
 		key := bindingKey(binding)

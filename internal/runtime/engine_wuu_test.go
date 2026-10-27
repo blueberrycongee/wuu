@@ -13,13 +13,39 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/externalengine"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+// Clients must distinguish native host-model admission from engines which own
+// their own model access, even when a replacement uses the same engine ID.
+func TestEngineDescriptorHostModelRequirement(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		factory  agentengine.Factory
+		required bool
+	}{
+		{"native", &nativeWuuEngineFactory{}, true},
+		{"embedded", NewWuuEngine(nil), true},
+		{"claude", claudeengine.NewEngine("", ""), false},
+		{"codex", codexengine.NewEngine(nil), false},
+		{"protocol", externalengine.New(enginecatalog.Entry{ID: "replacement", Protocol: "acp"}, "", ""), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			descriptor, err := test.factory.Descriptor(context.Background())
+			if err != nil || descriptor.RequiresHostModel == nil || *descriptor.RequiresHostModel != test.required {
+				t.Fatalf("host model requirement = %+v, error = %v", descriptor, err)
+			}
+		})
+	}
+}
 
 func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
 	binary, err := os.Executable()

@@ -33,9 +33,11 @@ func NewWuuEngine(session *Session) *WuuEngine {
 
 // Descriptor describes the built-in engine.
 func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
+	requiresHostModel := true
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineWuu,
-		Version: "1",
+		ID:                agentengine.EngineWuu,
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",

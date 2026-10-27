@@ -240,7 +240,7 @@ func (r *ServiceRegistry) backgroundTarget(caller, service, method string) (serv
 		if key.name != service || provider.pluginID != caller {
 			continue
 		}
-		if target.invoker != nil {
+		if target.invoker != nil && targetKey.major != key.major {
 			return serviceKey{}, serviceProvider{}, &HostServiceError{Code: "invalid_params", Message: "background service must have one registered major version"}
 		}
 		target, targetKey = provider, key

@@ -39,6 +39,7 @@ func (s *Service) Status() pluginhost.Status {
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+		{Name: "authority", InputSchema: AuthorityInputSchema, OutputSchema: AuthorityOutputSchema, Preparation: true},
 		{Name: "checkpoint", InputSchema: CheckpointInputSchema, OutputSchema: CheckpointOutputSchema, Preparation: true},
 		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1", Preparation: true},
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
@@ -94,12 +95,17 @@ func (s *Service) Close(context.Context) error {
 func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")) {
+	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "authority" || params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")) {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "state provider is not active"}
 	}
 	var result any
 	var err error
 	switch params.Method {
+	case "authority":
+		var request struct{}
+		if err = decode(params.Params, &request); err == nil {
+			result = LegacyAuthority()
+		}
 	case "checkpoint":
 		var request struct{}
 		if err = decode(params.Params, &request); err == nil {

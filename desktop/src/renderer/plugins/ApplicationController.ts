@@ -113,7 +113,15 @@ export class ApplicationController implements HostApplicationService {
   }
   private artifactsOwner?: ApplicationArtifacts;
   get artifacts(): ApplicationArtifacts {
-    return this.artifactsOwner ??= new ApplicationArtifacts(window.wuu, this.previewContent);
+    return this.artifactsOwner ??= new ApplicationArtifacts(window.wuu, this.previewContent, resource => {
+      // Source records, not artifact URLs or the currently selected connection,
+      // identify the execution host for consumers without a presentation context.
+      const sources = [this.state.thread,this.state.secondaryThread,...this.state.threads]
+        .filter((thread): thread is Thread => Boolean(thread && thread.id === resource.threadId && (!resource.cwd || thread.cwd === resource.cwd)));
+      const locators = new Map(sources.flatMap(thread => thread?.session_locator ? [[JSON.stringify(thread.session_locator),thread.session_locator] as const] : []));
+      if (locators.size > 1) throw new Error("Artifact source execution host is ambiguous");
+      return locators.values().next().value;
+    });
   }
   private composerPresentationOwner?: ApplicationComposerPresentation;
   createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => UIContributionRegistryV1) {
@@ -397,6 +405,7 @@ export class ApplicationController implements HostApplicationService {
   private reconcilingSubmission = false;
   private get applicationSubmission(): ApplicationSubmission {
     return this.submissionOwner ??= new ApplicationSubmission({
+      artifacts: () => this.artifacts,
       getState: () => this.state, updateState: this.updateState, changed: () => { this.rememberDraftResources(); this.publish(); },
       isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       pending: this.pendingComposer, resources: this.draftResources, sidebarCache: this.sidebarCache,
@@ -490,7 +499,7 @@ export class ApplicationController implements HostApplicationService {
       changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: signal => this.mutationActions(signal),
       getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
-    this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
+    this.applicationPreview = new ApplicationPreview({ artifacts: () => this.artifacts, getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
       .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
     this.applicationSettings = new ApplicationSettings({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),

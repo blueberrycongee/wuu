@@ -492,6 +492,9 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  artifactSourceCapabilities: {strategy: "streaming"},
+  acquireArtifactSource: (params) => ipcRenderer.invoke("wuu:artifact-acquire", params),
+  releaseArtifactSource: (leaseId) => ipcRenderer.invoke("wuu:artifact-release", leaseId),
   showArtifactItemMenu: (params) =>
     ipcRenderer.invoke("wuu:artifact-show-menu", params),
   saveArtifactFile: async (name: string, source: string) => {

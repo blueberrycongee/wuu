@@ -647,7 +647,8 @@
   min-width: 0;
 }
 
-.settings-row-error {
+.settings-row-error,
+.settings-row-detail {
   grid-column: 1 / -1;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1848,21 +1849,50 @@ button.settings-engine-expand:hover {
 
 /* --- MCP servers + pets --------------------------------------------------------- */
 
+.settings-mcp-details-toggle {
+  padding-inline: 0;
+  color: var(--ink-soft);
+}
+
+.settings-mcp-diagnostic-text {
+  max-height: 14em;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.5;
+}
+
+.settings-mcp-list-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-mcp-list-failure > .settings-mcp-diagnostic {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
 .settings-mcp-code-input {
   width: 9.5em;
   min-width: 7.5em;
 }
 
 /* A state mark leads the meta line and must not wrap away from it. */
-.settings-row-label-description:has(> .settings-row-attention) {
+.settings-mcp-status {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   column-gap: var(--space-1);
 }
 
 .settings-row-attention {
   display: inline-flex;
+  flex: 0 0 auto;
   color: var(--ink-tertiary);
 }
 
@@ -2690,8 +2720,9 @@ button.settings-engine-expand:hover {
   }
 
   /* Switches, numbers, short values, buttons and icon actions are narrow
-   * enough to stay beside their label. */
-  .settings-row:not(.settings-row-block):not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
+   * enough to stay beside their label. Action groups with a text button
+   * need their own line so recovery guidance keeps its reading space. */
+  .settings-row:not(.settings-row-block):not(:has(> .settings-row-control > .settings-row-actions > .settings-button:not(.settings-icon-button))):not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }

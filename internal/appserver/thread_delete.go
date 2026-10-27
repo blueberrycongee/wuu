@@ -95,11 +95,16 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	admissionCtx, err := s.requireRequestAccess(req, MethodThreadDelete, nil)
+	if err != nil {
+		releaseThreadLifecycleWriteLease(id, lifecycleLease)
+		return s.writeResponse(req.ID, nil, err)
+	}
 	// Stage side-chat history before deleting the main session.
 	// The staged record remains readable and can be atomically restored if the
 	// main transaction fails, avoiding either partial data loss or an orphaned
 	// side conversation across process crashes.
-	sideDelete, err := sidethread.NewStore(context.Background(), binding.Documents).BeginDelete(id)
+	sideDelete, err := sidethread.NewStore(admissionCtx, binding.Documents).BeginDelete(id)
 	if err != nil {
 		releaseThreadLifecycleWriteLease(id, lifecycleLease)
 		return s.writeResponse(req.ID, nil, fmt.Errorf("delete side thread for %q (stage): %w", id, err))

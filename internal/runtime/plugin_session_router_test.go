@@ -59,3 +59,44 @@ func TestPluginHostSessionSendUsesGenerationBoundOwner(t *testing.T) {
 		t.Fatal("caller-supplied plugin identity was accepted")
 	}
 }
+
+// Routing is opt-in: absence of a selected remote provider must not execute the
+// same request locally, even when the local handler could accept it.
+func TestSessionRouteLocalAndDisabledRemote(t *testing.T) {
+	router := NewPluginSessionRouter()
+	calls := 0
+	router.Bind(func(_ context.Context, owner string, p pluginhost.SessionCreateParams) (pluginhost.SessionCreateResult, error) {
+		calls++
+		if owner != "caller" || p.RequestID != "operation-1" {
+			t.Fatalf("lost identity: %q %+v", owner, p)
+		}
+		return pluginhost.SessionCreateResult{SessionID: "created", Created: true}, nil
+	}, nil, nil, nil)
+	request := pluginhost.SessionRouteRequest{Version: 1, Operation: "create", OperationID: "operation-1", Locator: pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: "local"}, Params: json.RawMessage(`{"visibility":"user","context_source":"fresh"}`)}
+	result, err := router.Route(context.Background(), "caller", request)
+	if err != nil || result.Status != "completed" || result.Locator.SessionID != "created" || calls != 1 {
+		t.Fatalf("local result=%+v calls=%d err=%v", result, calls, err)
+	}
+	request.Locator.ExecutionHost = "offline-host"
+	if _, err := router.Route(context.Background(), "caller", request); err == nil {
+		t.Fatal("missing remote transport accepted")
+	}
+	if calls != 1 {
+		t.Fatal("remote routing fell back to local session")
+	}
+	request.Locator.ExecutionHost = "local"
+	request.Params = json.RawMessage(`{"request_id":"other","visibility":"user","context_source":"fresh"}`)
+	if _, err := router.Route(context.Background(), "caller", request); err == nil {
+		t.Fatal("ambiguous operation identity accepted")
+	}
+	request.Operation = "cancel"
+	request.Locator.SessionID = "created"
+	request.Params = json.RawMessage(`{"session_id":"different","turn_id":"turn"}`)
+	if _, err := router.Route(context.Background(), "caller", request); err == nil {
+		t.Fatal("cross-session payload accepted")
+	}
+	request.Params = json.RawMessage(`{"session_id":"created"}`)
+	if _, err := router.Route(context.Background(), "caller", request); err == nil {
+		t.Fatal("unfenced remote-style cancellation accepted")
+	}
+}

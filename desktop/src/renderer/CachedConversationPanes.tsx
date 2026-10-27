@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  SessionLocatorV1,
   Agent,
   InputFile,
   InputImage,
@@ -371,6 +372,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
               renderTurn={(turn) => (
                 <PaneTurnView
                   threadID={thread.id}
+                  sessionLocator={thread.session_locator}
                   engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
@@ -457,6 +459,7 @@ function reuseCachedConversationPane(
 
 type PaneTurnViewProps = {
   threadID: string;
+  sessionLocator?: SessionLocatorV1;
   engineID?: string;
   turn: Turn;
   cwd?: string;
@@ -493,6 +496,7 @@ type PaneTurnViewProps = {
 // is a useCallback reading through threadRef for exactly that reason.
 const PaneTurnView = memo(function PaneTurnView({
   threadID,
+  sessionLocator,
   engineID,
   turn,
   cwd,
@@ -515,6 +519,7 @@ const PaneTurnView = memo(function PaneTurnView({
   return (
     <TurnView
       threadID={threadID}
+      sessionLocator={sessionLocator}
       engineID={engineID}
       turn={turn}
       cwd={cwd}

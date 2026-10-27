@@ -88,6 +88,8 @@ function workspaceDemoPath(path) {
 }
 
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
+  acquireArtifactSource: input => ipcRenderer.invoke("test:artifact-acquire",input),
+  releaseArtifactSource: id => ipcRenderer.invoke("test:artifact-release",id),
   initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
   projectWork: async (params) => {
     const work = projectWorks.get(params.project_id);

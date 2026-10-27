@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppServerResponseError } from "./appServerErrors";
+import { requestTrustedRemote, bindRemoteEventAuthorization, type TrustedRemotePeer } from "./trustedRemoteTransport";
+import type { ServerEvent } from "../shared/protocol";
 
 vi.mock("electron", () => ({
   app: {
@@ -237,7 +239,9 @@ describe("AppServerClientPool admission", () => {
               ? { thread: { id: "remote-thread", status: "idle" } }
               : { threads: [] };
           reply(4, { result });
-          await expect(fifth).resolves.toEqual(result);
+          await expect(fifth).resolves.toEqual(operation === "session read"
+            ? { thread: { id: "remote-thread", status: "idle", session_locator: { version: 1, execution_host: "local", session_id: "remote-thread" } } }
+            : result);
         }
         if (operation === "turn") {
           expect(disposed).toEqual([contexts[5].cwd]);
@@ -416,6 +420,37 @@ describe("AppServerClientPool session routing", () => {
     expect(await restored).toEqual({ text: "Durable history" });
     pool.shutdown();
   });
+});
+
+it("keeps delegated receipts and queued events on the original local core generation", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  const context={kind:"no_project" as const,cwd:"/fixture"};
+  const children:FakeAppServerChild[]=[],events:ServerEvent[]=[],calls:{method:string;params?:unknown}[][]=[];
+  const pool=new AppServerClientPool(()=>context,()=>context.cwd,event=>events.push(event),()=>{
+    const child=new FakeAppServerChild();const generation=children.length;children.push(child);calls.push([]);
+    child.stdin.on("data",data=>{const req=JSON.parse(String(data));calls[generation].push(req);
+      const result=req.method==="transport/dispatch"?{version:1,generation:String(generation),receipt:"receipt-"+generation,message:{result:{thread:{id:"same"}}}}:{allowed:true};
+      child.stdout.write(JSON.stringify({id:req.id,result})+"\n");
+      if(req.method==="shutdown") child.emit("exit",0,null);
+    });return child.asChildProcess();
+  });
+  const authority:TrustedRemotePeer={version:1,peer_id:"peer",owner:false,principal:{kind:"agent",issuer:"fixture",tenant:"t",subject:"reader"},validation:{address:"127.0.0.1:1",token:"a".repeat(32)}};
+  try {
+    const first=await requestTrustedRemote(pool,context,authority,"thread/resume",{session_id:"same"});
+    children[0].stdout.write(JSON.stringify({method:"turn/started",params:{thread_id:"same"}})+"\n");
+    const event=events.find(event=>event.kind==="notification");if(!event)throw new Error("missing source event");
+    const queued=bindRemoteEventAuthorization(pool,event,authority);
+    children[0].emit("exit",1,null);
+    const replacement=await requestTrustedRemote(pool,context,authority,"thread/resume",{session_id:"same"});
+    const before=calls[1].length;
+    await expect(first.receipt!.check()).rejects.toThrow(/owning|available/);
+    await expect(first.receipt!.release!()).rejects.toThrow(/owning|available/);
+    await expect(queued()).rejects.toThrow(/owning|available/);
+    expect(calls[1]).toHaveLength(before);
+    await replacement.receipt!.check();
+    expect(calls[1].at(-1)).toMatchObject({method:"transport/check",params:{receipt:"receipt-1"}});
+    expect(()=>bindRemoteEventAuthorization(pool,{...event},authority)).toThrow("owning");
+  } finally {await pool.shutdown();vi.unstubAllEnvs();}
 });
 
 describe("AppServerClient request admission", () => {

@@ -38,13 +38,41 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 		base["wuu.model.capacity.resources"] = true
 		base["wuu.engines.native"] = true
 		base["wuu.engine-execution"] = true
+		// The API consumer can use an installed provider; no sharing business
+		// implementation is activated by the default product.
+		base["wuu.session-sharing-access"] = true
 		desktop["wuu.default-application"] = true
 	}
-	return map[string]Profile{
+	if version >= 4 {
+	}
+	profiles := map[string]Profile{
 		"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},
 		"headless": {Bundles: []string{"wuu.base"}},
-	}, map[string]Bundle{
+	}
+	bundles := map[string]Bundle{
 		"wuu.base":    {Patches: []Patch{{Modules: base}}},
 		"wuu.desktop": {Patches: []Patch{{Modules: desktop}}},
 	}
+	if version >= 4 {
+		// The default product extends this same host/state graph; minimum
+		// compositions do not select unrelated execution or business providers.
+		host := map[string]bool{
+			"kernel": true, "wuu.state-consumer": true, "wuu.config.local": true,
+			"wuu.session-state": true, "wuu.state.sqlite": true, "wuu.session.default": true,
+			"wuu.engine-execution": true,
+			"wuu.resource-access":  true, "wuu.resource-policy.default": true,
+		}
+		for id := range host {
+			delete(base, id)
+		}
+		bundles["wuu.session-host"] = Bundle{Patches: []Patch{{Modules: host}}}
+		bundles["wuu.execution"] = Bundle{Patches: []Patch{{Modules: base}}}
+		// Keep the public complete-base bundle usable in existing custom
+		// profiles; product profiles expose its two independently usable parts.
+		bundles["wuu.base"] = Bundle{Patches: []Patch{{Modules: host}, {Modules: base}}}
+		profiles["desktop"] = Profile{Bundles: []string{"wuu.session-host", "wuu.execution", "wuu.desktop"}}
+		profiles["headless"] = Profile{Bundles: []string{"wuu.session-host", "wuu.execution"}}
+		profiles["minimal"] = Profile{Bundles: []string{"wuu.session-host"}}
+	}
+	return profiles, bundles
 }

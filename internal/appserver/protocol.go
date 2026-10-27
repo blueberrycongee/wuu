@@ -296,6 +296,7 @@ type ReverseRPCCapabilities struct {
 }
 
 type InitializeResult struct {
+	ResourceAccess      ResourceAccessCapabilities                 `json:"resource_access"`
 	ApplicationShell    *runtime.ApplicationShellBinding           `json:"application_shell"`
 	ApplicationSurfaces map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
 	Status              string                                     `json:"status"`
@@ -1592,6 +1593,9 @@ type EngineInfo struct {
 	// UpdateURL opens vendor guidance. Wuu does not manage CLI installation.
 	UpdateURL    string   `json:"update_url,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	// RequiresHostModel is the selected engine's client readiness/model-source
+	// metadata, not a backend authorization decision or credential validation.
+	RequiresHostModel *bool `json:"requires_host_model,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
 	Enabled bool `json:"enabled"`
 	// BinaryPath is the resolved CLI binary path, when the engine uses one.

@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 import type {
+  SessionLocatorV1,
   InputFile,
   InputImage,
   MessageContentPart,
@@ -14,7 +15,7 @@ import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
-import { ArtifactThreadContext } from "./ArtifactPreviewContext";
+import { ArtifactThreadContext, ArtifactLocatorContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -44,6 +45,7 @@ export { latestAgentMessageItemID };
 export type TurnViewProps = {
   turn: Turn;
   threadID?: string;
+  sessionLocator?: SessionLocatorV1;
   engineID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
@@ -77,6 +79,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   }
   return (
     <ArtifactThreadContext.Provider value={props.threadID}>
+    <ArtifactLocatorContext.Provider value={props.sessionLocator}>
     <ConversationTurnIdentityProvider threadId={props.threadID} turnId={projectedTurn.id}>
       <slots.Slot
         name={`${slotOwner}/conversation.turn`}
@@ -84,6 +87,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
         fallback={<TurnContent {...props} turn={projectedTurn} />}
       />
     </ConversationTurnIdentityProvider>
+    </ArtifactLocatorContext.Provider>
     </ArtifactThreadContext.Provider>
   );
 }

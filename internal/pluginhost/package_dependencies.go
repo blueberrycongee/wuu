@@ -44,7 +44,8 @@ func (h *Host) resolveServiceDependencies(registry *ServiceRegistry) {
 	registry.mu.RLock()
 	for id, requirements := range registry.requirements {
 		for _, requirement := range requirements {
-			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
+			declaration := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
+			key := registry.providerKeyLocked(id, declaration)
 			provider, found := registry.providers[key]
 			if !found {
 				if requirement.Required {
@@ -59,9 +60,13 @@ func (h *Host) resolveServiceDependencies(registry *ServiceRegistry) {
 				}
 				continue
 			}
-			if provider.pluginID != id {
-				dependencies[id] = append(dependencies[id], Dependency{Provider: provider.pluginID, Required: requirement.Required, Service: key.name, Major: key.major})
+			// Renderer -> own runtime is internal to one package lifecycle node.
+			// A runtime consuming its own selected service is a true self-delegate
+			// and must retain the edge so cycle validation rejects it.
+			if provider.pluginID == id && !registry.consumers[id][declaration].runtime {
+				continue
 			}
+			dependencies[id] = append(dependencies[id], Dependency{Provider: provider.pluginID, Required: requirement.Required, Service: key.name, Major: key.major})
 		}
 	}
 	registry.mu.RUnlock()

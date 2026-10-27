@@ -173,9 +173,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	}
 	defer catalog.Release()
 	discovered := discoverPlugins(root, home)
-	effectiveConfig := opts.Config
-	effectiveConfig.Composition = productComposition(opts.Config.Composition, false, activatedPlugins(opts.Config, discovered), opts.NativeProviders)
-	plan, err := ResolvePluginActivationPlan(effectiveConfig, discovered, opts.NativeProviders...)
+	plan, err := ResolvePluginActivationPlan(opts.Config, discovered, opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +194,8 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	host, kernel, err := buildPluginHost(plugins, root, "", home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, effectiveConfig.Composition, "", opts.NativeProviders...)
+	selection := productComposition(opts.Config.Composition, false, plugins, opts.NativeProviders)
+	host, kernel, err := buildPluginHost(plugins, root, "", home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, "", opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}

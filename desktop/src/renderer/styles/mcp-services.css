@@ -25,22 +25,29 @@
 }
 
 .mcp-service-status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
   margin-top: var(--space-1);
   color: var(--ink-secondary);
   font-size: var(--font-ui);
 }
 
-.mcp-service-status[data-attention] {
+.mcp-service-status[data-attention="auth"] > .icon-sm {
   color: var(--warning);
 }
 
-.mcp-connection-detail {
-  margin-top: var(--space-2);
-  color: var(--ink-secondary);
+.mcp-service-status[data-attention="error"] > .icon-sm,
+.mcp-failure .mcp-service-status > .icon-sm {
+  color: var(--danger);
 }
 
-.mcp-connection-detail > summary {
-  cursor: pointer;
+.mcp-service-status > .icon-sm {
+  flex: 0 0 auto;
+}
+
+.mcp-failure .mcp-service-status {
+  margin: 0;
 }
 
 .mcp-service-actions {
@@ -48,13 +55,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.mcp-error {
-  margin: var(--space-2) 0 0;
-  color: var(--danger);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
 }
 
 .mcp-form {

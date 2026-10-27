@@ -130,6 +130,7 @@ func newSideThreadServer(t *testing.T, client providers.StreamClient) (*Server, 
 	rt.ActivePlugins = []pluginpkg.Plugin{item}
 	out := &lockedBuffer{}
 	s := &Server{
+		access:    localOwnerTestAccess(),
 		rt:        rt,
 		out:       out,
 		threads:   make(map[string]*threadState),

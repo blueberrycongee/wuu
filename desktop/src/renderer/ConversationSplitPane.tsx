@@ -159,6 +159,7 @@ export function ConversationSplitPane({
             renderTurn={(turn) => (
                 <TurnView
                   threadID={thread.id}
+                  sessionLocator={thread.session_locator}
                   engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}

@@ -1,3 +1,6 @@
+import type { SessionLocatorV1 } from "./sessionLocator";
+export type { SessionLocatorV1 } from "./sessionLocator";
+export type * from "./trusted-transport";
 import type { AppContextSettings, AppContextState } from "./appContext";
 import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
 export type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
@@ -121,10 +124,22 @@ export type WorkspaceItemMenuResult = {
   action: "none";
 };
 
-export type ArtifactItemMenuParams = {
+export type ArtifactSourceCapabilities = {
+  strategy: "streaming" | "bounded-memory";
+  maxBytes?: number;
+  maxTotalBytes?: number;
+  unsupportedMimeTypes?: readonly string[];
+};
+export type ArtifactSourceParams = {
+  /** Caller-generated cancellation identity; also returned as leaseId. */
+  requestId?: string;
+  locator?: SessionLocatorV1;
   uri: string;
   threadId: string;
+  sha256: string;
 };
+export type ArtifactSourceLease = { url: string; leaseId: string };
+export type ArtifactItemMenuParams = ArtifactSourceParams;
 
 export type ArtifactItemMenuResult = {
   action: "none" | "save";
@@ -160,7 +175,14 @@ export type ApplicationShellBinding = {
   provider_id: string;
 };
 
+export type ResourceAccessCapabilities = {
+  version: 1;
+  /** Supported delegated RPC actions, not grants. Each still requires policy approval. */
+  delegated_actions: string[];
+};
+
 export type InitializeResult = {
+  resource_access?: ResourceAccessCapabilities;
   application_shell?: ApplicationShellBinding | null;
   /** Selected UI service providers from the same committed composition as the shell. */
   application_surfaces?: Record<string, ApplicationShellBinding>;
@@ -1359,6 +1381,8 @@ export type EngineInfo = {
   /** Vendor guide only; Wuu does not manage the CLI installation. */
   update_url?: string;
   capabilities?: string[];
+  /** Selected implementation's client readiness/model source; not backend authorization. Omitted uses legacy client admission. */
+  requires_host_model?: boolean;
   enabled: boolean;
   binary_path?: string;
   binary_ok: boolean;
@@ -1565,10 +1589,12 @@ export type RuntimeContext =
       kind: "project";
       project_id: string;
       cwd: string;
+      session_locator?: SessionLocatorV1;
     }
   | {
       kind: "no_project";
       cwd: string;
+      session_locator?: SessionLocatorV1;
     };
 
 export type ProjectRuntimeIssue = {
@@ -2039,6 +2065,8 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  /** Attached by the selected GUI connection, not trusted from remote JSON. */
+  session_locator?: SessionLocatorV1;
   running_model_provider?: string;
   running_model?: string;
   running_model_revision?: number;
@@ -2761,6 +2789,7 @@ export type ThreadResumeResult = {
 
 export type ServerEvent = {
   workdir: string;
+  session_locator?: SessionLocatorV1;
 } & (
   | {
       kind: "notification";
@@ -3308,6 +3337,9 @@ export type WuuDesktopApi = {
   // 远程控制（设置 → 远程）。管理机器级 remote host 守护进程与手机配对,
   // 走主进程 RemoteHostManager 而非 app-server 协议。
   /** Save original artifact bytes via a desktop save dialog or mobile share sheet. */
+  artifactSourceCapabilities?: ArtifactSourceCapabilities;
+  acquireArtifactSource?: (params: ArtifactSourceParams) => Promise<ArtifactSourceLease>;
+  releaseArtifactSource?: (leaseId: string) => Promise<void>;
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
   /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
   exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;

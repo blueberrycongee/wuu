@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.select.outputs.go }}
+      architecture: ${{ steps.select.outputs.architecture }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
       desktop_related: ${{ steps.select.outputs.desktop_related }}
@@ -202,6 +203,233 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  architecture-conformance:
+    name: Public provider conformance
+    needs: changes
+    if: needs.changes.outputs.architecture == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            clients/core/package-lock.json
+            packages/plugin-sdk/package-lock.json
+            plugins/package-lock.json
+            desktop/package-lock.json
+
+      - name: Install public SDK, provider and renderer test dependencies
+        run: |
+          npm ci --prefix clients/core
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
+          # The additive fixture uses Vitest/jsdom, not Electron or node-pty.
+          npm ci --prefix desktop --ignore-scripts
+
+      - name: Build the tested revision and record its identity
+        id: conformance-build
+        timeout-minutes: 8
+        run: |
+          mkdir -p .tmp/bin .tmp/e2e/architecture-conformance
+          git rev-parse HEAD > .tmp/e2e/architecture-conformance/source-commit.txt
+          npm --prefix packages/plugin-sdk run build
+          npm --prefix plugins run build
+          git diff --exit-code -- internal/plugin/bundled
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
+          sha256sum .tmp/bin/wuu > .tmp/e2e/architecture-conformance/binary.sha256
+          go version -m .tmp/bin/wuu > .tmp/e2e/architecture-conformance/build-info.txt
+
+      # Independent suites continue after a peer fails so one broken boundary
+      # does not hide the others. Every failed step still fails this job.
+      - name: Verify independent state authority
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/state-authority-acceptance/run.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/state-authority.log
+
+      - name: Verify independent restricted session sharing
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/session-sharing-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-sharing.log
+
+      - name: Verify selected artifact provider through the Go boundary
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        # Rendered preview and native open-with remain separate UI acceptance.
+        env:
+          WUU_ARTIFACT_ACCEPTANCE_RENDERER: '0'
+        run: |
+          set -o pipefail
+          node scripts/artifact-provider-acceptance.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/artifact-provider.log
+
+      - name: Verify minimal composition through the public executable
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_MINIMAL_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_MINIMAL_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/minimal-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/minimal-composition.log
+
+      - name: Verify independent identity and resource policy
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_AUTH_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_AUTH_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/resource-access-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/resource-access.log
+
+      - name: Verify partial provider delegation through the public SDK
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        env:
+          WUU_DELEGATION_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node scripts/provider-delegation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/provider-delegation.log
+
+      - name: Verify public federated session routing
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+        # The fixture packs remote-core's public TypeScript sources and installs
+        # the two tarballs independently; no renderer or remote bundle is reused.
+        run: |
+          set -o pipefail
+          node scripts/session-federation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-federation.log
+
+      - name: Verify encrypted desktop delegation into the original core
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_AUTH_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_AUTH_SDK_ROOT: ${{ github.workspace }}/packages/plugin-sdk
+        run: |
+          set -o pipefail
+          node desktop/scripts/trusted-desktop-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/trusted-desktop.log
+
+      - name: Verify independent additive packages across process and renderer
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_ADDITIVE_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_ADDITIVE_OUTPUT: ${{ github.workspace }}/.tmp/e2e/additive-cooperation
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/additive-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/additive-cooperation.log
+
+      - name: Require executed boundary cases and passing reports
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        run: |
+          sha256sum --check .tmp/e2e/architecture-conformance/binary.sha256
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, readdirSync } from 'node:fs';
+          import { join } from 'node:path';
+          const run = base => {
+            const runs = readdirSync(base).filter(name => name.startsWith('run-'));
+            assert.equal(runs.length, 1, `${base}: expected exactly one fresh fixture`);
+            return join(base, runs[0]);
+          };
+          for (const [base, file, name] of [
+            ['.tmp/e2e/provider-authority', 'verification.log', 'TestProviderAuthorityHTTPProcess'],
+            ['.tmp/e2e/session-sharing', 'verification.log', 'TestSessionSharingExternalProcess'],
+            ['.tmp/artifact-provider-acceptance', 'verification.log', 'TestThreadArtifactSelectedProvider'],
+            ['.tmp/e2e/trusted-desktop', 'go-test.log', 'TestEncryptedDelegatedDesktopSharedCore'],
+            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestProviderDelegationSDKProcess'],
+            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestStateProviderDelegationAuthority'],
+          ]) {
+            const log = readFileSync(join(run(base), file), 'utf8');
+            assert.match(log, new RegExp(`^--- PASS: ${name} [(]`, 'm'), `${name}: did not execute`);
+            assert.doesNotMatch(log, /^\s*--- SKIP:/m, `${name}: skipped coverage is not acceptance`);
+          }
+          for (const [base, file, key, expected] of [
+            ['.tmp/artifact-provider-acceptance', 'report.json', 'status', 'passed'],
+            ['.tmp/e2e/minimal-composition', 'result.json', 'passed', true],
+            ['.tmp/e2e/resource-access', 'result.json', 'passed', true],
+            ['.tmp/e2e/session-federation', 'results.json', 'status', 'passed'],
+            ['.tmp/e2e/trusted-desktop', 'result.json', 'passed', true],
+            ['.tmp/e2e/provider-delegation', 'report.json', 'passed', true],
+          ]) {
+            const report = JSON.parse(readFileSync(join(run(base), file), 'utf8'));
+            assert.equal(report[key], expected, `${base}: fixture did not pass`);
+          }
+          const additive = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/result.json', 'utf8'));
+          assert.equal(additive.passed, true, 'additive cooperation did not pass');
+          assert(Array.isArray(additive.cases) && additive.cases.length >= 11, 'additive boundary cases did not execute');
+          assert.equal(new Set(additive.cases).size, additive.cases.length, 'additive cases must be distinct');
+          // The runner emits its final marker only after the real renderer batch
+          // and report checks; renderer.log itself contains the Vitest output.
+          assert.match(readFileSync('.tmp/e2e/architecture-conformance/additive-cooperation.log', 'utf8'), /^PASS: independent additive packages cooperate through declared services and owned UI slots\.$/m);
+          const renderer = readFileSync('.tmp/e2e/additive-cooperation/renderer.log', 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
+          assert.match(renderer, /Tests\s+\d+ passed\b/);
+          assert.doesNotMatch(renderer, /\b[1-9]\d* skipped\b/);
+          const inputs = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/inputs.json', 'utf8'));
+          const binaryHash = readFileSync('.tmp/e2e/architecture-conformance/binary.sha256', 'utf8').trim().split(/\s+/)[0];
+          assert.equal(inputs.binarySHA256, binaryHash, 'additive fixture used a different executable');
+          NODE
+
+      - name: Preserve public boundary evidence without fixture credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-conformance-evidence
+          # Never upload fixture directories, homes, config, key material or
+          # token stores. Only these reports and fixture diagnostic logs leave
+          # the runner, including on fixture failure.
+          path: |
+            .tmp/e2e/architecture-conformance/*.txt
+            .tmp/e2e/architecture-conformance/*.sha256
+            .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/provider-authority/run-*/environment.json
+            .tmp/e2e/provider-authority/run-*/verification.log
+            .tmp/e2e/session-sharing/run-*/environment.json
+            .tmp/e2e/session-sharing/run-*/verification.log
+            .tmp/artifact-provider-acceptance/run-*/report.json
+            .tmp/artifact-provider-acceptance/run-*/verification.log
+            .tmp/e2e/minimal-composition/run-*/result.json
+            .tmp/e2e/minimal-composition/run-*/default-composer.log
+            .tmp/e2e/resource-access/run-*/result.json
+            .tmp/e2e/session-federation/run-*/results.json
+            .tmp/e2e/session-federation/run-*/commands.json
+            .tmp/e2e/trusted-desktop/run-*/result.json
+            .tmp/e2e/trusted-desktop/run-*/go-test.log
+            .tmp/e2e/trusted-desktop/run-*/failure.log
+            .tmp/e2e/provider-delegation/run-*/report.json
+            .tmp/e2e/provider-delegation/run-*/verification.log
+            .tmp/e2e/additive-cooperation/inputs.json
+            .tmp/e2e/additive-cooperation/result.json
+            .tmp/e2e/additive-cooperation/renderer.log
+            .tmp/e2e/additive-cooperation/failure.log
+          if-no-files-found: warn
+          retention-days: 14
+
   project-agent-check:
     name: Project Agent check
     needs: changes
@@ -239,13 +467,15 @@ jobs:
   go-check:
     name: Go check
     runs-on: ubuntu-latest
-    needs: [changes, go-validation, project-agent-check]
+    needs: [changes, go-validation, project-agent-check, architecture-conformance]
     if: always()
     steps:
       - name: Require selected Go suites
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
           GO_REQUIRED: ${{ needs.changes.outputs.go }}
+          ARCHITECTURE_REQUIRED: ${{ needs.changes.outputs.architecture }}
+          ARCHITECTURE_RESULT: ${{ needs.architecture-conformance.result }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
           PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
         run: |
@@ -256,6 +486,11 @@ jobs:
           else
             test "$GO_VALIDATION_RESULT" = skipped
             test "$PROJECT_AGENT_RESULT" = skipped
+          fi
+          if [ "$ARCHITECTURE_REQUIRED" = true ]; then
+            test "$ARCHITECTURE_RESULT" = success
+          else
+            test "$ARCHITECTURE_RESULT" = skipped
           fi
 
   desktop-suite:

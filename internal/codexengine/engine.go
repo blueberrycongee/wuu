@@ -40,9 +40,11 @@ func (e *Engine) Host() *Host {
 
 // Descriptor describes the codex engine.
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
+	requiresHostModel := false
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineID("codex"),
-		Version: "1",
+		ID:                agentengine.EngineID("codex"),
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",

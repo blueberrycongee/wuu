@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { ApplicationArtifacts } from "./ApplicationArtifacts";
 import type { ArtifactResourceV1 } from "../../../../packages/plugin-sdk/src/ui-artifacts";
+import type { SessionLocatorV1 as SDKSessionLocator } from "../../../../packages/plugin-sdk/src/session-transport";
+import type { SessionLocatorV1 as WireSessionLocator } from "../../shared/protocol";
+// Both independently consumable public packages describe the same wire value.
+expectTypeOf<SDKSessionLocator>().toEqualTypeOf<WireSessionLocator>();
 const resource:ArtifactResourceV1={id:"part",name:"report.pdf",mimeType:"application/pdf",text:"original"};
 const preview={resolveResourceURL:vi.fn(({source}:{source:string})=>`resolved:${source}`),openFile:vi.fn().mockResolvedValue(undefined)};
 afterEach(()=>vi.unstubAllGlobals());
@@ -53,8 +57,13 @@ it("keeps remote item identity and rejects a result after cancellation", async (
 
 it("saves the original managed document instead of its inline preview text", async () => {
   const save = vi.fn().mockResolvedValue(undefined);
-  const service = new ApplicationArtifacts({saveArtifactFile: save}, preview);
-  const uri = "wuu-artifact://workspace/thread/artifact/report.pdf?sha256=hash";
-  await service.save({...resource, uri, sha256: "hash", threadId: "thread", text: "truncated preview"});
-  expect(save).toHaveBeenCalledWith("report.pdf", uri);
+  const acquire = vi.fn(async ({requestId}:{requestId?:string}) => ({url:"wuu-artifact://lease/owned",leaseId:requestId!}));
+  const release = vi.fn().mockResolvedValue(undefined);
+  const locator: SDKSessionLocator = {version:1,execution_host:"source-host",session_id:"thread",storage_host:"objects"};
+  const service = new ApplicationArtifacts({saveArtifactFile: save, acquireArtifactSource: acquire, releaseArtifactSource: release}, preview, () => locator);
+  const uri = "cloud:opaque/artifact"; const sha256="a".repeat(64);
+  await service.save({...resource, uri, sha256, threadId: "thread", text: "truncated preview"});
+  expect(acquire).toHaveBeenCalledWith(expect.objectContaining({uri,threadId:"thread",sha256,locator,requestId:expect.any(String)}));
+  expect(save).toHaveBeenCalledWith("report.pdf", "wuu-artifact://lease/owned");
+  expect(release).toHaveBeenCalledWith(acquire.mock.calls[0][0].requestId);
 });

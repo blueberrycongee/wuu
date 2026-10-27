@@ -27,7 +27,7 @@ func TestPluginPackageInspectZipWithoutRuntime(t *testing.T) {
 	})
 
 	out := &lockedBuffer{}
-	srv := &Server{out: out}
+	srv := &Server{access: localOwnerTestAccess(), out: out}
 	callPluginPackageRPC(t, srv, "inspect", MethodPluginPackageInspect, PluginPackageInspectParams{Path: archive})
 	response := responseByID(t, parseOutput(t, out.String()), "inspect")
 	if response["error"] != nil {
@@ -61,6 +61,7 @@ func TestPluginDesktopModuleReadRequiresExactApprovedGeneration(t *testing.T) {
 		t.Fatalf("load plugin manifest: %v", err)
 	}
 	rt.Plugins = []pluginpkg.Plugin{item}
+	rt.ActivePlugins = []pluginpkg.Plugin{item}
 	if rt.ExtensionSettings == nil {
 		rt.ExtensionSettings = &extensions.Settings{}
 	}
@@ -111,6 +112,53 @@ func TestPluginDesktopModuleReadRequiresExactApprovedGeneration(t *testing.T) {
 	}
 }
 
+func TestPluginDesktopModuleReadUsesAdmittedSnapshotAfterSourceChanges(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
+	root := t.TempDir()
+	writePluginPackageFile(t, filepath.Join(root, "plugin.json"), `{"id":"admitted-desktop","desktop":{"entry":"desktop.js"}}`)
+	const admitted = `export const activate = () => "admitted";`
+	writePluginPackageFile(t, filepath.Join(root, "desktop.js"), admitted)
+	item, err := pluginpkg.LoadManifest(filepath.Join(root, "plugin.json"), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Extensions = &extensions.Settings{}
+	if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := rt.PreflightDiscoveredExtensions(cfg, []pluginpkg.Plugin{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	// No watcher: publication and this read are the only operations in the test.
+	home := rt.WuuHome
+	rt.WuuHome = ""
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	rt.WuuHome = home
+	defer srv.Close()
+	writePluginPackageFile(t, filepath.Join(root, "desktop.js"), `throw new Error("unadmitted source");`)
+	callPluginPackageRPC(t, srv, "snapshot", MethodPluginDesktopModuleRead, PluginDesktopModuleReadParams{ID: item.SubjectID, Fingerprint: item.Fingerprint})
+	response := responseByID(t, parseOutput(t, out.String()), "snapshot")
+	if response["error"] != nil {
+		t.Fatalf("admitted desktop module unavailable after source edit: %+v", response)
+	}
+	result := remarshal[PluginDesktopModuleReadResult](t, response["result"])
+	if result.Source != admitted {
+		t.Fatalf("read unadmitted desktop bytes: %q", result.Source)
+	}
+}
+
 func TestPluginDesktopModuleReadPreservesDevelopmentAuthorization(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	root := t.TempDir()
@@ -124,6 +172,7 @@ func TestPluginDesktopModuleReadPreservesDevelopmentAuthorization(t *testing.T) 
 	item.AuthorizedDev = true
 	rt.ExtensionSettings = &extensions.Settings{}
 	rt.Plugins = []pluginpkg.Plugin{item}
+	rt.ActivePlugins = []pluginpkg.Plugin{item}
 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -472,7 +521,7 @@ func TestPluginGenerationMutationPublicationFailureReachesResponse(t *testing.T)
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	out := &lockedBuffer{}
-	srv := &Server{rt: rt, out: out, threads: map[string]*threadState{}}
+	srv := &Server{access: localOwnerTestAccess(), rt: rt, out: out, threads: map[string]*threadState{}}
 	finish, err := srv.beginPluginGenerationMutation("install", pluginGenerationMutationCatalog)
 	if err != nil {
 		t.Fatal(err)
@@ -516,7 +565,7 @@ func TestPluginGenerationResponsePublishesCommittedStateBeforeReply(t *testing.T
 			rt := newTestRuntime(t, &fakeClient{})
 			rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "committed", Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.js"}}, SubjectID: "plugin:user:committed", Fingerprint: "committed-source", Source: "user"}}
 			out := &lockedBuffer{}
-			srv := &Server{rt: rt, out: out}
+			srv := &Server{access: localOwnerTestAccess(), rt: rt, out: out}
 			testRuntimeState(t, rt)
 			inventory, _ := srv.currentExtensionState()
 			if len(inventory) != 1 || inventory[0].GraphGeneration == "" {
@@ -803,6 +852,62 @@ description: Verifies plugin package removal.
 	if state.settings != nil {
 		if _, ok := state.settings.Grants[extensions.SubjectID("user", "remove-demo")]; ok {
 			t.Fatalf("removed plugin grant remains persisted: %+v", state.settings.Grants)
+		}
+	}
+}
+
+func TestPluginPackageRemovalBlocksImplicitDependents(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	for _, manifest := range []pluginpkg.Manifest{
+		{ID: "provider-addon", Version: "1.1.0"},
+		{ID: "required-addon", Version: "1.0.0", Dependencies: []pluginpkg.Dependency{{ID: "provider-addon", Version: "^1.0.0"}}},
+		{ID: "transitive-addon", Version: "1.0.0", Requires: []string{"required-addon"}},
+		{ID: "optional-addon", Version: "1.0.0", Dependencies: []pluginpkg.Dependency{{ID: "provider-addon", Version: "^1.0.0", Optional: true}}},
+		{ID: "independent-addon", Version: "1.0.0"},
+	} {
+		manifest.SchemaVersion = 1
+		source := t.TempDir()
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writePluginPackageFile(t, filepath.Join(source, "plugin.json"), string(raw))
+		callPluginPackageRPC(t, srv, manifest.ID, MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+		if response := responseByID(t, parseOutput(t, out.String()), manifest.ID); response["error"] != nil {
+			t.Fatalf("install %s: %v", manifest.ID, response["error"])
+		}
+	}
+	retained := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(retained)
+	callPluginPackageRPC(t, srv, "remove-provider", MethodPluginPackageRemove, PluginPackageRemoveParams{ID: "provider-addon"})
+	response := responseByID(t, parseOutput(t, out.String()), "remove-provider")
+	if response["error"] != nil {
+		t.Fatalf("remove implicitly discovered provider: %v", response["error"])
+	}
+	result := remarshal[PluginPackageRemoveResult](t, response["result"])
+	if !result.Removed {
+		t.Fatal("provider removal was not committed")
+	}
+	active := map[string]bool{}
+	for _, item := range rt.ActivePlugins {
+		active[item.ID] = true
+	}
+	if active["provider-addon"] || active["required-addon"] || active["transitive-addon"] || !active["optional-addon"] || !active["independent-addon"] {
+		t.Fatalf("active packages after provider removal = %v", active)
+	}
+	for _, id := range []string{"required-addon", "transitive-addon"} {
+		record := pluginPackageRecord(t, result.ExtensionInventory, id)
+		if len(record.ActivationIssues) == 0 || record.ActivationIssues[0].Kind != string(pluginpkg.ActivationIssueMissingRequirement) {
+			t.Fatalf("blocked package has no dependency diagnostic: %+v", record)
+		}
+		if _, err := os.Stat(filepath.Join(rt.WuuHome, "plugins", id, "plugin.json")); err != nil {
+			t.Fatalf("dependent package was removed: %v", err)
 		}
 	}
 }

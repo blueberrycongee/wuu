@@ -154,7 +154,6 @@ func TestValidateServiceNegotiation(t *testing.T) {
 				ProvidedServices: []ServiceDescriptor{validServiceDescriptor()},
 				RequiredServices: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1}},
 			},
-			wantErrSub: "both provided and required",
 		},
 		{
 			name: "negative major",

@@ -81,7 +81,7 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		KernelSessionCancelService, KernelSessionInspectService,
 		KernelSessionHistoryReadService, KernelSessionHistorySearchService,
 		KernelWorkspaceStatusService, KernelWorkspaceApplyService, KernelWorkspaceDiscardService,
-		KernelSessionControlService, KernelCredentialsRequestService,
+		KernelSessionControlService, KernelCredentialsRequestService, KernelSessionRouteService,
 	}
 	descriptors := make([]ServiceDescriptor, 0, len(names))
 	for _, name := range names {
@@ -367,11 +367,7 @@ func ValidateServiceNegotiation(result CapabilityInitializeResult) error {
 		}
 		required[name] = struct{}{}
 	}
-	for _, descriptor := range result.ProvidedServices {
-		name := strings.TrimSpace(descriptor.Name)
-		if _, conflict := required[name]; conflict {
-			return fmt.Errorf("service %s cannot be both provided and required by one plugin", name)
-		}
-	}
+	// A provider may explicitly consume the same contract to delegate methods.
+	// The resolved graph, not declarations alone, rejects self/cyclic routing.
 	return nil
 }

@@ -1020,7 +1020,7 @@ export function App({ application, slots, shellPluginId }: {
       ? activeWorkspaceViewTab : undefined;
   const activePreviewArtifact = activeWorkspaceViewTab?.kind === "artifact" &&
     activeWorkspaceViewTab.artifact.mimeType === "application/pdf" &&
-    activeWorkspaceViewTab.artifact.uri?.startsWith("wuu-artifact:") &&
+    activeWorkspaceViewTab.artifact.uri && activeWorkspaceViewTab.artifact.sha256 &&
     activeWorkspaceViewTab.threadID === previewTargetThread?.id &&
     activeWorkspaceViewTab.cwd === previewTargetThread.cwd
       ? activeWorkspaceViewTab : undefined;

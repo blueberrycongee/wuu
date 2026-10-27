@@ -13,6 +13,14 @@ import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateComposer } from "./DefaultComposerSurface";
 import { DefaultComposerSurface, type DefaultComposerLayout } from "./DefaultComposerSurface";
 import { WuuUIRoot } from "../ui/layers/UILayerHost";
+import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState } from "../AppState";
+import { ApplicationComposerRuntime } from "../plugins/ApplicationComposerRuntime";
+import { ApplicationSubmission } from "../plugins/ApplicationSubmission";
+import { ApplicationDraftResources } from "../plugins/ApplicationDrafts";
+import { createComposerPendingState } from "../ComposerPendingState";
+import { createSidebarThreadCache } from "../SidebarWorkspaceState";
+import type { EngineListResult, InitializeResult, ThreadStartParams, WuuDesktopApi } from "../../shared/protocol";
+
 
 let root: Root;
 let container: HTMLDivElement;
@@ -336,3 +344,83 @@ it("scopes unconfirmed delivery to its conversation and clears the drawer when i
   await fixture.update(view => ({ ...view, composerPending: [{ threadId: "draft-one", queued: [], guides: [] }] }));
   expect(container.querySelector('[data-wuu-component="composer-pending"]')).toBeNull();
 });
+
+// Invoked by the packed-SDK minimal acceptance runner with a real app-server.
+// Only unrelated presentation services use the preview fixture: the default
+// surface, runtime selection, submission, backend inventory and turns are real.
+it.skipIf(!process.env.WUU_MINIMAL_GUI_ENDPOINT)("sends through the default composer using the selected real engine capability", async () => {
+  const endpoint = process.env.WUU_MINIMAL_GUI_ENDPOINT!;
+  const request = async <T,>(method: string, params: unknown = {}): Promise<T> => {
+    const response = await fetch(endpoint, { method: "POST", body: JSON.stringify({ method, params }) });
+    const result = await response.json() as { result: T; error?: string };
+    if (result.error) throw new Error(result.error);
+    return result.result;
+  };
+  const initialized = await request<InitializeResult>("fixture/initialize");
+  expect(initialized.providers ?? []).toEqual([]);
+  const context = { kind: "no_project" as const, cwd: initialized.workspace_root };
+  const source = "draft-one";
+  const draft = (prompt: string) => ({ id: source, kind: "draft" as const, context, title: "", createdAt: 1, prompt, images: [], files: [] });
+  let state: AppState = { ...initialState, initialized, activeContext: context, activeSessionTabID: source, sessionTabs: [draft("default composer hello")] };
+  const oldAPI = window.wuu;
+  const starts: ThreadStartParams[] = [];
+  window.wuu = {
+    listEngines: () => request<EngineListResult>("engine/list"),
+    startThread: (params = {}) => { starts.push(params); return request("thread/start", params); },
+    startTurn: (thread_id, prompt, _images, _files, permission_mode, _document, content_parts, _context, client_id) => request("turn/start", { thread_id, prompt, permission_mode, content_parts, client_id }),
+  } as WuuDesktopApi;
+  const runtime = new ApplicationComposerRuntime({ getState: () => state, updateState: change => { state = typeof change === "function" ? change(state) : change; }, changed: () => {}, isNavigationPending: () => false });
+  const getDraft = (id: string) => { const tab = state.sessionTabs.find(tab => tab.id === id); return tab ? cloneSessionTabDraft(tab) : emptyComposerDraft(); };
+  const setDraft = (id: string, value: ReturnType<typeof emptyComposerDraft>) => { state = { ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === id && tab.kind !== "skills" ? { ...tab, ...value } : tab) }; };
+  const pending = createComposerPendingState({ getAppState: () => state, getComposerDraftForThread: getDraft, restoreComposerDraftForThread: setDraft, preserveFailedComposerMessage: () => {}, setStatus: () => {} });
+  const resources = new ApplicationDraftResources(() => {});
+  const submission = new ApplicationSubmission({ getState: () => state, updateState: change => { state = change(state); }, changed: () => {}, isNavigationPending: () => false,
+    getDraft, setDraft, pending, resources, getRuntime: owner => runtime.getSubmissionRuntime(owner), sidebarCache: createSidebarThreadCache(() => [], () => {}) });
+  const fixture = setup();
+  const originalInvoke = fixture.application.invoke;
+  const results: { accepted: boolean }[] = [];
+  vi.spyOn(fixture.application, "invoke").mockImplementation(async (action, input, options) => {
+    if (action === "composer.refresh-engine-models") return runtime.invoke(action, input as { ownerTabId: string; force?: boolean }) as never;
+    if (action === "composer.submit") { const result = submission.submit(input as Parameters<ApplicationSubmission["submit"]>[0]); results.push(result); return result as never; }
+    return originalInvoke(action, input, options);
+  });
+  const presentation = { ...fixture.application.composerPresentation.getSnapshot(source), threadId: undefined, configuration: initialized };
+  vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(presentation);
+  const project = async () => fixture.update(view => ({ ...view,
+    tabs: { ...view.tabs, items: [{ ...view.tabs.items[0], title: "", workspaceRoot: context.cwd }] },
+    drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: getDraft(source).prompt } }, composerRuntime: runtime.getSnapshot(),
+  }));
+  try {
+    await runtime.invoke("composer.refresh-engine-models", { ownerTabId: source });
+    expect(runtime.getSubmissionRuntime(source)).toMatchObject({ pending: false, requiresHostModel: false, params: { engine: "wuu", model: "" } });
+    await project(); await fixture.render();
+    const editor = container.querySelector("textarea")!;
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(results).toEqual([expect.objectContaining({ accepted: true })]);
+    await vi.waitFor(() => expect(submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ engine: "wuu", model: "" });
+    expect(starts[0]).not.toHaveProperty("provider");
+    const completed = await request<{ method: string; params: unknown }>("fixture/terminal", { turn: state.thread!.turns.at(-1) });
+    expect(completed.method).toBe("turn/completed");
+    expect(JSON.stringify(completed)).toContain("first:default composer hello");
+
+    // Rebind the selected provider while a fresh draft and an earlier backend
+    // run are alive. The same owner must observe the new requirement, not fall
+    // back to another engine or clear the input.
+    state = { ...state, thread: undefined, activeSessionTabID: source, sessionTabs: [draft("retained across replacement")] };
+    await project();
+    const replacement = await request<Pick<InitializeResult, "extension_inventory">>("fixture/promote");
+    state = { ...state, initialized: { ...initialized, extension_inventory: replacement.extension_inventory } };
+    expect(runtime.getSubmissionRuntime(source).pending).toBe(true);
+    await project();
+    await vi.waitFor(() => expect(runtime.getSubmissionRuntime(source)).toMatchObject({ pending: false, requiresHostModel: true, params: { engine: "wuu" } }));
+    await project();
+    expect(container.querySelector("textarea")).toBe(editor);
+    expect(editor.value).toBe("retained across replacement");
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(results.at(-1)).toEqual({ accepted: false });
+    expect(starts).toHaveLength(1);
+    expect(getDraft(source).prompt).toBe("retained across replacement");
+  } finally { submission.dispose(); runtime.dispose(); window.wuu = oldAPI; }
+}, 30_000);

@@ -59,6 +59,10 @@ var plugin = {
 };
 var src_default = plugin;
 
+// packages/plugin-sdk/src/persistence.ts
+var DOCUMENT_STORE_SERVICE = "state.documents";
+var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
 // packages/plugin-sdk/src/theme-contract.generated.ts
 var PUBLIC_THEME_TOKEN_NAMES = [
   "--wuu-paper",
@@ -217,8 +221,8 @@ var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
 var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
-  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork", "delete-thread"]),
-  version: "1.1.0"
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
+  version: "1.2.0"
 };
 
 // packages/plugin-sdk/src/coordination.ts
@@ -453,6 +457,18 @@ var TITLE_SERVICE_DESCRIPTOR = {
   }))
 };
 
+// packages/plugin-sdk/src/session-sharing.ts
+var SESSION_SHARING_SERVICE = "session.sharing";
+var SESSION_SHARING_DESCRIPTOR = {
+  name: SESSION_SHARING_SERVICE,
+  version: "1.0.0",
+  methods: ["preview", "create", "resolve", "read", "attachment", "revoke", "authorize"].map((name) => ({
+    name,
+    input_schema: `session.sharing.${name}.input.v1`,
+    output_schema: `session.sharing.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -466,6 +482,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.settings.list": "host.settings.list",
   "host.credentials.request": "host.credentials.request",
   "host.session.create": "host.session.create",
+  "host.session.route": "host.session.route",
   "host.session.send": "host.session.send",
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
@@ -498,8 +515,25 @@ async function handleRuntimeRequest(plugin2, request, host = unavailableRuntimeH
     switch (request.method) {
       case "initialize": {
         const result = await plugin2.initialize(request.params, host, lifecycle);
+        const offered = request.params.supported_host_features;
+        const required = result.required_host_features;
+        for (const features of [offered, required]) {
+          if (features !== void 0 && (!Array.isArray(features) || features.some((feature) => typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
+            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
+          }
+        }
+        const requirements = new Set(required);
+        if (result.provided_services?.some((service) => service.name === DOCUMENT_STORE_SERVICE && service.methods?.some((method) => method.name === "authority"))) {
+          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
+        }
+        for (const feature of requirements) {
+          if (!offered?.includes(feature)) {
+            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
+          }
+        }
         return { id: request.id, result: {
           ...result,
+          ...requirements.size ? { required_host_features: [...requirements] } : {},
           protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
           lifecycle_version: 2
         } };

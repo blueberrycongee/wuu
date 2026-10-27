@@ -113,7 +113,7 @@ func (s *Server) engineInventoryForState(binding *runtime.State, root string, re
 	var wg sync.WaitGroup
 	for i, descriptor := range descriptors {
 		wg.Go(func() {
-			info := EngineInfo{ID: string(descriptor.ID), Version: descriptor.Version, Capabilities: append([]string(nil), descriptor.Capabilities...), Enabled: true}
+			info := EngineInfo{ID: string(descriptor.ID), Version: descriptor.Version, Capabilities: append([]string(nil), descriptor.Capabilities...), RequiresHostModel: descriptor.RequiresHostModel, Enabled: true}
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			var description pluginprotocol.EngineDescription

@@ -95,7 +95,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		result.ProcessManager = manager
 		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(root, wuuHome, artifactDir)}
 		result.processHooks = dispatcher
-		if host != nil {
+		if host != nil && selectsRuntimeModule(host, toolExecutionConsumer) {
 			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
 		}
 		result.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: selection.PermissionMode}, false, nil)

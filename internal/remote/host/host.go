@@ -55,6 +55,8 @@ var ErrHostAlreadyRunning = errors.New("remote host already running for this Wuu
 
 // PairingConfig opens a pairing window when the host starts.
 type PairingConfig struct {
+	// DelegatedOnly enrolls a key without ambient owner authority.
+	DelegatedOnly bool
 	// Timeout closes the window after this long. Zero means 10 minutes.
 	Timeout time.Duration
 	// Once closes the window after the first successful pairing.
@@ -495,7 +497,7 @@ func (h *Host) handlePairOffer(msg wire.RelayMsg) {
 	if name == "" {
 		name = "phone-" + secure.Fingerprint(offer.DevicePub)
 	}
-	if err := h.store.AddDevice(offer.DevicePub, name, time.Now()); err != nil {
+	if err := h.store.addDevice(offer.DevicePub, name, time.Now(), st.cfg.DelegatedOnly); err != nil {
 		h.logf("remote host: persist device: %v", err)
 		_ = h.writeRelay(wire.RelayMsg{Type: wire.TypePairErr, PairingID: msg.PairingID, Code: wire.CodeBadRequest})
 		return

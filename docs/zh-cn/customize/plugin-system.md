@@ -52,6 +52,8 @@ npm 依赖。内置与第三方插件遵循相同的 JSONL 初始化、服务协
 
 包关系不会安装依赖、启用被禁用的包或授予信任，也不会授予服务调用权限：运行时 `provided_services` 和 `required_services` 单独协商服务名与主版本。详见[包关系](plugin-authoring.md#包结构和-manifest)。
 
+未覆盖组合配置时，产品只包含通过依赖解析的包。移除或禁用附加插件后，其必需包消费者仍保持安装，但不会激活，并显示依赖诊断；可选消费者和独立包仍可激活。这不会放宽显式选择：用户组合中选定的模块或服务提供者不可用时，仍会拒绝准备。安装或启用被选中激活的消费者时，其必需依赖也必须可用。
+
 App-server 客户端可以通过 `extension/package/update` 一次提交相关启停选择，例如 `{"updates":[{"id":"plugin:user:provider","action":"disable"},{"id":"plugin:user:consumer","action":"disable"}]}`。宿主校验完整选择，准备一个候选，通过一次 compare-and-exchange 持久化设置，再激活该 generation。每项可提供 `fingerprint`，用于拒绝过期的目录选择。数组不能为空，包 subject ID 不能重复，动作只能是 `enable` 或 `disable`；不能同时提供顶层单包字段，即使字段值为空。信任和待处理包更新仍使用原有单包请求。批量请求不会授予信任或自动选择依赖。对于请求显式启用、已获信任且被选中的包，准备阶段必须满足其必需的包依赖和服务依赖。校验或准备失败，以及已确认的 compare-and-exchange 拒绝，会保留原设置和 generation。写入结果未知时，应重新读取配置再决定下一步，不能假定已经回滚或自动重试。提交后的激活失败按下文约定报告已提交状态。
 
 ## 运行时 generation
@@ -61,6 +63,8 @@ App-server 客户端可以通过 `extension/package/update` 一次提交相关�
 运行时 generation 是一组一起生效的插件资源，包括所选包、进程、工具、能力、hook、技能、MCP 连接、服务注册表和受管包快照。构建候选 generation 不会立即替换活动版本。开发发布可以在轮次运行期间进行：每个仍被引用的 generation 拥有自己的包快照，替换已发布源码不会改变运行中工作使用的文件。宿主协调目录读取与发布，不会在整个轮次期间阻止发布。
 
 Lifecycle v2 将契约声明与状态验证分开。`initialize` 返回声明，不调用服务。完整依赖图绑定后，宿主按 provider 先于消费者的顺序调用 `prepare`。这个回调只能调用已声明服务中标记了 `preparation: true` 的方法；这些方法承诺不进行持久化写入或产生外部效果。所选原生与进程 provider 均遵循此规则。插件在 `activate` 中启动定时器等活动行为。准备阶段还可能建立 MCP 连接。这些都是可信进程：限制宿主服务调用，并不能阻止初始化代码直接访问文件系统、网络或产生其他外部效果。准备阶段不是无副作用的沙箱。
+
+Initialize 还包含 `supported_host_features`，以精确的版本化名称声明宿主语义，与服务发现分开。插件可返回 `required_host_features`；SDK 会在回复前逐项对照宿主声明检查，宿主也会拒绝不支持的要求。缺少声明表示不支持任何此类能力；未知的宿主声明名称允许向前兼容，但不能代表其他能力。所需能力不是可选项，不能降级。含 authority 的文档 descriptor 会被 SDK 自动要求 `state.documents.authority.v1`；未声明要求的旧插件保持原行为。
 
 运行时切换先准备候选，再提交相关包或策略的持久化变更，最后才调用原生 `activate`。准备或持久化提交失败时，关闭候选，旧运行时保持当前状态，不会调用候选的 `activate`。
 
@@ -118,9 +122,11 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 
 所选包须已启用、受信任，并声明指定服务主版本。绑定不会安装或启用包。重复绑定、指定提供者不可用或服务有歧义时，准备失败，之前运行的 generation 保持不变。所选提供者崩溃或移除后，调用失败，不会回退到其他已注册实现。没有显式绑定时，服务必须恰好有一个提供者。注册表检查会同时返回版本、提供者 ID 和 `binding_source`，后者标识选择来源层；无歧义的自动发现服务使用 `unique-provider`。
 
-组合版本 1–3 与产品 CalVer、服务版本相互独立。版本 1 支持内联 profile 和模块／服务选择；bundle 与补丁要求版本 2 或以上。新配置使用版本 3。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，已接纳的执行保留原注册表。恢复选择会创建新的 generation，不会撤销外部效果，也不会自动迁移提供者数据。
+组合版本 1–4 与产品 CalVer、服务版本相互独立。版本 1 支持内联 profile 和模块／服务选择；bundle 与补丁要求版本 2 或以上。新配置使用版本 4。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，已接纳的执行保留原注册表。恢复选择会创建新的 generation，不会撤销外部效果，也不会自动迁移提供者数据。
 
-读取版本 1/2 时，通过只读兼容映射保留从宿主迁出的行为：选择 `wuu.session-execution` 时补入 `wuu.agent.policy.default`；选择该会话消费者或 `kernel` 时补入 `wuu.model-execution` 和原生模型提供者 `wuu.model.native`；选择内置桌面 surface 时补入 `wuu.default-application`。旧产品会话还会选择 `wuu.engines.native` 与 `wuu.engine-execution`；只有 kernel 的状态作用域不会因此加载引擎。显式替换绑定和显式排除保持不变，空产品仍为空。检查结果以 `migration:v1-to-v3` 或 `migration:v2-to-v3` 标注这些补入项。原配置不会被改写，仍可配合旧程序恢复。版本 3 不会补足缺失依赖，必须明确包含所需提供者或选择替代实现。将旧配置改为版本 3 前，应显式包含映射后的提供者。降级不能仅改版本号，应恢复此前兼容的配置和提供者版本。
+读取版本 1/2 时，通过只读兼容映射保留从宿主迁出的行为：选择 `wuu.session-execution` 时补入 `wuu.agent.policy.default`；选择该会话消费者或 `kernel` 时补入 `wuu.model-execution` 和原生模型提供者 `wuu.model.native`；选择内置桌面 surface 时补入 `wuu.default-application`。旧产品会话还会选择 `wuu.engines.native` 与 `wuu.engine-execution`；只有 kernel 的状态作用域不会因此加载引擎。显式替换绑定和显式排除保持不变，空产品仍为空。检查结果以 `migration:v1-to-v3` 或 `migration:v2-to-v3` 标注这些补入项。原配置不会被改写，仍可配合旧程序恢复。
+
+版本 3 保留原有目录，不会重复这些执行迁移。版本 1–3 还会以 `migration:vN-to-v4` 投影显式资源授权边界：会话宿主选择 `wuu.resource-access` 和原生资源策略，但保留显式排除与替换。版本 4 不会补足缺失依赖，必须明确包含所需提供者或选择替代实现。将旧配置改为版本 4 前，应显式包含映射后的提供者，详见[配置升级](plugin-compositions.md#配置升级)。降级不能仅改版本号，应恢复此前兼容的配置和提供者版本。
 
 开发者和运行中的 agent 可以通过公开的 [`host.composition` 服务](plugin-compositions.md)试跑独立运行时，显式为逻辑 agent 选择组合并撤销选择，无需发布全局 generation。
 

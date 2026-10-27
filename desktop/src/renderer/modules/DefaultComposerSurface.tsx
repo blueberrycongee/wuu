@@ -106,7 +106,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
-  useEffect(() => { run(controls.refreshEngines()); }, [controls, run]);
+  useEffect(() => { run(controls.refreshEngines()); }, [controls, run, liveRuntime?.engineSelectionPending]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
   const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const draft = view.drafts[pane];
@@ -164,7 +164,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onChangeSelection={selection => run(controls.setSelections(draft.selections.map(row => row.id === selection.id ? selection : row)))}
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
       queuedMessages={queued(pending?.queued)} guideMessages={queued(pending?.guides)} running={running}
-      sendDisabled={!view.tabs.canSubmit || runtime.engineSelectionPending || Boolean(stop)}
+      sendDisabled={!view.tabs.canSubmit || !runtime.available || runtime.engineSelectionPending || Boolean(stop)}
       clearOnSubmit={false} draftPending={draftPending}
       submitting={editingSubmitting || view.submission.operations.some(row => (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)) && (row.phase === "preparing" || row.phase === "sending"))}
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}

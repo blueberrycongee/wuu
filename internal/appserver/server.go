@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
@@ -23,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
@@ -223,10 +225,14 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	rpcTiming *rpcTimingRecorder
-	rt        *runtime.Session
-	out       io.Writer
-	writeMu   sync.Mutex
+	trustedTransport  trustedTransportState
+	sessionFederation *SessionFederation
+	access            connectionAccess
+	artifactReads     sync.Map
+	rpcTiming         *rpcTimingRecorder
+	rt                *runtime.Session
+	out               io.Writer
+	writeMu           sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
@@ -360,6 +366,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
 		rpcTiming:        newRPCTimingRecorder(),
+		access:           connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
 		rt:      rt,
 		out:     out,
@@ -379,6 +386,12 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		runs:                         make(map[string]*runTracker),
 		activeRunByThread:            make(map[string]string),
 		modelCatalogHTTPClient:       http.DefaultClient,
+	}
+	for _, option := range options {
+		if err := option(s); err != nil {
+			s.startupErr = err
+			return s
+		}
 	}
 	s.bindUserQuestions()
 	if rt != nil {
@@ -483,12 +496,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	s.startInferenceJournalMaintenance()
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
-	for _, option := range options {
-		if err := option(s); err != nil {
-			s.startupErr = err
-			return s
-		}
-	}
+
 	return s
 }
 
@@ -776,6 +784,7 @@ func (s *Server) Close() {
 			s.nativeHistoryCancel()
 		}
 		s.cancelPluginClientRequests()
+		s.cancelArtifactReads()
 		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
@@ -1031,6 +1040,12 @@ func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Wri
 	if rt == nil {
 		return errors.New("runtime session is required")
 	}
+	if caller, ok := principal.FromContext(ctx); ok {
+		options = append(options, WithPrincipal(caller))
+	}
+	if _, authenticated := principal.FromContext(ctx); !remoteDevice && !authenticated {
+		options = append(options, WithTrustedLocalTransport())
+	}
 	s := New(rt, out, options...)
 	s.pushRegistrar = registrar
 	s.remoteDevice = remoteDevice
@@ -1079,7 +1094,24 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return nil
 	}
 
+	if strings.HasPrefix(req.Method, "transport/") {
+		return s.handleTrustedTransport(ctx, req)
+	}
+	ctx = principal.WithContext(ctx, s.Principal(ctx))
+	var effectErr error
+	ctx, effectErr = requestEffectContext(ctx, req)
+	if effectErr != nil {
+		return s.writeResponse(req.ID, nil, effectErr)
+	}
+	if err := s.authorizeRequest(ctx, req); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.trackAuthorizedRequest(ctx, req); err != nil {
+		return err
+	}
 	switch req.Method {
+	case "session/federation":
+		return s.handleSessionFederation(ctx, req)
 	case MethodInitialize:
 		return s.handleInitialize(req)
 	case MethodConfigRead:
@@ -1201,8 +1233,10 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return s.handleThreadHistoryRead(req)
 	case "message/image/read":
 		return s.handleMarkdownImageRead(ctx, req)
+	case "thread/artifact/resolve", "thread/artifact/read", "thread/artifact/cancel":
+		return s.handleThreadArtifactRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
-		return s.handleThreadAttachmentRead(req)
+		return s.handleThreadAttachmentRead(ctx, req)
 	case MethodThreadFork, MethodThreadEditMessage:
 		binding, stateErr := s.rt.RetainState()
 		if stateErr != nil {
@@ -1261,6 +1295,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return s.handleThreadSearch(req)
 	case MethodThreadPreview:
 		return s.handleThreadPreview(req)
+	case "session/share/preview", "session/share/create", "session/share/read", "session/share/attachment/read", "session/share/revoke":
+		return s.handleSessionShare(ctx, req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
 	case "thread/control/return":
@@ -1583,6 +1619,10 @@ func (s *Server) writeResponse(id json.RawMessage, result any, err error) error 
 			Message: err.Error(),
 		}
 	}
+	var denied *access.Denied
+	if errors.As(err, &denied) {
+		resp.Error.Code = "access_denied"
+	}
 	writeErr := s.writeJSON(resp)
 	s.rpcTiming.responseWritten(id, started, writeErr)
 	return writeErr
@@ -1619,11 +1659,31 @@ func (s *Server) writeJSON(v any) error {
 }
 
 func (s *Server) writeJSONContext(ctx context.Context, v any) error {
+	var allowed bool
+	var guard func() error
+	v, guard, allowed = s.authorizeOutbound(ctx, v)
+	if !allowed {
+		return nil
+	}
+	var transportErr error
+	v, transportErr = s.wrapTrustedTransportResponse(v, guard)
+	if transportErr != nil {
+		return transportErr
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	// Order the authority check with takeover/release notifications. An old
 	// cancelled request must not be written after a fresh control grant.
 	if err := activity.ControlErr(ctx); err != nil {
+		return err
+	}
+	if guarded, ok := s.out.(GuardedWriter); ok {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		raw = append(raw, '\n')
+		_, err = guarded.WriteAuthorized(raw, guard)
 		return err
 	}
 	enc := json.NewEncoder(s.out)

@@ -50,6 +50,13 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 	if err != nil {
 		return err
 	}
+	if !cfg.RequiresModelConfiguration() && len(cfg.Providers) == 0 && g.modelSelection == nil {
+		// Keep the same graph route, but never fabricate a native connection.
+		// Calls to an unselected model service fail closed at dispatch.
+		client := &modelRouteClient{host: g.host}
+		models.main, models.worker, models.title, models.config = client, client, client, cfg
+		return nil
+	}
 	providerName, model := s.ProviderName, s.Model
 	if g.modelSelection != nil {
 		providerName, model = g.modelSelection.provider, g.modelSelection.model

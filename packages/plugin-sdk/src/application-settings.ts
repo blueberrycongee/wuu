@@ -384,6 +384,8 @@ export type ApplicationSettingsEngineInfoV1 = {
   /** Vendor guide only; Wuu does not manage the CLI installation. */
   update_url?: string;
   capabilities?: string[];
+  /** Selected implementation's client readiness/model source; not backend authorization. Omitted uses legacy client admission. */
+  requires_host_model?: boolean;
   enabled: boolean;
   binary_path?: string;
   binary_ok: boolean;

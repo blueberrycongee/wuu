@@ -272,6 +272,14 @@ export interface EngineDescriptor {
  readonly id: string;
  readonly version: string;
  readonly capabilities?: readonly string[];
+ /** Client readiness/model-source metadata: true selects configured host models
+  * and requires their credentials in the default UI; false uses engine-owned
+  * model selection. This is not credential validation or backend authorization;
+  * providers retain execution/readiness checks independently of this field.
+  * Omitted retains legacy client behavior
+  * (wuu requires host configuration; other engines own their authentication).
+  */
+ readonly requires_host_model?: boolean;
 }
 
 /** Register the same session and administrative contract used by shipped engines.

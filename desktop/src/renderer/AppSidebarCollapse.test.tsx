@@ -128,7 +128,7 @@ function installWuuApi(): void {
       .fn()
       .mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
-    listEngines: vi.fn().mockResolvedValue({ engines: [] }),
+    listEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
     listThreads: vi.fn().mockResolvedValue({ threads: [pinnedThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     getSessionOrganization: vi.fn().mockResolvedValue({

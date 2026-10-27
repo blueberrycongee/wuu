@@ -95,6 +95,22 @@ describe("RuntimePicker", () => {
     };
   }
 
+  it.each([["wuu", false], ["external", true]] as const)("selects the declared model source for %s (requires host model=%s)", async (engine, requiresHostModel) => {
+    const onSelectModel = vi.fn(), onSelectEngineModel = vi.fn(), onSelectEngine = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), onSelectModel, createRef<HTMLDivElement>(), {
+      activeEngine: engine, engineModel: "engine-model", onSelectEngineModel, onSelectEngine,
+      engines: [{ id: engine, enabled: true, binary_ok: true, requires_host_model: requiresHostModel, models: [{ id: "engine-model", display_name: "Engine owned model" }] }],
+    });
+    await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
+    const rows = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"));
+    const chosen = rows.find(row => row.textContent?.includes(requiresHostModel ? "Claude Sonnet" : "Engine owned model"));
+    expect(chosen).toBeDefined();
+    await act(async () => chosen!.click());
+    expect(onSelectEngine).not.toHaveBeenCalled();
+    if (requiresHostModel) { expect(onSelectModel).toHaveBeenCalled(); expect(onSelectEngineModel).not.toHaveBeenCalled(); }
+    else { expect(onSelectEngineModel).toHaveBeenCalled(); expect(onSelectModel).not.toHaveBeenCalled(); }
+  });
+
   it.each([true, false])("keeps external effort keyboard focus and rolls back rejected saves (saved=%s)", async (saved) => {
     let finish!: (result: boolean) => void;
     const onSelectEngineEffort = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
@@ -88,6 +89,9 @@ func (s *Server) handleWorkspaceView(req Request) error {
 	}
 	rootPath, err := s.workspaceViewRoot(binding, params.Root)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.requireRequestAccess(req, req.Method, nil, access.Resource{Kind: "workspace", ID: rootPath}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	root, err := os.OpenRoot(rootPath)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,6 +276,77 @@ func TestDriverTurnCancellationAndClosureRejectEffects(t *testing.T) {
 	if _, err := gateway.ReadTurn(context.Background()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("closed turn accepted a late callback: %v", err)
 	}
+}
+
+// Cancel can win before parent-context propagation. Its reason must remain
+// diagnostic cancellation evidence, not an independent failure after settlement.
+func TestDefaultDriverExplicitCancellationPreservesCause(t *testing.T) {
+	for _, test := range []struct {
+		name, reason string
+		failure      error
+		parentCause  error
+	}{
+		{name: "parent cancellation race", reason: context.Canceled.Error()},
+		{name: "explicit interrupt", reason: "user interrupt"},
+		{name: "provider failure", reason: "user interrupt", failure: errors.New("provider response failed")},
+		{name: "receipt failure", reason: "user interrupt", failure: ErrModelReceiptLifecycle},
+		{name: "parent deadline", reason: "parent stopped", parentCause: context.DeadlineExceeded},
+		{name: "parent failure", reason: "parent stopped", parentCause: errors.New("observer failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			instance, err := (DefaultDriver{}).Create(ctx, loopdriver.ExecutionContext{ExecutionID: "cancellation-contract"}, loopdriver.PersistedInput{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer instance.Shutdown()
+			runner := &StreamRunner{Model: "controlled", Client: &mockStreamClient{}}
+			input := loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "work"}}}
+			turn := newStreamTurnGateway(ctx, runner, input, nil)
+			turn.descriptor, err = (DefaultDriver{}).Descriptor(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gateway := &driverCancellationGateway{streamDriverGateway: &streamDriverGateway{streamTurnGateway: turn}}
+			defer gateway.close()
+			var cause error
+			calls := 0
+			gateway.callModel = func(callCtx context.Context) error {
+				calls++
+				if test.parentCause != nil {
+					cancel(test.parentCause)
+				}
+				instance.Cancel(test.reason)
+				cause = context.Cause(callCtx)
+				cancel(nil)
+				return errors.Join(callCtx.Err(), test.failure)
+			}
+			outcome, runErr := instance.Run(ctx, gateway)
+			if calls != 1 || outcome.Status != loopdriver.TerminalCanceled || !errors.Is(runErr, context.Canceled) {
+				t.Fatalf("cancellation did not settle once: calls=%d outcome=%+v err=%v", calls, outcome, runErr)
+			}
+			if test.parentCause != nil {
+				if !errors.Is(cause, test.parentCause) || !errors.Is(runErr, test.parentCause) {
+					t.Fatalf("explicit cancel replaced the parent's cause: cause=%v err=%v", cause, runErr)
+				}
+			} else if !errors.Is(cause, context.Canceled) || !strings.Contains(cause.Error(), test.reason) {
+				t.Fatalf("cancellation reason became an independent failure: %v", cause)
+			}
+			if test.failure != nil && !errors.Is(runErr, test.failure) {
+				t.Fatalf("cancellation concealed the independent failure: %v", runErr)
+			}
+		})
+	}
+}
+
+type driverCancellationGateway struct {
+	*streamDriverGateway
+	callModel func(context.Context) error
+}
+
+func (g *driverCancellationGateway) CallModel(ctx context.Context, _ providers.ChatRequest) (loopdriver.ModelRound, error) {
+	return loopdriver.ModelRound{}, g.callModel(ctx)
 }
 
 // A request receipt is a dispatch barrier, including when streaming tools are

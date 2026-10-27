@@ -109,7 +109,7 @@ describe("shared application state", () => {
       await vi.waitFor(() => expect(engines).toBeTypeOf("function"));
       ui.abort();
       controller.updateState(state => ({ ...state, activeContext: { kind: "no_project", cwd: "/next" } }));
-      engines({ engines: [], settings: { default_engine: "native" } });
+      engines({ engines: [{ id: "native", enabled: true, binary_ok: true }], settings: { default_engine: "native" } });
       await vi.waitFor(() => expect(resolve).toHaveBeenCalledExactlyOnceWith("pet-command", { ok: true }));
       expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({ engine: "native", model: "", effort: "", permission_mode: "unconfined" }), context);
       expect(send.mock.calls[0][7]).toEqual(context);

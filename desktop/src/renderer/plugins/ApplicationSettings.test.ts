@@ -72,3 +72,15 @@ describe("application settings operations", () => {
     expect(h.get()).toBe(before);
   });
 });
+
+it("invalidates shared engine metadata when the provider generation changes", async () => {
+  const h = fixture();
+  window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] }) } as unknown as typeof window.wuu;
+  await h.settings.invoke("settings.refresh-engines", {});
+  expect(h.settings.getSnapshot().engineInventory?.engines[0].requires_host_model).toBe(false);
+  h.set({ ...h.get(), initialized: { ...h.get().initialized!, extension_inventory: [] } });
+  expect(h.settings.getSnapshot().engineInventory).toBeUndefined();
+  vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] });
+  await h.settings.invoke("settings.refresh-engines", {});
+  expect(h.settings.getSnapshot().engineInventory?.engines[0].requires_host_model).toBe(true);
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AppServerClientPool } from "./appServerClients";
+import type { AppServerClientPool, AppServerClient } from "./appServerClients";
 import type { PluginClientCancelParams, PluginClientRequestParams, RuntimeContext } from "../shared/protocol";
 import { PluginRuntimeRequests } from "./pluginRuntimeRequests";
 
@@ -9,7 +9,7 @@ function process() {
   let finish!: (result: unknown) => void;
   const calls = vi.fn((method: string, _params?: unknown): Promise<unknown> => method === "plugin/client/cancel"
     ? Promise.resolve({ cancelled: true }) : new Promise(resolve => { finish = resolve; }));
-  return { calls, finish: (result: unknown) => finish(result), request: calls as ReturnType<AppServerClientPool["bindContextRequest"]> };
+  return { calls, finish: (result: unknown) => finish(result), request: calls as AppServerClient["request"] };
 }
 
 describe("PluginRuntimeRequests", () => {

@@ -10,6 +10,60 @@ wuu plugin dev examples/plugins/composition-lab.ts
 
 插件在 `required_services` 中声明 `requireCompositionService()`，并用当前回调的 host 调用 `compositionService(host)`。该服务要求选择 `kernel` 模块，准备阶段不可调用。单文件 TypeScript 开发仍不要求 manifest 或构建。
 
+## 配置升级
+
+组合版本 1–3 仍可读取。版本 4 将资源授权设为显式 provider 边界，并引入最小会话宿主。
+旧选择包含 `kernel`、`wuu.session-state` 或 `wuu.session-execution` 时，解析会补入
+`wuu.resource-access`；未绑定其他 `resource.authorization@1` provider 时，还会补入
+`wuu.resource-policy.default`。检查结果用 `migration:vN-to-v4` 标注这些新增项，
+不会改写源配置。显式排除仍然有效，空选择仍为空。
+
+版本 3 保留原有产品目录：不会悄悄加入新的可选共享 provider，也不会重新应用版本 1/2
+的执行 provider 迁移。版本 4 不会补足缺失的授权组件。将旧配置改成版本 4 前，应显式
+保留投影后的模块或选择替代实现。缺失或禁用的策略仍会拒绝访问；迁移不是运行时回退。
+
+## 最小会话宿主
+
+组合版本 4 提供 `minimal` 配置。它与 `headless`、`desktop` 共用
+`wuu.session-host` bundle：内核路由适配器、配置与会话状态消费者、本地配置、
+SQLite 文档、会话域语义、引擎分发，以及显式选择的所有者资源策略。
+它**不启动**循环、模型适配器、工具、凭据、插件设置、产物或 trace provider、
+界面和业务插件，也不需要模型连接、占位 URL 或 API key。
+
+通过公开契约添加引擎。在源码目录中，先为隔离的 `$WUU_HOME/config.json` 写入
+`{"composition":{"version":4,"profile":"minimal"},"skills":{"enabled":false}}`。
+使用 `wuu plugin dev --watch=false /absolute/path/to/engine.ts` 发布
+[单文件 echo 引擎](../../../examples/compositions/minimal/engine.ts)，然后把命令报告的
+模块 ID 加入配置：
+
+```json
+{
+  "composition": {
+    "version": 4,
+    "profile": "minimal",
+    "patches": [{
+      "modules": {"YOUR_ENGINE_MODULE_ID": true},
+      "services": [{"service": "engine.wuu", "major": 1, "provider": "YOUR_ENGINE_MODULE_ID"}]
+    }]
+  },
+  "skills": {"enabled": false}
+}
+```
+
+保留发布过程写入的 `extensions` 设置。运行
+`wuu app-server --config "$WUU_HOME/config.json" --workdir /your/workspace`，
+通过普通的 [app-server 协议](../automation/app-server.md) 初始化、创建会话并发消息。
+该开发路径不要求 manifest 或构建；`/wait` 会保持本轮运行，直到收到中断。
+
+配置本身只是会话和状态宿主，不隐含任何引擎：未选择可用引擎时，发送会失败。
+删除显式绑定的 provider 不会改用内置实现。未选择相应 provider 时，设置、凭据、
+产物和模型调用也会失败。声明了设置的插件必须选择设置 provider，不会忽略缺失的
+持久化设置。替换状态或授权 provider 仍使用默认产品相同的服务绑定与生命周期规则；
+有状态替换仍须兼容 checkpoint，或先停止写入者再迁移。
+
+[可重复的独立包验收](../../../examples/compositions/minimal/README.md) 通过这些公开入口
+运行，并保存依赖图、协议与清理证据。它使用确定性引擎，不代表真实推理或桌面视觉验收。
+
 ## 试跑、选择与撤销
 
 ```ts

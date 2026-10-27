@@ -18,13 +18,11 @@ func (e *selectedToolBatch) SupportsStreaming() bool {
 	if e.host == nil || e.host.ServiceRegistry() == nil {
 		return false
 	}
-	for _, service := range e.host.ServiceRegistry().Snapshot(0).Services {
-		major, validVersion := pluginhost.ServiceVersionMajor(service.Version)
-		if service.Service == toolbatch.ServiceName && validVersion && major == 1 {
-			for _, method := range service.Methods {
-				if method == "stream_admit" {
-					return true
-				}
+	service, found := e.host.ServiceRegistry().ServiceDescriptorFor(toolExecutionConsumer, toolbatch.ServiceName, 1)
+	if found {
+		for _, method := range service.Methods {
+			if method.Name == "stream_admit" {
+				return true
 			}
 		}
 	}
@@ -50,7 +48,7 @@ func (e *selectedToolBatch) ExecuteBatch(ctx context.Context, request toolbatch.
 	if host == nil || host.ServiceRegistry() == nil {
 		return errors.New("tool batch service registry is unavailable")
 	}
-	owner, ok := host.ServiceRegistry().ProviderPluginID(toolbatch.ServiceName, 1)
+	owner, ok := host.ServiceRegistry().ProviderPluginIDFor(toolExecutionConsumer, toolbatch.ServiceName, 1)
 	if !ok {
 		return errors.New("selected tool batch provider is unavailable")
 	}

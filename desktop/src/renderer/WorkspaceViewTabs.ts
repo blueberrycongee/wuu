@@ -58,7 +58,7 @@ export type WorkspaceArtifactViewTab = ArtifactPreviewRequest & {
 export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): WorkspaceArtifactViewTab {
   const { artifact, threadID, cwd } = input;
   // Snapshot identity is separate from the editable workspace file path.
-  const identity = [threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
+  const identity = [...(artifact.locator ? [artifact.locator.execution_host] : []), threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 

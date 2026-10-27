@@ -181,6 +181,7 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
+		access:              localOwnerTestAccess(),
 		rt:                  rt,
 		out:                 out,
 		threads:             map[string]*threadState{threadID: th},

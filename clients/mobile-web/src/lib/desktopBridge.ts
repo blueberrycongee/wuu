@@ -1,4 +1,5 @@
 import { PluginAssets } from "./pluginAssets";
+import { BrowserArtifactSources, BROWSER_ARTIFACT_SOURCE_CAPABILITIES } from "./artifactSources";
 import { AndroidBackgroundSync } from './backgroundSync';
 import { languagePreferenceStore } from './language';
 import { downloadWorkspaceFile } from "./workspaceDownload";
@@ -13,6 +14,8 @@ import {
   type ServerRequestResult,
 } from "@wuu/remote-core";
 import type {
+  ArtifactSourceParams,
+  ArtifactSourceLease,
   ChatGPTAccount,
   DesktopPlatform,
   DesktopProject,
@@ -156,6 +159,7 @@ const unavailableWebActions = Object.fromEntries(
 export class RemoteDesktopBridge {
   private readonly client: RemoteClient;
   private readonly pluginAssets = new PluginAssets();
+  private readonly artifactSources = new BrowserArtifactSources();
   private readonly terminalIDs = new Set<string>();
   private readonly terminalListeners = new Set<(event:TerminalSessionEvent)=>void>();
   private readonly serverListeners = new Set<ServerEventListener>();
@@ -393,6 +397,7 @@ export class RemoteDesktopBridge {
         this.attachedOnce = true;
         if (!resumed) {
           this.attachmentGeneration++;
+          this.artifactSources.clear();
           this.desktopWorkdirs.clear();
           for(const id of this.terminalIDs)for(const listener of this.terminalListeners)listener({type:'error',id,message:'Connection restarted. Reopen the terminal.',finished_at:new Date().toISOString()});
           this.terminalIDs.clear();
@@ -405,6 +410,7 @@ export class RemoteDesktopBridge {
         void this.attachSync.catch(() => {});
       },
       onDetach: () => {
+        this.artifactSources.clear();
         if (this.stopped) return;
         this.resetConnectionEvents();
         this.workspaceSnapshotFresh = false;
@@ -440,6 +446,7 @@ export class RemoteDesktopBridge {
 
   async disconnect(): Promise<void> {
     this.stopped = true;
+    this.artifactSources.clear();
     this.resetConnectionEvents();
     this.cancelReconnecting();
     this.workspaceSnapshotFresh = false;
@@ -563,6 +570,7 @@ export class RemoteDesktopBridge {
   }
 
   private updateWorkspaces(snapshot: WorkspaceSnapshot): void {
+    const previousWorkdir = this.workdir();
     if (!snapshot.current) throw new Error("Remote host did not provide a workspace");
     this.defaultWorkdir = snapshot.current;
     const now = new Date().toISOString();
@@ -593,6 +601,7 @@ export class RemoteDesktopBridge {
         if (old) this.projects.push({ ...old, missing: true });
       }
     }
+    if (previousWorkdir !== this.workdir()) this.artifactSources.clear();
   }
 
   private workdir(): string {
@@ -621,6 +630,9 @@ export class RemoteDesktopBridge {
   }
 
   private emitServerEvent(event: ServerEvent): void {
+    if (event.kind === "notification" && ["plugin/inventory/changed", "thread/deleted"].includes(event.message.method)) {
+      this.artifactSources.clear(event.workdir || undefined);
+    }
     if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
       const route = this.desktopWorkdirs.get(event.workdir);
       const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
@@ -648,7 +660,13 @@ export class RemoteDesktopBridge {
     });
   }
 
-  private applyProjectState(state:ProjectListResult):ProjectListResult {this.projects=state.projects;this.activeContext=state.active_context;return state;}
+  private applyProjectState(state: ProjectListResult): ProjectListResult {
+    const previous = this.workdir();
+    this.projects = state.projects;
+    this.activeContext = state.active_context;
+    if (previous !== this.workdir()) this.artifactSources.clear();
+    return state;
+  }
 
   private bindDesktopGraphs(route: DesktopGraphRoute, inventory: readonly ExtensionInventoryRecord[]): void {
     for (const plugin of inventory) {
@@ -685,6 +703,38 @@ export class RemoteDesktopBridge {
    if(!path)return this.projectState();
    return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
   }
+  private acquireArtifactSource(params: ArtifactSourceParams): Promise<ArtifactSourceLease> {
+    this.assertAvailable();
+    const rpc = this.client.rpc();
+    if (!rpc) throw new Error("Remote host is disconnected");
+    const revision = this.connection.revision, generation = this.attachmentGeneration;
+    const context = this.workdir(), workdir = this.requestWorkdir({ thread_id: params.threadId });
+    const current = () => !this.stopped && this.client.isAttached() && this.connection.revision === revision
+      && this.attachmentGeneration === generation && this.workdir() === context;
+    // Capture this authenticated protocol client. Never wait for a fresh attach
+    // or silently retarget chunks/cleanup to a different workspace or provider.
+    const request = async <T>(method: string, input: unknown): Promise<T> => {
+      if (method !== "thread/artifact/cancel" && !current()) throw new Error("Artifact connection or workspace changed");
+      return rpc.call<T>(method, input, 30_000, workdir);
+    };
+    return this.artifactSources.acquire(params, request, current, workdir);
+  }
+
+  private async saveArtifactSource(name: string, source: string): Promise<void> {
+    // Managed resources are saved only from this connection's owned lease.
+    // Inline data and an explicit unmanaged HTTP download retain their existing
+    // user-action behavior. An href is never used to acquire a managed resource
+    // or proxy a provider URI with the core's credentials.
+    const directDownload = /^https?:\/\//i.test(source);
+    if (!this.artifactSources.owns(source) && !source.startsWith("data:") && !directDownload) throw new Error("Artifact source is not an active browser lease");
+    if (isNative) { await saveNativeArtifact(name, source); return; }
+    const anchor = document.createElement("a");
+    anchor.href = source;
+    anchor.download = name;
+    anchor.rel = "noopener";
+    anchor.click();
+  }
+
   private createApi(): WuuDesktopApi {
     let initializationRequest = 0;
     const initializationListeners = new Set<Parameters<NonNullable<WuuDesktopApi["onRuntimeInitialization"]>>[0]>();
@@ -692,11 +742,15 @@ export class RemoteDesktopBridge {
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
       hostKind: "web",
+      artifactSourceCapabilities: BROWSER_ARTIFACT_SOURCE_CAPABILITIES,
+      acquireArtifactSource: params => this.acquireArtifactSource(params),
+      releaseArtifactSource: async id => { this.artifactSources.release(id); },
+      saveArtifactFile: (name, source) => this.saveArtifactSource(name, source),
       createBlankProject: () => this.chooseComputerFolder(true),
       chooseProjectFolder: () => this.chooseComputerFolder(false),
       relocateProject: (id) => this.chooseComputerFolder(false,id),
       removeProject: async (id) => this.applyProjectState(await this.call('desktop/projects/remove',{id})),
-      ...(isNative ? { saveArtifactFile: saveNativeArtifact, exportWorkspaceFile: async (path: string, root?: string) => {
+      ...(isNative ? { exportWorkspaceFile: async (path: string, root?: string) => {
         const blob = await downloadWorkspaceFile(this.call.bind(this), path, root || this.workdir());
         const url = URL.createObjectURL(blob);
         try { await saveNativeArtifact(path.split('/').pop() || 'file', url); }
@@ -756,6 +810,7 @@ export class RemoteDesktopBridge {
       selectProject: async (id) => {
         const project = this.projects.find((candidate) => candidate.id === id);
         if (!project) throw new Error("Unknown remote workspace");
+        if (this.workdir() !== project.path) this.artifactSources.clear();
         this.activeContext = { kind: "project", project_id: project.id, cwd: project.path };
         return this.projectState();
       },
@@ -764,12 +819,14 @@ export class RemoteDesktopBridge {
         if (fresh || !cwd || ![...this.threadLocations.values()].some((thread) => thread.cwd === cwd)) {
           throw new UnavailableHostOperationError("selectNoProject");
         }
+        if (this.workdir() !== cwd) this.artifactSources.clear();
         this.activeContext = { kind: "no_project", cwd };
         return this.projectState();
       },
 
       onRuntimeInitialization: listener => { initializationListeners.add(listener); return () => initializationListeners.delete(listener); },
       initialize: async () => {
+        this.artifactSources.clear(this.workdir());
         const requestId = ++initializationRequest;
         for (const listener of initializationListeners) listener({ phase: "started", requestId });
         this.assertAvailable(true);

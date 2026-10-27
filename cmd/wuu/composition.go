@@ -20,7 +20,7 @@ func runComposition(args []string, output io.Writer) error {
 	fs := flag.NewFlagSet("composition resolve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	path := fs.String("file", "", "standalone composition JSON file")
-	profile := fs.String("profile", "", "profile to resolve (desktop or headless, or a configured profile)")
+	profile := fs.String("profile", "", "profile to resolve (desktop, headless, minimal, or a configured profile)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}

@@ -1,4 +1,5 @@
 import { useSettingsControls, SettingsControlsProvider } from "./SettingsControlsContext";
+import { MCPDiagnostic } from "./MCPDiagnostic";
 import { isTouchWebShell } from "./ComposerFocus";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import {
@@ -368,7 +369,11 @@ function SettingsViewContent({
   const [mcpServers, setMCPServers] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMCPLoading] = useState(false);
   const [mcpError, setMCPError] = useState("");
+  const [mcpActionErrors, setMCPActionErrors] = useState<Record<string, MCPActionFailure>>({});
+  const [mcpListRevision, setMCPListRevision] = useState(0);
   const [mcpBusyServer, setMCPBusyServer] = useState("");
+  const currentMCPControls = useRef(controls);
+  currentMCPControls.current = controls;
   const [autoCompactDraft, setAutoCompactDraft] = useState(true);
   const [compactThresholdDraft, setCompactThresholdDraft] = useState("");
   const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
@@ -425,6 +430,11 @@ function SettingsViewContent({
   }, [controls]);
 
   useEffect(() => {
+    setMCPActionErrors({});
+    setMCPBusyServer("");
+  }, [controls]);
+
+  useEffect(() => {
     let cancelled = false;
     setMCPLoading(true);
     setMCPError("");
@@ -448,7 +458,7 @@ function SettingsViewContent({
     return () => {
       cancelled = true;
     };
-  }, [controls]);
+  }, [controls, mcpListRevision]);
 
   const core = initialized?.core;
   useEffect(() => {
@@ -470,7 +480,7 @@ function SettingsViewContent({
 
   async function runMCPAction(name: string, action: "connect" | "disconnect" | "refresh"): Promise<void> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
       const result =
         action === "connect"
@@ -478,56 +488,78 @@ function SettingsViewContent({
           : action === "disconnect"
             ? await controls.disconnectMCPServer(name)
             : await controls.refreshMCPServer(name);
-      setMCPServers((servers) => upsertMCPServerStatus(servers, result.status));
+      if (mcpActionCurrent()) setMCPServers((servers) => upsertMCPServerStatus(servers, result.status));
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, action, err);
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
+    }
+  }
+
+  function mcpActionCurrent(): boolean {
+    return mounted.current && currentMCPControls.current === controls;
+  }
+
+  async function recordMCPActionFailure(name: string, action: MCPActionFailure["action"], error: unknown): Promise<void> {
+    if (!mcpActionCurrent() || isPluginLifecycleCancellation(error)) return;
+    setMCPActionErrors((errors) => ({ ...errors, [name]: { action, message: error instanceof Error ? error.message : String(error) } }));
+    // Failed actions reject over IPC, but the manager retains the classified
+    // state. Read it through the same public control rather than parsing logs.
+    try {
+      const result = await controls.listMCPServers();
+      if (mcpActionCurrent()) {
+        const status = result.servers.find((server) => server.name === name);
+        if (status) setMCPServers((servers) => upsertMCPServerStatus(servers, status));
+        setMCPError("");
+      }
+    } catch (statusError) {
+      if (!isPluginLifecycleCancellation(statusError)) console.error("Failed to read MCP status after an action failure", statusError);
     }
   }
 
   async function startMCPAuth(name: string): Promise<MCPAuthStartResult | undefined> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
       const result = await controls.startMCPAuth(name);
-      if (!mounted.current) return undefined;
+      if (!mcpActionCurrent()) return undefined;
       await controls.openExternal(result.authorization_url);
-      if (!mounted.current) return undefined;
+      if (!mcpActionCurrent()) return undefined;
       return result;
     } catch (err) {
-      if (mounted.current) setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "login", err);
       return undefined;
     } finally {
-      if (mounted.current) setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
   async function finishMCPAuth(name: string, state: string, code: string): Promise<boolean> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
       const result = await controls.finishMCPAuth(name, state, code);
+      if (!mcpActionCurrent()) return false;
       setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
       return true;
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "login", err);
       return false;
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
   async function removeMCPAuth(name: string): Promise<void> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
       const result = await controls.removeMCPAuth(name);
-      setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
+      if (mcpActionCurrent()) setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "logout", err);
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
@@ -974,7 +1006,9 @@ function SettingsViewContent({
                   mcpServers={mcpServers}
                   mcpLoading={mcpLoading}
                   mcpError={mcpError}
+                  mcpActionErrors={mcpActionErrors}
                   mcpBusyServer={mcpBusyServer}
+                  onMCPListRetry={() => setMCPListRevision((revision) => revision + 1)}
                   onGeneralSave={onGeneralSave}
                   onMCPAction={runMCPAction}
                   onMCPAuthStart={startMCPAuth}
@@ -1009,7 +1043,7 @@ function SettingsViewContent({
   );
   return <>{controls.renderPresentation({initialized,activePageId:activePage,availablePages,runningProviderNames,
     busy:running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer),
-    hasError:Boolean(advancedError || usageError || mcpError || codexPetsError),fallback:nativeSettings,
+    hasError:Boolean(advancedError || usageError || mcpError || Object.keys(mcpActionErrors).length || mcpServers.some((server) => server.error) || codexPetsError),fallback:nativeSettings,
     onOpenPage:pageId=>selectPage(pageId as SettingsPage),onAdvancedSave,onGeneralSave,onRefresh:onRefreshModelCatalog})}</>;
 }
 
@@ -1519,13 +1553,20 @@ function CodexPetSection({
 /*  MCP servers page                                                           */
 /* -------------------------------------------------------------------------- */
 
+type MCPActionFailure = {
+  action: "connect" | "disconnect" | "refresh" | "login" | "logout";
+  message: string;
+};
+
 function SettingsMCPPage({
   initialized,
   running,
   mcpServers,
   mcpLoading,
   mcpError,
+  mcpActionErrors,
   mcpBusyServer,
+  onMCPListRetry,
   onGeneralSave,
   onMCPAction,
   onMCPAuthStart,
@@ -1537,7 +1578,9 @@ function SettingsMCPPage({
   mcpServers: MCPServerStatus[];
   mcpLoading: boolean;
   mcpError: string;
+  mcpActionErrors: Record<string, MCPActionFailure>;
   mcpBusyServer: string;
+  onMCPListRetry: () => void;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   onMCPAction: (name: string, action: "connect" | "disconnect" | "refresh") => Promise<void>;
   onMCPAuthStart: (name: string) => Promise<MCPAuthStartResult | undefined>;
@@ -1549,7 +1592,7 @@ function SettingsMCPPage({
   const configuredMCPKey = stableBoolRecordSignature(configuredMCPEnabled);
   const [mcpEnabledDraft, setMCPEnabledDraft] = useState<Record<string, boolean>>(() => ({ ...configuredMCPEnabled }));
   const [mcpToggleBusy, setMCPToggleBusy] = useState("");
-  const [mcpToggleError, setMCPToggleError] = useState("");
+  const [mcpToggleErrors, setMCPToggleErrors] = useState<Record<string, string>>({});
   const [mcpAuthStates, setMCPAuthStates] = useState<Record<string, string>>({});
   const [mcpAuthCodes, setMCPAuthCodes] = useState<Record<string, string>>({});
 
@@ -1562,12 +1605,12 @@ function SettingsMCPPage({
     const next = { ...previous, [name]: enabled };
     setMCPEnabledDraft(next);
     setMCPToggleBusy(name);
-    setMCPToggleError("");
+    setMCPToggleErrors((errors) => withoutRecordKey(errors, name));
     try {
       await onGeneralSave({ mcp_enabled_toggles: next });
     } catch (toggleError) {
       setMCPEnabledDraft(previous);
-      setMCPToggleError(toastErrorMessage(toggleError, t("settings.saveFailed")));
+      setMCPToggleErrors((errors) => ({ ...errors, [name]: toastErrorMessage(toggleError, t("settings.saveFailed")) }));
     } finally {
       setMCPToggleBusy("");
     }
@@ -1596,7 +1639,7 @@ function SettingsMCPPage({
 
   const mcpServerByName = new Map(mcpServers.map((server) => [server.name, server]));
   const mcpRowNames = Array.from(
-    new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft)]),
+    new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft), ...Object.keys(mcpActionErrors)]),
   ).sort((a, b) => a.localeCompare(b));
 
   // Servers are defined only in the user configuration; the page says where,
@@ -1611,29 +1654,45 @@ function SettingsMCPPage({
     <>
       <SettingsPageHeader title={t("settings.mcpServers")} description={description} />
       <SettingsSection testID="settings-mcp">
-        <SettingsGroup>
+        {mcpLoading || mcpRowNames.length > 0 || !mcpError ? <SettingsGroup>
           {mcpLoading && mcpRowNames.length === 0 ? (
             <p className="settings-group-empty">{t("settings.loading")}</p>
           ) : mcpRowNames.length > 0 ? (
             mcpRowNames.map((name) => {
               const server = mcpServerByName.get(name);
               const busy = mcpBusyServer === name || mcpToggleBusy === name;
+              const controlsBusy = Boolean(mcpBusyServer || mcpToggleBusy);
               const connected = server ? server.connected || server.state === "connected" || server.state === "ready" : false;
               const disabledByConfig = server?.state === "disabled";
               const enabled = mcpEnabledDraft[name] ?? !disabledByConfig;
               const oauthPending = Boolean(mcpAuthStates[name]);
               const oauthCode = mcpAuthCodes[name] ?? "";
+              const failure = mcpActionErrors[name];
+              const working = busy && !failure && !mcpToggleErrors[name];
+              const needsAuth = server?.state === "auth_required" || server?.state === "needs_auth" || server?.state === "needs_client_registration";
+              const diagnostic = working ? "" : mcpToggleErrors[name] || failure?.message || (!oauthPending ? server?.error : "") || "";
+              const state = working ? "starting" : needsAuth ? server!.state : diagnostic ? "error" : server?.state ?? "stopped";
+              const status = working ? t("mcp.working")
+                : mcpToggleErrors[name] ? t("mcp.saveFailed")
+                : failure?.action === "login" ? t("mcp.loginFailed")
+                : failure?.action === "logout" ? t("mcp.logoutFailed")
+                : failure?.action === "disconnect" ? t("mcp.disconnectFailed")
+                : failure?.action === "refresh" ? t("mcp.refreshFailed")
+                : oauthPending ? t("mcp.enterAuthCode")
+                : needsAuth ? t("mcp.loginToConnect")
+                : diagnostic || mcpStateTone(state) === "danger" ? t("mcp.connectionFailed")
+                : server ? formatMCPServerMeta(server, t) : "";
               return (
                 <SettingsRow
                   key={name}
                   title={name}
-                  description={server ? (
-                    <>
-                      <MCPStateMark state={server.state} />
-                      {formatMCPServerMeta(server, t)}
-                    </>
+                  description={status ? (
+                    <span className="settings-mcp-status" role={diagnostic || needsAuth || busy ? "status" : undefined}>
+                      <MCPStateMark state={state} label={failure || mcpToggleErrors[name] || busy ? status : undefined} />
+                      <span>{status}</span>
+                    </span>
                   ) : undefined}
-                  error={server?.error}
+                  detail={diagnostic ? <MCPDiagnostic key={diagnostic} message={diagnostic} /> : undefined}
                 >
                   {server ? (
                     oauthPending ? (
@@ -1644,7 +1703,7 @@ function SettingsMCPPage({
                           autoComplete="off"
                           placeholder={t("mcp.authCode")}
                           value={oauthCode}
-                          disabled={busy}
+                          disabled={controlsBusy}
                           onChange={(event) => {
                             const value = event.currentTarget.value;
                             setMCPAuthCodes((codes) => ({ ...codes, [name]: value }));
@@ -1654,7 +1713,7 @@ function SettingsMCPPage({
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={t("mcp.finishLoginNamed", { name })}
-                          disabled={busy || oauthCode.trim() === ""}
+                          disabled={controlsBusy || oauthCode.trim() === ""}
                           onClick={() => void completeMCPAuth(name)}
                         >
                           <Check className="icon" aria-hidden="true" />
@@ -1663,7 +1722,7 @@ function SettingsMCPPage({
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={t("mcp.cancelLoginNamed", { name })}
-                          disabled={busy}
+                          disabled={controlsBusy}
                           onClick={() => {
                             setMCPAuthStates((states) => withoutRecordKey(states, name));
                             setMCPAuthCodes((codes) => withoutRecordKey(codes, name));
@@ -1674,22 +1733,23 @@ function SettingsMCPPage({
                       </>
                     ) : (
                       <div className="settings-row-actions">
-                        {server.auth_status === "not_logged_in" ? (
+                        {server.auth_status === "not_logged_in" || needsAuth ? (
                           <Tooltip asChild content={t("mcp.oauthLogin")}><button
-                            className="settings-button settings-button-ghost settings-icon-button"
+                            className="settings-button settings-button-ghost"
                             type="button"
                             aria-label={t("mcp.loginNamed", { name })}
-                            disabled={busy || disabledByConfig}
+                            disabled={controlsBusy || disabledByConfig}
                             onClick={() => void beginMCPAuth(name)}
                           >
                             <KeyRound className="icon" aria-hidden="true" />
+                            {t("mcp.login")}
                           </button></Tooltip>
                         ) : server.auth_status === "oauth" ? (
                           <Tooltip asChild content={t("mcp.removeLogin")}><button
                             className="settings-button settings-button-ghost settings-icon-button"
                             type="button"
                             aria-label={t("mcp.removeLoginNamed", { name })}
-                            disabled={busy}
+                            disabled={controlsBusy}
                             onClick={() => void onMCPAuthRemove(name)}
                           >
                             <LogOut className="icon" aria-hidden="true" />
@@ -1699,7 +1759,7 @@ function SettingsMCPPage({
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={t("mcp.refreshNamed", { name })}
-                          disabled={busy || disabledByConfig}
+                          disabled={controlsBusy || disabledByConfig}
                           onClick={() => void onMCPAction(name, "refresh")}
                         >
                           <RefreshCw className="icon" aria-hidden="true" />
@@ -1708,7 +1768,7 @@ function SettingsMCPPage({
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={`${connected ? t("mcp.disconnect") : t("mcp.connect")} ${name}`}
-                          disabled={busy || disabledByConfig}
+                          disabled={controlsBusy || disabledByConfig}
                           onClick={() => void onMCPAction(name, connected ? "disconnect" : "connect")}
                         >
                           {connected ? <PlugZap className="icon" aria-hidden="true" /> : <Plug className="icon" aria-hidden="true" />}
@@ -1722,7 +1782,7 @@ function SettingsMCPPage({
                     role="switch"
                     aria-checked={enabled}
                     data-testid={`settings-mcp-enabled-${name}`}
-                    disabled={running || !initialized || busy}
+                    disabled={running || !initialized || controlsBusy}
                     onClick={() => void toggleMCPServer(name, !enabled)}
                   >
                     <span className="settings-switch-thumb" aria-hidden="true" />
@@ -1734,9 +1794,16 @@ function SettingsMCPPage({
           ) : (
             <p className="settings-group-empty">{t("settings.noMcpServers")}</p>
           )}
-        </SettingsGroup>
-        {mcpError ? <p className="settings-error" role="alert">{mcpError}</p> : null}
-        {mcpToggleError ? <p className="settings-error" role="alert">{mcpToggleError}</p> : null}
+        </SettingsGroup> : null}
+        {mcpError ? (
+          <div className="settings-mcp-list-failure">
+            <p className="settings-section-note" role="status">{t("mcp.listFailed")}</p>
+            <button className="settings-button settings-button-ghost" type="button" data-testid="mcp-list-retry" disabled={mcpLoading} onClick={onMCPListRetry}>
+              <RefreshCw className="icon" aria-hidden="true" />{t("mcp.refresh")}
+            </button>
+            <MCPDiagnostic key={mcpError} message={mcpError} />
+          </div>
+        ) : null}
       </SettingsSection>
     </>
   );
@@ -2553,7 +2620,7 @@ function upsertMCPServerStatus(servers: MCPServerStatus[], status: MCPServerStat
   return next;
 }
 
-function withoutRecordKey(values: Record<string, string>, key: string): Record<string, string> {
+function withoutRecordKey<T>(values: Record<string, T>, key: string): Record<string, T> {
   const next = { ...values };
   delete next[key];
   return next;
@@ -2570,14 +2637,14 @@ function formatMCPServerMeta(server: MCPServerStatus, t: Translate): string {
 // A connected or idle server shows only its tools; the connect control and
 // the switch already say whether it runs. Work in progress and states that
 // need a look get one mark named by the state.
-function MCPStateMark({ state }: { state: string }): JSX.Element | null {
+function MCPStateMark({ state, label }: { state: string; label?: string }): JSX.Element | null {
   const { t } = useI18n();
   const tone = mcpStateTone(state);
   const busy = state === "starting" || state === "connecting" || state === "reconnecting";
   if (!busy && tone !== "danger" && tone !== "warning") return null;
-  const label = mcpStateLabel(state, t);
+  const statusLabel = label ?? mcpStateLabel(state, t);
   return (
-    <Tooltip asChild content={label}><span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label}>
+    <Tooltip asChild content={statusLabel}><span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={statusLabel}>
       {busy ? <Loader2 className="icon-sm settings-spin" aria-hidden="true" />
         : tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" />
         : <AlertTriangle className="icon-sm" aria-hidden="true" />}

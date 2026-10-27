@@ -127,6 +127,16 @@ func (r *rendererServiceClient) ProvidedServices() []pluginhost.ServiceDescripto
 func (r *rendererServiceClient) RequiredServices() []pluginhost.ServiceRequirement {
 	return r.requirements
 }
+
+// RuntimeRequiredServices preserves the process declarations before desktop
+// requirements are merged under the package's shared authority and lifecycle.
+func (r *rendererServiceClient) RuntimeRequiredServices() []pluginhost.ServiceRequirement {
+	if services, ok := r.owner.(pluginhost.ServiceClient); ok {
+		return pluginhost.RuntimeServiceRequirements(services)
+	}
+	return nil
+}
+
 func (r *rendererServiceClient) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err

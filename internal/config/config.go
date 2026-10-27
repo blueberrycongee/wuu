@@ -103,6 +103,7 @@ type MCPToolOverride struct {
 
 // Config holds CLI runtime settings.
 type Config struct {
+	SessionFederation     *SessionFederationConfig  `json:"session_federation,omitempty"`
 	Composition           *composition.Config       `json:"composition,omitempty"`
 	ExecutionEnvironments executionenv.Config       `json:"execution_environments,omitempty"`
 	DefaultProvider       string                    `json:"default_provider"`
@@ -730,8 +731,19 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 	return p, c.DefaultProvider, nil
 }
 
+// RequiresModelConfiguration reports whether the explicit composition selects
+// host-managed model execution. A missing or invalid composition is never an
+// opt-out; external engines without those consumers need no dummy connection.
+func (c Config) RequiresModelConfiguration() bool {
+	resolved, err := c.Composition.Resolve()
+	return err != nil || resolved.Includes("wuu.session-execution") || resolved.Includes("wuu.model-execution") || resolved.Includes("wuu.model.native")
+}
+
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if err := c.SessionFederation.Validate(); err != nil {
+		return err
+	}
 	if c.Composition != nil {
 		if err := c.Composition.Validate(); err != nil {
 			return err
@@ -745,14 +757,16 @@ func (c Config) Validate() error {
 	if err := c.ExecutionEnvironments.Validate(); err != nil {
 		return err
 	}
-	if len(c.Providers) == 0 {
-		return errors.New("providers is required")
-	}
-	if c.DefaultProvider == "" {
-		return errors.New("default_provider is required")
-	}
-	if _, ok := c.Providers[c.DefaultProvider]; !ok {
-		return fmt.Errorf("default_provider %q not found in providers", c.DefaultProvider)
+	if c.RequiresModelConfiguration() || len(c.Providers) > 0 || c.DefaultProvider != "" {
+		if len(c.Providers) == 0 {
+			return errors.New("providers is required")
+		}
+		if c.DefaultProvider == "" {
+			return errors.New("default_provider is required")
+		}
+		if _, ok := c.Providers[c.DefaultProvider]; !ok {
+			return fmt.Errorf("default_provider %q not found in providers", c.DefaultProvider)
+		}
 	}
 	if err := c.Engines.validate(); err != nil {
 		return err

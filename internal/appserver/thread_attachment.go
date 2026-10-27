@@ -18,7 +18,7 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-func (s *Server) handleThreadAttachmentRead(req Request) error {
+func (s *Server) handleThreadAttachmentRead(ctx context.Context, req Request) error {
 	var params struct {
 		ThreadID string `json:"thread_id"`
 		TurnID   string `json:"turn_id"`
@@ -84,7 +84,7 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		data, media, err := services.Artifacts.Read(context.Background(), params.ThreadID, artifactURI, 12*1024*1024)
+		data, media, err := services.Artifacts.Read(ctx, params.ThreadID, artifactURI, 12*1024*1024)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

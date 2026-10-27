@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -674,6 +675,10 @@ type SettingsListResult struct {
 type CapabilityInitializeResult struct {
 	InitializeResult
 
+	// RequiredHostFeatures names exact host semantics required by this provider.
+	// Providers must also check the initialize offer: older hosts ignore this field.
+	RequiredHostFeatures []string `json:"required_host_features,omitempty"`
+
 	// Capabilities lists the capabilities this plugin provides.
 	Capabilities []CapabilityDescriptor `json:"capabilities,omitempty"`
 
@@ -705,6 +710,10 @@ type CapabilityInitializeResult struct {
 // capability RPC support declaration.
 type CapabilityInitializeParams struct {
 	InitializeParams
+
+	// SupportedHostFeatures advertises versioned semantics, not service bindings.
+	// Absence means no features; unknown names grant no implied compatibility.
+	SupportedHostFeatures []string `json:"supported_host_features,omitempty"`
 
 	// CapabilityProtocolVersion offers the capability layer independently of
 	// the v1 transport version. Legacy plugins keep seeing protocol_version=1
@@ -997,9 +1006,26 @@ func validateCapabilityRelations(c CapabilityDescriptor) error {
 	return nil
 }
 
+// HostFeatureDocumentAuthority recognizes the selected state.documents authority
+// method, including provider-owned durability without a host business journal.
+const HostFeatureDocumentAuthority = "state.documents.authority.v1"
+
+// SupportedHostFeatures returns only semantics actually implemented by this host.
+func SupportedHostFeatures() []string { return []string{HostFeatureDocumentAuthority} }
+
 // ValidateCapabilityNegotiation validates one initialize response against the
 // services actually implemented by the host process.
 func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported []HostServiceMethod) error {
+	seenFeatures := map[string]bool{}
+	for _, feature := range result.RequiredHostFeatures {
+		if seenFeatures[feature] {
+			return fmt.Errorf("duplicate required host feature %q", feature)
+		}
+		seenFeatures[feature] = true
+		if !slices.Contains(SupportedHostFeatures(), feature) {
+			return fmt.Errorf("required host feature %q is unavailable", feature)
+		}
+	}
 	version := result.ProtocolVersion
 	if version == 0 {
 		version = ProtocolVersion

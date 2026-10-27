@@ -19,8 +19,8 @@ export const CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, 
 export const CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ['read', 'compare-exchange'], ['read']);
 export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state'], ['read', 'read-state']);
 export const ARTIFACT_STORE_DESCRIPTOR: ServiceDescriptor = {
-  ...descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'fork', 'delete-thread']),
-  version: '1.1.0',
+  ...descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'read-range', 'fork', 'delete-thread']),
+  version: '1.2.0',
 };
 export const DATA_QUERY_DESCRIPTOR: ServiceDescriptor = {
   name: DATA_QUERY_SERVICE, version: '2.0.0', methods: [
@@ -105,6 +105,12 @@ export interface ArtifactResolve { thread_id: string; uri: string }
 export interface ArtifactResolved { artifact: ImportedArtifact; managed: boolean }
 export interface ArtifactRead extends ArtifactResolve { max_bytes: number }
 export interface ArtifactBytes { data: Base64Bytes; mime_type: string }
+/** Requires state.artifacts@1.2. Offset is in decoded bytes; max_bytes is 1..1048576.
+ * Providers return exactly min(max_bytes, total-offset) bytes of the immutable
+ * sha256 snapshot. Missing support fails; clients never emulate a full read.
+ */
+export interface ArtifactRange extends ArtifactRead { offset: number; sha256: string }
+export interface ArtifactRangeBytes extends ArtifactBytes { offset: number; total: number; sha256: string }
 export interface ArtifactFork { source_thread_id: string; target_thread_id: string; uri: string }
 export interface ArtifactDeleteThreadRequest { thread_id: string }
 export interface ArtifactDeleteThreadResult { thread_id: string; deleted: boolean }
@@ -189,6 +195,7 @@ export function artifactStore(host: RuntimeHost) {
     import: (input: ArtifactStoreImport) => call<ImportedArtifact>(host, ARTIFACT_STORE_SERVICE, 'import', input),
     resolve: (input: ArtifactResolve) => call<ArtifactResolved>(host, ARTIFACT_STORE_SERVICE, 'resolve', input),
     read: (input: ArtifactRead) => call<ArtifactBytes>(host, ARTIFACT_STORE_SERVICE, 'read', input),
+    readRange: (input: ArtifactRange) => call<ArtifactRangeBytes>(host, ARTIFACT_STORE_SERVICE, 'read-range', input),
     fork: (input: ArtifactFork) => call<ImportedArtifact>(host, ARTIFACT_STORE_SERVICE, 'fork', input),
     /** Delete this provider's current thread payloads/manifests, including an
      * already empty thread. Drain producers first: this does not block future

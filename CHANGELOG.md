@@ -10,6 +10,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
+- Compose explicit consumer-scoped service delegates so downstream packages can augment selected methods while reusing the remaining implementation, with the same dependency, cancellation, and retirement rules as complete provider replacements.
+- Verify independent public-SDK providers and additive service/UI cooperation through executable conformance gates, including disabled providers, rejected upgrades, retained tasks, revoked access, and uncertain delivery.
+- Let the default composer use model-free replacement engines under the same engine identity, honoring each selected implementation’s declared host-model requirement across provider updates without losing drafts or admitted work.
+
+- Preserve old explicit version-3 compositions with a read-only, traceable resource-authority migration to composition version 4. Preserve explicit exclusions and external policies; current-version omissions never receive fallback providers.
+
+- Add a model-free `minimal` composition using the default product’s session-host bundle, with independently replaceable execution and explicit provider availability. Include packed-public-SDK acceptance for real session messages, replacement, cancellation and cleanup.
+- Select local, disabled, or encrypted remote desktop session connections through public configuration, with host-scoped session ownership, connection-bound reads, explicit uncertain outcomes, and detach-only remote shutdown.
 - Manage MCP services in the Plugins catalog: add, edit, import and remove standalone definitions, and connect plugin-owned services from their parent plugin's page. Complete desktop OAuth through a validated loopback callback with automatic connection, cancellation and expiry; retain manual completion for browser clients and custom callback URLs.
 
 - Add GPT-6.1 Terra and its Fast option with official pricing, context and output limits, image input, all six reasoning efforts, and Responses tool calling. Codex subscription catalogs reuse the metadata and Fast alias when Terra is available to the account.
@@ -203,6 +212,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Keep MCP catalog, login, and configuration failures concise and local to the failed operation, with shared opt-in diagnostics and explicit login retry without losing completed authorization.
+- Keep MCP connection and login failures beside their server with concise recovery guidance, and show technical diagnostics only on request instead of repeating raw transport errors.
+- Keep admitted plugin package bytes and desktop assets alive across rejected upgrades and unrelated package publications, while releasing each generation’s snapshots after its last reader finishes.
+- Keep published artifact images and their source leases stable across streamed commentary and answer handoff, without reloading unchanged media.
+- Preserve typed driver cancellation causes so force-archiving a running conversation keeps queued input pending without a false delivery error; retain independent provider, receipt, and parent-context failures.
+- Keep the default product usable when an add-on's required package dependency is missing, incompatible, disabled, or removed. Leave affected consumers inactive with diagnostics while preserving explicit composition requirements.
 
 - Preserve typed paths in the web folder picker while directory requests finish, ignore stale replies after newer navigation or dismissal, and require the displayed path to match the loaded directory before selecting it or creating a child folder.
 

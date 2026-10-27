@@ -18,7 +18,7 @@ type pluginProcessScopeKey struct{}
 func newHostProcessScope(host *pluginhost.Host, config tools.ProcessScopeConfig) *tools.ProcessScope {
 	config.Authorizer = &pluginAuthorizer{host: host}
 	config.SandboxProvider = nil
-	if host != nil && host.ServiceRegistry() != nil && host.ServiceRegistry().HasProvider(pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
+	if host != nil && host.ServiceRegistry() != nil && host.ServiceRegistry().HasProviderFor(toolExecutionConsumer, pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
 		config.SandboxProvider = &pluginSandboxProvider{host: host}
 	}
 	return tools.NewProcessScope(config)

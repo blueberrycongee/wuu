@@ -59,18 +59,18 @@ type defaultDriverInstance struct {
 	descriptor loopdriver.Descriptor
 	execution  loopdriver.ExecutionContext
 	mu         sync.Mutex
-	cancel     context.CancelCauseFunc
+	cancel     func(string)
 	state      defaultDriverState
 }
 
-func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.KernelGateway) (loopdriver.TerminalOutcome, error) {
+func (i *defaultDriverInstance) Run(parent context.Context, gateway loopdriver.KernelGateway) (loopdriver.TerminalOutcome, error) {
 	turn, ok := gateway.(loopdriver.TurnGateway)
 	if !ok {
 		return loopdriver.TerminalOutcome{Status: loopdriver.TerminalFailed}, errors.New("default loop requires independent turn resources")
 	}
-	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancel := context.WithCancelCause(parent)
 	i.mu.Lock()
-	i.cancel = cancel
+	i.cancel = func(reason string) { cancel(loopdriver.CancellationCause(parent, reason)) }
 	i.state.Phase, i.state.ExecutionID = "running", i.execution.ExecutionID
 	i.mu.Unlock()
 	defer cancel(nil)
@@ -269,7 +269,7 @@ func (i *defaultDriverInstance) Cancel(reason string) {
 	cancel := i.cancel
 	i.mu.Unlock()
 	if cancel != nil {
-		cancel(errors.New(reason))
+		cancel(reason)
 	}
 }
 

@@ -120,6 +120,8 @@ func run(args []string) error {
 		return runSkills(args[1:])
 	case "plugin":
 		return runPlugin(args[1:])
+	case "session-share":
+		return runSessionShare(args[1:])
 	case "session-show":
 		return runSessionShow(args[1:])
 	case "debug":
@@ -2139,6 +2141,8 @@ func runAppServer(args []string) (runErr error) {
 	fs := flag.NewFlagSet("app-server", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
+	authentication := fs.String("authentication", "local", "connection authentication: local (trusted pipe) or provider (credential handshake)")
+	authenticationAudience := fs.String("authentication-audience", "", "configured receiver audience required for provider authentication")
 	providerName := fs.String("provider", "", "provider name in config")
 	modelOverride := fs.String("model", "", "model override")
 	workdir := fs.String("workdir", "", "workspace directory")
@@ -2153,6 +2157,12 @@ func runAppServer(args []string) (runErr error) {
 		return err
 	}
 
+	if *authentication != "local" && *authentication != "provider" {
+		return errors.New("authentication must be local or provider")
+	}
+	if *authentication == "provider" && strings.TrimSpace(*authenticationAudience) == "" {
+		return errors.New("provider authentication requires --authentication-audience")
+	}
 	host, err := resolveAppServerHost(*hostKind, *instanceID, *workspaceID, *configFile)
 	if err != nil {
 		return err
@@ -2186,6 +2196,9 @@ func runAppServer(args []string) (runErr error) {
 		runErr = errors.Join(runErr, rt.Close())
 	}()
 
+	if *authentication == "provider" {
+		return rt.ServeProviderAuthenticated(context.Background(), os.Stdin, os.Stdout, *authenticationAudience)
+	}
 	return rt.Serve(context.Background(), os.Stdin, os.Stdout)
 }
 
@@ -2307,10 +2320,11 @@ Usage:
   wuu debug protocol events [flags] THREAD_ID
   wuu run [flags] "your coding task"
   wuu eval [flags]
+  wuu session-share {preview|create|read|attachment|revoke} [flags] JSON
   wuu app-server [flags]
   wuu relay [--addr HOST:PORT] [--state FILE] [--push-webhook URL]
   wuu remote init --relay ws://HOST:PORT/v1/connect [--name NAME]
-  wuu remote host [--workdir DIR] [--pair] [flags]
+  wuu remote host [--workdir DIR] [--pair [--delegate-only]] [flags]
   wuu remote ssh [--port 8787] [--remote-port PORT] user@host
   wuu remote devices
   wuu remote phone pair --uri "wuu://pair?..." [--store FILE]

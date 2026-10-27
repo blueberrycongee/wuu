@@ -89,7 +89,7 @@ func (c *modelAdapterClient) selected(ctx context.Context, request providers.Cha
 		if err != nil {
 			return request, capability, err
 		}
-		owner, ok := c.host.ServiceRegistry().ProviderPluginID(selectedModelService, 1)
+		owner, ok := c.host.ServiceRegistry().ProviderPluginIDFor(modelExecutionConsumer, selectedModelService, 1)
 		if !ok || owner != capability.PluginID {
 			return request, capability, errors.New("selected model descriptor must name its own adapter capability")
 		}

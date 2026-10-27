@@ -11,7 +11,7 @@ async function peer(endpoint: RemoteAppServerEndpoint, token = endpoint.token) {
   const socket = connect(Number(endpoint.address.split(":")[1]), "127.0.0.1"); sockets.push(socket);
   const lines = createInterface({ input: socket })[Symbol.asyncIterator]();
   await once(socket, "connect");
-  socket.write(JSON.stringify({ token }) + "\n");
+  socket.write(JSON.stringify({ token, transport: { version: 1, peer_id: "fixture", validation: { address: "127.0.0.1:1", token: "a".repeat(32) }, owner: true, principal: { kind: "device", issuer: "fixture", tenant: "paired", subject: "owner" } } }) + "\n");
   return { socket, send: (value: unknown) => socket.write(JSON.stringify(value) + "\n"), next: async () => { const line = await lines.next(); return line.done ? undefined : JSON.parse(line.value); } };
 }
 function fixture(request = vi.fn(async (_cwd: string, _method: string, _params?: unknown): Promise<unknown> => ({}))) {
@@ -55,7 +55,7 @@ it("isolates replies with colliding client ids and broadcasts the same live even
   const { bridge } = fixture(vi.fn(async (cwd, method) => ({ cwd, method })));
   const endpoint = await bridge.start("/default");
   const a = await peer(endpoint), b = await peer(endpoint);
-  expect(await a.next()).toEqual({ ready: true }); expect(await b.next()).toEqual({ ready: true });
+  expect(await a.next()).toEqual({ ready: true, transport_version: 1 }); expect(await b.next()).toEqual({ ready: true, transport_version: 1 });
   a.send({ id: "1", method: "thread/resume", workdir: "/alpha" });
   b.send({ id: "1", method: "thread/list", workdir: "/beta" });
   expect(await a.next()).toEqual({ id: "1", result: { cwd: "/alpha", method: "thread/resume" } });
@@ -187,4 +187,34 @@ it("owns remote activation identities and retains graph routes across workspace 
   await initialize(replacement, 2, "/a");
   expect(await report(replacement, 3, "second")).toHaveProperty("result");
   expect((second.mock.calls.at(-1)?.[1] as Record<string, unknown>).renderer_id).not.toBe(wireA.renderer_id);
+});
+
+it("rejects reserved transport methods and ignores request-time identity overrides", async () => {
+  const { bridge, request } = fixture(vi.fn(async (_cwd, method) => ({ method })));
+  const phone = await peer(await bridge.start("/workspace")); await phone.next();
+  phone.send({id:1,method:"transport/dispatch",params:{owner:true,method:"config/read"}});
+  expect(await phone.next()).toMatchObject({id:1,error:{message:expect.stringContaining("forbidden")}});
+  expect(request).not.toHaveBeenCalled();
+  phone.send({id:2,method:"thread/list",principal:{subject:"forged"},owner:false,transport:{owner:false}});
+  await phone.next();
+  expect((request.mock.calls[0] as unknown[])?.[6]).toMatchObject({owner:true,principal:{subject:"owner"}});
+});
+
+it("rechecks cached response receipts and isolates private checks by socket", async () => {
+  let revoked = false;
+  const check = vi.fn(async () => { if (revoked) throw new Error("revoked"); });
+  const request = vi.fn(async () => ({ result:{secret:"scoped"}, receipt:{token:"receipt-one",check} }));
+  const bridge = new RemoteAppServerBridge(request); bridges.push(bridge);
+  const endpoint = await bridge.start("/workspace");
+  const a=await peer(endpoint),b=await peer(endpoint);await a.next();await b.next();
+  const command={id:"cached",method:"thread/resume",params:{session_id:"a"}};
+  a.send(command);
+  expect(await a.next()).toMatchObject({transport_frame:1,receipt:"receipt-one",message:{id:"cached",result:{secret:"scoped"}}});
+  b.send({transport_check:{id:"cross-peer",receipt:"receipt-one"}});
+  expect(await b.next()).toEqual({transport_checked:"cross-peer",allowed:false});
+  revoked=true;a.send(command);
+  expect(await a.next()).toMatchObject({id:"cached",error:{code:"access_denied"}});
+  expect(request).toHaveBeenCalledTimes(1);
+  a.send({transport_check:{id:"current-policy",receipt:"receipt-one"}});
+  expect(await a.next()).toEqual({transport_checked:"current-policy",allowed:false});
 });

@@ -1,6 +1,28 @@
 import type { RuntimeHost, ServiceDescriptor, ServiceRequirement } from "./index.js";
 
 export const DOCUMENT_STORE_SERVICE = "state.documents";
+/** Required host semantics for any authority-aware descriptor. The SDK checks
+ * the host initialize offer before publishing that descriptor, including when
+ * an older host would otherwise silently impose legacy local journaling. */
+export const DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+/** Configured deployment, not all topologies the database could support.
+ * Provider authority owns durable CAS and exact-ID receipts without a host data
+ * journal. store_id is a stable logical dataset identity, not a provider ID or
+ * endpoint. Preserve it only across a verified, fenced migration; reset/copies
+ * require a new identity. Providers must fence identity changes on every call.
+ * coordinator identifies the shared CAS domain, NEVER an OS execution lease.
+ */
+export type StateAuthority = {
+  readonly version: 1;
+  readonly cas: "store";
+  readonly durable_receipts: true;
+} & (
+  | { readonly mode: "host-journal"; readonly storage_topology: "single-host"; readonly execution_topology: "single-host" }
+  | { readonly mode: "provider"; readonly store_id: string; readonly execution_topology: "single-host" | "multi-host" } & (
+      | { readonly storage_topology: "single-host"; readonly coordinator?: string }
+      | { readonly storage_topology: "multi-host"; readonly coordinator: string }
+    )
+);
 /** Decimal integer string. Do not convert durable revisions to JS numbers. */
 export type StateRevision = string;
 export interface StateDocument<Value = unknown> {
@@ -107,9 +129,13 @@ export function requireDocumentStore(): ServiceRequirement {
   return { name: DOCUMENT_STORE_SERVICE, major_version: 1, required: true };
 }
 
-/** Advertise optional maintenance only when the provider actually implements it. */
-export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean; checkpoint?: boolean } = {}): ServiceDescriptor {
+/** Advertise optional capabilities only when implemented. Without authority,
+ * existing v1 providers retain the documented same-host journal contract.
+ * An advertised authority failure never falls back to that legacy contract.
+ */
+export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean; checkpoint?: boolean; authority?: boolean } = {}): ServiceDescriptor {
   const methods = ["read", "commit", "export"];
+  if (options.authority) methods.push("authority");
   if (options.compact) methods.push("compact");
   if (options.import) methods.push("import");
   if (options.checkpoint) methods.push("checkpoint");
@@ -122,7 +148,7 @@ export function documentStoreDescriptor(options: { compact?: boolean; import?: b
         name,
         input_schema: `state.documents.${name}.input.v${schemaVersion}`,
         output_schema: `state.documents.${name}.output.v${schemaVersion}`,
-        ...(name === "read" || name === "export" || name === "checkpoint" ? { preparation: true } : {}),
+        ...(name === "read" || name === "export" || name === "checkpoint" || name === "authority" ? { preparation: true } : {}),
       };
     }),
   };
@@ -141,6 +167,8 @@ export function documentStore(host: RuntimeHost) {
     }) as T;
   }
   return {
+    /** Requires an advertised authority capability; errors never select a fallback. */
+    authority: () => call<StateAuthority>("authority", {}),
     read: <Value = unknown>(query: StateQuery) => call<StateView<Value>>("read", query),
     commit: <Value = unknown>(transaction: StateTransaction<Value>) => call<StateReceipt>("commit", transaction),
     checkpoint: () => call<StateCheckpoint>("checkpoint", {}),

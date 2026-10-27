@@ -88,6 +88,7 @@ func (h *Host) OpenServiceScope(ctx context.Context, consumer string, services .
 				break
 			}
 		}
+		key = registry.providerKeyLocked(consumer, key)
 		provider, found := registry.providers[key]
 		registry.mu.RUnlock()
 		if !declared || !found {

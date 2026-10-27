@@ -183,6 +183,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		},
 		CapabilityProtocolVersion: CapabilityProtocolVersion,
 		SupportedHostServices:     []HostServiceMethod{ServiceCallMethod},
+		SupportedHostFeatures:     SupportedHostFeatures(),
 		LifecycleVersion:          RuntimeLifecycleVersion,
 	}, &initialized); err != nil {
 		_ = client.stopProcess()

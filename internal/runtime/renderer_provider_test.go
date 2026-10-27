@@ -2,9 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -136,5 +140,81 @@ func TestMixedRendererRequirementsUseOneValidatedUnion(t *testing.T) {
 	conflicting := newRendererService(RendererModule{ID: "mixed"}, []pluginhost.ServiceRequirement{{Name: "automation.scheduler", MajorVersion: 2, Required: true}}, process)
 	if len(conflicting.RequiredServices()) != 2 {
 		t.Fatal("incompatible majors were silently merged")
+	}
+}
+
+// A desktop entry can consume its package's runtime service without introducing
+// a package lifecycle cycle. A backend declaration of the same dependency is a
+// real self-delegate and must still fail, even when merged with desktop needs.
+func TestMixedRendererOwnRuntimeService(t *testing.T) {
+	for _, backendRequires := range []bool{false, true} {
+		for _, scoped := range []bool{false, true} {
+			name := fmt.Sprintf("backend-requires=%t/scoped=%t", backendRequires, scoped)
+			t.Run(name, func(t *testing.T) {
+				item := testRuntimePlugin("mixed")
+				requirements := []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}
+				item.Desktop = &pluginpkg.DesktopSpec{Entry: "desktop.mjs", RequiredServices: requirements}
+				process := &fakeServicePluginClient{id: item.ID, provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}
+				if backendRequires {
+					process.required = requirements
+				}
+				modules := []string{item.ID}
+				selection := &composition.Config{Version: composition.Version, Modules: &modules}
+				if scoped {
+					selection.Services = []composition.Binding{{Consumer: item.ID, Service: "search.provider", Major: 1, Provider: item.ID}}
+				}
+				start := func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return process, nil }
+				host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, t.TempDir(), "mixed", t.TempDir(), t.TempDir(), nil, start, nil, nil, selection, "")
+				if backendRequires {
+					if err == nil {
+						host.Close(context.Background())
+						t.Fatal("runtime self-delegate was accepted")
+					}
+					if !strings.Contains(err.Error(), "cycle") && !strings.Contains(err.Error(), "itself") {
+						t.Fatalf("runtime self-delegate failed for the wrong reason: %v", err)
+					}
+					if process.active {
+						t.Fatal("cyclic backend activated")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer host.Close(context.Background())
+				if err := host.Activate(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := host.CallService(context.Background(), item.ID, "search.provider", "query", nil); err != nil {
+					t.Fatalf("desktop cannot consume own runtime service: %v", err)
+				}
+				for _, dependency := range host.Dependencies()[item.ID] {
+					if dependency.Provider == item.ID {
+						t.Fatalf("intra-package desktop call became lifecycle edge: %+v", dependency)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMixedRendererOwnStateService(t *testing.T) {
+	item := testRuntimePlugin("mixed-state")
+	item.Desktop = &pluginpkg.DesktopSpec{Entry: "desktop.mjs", RequiredServices: []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}}}
+	modules := []string{item.ID}
+	selection := &composition.Config{Version: composition.Version, Modules: &modules}
+	start := func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+		return persistence.NewService(item.ID, t.TempDir(), "sqlite"), nil
+	}
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, t.TempDir(), "mixed-state", t.TempDir(), t.TempDir(), nil, start, nil, nil, selection, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(context.Background())
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.CallService(context.Background(), item.ID, persistence.ServiceName, "read", json.RawMessage(`{"namespace":"mixed.renderer"}`)); err != nil {
+		t.Fatalf("desktop cannot consume own admitted state service: %v", err)
 	}
 }

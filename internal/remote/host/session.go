@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
@@ -32,6 +33,7 @@ type deviceSession struct {
 	mu            sync.Mutex
 	channel       *secure.Channel
 	attached      bool
+	replaying     bool
 	compressLines bool
 	app           *appConn
 	lastPush      time.Time
@@ -90,12 +92,13 @@ type appConn struct {
 	inW     io.Writer
 
 	// guarded by deviceSession.mu
-	profile  string
-	seq      uint64
-	spool    *spool
-	stateVer uint64
-	running  map[string]wire.RunningTurn
-	closed   bool
+	profile       string
+	seq           uint64
+	spool         *spool
+	stateVer      uint64
+	running       map[string]wire.RunningTurn
+	runningGuards map[string]func() error
+	closed        bool
 }
 
 func (a *appConn) close() {
@@ -114,7 +117,8 @@ func (a *appConn) close() {
 func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 	serverInR, serverInW := io.Pipe()
 	serverOutR, serverOutW := io.Pipe()
-	ctx, cancel := context.WithCancel(s.h.baseCtx)
+	caller, _ := s.h.devicePrincipal(s.devPub)
+	ctx, cancel := context.WithCancel(principal.WithContext(s.h.baseCtx, caller))
 	app := &appConn{
 		contID:  randomID(),
 		cancel:  cancel,
@@ -124,13 +128,14 @@ func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 		spool:   newSpool(),
 		running: map[string]wire.RunningTurn{},
 	}
+	output := &deviceOutput{session: s, app: app, fallback: serverOutW}
 	go func() {
 		if s.h.appServer != nil {
-			if err := s.h.appServer(ctx, serverInR, serverOutW); err != nil && ctx.Err() == nil {
+			if err := s.h.appServer(ctx, serverInR, output); err != nil && ctx.Err() == nil {
 				s.h.logf("remote app-server connection: %v", err)
 			}
 		} else {
-			_ = appserver.RunStdioForDevice(ctx, s.h.rt, serverInR, serverOutW, devicePushRegistrar{store: s.h.store, devPub: s.devPub}, s.h.appServerOptions...)
+			_ = appserver.RunStdioForDevice(ctx, s.h.rt, serverInR, output, devicePushRegistrar{store: s.h.store, devPub: s.devPub}, s.h.appServerOptions...)
 		}
 		_ = serverOutW.Close()
 	}()
@@ -161,18 +166,35 @@ func (s *deviceSession) pumpAppOutput(app *appConn, out io.Reader) {
 
 // onAppLine records one outbound app-server line and, when the phone is
 // attached, delivers it (plus any state change) in seq order.
-func (s *deviceSession) onAppLine(app *appConn, line []byte) {
+func (s *deviceSession) onAppLine(app *appConn, line []byte) { s.onAuthorizedAppLine(app, line, nil) }
+func (s *deviceSession) onAuthorizedAppLine(app *appConn, line []byte, guard func() error) {
+	if guard != nil && guard() != nil {
+		return
+	}
 	s.mu.Lock()
 	if s.app != app || app.closed {
 		s.mu.Unlock()
 		return
 	}
 	stateChanged := app.observeLine(line)
+	if guard != nil {
+		if app.runningGuards == nil {
+			app.runningGuards = make(map[string]func() error)
+		}
+		var frame struct {
+			Params struct {
+				ThreadID string `json:"thread_id"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(line, &frame) == nil && frame.Params.ThreadID != "" {
+			app.runningGuards[frame.Params.ThreadID] = guard
+		}
+	}
 	outLine := line
 	if app.profile == wire.ClientProfileMobileChat || app.profile == wire.ClientProfileMobileActivity {
 		filtered, keep := (mobileChatFilter{tools: app.profile == wire.ClientProfileMobileActivity}).line(line)
 		if !keep {
-			attached := s.attached && s.channel != nil
+			attached := s.attached && !s.replaying && s.channel != nil
 			if attached && stateChanged {
 				s.sendStateLocked()
 			}
@@ -183,8 +205,8 @@ func (s *deviceSession) onAppLine(app *appConn, line []byte) {
 	}
 	app.seq++
 	seq := app.seq
-	app.spool.append(seq, outLine)
-	attached := s.attached && s.channel != nil
+	app.spool.appendAuthorized(seq, outLine, guard)
+	attached := s.attached && !s.replaying && s.channel != nil
 	if attached {
 		s.sendSealedLocked(wire.E2EMsg{T: wire.E2ERPC, Seq: seq, Line: json.RawMessage(outLine)})
 		if stateChanged {
@@ -286,6 +308,10 @@ func (s *deviceSession) detach() {
 
 // handleSealed decrypts and dispatches one sealed frame from the phone.
 func (s *deviceSession) handleSealed(body []byte) {
+	caller, err := s.h.devicePrincipal(s.devPub)
+	if err != nil || caller.Check(s.h.baseCtx) != nil {
+		return
+	}
 	s.mu.Lock()
 	ch := s.channel
 	if ch == nil {
@@ -360,10 +386,31 @@ func (s *deviceSession) handleAttachLocked(msg wire.E2EMsg) {
 		Resumed:    resumed,
 		ReplayFrom: msg.Recv + 1,
 	})
-	s.sendStateLocked()
-	for _, e := range replay {
-		s.sendSealedLocked(wire.E2EMsg{T: wire.E2ERPC, Seq: e.seq, Line: json.RawMessage(e.line)})
+	s.replaying = true
+	app, channel := s.app, s.channel
+	cursor := msg.Recv
+	for {
+		for _, e := range replay {
+			s.mu.Unlock()
+			allowed := e.guard == nil || e.guard() == nil
+			s.mu.Lock()
+			if s.app != app || s.channel != channel || app.closed {
+				s.replaying = false
+				return
+			}
+			if allowed {
+				s.sendSealedLocked(wire.E2EMsg{T: wire.E2ERPC, Seq: e.seq, Line: json.RawMessage(e.line)})
+			}
+			cursor = e.seq
+		}
+		var ok bool
+		replay, ok = app.spool.replayFrom(cursor)
+		if !ok || len(replay) == 0 {
+			break
+		}
 	}
+	s.replaying = false
+	s.sendStateLocked()
 }
 
 // sendStateLocked pushes the host state snapshot. Called with s.mu held.
@@ -371,13 +418,29 @@ func (s *deviceSession) sendStateLocked() {
 	if s.app == nil {
 		return
 	}
-	s.app.stateVer++
-	running := make([]wire.RunningTurn, 0, len(s.app.running))
-	for _, r := range s.app.running {
-		running = append(running, r)
+	app, channel, seq := s.app, s.channel, s.app.seq
+	type candidate struct {
+		turn  wire.RunningTurn
+		guard func() error
 	}
+	candidates := make([]candidate, 0, len(app.running))
+	for _, r := range app.running {
+		candidates = append(candidates, candidate{r, app.runningGuards[r.ThreadID]})
+	}
+	s.mu.Unlock()
+	running := make([]wire.RunningTurn, 0, len(candidates))
+	for _, c := range candidates {
+		if c.guard == nil || c.guard() == nil {
+			running = append(running, c.turn)
+		}
+	}
+	s.mu.Lock()
+	if s.app != app || s.channel != channel || app.seq != seq || app.closed {
+		return
+	}
+	app.stateVer++
 	info := s.h.hostInfo()
-	s.sendSealedLocked(wire.E2EMsg{T: wire.E2EState, Ver: s.app.stateVer, Host: &info, Running: running})
+	s.sendSealedLocked(wire.E2EMsg{T: wire.E2EState, Ver: app.stateVer, Host: &info, Running: running})
 }
 
 // sendSealedLocked seals and ships one end-to-end message. Called with s.mu
@@ -440,4 +503,18 @@ func mustDecodeKey(s string) []byte {
 		return []byte(strings.TrimSpace(s))
 	}
 	return raw
+}
+
+// The ordinary pipe remains available to legacy trusted embeddings. The core's
+// GuardedWriter path carries replay authority out of band, never to the phone.
+type deviceOutput struct {
+	session  *deviceSession
+	app      *appConn
+	fallback io.Writer
+}
+
+func (w *deviceOutput) Write(p []byte) (int, error) { return w.fallback.Write(p) }
+func (w *deviceOutput) WriteAuthorized(p []byte, guard func() error) (int, error) {
+	w.session.onAuthorizedAppLine(w.app, append([]byte(nil), p...), guard)
+	return len(p), nil
 }

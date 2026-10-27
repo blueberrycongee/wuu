@@ -39,7 +39,7 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	rt.PluginHost.Add(client)
 	rt.PluginHost.SetPackageRequirements(map[string][]string{provider.ID: nil, consumer.ID: {provider.ID}})
 	out := &lockedBuffer{}
-	srv := &Server{rt: rt, out: out, threads: make(map[string]*threadState)}
+	srv := &Server{access: localOwnerTestAccess(), rt: rt, out: out, threads: make(map[string]*threadState)}
 	_, before := srv.currentExtensionState()
 	if len(before) != 3 {
 		t.Fatalf("initial skills = %+v", before)

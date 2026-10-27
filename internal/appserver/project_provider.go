@@ -369,7 +369,7 @@ func (p *ProjectCoordinationProvider) selected() bool {
 	if p.registry == nil {
 		return false
 	}
-	id, ok := p.registry.ProviderPluginID(ProjectCoordinationService, 1)
+	id, ok := p.registry.ProviderPluginIDFor(ProjectCoordinationConsumer, ProjectCoordinationService, 1)
 	return ok && id == p.ID()
 }
 

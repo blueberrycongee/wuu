@@ -1,3 +1,4 @@
+import type { SessionLocatorV1 } from "./session-transport.js";
 /** Public display data, independent of host state and mutable transport objects. */
 export type ApplicationConversationThreadV1 = ConversationThreadData;
 export type ApplicationConversationTurnV1 = ConversationTurnData;
@@ -24,6 +25,7 @@ export interface ApplicationConversationTextV1 {
     subscribe(target: ApplicationConversationTextTargetV1, listener: () => void): () => void;
 }
 type ConversationThreadData = {
+    readonly session_locator?: SessionLocatorV1;
     readonly model_options?: Readonly<Record<string, string>>;
     readonly speed?: string;
     readonly session_control?: {

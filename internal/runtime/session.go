@@ -491,12 +491,10 @@ func NewSession(opts Options) (*Session, error) {
 	} else {
 		discoveredPlugins = discoverPlugins(rootDir, wuuHome)
 	}
-	effectiveConfig := cfg
-	effectiveConfig.Composition = productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activatedPlugins(cfg, discoveredPlugins), factories)
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
 	if !safeMode {
-		activationPlan, activationErr := ResolvePluginActivationPlan(effectiveConfig, discoveredPlugins, factories...)
+		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, factories...)
 		if activationErr != nil {
 			return nil, activationErr
 		}
@@ -523,7 +521,8 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := buildPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(effectiveConfig.Composition, safeMode), opts.DriverProfile, factories...)
+	selection := productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activePlugins, factories)
+	pluginHost, pluginKernel, err := buildPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), opts.DriverProfile, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
@@ -590,22 +589,24 @@ func NewSession(opts Options) (*Session, error) {
 	cfg = withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults)
 	permissions := config.ResolveAgentPermissions(cfg.Agent)
 
-	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.ModelOverride != "" {
-		providerCfg.Model = opts.ModelOverride
-	}
-	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-		ProviderName:   resolvedName,
-		ProviderConfig: providerCfg,
-		Model:          providerCfg.Model,
-		Effort:         cfg.Agent.Effort,
-		Variant:        cfg.Agent.Variant,
-	})
-	if err != nil {
-		return nil, err
+	var providerCfg config.ProviderConfig
+	var resolvedName string
+	var roleSelections modelroles.Set
+	if cfg.RequiresModelConfiguration() || len(cfg.Providers) > 0 || opts.ProviderName != "" || opts.ModelOverride != "" {
+		providerCfg, resolvedName, err = cfg.ResolveProvider(opts.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		if opts.ModelOverride != "" {
+			providerCfg.Model = opts.ModelOverride
+		}
+		roleSelections, err = modelroles.Resolve(cfg, modelroles.ResolveOptions{
+			ProviderName: resolvedName, ProviderConfig: providerCfg, Model: providerCfg.Model,
+			Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	mainRole := roleSelections.Main
 	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
@@ -663,7 +664,7 @@ func NewSession(opts Options) (*Session, error) {
 	toolLoadingPreference := cfg.Agent.ToolLoadingPreference()
 	toolLoadingMode, toolSearchEnabled, nativeDeferredDiscovery := resolveToolLoadingModeForProvider(toolLoadingPreference, ruleProviderCfg, toolModeModel, mainRole.ProviderOptions)
 	var codeModeService *codemode.Service
-	if !opts.NoTools && !safeMode {
+	if !opts.NoTools && !safeMode && selectsRuntimeModule(pluginHost, toolExecutionConsumer) {
 		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
 			kit, newErr := tools.New(rootDir)
 			if newErr != nil {
@@ -729,7 +730,7 @@ func NewSession(opts Options) (*Session, error) {
 	deferredToolCatalogPrompt := mainSurface.DeferredToolCatalog
 	mainSurface.DeferredToolCatalog = deferredToolCatalogPrompt
 	var baseSystemPromptResult prompt.BuildResult
-	if !safeMode {
+	if !safeMode && selectsRuntimeModule(pluginHost, sessionExecutionConsumer) {
 		baseSystemPromptResult, err = assembleSelectedPrompt(context.Background(), pluginHost, promptservice.Request{Role: "main", CWD: rootDir, Date: sessionDate, Provider: resolvedName, Model: toolModeModel, Surface: mainSurface, Instructions: instructionFiles, Skills: discoveredSkills}, systemPrompts)
 		if err != nil {
 			return nil, err

@@ -282,7 +282,7 @@ func TestRemoteDriverCancelPropagatesThroughExecution(t *testing.T) {
 	if got.outcome.Status != TerminalCanceled {
 		t.Fatalf("outcome status = %q, want canceled", got.outcome.Status)
 	}
-	if err := <-runCanceled; err == nil || !strings.Contains(err.Error(), "user interrupt") {
+	if err := <-runCanceled; !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "user interrupt") {
 		t.Fatalf("remote ctx cause = %v", err)
 	}
 }

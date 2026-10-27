@@ -22,6 +22,8 @@ export * from "./composition.js";
 export * from "./engine-admin.js";
 export * from "./engine.js";
 export * from "./persistence.js";
+import { DOCUMENT_AUTHORITY_HOST_FEATURE, DOCUMENT_STORE_SERVICE } from "./persistence.js";
+export { delegateService, type ServiceMethodOverride } from "./service-delegation.js";
 
 import type {
   PublicIconName,
@@ -610,6 +612,7 @@ export const HOST_SERVICE_METHODS = [
   "host.settings.list",
   "host.credentials.request",
   "host.session.create",
+  "host.session.route",
   "host.session.send",
   "host.session.list",
   "host.session.cancel",
@@ -647,6 +650,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.settings.list": "host.settings.list",
   "host.credentials.request": "host.credentials.request",
   "host.session.create": "host.session.create",
+  "host.session.route": "host.session.route",
   "host.session.send": "host.session.send",
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
@@ -691,13 +695,13 @@ export type ProductComposition = {
   profile?: string;
   /** Replaces the profile's complete module set. [] starts no modules. */
   modules?: string[];
-  /** Overrides profile bindings by service name and major version. */
+  /** Overrides profile bindings by consumer (if any), service name and major version. */
   services?: ServiceBinding[];
 } & ({
   version: 1;
   profiles?: Record<string, { modules: string[]; services?: ServiceBinding[] }>;
 } | {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   profiles?: Record<string, CompositionProfile>;
   bundles?: Record<string, CompositionBundle>;
   /** Applied last. Without a profile/modules, patches start from an empty set. */
@@ -724,7 +728,7 @@ export interface CompositionPatch {
   modules?: Record<string, boolean>;
   services?: ServiceBinding[];
   /** Restores unique-provider resolution; multiple providers remain an error. */
-  remove_services?: Pick<ServiceBinding, "service" | "major">[];
+  remove_services?: Pick<ServiceBinding, "consumer" | "service" | "major">[];
 }
 
 export type CompositionSource = "composition" | `profile:${string}` | `bundle:${string}` | `composition:patch:${number}`;
@@ -739,6 +743,8 @@ export interface ServiceRegistrySnapshot {
   /** Includes requirements that could not be resolved. */
   requirements?: Record<string, ServiceRequirement[]>;
   services: {
+    /** Present only on a consumer-specific route. */
+    consumer?: string;
     service: string;
     version: string;
     provider: string;
@@ -765,6 +771,8 @@ export interface ServiceRegistrySnapshot {
 
 /** Selects a provider without fallback when it fails or is removed. */
 export interface ServiceBinding {
+  /** Selects only this declared consumer; absence selects the global route. */
+  consumer?: string;
   service: string;
   major: number;
   provider: string;
@@ -862,10 +870,15 @@ export interface RuntimeInitializeParams {
   workspace_state_dir?: string;
   capability_protocol_version?: number;
   supported_host_services?: HostServiceMethod[];
+  /** Exact versioned host semantics. Missing means none; unrelated names imply nothing. */
+  supported_host_features?: readonly string[];
   lifecycle_version?: 2;
 }
 
 export interface RuntimeInitializeResult {
+  /** The SDK verifies these exact names against the host offer before replying.
+   * Authority-aware document descriptors add their required feature automatically. */
+  required_host_features?: readonly string[];
   model_adapters?: readonly ModelAdapterDescriptor[];
   tools?: ToolRegistration[];
   protocol_version?: 1 | 2 | 3;
@@ -1221,6 +1234,10 @@ export interface CredentialRequestResult {
 }
 
 export interface HostServiceContracts {
+  "host.session.route": {
+    params: import("./session-transport.js").SessionRouteRequest;
+    result: import("./session-transport.js").SessionRouteResult;
+  };
   "host.credentials.request": { params: CredentialRequestParams; result: CredentialRequestResult };
   "host.storage.get": { params: { scope: "user" | "workspace"; key: string }; result: { value: string | null } };
   "host.storage.set": { params: { scope: "user" | "workspace"; key: string; value: string }; result: Record<string, never> };
@@ -1796,8 +1813,27 @@ export async function handleRuntimeRequest(
     switch (request.method) {
       case "initialize": {
         const result = await plugin.initialize(request.params, host, lifecycle);
+        const offered = request.params.supported_host_features;
+        const required = result.required_host_features;
+        for (const features of [offered, required]) {
+          if (features !== undefined && (!Array.isArray(features) || features.some(feature =>
+            typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
+            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
+          }
+        }
+        const requirements = new Set(required);
+        if (result.provided_services?.some(service => service.name === DOCUMENT_STORE_SERVICE
+          && service.methods?.some(method => method.name === "authority"))) {
+          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
+        }
+        for (const feature of requirements) {
+          if (!offered?.includes(feature)) {
+            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
+          }
+        }
         return { id: request.id, result: {
           ...result,
+          ...(requirements.size ? { required_host_features: [...requirements] } : {}),
           protocol_version: result.required_services?.length || result.provided_services?.length
             ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
           lifecycle_version: 2,
@@ -2737,3 +2773,8 @@ export * from "./agent-policy.js";
 export { scopeApplicationWorkbench } from "./ui-contributions.js";
 
 export * from "./model-capacity.js";
+export * from "./session-transport.js";
+export * from "./desktop-session-transport.js";
+export * from "./session-sharing.js";
+export * from "./identity.js";
+export * from "./resource-policy.js";

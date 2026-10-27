@@ -198,6 +198,8 @@ function installWuuApi(): void {
       entries: [{ kind: "file", name: "README.md", path: "README.md" }],
       truncated: false,
     }),
+    acquireArtifactSource: vi.fn(async ({requestId}:{requestId:string}) => ({url:"wuu-artifact://lease/fixture",leaseId:requestId})),
+    releaseArtifactSource: vi.fn().mockResolvedValue(undefined),
     readWorkspaceFile: vi.fn().mockResolvedValue({
       root: workspace,
       path: "README.md",
@@ -897,7 +899,7 @@ describe("workspace file tabs", () => {
       id: "present-pdf", type: "tool_call", name: "present_artifact", status: "completed",
       result_detail: { content: [{ type: "file", mime_type: "application/pdf", name: "report.pdf",
         uri: "wuu-artifact://workspace/thread-artifact-tabs/digest/report.pdf",
-        artifact: { placement: "turn_end", sha256: "digest" } }] },
+        artifact: { placement: "turn_end", sha256: "a".repeat(64) } }] },
     });
     vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
@@ -925,7 +927,7 @@ describe("workspace file tabs", () => {
       ...snapshotFile, data: "", encodePromise: Promise.reject(new Error("Preview unavailable")),
     }));
     await submitMainPrompt();
-    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ threadID: thread.id }), thread.id);
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ threadID: thread.id }), thread.id, expect.anything());
     if (failure === "success" || failure === "send") {
       expect(startTurnMock.mock.calls[0][3]).toEqual([{ filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" }]);
       expect(startTurnMock.mock.calls[0][5]).toBeUndefined();

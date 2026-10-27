@@ -45,7 +45,8 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id and fingerprint are required"))
 	}
 
-	snapshot := s.rt.ExtensionSnapshot()
+	snapshot, releaseSnapshot := s.rt.RetainExtensionSnapshot()
+	defer releaseSnapshot()
 	for _, module := range snapshot.NativeRendererModules() {
 		if params.ID != module.SubjectID {
 			continue
@@ -59,14 +60,17 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 	}
 
 	var selected *pluginpkg.Plugin
-	for index := range snapshot.Plugins {
-		if snapshot.Plugins[index].SubjectID == params.ID {
-			selected = &snapshot.Plugins[index]
+	for index := range snapshot.ActivePlugins {
+		if snapshot.ActivePlugins[index].SubjectID == params.ID {
+			selected = &snapshot.ActivePlugins[index]
 			break
 		}
 	}
 	if selected == nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("plugin %q is not available in this workspace", params.ID))
+		if _, err := s.requireActiveDesktopPluginIn(snapshot, params.ID, params.Fingerprint); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin generation is not active"))
 	}
 	fresh, err := pluginpkg.LoadManifestWithOptions(selected.ManifestPath, pluginpkg.LoadOptions{
 		Source:      selected.Source,
@@ -144,7 +148,8 @@ func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id, fingerprint, and icon path are required"))
 	}
 
-	snapshot := s.rt.ExtensionSnapshot()
+	snapshot, releaseSnapshot := s.rt.RetainExtensionSnapshot()
+	defer releaseSnapshot()
 	var selected *pluginpkg.Plugin
 	for index := range snapshot.Plugins {
 		if snapshot.Plugins[index].SubjectID == params.ID {
@@ -154,6 +159,12 @@ func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 	}
 	if selected == nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("plugin %q is not available in this workspace", params.ID))
+	}
+	for index := range snapshot.ActivePlugins {
+		if snapshot.ActivePlugins[index].SubjectID == params.ID && snapshot.ActivePlugins[index].Fingerprint == params.Fingerprint {
+			selected = &snapshot.ActivePlugins[index]
+			break
+		}
 	}
 	fresh, err := pluginpkg.LoadManifestWithOptions(selected.ManifestPath, pluginpkg.LoadOptions{
 		Source: selected.Source, Official: selected.Official, WorkspaceID: selected.WorkspaceID,

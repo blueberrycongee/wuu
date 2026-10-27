@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -14,10 +15,11 @@ func TestRendererDefaultIdentityIsOwnedByConnection(t *testing.T) {
 	rt.Plugins = []pluginpkg.Plugin{item}
 	rt.ActivePlugins = []pluginpkg.Plugin{item}
 	client := &pluginClientRequestTestRuntime{id: item.ID}
-	host := pluginhost.New(client)
-	registry, conflicts := pluginhost.BuildServiceRegistry(client)
+	runtimeClients := []pluginhost.Client{client, access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}}
+	host := pluginhost.New(runtimeClients...)
+	registry, conflicts := pluginhost.BuildServiceRegistry(runtimeClients...)
 	registry.RegisterRenderer(item.ID, item.Fingerprint)
-	registry.SetComposition(pluginhost.CompositionSnapshot{Modules: []pluginhost.CompositionModuleSnapshot{{ID: item.ID}}})
+	registry.SetComposition(pluginhost.CompositionSnapshot{Modules: []pluginhost.CompositionModuleSnapshot{{ID: item.ID}, {ID: access.NativeModule}, {ID: access.ConsumerModule}}})
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)

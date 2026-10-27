@@ -22,7 +22,7 @@ export interface ApplicationSideConversationHost {
   activateThread(id: string, signal: AbortSignal): Promise<void>;
   openPanel(): void;
   closePanel(): void;
-  getContextChatRuntime(): { pending: boolean; params: ThreadStartParams };
+  getContextChatRuntime(): { pending: boolean; requiresHostModel: boolean; params: ThreadStartParams };
   submitBackground(message: QueuedComposerMessage, thread: Thread, context: RuntimeContext): Promise<boolean>;
   cacheThread(thread: Thread, context: RuntimeContext): void;
 }
@@ -98,7 +98,7 @@ export class ApplicationSideConversation {
       if (!thread) {
         const runtime = this.host.getContextChatRuntime(), params = structuredClone(runtime.params);
         if (runtime.pending) throw new Error("The selected agent is still loading. Try again shortly.");
-        if ((params.engine ?? "wuu") === "wuu" && !hasAuthenticatedProvider(state.initialized.providers)) throw new Error("Configure a model before sending.");
+        if (runtime.requiresHostModel && !hasAuthenticatedProvider(state.initialized.providers)) throw new Error("Configure a model before sending.");
         this.host.updateState(current => ({ ...current, allowThreadAutoActivation: false }));
         thread = requireThread(await window.wuu.startThread(params, context), "thread/start did not return a thread");
         const created = thread;

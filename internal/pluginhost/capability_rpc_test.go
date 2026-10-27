@@ -197,3 +197,28 @@ func TestValidateCapabilityNegotiationRejectsUnsupportedAndDuplicateDeclarations
 		})
 	}
 }
+
+// Host features gate changed semantics independently of protocol version; raw
+// non-SDK providers cannot get an unknown requirement silently accepted either.
+func TestValidateCapabilityNegotiationHostFeatures(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		required []string
+		reject   bool
+	}{
+		{name: "legacy"},
+		{name: "authority", required: []string{HostFeatureDocumentAuthority}},
+		{name: "unknown", required: []string{"unknown.feature.v1"}, reject: true},
+		{name: "wrong-version", required: []string{"state.documents.authority.v2"}, reject: true},
+		{name: "empty", required: []string{""}, reject: true},
+		{name: "duplicate", required: []string{HostFeatureDocumentAuthority, HostFeatureDocumentAuthority}, reject: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := CapabilityInitializeResult{ProtocolVersion: CapabilityProtocolVersion, RequiredHostFeatures: test.required}
+			err := ValidateCapabilityNegotiation(result, []HostServiceMethod{ServiceCallMethod})
+			if (err != nil) != test.reject {
+				t.Fatalf("required=%v err=%v", test.required, err)
+			}
+		})
+	}
+}

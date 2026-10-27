@@ -5,16 +5,75 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
+
+func TestProductStartupWithUnavailablePackageDependency(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, mismatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("explicit=%t/mismatch=%t", explicit, mismatch), func(t *testing.T) {
+				consumer := testRuntimePlugin("dependent-addon")
+				consumer.Runtime = nil
+				consumer.Dependencies = []pluginpkg.Dependency{{ID: "provider-addon", Version: "^1.0.0"}}
+				independent := testRuntimePlugin("independent-addon")
+				independent.Runtime = nil
+				optional := testRuntimePlugin("optional-addon")
+				optional.Runtime = nil
+				optional.Dependencies = []pluginpkg.Dependency{{ID: "provider-addon", Version: "^1.0.0", Optional: true}}
+				catalog := []pluginpkg.Plugin{consumer, independent, optional}
+				if mismatch {
+					provider := testRuntimePlugin("provider-addon")
+					provider.Runtime = nil
+					provider.Version = "2.0.0"
+					catalog = append(catalog, provider)
+				}
+				cfg := config.Default()
+				cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "synthetic", Model: "fixture"}}
+				cfg.DefaultProvider = "fixture"
+				if explicit {
+					var ids []string
+					for _, item := range catalog {
+						ids = append(ids, item.ID)
+					}
+					cfg.Composition = composition.DefaultConfig("headless", ids...)
+				}
+				home := t.TempDir()
+				rt, err := NewSession(Options{RootDir: t.TempDir(), HomeDir: home, WuuHome: home, Config: cfg, DiscoveredPlugins: &catalog, NonInteractive: true})
+				if explicit {
+					if err == nil {
+						defer rt.Cleanup()
+						t.Fatal("an unavailable explicitly selected consumer did not reject startup")
+					}
+					if !strings.Contains(err.Error(), consumer.ID) {
+						t.Fatalf("explicit selection failed for an unrelated reason: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rt.Cleanup()
+				active := map[string]bool{}
+				for _, item := range rt.ActivePlugins {
+					active[item.ID] = true
+				}
+				if active[consumer.ID] || !active[independent.ID] || !active[optional.ID] {
+					t.Fatalf("package dependency admission = %v", active)
+				}
+			})
+		}
+	}
+}
 
 // Failure must cascade through declarative-only intermediary packages too.
 func TestPackageDependencyFailureBlocksConsumers(t *testing.T) {

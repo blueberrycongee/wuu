@@ -10,6 +10,72 @@ A plugin declares `requireCompositionService()` in `required_services` and calls
 
 For a fixed task list, independent grading, process isolation and retained results, use [local harness experiments](harness-experiments.md). A fresh composition run alone does not define a benchmark.
 
+## Configuration upgrades
+
+Composition versions 1–3 remain readable. Version 4 makes resource authorization
+an explicit provider boundary and introduces the minimal session host. When an
+older selection includes `kernel`, `wuu.session-state` or `wuu.session-execution`,
+resolution adds `wuu.resource-access` and, unless another `resource.authorization@1`
+provider is bound, `wuu.resource-policy.default`. Introspection marks only these
+additions as `migration:vN-to-v4`; it does not rewrite the source configuration.
+Explicit module exclusions remain excluded, and an empty selection stays empty.
+
+Version 3 keeps its original product catalog: it does not silently acquire the
+new optional sharing providers or reapply version 1/2 execution migrations.
+Version 4 never repairs missing authority. Before changing an old configuration's
+version to 4, explicitly retain the projected modules or choose replacements.
+Missing or disabled policy still fails closed; migration is not a runtime fallback.
+
+## Minimal session host
+
+Composition version 4 ships a `minimal` profile. It starts the same
+`wuu.session-host` bundle used by `headless` and `desktop`: the kernel routing
+adapter, configuration and session-state consumers, local configuration,
+SQLite documents, session-domain semantics, engine dispatch and explicit owner
+resource policy. It does **not** start a loop, model adapter, tools, credentials,
+plugin settings, artifact or trace provider, presentation, or business plugins.
+No model connection, placeholder URL or API key is required.
+
+Add an engine through its public contract. From a source checkout, start with an
+isolated `$WUU_HOME/config.json` containing
+`{"composition":{"version":4,"profile":"minimal"},"skills":{"enabled":false}}`.
+Publish the [one-file echo engine](../../../examples/compositions/minimal/engine.ts)
+using `wuu plugin dev --watch=false /absolute/path/to/engine.ts`. Then add its
+reported module ID to that config:
+
+```json
+{
+  "composition": {
+    "version": 4,
+    "profile": "minimal",
+    "patches": [{
+      "modules": {"YOUR_ENGINE_MODULE_ID": true},
+      "services": [{"service": "engine.wuu", "major": 1, "provider": "YOUR_ENGINE_MODULE_ID"}]
+    }]
+  },
+  "skills": {"enabled": false}
+}
+```
+
+Keep any existing `extensions` settings written during publication. Run
+`wuu app-server --config "$WUU_HOME/config.json" --workdir /your/workspace` and
+use the ordinary [app-server protocol](../automation/app-server.md) to initialize,
+create a thread and send a message. The echo engine requires neither a manifest
+nor a build for this development path. `/wait` holds a turn until interrupted.
+
+The profile alone is a session/state host, not a hidden engine: sending without
+an available selected engine fails. Removing an explicitly bound provider does
+not choose a bundled replacement. Settings, credentials, artifact and model calls
+also fail if their providers are omitted. A plugin with declared settings must
+select its settings provider; missing persisted settings are not ignored.
+Replace state or authorization providers using the same service bindings and
+lifecycle rules as the default product. Stateful replacement still requires a
+compatible checkpoint or a stopped writer and migration.
+
+The [repeatable independent-package acceptance](../../../examples/compositions/minimal/README.md)
+runs these public entry points and records graph, protocol and cleanup evidence.
+It is a deterministic engine fixture, not real inference or desktop acceptance.
+
 ## Try, select, and undo
 
 ```ts

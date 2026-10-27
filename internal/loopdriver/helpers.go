@@ -52,6 +52,16 @@ func checkpointFor(descriptor Descriptor, state any) Checkpoint {
 	}
 }
 
+// CancellationCause keeps an explicit stop reason diagnostic rather than an
+// independent failure. Parent cancellation may already have fired before its
+// propagation reaches the driver's child context; preserve that original cause.
+func CancellationCause(parent context.Context, reason string) error {
+	if cause := context.Cause(parent); cause != nil {
+		return cause
+	}
+	return fmt.Errorf("%s: %w", reason, context.Canceled)
+}
+
 func terminalStatus(ctx context.Context, err error) TerminalStatus {
 	if err == nil {
 		return TerminalSucceeded

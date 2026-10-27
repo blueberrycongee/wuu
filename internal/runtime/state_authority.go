@@ -22,8 +22,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// StateAuthority owns the host's durable head independently of replaceable
-// storage. One instance decorates one generation's selected invoker. Registry
+// StateAuthority admits the selected provider's explicit authority contract.
+// Legacy host-journal mode owns the host's durable head; provider mode owns only
+// a metadata identity pin, never business data or pending intent. One instance
+// decorates one generation's selected invoker. Registry
 // dispatch still owns permissions, provider identity and callback lifetimes.
 // Its fence also protects complete checkpoint traversals, so waiters use their
 // caller's cancellation budget rather than the short ordinary-transaction limit.
@@ -34,6 +36,9 @@ type StateAuthority struct {
 	provider                            pluginhost.ServiceInvoker
 	exportCapabilityErr                 error
 	checkpointCapability                bool
+	authorityCapability                 bool
+	authorityCapabilityErr              error
+	authorityContract                   *persistence.Authority
 	documents                           persistence.Documents
 	prepared, admitted, closing, closed bool
 	preparedCheckpoint                  persistence.Checkpoint
@@ -106,6 +111,12 @@ func (a *StateAuthority) Wrap(provider pluginhost.ServiceInvoker) pluginhost.Ser
 				continue
 			}
 			for _, method := range service.Methods {
+				if method.Name == "authority" {
+					a.authorityCapability = true
+					if method.InputSchema != persistence.AuthorityInputSchema || method.OutputSchema != persistence.AuthorityOutputSchema || !method.Preparation {
+						a.authorityCapabilityErr = fmt.Errorf("%w: authority requires preparation-safe v1 schemas", persistence.ErrInvalid)
+					}
+				}
 				if method.Name == "checkpoint" && method.InputSchema == persistence.CheckpointInputSchema && method.OutputSchema == persistence.CheckpointOutputSchema && method.Preparation {
 					a.checkpointCapability = true
 				}
@@ -181,6 +192,7 @@ func (a *StateAuthority) Close(ctx context.Context) error {
 	a.closing = true
 	cancel, done := a.cancel, a.done
 	if cancel == nil {
+		a.admitted = false
 		a.closed = true
 		a.mu.Unlock()
 		return nil
@@ -200,16 +212,26 @@ func (a *StateAuthority) rawClient(params pluginhost.ServiceInvokeParams) *persi
 		invoke := params
 		invoke.Method = method
 		invoke.Params = raw
-		// Only host coordination may reuse a held lock. It is never inherited by a
-		// provider callback, which could otherwise bypass serialization recursively.
-		ctx = context.WithValue(ctx, authorityLockKey{}, nil)
-		ctx = context.WithValue(ctx, authorityPreflightKey{}, nil)
-		ctx = context.WithValue(ctx, authorityActivationKey{}, nil)
-		ctx = context.WithValue(ctx, authorityRawKey{}, a.dir)
-		return a.provider.InvokeService(ctx, invoke)
+		return a.invokeSelectedProvider(ctx, invoke)
 	})
 }
+func (a *StateAuthority) invokeSelectedProvider(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	// Only host coordination may reuse a held lock. Never pass it into provider
+	// callbacks, which could otherwise bypass serialization recursively.
+	ctx = context.WithValue(ctx, authorityLockKey{}, nil)
+	ctx = context.WithValue(ctx, authorityPreflightKey{}, nil)
+	ctx = context.WithValue(ctx, authorityActivationKey{}, nil)
+	ctx = context.WithValue(ctx, authorityRawKey{}, a.dir)
+	return a.provider.InvokeService(ctx, params)
+}
+
 func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	a.mu.Lock()
+	closed := a.closed
+	a.mu.Unlock()
+	if closed {
+		return nil, persistence.ErrClosed
+	}
 	if ctx.Value(authorityRawKey{}) == a.dir {
 		return nil, errors.New("state provider recursively called its own authority")
 	}
@@ -227,6 +249,18 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 			return nil, err
 		}
 		return json.Marshal(persistence.View{Revision: revision, Documents: []persistence.Document{}})
+	}
+	if _, err := a.selectAuthority(ctx, client); err != nil {
+		return nil, err
+	}
+	if params.Method == "authority" {
+		if err := decodeAuthorityRequest(params.Params, new(struct{})); err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		contract := *a.authorityContract
+		a.mu.Unlock()
+		return json.Marshal(contract)
 	}
 	if params.Method == "export" {
 		if _, err := persistence.DecodeExportRequest(params.Params); err != nil {
@@ -256,6 +290,9 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 			return a.readPrepared(ctx, client, params)
 		}
 		return nil, fmt.Errorf("%w: selected state provider has not been admitted", persistence.ErrMigrationRequired)
+	}
+	if a.providerOwned() {
+		return a.invokeProviderAuthority(ctx, params)
 	}
 	if locked != nil && locked.dir == a.dir {
 		return a.dispatch(ctx, client, locked, params)
@@ -299,6 +336,12 @@ func (a *StateAuthority) admitActiveCall(ctx context.Context, client *persistenc
 func (a *StateAuthority) readPrepared(ctx context.Context, client *persistence.Client, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	a.preflightMu.Lock()
 	defer a.preflightMu.Unlock()
+	if a.providerOwned() {
+		if _, err := a.prepareProviderAuthority(ctx, client); err != nil {
+			return nil, err
+		}
+		return a.invokeSelectedProvider(ctx, params)
+	}
 	var query *persistence.ExportQuery
 	if params.Method == "export" {
 		var err error
@@ -359,6 +402,9 @@ func decodeAuthorityRequest(raw json.RawMessage, target any) error {
 }
 
 func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Client, locked *authorityLocked, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if err := a.requireHostJournalBinding(); err != nil {
+		return nil, err
+	}
 	if err := a.recoverPending(ctx, client, locked.record); err != nil {
 		return nil, err
 	}
@@ -568,6 +614,10 @@ func (a *StateAuthority) writeRecord(record *authorityRecord) error {
 	} else if err != nil {
 		return err
 	}
+	return a.syncDirectory()
+}
+
+func (a *StateAuthority) syncDirectory() error {
 	for _, dir := range []string{a.dir, filepath.Dir(a.dir)} {
 		file, err := os.Open(dir)
 		if err != nil {
@@ -575,7 +625,7 @@ func (a *StateAuthority) writeRecord(record *authorityRecord) error {
 		}
 		err = errors.Join(file.Sync(), file.Close())
 		if err != nil {
-			return fmt.Errorf("authority head published; directory durability failed: %w", err)
+			return fmt.Errorf("authority metadata published; directory durability failed: %w", err)
 		}
 	}
 	return nil
@@ -603,6 +653,15 @@ func (a *StateAuthority) markPrepared(checkpoint persistence.Checkpoint, epoch s
 	a.mu.Unlock()
 }
 func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client) (persistence.Revision, error) {
+	if _, err := a.selectAuthority(ctx, client); err != nil {
+		return 0, err
+	}
+	if a.providerOwned() {
+		return a.prepareProviderAuthority(ctx, client)
+	}
+	if err := a.requireHostJournalBinding(); err != nil {
+		return 0, err
+	}
 	if a.exportCapabilityErr != nil {
 		return 0, a.exportCapabilityErr
 	}
@@ -666,11 +725,23 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 	return checkpoint.Revision, nil
 }
 func (a *StateAuthority) activate(ctx context.Context, client *persistence.Client) (persistence.Revision, error) {
+	if _, err := a.selectAuthority(ctx, client); err != nil {
+		return 0, err
+	}
+	if a.providerOwned() {
+		return a.activateProviderAuthority(ctx, client)
+	}
+	if err := a.requireHostJournalBinding(); err != nil {
+		return 0, err
+	}
 	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return 0, err
 	}
 	defer lock.Release()
+	if err := a.requireHostJournalBinding(); err != nil {
+		return 0, err
+	}
 	record, err := a.readRecord()
 	if err != nil {
 		return 0, err

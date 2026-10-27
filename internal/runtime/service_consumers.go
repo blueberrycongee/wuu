@@ -53,11 +53,11 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		requirements: []pluginhost.ServiceRequirement{{Name: pluginprotocol.AgentPolicyService, MajorVersion: 1, Required: true}, {Name: titleservice.ServiceName, MajorVersion: 1}, {Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
 	state := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
-		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
-		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
+		{Name: credentialstore.ServiceName, MajorVersion: 1},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1},
 		{Name: config.ServiceName, MajorVersion: 1, Required: true},
-		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
-		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1},
+		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor},
 	}}
 	return []pluginhost.Client{tool, loop, state, &runtimeServiceConsumer{id: modelExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: selectedModelService, MajorVersion: 1, Required: true}, {Name: capacityPolicyService, MajorVersion: 1, Required: true}, {Name: capacityResourceService, MajorVersion: 1, Required: true}}}, &runtimeServiceConsumer{id: engineExecutionConsumer, state: pluginhost.StatePrepared}}
 }
@@ -87,4 +87,15 @@ func (c *runtimeServiceConsumer) Close(ctx context.Context) error {
 	defer c.mu.Unlock()
 	c.state = pluginhost.StateStopped
 	return err
+}
+
+// Selection is independent of activation success. Failed selected consumers
+// must still attempt their normal admission and report the missing dependency.
+func selectsRuntimeModule(host *pluginhost.Host, id string) bool {
+	for _, status := range host.Statuses() {
+		if status.ID == id {
+			return true
+		}
+	}
+	return false
 }

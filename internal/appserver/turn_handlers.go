@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"mime"
-	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -19,6 +18,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -115,6 +115,9 @@ type turnAdmissionHooks struct {
 	// take th.mu and perform admission-only side effects without racing another
 	// model turn.
 	afterLease func(*threadState, *providers.ChatMessage) error
+	// authorizeEffect runs without th.mu after refresh/hooks, with resolved execution
+	// effects. The execution lease remains held through this admission fence.
+	authorizeEffect func(provider, model, permission, engine string) error
 	// beforeUserAppendLocked may rewrite history while th.mu and the durable
 	// lease are held. Its commit callback runs only after the synthetic/user
 	// message has been durably appended.
@@ -221,11 +224,19 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	th.mu.Lock()
 	disabledProject := projectExecutionDisabled(th.Source)
+	effects := executionEffects(th.ModelProvider, th.Model, permissions.Mode, string(agentengine.NormalizeEngineID(th.EngineID)))
 	th.mu.Unlock()
+	ctx, err = s.requireRequestAccess(req, MethodTurnStart, effects)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if disabledProject {
 		return s.writeResponse(req.ID, nil, errProjectAgentDisabled)
 	}
 	if isManualCompactPrompt(params.Prompt) {
+		if !s.Principal(ctx).IsOwner() {
+			return s.writeResponse(req.ID, nil, &access.Denied{Action: MethodTurnStart, Reason: "delegated-compact-unsupported"})
+		}
 		th.mu.Lock()
 		engineID := agentengine.NormalizeEngineID(th.EngineID)
 		th.mu.Unlock()
@@ -255,6 +266,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	userMsg.ClientID = strings.TrimSpace(params.ClientID)
+	if _, err := s.requireRequestAccess(req, MethodTurnStart, nil); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if !resuming {
 		if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -276,7 +290,13 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		snapshot,
 		true,
 		turnReadOnlyIgnore,
-		turnAdmissionHooks{timing: req.timing, afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+		turnAdmissionHooks{timing: req.timing, authorizeEffect: func(provider, model, permission, engine string) error {
+			_, err := s.requireRequestAccess(req, MethodTurnStart, executionEffects(provider, model, permission, engine))
+			return err
+		}, afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+			if _, err := s.requireRequestAccess(req, MethodTurnStart, nil); err != nil {
+				return err
+			}
 			var err error
 			threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
 			if err != nil {
@@ -2049,12 +2069,9 @@ func validFileSelectionPart(part providers.MessageContentPart) bool {
 		}
 		// A URI is provenance, never permission to read a different resource.
 		if pdf.ArtifactURI != "" || pdf.ArtifactSHA256 != "" || pdf.ArtifactThreadID != "" {
-			uri, err := url.Parse(pdf.ArtifactURI)
-			if err != nil || uri.Scheme != "wuu-artifact" || len(pdf.ArtifactSHA256) != 64 || pdf.ArtifactThreadID == "" {
-				return false
-			}
-			segments := strings.Split(strings.TrimPrefix(uri.Path, "/"), "/")
-			if len(segments) != 3 || segments[0] != pdf.ArtifactThreadID || uri.Query().Get("sha256") != pdf.ArtifactSHA256 || source.Revision != "sha256:"+pdf.ArtifactSHA256 {
+			// Provenance carries an opaque provider reference, not a read grant.
+			// Actual reads match persisted metadata through the selected service.
+			if pdf.ArtifactURI == "" || strings.ContainsAny(pdf.ArtifactURI, "\x00\r\n") || len(pdf.ArtifactSHA256) != 64 || pdf.ArtifactThreadID == "" || source.Revision != "sha256:"+pdf.ArtifactSHA256 {
 				return false
 			}
 			if _, err := hex.DecodeString(pdf.ArtifactSHA256); err != nil {
@@ -2143,7 +2160,15 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
-	err := s.interruptThreadForUser(threadID, req.timing.forThread(threadID))
+	binding, runID, err := s.retainUserThreadExecutionState(threadID, false)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer binding.Close()
+	if _, err := s.requireRequestAccess(req, MethodTurnInterrupt, nil); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	err = s.interruptThreadForUserState(binding, threadID, runID, "", req.timing.forThread(threadID))
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
@@ -3905,6 +3930,19 @@ func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime
 	if err != nil {
 		return "", err
 	}
+	// Omitted optional indexing has no write to confirm. Use captured graph
+	// edges, which survive retirement, so a lost selected index still reports
+	// its failure rather than being mistaken for an intentionally absent one.
+	selected := false
+	for _, dependency := range services.Snapshot.PluginHost.Dependencies()[runtime.StateServicesConsumer] {
+		if dependency.Service == pluginhost.KernelDataQueryService && dependency.Major == pluginhost.DataQueryServiceMajor {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return "", nil
+	}
 	providerName := strings.TrimSpace(turnRuntime.ProviderName)
 	permissions := turnRuntime.permissions()
 	model := ""
@@ -4698,6 +4736,21 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 		return startedThreadTurn{}, false, err
+	}
+	if hooks.authorizeEffect != nil {
+		provider, model, engine, savedMode := th.ModelProvider, th.Model, th.EngineID, th.PermissionMode
+		th.mu.Unlock()
+		err := hooks.authorizeEffect(provider, model, permissions.Mode, string(agentengine.NormalizeEngineID(engine)))
+		th.mu.Lock()
+		if err == nil && (th.ModelProvider != provider || th.Model != model || th.EngineID != engine || th.PermissionMode != savedMode) {
+			err = errors.New("execution effects changed during authorization")
+		}
+		if err != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, err
+		}
 	}
 	var commitAfterAppend func() error
 	if hooks.beforeUserAppendLocked != nil {
@@ -6163,10 +6216,11 @@ func (s *Server) engineDescriptorForState(ctx context.Context, binding *runtime.
 	}
 	if registry.IsResolved() {
 		var descriptor struct {
-			ID           agentengine.EngineID `json:"id"`
-			Version      string               `json:"version"`
-			Capabilities []string             `json:"capabilities"`
-			Enabled      bool                 `json:"enabled"`
+			ID                agentengine.EngineID `json:"id"`
+			Version           string               `json:"version"`
+			Capabilities      []string             `json:"capabilities"`
+			RequiresHostModel *bool                `json:"requires_host_model,omitempty"`
+			Enabled           bool                 `json:"enabled"`
 		}
 		if err := binding.CallEngine(ctx, id, "descriptor", struct{}{}, &descriptor); err != nil {
 			return agentengine.Descriptor{}, err
@@ -6174,7 +6228,7 @@ func (s *Server) engineDescriptorForState(ctx context.Context, binding *runtime.
 		if descriptor.ID != id || !descriptor.Enabled {
 			return agentengine.Descriptor{}, agentengine.ErrUnknownEngine
 		}
-		return agentengine.Descriptor{ID: id, Version: descriptor.Version, Capabilities: descriptor.Capabilities}, nil
+		return agentengine.Descriptor{ID: id, Version: descriptor.Version, Capabilities: descriptor.Capabilities, RequiresHostModel: descriptor.RequiresHostModel}, nil
 	}
 	// Explicit embedded registries are supported without silently substituting
 	// them when a production graph selection is missing or unavailable.

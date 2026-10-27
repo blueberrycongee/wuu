@@ -5,15 +5,16 @@ import type { Thread, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
 
 vi.mock("./plugins/DesktopPluginRuntime", () => ({ desktopWorkbenchController: {} }));
+vi.mock("./ArtifactsContext", () => ({useArtifacts: () => ({acquireSource: async (resource: {uri:string}) => ({url: "wuu-artifact://lease/test",leaseId:"test"}),releaseSource: () => {}})}));
 
 const file: ToolResultContentPart = {
   type: "file", name: "report.html", mime_type: "text/html",
   uri: "wuu-artifact://workspace/thread/output/report.html",
-  artifact: { placement: "turn_end", sha256: "snapshot", size_bytes: 120 },
+  artifact: { ref: "opaque-object", placement: "turn_end", sha256: "a".repeat(64), size_bytes: 120 },
 };
 
 function thread(status: Turn["status"], parts = [file]): Thread {
-  return { id: "thread", cwd: "workspace", turns: [{ id: "turn", status, items: [{
+  return { id: "thread", session_locator:{version:1,execution_host:"source-host",session_id:"thread"}, cwd: "workspace", turns: [{ id: "turn", status, items: [{
     id: "deliver", type: "tool_call", status: "completed", result_detail: { content: parts },
   }] }] } as Thread;
 }
@@ -50,7 +51,7 @@ it("opens a ready delivery once on live completion and does not replay updates o
   await render();
   expect(fetchMock).not.toHaveBeenCalled();
   await render({ thread: thread("completed") });
-  expect(options.onOpen).toHaveBeenCalledWith(expect.objectContaining({ threadID: "thread", cwd: "workspace", artifact: expect.objectContaining({ uri: file.uri }) }));
+  expect(options.onOpen).toHaveBeenCalledWith(expect.objectContaining({ threadID: "thread", cwd: "workspace", artifact: expect.objectContaining({ uri: file.uri, locator:options.thread!.session_locator }) }));
   await render({ panelOpen: true, activeTabID: "preview" });
   await render({ panelOpen: false });
   await render({ thread: thread("completed") });
@@ -73,8 +74,8 @@ it.each(["failed", "interrupted"] as const)("retains deliveries without auto-ope
 
 it.each([
   ["a reference", [{ ...file, artifact: undefined }]],
-  ["an external resource", [{ ...file, uri: "https://example.com/report.html" }]],
-  ["a workspace file", [{ ...file, uri: "report.html" }]],
+  ["an unmanaged external resource", [{ ...file, uri: "https://example.com/report.html", artifact: { ...file.artifact, ref: undefined } }]],
+  ["a workspace file", [{ ...file, uri: "report.html", artifact: undefined }]],
   ["multiple files", [file, { ...file, name: "other.html" }]],
   ["an unsupported format", [{ ...file, mime_type: "application/zip" }]],
   ["an oversized file", [{ ...file, artifact: { ...file.artifact, size_bytes: 30 * 1024 * 1024 } }]],

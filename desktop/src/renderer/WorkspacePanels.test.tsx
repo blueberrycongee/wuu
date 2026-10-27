@@ -11,7 +11,7 @@ import {
   WorkspaceRightPanel as PublicWorkspaceRightPanel,
   type WorkspacePanelView,
 } from "./WorkspacePanels";
-import type { RuntimeContext } from "../shared/protocol";
+import type { ArtifactSourceParams, RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
   workspaceArtifactViewTab,
@@ -450,6 +450,9 @@ describe("WorkspaceRightPanel", () => {
   });
 
   it("pauses a retained artifact video when the panel closes without resuming on reopen", async () => {
+    const acquire = vi.fn(async ({requestId}: ArtifactSourceParams) => ({url: `wuu-artifact://lease/${requestId}`, leaseId: requestId!}));
+    const release = vi.fn(async () => {});
+    Object.assign(window.wuu, {acquireArtifactSource: acquire, releaseArtifactSource: release});
     const fileTab = workspaceFileViewTab({
       context: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
       path: "src/App.tsx",
@@ -459,7 +462,8 @@ describe("WorkspaceRightPanel", () => {
       artifact: {
         id: "video", itemId: "delivery", index: 0, type: "file",
         name: "clip.webm", mimeType: "video/webm", placement: "turn_end",
-        uri: "wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=hash",
+        uri: `wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=${"a".repeat(64)}`,
+        sha256: "a".repeat(64),
       },
     });
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
@@ -470,6 +474,8 @@ describe("WorkspaceRightPanel", () => {
       await act(async () => Promise.resolve());
       const video = container!.querySelector("video")!;
       expect(video).not.toBeNull();
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(video.getAttribute("src")).toBe(`wuu-artifact://lease/${acquire.mock.calls[0][0].requestId}`);
       expect(pause).not.toHaveBeenCalled();
       await act(async () => video.play());
       play.mockClear();
@@ -482,6 +488,10 @@ describe("WorkspaceRightPanel", () => {
       await act(async () => root!.render(<WorkspaceRightPanel {...props} />));
       expect(container!.querySelector("video")).toBe(video);
       expect(play).not.toHaveBeenCalled();
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      unmount();
+      expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0].requestId);
     } finally {
       pause.mockRestore();
       play.mockRestore();

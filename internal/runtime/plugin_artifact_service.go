@@ -479,6 +479,23 @@ type ArtifactReadResult struct {
 	Data     []byte `json:"data"`
 	MIMEType string `json:"mime_type"`
 }
+
+// Range reads are bounded independently of total artifact size. Providers must
+// serve the exact immutable digest, not return an entire payload as a fallback.
+const MaxArtifactRangeBytes int64 = 1024 * 1024
+
+type ArtifactRangeRequest struct {
+	ArtifactReadRequest
+	Offset int64  `json:"offset"`
+	SHA256 string `json:"sha256"`
+}
+type ArtifactRangeResult struct {
+	ArtifactReadResult
+	Offset int64  `json:"offset"`
+	Total  int64  `json:"total"`
+	SHA256 string `json:"sha256"`
+}
+
 type ArtifactForkRequest struct {
 	SourceThreadID string `json:"source_thread_id"`
 	TargetThreadID string `json:"target_thread_id"`
@@ -513,10 +530,10 @@ func (s *artifactService) Status() pluginhost.Status {
 func (*artifactService) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*artifactService) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
-	for _, method := range []string{"import", "resolve", "read", "fork", "delete-thread"} {
+	for _, method := range []string{"import", "resolve", "read", "read-range", "fork", "delete-thread"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ArtifactServiceName + "." + method + ".input.v1", OutputSchema: ArtifactServiceName + "." + method + ".output.v1"})
 	}
-	return []pluginhost.ServiceDescriptor{{Name: ArtifactServiceName, Version: "1.1.0", Methods: methods}}
+	return []pluginhost.ServiceDescriptor{{Name: ArtifactServiceName, Version: "1.2.0", Methods: methods}}
 }
 func (s *artifactService) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -609,6 +626,12 @@ func (s *artifactService) InvokeService(ctx context.Context, params pluginhost.S
 		var read ArtifactReadResult
 		read.Data, read.MIMEType, err = ReadManagedArtifact(s.home, s.stateDir, request.ThreadID, request.URI, request.MaxBytes)
 		result = read
+	case "read-range":
+		var request ArtifactRangeRequest
+		if err := decodeServiceParams(params.Params, &request); err != nil {
+			return nil, err
+		}
+		result, err = s.readRange(ctx, request)
 	case "fork":
 		var request ArtifactForkRequest
 		if err := decodeServiceParams(params.Params, &request); err != nil {
@@ -801,6 +824,26 @@ func (c *ArtifactClient) Read(ctx context.Context, threadID, uri string, maxByte
 	err := c.invoke(ctx, "read", ArtifactReadRequest{ArtifactResolveRequest: ArtifactResolveRequest{ThreadID: threadID, URI: uri}, MaxBytes: maxBytes}, &result)
 	return result.Data, result.MIMEType, err
 }
+func (c *ArtifactClient) ReadRange(ctx context.Context, input ArtifactRangeRequest) (ArtifactRangeResult, error) {
+	var result ArtifactRangeResult
+	if !validArtifactRange(input) {
+		return result, serviceError("invalid_params", "artifact range is invalid")
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := c.invoke(ctx, "read-range", input, &result); err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ArtifactRangeResult{}, err
+	}
+	if result.Offset != input.Offset || result.Total < result.Offset || result.SHA256 != input.SHA256 || result.MIMEType == "" || int64(len(result.Data)) != min(input.MaxBytes, result.Total-result.Offset) {
+		return ArtifactRangeResult{}, serviceError("invalid_response", "artifact provider returned a mismatched range")
+	}
+	return result, nil
+}
+
 func (c *ArtifactClient) Fork(ctx context.Context, sourceThreadID, targetThreadID, uri string) (pluginhost.ArtifactImportResult, error) {
 	var result pluginhost.ArtifactImportResult
 	err := c.invoke(ctx, "fork", ArtifactForkRequest{SourceThreadID: sourceThreadID, TargetThreadID: targetThreadID, URI: uri}, &result)
@@ -864,4 +907,65 @@ func (k *kernelHostServices) artifactClient(executionID string) *ArtifactClient 
 		}
 		return result, nil
 	})
+}
+
+func validArtifactRange(input ArtifactRangeRequest) bool {
+	digest, err := hex.DecodeString(input.SHA256)
+	return validArtifactThreadID(input.ThreadID) && input.URI != "" && input.Offset >= 0 && input.MaxBytes > 0 && input.MaxBytes <= MaxArtifactRangeBytes && err == nil && len(digest) == sha256.Size
+}
+
+func (s *artifactService) readRange(ctx context.Context, input ArtifactRangeRequest) (ArtifactRangeResult, error) {
+	if !validArtifactRange(input) {
+		return ArtifactRangeResult{}, serviceError("invalid_params", "artifact range is invalid")
+	}
+	artifact, managed, err := resolveManagedArtifact(s.home, s.stateDir, input.ThreadID, input.URI)
+	if err != nil {
+		return ArtifactRangeResult{}, err
+	}
+	if !managed || artifact.SHA256 != input.SHA256 || input.Offset > artifact.Size {
+		return ArtifactRangeResult{}, serviceError("artifact_invalid", "artifact range does not identify this snapshot")
+	}
+	root, err := os.OpenRoot(s.stateDir)
+	if err != nil {
+		return ArtifactRangeResult{}, err
+	}
+	defer root.Close()
+	file, err := root.Open(filepath.Join("sessions", input.ThreadID, "artifacts", artifact.ID, artifact.Name))
+	if err != nil {
+		return ArtifactRangeResult{}, err
+	}
+	defer file.Close()
+	// Hash and collect the requested span in the same pass. No full-payload cache,
+	// and a mutation between verification and a second read cannot change a range.
+	hash := sha256.New()
+	data := make([]byte, 0, min(input.MaxBytes, artifact.Size-input.Offset))
+	buffer := make([]byte, 64*1024)
+	var offset int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return ArtifactRangeResult{}, err
+		}
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			hash.Write(buffer[:n])
+			start, end := max(offset, input.Offset), min(offset+int64(n), input.Offset+input.MaxBytes)
+			if start < end {
+				data = append(data, buffer[start-offset:end-offset]...)
+			}
+			offset += int64(n)
+			if offset > artifact.Size {
+				return ArtifactRangeResult{}, serviceError("artifact_invalid", "artifact size changed")
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return ArtifactRangeResult{}, readErr
+		}
+	}
+	if offset != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		return ArtifactRangeResult{}, serviceError("artifact_invalid", "artifact contents changed")
+	}
+	return ArtifactRangeResult{ArtifactReadResult: ArtifactReadResult{Data: data, MIMEType: artifact.MIMEType}, Offset: input.Offset, Total: artifact.Size, SHA256: artifact.SHA256}, nil
 }

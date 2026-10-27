@@ -89,7 +89,7 @@ func configureToolkitSecurityExtensions(kit *tools.Toolkit, host *pluginhost.Hos
 		return
 	}
 	registry := host.ServiceRegistry()
-	if registry.HasProvider(pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
+	if registry.HasProviderFor(toolExecutionConsumer, pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
 		kit.SetProcessSandboxProvider(&pluginSandboxProvider{host: host})
 	}
 }

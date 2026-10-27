@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/composition"
@@ -23,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/sessionshare"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
 	"github.com/blueberrycongee/wuu/internal/toolbatch"
@@ -64,7 +66,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	// Bare host embedders create a root resource owner; session generations pass
 	// captured capacity factories and therefore never allocate another owner.
 	factories = withCapacityProviders(factories, nil)
-	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory(), loopPolicyProviderFactory(), nativeModelProviderFactory(), nativeEngineProviderFactory())
+	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory(), loopPolicyProviderFactory(), nativeModelProviderFactory(), nativeEngineProviderFactory(), resourceAccessConsumerFactory(), resourcePolicyProviderFactory(), sessionSharingProviderFactory(), sessionSharingConsumerFactory())
 	factoryIDs := make([]string, 0, len(factories))
 	for _, factory := range factories {
 		factoryIDs = append(factoryIDs, factory.ID)
@@ -315,6 +317,10 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
 	conflicts = append(conflicts, registry.RegisterClients(rendererServices...)...)
 	providerID, hasState := registry.ProviderPluginID(persistence.ServiceName, 1)
+	stateImplementations, err := stateProviderChain(registry)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
+	}
 	importedState := false
 	for _, client := range nativeModules {
 		if client.ID() == providerID {
@@ -336,7 +342,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			if client.ID() == consumer.ID() {
 				return nil, nil, errors.Join(fmt.Errorf("reserved host mechanism identity %q", consumer.ID()), closeStarted())
 			}
-			if client.ID() == providerID {
+			if stateImplementations[client.ID()] {
 				continue
 			}
 			if services, ok := client.(pluginhost.ServiceClient); ok {
@@ -400,6 +406,8 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 
 // Inferred products are rebuilt from the admitted catalog on each generation.
 // They are never written into the user's configuration.
+// Host construction passes dependency-admitted packages, so blocked consumers
+// do not become mandatory merely because discovery found their manifests.
 func productComposition(selection *composition.Config, desktop bool, candidates []pluginpkg.Plugin, factories []NativeProviderFactory) *composition.Config {
 	if selection != nil {
 		return selection
@@ -437,7 +445,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{toolbatch.AdapterModule, modelExecutionConsumer, nativeEnginesModule, engineExecutionConsumer, nativeModelModule, loopdriver.NativePolicyModule, titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{sessionshare.NativeModule, sessionshare.ConsumerModule, access.NativeModule, access.ConsumerModule, toolbatch.AdapterModule, modelExecutionConsumer, nativeEnginesModule, engineExecutionConsumer, nativeModelModule, loopdriver.NativePolicyModule, titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
 	for _, module := range nativeRendererModules() {
 		available = append(available, module.ID)

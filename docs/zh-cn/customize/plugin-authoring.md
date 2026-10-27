@@ -54,6 +54,25 @@
 
 包依赖与运行时服务要求用途不同。包依赖选择已安装的包并确定生命周期顺序；`provided_services` / `required_services` 协商命名 API 和服务主版本，不按包 ID 选择，也不继承包版本。功能需要特定包及其 API 时，应同时声明两者。仅依赖服务的消费者则可接受该服务的任意合格 provider。
 
+## 不替换 provider 也能协作
+
+新增插件可以消费已有服务，并向服务所属插件公开的 UI 插槽贡献内容，
+无需修改该插件或选择替代 provider。例如，[计数器与控制插件](../../../examples/plugins/additive-counter/README.md)
+组合了外部进程状态/操作 API、公开的类型化 helper、可取消订阅和嵌套桌面贡献。
+这只是可复验的一个样本，不限制插件组合服务、hook、capability 和 UI 的方式。
+
+使用 `api.invokeService` 前先声明 `desktop.required_services`；运行时消费者在
+初始化时声明 `required_services`。宿主依据消费者身份和已捕获的 generation
+路由调用。所属插件通过 `registerUISlot` 发布插槽，其他包通过
+`registerUIContribution` 添加内容。使用公开 UI kit 和契约 context，
+不要访问私有 DOM 或 controller。注册和调用取消由 generation 管理；
+视图卸载时也应停止领域订阅。
+
+交互安装缺少必需依赖的新插件时，候选会被拒绝。更新若会破坏已活跃消费者的
+必需依赖，也会在发布前拒绝并保留原有可用图。可选依赖不保证服务可用：应处理
+调用失败，只禁用受影响的功能。包版本约束与服务主版本是独立检查。
+安装附加插件并不隐含替换现有 provider；存在 provider 冲突时，仍需明确选择组合。
+
 ## 声明式贡献
 
 主题、外壳皮肤和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
@@ -443,7 +462,7 @@ capability 不能启动进程。同一 key 和相同参数返回已有记录，�
 
 初始化时返回 `provided_services`，并实现 `invokeService`。描述包含小写点分名称、严格的 `MAJOR.MINOR.PATCH` 版本，以及带 `input_schema`、`output_schema` 标识的方法。这些标识命名契约，不是内嵌 JSON Schema 定义。
 
-消费者声明服务名和主版本，再通过统一入口调用。宿主提供调用者身份并路由到活动 provider，不应直接寻址另一个插件进程或依赖其私有文件。同一初始化结果不能同时提供和消费同名服务。缺少必需服务会阻止消费者激活；同名同主版本的多个 provider 会产生诊断，不会合并实现。
+消费者声明服务名和主版本，再通过统一入口调用。宿主提供调用者身份并路由到活动 provider，不应直接寻址另一个插件进程或依赖其私有文件。适配插件可以同时提供和消费同名服务，通过显式的 consumer 绑定委托给另一个实现；已解析的依赖图拒绝自调用和循环。参见[局部扩展 provider](replaceable-providers.md#局部扩展-provider)。缺少必需服务会阻止消费者激活；同名同主版本的多个 provider 会产生诊断，不会合并实现。
 
 [服务组合示例](../../../examples/plugins/service-composition/README.md)（英文）包含两个可构建的包：无状态的文本分析 provider，以及消费其版本 1 API 的写作报告工具。示例展示两种声明和真实的 gateway 调用。
 

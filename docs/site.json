@@ -65,7 +65,8 @@
           "pages": [
             "zh-cn/automation/scheduled-tasks.md",
             "zh-cn/automation/exec.md",
-            "zh-cn/automation/remote.md"
+            "zh-cn/automation/remote.md",
+            "zh-cn/automation/session-federation.md"
           ]
         },
         {
@@ -92,6 +93,7 @@
             "zh-cn/customize/desktop-plugin-quickstart.md",
             "zh-cn/customize/ui-sdk.md",
             "zh-cn/customize/replaceable-providers.md",
+            "zh-cn/customize/session-sharing.md",
             "zh-cn/customize/desktop-plugins.md",
             "zh-cn/customize/plugin-recipes.md",
             "zh-cn/customize/feishu-workspace.md",
@@ -111,6 +113,7 @@
           "pages": [
             "zh-cn/automation/app-server.md",
             "en/automation/jsonl-events.md",
+            "zh-cn/integrations/resource-access.md",
             "en/integrations/app-server-protocol.md"
           ]
         },
@@ -177,7 +180,8 @@
           "pages": [
             "en/automation/scheduled-tasks.md",
             "en/automation/exec.md",
-            "en/automation/remote.md"
+            "en/automation/remote.md",
+            "en/automation/session-federation.md"
           ]
         },
         {
@@ -204,6 +208,7 @@
             "en/customize/desktop-plugin-quickstart.md",
             "en/customize/ui-sdk.md",
             "en/customize/replaceable-providers.md",
+            "en/customize/session-sharing.md",
             "en/customize/desktop-plugins.md",
             "en/customize/plugin-recipes.md",
             "en/customize/feishu-workspace.md",
@@ -223,6 +228,7 @@
           "pages": [
             "en/automation/app-server.md",
             "en/automation/jsonl-events.md",
+            "en/integrations/resource-access.md",
             "en/integrations/app-server-protocol.md"
           ]
         },

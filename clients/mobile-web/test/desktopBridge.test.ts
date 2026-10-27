@@ -837,3 +837,67 @@ it("forwards explicit continuation without inventing user input", async () => {
     thread_id: "thread", prompt: "", resume_after_turn_id: "turn-interrupted",
   }), expect.any(Number), expect.any(String));
 });
+
+describe('selected artifacts in the shared browser renderer',()=>{
+ it('routes cloud artifacts through the captured authenticated workspace and releases URLs across switches',async()=>{
+  remote.call.mockResolvedValueOnce({current:'/a',current_id:'a',workspaces:[{id:'a',name:'A',path:'/a'},{id:'b',name:'B',path:'/b'}]});
+  const bridge=await connectBridge();
+  const bytes=new TextEncoder().encode('cloud artifact through shared renderer');
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  const artifact={id:'cloud-resource',uri:'s3://selected-bucket/object',name:'result.txt',mime_type:'text/plain',size:bytes.length,sha256:digest};
+  remote.call.mockImplementation(async(method:string,params:Record<string,unknown>)=>{
+   if(method==='thread/artifact/resolve')return {artifact,generation_id:'cloud-provider-generation'};
+   if(method==='thread/artifact/read')return {data:btoa(String.fromCharCode(...bytes)),offset:params.offset,total:bytes.length,mime_type:artifact.mime_type,sha256:digest};
+   return {ok:true};
+  });
+  const {ApplicationArtifacts}=await import('../../../desktop/src/renderer/plugins/ApplicationArtifacts');
+  const service=new ApplicationArtifacts(bridge.api,{resolveResourceURL:()=>undefined,openFile:async()=>{}});
+  const source=await service.acquireSource({id:artifact.id,uri:artifact.uri,threadId:'thread-a',sha256:digest,name:artifact.name,mimeType:artifact.mime_type});
+  expect(service.capabilities.source).toMatchObject({strategy:'bounded-memory',maxBytes:8*1024*1024});
+  expect(await (await fetch(source.url)).text()).toBe('cloud artifact through shared renderer');
+  expect(remote.call).toHaveBeenCalledWith('thread/artifact/read',expect.objectContaining({thread_id:'thread-a',generation_id:'cloud-provider-generation',uri:artifact.uri,sha256:digest}),30_000,'/a');
+  await bridge.api.selectProject('b');
+  await expect(fetch(source.url)).rejects.toThrow();
+  await expect(bridge.api.saveArtifactFile!('result.txt',source.url)).rejects.toThrow(/lease/);
+  service.releaseSource(source.leaseId!);await bridge.disconnect();
+ });
+ it('cancels shared-renderer acquisition before its first range completes',async()=>{
+  const bridge=await connectBridge();const chunk=deferred<unknown>();let requestID='';
+  remote.call.mockImplementation(async(method:string,params:Record<string,unknown>)=>{
+   if(method==='thread/artifact/resolve')return {artifact:{id:'a',uri:'remote-store://object',name:'result',mime_type:'text/plain',size:3,sha256:'a'.repeat(64)},generation_id:'generation'};
+   if(method==='thread/artifact/read'){requestID=String(params.request_id);return chunk.promise;}
+   return {ok:true};
+  });
+  const {ApplicationArtifacts}=await import('../../../desktop/src/renderer/plugins/ApplicationArtifacts');
+  const service=new ApplicationArtifacts(bridge.api,{resolveResourceURL:()=>undefined,openFile:async()=>{}});
+  const abort=new AbortController();const pending=service.acquireSource({id:'a',uri:'remote-store://object',threadId:'t',sha256:'a'.repeat(64),name:'result',mimeType:'text/plain'},{signal:abort.signal});
+  await vi.waitFor(()=>expect(requestID).not.toBe(''));abort.abort();
+  await expect(pending).rejects.toThrow(/released|aborted/);
+  expect(remote.call).toHaveBeenCalledWith('thread/artifact/cancel',{thread_id:'t',request_id:requestID},30_000,'/paired/workspace');
+  chunk.resolve({});await bridge.disconnect();
+ });
+ it('clears a loaded preview when the selected provider changes or the authenticated link detaches',async()=>{
+  const bridge=await connectBridge();const digest='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  remote.call.mockResolvedValue({artifact:{id:'empty',uri:'cloud://empty',name:'empty',mime_type:'text/plain',size:0,sha256:digest},generation_id:'generation'});
+  const first=await bridge.api.acquireArtifactSource!({uri:'cloud://empty',threadId:'t',sha256:digest});
+  remote.options.onNotification?.('plugin/inventory/changed',{},'/paired/workspace');await expect(fetch(first.url)).rejects.toThrow();
+  const second=await bridge.api.acquireArtifactSource!({uri:'cloud://empty',threadId:'t',sha256:digest});
+  remote.options.onDetach?.();await expect(fetch(second.url)).rejects.toThrow();await bridge.disconnect();
+ });
+});
+
+
+it('keeps unmanaged HTTP downloads as explicit anchors without granting provider or foreign Blob access', async () => {
+  const bridge = await connectBridge();
+  const anchor = { href: '', download: '', rel: '', click: vi.fn() };
+  vi.stubGlobal('document', { createElement: () => anchor });
+  const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  try {
+    await bridge.api.saveArtifactFile!('image.png', 'https://example.invalid/user-chosen.png');
+    expect(anchor.href).toBe('https://example.invalid/user-chosen.png');
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(bridge.api.saveArtifactFile!('secret', 's3://selected-provider/private')).rejects.toThrow(/lease/);
+    await expect(bridge.api.saveArtifactFile!('foreign', 'blob:unowned')).rejects.toThrow(/lease/);
+  } finally { fetchSpy.mockRestore(); await bridge.disconnect(); vi.unstubAllGlobals(); }
+});

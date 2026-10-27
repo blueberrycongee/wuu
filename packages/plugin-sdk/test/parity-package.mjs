@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, cp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import {preparePublicSDK} from './public-package.mjs';
 
 const exec = promisify(execFile);
 const authorSDK = fileURLToPath(new URL('../', import.meta.url));
@@ -14,30 +16,7 @@ const output = resolve(process.env.WUU_PARITY_OUTPUT ?? join(repo, 'artifacts/pa
 await mkdir(output, {recursive: true});
 const temporary = await mkdtemp(join(tmpdir(), 'wuu-parity-author-'));
 try {
-  const tsc = join(sdk, 'node_modules/typescript/bin/tsc');
-  let packed;
-  if (process.env.WUU_PARITY_SDK_TARBALL) {
-    packed = 'verified-sdk.tgz';
-    await cp(resolve(process.env.WUU_PARITY_SDK_TARBALL), join(temporary, packed));
-  } else {
-    const stage = join(temporary, 'package');
-    await mkdir(stage);
-    await cp(join(sdk, 'package.json'), join(stage, 'package.json'));
-    await exec(process.execPath, [tsc, '--project', join(sdk, 'tsconfig.json'), '--outDir', join(stage, 'dist')]);
-    packed = JSON.parse((await exec('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], {cwd: stage})).stdout)[0].filename;
-  }
-  const project = join(temporary, 'author');
-  const installed = join(project, 'node_modules/@wuu/plugin-sdk');
-  await mkdir(installed, {recursive: true});
-  await exec('tar', ['-xzf', join(temporary, packed), '--strip-components=1', '-C', installed]);
-  // Reuse declared dependencies offline without mutating their shared install.
-  const manifest = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
-  for (const dependency of Object.keys({...manifest.dependencies, ...manifest.devDependencies})) {
-    const destination = join(project, 'node_modules', dependency);
-    await mkdir(resolve(destination, '..'), {recursive: true});
-    await symlink(join(sdk, 'node_modules', dependency), destination);
-  }
-  await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
+  const {tsc, packed, project, manifest} = await preparePublicSDK({sdk, temporary, tarball: process.env.WUU_PARITY_SDK_TARBALL});
   for (const name of ['tools', 'sessions', 'journal', 'turn-state', 'prompt', 'compaction', 'title']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
   for (const name of ['shell', 'navigation', 'application']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
   await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx', 'application.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
@@ -45,8 +24,8 @@ try {
     env: {...process.env, WUU_PARITY_APPLICATION_ENTRY: join(project, 'application.js'), WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js'), WUU_PARITY_COMPACTION_ENTRY: join(project, 'compaction.js'), WUU_PARITY_TITLE_ENTRY: join(project, 'title.js')},
   });
   await writeFile(join(output, 'public-sdk-check.log'), checked.stdout);
-  const tarball = await readFile(join(temporary, packed));
-  await cp(join(temporary, packed), join(output, 'sdk.tgz'));
+  const tarball = await readFile(packed);
+  await cp(packed, join(output, 'sdk.tgz'));
   await writeFile(join(output, 'public-sdk-check.json'), JSON.stringify({passed: true, sdkRoot: sdk, sdkTarball: process.env.WUU_PARITY_SDK_TARBALL ? resolve(process.env.WUU_PARITY_SDK_TARBALL) : null, packageSHA256: createHash('sha256').update(tarball).digest('hex'), package: manifest.name, version: manifest.version, sourceFiles: ['tools.ts', 'sessions.ts', 'journal.ts', 'turn-state.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx']}, null, 2));
   console.log(checked.stdout);
   console.log('PASS: independent providers compiled against packed public SDK and passed behavior fixtures; no dependency installation.');

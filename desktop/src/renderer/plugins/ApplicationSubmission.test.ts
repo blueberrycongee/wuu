@@ -14,7 +14,7 @@ function deferred<T>() { let resolve!: (value:T) => void; let reject!: (error:Er
   const promise = new Promise<T>((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; }
 const context = {kind:"no_project" as const,cwd:"/fixture"};
 const thread = (id="created"):Thread => ({id,cwd:context.cwd,preview:"",status:"idle",model_provider:"fixture",model:"fixture",created_at:"",updated_at:"",turns:[]});
-function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture", runtimeParams: Partial<ThreadStartParams> = {}) {
+function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture", runtimeParams: Partial<ThreadStartParams> = {}, requiresHostModel = engine === "wuu") {
   let state:AppState={...initialState,activeContext:context,initialized:{provider:"fixture",model:"fixture"} as AppState["initialized"],thread:existing,threads:existing?[existing]:[],activeSessionTabID:existing?`thread:${existing.id}`:"draft:a",
     sessionTabs:existing?[{id:`thread:${existing.id}`,kind:"thread",threadID:existing.id,context,title:"Fixture",prompt:"hello",images:[],files:[]}]:[{id:"draft:a",kind:"draft",context,title:"",createdAt:1,prompt:"hello",images:[],files:[]}]};
   const getDraft=(id:string)=>{const tab=state.sessionTabs.find(tab=>tab.id===id);return tab?cloneSessionTabDraft(tab):emptyComposerDraft();};
@@ -23,7 +23,7 @@ function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture"
   const changed=vi.fn();
   const resources=new ApplicationDraftResources(()=>{});
   const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed,isNavigationPending:()=>false,pending,resources,getDraft,setDraft,
-    getRuntime:()=>({pending:false,params:{engine,model:"",effort:"",permission_mode:"unconfined",...runtimeParams}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
+    getRuntime:()=>({pending:false,requiresHostModel,params:{engine,model:"",effort:"",permission_mode:"unconfined",...runtimeParams}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
   return {submission,pending,changed,resources,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
 }
 
@@ -361,4 +361,13 @@ it.each(["event-first", "ack-first"] as const)("retains the first draft through 
   expect(window.wuu.startThread).toHaveBeenCalledOnce();
   expect(window.wuu.startTurn).toHaveBeenCalledOnce();
   expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+});
+
+// The requirement is captured from the selected implementation, not its ID.
+it.each([["wuu", false, true], ["wuu", true, false], ["external", true, false], ["external", false, true]] as const)("gates fresh %s submission using requiresHostModel=%s", async (engine, requires, accepted) => {
+  window.wuu={startThread:vi.fn().mockResolvedValue({thread:thread()}),startTurn:vi.fn().mockResolvedValue({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+  const f=fixture(undefined,false,engine,{},requires);
+  expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(accepted);
+  if(accepted) await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+  else { expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(f.getDraft("draft:a").prompt).toBe("hello"); }
 });

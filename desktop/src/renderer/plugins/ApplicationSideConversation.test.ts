@@ -31,7 +31,7 @@ function fixture() {
   };
   Object.defineProperty(window, "wuu", { configurable: true, value: api });
   const submitBackground = vi.fn().mockResolvedValue(true), cacheThread = vi.fn(), openPanel = vi.fn(), closePanel = vi.fn();
-  const runtime = { pending: false, params: { engine: "wuu" } };
+  const runtime = { pending: false, requiresHostModel: true, params: { engine: "wuu" } };
   const owner = new ApplicationSideConversation({ getState: () => state, updateState: update => install(typeof update === "function" ? update(state) : update), subscribeState: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, changed: vi.fn(), isNavigationPending: () => false,
     activateThread: async id => install({ ...state, thread: state.threads.find(row => row.id === id) }), openPanel, closePanel, getContextChatRuntime: () => runtime, submitBackground, cacheThread });
   stops.push(owner.start());
@@ -102,4 +102,11 @@ it("keeps response and file selections on the addressed parent", async () => {
   await h.owner.invoke("side.set-selection", { parentThreadId: "other", selection: file });
   file.file.quote = "changed";
   expect(h.owner.getSnapshot().entry?.draftSelection).toMatchObject({ file: { quote: "first" } });
+});
+
+it("allows context chat through a model-free selected wuu engine without host credentials", async () => {
+  const h = fixture(); h.runtime.requiresHostModel = false;
+  h.install({ ...h.get(), initialized: { ...initialized(), providers: [] } });
+  await expect(h.owner.invoke("context-chat.submit", { text: "explain", page, context })).resolves.toMatchObject({ sent: true });
+  expect(h.api.startThread).toHaveBeenCalledOnce();
 });

@@ -19,7 +19,7 @@ import { useI18n } from "./i18n";
 import { imagePreviewSelection } from "./ImagePreviewGallery";
 
 export type ImagePreviewItem =
-  | { src: string; alt?: string; title?: string; svg?: undefined; loadSource?: () => Promise<string> }
+  | { src: string; alt?: string; title?: string; svg?: undefined; loadSource?: (options?: {signal?: AbortSignal}) => Promise<string> }
   | { src?: undefined; alt?: string; title?: string; svg: string };
 
 export type ImagePreviewContextValue = {
@@ -176,7 +176,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
       setLoadStatus("loaded");
     } else if (item.loadSource) {
       setSource(undefined);
-      void item.loadSource().then(src => {
+      void item.loadSource({signal: lifetime.current.signal}).then(src => {
         if (!cancelled) setSource(src);
       }).catch(() => {
         if (!cancelled) setLoadStatus("error");

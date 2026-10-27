@@ -2,6 +2,8 @@ package composition
 
 import (
 	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -353,5 +355,134 @@ func TestLegacyToolBatchAdapterPreservesExplicitReplacement(t *testing.T) {
 		if err != nil || resolved.Includes("wuu.tools.v1-batch") {
 			t.Fatalf("v%d replaced batch adapter: %+v %v", version, resolved, err)
 		}
+	}
+}
+
+// Legacy products acquire the newly explicit admission boundary, but a chosen
+// replacement or exclusion must never be repaired into the native policy.
+func TestLegacyResourcePolicySelection(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		cfg := &Config{Version: version, Modules: &[]string{"kernel"}}
+		got, err := cfg.Resolve()
+		if err != nil || !got.Includes("wuu.resource-access") || !got.Includes("wuu.resource-policy.default") {
+			t.Fatalf("legacy admission boundary: %+v %v", got, err)
+		}
+		if !strings.HasPrefix(got.SourceForModule("wuu.resource-access"), "migration:") {
+			t.Fatal("auth migration lost provenance")
+		}
+		cfg.Modules = &[]string{"kernel", "example.resource-policy"}
+		cfg.Services = []Binding{{Service: "resource.authorization", Major: 1, Provider: "example.resource-policy"}}
+		got, err = cfg.Resolve()
+		if err != nil || got.Includes("wuu.resource-policy.default") || !got.Includes("wuu.resource-access") {
+			t.Fatalf("legacy replacement ignored: %+v %v", got, err)
+		}
+	}
+	cfg := &Config{Version: 2, Profile: "headless", Patches: []Patch{{Modules: map[string]bool{"wuu.resource-policy.default": false, "wuu.resource-access": false}}}}
+	got, err := cfg.Resolve()
+	if err != nil || got.Includes("wuu.resource-access") || got.Includes("wuu.resource-policy.default") {
+		t.Fatalf("explicit exclusion repaired: %+v %v", got, err)
+	}
+}
+
+// Frozen pre-resource-policy headless selection from 00c2811. Do not regenerate it from
+// the current catalog: downstream v3 explicit module lists are the contract.
+func TestFrozenV3CompositionMigratesOnlyResourceAuthority(t *testing.T) {
+	raw, err := os.ReadFile("testdata/v3-headless.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(cfg)
+	got, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make(map[string]bool)
+	for _, id := range *cfg.Modules {
+		want[id] = true
+	}
+	for _, id := range []string{"wuu.resource-access", "wuu.resource-policy.default"} {
+		want[id] = true
+		if got.SourceForModule(id) != "migration:v3-to-v4" {
+			t.Fatalf("resource authority lacks versioned provenance: %+v", got)
+		}
+	}
+	if len(*got.Modules) != len(want) {
+		t.Fatalf("legacy composition acquired unrelated modules: %+v", got)
+	}
+	for _, id := range *got.Modules {
+		if !want[id] {
+			t.Fatalf("unexpected migrated module %s", id)
+		}
+	}
+	again, err := cfg.Resolve()
+	if err != nil || !reflect.DeepEqual(got, again) {
+		t.Fatalf("migration not stable: %+v %v", again, err)
+	}
+	after, _ := json.Marshal(cfg)
+	if string(before) != string(after) {
+		t.Fatal("migration rewrote old configuration")
+	}
+	profile, err := (&Config{Version: 3, Profile: "headless"}).Resolve()
+	if err != nil || !reflect.DeepEqual(*got.Modules, *profile.Modules) {
+		t.Fatalf("frozen v3 catalog changed: %+v %v", profile, err)
+	}
+}
+
+func TestV3ResourceMigrationHonorsExplicitAuthorityChoices(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		cfg              Config
+		consumer, policy bool
+	}{
+		{"v3 extraction is already explicit", Config{Version: 3, Modules: &[]string{"wuu.session-execution"}}, true, true},
+		{"v3 empty recovery", Config{Version: 3, Modules: &[]string{}}, false, false},
+		{"v3 excluded boundary", Config{Version: 3, Modules: &[]string{"kernel"}, Patches: []Patch{{Modules: map[string]bool{"wuu.resource-access": false, "wuu.resource-policy.default": false}}}}, false, false},
+		{"v3 scoped replacement", Config{Version: 3, Modules: &[]string{"kernel", "external.policy"}, Services: []Binding{{Consumer: "wuu.resource-access", Service: "resource.authorization", Major: 1, Provider: "external.policy"}}}, true, false},
+		{"v3 replacement", Config{Version: 3, Modules: &[]string{"kernel", "external.policy"}, Services: []Binding{{Service: "resource.authorization", Major: 1, Provider: "external.policy"}}}, true, false},
+		{"v4 omission stays omitted", Config{Version: 4, Modules: &[]string{"kernel"}}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.cfg.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Includes("wuu.resource-access") != tc.consumer || got.Includes("wuu.resource-policy.default") != tc.policy {
+				t.Fatalf("explicit authority changed: %+v", got)
+			}
+			for _, id := range []string{"wuu.model.native", "wuu.model-execution", "wuu.engines.native", "wuu.agent.policy.default"} {
+				if got.Includes(id) {
+					t.Fatalf("reapplied v1/v2 extraction to v3: %s", id)
+				}
+			}
+		})
+	}
+}
+func TestConsumerScopedBindingsResolveAndRemove(t *testing.T) {
+	modules := []string{"wrapper", "base", "reader"}
+	cfg := &Config{Version: Version, Modules: &modules, Services: []Binding{
+		{Service: "state.documents", Major: 1, Provider: "wrapper"},
+		{Service: "state.documents", Major: 1, Provider: "base", Consumer: "wrapper"},
+	}}
+	got, err := cfg.Resolve()
+	if err != nil || len(got.Services) != 2 {
+		t.Fatalf("resolve: %+v %v", got, err)
+	}
+	cfg.Patches = []Patch{{RemoveServices: []ServiceKey{{Service: "state.documents", Major: 1, Consumer: "wrapper"}}}}
+	got, err = cfg.Resolve()
+	if err != nil || len(got.Services) != 1 || got.Services[0].Consumer != "" {
+		t.Fatalf("scoped removal: %+v %v", got, err)
+	}
+	cfg.Patches = nil
+	cfg.Services[1].Consumer = "excluded"
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("excluded consumer accepted")
+	}
+	cfg.Services[1].Consumer = " wrapper "
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("invalid consumer accepted")
 	}
 }
