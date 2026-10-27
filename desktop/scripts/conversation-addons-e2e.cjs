@@ -13,7 +13,7 @@ const example = path.join(desktop, "../examples/plugins/conversation-metrics/des
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(os.tmpdir(), "wuu-conversation-addons-")));
 process.env.WUU_RESIZE_E2E_CWD = path.dirname(desktop);
-process.env.WUU_RESIZE_E2E_LOCALE = "en";
+process.env.WUU_RESIZE_E2E_LOCALE = "en-US";
 process.env.WUU_RENDERER_E2E_EXTENSION = path.join(__dirname, "conversation-addons-e2e-preload.cjs");
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 const peer = `export function activatePresentation(api) {
@@ -30,9 +30,9 @@ const broken = `export function activatePresentation(api) {
   api.registerUIContribution({ id: 'broken', target: 'wuu.default-conversation/conversation.turn.after',
     render() { throw new Error('Expected conversation addon failure'); } });
 }`;
-const report = { fixture: "production renderer with synthetic backend", checks: [], geometry: [], captures: [], errors: [],
+const report = { fixture: "production renderer with synthetic backend", phase: "startup", checks: [], geometry: [], captures: [], errors: [], console: [],
   exampleSha256: crypto.createHash("sha256").update(fs.readFileSync(example)).digest("hex") };
-let win, watchdog;
+let win, watchdog, failing = false;
 const save = () => fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(report, null, 2));
 const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
 const frames = (count = 2) => evaluate(count => new Promise(resolve => {
@@ -42,6 +42,7 @@ const frames = (count = 2) => evaluate(count => new Promise(resolve => {
 async function until(fn, value) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
+    if (report.errors.length) throw new Error(`Renderer failed during ${report.phase}: ${report.errors.join("\n")}`);
     if (await evaluate(fn, value)) return;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -60,10 +61,30 @@ async function preserved() {
   }), { turns: true, details: true, folds: true, focus: true, composer: true }, "native DOM, disclosures and focus survive inventory changes");
 }
 async function fail(error) {
+  if (failing) return;
+  failing = true;
   clearTimeout(watchdog); report.passed = false; report.failure = String(error.stack || error); save(); console.error(error);
   if (win && !win.isDestroyed()) {
-    try { fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG()); } catch {}
+    // A crashed preload or renderer must leave actionable evidence, not just a
+    // later missing-selector timeout. Bound diagnostics when the process died.
+    const bounded = async promise => {
+      let timeout;
+      try { return await Promise.race([promise, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Failure diagnostics timed out')), 2000);
+      })]); } finally { clearTimeout(timeout); }
+    };
+    try {
+      report.dom = await bounded(evaluate(async () => ({ readyState: document.readyState,
+        bridgeAvailable: Boolean(window.wuu), language: window.wuu?.initialLanguagePreference,
+        bodyText: document.body?.innerText.slice(0, 8000), html: document.body?.innerHTML.slice(0, 16000),
+        threads: [...document.querySelectorAll('.thread-row-main')].map(node => ({ label: node.getAttribute('aria-label'), text: node.textContent })),
+        activations: await window.wuu?.testDesktopActivations?.(),
+      })));
+    } catch (diagnosticError) { report.diagnosticError = String(diagnosticError); }
+    try { fs.writeFileSync(path.join(output, "failure.png"), (await bounded(win.webContents.capturePage())).toPNG()); }
+    catch (captureError) { report.captureError = String(captureError); }
   }
+  save();
   app.exit(1);
 }
 app.whenReady().then(async () => {
@@ -77,15 +98,19 @@ app.whenReady().then(async () => {
   win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: {
     preload: path.join(__dirname, "resize-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
   } });
-  win.webContents.on("console-message", ({ level, message }) => {
+  win.webContents.on("console-message", ({ level, message, lineNumber, sourceId }) => {
+    if (report.console.length < 50) report.console.push({ level, message, lineNumber, sourceId });
     if (level === "error" && !message.includes("Expected conversation addon failure")) report.errors.push(message);
   });
+  win.webContents.on("preload-error", (_event, preload, error) => report.errors.push(`Preload ${preload}: ${error.stack || error}`));
+  win.webContents.on("render-process-gone", (_event, details) => report.errors.push(`Renderer exited: ${JSON.stringify(details)}`));
+  win.webContents.on("did-fail-load", (_event, code, description, url) => report.errors.push(`Load ${url}: ${code} ${description}`));
   await win.loadFile(renderer); win.showInactive();
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
-  await until(() => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Conversation addon acceptance')));
-  await evaluate(() => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Conversation addon acceptance')).click());
+  await until(() => [...document.querySelectorAll('.thread-row-main')].some(button => button.getAttribute('aria-label')?.includes('Conversation addon acceptance')));
+  await evaluate(() => [...document.querySelectorAll('.thread-row-main')].find(button => button.getAttribute('aria-label')?.includes('Conversation addon acceptance')).click());
   await until(() => document.querySelectorAll('.turn').length === 2);
   await check("single and grouped native tool details before addons", async () => {
     await evaluate(() => document.querySelectorAll('.turn-process-toggle').forEach(button => { if (button.getAttribute('aria-expanded') === 'false') button.click(); }));
