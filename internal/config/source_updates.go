@@ -604,5 +604,12 @@ func UpdateExtensionSettingsSource(data []byte, update func(*extensions.Settings
 	if err := cfg.Validate(); err != nil {
 		return nil, extensions.Settings{}, err
 	}
+	// Publish the persisted representation, not temporary maps allocated by
+	// the mutation. Omitted empty policy maps must compare identically when
+	// the committed generation observes its configuration again.
+	settings = extensions.Settings{}
+	if cfg.Extensions != nil {
+		settings = *cfg.Extensions
+	}
 	return append(out, '\n'), settings, nil
 }

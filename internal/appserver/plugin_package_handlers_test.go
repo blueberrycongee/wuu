@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -283,11 +284,17 @@ func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
 	rt.ConfigPath = configPath
-	rt = newConfigRefreshRuntime(t, rt)
+	rt = newReloadBehaviorRuntime(t, rt, &fakeClient{response: providers.ChatResponse{Content: "fresh turn after promotion"}})
 
 	versionOne := writeManagedPluginPackage(t, "update-demo", "1.0.0", "first generation")
 	out := &lockedBuffer{}
+	// Model a CLI-published catalog epoch deterministically; automatic watchers
+	// must not adopt it before the promotion under test.
+	home := rt.WuuHome
+	rt.WuuHome = ""
 	srv := New(rt, out)
+	rt.WuuHome = home
+	t.Cleanup(srv.Close)
 	callPluginPackageRPC(t, srv, "install-v1", MethodPluginPackageInstall, PluginPackageInstallParams{Path: versionOne})
 	installResponse := responseByID(t, parseOutput(t, out.String()), "install-v1")
 	installed := remarshal[PluginPackageInstallResult](t, installResponse["result"])
@@ -329,12 +336,36 @@ func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
 		t.Fatalf("stale approval changed active generation: %+v", state.active)
 	}
 
+	advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
 	callPluginPackageRPC(t, srv, "promote-v2", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{
 		ID: stagedRecord.ID, Fingerprint: staged.Package.Fingerprint, Action: ExtensionPackagePromoteUpdate,
 	})
 	promoteResponse := responseByID(t, parseOutput(t, out.String()), "promote-v2")
 	if promoteResponse["error"] != nil {
 		t.Fatalf("promote v2 response = %+v", promoteResponse)
+	}
+	published := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(published)
+	callPluginPackageRPC(t, srv, "fresh-thread", MethodThreadStart, ThreadStartParams{})
+	threadResponse := responseByID(t, parseOutput(t, out.String()), "fresh-thread")
+	if threadResponse["error"] != nil {
+		t.Fatalf("create thread after promotion: %+v", threadResponse)
+	}
+	threadID := remarshal[ThreadStartResult](t, threadResponse["result"]).Thread.ID
+	callPluginPackageRPC(t, srv, "fresh-turn", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "immediately after promotion"})
+	if response := responseByID(t, parseOutput(t, out.String()), "fresh-turn"); response["error"] != nil {
+		t.Fatalf("fresh turn after successful promotion: %+v", response)
+	}
+	waitForTurnCompletedCountForThread(t, out, threadID, 1)
+	if !rt.IsCurrentPluginGeneration(published) {
+		t.Fatal("fresh turn rebuilt its already published graph")
+	}
+	epoch, err := session.ReadPluginGenerationEpoch(rt.WuuHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.pluginGenerationEpoch.Load(); got != epoch {
+		t.Fatalf("successful promotion left admission on stale epoch %d, committed %d", got, epoch)
 	}
 	promoted := remarshal[ExtensionPackageUpdateResult](t, promoteResponse["result"])
 	promotedRecord := pluginPackageRecord(t, promoted.ExtensionInventory, "update-demo")
