@@ -591,16 +591,23 @@ async function run() {
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.conversation-pane[inert]'));
   await evaluate(() => {
-    const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
+    const host = document.querySelector('[data-workspace-pdf-preview]');
+    const root = host.shadowRoot;
     const describe = node => node ? `${node.nodeName}.${typeof node.className === 'string' ? node.className : ''}` : null;
+    let range;
     window.__pdfFocusTrace = [];
     const record = (event, target) => {
       if (window.__pdfFocusTrace.length >= 150) return;
       const selection = root.getSelection();
+      if (selection?.rangeCount && !selection.isCollapsed) range = selection.getRangeAt(0).cloneRange();
       const menu = document.querySelector('.pdf-selection-action-menu');
+      const composer = host.closest('.workspace-file-layout, .workspace-artifact-document')?.querySelector('.workspace-document-composer');
       window.__pdfFocusTrace.push({ event, target: describe(target), active: describe(document.activeElement),
         selection: selection?.toString(), menu: menu?.className || null,
-        input: Boolean(menu?.querySelector('textarea')), time: Math.round(performance.now()) });
+        input: Boolean(menu?.querySelector('textarea')), time: Math.round(performance.now()),
+        hostConnected: host.isConnected, sameHost: document.querySelector('[data-workspace-pdf-preview]') === host,
+        hostBounds: host.getBoundingClientRect().toJSON(), composerBounds: composer?.getBoundingClientRect().toJSON(),
+        rangeBounds: range?.getBoundingClientRect().toJSON() });
     };
     window.__recordPdfFocus = record;
     for (const type of ['focusin', 'focusout', 'selectionchange']) {
@@ -612,6 +619,7 @@ async function run() {
     new MutationObserver(records => {
       if (records.some(change => [...change.addedNodes, ...change.removedNodes].some(relevant))) record('menu:mutation');
     }).observe(document.querySelector('[data-wuu-layer-host]') || document.body, { childList: true, subtree: true });
+    new ResizeObserver(() => record('host:resize')).observe(host);
     record('trace:start');
   });
   await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-menu__comment-toggle'));
