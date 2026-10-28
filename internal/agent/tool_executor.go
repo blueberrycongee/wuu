@@ -39,6 +39,49 @@ type ToolResultFinalizer interface {
 	FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result
 }
 
+// ToolFinalization keeps post-settlement additions with the specific result.
+// Additions compose with execution metadata; later discovery definitions win.
+type ToolFinalization struct {
+	Result            toolresult.Result
+	DiscoveredTools   []providers.LoadableToolDefinition
+	AdditionalContext string
+}
+
+// ToolOutcomeFinalizer preserves metadata supplied while settling successes or
+// normalized errors. The runtime captures it once before publishing completion.
+type ToolOutcomeFinalizer interface {
+	FinalizeToolOutcome(call providers.ToolCall, result toolresult.Result) ToolFinalization
+}
+
+// FinalizeToolOutcome captures invocation-owned additions after settlement,
+// including additions left by execution errors. Service adapters and the local
+// runtime use the same ordering; a shared last-context slot is never attributed.
+func FinalizeToolOutcome(executor ToolExecutor, call providers.ToolCall, result toolresult.Result) ToolFinalization {
+	settled := ToolFinalization{Result: result}
+	if finalizer, ok := executor.(ToolOutcomeFinalizer); ok {
+		settled = finalizer.FinalizeToolOutcome(call, result)
+	} else if finalizer, ok := executor.(ToolResultFinalizer); ok {
+		settled.Result = finalizer.FinalizeToolResult(call, result)
+	}
+	var discovered []providers.LoadableToolDefinition
+	if provider, ok := executor.(ToolDiscoveryProvider); ok {
+		discovered = provider.DiscoveredTools(call)
+	}
+	var additional string
+	if provider, ok := executor.(ToolCallContextProvider); ok {
+		additional = provider.TakeAdditionalContext(call)
+	}
+	if settled.AdditionalContext != "" {
+		if additional != "" {
+			additional += "\n\n"
+		}
+		additional += settled.AdditionalContext
+	}
+	settled.DiscoveredTools = providers.MergeLoadableToolDefinitions(discovered, settled.DiscoveredTools)
+	settled.AdditionalContext = additional
+	return settled
+}
+
 // ToolSupportProvider lets an executor report whether a tool belongs to the
 // current model surface, even when its schema is deferred and must be loaded
 // through discovery before execution.
@@ -81,8 +124,10 @@ type ToolDisplayProvider interface {
 
 // ToolContextProvider is an optional interface a ToolExecutor can
 // implement to return additional context alongside tool results.
-// Hook systems use this to expose request-only context after
-// PostToolUse hooks run.
+// This legacy shared slot is supported only by non-streaming direct serial
+// leaf-tool consumers. Hook decorators, service adapters and selected batches require
+// ToolCallContextProvider instead; they cannot safely attribute a last-result
+// value to an invocation.
 type ToolContextProvider interface {
 	// LastAdditionalContext returns the additional context string
 	// from the most recent Execute call, if any. Callers should check

@@ -542,6 +542,137 @@ type finalizingRuntimeTools struct {
 	err error
 }
 
+type parallelLegacyContextTools struct {
+	*delayedConcurrentTools
+	contextMu sync.Mutex
+	reads     int
+}
+
+func (e *parallelLegacyContextTools) LastAdditionalContext() string {
+	e.contextMu.Lock()
+	defer e.contextMu.Unlock()
+	e.reads++
+	return "unattributed shared context"
+}
+
+func TestTurnToolRuntimeDoesNotReadSharedLegacyContextConcurrently(t *testing.T) {
+	executor := &parallelLegacyContextTools{delayedConcurrentTools: newDelayedConcurrentTools()}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor})
+	defer runtime.Close()
+	_, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{
+		{ID: "call_1", Name: "read_file", Arguments: "{}"},
+		{ID: "call_2", Name: "read_file", Arguments: "{}"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executor.reads != 0 || len(runtime.TakeRequestContextSegments()) != 0 {
+		t.Fatal("parallel results acquired context from an unattributed last-result slot")
+	}
+}
+
+type serialLegacyContextTools struct {
+	runtimeTestTools
+	last  string
+	reads int
+}
+
+func (e *serialLegacyContextTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	result, err := e.runtimeTestTools.Execute(ctx, call)
+	if call.Name == "orchestrate" {
+		scope, ok := toolctx.Nested(ctx)
+		if !ok {
+			return "", errors.New("missing nested execution scope")
+		}
+		child, err := scope.Invoke(ctx, providers.ToolCall{ID: "child", Name: "read_file", Arguments: `{}`})
+		return child.TextProjection(), err
+	}
+	e.mu.Lock()
+	e.last = "legacy-context[" + call.ID + "]"
+	e.mu.Unlock()
+	return result, err
+}
+
+func (e *serialLegacyContextTools) LastAdditionalContext() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.reads++
+	value := e.last
+	e.last = ""
+	return value
+}
+
+func TestTurnToolRuntimeLegacyContextRequiresNonStreamingSerialExecution(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		streaming bool
+		orphan    bool
+	}{
+		{name: "direct-serial"},
+		{name: "streamed-serial", streaming: true},
+		{name: "streamed-singleton-after-orphan", streaming: true, orphan: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			executor := &serialLegacyContextTools{runtimeTestTools: runtimeTestTools{
+				metadata: map[string]ToolMetadata{"read_file": {ReadOnly: true, ConcurrencySafe: true}},
+			}}
+			runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Serial: !scenario.orphan})
+			defer runtime.Close()
+			calls := []providers.ToolCall{{ID: "A", Name: "read_file", Arguments: `{}`}, {ID: "B", Name: "read_file", Arguments: `{}`}}
+			if scenario.streaming {
+				for _, call := range calls {
+					if err := runtime.ObserveStreamEvent(context.Background(), providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call}); err != nil {
+						t.Fatal(err)
+					}
+					// The model may stay open after every streamed effect settles.
+					// Complete A then B before reconciling, without timing assumptions.
+					runtime.workers.Wait()
+				}
+			}
+			if scenario.orphan {
+				calls = calls[:1]
+			}
+			messages, err := runtime.ExecuteFinalCalls(context.Background(), calls, nil)
+			if err != nil || len(messages) != len(calls) {
+				t.Fatalf("tool outcomes changed: messages=%+v err=%v", messages, err)
+			}
+			segments := runtime.TakeRequestContextSegments()
+			if scenario.streaming {
+				if executor.reads != 0 || len(segments) != 0 {
+					t.Fatalf("streamed calls acquired an unattributed last-result slot: reads=%d segments=%+v", executor.reads, segments)
+				}
+				return
+			}
+			if executor.reads != len(calls) || len(segments) != len(calls) {
+				t.Fatalf("direct serial legacy context lost: reads=%d segments=%+v", executor.reads, segments)
+			}
+			for i, call := range calls {
+				if len(segments[i].Messages) != 1 || !strings.Contains(segments[i].Messages[0].Content, "legacy-context["+call.ID+"]") {
+					t.Fatalf("direct serial call %s acquired wrong context: %+v", call.ID, segments[i])
+				}
+			}
+		})
+	}
+}
+
+func TestTurnToolRuntimeDoesNotAssignNestedLegacyContextToParent(t *testing.T) {
+	executor := &serialLegacyContextTools{runtimeTestTools: runtimeTestTools{
+		metadata: map[string]ToolMetadata{
+			"orchestrate": {Orchestrator: true, ConcurrencySafe: true},
+			"read_file":   {ReadOnly: true, ConcurrencySafe: true},
+		},
+	}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Serial: true})
+	defer runtime.Close()
+	messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || len(executor.recordedCalls()) != 2 {
+		t.Fatalf("nested execution changed: messages=%+v calls=%+v err=%v", messages, executor.recordedCalls(), err)
+	}
+	if segments := runtime.TakeRequestContextSegments(); executor.reads != 0 || len(segments) != 0 {
+		t.Fatalf("parent acquired its child's legacy slot: reads=%d segments=%+v", executor.reads, segments)
+	}
+}
+
 func (f *finalizingRuntimeTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
 	text, _ := f.runtimeTestTools.Execute(ctx, call)
 	return text, f.err

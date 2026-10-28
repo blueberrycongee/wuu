@@ -529,6 +529,9 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
 	runtime.SetResultCallback(onResult)
 	messages, err := runtime.ExecuteFinalCalls(ctx, batch.Calls, nil, g.runner.OnToolBatchRejected)
+	// Admitted children can finalize after their parent result is available.
+	// Drain the owned batch before projecting its request-only metadata.
+	runtime.Close()
 	g.postToolContext = append(g.postToolContext, runtime.TakeRequestContextSegments()...)
 	g.appendMessages(messages...)
 	g.contextTokens += estimateMessages(messages)

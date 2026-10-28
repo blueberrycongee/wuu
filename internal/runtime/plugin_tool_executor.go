@@ -172,6 +172,20 @@ func (e *pluginToolExecutor) FinalizeToolResult(call providers.ToolCall, result 
 	return result
 }
 
+func (e *pluginToolExecutor) FinalizeToolOutcome(call providers.ToolCall, result toolresult.Result) agent.ToolFinalization {
+	if finalizer, ok := e.inner.(agent.ToolOutcomeFinalizer); ok {
+		return finalizer.FinalizeToolOutcome(call, result)
+	}
+	return agent.ToolFinalization{Result: e.FinalizeToolResult(call, result)}
+}
+
+func (e *pluginToolExecutor) TakeAdditionalContext(call providers.ToolCall) string {
+	if provider, ok := e.inner.(agent.ToolCallContextProvider); ok {
+		return provider.TakeAdditionalContext(call)
+	}
+	return ""
+}
+
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	directOnly := false
 	if tool, ok := e.host.Tool(call.Name); ok {

@@ -229,11 +229,8 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	var result any
 	switch p.Method {
 	case "finalize":
-		value := *finalization.Result
-		if finalizer, ok := executor.(agent.ToolResultFinalizer); ok {
-			value = finalizer.FinalizeToolResult(finalization.Call, value)
-		}
-		result = ExecutionResult{Result: value}
+		settled := agent.FinalizeToolOutcome(executor, finalization.Call, *finalization.Result)
+		result = ExecutionResult{Result: settled.Result, DiscoveredTools: settled.DiscoveredTools, AdditionalContext: settled.AdditionalContext}
 	case "prepare":
 		prepared := PrepareResult{Messages: []pluginprotocol.ModelMessageV1{}}
 		if preparer, ok := executor.(agent.ModelStepPreparer); ok {
@@ -319,8 +316,6 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		}
 		if provider, ok := executor.(agent.ToolCallContextProvider); ok {
 			execution.AdditionalContext = provider.TakeAdditionalContext(input.Call)
-		} else if provider, ok := executor.(agent.ToolContextProvider); ok {
-			execution.AdditionalContext = provider.LastAdditionalContext()
 		}
 		result = execution
 	}

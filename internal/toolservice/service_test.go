@@ -362,9 +362,9 @@ func TestFinalizeRunsOnceAfterSuccessOrNormalizedFailure(t *testing.T) {
 	if err != nil || probe.count != 0 {
 		t.Fatalf("execute finalized prematurely: %d %v", probe.count, err)
 	}
-	result, err = client.Finalize(ctx, call, result)
-	if err != nil || probe.count != 1 || result.ModelText == nil || *result.ModelText != "settled" {
-		t.Fatalf("finalize: %+v %v count=%d", result, err, probe.count)
+	settled, err := client.Finalize(ctx, call, result)
+	if err != nil || probe.count != 1 || settled.Result.ModelText == nil || *settled.Result.ModelText != "settled" {
+		t.Fatalf("finalize: %+v %v count=%d", settled, err, probe.count)
 	}
 	probe.fail = true
 	if _, err = client.ExecuteResult(ctx, call); err == nil {
@@ -373,9 +373,9 @@ func TestFinalizeRunsOnceAfterSuccessOrNormalizedFailure(t *testing.T) {
 	if probe.count != 1 {
 		t.Fatal("error path finalized before normalization")
 	}
-	result, err = client.Finalize(ctx, call, toolresult.FromErrorText("normalized error"))
-	if err != nil || !result.IsError || probe.count != 2 {
-		t.Fatalf("normalized failure: %+v %v count=%d", result, err, probe.count)
+	settled, err = client.Finalize(ctx, call, toolresult.FromErrorText("normalized error"))
+	if err != nil || !settled.Result.IsError || probe.count != 2 {
+		t.Fatalf("normalized failure: %+v %v count=%d", settled, err, probe.count)
 	}
 	failed := NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("selected finalizer unavailable")
@@ -402,4 +402,37 @@ func (p *finalizationProbe) FinalizeToolResult(_ providers.ToolCall, result tool
 	text := "settled"
 	result.ModelText = &text
 	return result
+}
+
+// A service invocation can overlap other calls even if its caller later
+// projects results serially. A shared last-context slot supplies no ownership.
+type legacyServiceContextTools struct{ reads atomic.Int32 }
+
+func (*legacyServiceContextTools) Definitions() []providers.ToolDefinition { return nil }
+func (*legacyServiceContextTools) Execute(_ context.Context, call providers.ToolCall) (string, error) {
+	return call.ID, nil
+}
+func (e *legacyServiceContextTools) LastAdditionalContext() string {
+	e.reads.Add(1)
+	return "another invocation's context"
+}
+
+func TestNativeServiceDoesNotAttributeSharedLegacyContext(t *testing.T) {
+	service := NewService()
+	if err := service.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close(context.Background())
+	executor := &legacyServiceContextTools{}
+	ctx := WithScope(context.Background(), NewScope(func(context.Context) (Backend, error) { return Backend{Executor: executor}, nil }))
+	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
+	})
+	result, err := client.Execute(ctx, providers.ToolCall{ID: "A", Name: "echo", Arguments: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AdditionalContext != "" || executor.reads.Load() != 0 {
+		t.Fatalf("service attributed a shared slot to A: context=%q reads=%d", result.AdditionalContext, executor.reads.Load())
+	}
 }

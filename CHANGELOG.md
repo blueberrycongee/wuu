@@ -217,6 +217,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep independently contributed message-action controls alongside placed command buttons, preserving peer state and keyboard focus when either plugin is enabled or disabled.
 
+- Preserve selected tool providers' finalization context and discovered schemas alongside each settled call, including parallel completion, normalized errors, and nested-call context, without leaking metadata into later turns.
+
 - Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
 
 - Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.

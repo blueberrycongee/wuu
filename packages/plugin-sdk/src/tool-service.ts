@@ -112,7 +112,10 @@ export function toolService(host: RuntimeHost) {
     unfreeze: () => call<Record<string, never>>('unfreeze', {}),
     resolve: (input: ToolServiceCallRequest) => call<ToolServiceResolution>('resolve', input),
     execute: (input: ToolServiceCallRequest) => call<ToolServiceExecution>('execute', input),
-    /** Settle once after converting execution errors to a tool result. */
+    /** Settle once after converting execution errors to a tool result. Context
+     * additions follow execute context; discovery definitions merge by name,
+     * with finalize definitions taking precedence. Context also applies to
+     * nested calls and is recorded in the next model-input receipt, not history. */
     finalize: (input: ToolServiceFinalizeRequest) => call<ToolServiceExecution>('finalize', input),
   };
 }
