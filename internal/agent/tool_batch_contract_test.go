@@ -235,3 +235,47 @@ func TestBatchContractCanonicalCustomStillStreamsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type legacyBatchContextTools struct {
+	batchContractTools
+	lastContext  string
+	contextReads int
+}
+
+func (e *legacyBatchContextTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	result, err := e.batchContractTools.Execute(ctx, call)
+	e.lastContext = "legacy-context[" + call.ID + "]"
+	return result, err
+}
+
+func (e *legacyBatchContextTools) LastAdditionalContext() string {
+	e.contextReads++
+	result := e.lastContext
+	e.lastContext = ""
+	return result
+}
+
+func TestSelectedSerialBatchDoesNotAssignLastContextToFirstCall(t *testing.T) {
+	executor := &legacyBatchContextTools{batchContractTools: batchContractTools{calls: map[string]int{}, finalized: map[string]int{}}}
+	calls := []providers.ToolCall{{ID: "A", Name: "ok", Arguments: `{}`}, {ID: "B", Name: "fail", Arguments: `{}`}}
+	backend := toolbatch.ExecutorFunc(func(ctx context.Context, _ toolbatch.Request, resources toolbatch.Resources) error {
+		for index := range calls {
+			if _, err := resources.Execute(ctx, index); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	messages, segments, err := executeSelectedToolBatch(context.Background(), backend, toolbatch.Request{ID: "serial", Calls: calls, Serial: true}, ToolRuntimeConfig{Executor: executor, Serial: true}, nil)
+	if err != nil || len(messages) != 2 || messages[0].Content != "A" || !messages[1].ToolResult.IsError {
+		t.Fatalf("serial outcomes changed: messages=%+v err=%v", messages, err)
+	}
+	if len(segments) != 0 || executor.contextReads != 0 {
+		t.Fatalf("batch projection attributed shared last context to a call: %+v reads=%d", segments, executor.contextReads)
+	}
+	for _, call := range calls {
+		if executor.calls[call.ID] != 1 || executor.finalized[call.ID] != 1 {
+			t.Fatalf("serial call was not settled once: calls=%v finalized=%v", executor.calls, executor.finalized)
+		}
+	}
+}

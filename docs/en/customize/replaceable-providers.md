@@ -114,6 +114,18 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
+`finalize` receives the normalized result once, including execution failures and
+rejections settled through selected batch resources. Its `additional_context` follows that call's execute context;
+`discovered_tools` merge by name, with finalization definitions taking precedence.
+These additions stay with the settled invocation, including when parallel calls
+finish out of order. Discovery belongs to that call's model-visible tool result.
+Context also applies to nested calls and is saved in the next model-input receipt,
+without becoming ordinary conversation history or leaking into later turns.
+Hook decorators, native service adapters and selected batches do not infer call
+ownership from a legacy shared last-result context slot; those integrations must
+supply per-call context. The shared-slot API remains available only to direct
+serial leaf-tool consumers without speculative streaming or nested execution.
+
 `agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Conversation titles use the independently selected `session.title` service below. Plugin-command side-conversation prompts remain separate from the main/worker contract; replacing `agent.prompt` alone does not replace either behavior.
 
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.

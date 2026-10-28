@@ -105,9 +105,7 @@ func (b *batchResources) claimSettlement(run *toolRun, result toolresult.Result,
 	if err := validateRuntimeToolArguments(run.call); err != nil {
 		result = toolresult.FromErrorText(errorJSON(err))
 	}
-	if finalizer, ok := b.runtime.executor.(ToolResultFinalizer); ok {
-		result = finalizer.FinalizeToolResult(run.call, result)
-	}
+	result = run.finalize(b.runtime.executor, run.call, result)
 	var err error
 	if b.runtime.ledger != nil {
 		// Rejection is an invocation outcome, not a tool effect. Enter the
@@ -191,9 +189,6 @@ func executeSelectedToolBatch(ctx context.Context, executor toolbatch.Executor, 
 	runtime.Close()
 	settleCtx := context.WithoutCancel(ctx)
 	messages := make([]providers.ChatMessage, 0, len(request.Calls))
-	discovery, hasDiscovery := config.Executor.(ToolDiscoveryProvider)
-	callContext, hasCallContext := config.Executor.(ToolCallContextProvider)
-	legacyContext, hasLegacyContext := config.Executor.(ToolContextProvider)
 	var segments []ContextSegment
 	for i, call := range request.Calls {
 		run, _ := resources.run(i)
@@ -217,10 +212,8 @@ func executeSelectedToolBatch(ctx context.Context, executor toolbatch.Executor, 
 			continue
 		}
 		runtime.notifyResult(call, result, nil)
-		messages = append(messages, toolResultMessage(call, run.invocationID, result, discovery, hasDiscovery))
-		if extra := takeToolAdditionalContext(call, callContext, hasCallContext, legacyContext, hasLegacyContext); extra != "" {
-			segments = append(segments, postToolAdditionalContextSegment(call.Name, extra))
-		}
+		messages = append(messages, run.message(result))
+		segments = append(segments, run.takeRequestContext()...)
 	}
 	segments = append(segments, runtime.TakeRequestContextSegments()...)
 	return messages, segments, errors.Join(runErr, ctx.Err())

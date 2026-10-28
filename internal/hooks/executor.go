@@ -71,6 +71,13 @@ func (h *HookedExecutor) FinalizeToolResult(call providers.ToolCall, result tool
 	return result
 }
 
+func (h *HookedExecutor) FinalizeToolOutcome(call providers.ToolCall, result toolresult.Result) agent.ToolFinalization {
+	if finalizer, ok := h.inner.(agent.ToolOutcomeFinalizer); ok {
+		return finalizer.FinalizeToolOutcome(call, result)
+	}
+	return agent.ToolFinalization{Result: h.FinalizeToolResult(call, result)}
+}
+
 // SupportsTool forwards tool-surface checks through the hook layer. This keeps
 // deferred tool support visible to the agent loop even when hooks decorate the
 // real Toolkit.
@@ -265,9 +272,7 @@ func (h *HookedExecutor) TakeAdditionalContext(call providers.ToolCall) string {
 	if provider, ok := h.inner.(agent.ToolCallContextProvider); ok {
 		return joinAdditionalContext(provider.TakeAdditionalContext(call), additional)
 	}
-	if provider, ok := h.inner.(agent.ToolContextProvider); ok {
-		return joinAdditionalContext(provider.LastAdditionalContext(), additional)
-	}
+	// A legacy last-result slot cannot identify this call, even through a wrapper.
 	return additional
 }
 

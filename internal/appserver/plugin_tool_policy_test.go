@@ -1,6 +1,9 @@
 package appserver
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -37,4 +40,90 @@ func TestSessionToolPolicyKeepsResultsRecoverable(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Session policies decorate the actual turn executor. They must not reduce a
+// selected provider's settled outcome to its text-only compatibility projection.
+func TestSessionToolPolicyPreservesFinalizationMetadata(t *testing.T) {
+	for _, allowRead := range []bool{false, true} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("read-%t/failure-%t", allowRead, fail), func(t *testing.T) {
+				base := &policyFinalizationTools{fail: fail}
+				allow := []string{"extension_records", "allowed_discovery"}
+				if allowRead {
+					allow = append(allow, "read_file")
+				}
+				executor := newSessionToolPolicyExecutor(base, pluginhost.SessionToolPolicy{Allow: allow})
+				run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor})
+				defer run.Close()
+				messages, err := run.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "call", Name: "extension_records", Arguments: "{}"}}, nil)
+				if err != nil || len(messages) != 1 || messages[0].ToolResult == nil {
+					t.Fatalf("tool outcome: messages=%+v err=%v", messages, err)
+				}
+				if base.finalized != 1 || base.normalizedError != fail {
+					t.Fatalf("finalizer was skipped or did not receive normalization: calls=%d error=%t", base.finalized, base.normalizedError)
+				}
+				result := messages[0].ToolResult
+				if result.IsError != fail {
+					t.Fatalf("error outcome changed: %+v", result)
+				}
+				if allowRead {
+					if result.ModelText == nil || result.TextProjection() != "archive cursor" {
+						t.Fatalf("allowed recovery projection lost: %+v", result)
+					}
+				} else if result.ModelText != nil || result.TextProjection() != result.Content[0].Text {
+					t.Fatalf("restricted session received unrecoverable evidence: %+v", result)
+				}
+				definitions := messages[0].DiscoveredTools
+				if len(definitions) != 1 || definitions[0].Name != "allowed_discovery" || definitions[0].Description != "finalized schema" {
+					t.Fatalf("finalized discovery was lost or bypassed policy: %+v", definitions)
+				}
+				segments := run.TakeRequestContextSegments()
+				if len(segments) != 1 || len(segments[0].Blocks) != 1 || segments[0].Blocks[0].Content != "execute context\n\nfinalize context" {
+					t.Fatalf("call-owned context was lost or reordered: %+v", segments)
+				}
+				if len(run.TakeRequestContextSegments()) != 0 {
+					t.Fatal("finalization context was consumed twice")
+				}
+			})
+		}
+	}
+}
+
+type policyFinalizationTools struct {
+	fail            bool
+	finalized       int
+	normalizedError bool
+	contextTaken    bool
+}
+
+func (*policyFinalizationTools) Definitions() []providers.ToolDefinition { return nil }
+func (e *policyFinalizationTools) Execute(context.Context, providers.ToolCall) (string, error) {
+	if e.fail {
+		return "", errors.New("execution failed")
+	}
+	return "full evidence", nil
+}
+func (e *policyFinalizationTools) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	return e.FinalizeToolOutcome(call, result).Result
+}
+func (e *policyFinalizationTools) FinalizeToolOutcome(_ providers.ToolCall, result toolresult.Result) agent.ToolFinalization {
+	e.finalized++
+	e.normalizedError = result.IsError
+	projection := "archive cursor"
+	result.ModelText = &projection
+	return agent.ToolFinalization{Result: result, AdditionalContext: "finalize context", DiscoveredTools: []providers.LoadableToolDefinition{
+		{Name: "allowed_discovery", Description: "finalized schema"},
+		{Name: "denied_discovery", Description: "must remain hidden"},
+	}}
+}
+func (*policyFinalizationTools) DiscoveredTools(providers.ToolCall) []providers.LoadableToolDefinition {
+	return []providers.LoadableToolDefinition{{Name: "allowed_discovery", Description: "execute schema"}, {Name: "denied_discovery"}}
+}
+func (e *policyFinalizationTools) TakeAdditionalContext(providers.ToolCall) string {
+	if e.contextTaken {
+		return ""
+	}
+	e.contextTaken = true
+	return "execute context"
 }

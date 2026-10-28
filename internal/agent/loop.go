@@ -1266,6 +1266,11 @@ func RunToolLoop(
 			toolRuntime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: cfg.Tools, StepIndex: stepIdx})
 		}
 		orderedToolMessages, toolErr := toolRuntime.Join(toolCtx, result.ToolCalls, stepIdx, cfg.OnToolResultDetail, cfg.OnToolResult, cfg.OnToolBatchRejected)
+		// Local batches own physical child executions; service-backed batches
+		// drain through Join without closing the remote turn or session.
+		if closer, ok := toolRuntime.(interface{ Close() }); ok {
+			closer.Close()
+		}
 		if toolErr != nil {
 			return LoopResult{
 				NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
