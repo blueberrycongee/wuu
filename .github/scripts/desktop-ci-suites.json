@@ -5,6 +5,7 @@
     "corpus",
     "layout",
     "session",
+    "session-lifecycle",
     "shell"
   ],
   "entries": {

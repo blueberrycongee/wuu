@@ -1010,13 +1010,13 @@ jobs:
           retention-days: 14
 
       - uses: actions/setup-go@v5
-        if: ${{ contains(fromJSON('["corpus","session","shell"]'), matrix.suite) }}
+        if: ${{ contains(fromJSON('["corpus","session","session-lifecycle","shell"]'), matrix.suite) }}
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
-        if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
+        if: ${{ contains(fromJSON('["corpus","session","session-lifecycle"]'), matrix.suite) }}
         id: build-fixture-core
         run: |
           fixture_version="$(make -s print-version)"
@@ -1303,7 +1303,7 @@ jobs:
           retention-days: 14
 
       - name: Guard confirmed archive through selected providers
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 12
         shell: bash
         env:
@@ -1325,7 +1325,7 @@ jobs:
           exit "$failed"
 
       - name: Upload confirmed archive evidence
-        if: ${{ matrix.suite == 'session' && always() }}
+        if: ${{ matrix.suite == 'session-lifecycle' && always() }}
         uses: actions/upload-artifact@v4
         with:
           name: confirmed-archive-evidence
@@ -1334,7 +1334,7 @@ jobs:
           retention-days: 14
 
       - name: Guard responsive composer footer
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 14
         shell: bash
         env:
@@ -1354,7 +1354,7 @@ jobs:
           exit "$failed"
 
       - name: Upload composer footer evidence
-        if: ${{ matrix.suite == 'session' && always() }}
+        if: ${{ matrix.suite == 'session-lifecycle' && always() }}
         uses: actions/upload-artifact@v4
         with:
           name: composer-footer-evidence
@@ -1363,7 +1363,7 @@ jobs:
           retention-days: 14
 
       - name: Guard request lifecycle
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -1373,7 +1373,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
 
       - name: Upload request lifecycle evidence
-        if: ${{ matrix.suite == 'session' && (always()) }}
+        if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: request-lifecycle-evidence
@@ -1425,7 +1425,7 @@ jobs:
           retention-days: 14
 
       - name: Guard workspace terminal ownership handoff
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -1442,7 +1442,7 @@ jobs:
           exit "$failed"
 
       - name: Upload terminal handoff evidence
-        if: ${{ matrix.suite == 'session' && (always()) }}
+        if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: terminal-handoff-evidence
@@ -1454,7 +1454,7 @@ jobs:
           retention-days: 14
 
       - name: Guard message-only navigation presentation
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         shell: bash
         env:
           WUU_SWITCH_PRESENTATION: "1"
@@ -1473,7 +1473,7 @@ jobs:
           done
 
       - name: Upload navigation presentation evidence
-        if: ${{ matrix.suite == 'session' && (always()) }}
+        if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: navigation-presentation-evidence
@@ -1482,7 +1482,7 @@ jobs:
           retention-days: 14
 
       - name: Check session switch budget ratchet
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
@@ -1491,7 +1491,7 @@ jobs:
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         # Preserve Electron failures through the evidence log pipeline.
         shell: bash
         env:
@@ -1503,7 +1503,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
 
       - name: Upload session switch evidence
-        if: ${{ matrix.suite == 'session' && (always()) }}
+        if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: session-switch-evidence
