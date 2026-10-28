@@ -47,6 +47,7 @@ import { handoffPromptFromIntent } from "./HandoffDraft";
 import { useI18n } from "./i18n";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
+import { ComposerPlusButton } from "./ComposerRuntimeMenus";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { showErrorToast } from "./Toast";
@@ -133,6 +134,7 @@ export function ComposerContinueButton({ continuation, disabled }: {
 export function SplitPaneComposer({
   pluginHost,
   placeholder,
+  framed = false,
   allowWorkspaceReferences = true,
   prompt,
   setPrompt,
@@ -166,6 +168,7 @@ export function SplitPaneComposer({
 }: {
   pluginHost?: PluginHost;
   placeholder?: string;
+  framed?: boolean;
   allowWorkspaceReferences?: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
@@ -505,9 +508,14 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <div className="composer-bar split-composer-bar">
+                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar`}>
                   <div className="composer-bar-left">
-                    {mobileWeb ? (
+                    {framed ? (
+                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} menuAnchorRef={shellRef}
+                        onAddAttachment={() => attachmentInputRef.current?.click()}
+                        mobileAttachments={mobileWeb ? { onTakePhoto: openCamera, onPickPhotos: () => photosInputRef.current?.click(), onPickFiles: () => attachmentInputRef.current?.click() } : undefined}
+                        onSelectCommand={() => {}} />
+                    ) : mobileWeb ? (
                       <ComposerAttachMenuButton
                         variant="dock"
                         disabled={readOnly}

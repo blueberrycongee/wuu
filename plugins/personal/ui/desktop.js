@@ -251,7 +251,6 @@ export async function activate(api) {
     .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 24px 16px;box-sizing:border-box; }
     .mosaic-replies .composer-wrap { margin:0;padding:0; }
     .mosaic-replies .composer-stack { width:100%;--composer-expanded-offset:0px; }
-    .mosaic-replies .composer textarea:placeholder-shown { white-space:nowrap;text-overflow:ellipsis;overflow:hidden; }
     .mosaic-replies .plugin-conversation-attachment:has(> img) > .conversation-file-card { display:none; }
     .mosaic-replies .plugin-conversation-attachment > img { max-height:none;height:auto;margin-top:0;border-radius:16px; }
     .mosaic-replies .bubble-time-toggle { display:none; }
@@ -280,24 +279,8 @@ export async function activate(api) {
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
     .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;box-shadow:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
-    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%;--session-composer-radius:26px; }
+    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
-    .mosaic .composer-stack { --composer-collapsed-min-height:52px; }
-    .mosaic .composer { min-height:52px; }
-    .mosaic .composer textarea { --placeholder-ink:var(--ink-muted);height:52px;min-height:52px;padding:calc((52px - var(--conversation-reading-line-height)) / 2) 56px; }
-    .mosaic .composer-bar { position:absolute;inset:0;height:52px;padding:0 10px;pointer-events:none; }
-    .mosaic .composer-bar button { pointer-events:auto; }
-    .mosaic .composer-attach-button { color:var(--ink); }
-    .mosaic .composer-attach-button svg { display:none; }
-    .mosaic .composer-attach-button::before { content:"+";inset:2px;display:grid;place-items:center;border-radius:var(--radius-pill);font-size:22px;font-weight:300;line-height:1; }
-    .mosaic .composer-send-button { background:transparent;color:var(--paper); }
-    .mosaic .composer-send-button::before { background:#111; }
-    .mosaic .composer-send-button:hover:not(:disabled) { background:transparent;color:#fff; }
-    .mosaic .composer-send-button:hover:not(:disabled)::before { background:#000; }
-    .mosaic .composer-send-button:disabled,
-    .mosaic .composer-send-button:disabled:hover { background:transparent;color:var(--ink-muted); }
-    .mosaic .composer-send-button:disabled::before,
-    .mosaic .composer-send-button:disabled:hover::before { background:var(--surface-3); }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-profile-trigger .mosaic-avatar { width:56px;height:56px; }

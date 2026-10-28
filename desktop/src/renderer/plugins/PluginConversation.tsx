@@ -375,7 +375,7 @@ export function PluginConversationComposer({ replyContext, conversationId, promp
   const files = attachments.filter(file => !images.some(image => image.id === file.id)).map(file => ({ ...file }));
   return <FileSelectionIsolation>
     {replyContext && <div className="plugin-composer-reply-context" data-reply-context="" role="group" aria-label={replyContext.label}><div><span>{replyContext.label}</span><p>{replyContext.preview}</p></div><button type="button" className="settings-button settings-button-ghost" data-action="cancel-reply" aria-label={replyContext.cancelLabel} onClick={replyContext.onCancel}>{replyContext.cancelLabel}</button></div>}
-    <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false}
+    <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false} framed
       placeholder={placeholder} prompt={prompt} setPrompt={onChangePrompt} images={images} files={files}
       running={running} submitting={submitting} queuedCount={queuedCount} pendingCount={pendingCount} stopState={stopState} readOnly={disabled} sendDisabled={sendDisabled} queryHistorySessionID={`plugin:${conversationId}`}
       onPasteAttachmentFiles={onAddAttachments} onRemoveFile={onRemoveAttachment} onRemoveImage={onRemoveAttachment}
