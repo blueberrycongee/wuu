@@ -765,10 +765,10 @@ describe("SkillsCatalog", () => {
   });
 
   it.each([
-    { name: "owned retirement", error: new PluginLifecycleCancellationError(), report: false },
-    { name: "matching ordinary error", error: new Error(new PluginLifecycleCancellationError().message), report: true },
-    { name: "unowned abort", error: new DOMException("Provider aborted the update", "AbortError"), report: true },
-  ])("classifies a settled catalog mutation's $name without replaying it", async ({ error, report }) => {
+    { name: "owned retirement", error: new PluginLifecycleCancellationError() },
+    { name: "matching ordinary error", error: new Error(new PluginLifecycleCancellationError().message) },
+    { name: "unowned abort", error: new DOMException("Provider aborted the update", "AbortError") },
+  ])("preserves a settled catalog mutation's $name for the error sink without replaying it", async ({ error }) => {
     installSkillList([]);
     const plugin: ExtensionInventoryRecord = {
       id: "plugin:bundled:widget", name: "widget", kind: "plugin",
@@ -790,8 +790,7 @@ describe("SkillsCatalog", () => {
     expect(pluginSwitch("widget")!.disabled).toBe(false);
     expect(update).toHaveBeenCalledOnce();
     expect(toastMocks.showToast).not.toHaveBeenCalled();
-    if (report) expect(toastMocks.showErrorToast).toHaveBeenCalledWith(error, expect.any(String));
-    else expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(error, expect.any(String));
   });
 
   it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {
