@@ -38,6 +38,25 @@ describe("ApplicationPreviewContent", () => {
     expect(api.revealWorkspaceItem).not.toHaveBeenCalled();
   });
 
+  it.each([["dispose", "resolve"], ["dispose", "reject"], ["abort", "resolve"], ["abort", "reject"]])(
+    "settles a pending directory %s/%s without publishing late results",
+    async (cancellation, outcome) => {
+      const { api, service } = setup();
+      const controller = new AbortController();
+      let resolve!: (value: unknown) => void;
+      let reject!: (error: Error) => void;
+      api.listWorkspaceDirectory.mockReturnValue(new Promise((done, fail) => { resolve = done; reject = fail; }));
+      const pending = service.listDirectory({ root: "/a", path: "" }, { signal: controller.signal });
+      const assertion = expect(pending).rejects.toMatchObject(outcome === "reject" ? { message: "old root unavailable" } : { name: "AbortError" });
+      if (cancellation === "dispose") service.dispose();
+      else controller.abort();
+      if (outcome === "reject") reject(new Error("old root unavailable"));
+      else resolve({ root: "/a", path: "", entries: [], truncated: false });
+      await assertion;
+      expect(api.listWorkspaceDirectory).toHaveBeenCalledExactlyOnceWith("", "/a");
+    },
+  );
+
   it("does not publish an aborted read or replay failed effects", async () => {
     const { api, service } = setup();
     const controller = new AbortController();

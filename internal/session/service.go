@@ -35,6 +35,14 @@ type domainResource struct {
 func NewService(id string, documents persistence.Documents) *Service {
 	return &Service{id: id, state: pluginhost.StatePrepared, store: newDocumentStore(context.Background(), documents), resources: make(map[string]domainResource), pending: make(map[uint64]context.CancelFunc)}
 }
+
+// NewServiceWithJournalBackgroundDocuments supplies authority for journal-owned
+// heartbeats and progress writes that outlive an individual service call.
+func NewServiceWithJournalBackgroundDocuments(id string, documents, background persistence.Documents) *Service {
+	s := NewService(id, documents)
+	s.store.journalBackgroundDocuments = background
+	return s
+}
 func (s *Service) ID() string { return s.id }
 func (s *Service) Status() pluginhost.Status {
 	s.mu.Lock()

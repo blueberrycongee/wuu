@@ -9,7 +9,8 @@ import { MCPDiagnostic, MCPFailure } from "./MCPDiagnostic";
 import { confirmAction } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
-import { AlertCircle, AlertTriangle, Plug } from "./WuuIcons";
+import { AlertCircle, AlertTriangle, MoreHorizontal, Plug } from "./WuuIcons";
+import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 
 type MCPAction = "connect" | "disconnect" | "refresh" | "login" | "logout" | "edit" | "remove";
 type MCPActionFailure = { action: MCPAction; diagnostic: string };
@@ -63,6 +64,7 @@ export function MCPServices({ pluginID, enabled = true, filter = "" }: { pluginI
   currentControls.current = controls;
   const [editor, setEditor] = useState<{ name: string; definition?: MCPDefinitionResult } | null>(null);
   const [login, setLogin] = useState<MCPServerStatus | null>(null);
+  const [menu, setMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setErrors({}); setBusy(""); inFlight.current = false; }, [controls]);
   useEffect(() => {
@@ -137,6 +139,15 @@ export function MCPServices({ pluginID, enabled = true, filter = "" }: { pluginI
         : ["starting", "connecting", "reconnecting"].includes(server.state) ? t("mcp.connecting")
         : server.state === "disabled" ? t("mcp.disabledByConfig") : t("mcp.disconnected");
       const attention = working ? undefined : needsAuth ? "auth" : failure || server.error || ["error", "failed"].includes(server.state) ? "error" : undefined;
+      const actions: ThreadContextMenuItem[] = [];
+      if (enabled && server.state !== "disabled") {
+        if (server.connected) actions.push({ label: t("mcp.refresh"), onSelect: () => act(server.name, "refresh", () => controls.refreshMCPServer(server.name)) });
+        if (server.auth_status === "oauth") actions.push({ label: t("mcp.removeLogin"), onSelect: () => act(server.name, "logout", () => controls.removeMCPAuth(server.name)) });
+      }
+      if (server.editable) {
+        actions.push({ label: t("common.edit"), onSelect: () => act(server.name, "edit", async () => { const definition = await controls.readMCPDefinition(server.name); if (current()) setEditor({ name: server.name, definition }); }) });
+        actions.push({ label: t("common.remove"), danger: true, onSelect: () => act(server.name, "remove", () => remove(server)) });
+      }
       return <div className="mcp-service" key={server.name} data-mcp={server.name} aria-busy={busy === server.name}>
         <Plug className="icon mcp-service-icon" aria-hidden="true" />
         <div className="mcp-service-copy">
@@ -152,13 +163,13 @@ export function MCPServices({ pluginID, enabled = true, filter = "" }: { pluginI
           {enabled && server.state !== "disabled" ? <>
             {needsAuth ? <button type="button" className="settings-button" disabled={!!busy} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
               : <button type="button" className="settings-button" disabled={!!busy} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
-            {server.connected ? <button type="button" className="settings-button settings-button-ghost" disabled={!!busy} onClick={() => void act(server.name, "refresh", () => controls.refreshMCPServer(server.name))}>{t("mcp.refresh")}</button> : null}
-            {server.auth_status === "oauth" ? <button type="button" className="settings-button settings-button-ghost" disabled={!!busy} onClick={() => void act(server.name, "logout", () => controls.removeMCPAuth(server.name))}>{t("mcp.removeLogin")}</button> : null}
           </> : null}
-          {server.editable ? <>
-            <button type="button" className="settings-button settings-button-ghost" disabled={!!busy} onClick={() => void act(server.name, "edit", async () => { const definition = await controls.readMCPDefinition(server.name); if (current()) setEditor({ name: server.name, definition }); })}>{t("common.edit")}</button>
-            <button type="button" className="settings-button settings-button-ghost" disabled={!!busy} onClick={() => void act(server.name, "remove", () => remove(server))}>{t("common.remove")}</button>
-          </> : null}
+          {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy}
+            aria-label={t("provider.moreActions", { name })} aria-haspopup="menu" aria-expanded={menu?.name === server.name}
+            onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ name: server.name, x: bounds.right, y: bounds.bottom }); }}>
+            <MoreHorizontal className="icon" aria-hidden="true" />
+          </button> : null}
+          {menu?.name === server.name ? <ThreadContextMenu x={menu.x} y={menu.y} items={actions} onClose={() => setMenu(null)} /> : null}
         </div>
       </div>;
     })}</SettingsGroup> : !loadError ? <p className="settings-group-empty">{t(filter ? "skills.noMatches" : "mcp.empty")}</p> : null}

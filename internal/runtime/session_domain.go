@@ -19,7 +19,7 @@ type nativeSessionDomain struct {
 	registry  *pluginhost.ServiceRegistry
 }
 
-func newNativeSessionDomain(registry *pluginhost.ServiceRegistry, directory string) *nativeSessionDomain {
+func newNativeSessionDomain(registry *pluginhost.ServiceRegistry, directory string, host *pluginhost.Host) *nativeSessionDomain {
 	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 		result, err := registry.Call(ctx, session.DefaultModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
 		if err != nil {
@@ -27,7 +27,14 @@ func newNativeSessionDomain(registry *pluginhost.ServiceRegistry, directory stri
 		}
 		return result, nil
 	})
-	return &nativeSessionDomain{Service: session.NewService(session.DefaultModule, documents), documents: documents, directory: directory, registry: registry}
+	background := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		result, err := host.CallService(ctx, session.DefaultModule, persistence.ServiceName, method, params)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	})
+	return &nativeSessionDomain{Service: session.NewServiceWithJournalBackgroundDocuments(session.DefaultModule, documents, background), documents: documents, directory: directory, registry: registry}
 }
 
 // The native domain's leases coordinate OS processes on one host. Database CAS

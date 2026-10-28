@@ -8,6 +8,7 @@ import {
   renameSync,
   statSync,
 } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type {
@@ -30,8 +31,13 @@ export class ProjectManager {
 
   constructor(private readonly legacyStorePath?: string) {}
 
-  load(): void {
+  private reload(): void {
     this.store = loadProjectStore(this.legacyStorePath);
+  }
+
+  load(): void {
+    this.reload();
+    this.reconcileRuntimeContext();
   }
 
   list(): ProjectListResult {
@@ -75,6 +81,27 @@ export class ProjectManager {
       : undefined;
   }
 
+  async readRuntimeContext(): Promise<RuntimeContext> {
+    const active = this.store.active_context;
+    if (!active) throw new Error("project runtime context is not initialized");
+    // Reconciliation belongs to startup/selection, not a read-only request.
+    // Capture identity before checking a potentially slow or offline volume.
+    const context = { ...active };
+    if (context.kind === "project") {
+      const project = this.store.projects.find(candidate => candidate.id === context.project_id);
+      if (project) {
+        let available = false;
+        try {
+          available = (await stat(project.path)).isDirectory();
+        } catch {
+          // Preserve the same unavailable-project error as synchronous callers.
+        }
+        if (!available) throw new Error(activeProjectUnavailableIssue(project).message);
+      }
+    }
+    return context;
+  }
+
   ensureRuntimeContext(): RuntimeContext {
     const context = this.reconcileRuntimeContext();
     if (context.kind === "project") {
@@ -89,7 +116,7 @@ export class ProjectManager {
   }
 
   resolveSubmissionContext(context: RuntimeContext): RuntimeContext {
-    this.load();
+    this.reload();
     if (context.kind === "project") {
       const project = this.store.projects.find((candidate) => candidate.id === context.project_id);
       if (!project || resolve(project.path) !== resolve(context.cwd)) {

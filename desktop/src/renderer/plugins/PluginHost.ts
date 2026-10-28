@@ -1,4 +1,4 @@
-import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginActionNotStartedError, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { showToast, dismissToast } from "../Toast";
 import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
@@ -918,7 +918,12 @@ export class PluginHost {
       invoke: async <Action extends keyof ApplicationActionMapV1>(
         action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal },
       ): Promise<ApplicationActionMapV1[Action]["result"]> => {
-        const application = service();
+        let application: HostApplicationService | ApplicationServiceV1;
+        try { application = service(); }
+        catch (error) {
+          if (isPluginLifecycleCancellation(error)) throw new PluginActionNotStartedError(error);
+          throw error;
+        }
         const signal = options?.signal ? AbortSignal.any([lifetime.signal, options.signal]) : lifetime.signal;
         signal.throwIfAborted();
         if (action === "preview.set-visibility" && "setPreviewVisibility" in application) {

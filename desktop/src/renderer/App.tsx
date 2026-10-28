@@ -711,7 +711,11 @@ export function App({ application, slots, shellPluginId }: {
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
-      application.desktop.setActiveCUAThread?.(activeThreadID);
+      try { application.desktop.setActiveCUAThread?.(activeThreadID); }
+      catch (error) {
+        // The retained shell can receive focus before its replacement binds.
+        if (!isPluginLifecycleCancellation(error)) throw error;
+      }
     };
     syncVisibleCUAThread();
     window.addEventListener("focus", syncVisibleCUAThread);

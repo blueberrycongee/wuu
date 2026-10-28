@@ -410,24 +410,11 @@
   /* Leave room below the floating input and its shadow. The top space
      belongs to the latest-turn clearance (conversation-shell.css). */
   padding-block: var(--conversation-dock-top-space) var(--composer-dock-bottom-space);
-  /* Mirror the scroll region's symmetric scrollbar gutters to keep the
-     composer centered. ScrollbarMetrics.ts measures --scrollbar-width at
-     runtime: zero for overlay scrollbars, the actual width for classic ones. */
+  /* Mirror the scroll region's symmetric scrollbar gutters while keeping the
+     dock centered in the pane. ScrollbarMetrics.ts measures their actual width. */
   padding-inline: var(--scrollbar-width);
   background: transparent;
   pointer-events: none;
-  transition: padding-inline var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
-  transition-delay: 0ms;
-}
-
-.conversation-pane [data-main-conversation-composer="dock"] {
-  padding-left: calc(var(--scrollbar-width) + var(--conversation-rail-start));
-  padding-right: calc(var(--scrollbar-width) + var(--conversation-environment-inset) +
-    var(--workspace-tool-rail-inset, 0px));
-}
-
-.conversation-pane.environment-panel-reserved .dock-composer-wrap {
-  transition-delay: var(--environment-flow-motion-delay);
 }
 
 .dock-composer-wrap::before {

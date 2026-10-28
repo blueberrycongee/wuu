@@ -50,6 +50,11 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     if (Object.hasOwn(entries, path)) {
       selected.desktop = true;
       desktopSuites.add(entries[path]);
+      // Session checks are sharded for latency; a targeted edit still runs both.
+      if (['session', 'session-lifecycle'].includes(entries[path])) {
+        desktopSuites.add('session');
+        desktopSuites.add('session-lifecycle');
+      }
     } else if (/^desktop\/src\/renderer\//.test(path)) {
       fullDesktop = true;
       // mobile-web imports production renderer modules, styles and assets.

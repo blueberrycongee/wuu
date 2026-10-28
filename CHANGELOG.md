@@ -219,7 +219,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
 - Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
+- Keep effective configuration tied to the captured base source when applying project settings, avoiding a redundant file read and mismatched source/config snapshots during external edits.
 
 - Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
 - Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
@@ -231,6 +233,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
 
+- Avoid redundant workspace snapshots around read-only tools and tool orchestrators. Keep leaf result revisions and mutation evidence; optional read-only telemetry no longer samples whole-workspace freshness.
+
 - Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.
 
 - Keep experimental project scheduling active through explicitly selected coordination decorators, while preserving stopped-generation completion and rejecting unreachable native fallback.
@@ -241,6 +245,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
 - Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
+
+- Keep directory browsing from blocking the desktop main event loop on slow filesystems, including workspace availability and symlink checks; pending reads remain bound to their original workspace.
 
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 

@@ -4,11 +4,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createServer } = require("node:http");
 const { createHash } = require("node:crypto");
-const { shell, dialog } = require("electron");
+const { shell, dialog, Menu } = require("electron");
 
 module.exports = async function prepareMCPFixture({ fixture, output }) {
   let endpoint, authorizationURL;
   let failedInitializations = 0;
+  let pauseToolList = null;
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
   const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, checks: [] };
@@ -62,7 +63,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     }
     const reply = result => json({ jsonrpc: "2.0", id: rpc.id, result });
     if (rpc.method === "initialize") { response.setHeader("Mcp-Session-Id", "fixture-session"); reply({ protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "fixture", version: "1" } }); }
-    else if (rpc.method === "tools/list") { evidence.authenticatedLists++; reply({ tools: [{ name: "echo", description: "Echo fixture", inputSchema: { type: "object", properties: {} } }] }); }
+    else if (rpc.method === "tools/list") { if (pauseToolList) await pauseToolList; evidence.authenticatedLists++; reply({ tools: [{ name: "echo", description: "Echo fixture", inputSchema: { type: "object", properties: {} } }] }); }
     else if (rpc.method === "tools/call") reply({ content: [{ type: "text", text: "fixture-ok" }] });
     else if (rpc.id !== undefined) json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "unsupported" } });
     else response.writeHead(202).end();
@@ -77,7 +78,35 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
 
   return {
     async run({ evaluate, until, capture, win }) {
-      const click = async ([selector, label]) => {
+      const click = async ([selector, label], keyboard = false) => {
+        const menuAction = selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label);
+        if (menuAction) {
+          await until(selector => {
+            const button = document.querySelector(`${selector} [aria-haspopup="menu"]`);
+            return button && !button.disabled;
+          }, selector);
+          const originalPopup = Menu.prototype.popup;
+          let complete;
+          const selected = new Promise(resolve => { complete = resolve; });
+          try {
+            Menu.prototype.popup = function(options) {
+              const item = this.items.find(candidate => candidate.label === label);
+              assert.ok(item && item.enabled, `Missing menu item ${label}`);
+              item.click();
+              options.callback();
+              complete();
+            };
+            if (keyboard) {
+              win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+              win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
+            } else {
+              await evaluate(selector => document.querySelector(`${selector} [aria-haspopup="menu"]`).click(), selector);
+            }
+            await selected;
+            await until(() => !document.querySelector('[data-mcp] [aria-expanded="true"]'));
+          } finally { Menu.prototype.popup = originalPopup; }
+          return;
+        }
         console.log(`MCP journey: ${label}`);
         await until(([selector, label]) => [...document.querySelectorAll(`${selector} button`)].some(button => button.textContent.trim() === label && !button.disabled), [selector, label]);
         await evaluate(([selector, label]) => {
@@ -121,6 +150,34 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal(evidence.exchanges, 1);
       assert.ok(evidence.authenticatedLists > 0);
       await capture("mcp-connected-light");
+      win.focus();
+      win.webContents.focus();
+      await evaluate(selector => document.querySelector(`${selector} .mcp-service-actions > button:not([aria-haspopup])`).focus(), row);
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+      await until(() => document.activeElement?.getAttribute("aria-haspopup") === "menu");
+      await capture("mcp-keyboard-focus");
+      let releaseToolList;
+      pauseToolList = new Promise(resolve => { releaseToolList = resolve; });
+      const listsBeforeRefresh = evidence.authenticatedLists;
+      await click([row, "刷新"], true);
+      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.getAttribute("aria-busy") === "true");
+      assert.equal(await evaluate(selector => [...document.querySelectorAll(`${selector} .mcp-service-actions button`)].every(button => button.disabled), row), true);
+      await capture("mcp-refresh-busy");
+      releaseToolList();
+      pauseToolList = null;
+      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.getAttribute("aria-busy") === "false");
+      assert.ok(evidence.authenticatedLists > listsBeforeRefresh, "Refresh must rediscover synthetic tools");
+      await click([row, "断开"]);
+      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("已断开"));
+      await capture("mcp-disconnected");
+      failedInitializations = 1;
+      await click([row, "连接"]);
+      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("连接失败"));
+      await capture("mcp-connection-error");
+      await click([row, "连接"]);
+      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("1 个工具"));
+      evidence.checks.push("Keyboard opens management menu; refresh busy state, disconnect, failed connection and retry use the synthetic service");
       evidence.checks.push("DCR, PKCE, wrong-state rejection, callback exchange and automatic tool discovery");
 
       await click([row, "移除 OAuth 登录"]);
