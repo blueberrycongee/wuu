@@ -113,6 +113,19 @@
   background: transparent;
 }
 
+/* A single selected destination already appears in the ribbon. Preserve the
+   contextual sidebar when it has more destinations or contributed content. */
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) {
+  grid-template-columns: var(--sidebar-ribbon-width) minmax(0, 1fr) 0;
+}
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) .sidebar-content,
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) > :is(.sidebar-resizer, .section-sidebar-toggle) {
+  display: none;
+}
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) .conversation-pane {
+  --conversation-pane-left-radius: var(--conversation-canvas-radius);
+}
+
 .navigation-ribbon-layout:has(.sidebar-ribbon) .traffic-spacer {
   display: none;
 }
