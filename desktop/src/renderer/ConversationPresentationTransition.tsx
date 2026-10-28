@@ -426,5 +426,7 @@ export function usePresentedNavigation(): <T>(action: () => Promise<T>) => Promi
 }
 
 export function reportPresentedNavigationError(error: unknown): void {
+  // Temporary workspace-close CI diagnostics; remove when navigation handoff is understood.
+  if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "present-error", name: error instanceof Error ? error.name : undefined, message: error instanceof Error ? error.message : String(error) }));
   if (!(error instanceof ConversationPresentationCancellation)) showApplicationActionError(error);
 }

@@ -175,8 +175,21 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onStartNewThread={() => startDraft({ kind: "active" })}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
-    onSelectThread={threadId => run(presentNavigation(() => application.invoke("thread.activate", { threadId })))}
-    onSelectWorkspaceThread={(workspaceId, threadId) => run(presentNavigation(() => application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })))}
+    onSelectThread={threadId => {
+      // Temporary workspace-close CI diagnostics; remove when navigation handoff is understood.
+      if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "present-thread", threadId }));
+      run(presentNavigation(() => {
+        if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "invoke-thread", threadId }));
+        return application.invoke("thread.activate", { threadId });
+      }));
+    }}
+    onSelectWorkspaceThread={(workspaceId, threadId) => {
+      if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "present-workspace-thread", threadId, workspaceId }));
+      run(presentNavigation(() => {
+        if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "invoke-workspace-thread", threadId, workspaceId }));
+        return application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId });
+      }));
+    }}
     onTogglePinned={thread => run(invoke("navigation.pin-thread", { threadId: thread.id, pinned: !thread.pinned }))}
     onArchiveThread={thread => run(archiveThread(thread))}
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}

@@ -368,6 +368,7 @@ export function createThreadActivationActions(
     threadID: string,
   ): Promise<void> {
     const currentState = deps.getAppState();
+    if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "select-workspace-thread", workspaceID, threadID, activeContext: currentState.activeContext, pending: deps.getPendingViewSwitch() }));
     if (
       workspaceID === currentState.activeProjectId &&
       currentState.activeContext?.kind === "project"
@@ -414,6 +415,8 @@ export function createThreadActivationActions(
 
   async function activateThread(threadID: string): Promise<void> {
     const currentState = deps.getAppState();
+    // Temporary workspace-close CI diagnostics; remove when navigation handoff is understood.
+    if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage: "activate-thread", threadID, activeContext: currentState.activeContext, activeThreadID: deps.getActiveThreadID(), pending: deps.getPendingViewSwitch() }));
     const retained = currentState.sessionTabs.find((tab) => tab.kind === "thread" && tab.threadID === threadID);
     if (retained && !sameRuntimeContext(retained.context, currentState.activeContext)) {
       const retainedContext = retained.context;
