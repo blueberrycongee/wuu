@@ -549,6 +549,7 @@ describe("AppServerClientPool session routing", () => {
       const failure = expect(first).rejects.toThrow();
       send({ method: "turn/error", params: { thread_id: "session", turn: { id: "same-turn", status: "interrupted" } } });
       send({ method: "turn/held", params: { thread_id: "session", messages: [queued] } });
+      send({ method: "turn/started", params: { thread_id: "session", turn: { id: "same-turn", status: "in_progress" } } });
       children[0].emit("exit", 1, null);
       await failure;
       const restarted = client.request("thread/resume", { session_id: "session" });
@@ -558,6 +559,128 @@ describe("AppServerClientPool session routing", () => {
       expect(await restarted).toEqual(result);
       expect(client.runningThreadIDsList()).toEqual(["session"]);
       children[1].emit("exit", 0, null);
+    });
+
+    it.each([
+      { order: ["start-b"], snapshotTurn: "idle-a", running: true },
+      { order: ["start-b"], snapshotTurn: "turn-a", running: true },
+      { order: ["finish-a", "start-b"], snapshotTurn: "idle-a", running: true },
+      { order: ["start-b", "finish-a"], snapshotTurn: "idle-a", running: true },
+      { order: ["finish-a", "start-b"], snapshotTurn: "turn-a", running: true },
+      { order: ["start-b", "finish-a"], snapshotTurn: "turn-a", running: true },
+      { order: ["start-b", "finish-b"], snapshotTurn: "turn-b", running: false },
+      { order: ["start-b", "finish-a", "finish-b"], snapshotTurn: "idle-a", running: false },
+    ])("keeps the current turn's activity across $order then $snapshotTurn", async ({ order, snapshotTurn, running }) => {
+      const f = fixture();
+      const busy = [{ workdir: f.owner.cwd, thread_id: "session" }];
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        void read.catch(() => {}); // Teardown also settles the request if an earlier assertion fails.
+        let currentRunning = true;
+        for (const event of order) {
+          if (event === "start-b") {
+            f.turn("turn/started", "turn-b");
+            currentRunning = true;
+          } else {
+            f.turn("turn/completed", event === "finish-a" ? "turn-a" : "turn-b");
+            if (event === "finish-b" || !order.slice(0, order.indexOf(event)).includes("start-b")) currentRunning = false;
+          }
+          expect(f.pool.runningThreadsSnapshot()).toEqual(currentRunning ? busy : []);
+        }
+        const stale = snapshotTurn === "idle-a"
+          ? { thread: { ...f.snapshot("turn-a").thread, status: "idle", turns: [{ id: "turn-a", status: "completed" }] } }
+          : f.snapshot(snapshotTurn);
+        f.reply(stale);
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual(running ? busy : []);
+        if (running) {
+          // A response must not replace B's active identity with an older A.
+          f.turn("turn/completed", "turn-a");
+          expect(f.pool.runningThreadsSnapshot()).toEqual(busy);
+          f.turn("turn/completed", "turn-b");
+          expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        }
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each([undefined, "future_status", "in_progress"])("does not treat B's %s status in an idle snapshot as terminal", async status => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, status: "idle", turns: [{ id: "turn-b", status }] } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("does not erase B's known identity when a running thread-list summary omits its turns", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        void read.catch(() => {});
+        f.turn("turn/started", "turn-b");
+        const list = f.pool.requestInContext(f.owner, "thread/list", { summary_only: true });
+        f.reply({ threads: [{ ...f.snapshot("turn-b").thread, turns: [] }] });
+        await list;
+        f.turn("turn/completed", "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.send({ id: f.requests.get(f.owner.cwd)!.find(request => request.method === "thread/resume")!.id,
+          result: { thread: { ...f.snapshot("turn-a").thread, status: "idle", turns: [] } } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("keeps B's observed identity when an active snapshot also contains an older active A", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, turns: [
+          { id: "turn-b", status: "in_progress" }, { id: "turn-a", status: "in_progress" },
+        ] } });
+        await read;
+        f.turn("turn/completed", "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each(["completed", "interrupted", "failed"])("accepts B's %s snapshot and releases its start receipt before the next request", async status => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, status: "idle", turns: [{ id: "turn-b", status }] } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        f.turn("turn/started", "turn-c");
+        const fresh = f.resume();
+        f.reply({ thread: { ...f.snapshot("turn-c").thread, status: "idle", turns: [] } });
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
     });
 
     it.each(["turn-a", "turn-b"])("preserves a newer live turn when the late response contains %s", async snapshotTurn => {
