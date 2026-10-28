@@ -515,9 +515,28 @@ TypeScript 运行时适配器中的 `model.adapter` 和 `model.middleware` 处�
 
 声明 `requireProcessService()` 以使用 `host.process` 版本 1。在活动的会话工具回调中调用
 `startProcess(host, { key, command, cwd?, timeout_ms?, follow_parent? })`，沿用调用方的
-本地 shell 权限、沙箱、工作目录和进程管理器，目前不支持远程执行环境。激活阶段或无关
-capability 不能启动进程。同一 key 和相同参数返回已有记录，参数变化会冲突；每代最多
-运行 64 个进程，宿主最多保留 256 条终态句柄记录。
+权限及已绑定的本地或远程执行环境，包括该环境的工作区和进程管理器。远程路径不会被当作
+插件或宿主的本地路径。所选远程环境缺失、不可用或协议不兼容时直接失败，不会改在本地
+执行。激活阶段或无关 capability 不能启动进程。
+
+`getProcessEnvironment(host)` 在该活动回调内检查已选位置，不连接或创建执行环境。
+返回值为 `{ backend, root, identity? }`：`backend: "local"` 表示本地执行；`root` 是所选
+后端内的工作区根目录；可选 `identity` 是其已绑定环境的不透明标识。这些信息不是选择器，
+也不授予权限。此方法和进程快照的可选 `environment` 字段从 `host.process` 1.1 起提供，
+既有版本 1 的 start/read/stop/send 调用保持兼容。旧宿主会明确拒绝新方法；快照没有元数据
+不代表本地执行。快照元数据在进程获接纳时捕获，修改默认环境或将事件接收方移交父会话
+都不会迁移运行中的进程。
+
+在同一会话与插件 generation 内，同一 key 和相同参数返回已保留的记录，参数变化会冲突；
+每代最多运行 64 个进程，宿主最多保留 256 条终态句柄记录。启动请求断线时，命令可能已产生
+效果而回复丢失。key 保护宿主已保留的记录，不保证跨重启或记录淘汰的恰好一次执行。
+已保留的启动失败记录会让同一 key 返回原错误，而非再次启动。应使用报告中的 `operation_id`
+对照所选后端的进程记录核实不确定结果，再启动另一条命令。辅助函数不会自动重试。
+
+所有进程辅助函数均接受可选的最后一个参数 `{ signal }`，且不能解除回调本身的取消信号。
+在接纳之前，取消会阻止启动，或在结果已知时清理已启动的进程。接纳之后，进程归该插件
+generation 所有，可以活过工具回调。取消读取或中止原始调用的信号不会停止已接纳的进程；
+显式取消应调用 `stopProcess`。
 
 `readProcess` 返回合并输出、字节游标、截断信息和进程状态。单次读取范围为 4 字节到
 1 MiB，默认 64 KiB，最多等待 30 秒。应使用返回的 `next_offset`，因为 UTF-8 分块及日志
@@ -599,3 +618,61 @@ Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev":
 install CLI 会确认信任并启用包。同一已记录来源的更新继承信任与启停状态；来源改变或尚未记录来源时需要确认。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
 完整插件编写类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)。Go 宿主及其内部应用嵌入接口属于宿主实现，不是另一套插件编写 SDK。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。
+
+## 包分发
+
+除本地目录和 ZIP 外，`inspect`、`install`、`update` 还接受
+`npm:<name>@<exact-version>`。支持带 scope 和不带 scope 的包名；不接受版本范围、
+tag、Git URL 或隐含的 `latest`。默认 registry 为 `https://registry.npmjs.org`；
+`--registry` 可明确选择另一个 HTTPS npm registry。选项写在位置参数之前：
+
+```bash
+# 将示例包名替换为你信任的实际包。
+wuu plugin inspect --json npm:@your-scope/wuu-plugin@1.2.3
+wuu plugin install --integrity 'sha512-BASE64_FROM_INSPECTION' npm:@your-scope/wuu-plugin@1.2.3
+wuu plugin update my-plugin npm:@your-scope/wuu-plugin@1.2.4
+```
+
+压缩包必须以 `package/` 为根目录，包含 `package.json`、受支持的 Wuu manifest
+及全部运行时资源。npm 包名与版本必须匹配 registry 元数据，插件 manifest 版本
+必须等于 npm 版本。插件 ID 与 npm 包名独立；`update` 使用已安装的插件 ID。
+发布前应将运行时依赖打入独立 JavaScript bundle，构建工具及 SDK 放在开发依赖中。
+非空的 `dependencies`、`optionalDependencies` 和 `peerDependencies` 会被拒绝，
+而不是自动安装。检查或安装时，Wuu 不调用 npm，不运行生命周期脚本或构建脚本。
+单文件 TypeScript 开发路径保持不变，不需要上述打包步骤。
+
+远程包必须提供 SHA-512 完整性值，并在解压前验证。检查结果中的 `distribution`
+对象与安装后 `<WUU_HOME>/plugins/<id>/.wuu-package-lock.json` 使用同一 lock
+schema；lock 本身也纳入包指纹。更新前可另存一份：
+
+```bash
+cp "${WUU_HOME:-$HOME/.wuu}/plugins/my-plugin/.wuu-package-lock.json" ./my-plugin.lock.json
+wuu plugin install lock:./my-plugin.lock.json
+# 或明确为已安装的 ID 恢复该固定包：
+wuu plugin update my-plugin lock:./my-plugin.lock.json
+```
+
+lock 重放只下载记录中的 tarball，不读取可变 registry 元数据；仍然需要网络。
+lock 记录 registry、npm 包名/版本、插件 ID、tarball URL 和完整性值。这是制品来源
+记录，**不是** npm provenance/签名验证、作者认证或安全审计。安装前应信任发布者。
+恢复旧包不会撤销 provider 数据迁移或已完成的外部副作用。
+
+下载只使用不带凭据、Cookie、查询参数或 fragment 的 HTTPS URL。Wuu 不读取
+`.npmrc` 或 token 环境变量中的 npm 凭据。tarball 与重定向必须保持在所选 registry
+同一 origin；此路径不支持需认证的 registry 或跨 origin CDN。元数据上限 4 MiB，
+压缩包上限 128 MiB，解压后上限 512 MiB / 10,000 个条目。链接、路径穿越、仅大小写
+不同的冲突路径，以及发布者自行携带的 lock 文件都会被拒绝。失败不会改用其他
+registry 或本地包。
+
+下载和验证完成后才获取 catalog 变更租约；随后复用本地包的准备、信任、原子发布
+和 generation 生命周期。来源身份为 registry 加 npm 包名：同来源精确版本更新
+继承信任及明确的启停状态；registry 或包名变化需要确认来源。无效制品或准备失败
+保留旧 generation；提交后的激活失败会报告已提交状态，不会声称已回滚。已接收任务
+继续保留其捕获的 generation。
+
+`plugin/package/inspect` 和 `plugin/package/install` RPC 的 `path` 接受相同来源，
+另有可选 `registry` 与 `integrity` 字段。lock 来源不允许覆盖 registry 或完整性值。
+registry 请求不占用串行 RPC 分派循环，无关发送和读取无需等待下载。CLI 信号可取消
+下载；RPC 下载继承请求 context，连接对应的 server 关闭时会取消并等待其退出。
+没有独立的包下载取消 RPC。
+官方和社区 npm 包都走这些公开契约，安装不会授予内置包特权。

@@ -10,6 +10,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Route plugin-owned processes through the conversation's selected execution environment, retaining their location and ownership across configuration changes. Remote start admission does not block unrelated process reads or stops, and uncertain starts retain reconciliation identities without automatic replay.
+- Publish an execution-backend TypeScript SDK for the existing versioned worker transport, including authenticated binding, tool callbacks, cancellation, process receipts and transport cleanup, so independent backends do not import Wuu's Go internals.
+- Install exact-version, integrity-pinned, self-contained npm plugins and replay saved distribution locks through the existing trust and generation lifecycle, without install scripts or automatic dependency downloads.
+- Separate goal and automation presentation into independently selectable UI plugins using public services and selected-provider slots. Composition version 5 preserves older explicit desktop selections while respecting exclusions and headless configurations.
+- Assemble native default providers through one lazy factory catalog and separate the default agent policy from its consumer contract, allowing external replacements without constructing disabled defaults.
+
 - Expose opt-in, bounded progress snapshots for exact plugin-owned session requests, so independent bot and fleet views can observe live output without reading reasoning, tool payloads, or another request's activity.
 
 - Let selected tool-service decorators explicitly continue the original invocation once, preserving its process authority and captured generation without granting ordinary service calls tool authority.
@@ -221,6 +227,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
 - Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
+- Keep effective configuration tied to the captured base source when applying project settings, avoiding a redundant file read and mismatched source/config snapshots during external edits.
 
 - Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
 - Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.

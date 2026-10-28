@@ -16,6 +16,7 @@ export * from "./ui.js";
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
+export * from "./execution-backend.js";
 export * from "./settings.js";
 export * from "./driver.js";
 export * from "./composition.js";
@@ -24,6 +25,7 @@ export * from "./engine.js";
 export * from "./persistence.js";
 import { DOCUMENT_AUTHORITY_HOST_FEATURE, DOCUMENT_STORE_SERVICE } from "./persistence.js";
 export { continueService, delegateService, SERVICE_CONTINUATION_HOST_FEATURE, type ServiceMethodOverride } from "./service-delegation.js";
+export { GOAL_CONTROL_SERVICE_DESCRIPTOR, type GoalSnapshotV1, type GoalControlRequestV1, type GoalControlResultV1 } from "./goal.js";
 
 import type {
   PublicIconName,
@@ -704,7 +706,7 @@ export type ProductComposition = {
   version: 1;
   profiles?: Record<string, { modules: string[]; services?: ServiceBinding[] }>;
 } | {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   profiles?: Record<string, CompositionProfile>;
   bundles?: Record<string, CompositionBundle>;
   /** Applied last. Without a profile/modules, patches start from an empty set. */

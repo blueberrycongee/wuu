@@ -78,10 +78,10 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		}
 		cfg.Root = root
 		if s.init != nil {
-			if s.init.Session != cfg.Session || s.init.Root != cfg.Root {
+			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -101,7 +101,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {

@@ -12,37 +12,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/mcp"
-	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/siwc"
 )
-
-func stateServiceModules() []string {
-	return []string{StateServicesConsumer, credentialstore.OSModule, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule}
-}
-
-func nativeStateProviders(home, root, stateDir string, factoryIDs []string) ([]pluginhost.Client, error) {
-	configPath := filepath.Join(home, "config.json")
-	modules := []pluginhost.Client{
-		credentialstore.NewService(credentialstore.OSModule, credentialstore.NewDesktopStore),
-		credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) {
-			return credentialstore.NewFileStore(filepath.Join(home, "credentials.json")), nil
-		}),
-		pluginsettings.NewService(pluginsettings.Module, home, root),
-		config.NewService(config.Module, configPath, root),
-		permissionpolicy.NewService(permissionpolicy.Module),
-		NewArtifactService(ArtifactModule, home, stateDir),
-		NewDataQueryService(DataQueryModule, stateDir),
-	}
-	result := make([]pluginhost.Client, 0, len(modules))
-	for _, module := range modules {
-		if !slices.Contains(factoryIDs, module.ID()) {
-			result = append(result, module)
-		}
-	}
-	return result, nil
-}
 
 func boundServiceCall(host *pluginhost.Host, consumer, service string) func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 	return func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {

@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,12 +136,14 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	var hello struct {
-		Version int `json:"version"`
+		Version      int      `json:"version"`
+		Capabilities []string `json:"capabilities"`
 	}
 	if err = json.Unmarshal(data, &hello); err != nil || hello.Version != ProtocolVersion {
 		_ = client.Close()
 		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
+	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -426,3 +429,35 @@ func (e *Environment) Request(ctx context.Context, method string, params, result
 	}
 	return json.Unmarshal(data, result)
 }
+
+// StartProcess submits once to the captured environment. A failed transport can
+// leave an uncertain result; it is never retried or substituted with local work.
+func (e *Environment) StartProcess(ctx context.Context, request ProcessRequest) (*process.Process, error) {
+	client, err := e.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !client.processStart {
+		return nil, errors.New("execution worker does not support plugin process starts; update the environment worker")
+	}
+	request.OperationID = "operation-" + rand.Text()
+	data, callErr := client.Call(ctx, "process/start", request)
+	if len(data) == 0 && callErr != nil {
+		return nil, fmt.Errorf("remote process operation %s in environment %s did not return a receipt; outcome may be unknown, inspect process records before another start: %w", request.OperationID, e.identity, callErr)
+	}
+	var started process.Process
+	if err = json.Unmarshal(data, &started); err != nil || started.ID == "" || started.OperationID != request.OperationID || started.RootThreadID != e.session || started.OwnerID != request.Actor {
+		return nil, fmt.Errorf("remote process operation %s in environment %s returned an invalid receipt; outcome unknown", request.OperationID, e.identity)
+	}
+	if err = errors.Join(callErr, ctx.Err()); err != nil {
+		// A cancelled call can race the worker's success response. Retain that
+		// response until cleanup targets the original process, never a replacement.
+		_, stopErr := e.ProcessManager().Stop(started.ID)
+		return nil, errors.Join(err, stopErr)
+	}
+	return &started, nil
+}
+
+// Identity is the immutable binding selected when this conversation was opened.
+// Reading it, Root or Backend does not connect to or provision the environment.
+func (e *Environment) Identity() string { return e.identity }

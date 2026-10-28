@@ -286,9 +286,19 @@ export interface UISlotRenderProps {
   /** For wrappers, the composed content including the slot's fallback. */
   readonly children?: ReactNode;
 }
+/** Attach to an owned slot, or follow the committed selection of a UI surface.
+ * Service targets match the selected provider's identity and generation, never
+ * an arbitrary provider advertising the same service. An absent selection or
+ * slot renders nothing; it does not select a default provider.
+ */
+export const UI_SELECTED_SLOT_TARGET_FEATURE = "ui.selected-slot-target.v1" as const;
+export type UIContributionTargetV1 = string | {
+  readonly service: string;
+  readonly slot: string;
+};
 export interface UIContributionDefinition {
   readonly id: string;
-  readonly target: string;
+  readonly target: UIContributionTargetV1;
   /** Label for host layouts such as toolbar overflow menus. Defaults to the local ID. */
   readonly title?: string;
   /** Content replaces the slot fallback; wrappers surround all composed content.
@@ -316,7 +326,7 @@ export interface ApplicationShellDefinition {
  * is active. This is not permission to run old business operations during a handoff.
  * Modules exporting only activate(api) keep the original graph-owned lifecycle. */
 export interface ApplicationPresentationAPI extends Pick<ApplicationGenerationAPI,
-  "manifestId" | "contributions" | "registerApplicationShell" | "registerUISlot" | "registerUIContribution"> {
+  "manifestId" | "supportedFeatures" | "contributions" | "registerApplicationShell" | "registerUISlot" | "registerUIContribution"> {
   readonly signal: AbortSignal;
   readonly react: typeof import("react");
 }
@@ -325,6 +335,9 @@ export interface ApplicationPresentationModule {
 }
 
 export interface ApplicationGenerationAPI {
+  /** Explicit renderer capabilities. Older hosts may omit this at runtime;
+   * consumers must check the feature they need before registering newer APIs. */
+  readonly supportedFeatures?: readonly string[];
   readonly contributions: UIContributionRegistryV1;
   /** Central, generation-owned notice; key deduplicates repeated background failures. */
   showNotice(input: { readonly message: string; readonly tone?: "info" | "error"; readonly key?: string }): Disposable;

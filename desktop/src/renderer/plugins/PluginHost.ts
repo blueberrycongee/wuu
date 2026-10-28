@@ -1,4 +1,4 @@
-import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginActionNotStartedError, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { showToast, dismissToast } from "../Toast";
 import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
@@ -732,7 +732,7 @@ export class PluginHost {
     state.presentationOnly = true;
     return register(Object.freeze({ react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
       registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
-      registerUIContribution: api.registerUIContribution }));
+      registerUIContribution: api.registerUIContribution, supportedFeatures: api.supportedFeatures }));
   }
 
   canRebindPresentation(pluginId: string, generation: string): boolean {
@@ -918,7 +918,12 @@ export class PluginHost {
       invoke: async <Action extends keyof ApplicationActionMapV1>(
         action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal },
       ): Promise<ApplicationActionMapV1[Action]["result"]> => {
-        const application = service();
+        let application: HostApplicationService | ApplicationServiceV1;
+        try { application = service(); }
+        catch (error) {
+          if (isPluginLifecycleCancellation(error)) throw new PluginActionNotStartedError(error);
+          throw error;
+        }
         const signal = options?.signal ? AbortSignal.any([lifetime.signal, options.signal]) : lifetime.signal;
         signal.throwIfAborted();
         if (action === "preview.set-visibility" && "setPreviewVisibility" in application) {
@@ -1243,6 +1248,7 @@ export class PluginHost {
 
     return Object.freeze({
       react: this.react,
+      supportedFeatures: Object.freeze(["ui.selected-slot-target.v1"]),
       application,
       contributions: this.createContributionRegistry(state),
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
@@ -1289,8 +1295,11 @@ export class PluginHost {
       registerUIContribution: (definition: UIContributionDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "ui-contribution", definition.id);
-        const target = requireNonEmpty(definition.target, "UI slot target");
-        if (!target.includes("/")) throw new Error("UI slot target must include its owner");
+        const target = typeof definition.target === "string"
+          ? requireNonEmpty(definition.target, "UI slot target")
+          : Object.freeze({ service: requireNonEmpty(definition.target.service, "UI target service"), slot: requireNonEmpty(definition.target.slot, "UI target slot") });
+        if (typeof target === "string" && !target.includes("/")) throw new Error("UI slot target must include its owner");
+        if (typeof target !== "string" && target.slot.includes("/")) throw new Error("Selected UI target slot must be local to its provider");
         if (definition.mode !== undefined && definition.mode !== "content" && definition.mode !== "wrap") throw new Error("Invalid UI contribution mode");
         const record: UIContributionRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: normalizeOrder(definition.order), removed: false,

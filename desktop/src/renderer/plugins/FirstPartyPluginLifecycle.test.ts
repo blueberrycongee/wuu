@@ -38,7 +38,7 @@ const repositoryRoot = basename(process.cwd()) === "desktop"
   ? resolve(process.cwd(), "..")
   : process.cwd();
 const bundledRoot = resolve(repositoryRoot, "internal/plugin/bundled");
-const firstPartyPluginIds = ["subagent", "automation-client", "memory", "dream", "todo"] as const;
+const firstPartyPluginIds = ["subagent", "automation-ui", "memory", "dream", "todo"] as const;
 
 afterEach(() => {
   for (const style of document.head.querySelectorAll("style[data-wuu-plugin-id]")) {
@@ -114,13 +114,13 @@ describe("first-party desktop plugin lifecycle", () => {
     ]);
     expect(host.getUIContributions("wuu.default-composer/composer.toolbar")).toEqual([]);
     expect(host.getViewTypes().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
-      "automation-client:automation.catalog",
+      "automation-ui:automation.catalog",
       "dream:dream.settings",
       "memory:memory.settings",
       "subagent:subagent.settings",
     ]);
     expect(host.getNavigationEntries().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
-      "automation-client:automation.catalog",
+      "automation-ui:automation.catalog",
     ]);
     expect(host.getSettingsPages().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
       "memory:memory.settings",
@@ -278,7 +278,7 @@ describe("first-party desktop plugin lifecycle", () => {
   });
 
   it.each([
-    ["automation-client", "automation.catalog", "还没有自动化任务"],
+    ["automation-ui", "automation.catalog", "还没有自动化任务"],
     ["memory", "memory.settings", "笔记本原文"],
     ["dream", "dream.settings", "后台整合"],
   ] as const)("renders the real %s view with localized host UI", async (pluginId, viewTypeId, expectedText) => {
@@ -321,7 +321,7 @@ describe("first-party desktop plugin lifecycle", () => {
       expect(container.querySelector('[data-wuu-component="plugin-ui-page"]')).not.toBeNull();
       expect(container.textContent).toContain(expectedText);
       expect([...container.querySelectorAll("input, textarea")].every((control) => control.closest("label"))).toBe(true);
-      if (pluginId === "automation-client") {
+      if (pluginId === "automation-ui") {
         expect(invokeRuntime).toHaveBeenCalledWith(expect.objectContaining({
           pluginId,
           generation: "render-test",

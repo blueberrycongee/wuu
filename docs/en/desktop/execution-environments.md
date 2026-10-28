@@ -28,7 +28,7 @@ The workspace starts empty. Clone a repository inside it or explicitly mount a h
 | Modal | Python 3.10+, `modal` 1.5+ and configured SDK credentials; accessible worker image | CPU/memory limits and network isolation |
 | Daytona | Python 3.10+, `daytona` SDK and configured credentials; accessible worker image | Whole CPU cores, memory rounded up to GiB and network isolation |
 | Vercel Sandbox | Python 3.10+, authenticated `sandbox` CLI 3+ and worker image in the provider’s image registry | Whole CPU cores; memory follows CPU allocation; network isolation |
-| Command | Installed trusted adapter implementing the private worker protocol | The adapter owns provisioning and enforcement |
+| Command | Installed trusted adapter implementing the versioned execution backend protocol | The adapter owns provisioning and enforcement |
 
 Cloud dependencies are optional; they are not installed automatically. The Python executable field can point to a virtual environment containing the SDK. Configure cloud credentials using the provider’s normal SDK or CLI login flow. The host transport uses them to provision the environment; they are not implicitly forwarded to workspace commands. The environment’s own base image or server may already contain credentials.
 
@@ -77,6 +77,111 @@ Profiles are user-owned. Project configuration cannot install or override execut
 
 Optional fields include `shared`, `user`, `host_workspace`, `mount_read_only`, `forward_env`, `worker`, `lifetime_seconds`, `python`, and SSH `host`, `port`, `identity_file`, `known_hosts_file`. A command adapter uses an executable-and-arguments array in `command`. Adapters are trusted local programs; selecting one grants it the host permissions of Wuu.
 
+## Implement a backend with the public SDK
+
+`runExecutionBackendV4` and the `ExecutionBackendV4` types are exported by
+`@wuu/plugin-sdk`. They serve the existing worker protocol, not a second host
+service or the plugin `runJSONLRuntime` protocol. A backend can implement file
+operations and process ownership without importing Wuu internals. Select its
+installed executable with a user-owned profile, for example
+`{ "backend": "command", "command": ["node", "/absolute/path/backend.mjs"], "workspace": "/workspace" }`.
+The [independent backend fixture](../../../scripts/external-composition-acceptance/external-worker.ts)
+is a complete Node-only example with file read/write/list, process output,
+reconciliation records and cleanup. It deliberately rejects confined shell
+execution; it is a trusted test implementation, not a production sandbox.
+
+The adapter owns framing, authentication-token binding, request cancellation,
+and callback routing. The provider supplies `initialize`, a typed `methods` map,
+and `close`:
+
+- **Handshake:** newline-delimited JSON requests contain `{ id, method, token, data }`.
+  Replies contain `{ id, data }` or `{ id, error }`, where `error` is a string.
+  Frames are at most 16 MiB including the newline. First initialization pins the
+  token and immutable `{ version: 4, root, session, identity?, environment?,
+  require_existing_workspace?, remove_workspace_on_exit? }` binding. No operation
+  runs before successful initialization; reinitialization cannot change the
+  binding. A cancelled/failed provider initialization requires a new connection.
+  The token protects a private connection, not unauthenticated remote transport;
+  use authenticated SSH or an equivalently secured transport between machines.
+- **Files and tools:** `execute` receives an `ExecutionToolRequestV4` with a
+  workspace tool name, encoded `call.arguments`, actor and permission mode, and
+  returns the ordinary `ToolResult`. Paths belong to the initialized backend.
+  The provider implements its operations, enforces read-only/path/OS boundaries,
+  honors initialization retention flags and explicitly forwarded environment
+  values, and rejects unsupported policies. The SDK does not create directories,
+  forward the adapter's environment to commands, or implement a filesystem fallback.
+- **Processes:** implement `process/start`, `process/list`, `process/get`,
+  `process/read`, `process/stop` and whichever additional controls are supported.
+  `ExecutionProcessV4` records use snake_case and stay bound to
+  `root_thread_id: binding.session`. Read options and output intentionally retain
+  Go wire casing (`MaxBytes`, `OffsetBytes`, `Wait`, `MinDwell`; `Process`, `Output`,
+  `StartOffset`, `EndOffset`, `TotalBytes`, `Truncated`, `TimedOut`, `Duration`).
+  Durations in these process records are **nanoseconds**, unlike `timeout_ms`.
+  `emitProcess` publishes `{ Type, Cause, Process }` events on the same connection.
+- **Acceptance and recovery:** explicitly advertise `capabilities: ["process.start.v1"]`
+  only when start replies and persisted records returned by `process/list`
+  preserve the host's `operation_id`. The helper checks the reply identity and
+  requires both handlers and `close`; durability belongs to the provider. This capability
+  does not promise duplicate-start deduplication. Requests are never replayed by
+  the helper, and a lost reply is not proof that an effect did not occur.
+- **Lifetime:** handlers can overlap; protect shared state. `context.signal`
+  ends with its addressed request. `cancel` aborts it and the terminal reply waits
+  for the handler to drain. An accepted detached process must not use that signal
+  as its lifetime: use `context.lifetimeSignal` and stop owned process trees in
+  `close`. EOF, malformed frames and output failure cancel and drain handlers
+  before cleanup; even blocked input cannot postpone cleanup after output failure.
+  Unsupported methods return errors, never a local substitute.
+- **Code and artifacts:** optional `run_code` handlers use `context.invokeTool`
+  only while their own parent request is live. Version 4 requires per-program
+  `result_view` semantics; do not advertise a successful code implementation that
+  ignores them. Artifact export uses `export/read` with a token and byte offset,
+  returning base64 `{ data, eof }`, followed by `export/close`. Providers own
+  immutable export snapshots. Omit unsupported handlers rather than faking success.
+
+For a partial backend, `delegateExecutionBackendV4` provides an explicit peer
+client. It does not discover or start a default worker:
+
+```ts
+const peer = delegateExecutionBackendV4({
+  command: ["node", "/absolute/path/selected-peer.mjs"],
+  capabilities: ["process.start.v1"],
+});
+await runExecutionBackendV4({
+  ...peer,
+  methods: {
+    ...peer.methods,
+    async execute(request, context) {
+      // Add an audit operation here, then explicitly delegate unchanged input.
+      return peer.methods.execute!(request, context);
+    },
+  },
+});
+```
+
+The peer starts lazily at initialization and must accept the same complete
+binding, protocol version, workspace root and requested capabilities. Each call
+retains that binding and its current cancellation signal. Code callbacks use
+the exact outer request's `invokeTool`; process events remain in the outer
+connection lifetime. A missing/failed peer is never retried or replaced. Terminal
+transport failure closes the peer immediately, even while the outer input stays
+open. Cancellation waits up to 35 seconds for the peer's terminal reply before
+closing an unresponsive peer. A spawned peer receives EOF for cleanup; after
+3 seconds it is terminated and cleanup failure is reported, not treated as proof
+that all remote resources stopped. An explicitly attached `{ input, output,
+close }` transport can be supplied instead of `command`; its `close` owns physical
+cleanup. Spawned peers inherit the adapter's environment unless `env` is supplied,
+so only select trusted peers and provide a restricted environment when appropriate.
+
+Delegation is valid only for a coherent execution world. If an override replaces
+files with an unrelated in-memory or remote filesystem, omit delegated process
+methods and `process.start.v1` rather than running commands against different
+files. The [audit and memory-filesystem acceptance fixtures](../../../scripts/external-composition-acceptance/README.md)
+exercise both choices through the real host.
+
+Plugin consumers use the separate [conversation-bound process API](../customize/plugin-authoring.md#conversation-bound-shell-processes).
+`getProcessEnvironment` and accepted snapshots expose the selected location;
+consumers cannot use that metadata to change the binding or acquire authority.
+
 ## Reproducible validation
 
 With the current worker image built and Docker running:
@@ -97,3 +202,8 @@ The host and worker must use execution protocol version 4. Upgrade the worker
 binary or rebuild its image when upgrading the host. Older workers are rejected
 before execution: programs require the current isolated interpreter and
 actor-scoped JSON state and per-program result-view contracts. They cannot fall back to native program access. No existing permission is expanded.
+
+`host.process` remote starts additionally require the additive
+`process.start.v1` capability in the version-4 handshake. An older version-4
+worker can still serve its existing methods, but cannot silently ignore the
+operation-identity contract for new plugin process starts.

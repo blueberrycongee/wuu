@@ -27,10 +27,6 @@ func newSelectedCompactionClient(host *pluginhost.Host) *compactionservice.Clien
 	})
 }
 
-func compactionProviderFactory() NativeProviderFactory {
-	return NativeProviderFactory{ID: compactionservice.NativeModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) { return compactionservice.NewService(), nil }}
-}
-
 func newSelectedLoopPolicyClient(host *pluginhost.Host) *loopdriver.PolicyClient {
 	return loopdriver.NewPolicyClient(func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 		if host == nil {
@@ -42,9 +38,4 @@ func newSelectedLoopPolicyClient(host *pluginhost.Host) *loopdriver.PolicyClient
 		}
 		return result, nil
 	})
-}
-func loopPolicyProviderFactory() NativeProviderFactory {
-	return NativeProviderFactory{ID: loopdriver.NativePolicyModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) {
-		return loopdriver.NewNativePolicyService(), nil
-	}}
 }

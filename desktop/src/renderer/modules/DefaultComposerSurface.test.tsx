@@ -67,10 +67,52 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async (layout: DefaultComposerLayout = {}) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("saves the latest text entered while its application provider is retiring", async () => {
+    const fixture = setup();
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.set-draft") throw new PluginLifecycleCancellationError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    const invoke = vi.fn(fixture.application.invoke);
+    const successor = { ...fixture.application, invoke } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    const editor = container.querySelector("textarea")!;
+    for (const text of ["first edit", "latest edit"]) await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, text);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await fixture.render({}, successor);
+    expect(invoke).toHaveBeenCalledWith("composer.set-draft", { ownerTabId: "draft-one", text: "latest edit" });
+    expect(container.querySelector("textarea")!.value).toBe("latest edit");
+  });
+
+  it.each(["owner", "workspace"])("does not carry an unsaved edit into a different %s", async changed => {
+    const fixture = setup();
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.set-draft") throw new PluginLifecycleCancellationError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    const editor = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "private draft");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const nextOwner = changed === "owner" ? "draft-two" : "draft-one";
+    await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activeTabId: nextOwner, items: [{ ...view.tabs.items[0], id: nextOwner, workspaceRoot: changed === "workspace" ? "/other" : "/synthetic" }] },
+      drafts: { ...view.drafts, activeTabId: nextOwner, primary: { ...view.drafts.primary, ownerTabId: nextOwner, text: "", revision: 1 } },
+      composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId: nextOwner }] },
+    }));
+    const invoke = vi.fn(fixture.application.invoke);
+    await fixture.render({}, { ...fixture.application, invoke });
+    expect(invoke.mock.calls.some(([action, input]) => action === "composer.set-draft" && (input as { text?: string }).text === "private draft")).toBe(false);
+  });
+
   it("announces a failed send once, retains input, and clears its notice when retry starts", async () => {
     const toast = vi.spyOn(Notices, "showErrorToast");
     const fixture = setup();

@@ -113,7 +113,7 @@ func TestNestedCallsUseLedgerWithoutProviderProjection(t *testing.T) {
 func TestNestedParentsDoNotConsumeLeafSlots(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	const count = maxToolConcurrency + 2
+	const count = 12
 	parents := make(chan struct{}, count)
 	release := make(chan struct{})
 	var writes atomic.Int32

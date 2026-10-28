@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/process"
 )
 
@@ -16,6 +17,25 @@ func (s *Server) process(ctx context.Context, method string, data json.RawMessag
 	s.mu.Unlock()
 	if manager == nil {
 		return nil, errors.New("worker is not initialized")
+	}
+	if method == "process/start" {
+		var request executionenv.ProcessRequest
+		if err := json.Unmarshal(data, &request); err != nil {
+			return nil, err
+		}
+		a, err := s.actor(request.Actor, request.PermissionMode, request.GitAttributionEnabled, false)
+		if err != nil {
+			return nil, err
+		}
+		started, err := a.kit.StartEnvironmentProcess(ctx, request.Command, request.CWD, request.OperationID)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			_, stopErr := manager.Stop(started.ID)
+			return nil, errors.Join(err, stopErr)
+		}
+		return json.Marshal(started)
 	}
 	var request struct {
 		ID       string                    `json:"id"`

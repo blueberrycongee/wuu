@@ -200,3 +200,33 @@ JSONL 响应保留 code 与 message，嵌套服务调用同样如此。具有非
 不要在输入框、导航行或消息内容中插入异常文字。它复用现有集中通知位置，并按语义 key
 去重。返回的 disposable 可关闭通知；代际退出会关闭其通知并拒绝后续调用。通知应简短，
 技术细节留在诊断中。独立预览明确不模拟产品集中通知投递。
+
+### 跟随已选择的呈现提供者
+
+功能 UI 可以挂载到提供者公开的本地插槽，而不写死内置包的身份：
+
+```tsx
+if (!api.supportedFeatures?.includes('ui.selected-slot-target.v1')) {
+  throw new Error('This UI requires renderer feature ui.selected-slot-target.v1');
+}
+api.registerUIContribution({
+  id: 'goal-controls',
+  target: { service: 'ui.composer', slot: 'composer.above' },
+  render: ({ context }) => <span>{String(context.threadId ?? '')}</span>,
+});
+```
+
+这种 target 跟随已提交 UI surface 绑定的提供者身份、generation 和已注册的
+surface。选中的提供者必须声明并挂载 `composer.above`；另一个提供者仅声明
+同名本地插槽并不会接收该贡献。未选择、generation 已退出或插槽不存在时不
+挂载，绝不回退到内置实现。导航对应的 target 为
+`{ service: 'ui.navigation', slot: 'sidebar.primary' }`。提供者决定支持哪些公开
+插槽，并传入约定的 context。此形式只挂载到嵌套插槽，不替换由服务图直接选择
+的 surface 插槽。现有 `owner/local-slot` 字符串 target 仍按确切所有者匹配。
+多个贡献争用单值插槽会产生诊断并留空该插槽；其他插槽仍然可用，移除冲突后
+即可恢复。SDK 通过 `UI_SELECTED_SLOT_TARGET_FEATURE` 导出能力名称；必须在
+注册前检测它，旧宿主可能不提供 `supportedFeatures`，产品 CalVer 不代替呈现
+能力协商。不支持的宿主会得到明确的激活错误，而不是回退到写死的默认提供者。
+独立组件预览没有已提交的产品服务图，不声明该能力，需要此能力的包会拒绝在
+预览中激活。可用确切所有者的预览 shell 单独检查组件，在运行中的宿主验证
+服务图选择；现有确切所有者的预览不受影响。

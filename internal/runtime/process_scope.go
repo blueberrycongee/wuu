@@ -80,3 +80,11 @@ func (t *ThreadRuntime) ConfigureExecutionPermissions(permissions config.Resolve
 		selected.mu.Unlock()
 	}
 }
+
+func processGitAttribution(generation *PluginGeneration) bool {
+	settings := config.AgentConfig{}
+	if generation != nil {
+		settings = generation.settings.Agent
+	}
+	return settings.GitAttributionEnabledValue()
+}

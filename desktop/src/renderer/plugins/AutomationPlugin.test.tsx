@@ -6,32 +6,37 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
-const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/automation-client/desktop.js"), "utf8");
+const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/automation-ui/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 const task = { id: "one", title: "Review", prompt: "Review recent changes", cron: "0 9 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "worktree", next_run_at: "2026-09-16T01:00:00Z" };
 const cleanups: Array<() => void> = [];
+it("rejects a host without selected-slot targeting before registering presentation", async () => {
+  await expect(activate({} as PluginGenerationApi)).rejects.toThrow("ui.selected-slot-target.v1");
+});
 afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); vi.useRealTimers(); });
-async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; mutate?: (input: any) => Promise<unknown> } = {}) {
+async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readError?: () => string | undefined; mutate?: (input: any) => Promise<unknown> } = {}) {
   vi.useFakeTimers();
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input, workspaceId }) => {
+    const readError = options.readError?.();
+    if (readError && (method === "automation.list" || method === "automation.run.list")) throw new Error(readError);
     if (method === "automation.list") return { tasks: workspaceId === "wuu" ? options.tasks ?? [task] : [], workspace: { id: workspaceId } };
     if (method === "automation.run.list") return { runs: options.runs || [] };
     return options.mutate ? options.mutate(input) : { ...task, ...(input as object), id: "one" };
   });
   const host = new PluginHost({ react: React, invokeRuntime: request => {
-    expect(request).toMatchObject({ pluginId: "automation-client", generation: "one", graphGeneration: "selected-graph", service: "automation.scheduler", method: "request" });
+    expect(request).toMatchObject({ pluginId: "automation-ui", generation: "one", graphGeneration: "selected-graph", service: "automation.scheduler", method: "request" });
     const { method, input } = request.input as { method: string; input?: unknown };
     return invoke({ ...request, method, input });
   },
     listWorkspaces: async () => ({ activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }),
     listThreads: async () => [{ id: "chat", title: "Existing investigation", pinned: true }],
   });
-  await host.activateGeneration({ pluginId: "automation-client", generation: "one", graphGeneration: "selected-graph", register: activate });
+  await host.activateGeneration({ pluginId: "automation-ui", generation: "one", graphGeneration: "selected-graph", register: activate });
   const controller = new WorkbenchController(host);
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.disable("automation-client"); container.remove(); });
-  await act(async () => root.render(<PluginViewContent controller={controller} pluginId="automation-client" viewTypeId="automation.catalog" />));
+  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.disable("automation-ui"); container.remove(); });
+  await act(async () => root.render(<PluginViewContent controller={controller} pluginId="automation-ui" viewTypeId="automation.catalog" />));
   const click = async (text: string) => {
     const button = [...container.querySelectorAll("button")].find(item => item.textContent === text || item.getAttribute("aria-label") === text);
     expect(button, text).toBeDefined(); await act(async () => button!.click());
@@ -48,6 +53,19 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; mutate?
   const open = async () => { await act(async () => container.querySelector<HTMLButtonElement>(".plugin-automation-list button")!.click()); };
   return { container, invoke, click, edit, open };
 }
+it("keeps presentation available with an explicit unavailable scheduler and recovers without fallback", async () => {
+  let unavailable = true;
+  const ui = await mount({ readError: () => unavailable ? "Selected automation.scheduler provider is unavailable" : undefined });
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("automation.scheduler");
+  expect(ui.container.querySelector<HTMLButtonElement>(".plugin-automation-create")?.disabled).toBe(true);
+  expect(ui.container.querySelector(".plugin-automation-list")).toBeNull();
+  unavailable = false;
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector<HTMLButtonElement>(".plugin-automation-create")?.disabled).toBe(false);
+  expect(ui.container.querySelector(".plugin-automation-list")?.textContent).toContain("Review");
+});
+
 it("edits wall-clock schedules and moves a worktree task to an existing chat", async () => {
   const ui = await mount(); await ui.open();
   expect(ui.container.querySelector<HTMLInputElement>('input[type="time"]')!.value).toBe("09:00");

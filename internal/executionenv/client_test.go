@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -15,11 +16,25 @@ func TestTransportWorker(t *testing.T) {
 		return
 	}
 	held := ""
+	processStart := false
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var req Request
 		if json.Unmarshal(scan.Bytes(), &req) != nil {
 			os.Exit(2)
+		}
+		if req.Method == "process/start" {
+			if string(req.Data) != "null" {
+				var input ProcessRequest
+				_ = json.Unmarshal(req.Data, &input)
+				data, _ := json.Marshal(map[string]string{"id": "foreign-process", "operation_id": input.OperationID, "owner_id": input.Actor, "root_thread_id": "foreign-thread"})
+				_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Data: data})
+				continue
+			}
+			held = req.ID
+			processStart = true
+			_ = json.NewEncoder(os.Stdout).Encode(Response{Method: "process", Data: json.RawMessage(`{"started":true}`)})
+			continue
 		}
 		if req.Method == "run_code" && string(req.Data) == `{"hold":true}` {
 			held = req.ID
@@ -41,6 +56,11 @@ func TestTransportWorker(t *testing.T) {
 			continue
 		}
 		if req.Method == "cancel" {
+			if req.ID == held && processStart {
+				_ = json.NewEncoder(os.Stdout).Encode(Response{ID: held, Data: json.RawMessage(`{"id":"proc-accepted","operation_id":"operation-known"}`)})
+				held = ""
+				continue
+			}
 			if req.ID == held {
 				continue
 			}
@@ -131,5 +151,52 @@ func TestProgramRetirementKeepsProcessControlAvailable(t *testing.T) {
 	}
 	if err := <-next; err != nil {
 		t.Fatalf("program reuse: %v", err)
+	}
+}
+
+func TestProcessStartCancellationReturnsReceiptForCleanup(t *testing.T) {
+	c := testClient(t)
+	ready := make(chan struct{})
+	c.event = func(json.RawMessage) { close(ready) }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		data json.RawMessage
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() { data, err := c.Call(ctx, "process/start", nil); done <- result{data, err} }()
+	<-ready
+	cancel()
+	got := <-done
+	if !errors.Is(got.err, context.Canceled) || string(got.data) != `{"id":"proc-accepted","operation_id":"operation-known"}` {
+		t.Fatalf("cancel lost accepted process receipt: %s %v", got.data, got.err)
+	}
+}
+
+func TestEnvironmentRejectsWorkerWithoutProcessCapability(t *testing.T) {
+	c := testClient(t)
+	environment := &Environment{client: c, identity: "pinned"}
+	if _, err := environment.StartProcess(context.Background(), ProcessRequest{Command: "must-not-start", Actor: "actor", PermissionMode: "unconfined"}); err == nil {
+		t.Fatal("old worker silently accepted process capability")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sequence != 0 {
+		t.Fatal("unsupported worker received mutating request")
+	}
+}
+
+func TestEnvironmentRejectsForeignProcessReceipt(t *testing.T) {
+	c := testClient(t)
+	c.processStart = true
+	environment := &Environment{client: c, identity: "pinned", session: "thread"}
+	if _, err := environment.StartProcess(context.Background(), ProcessRequest{Command: "printf remote", Actor: "actor", PermissionMode: "unconfined"}); err == nil {
+		t.Fatal("foreign process receipt accepted")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sequence != 1 {
+		t.Fatal("host attempted cleanup of a foreign process")
 	}
 }

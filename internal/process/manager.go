@@ -64,10 +64,11 @@ const (
 )
 
 type Process struct {
-	Action    string    `json:"action,omitempty"`
-	ID        string    `json:"id"`
-	OwnerKind OwnerKind `json:"owner_kind"`
-	OwnerID   string    `json:"owner_id"`
+	Action      string    `json:"action,omitempty"`
+	ID          string    `json:"id"`
+	OperationID string    `json:"operation_id,omitempty"`
+	OwnerKind   OwnerKind `json:"owner_kind"`
+	OwnerID     string    `json:"owner_id"`
 	// RootThreadID is the conversation that owns this command. It is stamped
 	// at start from host state, never derived afterwards: once a thread or
 	// subagent is gone there is nothing left to scan to recover the owner. This
@@ -121,6 +122,8 @@ type Process struct {
 }
 
 type StartOptions struct {
+	// OperationID correlates an uncertain remote submission with its durable record.
+	OperationID   string
 	Command       string
 	CommandPrefix string
 	CWD           string
@@ -390,7 +393,7 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		opt.TTY = false
 	}
 	id := "proc-" + randomHex(4)
-	p := &Process{ID: id, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1, RecheckMinutes: opt.RecheckMinutes}
+	p := &Process{ID: id, OperationID: opt.OperationID, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1, RecheckMinutes: opt.RecheckMinutes}
 	if opt.SandboxPolicy != nil {
 		p.SandboxMode = opt.SandboxPolicy.Mode
 	}

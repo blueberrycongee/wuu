@@ -681,12 +681,41 @@ uses a local fake provider and records repeatable evidence without paid inferenc
 
 Declare `requireProcessService()` to consume `host.process` version 1. From a live
 conversation tool callback, call `startProcess(host, { key, command, cwd?,
-timeout_ms?, follow_parent? })`. It uses the caller's local shell permissions,
-sandbox, working directory and process manager. Remote execution environments are
-not supported. Starting from activation or an unrelated capability is rejected.
-A repeated key with identical arguments returns its existing receipt; changed
-arguments conflict. There may be at most 64 running processes per generation.
-Terminal handles are retained up to the host's 256-record receipt bound.
+timeout_ms?, follow_parent? })`. It uses the caller's permissions and pinned
+local or remote execution environment, including that environment's workspace
+and process manager. A remote path is never interpreted on the plugin's or host's
+local filesystem. Missing, unavailable or incompatible remote execution fails;
+it never substitutes a local process. Starting from activation or an unrelated
+capability is rejected.
+
+`getProcessEnvironment(host)` inspects that live callback's selected location
+without connecting or provisioning it. It returns `{ backend, root, identity? }`:
+`backend: "local"` identifies local execution; `root` is the workspace root on
+the selected backend; `identity`, when present, is its opaque pinned identity.
+These are observations, not selectors or authority. The method and the optional
+`environment` field on process snapshots were added in `host.process` 1.1.
+Existing version-1 start/read/stop/send calls remain compatible. An older host
+rejects the new method explicitly; missing snapshot metadata does not imply local
+execution. Snapshot metadata is captured at process acceptance: changing defaults
+or handing event delivery to a parent does not move a running process.
+
+A repeated key in the same conversation and plugin generation with identical
+arguments returns its retained receipt; changed arguments conflict. There may be
+at most 64 running processes per generation. Terminal handles are retained up to
+the host's 256-record receipt bound. A disconnected start may already have had
+effects before its reply was lost. Keys protect retained host receipts, not
+exactly-once execution across restarts or receipt eviction. A retained failed-start
+receipt returns the same error for that key, not another launch. Use the reported
+`operation_id` to reconcile an uncertain remote start against the selected
+backend's process records before starting another command. Helpers never retry
+automatically.
+
+All process helpers accept an optional final `{ signal }` argument. The callback's
+own cancellation still applies. Before acceptance, cancellation prevents or
+cleans up the start where its outcome is known. After acceptance, the process
+belongs to the plugin generation and may outlive the tool callback. Cancelling
+a read or aborting the original call's signal does not stop that accepted process;
+call `stopProcess` for explicit cancellation.
 
 `readProcess` returns merged output, byte cursors, truncation and a process snapshot.
 Reads accept 4 bytes to 1 MiB (default 64 KiB), and up to 30 seconds of waiting.
@@ -783,3 +812,75 @@ Use `validate` for package structure, `test` for executable initialization and n
 The install CLI grants trust and enables the package. Updates from the same recorded source retain trust and the enabled state; a changed or previously unrecorded source requires confirmation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
 
 Exact authoring types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts). The Go host and its internal application-embedding facade are host implementation code, not additional plugin authoring SDKs. Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.
+
+## Package distribution
+
+Besides local directories and ZIP files, `inspect`, `install`, and `update` accept
+`npm:<name>@<exact-version>`. Both scoped and unscoped names work; ranges, tags,
+Git URLs and implicit `latest` do not. The default registry is
+`https://registry.npmjs.org`; `--registry` explicitly selects another HTTPS npm
+registry. Put options before positional arguments:
+
+```bash
+# Replace this illustrative package name with a package you trust.
+wuu plugin inspect --json npm:@your-scope/wuu-plugin@1.2.3
+wuu plugin install --integrity 'sha512-BASE64_FROM_INSPECTION' npm:@your-scope/wuu-plugin@1.2.3
+wuu plugin update my-plugin npm:@your-scope/wuu-plugin@1.2.4
+```
+
+The archive must contain a `package/` root with `package.json`, a supported Wuu
+manifest, and all runtime assets. The npm name/version must match registry
+metadata, and the plugin manifest version must equal the npm version. The plugin
+ID remains independent of the npm name; `update` requires that installed ID.
+Publish self-contained JavaScript bundles, with build tools and the SDK as
+development dependencies. Nonempty `dependencies`, `optionalDependencies` and
+`peerDependencies` are rejected, not installed. Wuu never invokes npm, lifecycle
+scripts or package builds during inspection or installation. Single-file
+TypeScript development remains unchanged and needs none of this packaging.
+
+Each remote artifact requires a SHA-512 integrity value, verified before
+extraction. Inspection returns a `distribution` object; installation stores that
+same lock schema in `<WUU_HOME>/plugins/<id>/.wuu-package-lock.json`, covered by the
+package fingerprint. Keep an independent copy before updating:
+
+```bash
+cp "${WUU_HOME:-$HOME/.wuu}/plugins/my-plugin/.wuu-package-lock.json" ./my-plugin.lock.json
+wuu plugin install lock:./my-plugin.lock.json
+# Or deliberately restore the pinned artifact for an already installed ID:
+wuu plugin update my-plugin lock:./my-plugin.lock.json
+```
+
+Lock replay fetches only the recorded tarball, never mutable registry metadata;
+it still needs network access. The lock identifies registry, package name/version,
+plugin ID, tarball URL and integrity. It is artifact provenance, **not** an npm
+provenance/signature verification, author certification or safety audit. Trust
+the publisher before installing. Restoring an older artifact does not reverse
+provider data migrations or completed external effects.
+
+Downloads use HTTPS without credentials, cookies, URL query strings or fragments.
+Wuu does not load npm credentials from `.npmrc` or token environment variables. Tarballs and
+redirects must stay on the selected registry origin; authenticated registries and
+cross-origin CDN URLs are not supported by this path. Metadata is limited to
+4 MiB, compressed archives to 128 MiB, and extracted packages to 512 MiB / 10,000
+entries. Links, traversal, case-colliding paths and a publisher-supplied lock file
+are rejected. There is no alternate-registry or local-package fallback.
+
+Fetching and validation finish before acquiring the catalog mutation lease.
+The resolved bundle then uses the same preparation, trust, atomic package
+publication and generation lifecycle as a local package. Registry plus npm name
+is the recorded source identity: exact-version updates from that same source
+retain trust and explicit enabled/disabled choices; a registry or package-name
+change requires source confirmation. An invalid artifact or failed preparation
+keeps the prior generation. Post-commit activation failures report the committed
+state rather than pretending rollback occurred. Already admitted work retains
+its captured generation.
+
+The `plugin/package/inspect` and `plugin/package/install` RPCs accept the same
+source in `path`, with optional `registry` and `integrity` fields. A lock source
+does not accept registry or integrity overrides. Registry requests run outside
+the serial RPC dispatcher, so unrelated sends and reads do not wait for a
+download. CLI signals cancel downloads; RPC downloads inherit the request
+context and are canceled and drained when the connection's server closes.
+There is no separate package-download cancel RPC. Official and community npm
+packages go through these same public contracts; installation does not grant
+bundled-package privileges.

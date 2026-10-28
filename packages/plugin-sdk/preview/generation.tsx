@@ -143,7 +143,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         contributions: previewContributions,
         showNotice() { throw new Error("Central product notices require the desktop host; standalone preview does not simulate notification delivery."); },
         registerApplicationProvider() { throw new Error("Application business providers require the production desktop host; preview does not simulate process or persistence effects."); },
-        react: React, ui: createPreviewUIKit(), pluginId, manifestId: pluginId, generation: revision, signal: controller.signal, application: scoped,
+        react: React, ui: createPreviewUIKit(), pluginId, manifestId: pluginId, generation: revision, signal: controller.signal, application: scoped, supportedFeatures: Object.freeze([]),
         registerCleanup(callback: () => void) {
           cleanup.push(callback);
           return { dispose() { const index = cleanup.indexOf(callback); if (index !== -1) { cleanup.splice(index, 1); callback(); } } };
@@ -194,7 +194,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       if (module.activatePresentation) await module.activatePresentation(Object.freeze({
         react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
         registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
-        registerUIContribution: api.registerUIContribution,
+        registerUIContribution: api.registerUIContribution, supportedFeatures: api.supportedFeatures,
       }));
       else if (module.activate) await module.activate(api);
       if (module.preview) {

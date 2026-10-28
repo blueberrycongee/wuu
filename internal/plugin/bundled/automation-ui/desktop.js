@@ -1,4 +1,5 @@
 export async function activate(api) {
+  if (!api.supportedFeatures?.includes("ui.selected-slot-target.v1")) throw new Error("Automation catalog requires renderer feature ui.selected-slot-target.v1");
   const React = api.react;
   const h = React.createElement;
   const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
@@ -726,7 +727,7 @@ export async function activate(api) {
       if (!loaded) fresh.current.clear();
     }, [tasks, loaded]);
     const act = async (method, input) => {
-      if (!workspace || busy) return null;
+      if (!workspace || busy || refreshError || !loaded) return null;
       setBusy(true); setError("");
       try {
         const result = await requestScheduler(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
@@ -793,7 +794,7 @@ export async function activate(api) {
           h("span", { className: "plugin-automation-item-icon", "data-state": state }, state === "done" ? h(CheckIcon) : state === "paused" ? h(PauseIcon) : state === "failed" ? h(AlertIcon) : h(ClockIcon)),
           h("span", { className: "plugin-automation-item-title" }, title),
           h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, h("span", null, meta))),
-        done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
+        done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy || !!refreshError, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
     };
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
@@ -806,7 +807,7 @@ export async function activate(api) {
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
               onChange: (id) => { epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); setRefreshError(""); },
             })),
-            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
+            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace || !loaded || !!refreshError, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
           refreshError || (error && !panelOpen) ? h("p", { className: "plugin-automation-error", role: "alert" }, refreshError || error) : null,
           !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
@@ -816,7 +817,7 @@ export async function activate(api) {
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
-          readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
+          readOnly: !!refreshError || (!!selectedTask && !tasks.some((task) => task.id === selectedTask.id)),
           closing: panelClosing, swap, separator: resize.separator,
           runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,
           onPause: () => act("automation.update", { id: selectedTask.id, paused: !selectedTask.paused }),
@@ -830,7 +831,7 @@ export async function activate(api) {
         }) : null)));
   }
 
-  api.registerUIContribution({ id: "automation.schedule", target: "wuu.default-navigation/sidebar.primary",
+  api.registerUIContribution({ id: "automation.schedule", target: { service: "ui.navigation", slot: "sidebar.primary" },
     render: ({ context, locale, translate }) => context.viewTypeId === "automation.catalog"
       ? h(ScheduleSidebar, { viewContext: context.viewContext, locale, translate }) : null });
   api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });

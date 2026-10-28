@@ -1375,6 +1375,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	if err != nil {
 		return nil, fmt.Errorf("thread process manager: %w", err)
 	}
+	threadEnvironment, err := s.selectedExecutionEnvironment(id, artifactDir)
+	if err != nil {
+		return nil, err
+	}
+	if remote, ok := threadEnvironment.(*environmentToolExecutor); ok {
+		threadProcessManager = remote.ProcessManager()
+	}
 
 	// Prepare every fallible thread-local dependency before AgentControl. The
 	// control restores queue metadata here but remains dormant until app-server
@@ -1685,7 +1692,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
 	result := &ThreadRuntime{SessionID: id,
-		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(threadRoot, wuuHome, artifactDir)},
+		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, ExecutionEnvironment: threadEnvironment, GitAttributionEnabled: processGitAttribution(generation), RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(threadRoot, wuuHome, artifactDir)},
 		processHooks:       s.HookDispatcher,
 		StreamRunner:       runner,
 		Toolkit:            kit,

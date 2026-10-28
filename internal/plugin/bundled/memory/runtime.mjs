@@ -5,6 +5,9 @@ import { randomBytes as randomBytes2 } from "node:crypto";
 import { lstat as lstat2, mkdir as mkdir2, readdir, unlink as unlink2 } from "node:fs/promises";
 import { basename as basename2, join as join3 } from "node:path";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
 var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
