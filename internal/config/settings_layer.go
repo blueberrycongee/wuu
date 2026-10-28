@@ -92,34 +92,29 @@ func restrictedProjectLayers(projectRoot string) ([]settingsLayer, error) {
 // applyProjectSettingsLayers deep-merges the project-scoped settings layers on
 // top of the already-parsed base config selected by LoadFrom.
 //
-// basePath is the on-disk path of the selected base config; it is re-read to
-// obtain the raw base object for merging and to label decode errors. base is
-// the parsed base config, returned untouched when no layer files are present so
+// basePath labels decode errors, and source is the snapshot used to parse base.
+// base is returned untouched when no layer files are present so
 // the non-layered path stays byte-for-byte identical to before. projectRoot is
 // LoadFrom's rootDir (workdir).
 //
 // It returns the merged config and the ordered list of layer paths that were
 // actually applied (empty when none existed).
-func applyProjectSettingsLayers(basePath, projectRoot string, base Config) (Config, []string, error) {
-	return applySettingsLayers(basePath, base, projectSettingsLayers(projectRoot))
+func applyProjectSettingsLayers(basePath, projectRoot string, base Config, source []byte) (Config, []string, error) {
+	return applySettingsLayersSource(basePath, source, base, projectSettingsLayers(projectRoot))
 }
 
 // applyRestrictedProjectLayers overlays every project config source on a
 // user-owned base while preserving the user-only security boundary.
-func applyRestrictedProjectLayers(basePath, projectRoot string, base Config) (Config, []string, error) {
+func applyRestrictedProjectLayers(basePath, projectRoot string, base Config, source []byte) (Config, []string, error) {
 	layers, err := restrictedProjectLayers(projectRoot)
 	if err != nil {
 		return Config{}, nil, err
 	}
-	return applySettingsLayers(basePath, base, layers)
+	return applySettingsLayersSource(basePath, source, base, layers)
 }
 
-func applySettingsLayers(basePath string, base Config, layers []settingsLayer) (Config, []string, error) {
-	return applySettingsLayersSource(basePath, nil, base, layers)
-}
-
-// A supplied base source lets a selected provider validate a replacement before
-// committing it. Legacy file loaders read the base only when overlays exist.
+// A supplied base source keeps the effective config tied to the captured
+// snapshot. A nil source retains the on-disk fallback when overlays exist.
 func applySettingsLayersSource(basePath string, baseData []byte, base Config, layers []settingsLayer) (Config, []string, error) {
 	type pendingLayer struct {
 		spec settingsLayer
