@@ -679,6 +679,15 @@ func TestProcessClientReceiptCompletion(t *testing.T) {
 				returned <- err
 			}()
 			expect("invoked")
+			// The helper can read the frame before writeLine has finished. Wait
+			// for the writer to release its gate so this tests cancellation after
+			// dispatch, not cancellation of a still-in-progress write.
+			select {
+			case client.writeGate <- struct{}{}:
+				<-client.writeGate
+			case <-time.After(time.Second):
+				t.Fatal("invocation write did not finish")
+			}
 			cancel()
 			select {
 			case err := <-returned:
