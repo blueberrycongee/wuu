@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Expose a composer runtime slot and add an installable Token Speed example that estimates observable streamed output.
+
 - Add a default-disabled experimental Generative UI plugin with composable layouts,
   reactive local calculations, charts and forms, bounded data programs, per-result
   state restoration, and readable fallback. Preview validated nodes while tool

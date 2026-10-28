@@ -33,6 +33,7 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
 | `wuu.default-composer/composer.above`, `wuu.default-composer/composer.toolbar` | Above the composer or in its toolbar |
+| `wuu.default-composer/composer.runtime` | Beside runtime controls in the workspace tool rail or composer footer |
 
 Use an explicitly qualified slot target to compose a region. The default conversation provider declares `wuu.default-conversation/conversation.turn` and `wuu.default-conversation/conversation.message`; the preview provider declares its own message slots under `wuu.default-preview`. The turn boundary includes that turn’s messages and process group, not the entire scroll container.
 
@@ -62,6 +63,8 @@ A contribution receives `locale` and `translate(key, values?)` alongside `contex
 Slot owners may pass a React component through `<Slot layout={Layout} ... />`. It receives the ordered `items` (`key`, `pluginId`, `id`, `title`, `node`) and `context`; render each selected `node` using its `key`. A contribution's optional `title` defaults to its ID. Layouts can group or filter content without creating another registry. Wrappers surround the result; empty slots use `fallback`. Graph-selected service slots render their selected provider directly and ignore custom layouts.
 
 The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal and Monitor now use `registerUIContribution`; remove their old `contributes.slots` entries. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
+
+The `composer.runtime` slot accepts compact contributions beside the runtime controls. Its `ComposerRuntimeSlotContextV1` contains the optional protocol `threadId` and `turnId`, `running`, `mainConversation`, and `inToolRail`. It follows the runtime controls when they move between the tool rail and composer footer, and is hidden when those controls are hidden. Keep a rail contribution within a two-em-high row. It can be abbreviated in a narrow window, so expose its full meaning in an accessible label. [Token Speed](../../../examples/plugins/token-speed/README.md) demonstrates a live, estimated readout without relying on host DOM structure.
 
 ## Presenters and actions
 

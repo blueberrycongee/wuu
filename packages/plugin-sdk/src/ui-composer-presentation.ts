@@ -47,6 +47,14 @@ export interface ApplicationComposerPresentationViewV1 {
   readonly skillRevision: string;
   readonly workspaceCapabilities: { readonly create: boolean; readonly open: boolean };
 }
+/** Context passed to contributions in the default composer's runtime controls. */
+export interface ComposerRuntimeSlotContextV1 {
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly running: boolean;
+  readonly mainConversation: boolean;
+  readonly inToolRail: boolean;
+}
 export interface ApplicationComposerTelemetryV1 {
   readonly tokensPerSecond: number; readonly source: "real" | "estimated" | "none";
   readonly sampledAt?: number; readonly inputTokens: number; readonly outputTokens: number;

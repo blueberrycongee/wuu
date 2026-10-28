@@ -83,6 +83,13 @@
   --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-right) - var(--conversation-pane-inset) + var(--workspace-tool-rail-width) + var(--space-2));
 }
 
+@supports (position-anchor: --composer-runtime-item) and (anchor-scope: --composer-runtime-item) and (position-visibility: anchors-visible) {
+  /* Compact runtime contributions can extend beyond the rail without covering reading content. */
+  .app-shell:has(.workspace-tool-rail .composer-runtime-rail-content:not(:empty)) {
+    --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-right) - var(--conversation-pane-inset) + var(--workspace-tool-rail-width) + var(--space-2) + 0.65em);
+  }
+}
+
 .workspace-tool-rail {
   position: absolute;
   top: calc(var(--workbench-top, 0px) + var(--canvas-titlebar-height) + var(--space-2));

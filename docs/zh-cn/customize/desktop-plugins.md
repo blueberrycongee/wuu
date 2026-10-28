@@ -33,6 +33,7 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
 | `wuu.default-composer/composer.above`、`wuu.default-composer/composer.toolbar` | 输入框上方或工具栏中 |
+| `wuu.default-composer/composer.runtime` | 工作区工具栏或输入框底部的运行控制旁 |
 
 通过带所有者前缀的 Slot 目标组合区域。默认会话 provider 声明 `wuu.default-conversation/conversation.turn` 和 `wuu.default-conversation/conversation.message`；预览 provider 在 `wuu.default-preview` 下声明自己的消息 Slot。轮次边界包含该轮的消息与过程组，不是整个滚动容器。
 
@@ -62,6 +63,8 @@ api.registerUIContribution({
 Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接收排序后的 `items`（`key`、`pluginId`、`id`、`title`、`node`）及 `context`；使用各项的 `key` 渲染选中的 `node`。贡献可选的 `title` 默认使用 ID。布局可以分组或过滤内容，无需另一套注册表。包装位于布局结果外层，空 Slot 使用 `fallback`。服务图选择的 Slot 直接渲染选中的 provider，忽略自定义布局。
 
 默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal、Monitor 已改用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
+
+`composer.runtime` Slot 在运行控制旁接收紧凑的贡献。其 `ComposerRuntimeSlotContextV1` 提供可选的协议 `threadId` 和 `turnId`，以及 `running`、`mainConversation`、`inToolRail`。贡献跟随运行控制在工具栏和输入框底部之间移动，并在运行控制隐藏时一同隐藏。工具栏贡献应放在高度为两个 UI 字号的行内；窄窗口中可能被省略显示，因此应通过无障碍标签提供完整含义。[Token Speed](../../../examples/plugins/token-speed/README.md) 示例展示了如何在不依赖宿主 DOM 结构的情况下显示实时估算值。
 
 ## Presenter 和动作
 

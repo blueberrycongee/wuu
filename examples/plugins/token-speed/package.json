@@ -1,0 +1,8 @@
+{
+  "name": "wuu-token-speed-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --check desktop.js"
+  }
+}
