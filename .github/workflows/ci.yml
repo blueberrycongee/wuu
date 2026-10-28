@@ -811,6 +811,28 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
 
+      - name: Guard native Settings overlay visibility and interaction
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p desktop/out/e2e/settings-overlay
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-overlay/run.log
+
+      - name: Upload native Settings overlay evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-overlay-evidence
+          path: |
+            desktop/out/e2e/settings-overlay/*.png
+            desktop/out/e2e/settings-overlay/*.json
+            desktop/out/e2e/settings-overlay/*.jsonl
+            desktop/out/e2e/settings-overlay/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload titlebar alignment evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1500,6 +1522,24 @@ jobs:
           git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
           set -o pipefail
           desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+      - name: Exercise sandboxed native Settings overlay
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SETTINGS_OVERLAY_OUTPUT: ${{ runner.temp }}/wuu-macos-settings-overlay
+        run: |
+          mkdir -p "$WUU_SETTINGS_OVERLAY_OUTPUT"
+          git rev-parse HEAD > "$WUU_SETTINGS_OVERLAY_OUTPUT/source-commit.txt"
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee "$WUU_SETTINGS_OVERLAY_OUTPUT/run.log"
+      - name: Upload hosted macOS Settings overlay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-overlay-hosted-macos-evidence
+          path: ${{ runner.temp }}/wuu-macos-settings-overlay/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload hosted macOS control evidence
         if: always()
         uses: actions/upload-artifact@v4

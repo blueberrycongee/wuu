@@ -38,6 +38,14 @@ Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有
 `npm --prefix desktop run test:e2e:project-agent` 验证后端能力字段缺省、关闭和开启时
 的界面，将截图与结果保存到 `desktop/out/e2e/project-agent-gate/`。
 
+构建桌面后，运行 `npm --prefix desktop run test:e2e:settings-overlay`，验证真实的
+原生设置菜单，而不是主 renderer 中隐藏的尺寸测量副本。测试检查可见边界、实际绘制
+像素、点击命中、关闭与焦点、运行中对话和草稿在设置往返后的保留，以及首次呈现确认
+丢失后的恢复。合成后端不需要模型或账户。结果、传输日志和分别采集的主界面/菜单
+截图保存在 `desktop/out/e2e/settings-overlay/`；可用 `WUU_SETTINGS_OVERLAY_OUTPUT`
+更改目录。Linux 与托管 macOS CI 运行此门禁；分层截图不替代完整桌面截图或实体
+macOS 验收。
+
 只开发 CLI 时可以运行：
 
 ```bash

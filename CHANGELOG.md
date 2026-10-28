@@ -215,6 +215,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
+
 - Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
 - Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
 
