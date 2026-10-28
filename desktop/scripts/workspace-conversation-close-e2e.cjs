@@ -28,7 +28,7 @@ delete process.env.ELECTRON_RENDERER_URL;
 for (const name of Object.keys(process.env)) if (/(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|PASSWORD)$/.test(name)) delete process.env[name];
 fs.writeFileSync(path.join(workspace, 'README.md'), '# Synthetic file\n\n' + 'Keep the reading position.\n\n'.repeat(100));
 
-const report = { status: 'running', checks: [], screenshots: [], forbiddenCalls: [], errors: [], navigation: [], modelRequests: 0, threadStarts: 0,
+const report = { status: 'running', checks: [], screenshots: [], forbiddenCalls: [], errors: [], navigation: [], threadClicks: [], modelRequests: 0, threadStarts: 0,
   fixture: 'production Electron/main/preload/Go, isolated profile and loopback model' };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 let win, response, targetThread;
@@ -98,11 +98,14 @@ async function click(selector) {
         window.closeFixtureTrustedClicks = (window.closeFixtureTrustedClicks || 0) + 1;
       }
     }, { capture: true, once: true });
-    return { x, y };
+    const row = el.closest('.thread-row');
+    return { x, y, row: row ? { label: el.getAttribute('aria-label'), draftId: row.getAttribute('data-draft-id'),
+      current: row.getAttribute('aria-current'), className: row.className } : undefined };
   }, selector), `click target ${selector}`);
   win.focus(); win.webContents.focus();
-  for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, ...target, button: 'left', clickCount: 1 });
+  for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, x: target.x, y: target.y, button: 'left', clickCount: 1 });
   await until(() => evaluate(previous => (window.closeFixtureTrustedClicks || 0) > previous, before), `trusted click ${selector}`);
+  if (target.row) { report.threadClicks.push({ selector, ...target.row }); save(); }
 }
 async function capture(name) {
   await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
@@ -232,5 +235,21 @@ async function run() {
 }
 run().then(() => { server.close(); app.once('will-quit', () => app.exit(0)); app.quit(); setTimeout(() => app.exit(0), 1000).unref(); })
   .catch(async error => { report.status = 'failed'; report.error = String(error.stack || error); if (win && !win.isDestroyed()) {
+    try {
+      report.failureState = await evaluate(async target => {
+        const rows = [...document.querySelectorAll('.thread-row')].map(row => ({
+          label: row.querySelector('.thread-row-main')?.getAttribute('aria-label'),
+          draftId: row.getAttribute('data-draft-id'), current: row.getAttribute('aria-current'),
+          visible: Boolean(row.getBoundingClientRect().height && !row.closest('[inert]')),
+        }));
+        const listed = await Promise.race([
+          window.wuu.listAllThreads(),
+          new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+        ]);
+        const thread = listed?.threads.find(item => item.id === target);
+        return { rows, targetListingAvailable: Boolean(listed), target: thread && { id: thread.id, cwd: thread.cwd, workspaceId: thread.workspace_id,
+          title: thread.title, preview: thread.preview, status: thread.status } };
+      }, targetThread);
+    } catch (diagnosticError) { report.diagnosticError = String(diagnosticError); }
     try { report.visibleText = (await evaluate(() => document.body.innerText)).slice(0, 4000); await capture('failure'); } catch {}
   } save(); console.error(error); if (response) response.destroy(); server.close(); app.exit(1); });
