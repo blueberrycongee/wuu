@@ -379,7 +379,7 @@
   text-align: left;
 }
 
-.sidebar-ribbon .sidebar-ribbon-button > :is(svg, .plugin-icon-asset, .plugin-icon-themed) {
+.sidebar-ribbon .sidebar-ribbon-button > :is(svg, .plugin-icon-asset, .plugin-icon-themed, .plugin-ui-avatar) {
   width: var(--sidebar-ribbon-icon-size);
   height: var(--sidebar-ribbon-icon-size);
   flex-shrink: 0;
@@ -636,7 +636,7 @@
   cursor: pointer;
 }
 
-.sidebar-section-item > :is(svg, .plugin-icon-asset, .plugin-icon-themed) {
+.sidebar-section-item > :is(svg, .plugin-icon-asset, .plugin-icon-themed, .plugin-ui-avatar) {
   width: var(--sidebar-primary-icon-size);
   height: var(--sidebar-primary-icon-size);
   flex: 0 0 var(--sidebar-primary-icon-size);
