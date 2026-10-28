@@ -18,6 +18,7 @@ import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AppLocale } from "../shared/protocol";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryRecord,
  CatalogPackageActionV1 as ExtensionPackageAction, CatalogSkillV1 as SkillSummary } from "../../../packages/plugin-sdk/src/ui-catalog";
@@ -58,6 +59,7 @@ const initialLoadState: LoadState = {
 };
 
 function showExtensionMutationError(error: unknown, fallback: string): void {
+  if (isPluginLifecycleCancellation(error)) return;
   // These admission errors currently cross IPC as text, without a typed code.
   // Keep their translation here, shared by refresh and package actions.
   const message = toastErrorMessage(error);

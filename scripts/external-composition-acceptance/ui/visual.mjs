@@ -104,7 +104,7 @@ try {
       throw new Error(`Browser state timed out: ${description}`);
     };
     const key = async (key, code = key, virtual = key === 'Escape' ? 27 : 9) => {
-      await command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: virtual });
+      await command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: virtual, ...(key === 'Enter' ? { text: '\r' } : {}) });
       await command('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtual });
     };
     const click = async selector => {
@@ -127,10 +127,15 @@ try {
           const r = el.getBoundingClientRect(); const style = getComputedStyle(el);
           return { selector, x:r.x, y:r.y, width:r.width, height:r.height, clientWidth:el.clientWidth, scrollWidth:el.scrollWidth, clientHeight:el.clientHeight, scrollHeight:el.scrollHeight, scrollTop:el.scrollTop, fontSize:style.fontSize, fontFamily:style.fontFamily };
         }));
+        const sidebarRows = [...document.querySelectorAll('.plugin-automation-sidebar-item')].map(row => {
+          const icon = row.querySelector('svg'), title = row.querySelector('.plugin-automation-sidebar-title'), meta = row.querySelector('.plugin-automation-sidebar-meta');
+          const box = node => { const r = node.getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height }; };
+          return { row:box(row), icon:box(icon), title:box(title), meta:box(meta), fontSize:parseFloat(getComputedStyle(row).fontSize), metaLineHeight:parseFloat(getComputedStyle(meta).lineHeight) };
+        });
         const focused = document.activeElement; const style = getComputedStyle(focused);
         return { viewport:{ width:innerWidth, height:innerHeight, devicePixelRatio }, theme:document.documentElement.dataset.theme, regions,
           focus:{ tag:focused.tagName, label:focused.getAttribute('aria-label'), className:focused.className, visible:focused.matches(':focus-visible'), outline:style.outline, boxShadow:style.boxShadow },
-          diagnostics:window.featureUI.diagnostics(), requests:window.featureUI.requests };
+          sidebarRows, diagnostics:window.featureUI.diagnostics(), requests:window.featureUI.requests };
       })()`);
       // Check inner scrolling regions too: overflow:hidden on the document must
       // not turn a clipped toolbar or editor into an apparent layout pass.
@@ -144,21 +149,28 @@ try {
       await writeFile(join(output, `${name}.json`), JSON.stringify(metrics, null, 2));
       report.screenshots.push({ name, scenario, sha256: hash(png), width:png.readUInt32BE(16), height:png.readUInt32BE(20), ...metrics.viewport });
       assert.deepEqual(overflow, [], `${name}: horizontal content is clipped or overflowing`);
+      for (const row of metrics.sidebarRows) {
+        assert.ok(row.icon.width >= row.fontSize * 0.6 && row.icon.width <= row.fontSize * 1.8 && row.icon.height <= row.fontSize * 1.8, `${name}: sidebar icon must stay at text scale`);
+        assert.ok(row.title.width >= Math.min(row.fontSize * 8, row.row.width * 0.6), `${name}: sidebar title must retain a usable reading column`);
+        assert.ok(row.meta.height <= row.metaLineHeight * 3 + 1, `${name}: sidebar metadata must not collapse into one-character vertical text`);
+      }
       assert.equal(metrics.regions.find(region => region.selector === '.plugin-automation')?.fontSize, `${scenario.font}px`, `${name}: requested UI font size must reach the production feature`);
       assert.deepEqual(metrics.diagnostics.filter(item => item.kind !== 'runtime'), [], `${name}: renderer/activation failure`);
       assert.deepEqual(report.runtimeErrors, [], `${name}: uncaught browser exception`);
       return metrics;
     };
     for (const scene of [
+      { id:'default-navigation', navigation:'default', scenario:'populated', theme:'light', font:15, width:1280, height:900 },
       { id:'light-wide', scenario:'populated', theme:'light', font:15, width:1280, height:900 },
       { id:'dark-narrow-long', scenario:'long', theme:'dark', font:20, width:480, height:960 },
       { id:'empty', scenario:'empty', theme:'light', font:15, width:1280, height:900 },
       { id:'unavailable', scenario:'populated', theme:'dark', font:20, width:480, height:960 },
     ]) {
       await command('Emulation.setDeviceMetricsOverride', { width:scene.width, height:scene.height, deviceScaleFactor:1, mobile:false });
-      await command('Page.navigate', { url:`${url}?${new URLSearchParams({ scenario:scene.scenario, theme:scene.theme, font:String(scene.font) })}` });
+      await command('Page.navigate', { url:`${url}?${new URLSearchParams({ scenario:scene.scenario, theme:scene.theme, font:String(scene.font), navigation:scene.navigation ?? 'external' })}` });
       await until(`window.featureUI?.ready && document.querySelector('[data-external-shell]') && ${scene.scenario === 'empty' ? "document.querySelector('.plugin-automation-empty') && !document.querySelector('.plugin-goal')" : "document.querySelectorAll('.plugin-automation-item').length === window.featureUI.taskCount && document.querySelector('.plugin-goal') && document.querySelector('.plugin-automation-sidebar-item')"}`, 'production feature modules loaded');
       await capture(`${scene.id}-catalog`, scene);
+      if (scene.id === 'default-navigation') { report.cases.push('default-navigation: production sidebar ancestor styles preserve text-scale icons and readable rows'); continue; }
       if (scene.id === 'unavailable') {
         await evaluate('window.featureUI.disableProviders()');
         await until("document.querySelector('.plugin-goal [role=alert]') && document.querySelector('.plugin-automation [role=alert]') && document.querySelector('.plugin-automation-create').disabled", 'provider errors disable writes');
@@ -202,8 +214,8 @@ try {
       await until("!document.querySelector('.plugin-automation-detail')", 'Close dismisses reopened editor');
       report.cases.push(`${scene.id}: production surfaces, scrolling/empty state, editor focus, Escape, reopen and Close; no horizontal overflow`);
     }
-    assert.equal(report.cases.length, 4);
-    assert.ok(report.screenshots.length >= 16);
+    assert.equal(report.cases.length, 5);
+    assert.ok(report.screenshots.length >= 17);
     report.passed = true;
   }
 } catch (error) {

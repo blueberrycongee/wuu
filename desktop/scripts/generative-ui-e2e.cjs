@@ -613,12 +613,14 @@ const rendererRun = app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] details').open`);
   for (const keyCode of ['Space', 'Enter']) {
     win.webContents.sendInputEvent({type:'keyDown',keyCode});
+    if (keyCode === 'Enter') win.webContents.sendInputEvent({type:'char',keyCode:'\r'});
     win.webContents.sendInputEvent({type:'keyUp',keyCode});
     await waitFor(win, `!document.querySelector('[data-genui-node="areaV2"] details').open`);
     assert.equal(await evaluate(win, `document.activeElement===document.querySelector('[data-genui-node="areaV2"] details > summary')`), true, 'Native disclosure keyboard activation retains summary focus');
     await click(win, '[data-genui-node="areaV2"] details > summary');
     await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] details').open`);
   }
+  results.checks.push('native Space and Enter toggle chart data while preserving summary focus');
   await click(win, '[data-genui-node="pieV2"] .plugin-genui-legend button:first-child');
   await waitFor(win, `window.probe.pending===0 && document.querySelector('[data-genui-node="tableV2"] tbody td').textContent==='4'`);
   await click(win, '[data-genui-node="reversePoints"] button');

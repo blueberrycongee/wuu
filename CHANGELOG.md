@@ -230,6 +230,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep normal plugin-generation retirement silent after catalog changes while preserving genuine update failures and plugin diagnostics.
 - Preserve generated UI disclosure state when leaving a view immediately after opening or closing it.
 - Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
 - Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.

@@ -9,6 +9,7 @@
     /* Only the independent shell's layout lives here. Feature UI and controls
        retain their production styles; no clipping or font-size overrides. */
     [data-external-shell] { display:grid; grid-template-columns:260px minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); height:100%; background:var(--paper); color:var(--ink); font-size:var(--font-ui); }
+    [data-external-shell][data-navigation="default"] { grid-template-columns:296px minmax(0,1fr); }
     [data-preview-heading] { grid-column:1 / -1; padding:var(--space-4); border-bottom:1px solid var(--hairline); }
     [data-external-navigation] { min-width:0; min-height:0; overflow:auto; padding-inline:var(--space-3); border-right:1px solid var(--hairline); background:var(--surface-1); }
     [data-preview-main] { display:flex; flex-direction:column; min-width:0; min-height:0; }

@@ -17,6 +17,7 @@ const params = new URLSearchParams(location.search);
 const scenario = params.get("scenario") ?? "populated";
 const long = scenario === "long";
 const empty = scenario === "empty";
+const defaultNavigation = params.get("navigation") === "default";
 const workspace = { id: "visual-workspace", root: "/synthetic/workspace", name: "Preview workspace", available: true };
 const viewContext = Object.freeze({});
 const context = Object.freeze({ threadId: "visual-thread", mainConversation: true, viewTypeId: "automation.catalog", viewContext });
@@ -58,8 +59,8 @@ await host.activateGeneration({ pluginId: "external-surfaces", generation, regis
   api.registerUIContribution({ id: "composer", target: "external-surfaces/composer-host", render: ({ slots: { Slot } }) =>
     <section data-external-composer aria-label="Independent composer"><Slot name="external-surfaces/composer.above" context={context} /></section> });
   api.registerUIContribution({ id: "navigation", target: "external-surfaces/navigation-host", render: ({ slots: { Slot } }) =>
-    <aside data-external-navigation aria-label="Independent navigation"><Slot name="external-surfaces/sidebar.primary" context={context} /></aside> });
-  api.registerApplicationShell({ id: "shell", render: ({ slots: { Slot } }) => <main data-external-shell>
+    <aside data-external-navigation className={defaultNavigation ? "sidebar-content" : undefined} aria-label="Independent navigation"><Slot name="external-surfaces/sidebar.primary" context={context} /></aside> });
+  api.registerApplicationShell({ id: "shell", render: ({ slots: { Slot } }) => <main data-external-shell data-navigation={defaultNavigation ? "default" : "external"}>
     <header data-preview-heading>Independent feature UI · {scenario}</header>
     <Slot name="external-surfaces/navigation-host" />
     <div data-preview-main><Slot name="external-surfaces/composer-host" /><section data-preview-catalog><Catalog /></section></div>
