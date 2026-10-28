@@ -1608,6 +1608,10 @@ export class ApplicationController implements HostApplicationService {
         return;
       }
       case "composer.submit": return this.applicationSubmission.submit(input as ApplicationActionMapV1["composer.submit"]["input"], signal);
+      case "conversation.submit-content": {
+        const content = input as ApplicationActionMapV1["conversation.submit-content"]["input"];
+        return this.applicationSubmission.submitContent(content.source, { text: content.text, context: content.context }, signal);
+      }
       case "composer.cancel-submission": return { cancelled: this.applicationSubmission.cancel((input as ApplicationActionMapV1["composer.cancel-submission"]["input"]).operationID) };
       case "composer.stop": return this.applicationSubmission.stop(this.state.activeSessionTabID);
       case "composer.configure": {

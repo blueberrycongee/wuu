@@ -31,6 +31,18 @@ export interface ApplicationSubmissionResultV1 {
   readonly threadId?: string;
   readonly operationID?: string;
 }
+
+/** The host-captured result from which a user explicitly continues a conversation. */
+export interface ApplicationContentSourceV1 {
+  readonly threadId: string;
+  readonly itemId: string;
+  readonly index: number;
+  readonly mimeType: string;
+  readonly ref?: string;
+  readonly sha256?: string;
+  readonly text?: string;
+  readonly resource?: unknown;
+}
 export interface ApplicationSubmissionOperationV1 {
   readonly operationID: string;
   readonly ownerTabId: string;
@@ -54,4 +66,6 @@ export interface ApplicationSubmissionSnapshotV1 {
 export interface ApplicationSubmissionActionMapV1 {
   "composer.submit": { input: ApplicationSubmissionInputV1; result: ApplicationSubmissionResultV1 };
   "composer.cancel-submission": { input: { readonly operationID: string }; result: { readonly cancelled: boolean } };
+  /** Submit independently of the composer draft, bound to a completed content result. */
+  "conversation.submit-content": { input: { readonly source: ApplicationContentSourceV1; readonly text: string; readonly context?: unknown }; result: { readonly accepted: boolean } };
 }

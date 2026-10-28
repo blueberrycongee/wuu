@@ -98,7 +98,9 @@
     "release:linux": "node scripts/release-linux.cjs",
     "test:e2e:linux-package": "node scripts/linux-package-e2e.cjs",
     "test:release-packaging": "node --experimental-strip-types --test scripts/bundled-dependency-licenses.test.mjs scripts/packaged-worker-observer.test.cjs",
-    "test:e2e:packaged": "node scripts/packaged-runtime-smoke.cjs"
+    "test:e2e:packaged": "node scripts/packaged-runtime-smoke.cjs",
+    "test:e2e:generative-ui": "electron scripts/generative-ui-e2e.cjs",
+    "test:e2e:generative-ui-app": "npm run build:core && npm run build && electron scripts/generative-ui-app-e2e.cjs"
   },
   "dependencies": {
     "electron-updater": "6.8.10",
