@@ -215,6 +215,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
+- Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
+
 - Keep independently contributed message-action controls alongside placed command buttons, preserving peer state and keyboard focus when either plugin is enabled or disabled.
 
 - Preserve selected tool providers' finalization context and discovered schemas alongside each settled call, including parallel completion, normalized errors, and nested-call context, without leaking metadata into later turns.

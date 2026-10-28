@@ -1095,6 +1095,16 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		s.deliverClientResponse(raw)
 		return nil
 	}
+	// Ingress dispatch is ordered, but admitted handlers may still be running.
+	// Reject a reused ID before any early error response can consume the first
+	// request's pending principal/scope and make it fall back to the pipe owner.
+	// Reverse client responses above belong to a separate pending table.
+	s.access.mu.Lock()
+	_, pending := s.access.pending[string(req.ID)]
+	s.access.mu.Unlock()
+	if pending {
+		return errors.New("request id is already in flight")
+	}
 
 	if strings.HasPrefix(req.Method, "transport/") {
 		return s.handleTrustedTransport(ctx, req)
@@ -1347,7 +1357,23 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		}
 		return nil
 	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve, MethodWorkspaceFileChunk:
-		return s.handleWorkspaceView(req)
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		// Workspace views can wait on providers or the filesystem after
+		// authorization. Keep that work off the serial stdio reader and retain
+		// the admitted authority until physical completion. Shutdown owns this
+		// worker through the existing background drain.
+		if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
+			if err := s.handleWorkspaceView(binding, req); err != nil {
+				log.Printf("wuu: %s: %v", req.Method, err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
 	case MethodWorkspaceStateCleanup:

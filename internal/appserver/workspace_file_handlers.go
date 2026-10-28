@@ -76,13 +76,7 @@ type workspaceReferenceResult struct {
 	Matches      []string `json:"matches,omitempty"`
 }
 
-func (s *Server) handleWorkspaceView(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
+func (s *Server) handleWorkspaceView(binding *runtime.State, req Request) error {
 	var params workspaceViewParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
