@@ -647,9 +647,18 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if !strings.Contains(requestMessagesText(requests[0].Messages), "history before reload") || !strings.Contains(requestMessagesText(requests[0].Messages), "worker finished") {
 				t.Fatalf("completion lost retained history or worker result: %+v", requests[0].Messages)
 			}
-			pending, err := current.execRuntime.AgentControl.PendingRootAgentCompletions()
+			// An idle projection may not have a runtime until its next turn.
+			srv.releaseThreadRuntime(current)
+			currentRuntime, err := srv.ensureThreadRuntime(current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if currentRuntime.AgentControl == nil {
+				t.Fatal("rebuilt runtime has no agent control")
+			}
+			pending, err := currentRuntime.AgentControl.PendingRootAgentCompletions()
 			if err != nil || len(pending) != 0 {
-				t.Fatalf("completion acknowledgement missing: %+v %v", pending, err)
+				t.Fatalf("completion acknowledgement missing after runtime rebuild: %+v %v", pending, err)
 			}
 			var completed subagent.SubAgentSnapshot
 			for _, snap := range control.List() {
