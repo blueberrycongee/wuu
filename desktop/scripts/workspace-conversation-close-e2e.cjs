@@ -93,6 +93,17 @@ async function click(selector) {
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const r = el.getBoundingClientRect(), x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
     if (!el.contains(document.elementFromPoint(x, y))) return;
+    window.closeFixturePointerEvents = [];
+    window.closeFixtureClickTarget = { selector, x, y, label: el.getAttribute('aria-label') };
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      document.addEventListener(type, event => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest('button');
+        window.closeFixturePointerEvents.push({ type, trusted: event.isTrusted, x: event.clientX, y: event.clientY,
+          target: target?.className, button: button?.className, label: button?.getAttribute('aria-label'),
+          matches: Boolean(target?.closest(selector)) });
+      }, { capture: true, once: true });
+    }
     document.addEventListener('click', event => {
       if (event.isTrusted && event.target instanceof Element && event.target.closest(selector)) {
         window.closeFixtureTrustedClicks = (window.closeFixtureTrustedClicks || 0) + 1;
@@ -247,8 +258,9 @@ run().then(() => { server.close(); app.once('will-quit', () => app.exit(0)); app
           new Promise(resolve => setTimeout(() => resolve(null), 2000)),
         ]);
         const thread = listed?.threads.find(item => item.id === target);
-        return { rows, targetListingAvailable: Boolean(listed), target: thread && { id: thread.id, cwd: thread.cwd, workspaceId: thread.workspace_id,
-          title: thread.title, preview: thread.preview, status: thread.status } };
+        return { rows, clickTarget: window.closeFixtureClickTarget, pointerEvents: window.closeFixturePointerEvents,
+          targetListingAvailable: Boolean(listed), target: thread && { id: thread.id, cwd: thread.cwd, workspaceId: thread.workspace_id,
+            title: thread.title, preview: thread.preview, status: thread.status } };
       }, targetThread);
     } catch (diagnosticError) { report.diagnosticError = String(diagnosticError); }
     try { report.visibleText = (await evaluate(() => document.body.innerText)).slice(0, 4000); await capture('failure'); } catch {}
