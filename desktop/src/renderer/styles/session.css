@@ -27,8 +27,9 @@
    * mirrors that inset so the sent query and the draft share one width. */
   --session-im-inline-outset: min(
     clamp(var(--space-2), calc(var(--session-outer-padding-inline) - var(--space-2)), var(--space-3)),
-    calc(var(--session-outer-padding-inline) - max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)))
+    calc(var(--session-outer-padding-inline) - max(var(--space-3), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)))
   );
+  --session-im-text-padding: max(var(--space-2), var(--session-im-inline-outset));
   /* The draft can overhang the reading column while retaining a comfortable
    * edge gap. Narrow panes converge to the reading width; notches stay clear. */
   --session-composer-inline-outset: clamp(

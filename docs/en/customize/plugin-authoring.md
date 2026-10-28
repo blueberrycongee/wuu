@@ -380,6 +380,33 @@ A completed turn may have an empty `final_output`: normal provider completion do
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
 
+#### Live session progress
+
+For a status card or subagent dashboard, declare
+`required_host_features: [SESSION_PROGRESS_HOST_FEATURE]` and the ordinary
+`host.session.inspect` service requirement. Pass `include_progress: true` with
+an explicit `request_id`. Default inspection does not include content-bearing
+progress. `progress` is a version-1 **snapshot**, not an event stream: replace
+the displayed snapshot on each read instead of appending it as new messages.
+
+The caller must own the session, and its request must be the turn's only input
+identity. A queued request has no turn to project; a steer cannot borrow the
+original request's progress. Once different inputs share a turn, neither can
+claim its output exclusively. In these cases, `available: false` reports
+`session_not_owned`, `request_not_exclusive`, or `turn_unavailable`, without
+content. Shared-session inspection remains available without progress.
+
+Available snapshots identify the session, request, turn, and items. They contain
+at most 32 recent assistant/tool display items and 32 KiB of JSON. Assistant text
+is limited to 4096 UTF-8 bytes per item; `truncated` explicitly reports shortened
+text or omitted items. Prompts, reasoning, tool arguments/results, attachments,
+and private provider state are excluded. Empty `items` is valid before output.
+Reading progress neither subscribes nor changes the observed work. A finished
+turn may remain inspectable, but the snapshot is not durable evidence of success,
+input consumption, or message delivery. Use the existing terminal inspection and
+lifecycle receipts for settlement; this API provides no replay or lost-event
+recovery. See the SDK-only [session progress example](../../../examples/plugins/session-progress/).
+
 ### Shared file locks
 
 Declare `{ name: "host.file-lock", major_version: 1, required: true }` when

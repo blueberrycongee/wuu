@@ -300,6 +300,16 @@ jobs:
           set -o pipefail
           node packages/plugin-sdk/test/resource-access-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/resource-access.log
 
+      - name: Verify owned live progress through the public SDK
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_SESSION_PROGRESS_BINARY: ${{ github.workspace }}/.tmp/bin/wuu
+        run: |
+          set -o pipefail
+          node packages/plugin-sdk/test/session-progress-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-progress.log
+
       - name: Verify partial provider delegation through the public SDK
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         timeout-minutes: 6
@@ -309,6 +319,24 @@ jobs:
         run: |
           set -o pipefail
           node scripts/provider-delegation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/provider-delegation.log
+
+      - name: Verify selected-service continuation authority
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/service-continuation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/service-continuation.log
+
+      - name: Verify default native tools in product compositions
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+        run: |
+          set -o pipefail
+          node scripts/composition-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/native-composition.log
 
       - name: Verify public federated session routing
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
@@ -375,6 +403,7 @@ jobs:
             ['.tmp/e2e/trusted-desktop', 'go-test.log', 'TestEncryptedDelegatedDesktopSharedCore'],
             ['.tmp/e2e/provider-delegation', 'verification.log', 'TestProviderDelegationSDKProcess'],
             ['.tmp/e2e/provider-delegation', 'verification.log', 'TestStateProviderDelegationAuthority'],
+            ['.tmp/e2e/service-continuation', 'verification.log', 'TestServiceContinuationSDKReplacementAndRemoval'],
           ]) {
             const log = readFileSync(join(run(base), file), 'utf8');
             assert.match(log, new RegExp(`^--- PASS: ${name} [(]`, 'm'), `${name}: did not execute`);
@@ -384,9 +413,12 @@ jobs:
             ['.tmp/artifact-provider-acceptance', 'report.json', 'status', 'passed'],
             ['.tmp/e2e/minimal-composition', 'result.json', 'passed', true],
             ['.tmp/e2e/resource-access', 'result.json', 'passed', true],
+            ['.tmp/e2e/session-progress', 'report.json', 'passed', true],
             ['.tmp/e2e/session-federation', 'results.json', 'status', 'passed'],
             ['.tmp/e2e/trusted-desktop', 'result.json', 'passed', true],
             ['.tmp/e2e/provider-delegation', 'report.json', 'passed', true],
+            ['.tmp/e2e/service-continuation', 'report.json', 'passed', true],
+            ['.tmp/e2e/composition', 'results.json', 'status', 'passed'],
           ]) {
             const report = JSON.parse(readFileSync(join(run(base), file), 'utf8'));
             assert.equal(report[key], expected, `${base}: fixture did not pass`);
@@ -433,6 +465,8 @@ jobs:
             .tmp/artifact-provider-acceptance/run-*/report.json
             .tmp/artifact-provider-acceptance/run-*/verification.log
             .tmp/e2e/minimal-composition/run-*/result.json
+            .tmp/e2e/session-progress/run-*/report.json
+            .tmp/e2e/session-progress/run-*/transcript.jsonl
             .tmp/e2e/minimal-composition/run-*/default-composer.log
             .tmp/e2e/resource-access/run-*/result.json
             .tmp/e2e/session-federation/run-*/results.json
@@ -442,6 +476,12 @@ jobs:
             .tmp/e2e/trusted-desktop/run-*/failure.log
             .tmp/e2e/provider-delegation/run-*/report.json
             .tmp/e2e/provider-delegation/run-*/verification.log
+            .tmp/e2e/service-continuation/run-*/report.json
+            .tmp/e2e/service-continuation/run-*/verification.log
+            .tmp/e2e/composition/run-*/results.json
+            .tmp/e2e/composition/run-*/requests.json
+            .tmp/e2e/composition/run-*/transcript.json
+            .tmp/e2e/composition/run-*/app-server.stderr
             .tmp/e2e/additive-cooperation/inputs.json
             .tmp/e2e/additive-cooperation/result.json
             .tmp/e2e/additive-cooperation/renderer.log

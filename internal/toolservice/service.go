@@ -221,6 +221,13 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	} else if err := decode(p.Params, &struct{}{}); err != nil {
 		return nil, err
 	}
+	if p.Method == "execute" {
+		// The default implementation has no private-scope shortcut: only its own
+		// admitted callback may execute tools, just like an external provider.
+		if _, err := p.Execution(ctx, s.ID(), true); err != nil {
+			return nil, err
+		}
+	}
 	backend, err := s.backend(ctx)
 	if err != nil {
 		return nil, err

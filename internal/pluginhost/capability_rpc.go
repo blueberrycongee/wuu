@@ -394,6 +394,9 @@ type SessionInspectParams struct {
 	RequestID string `json:"request_id,omitempty"`
 	Wait      string `json:"wait,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	// Requires an explicit request ID. Progress is an optional display snapshot,
+	// not a delivery receipt, event stream or durable execution result.
+	IncludeProgress bool `json:"include_progress,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
@@ -416,6 +419,29 @@ type SessionInspectResult struct {
 	Turn      *SessionTurnInspection   `json:"turn,omitempty"`
 	Workspace *SessionWorkspaceSummary `json:"workspace,omitempty"`
 	TimedOut  bool                     `json:"timed_out,omitempty"`
+	Progress  *SessionProgressSnapshot `json:"progress,omitempty"`
+}
+
+// SessionProgressSnapshot projects only an exclusively correlated turn in a
+// session owned by the caller. Unavailable snapshots never contain items.
+type SessionProgressSnapshot struct {
+	Version   int                   `json:"version"`
+	Available bool                  `json:"available"`
+	Reason    string                `json:"reason,omitempty"`
+	SessionID string                `json:"session_id,omitempty"`
+	RequestID string                `json:"request_id,omitempty"`
+	TurnID    string                `json:"turn_id,omitempty"`
+	Items     []SessionProgressItem `json:"items"`
+	Truncated bool                  `json:"truncated"`
+}
+
+type SessionProgressItem struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	Text      string `json:"text,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type SessionTurnInspection struct {
@@ -1011,8 +1037,23 @@ func validateCapabilityRelations(c CapabilityDescriptor) error {
 // method, including provider-owned durability without a host business journal.
 const HostFeatureDocumentAuthority = "state.documents.authority.v1"
 
+const HostFeatureSessionProgress = "session.progress.v1"
+
+// HostFeatureServiceContinuation recognizes single-use selected invocation forwarding.
+const HostFeatureServiceContinuation = "service.continuation.v1"
+
 // SupportedHostFeatures returns only semantics actually implemented by this host.
-func SupportedHostFeatures() []string { return []string{HostFeatureDocumentAuthority} }
+func SupportedHostFeatures() []string {
+	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation}
+}
+
+func hostFeaturesForServices(supported []HostServiceMethod) []string {
+	features := SupportedHostFeatures()
+	if !slices.Contains(supported, ServiceContinueMethod) {
+		features = slices.DeleteFunc(features, func(feature string) bool { return feature == HostFeatureServiceContinuation })
+	}
+	return features
+}
 
 // ValidateCapabilityNegotiation validates one initialize response against the
 // services actually implemented by the host process.
@@ -1023,7 +1064,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return fmt.Errorf("duplicate required host feature %q", feature)
 		}
 		seenFeatures[feature] = true
-		if !slices.Contains(SupportedHostFeatures(), feature) {
+		if !slices.Contains(hostFeaturesForServices(supported), feature) {
 			return fmt.Errorf("required host feature %q is unavailable", feature)
 		}
 	}
@@ -1098,7 +1139,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 // ValidateHostServiceMethod checks that a host service method is recognized.
 func ValidateHostServiceMethod(m HostServiceMethod) error {
 	switch m {
-	case ServiceCallMethod:
+	case ServiceCallMethod, ServiceContinueMethod:
 		return nil
 	default:
 		return fmt.Errorf("unknown host service method %q", m)
