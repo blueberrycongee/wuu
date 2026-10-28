@@ -1,3 +1,4 @@
+import "../test-support/AbortSignal";
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -5,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { ApplicationController } from "../plugins/ApplicationController.test-support";
 import { PluginHost } from "../plugins/PluginHost";
+import * as Toast from "../Toast";
 import { DefaultNavigationSurface } from "./DefaultNavigationSurface";
 
 vi.mock("../AppSidebar", async importOriginal => ({ ...await importOriginal<typeof import("../AppSidebar")>(),
@@ -39,4 +41,35 @@ describe("navigation composer focus intent", () => {
       expect(invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toHaveLength(mode === "unchanged" ? 1 : 0);
     } finally { if (mounted) act(() => root.unmount()); host.unload("navigation-test"); element.remove(); other.remove(); }
   });
+});
+
+it.each(["retired", "failure"])("handles a pending navigation refresh after %s", async outcome => {
+  window.wuu = {} as typeof window.wuu;
+  const controller = new ApplicationController();
+  const snapshot = controller.getSnapshot();
+  vi.spyOn(controller, "getSnapshot").mockReturnValue({ ...snapshot, navigationWorkspace: { ...snapshot.navigationWorkspace, initialized: true } });
+  let reject!: (error: Error) => void;
+  vi.spyOn(controller, "invoke").mockImplementation(async action => {
+    if (action === "navigation.refresh") return new Promise((_resolve, fail) => { reject = fail; });
+    return undefined;
+  });
+  const toast = vi.spyOn(Toast, "showErrorToast");
+  let application!: ApplicationServiceV1;
+  const host = new PluginHost({ react: React, application: controller });
+  await host.activateGeneration({ pluginId: "navigation-refresh", generation: "one", register: api => { application = api.application; } });
+  const element = document.createElement("div"); document.body.append(element);
+  const root = createRoot(element);
+  try {
+    await act(async () => root.render(<DefaultNavigationSurface application={application} slots={{ Slot: () => null }} />));
+    expect(reject).toBeTypeOf("function");
+    if (outcome === "retired") host.unload("navigation-refresh");
+    await act(async () => reject(new Error("Refresh failed")));
+    if (outcome === "retired") expect(toast).not.toHaveBeenCalled();
+    else expect(toast).toHaveBeenCalledWith(expect.objectContaining({ message: "Refresh failed" }));
+  } finally {
+    act(() => root.unmount());
+    host.unload("navigation-refresh");
+    element.remove();
+    vi.restoreAllMocks();
+  }
 });

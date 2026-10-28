@@ -16,8 +16,9 @@ import (
 // not open a database or choose a backend. Its owner retains the generation and
 // supplies an operation context; a retired binding cannot reopen local files.
 type documentStore struct {
-	ctx       context.Context
-	documents persistence.Documents
+	ctx                        context.Context
+	documents                  persistence.Documents
+	journalBackgroundDocuments persistence.Documents
 }
 
 func newDocumentStore(ctx context.Context, documents persistence.Documents) *documentStore {
@@ -25,7 +26,7 @@ func newDocumentStore(ctx context.Context, documents persistence.Documents) *doc
 }
 
 func (s *documentStore) WithContext(ctx context.Context) *documentStore {
-	return &documentStore{ctx: ctx, documents: s.documents}
+	return &documentStore{ctx: ctx, documents: s.documents, journalBackgroundDocuments: s.journalBackgroundDocuments}
 }
 
 func documentNamespace(table string) string { return "wuu." + table + ".v1" }

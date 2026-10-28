@@ -183,7 +183,7 @@ func buildPluginHostWithSelection(ctx context.Context, plugins []pluginpkg.Plugi
 		required[toolservice.DefaultModule] = true
 	}
 	if resolved.Includes(session.DefaultModule) {
-		nativeModules = append(nativeModules, newNativeSessionDomain(registry, statepath.SessionsDir(wuuHome)))
+		nativeModules = append(nativeModules, newNativeSessionDomain(registry, statepath.SessionsDir(wuuHome), host))
 		required[session.DefaultModule] = true
 	}
 	stateModules, err := nativeStateProviders(wuuHome, projectRoot, workspaceStateDir, factoryIDs)

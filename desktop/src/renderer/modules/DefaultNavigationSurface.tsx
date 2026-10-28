@@ -8,6 +8,7 @@ import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, t
 import type { DesktopProject } from "../../shared/protocol";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { showErrorToast } from "../Toast";
+import { showApplicationActionError } from "../ApplicationActionError";
 import { confirmAction } from "../ConfirmDialog";
 import { useI18n } from "../i18n";
 
@@ -80,7 +81,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const workspaces = useMemo<DesktopProject[]>(() => [{ id: SCRATCH_PSEUDO_PROJECT_ID, name: t("sidebar.conversations"), path: "", created_at: "", updated_at: "" }, ...view.workspaces.map(row => ({ ...row }))], [view.workspaces, t]);
   const sectionOrder = useMemo(() => reconcileSidebarSectionOrder(order, workspaces.map(row => row.id)), [order, workspaces]);
   const workspaceRows = useMemo(() => Object.fromEntries(workspaces.map(workspace => [workspace.id, rows.filter(row => !row.archived && (workspace.id === SCRATCH_PSEUDO_PROJECT_ID ? isScratchThread(row, [...view.workspaces]) : threadBelongsToWorkspace(row, workspace)))])), [rows, workspaces, view.workspaces]);
-  useEffect(() => { if (!view.initialized) return; const lifetime = new AbortController(); void invoke("navigation.refresh", {}, { signal: lifetime.signal }).catch(error => { if (!lifetime.signal.aborted) showErrorToast(error); }); return () => lifetime.abort(); }, [invoke, view.initialized]);
+  useEffect(() => { if (!view.initialized) return; const lifetime = new AbortController(); void invoke("navigation.refresh", {}, { signal: lifetime.signal }).catch(error => { if (!lifetime.signal.aborted) showApplicationActionError(error); }); return () => lifetime.abort(); }, [invoke, view.initialized]);
   const navigation = useMemo<SidebarNavigationService>(() => ({ view, invoke, slots, organization: {
     folders: view.folders.map(folder => ({ ...folder })),
     folderByThreadID: Object.fromEntries(rows.filter(row => row.folder_id).map(row => [row.id, row.folder_id!])),
