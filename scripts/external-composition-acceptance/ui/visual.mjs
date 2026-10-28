@@ -18,7 +18,7 @@ const report = { passed: false, sourceRevision: execFileSync('git', ['rev-parse'
   scope: 'Actual Chromium pixels, production PluginHost / goal-ui / automation-ui / styles, independent surface bindings, deterministic synthetic services. Not real-core or packaged desktop acceptance.',
   inputs: {}, build: [], browser: null, cases: [], screenshots: [], runtimeErrors: [],
 };
-let browser, server, cdp;
+let browser, browserExit, server, cdp, browserSession;
 let browserLog = '';
 async function files(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -57,6 +57,7 @@ try {
     // disposable; the browser sandbox stays enabled.
     browser = spawn(executable, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
       '--remote-debugging-pipe', `--user-data-dir=${join(temporary, 'profile')}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
+    browserExit = new Promise(resolve => browser.once('exit', resolve));
     browser.stderr.on('data', bytes => { browserLog += bytes.toString(); });
     const pending = new Map(); let sequence = 0, buffer = '';
     const failPending = error => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(error); } pending.clear(); };
@@ -72,18 +73,19 @@ try {
         if (message.method === 'Runtime.exceptionThrown') report.runtimeErrors.push(message.params.exceptionDetails);
         const entry = pending.get(message.id); if (!entry) continue;
         pending.delete(message.id); clearTimeout(entry.timer);
-        message.error ? entry.reject(new Error(JSON.stringify(message.error))) : entry.resolve(message.result);
+        message.error ? entry.reject(new Error(`${entry.method}: ${JSON.stringify(message.error)}`)) : entry.resolve(message.result);
       }
     });
     cdp = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
       const id = ++sequence;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} timed out`)); }, 20_000);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, method });
       browser.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
     });
     report.browser = await cdp('Browser.getVersion');
     const { targetId } = await cdp('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true });
+    browserSession = sessionId;
     const command = (method, params) => cdp(method, params, sessionId);
     await command('Runtime.enable'); await command('Page.enable');
     await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -96,7 +98,7 @@ try {
     const until = async (expression, description) => {
       const deadline = Date.now() + 15_000;
       do {
-        if (await evaluate(expression)) return;
+        if (await evaluate(`Boolean(${expression})`)) return;
         await new Promise(resolve => setTimeout(resolve, 50));
       } while (Date.now() < deadline);
       throw new Error(`Browser state timed out: ${description}`);
@@ -117,7 +119,7 @@ try {
       await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
     };
     const capture = async (name, scenario) => {
-      await evaluate('document.fonts.ready');
+      await evaluate('document.fonts.ready.then(() => true)');
       await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       const metrics = await evaluate(`(() => {
         const selectors = ['html','body','[data-external-shell]','[data-external-navigation]','[data-external-composer]','[data-preview-catalog]', '.plugin-automation','.plugin-goal','.plugin-automation-main','.plugin-automation-detail-body','.plugin-automation-detail'];
@@ -203,21 +205,41 @@ try {
     assert.equal(report.cases.length, 4);
     assert.ok(report.screenshots.length >= 16);
     report.passed = true;
-    console.log(`Feature UI Chromium acceptance passed: ${report.cases.length} scenarios, ${report.screenshots.length} screenshots. Evidence: ${output}`);
   }
 } catch (error) {
   report.error = error.stack ?? String(error);
+  if (browserSession && browser?.exitCode === null && browser?.signalCode === null) {
+    try {
+      const { data } = await cdp('Page.captureScreenshot', { format:'png', fromSurface:true }, browserSession);
+      const png = Buffer.from(data, 'base64');
+      await writeFile(join(output, 'failure.png'), png);
+      report.failureScreenshotSHA256 = hash(png);
+    } catch (captureError) { report.failureCaptureError = String(captureError); }
+  }
   throw error;
 } finally {
-  if (browser && browser.exitCode === null) {
-    browser.kill('SIGTERM');
-    await new Promise(resolve => {
-      const timer = setTimeout(() => { browser.kill('SIGKILL'); resolve(); }, 3000);
-      browser.once('exit', () => { clearTimeout(timer); resolve(); });
+  if (browser?.pid && browser.exitCode === null && browser.signalCode === null) {
+    // Chrome persists its profile on shutdown. Close through CDP before any
+    // signal fallback, then wait for exit instead of racing profile writers.
+    try { await cdp('Browser.close'); }
+    catch (error) { browserLog += `\nBrowser.close: ${String(error)}\n`; }
+    const waitForExit = milliseconds => new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), milliseconds);
+      browserExit.then(() => { clearTimeout(timer); resolve(true); });
     });
+    if (!await waitForExit(3000)) {
+      browser.kill('SIGTERM');
+      if (!await waitForExit(3000)) { browser.kill('SIGKILL'); await browserExit; }
+    }
   }
   if (server) await new Promise(resolve => server.close(resolve));
   await writeFile(join(output, 'browser.log'), browserLog);
+  try { await rm(temporary, { recursive:true, force:true, maxRetries:8, retryDelay:100 }); }
+  catch (error) {
+    report.cleanupError = String(error);
+    // A cleanup failure must not replace the original rendering failure.
+    if (!report.error) { report.passed = false; report.error = error.stack ?? String(error); process.exitCode = 1; }
+  }
   if (!process.argv.includes('--build-only') || report.error) await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2));
-  await rm(temporary, { recursive:true, force:true });
 }
+if (report.passed) console.log(`Feature UI Chromium acceptance passed: ${report.cases.length} scenarios, ${report.screenshots.length} screenshots. Evidence: ${output}`);
