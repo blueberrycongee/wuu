@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Documentation
+
+- Guide Computer Use through iPhone Mirroring connection checks, phone-screen verification, and built-in foreground input when background interaction fails, avoiding ad hoc mouse scripts without promising background-only phone control.
+
 ### Added
 
 - Add opt-in, metadata-only `model.request.metrics` observations with exact request/turn correlation, host-observed first-output timing, explicit adapter-reported usage, and bounded nonblocking delivery across cancellation and plugin replacement.
