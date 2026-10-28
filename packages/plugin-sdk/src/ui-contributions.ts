@@ -10,7 +10,7 @@ import type {
 export interface UIContributionIdentityV1 { readonly pluginId: string; readonly generation: string }
 export interface RegisteredCommandV1 extends CommandRegistration, UIContributionIdentityV1 {}
 export interface RegisteredViewV1 extends ViewTypeDefinition, UIContributionIdentityV1 { readonly order: number }
-export interface RegisteredRendererV1 extends Omit<RendererDefinition, "render">, UIContributionIdentityV1 { readonly order: number; readonly render: ComponentType<{ content: unknown; metadata: Readonly<Record<string, unknown>>; host: ViewHostAPI }> }
+export interface RegisteredRendererV1 extends Omit<RendererDefinition, "render">, UIContributionIdentityV1 { readonly order: number; readonly render: ComponentType<{ content: unknown; metadata: Readonly<Record<string, unknown>>; host: PresentationHost }> }
 export interface RegisteredPresenterV1 extends PresenterDefinition, UIContributionIdentityV1 { readonly mode: PresentationMode; readonly priority: number; readonly order: number }
 export interface RegisteredStatusItemV1 extends StatusItemDefinition, UIContributionIdentityV1 { readonly order: number }
 export interface RegisteredThemeTokensV1 extends ThemeTokens, UIContributionIdentityV1 { readonly id: string; readonly order: number }
@@ -93,7 +93,9 @@ export interface ApplicationWorkbenchV1 {
   createRendererHostAPI(pluginId: string, generation: string): ViewHostAPI;
   createPresentationHostAPI(pluginId: string, generation: string, actions: readonly string[], dispatcher?: (action: string, input?: unknown) => unknown | Promise<unknown>): PresentationHost;
   renderLayers(input: { readonly settingsOnly?: boolean }): ReactNode;
-  renderContent(input: { readonly category: RendererDefinition['category']; readonly contentType: string; readonly content: unknown; readonly metadata?: Readonly<Record<string, unknown>>; readonly fallback: ReactNode }): ReactNode;
+  renderContent(input: { readonly category: RendererDefinition['category']; readonly contentType: string; readonly content: unknown; readonly metadata?: Readonly<Record<string, unknown>>; readonly fallback: ReactNode;
+    readonly actions?: readonly string[];
+    readonly dispatchAction?: (action: string, input: unknown, isCurrent: () => boolean, signal: AbortSignal) => unknown | Promise<unknown> }): ReactNode;
   renderView(input: { readonly pluginId: string; readonly viewTypeId: string; readonly region?: ViewPlacementRegion; readonly context?: Readonly<Record<string, unknown>>; readonly settings?: import('./index.js').SettingsPageHostAPI; readonly onFailure?: () => void }): ReactNode;
 }
 

@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { cp, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -39,6 +39,63 @@ const events = new EventEmitter(), observations = [], held = new Map(), servers 
 let project, control;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const moduleID = path => `local-${hash(path).slice(0, 24)}`;
+const ownedProcesses = new Map();
+
+async function procIdentity(pid) {
+  try {
+    const raw = await readFile(`/proc/${pid}/stat`, "utf8"), fields = raw.slice(raw.lastIndexOf(")") + 2).trim().split(/\s+/);
+    const cmdline = (await readFile(`/proc/${pid}/cmdline`)).toString().split("\0").filter(Boolean);
+    const confirm = await readFile(`/proc/${pid}/stat`, "utf8");
+    if (confirm.slice(confirm.lastIndexOf(")") + 2).trim().split(/\s+/)[19] !== fields[19]) return null;
+    return { pid, state: fields[0], ppid: Number(fields[1]), pgid: Number(fields[2]), starttime: fields[19], cmdline, stat: raw };
+  } catch (error) { if (["ENOENT", "ESRCH"].includes(error.code)) return null; throw error; }
+}
+function sameProcess(left, right) {
+  return Boolean(left && right && left.pid === right.pid && left.pgid === right.pgid && left.starttime === right.starttime && JSON.stringify(left.cmdline) === JSON.stringify(right.cmdline));
+}
+async function ownProcess(label, pid) {
+  const identity = await procIdentity(pid);
+  assert(identity, `${label}: accepted process ${pid} is absent from /proc`);
+  const owned = { ...identity, label };
+  ownedProcesses.set(`${pid}:${identity.starttime}`, owned);
+  return owned;
+}
+async function saveProcessEvidence(label) {
+  const table = (await Promise.all((await readdir("/proc")).filter(name => /^\d+$/.test(name)).map(name => procIdentity(Number(name))))).filter(Boolean);
+  const selected = new Map();
+  for (const owned of ownedProcesses.values()) {
+    const current = table.find(item => sameProcess(item, owned));
+    if (current) selected.set(current.pid, { ...current, label: owned.label });
+  }
+  // Only descendants and groups of a still-verified process belong to this
+  // run. Never infer ownership from a recycled PID or a broad command match.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const item of table) if (!selected.has(item.pid)) {
+      const parent = selected.get(item.ppid), leader = selected.get(item.pgid);
+      const owner = parent ?? (leader?.pid === leader?.pgid ? leader : undefined);
+      if (owner) { selected.set(item.pid, { ...item, label: owner.label }); changed = true; }
+    }
+  }
+  for (const item of selected.values()) ownedProcesses.set(`${item.pid}:${item.starttime}`, item);
+  const snapshots = [...ownedProcesses.values()].map(owned => ({ owned, current: table.find(item => item.pid === owned.pid) ?? null }));
+  report.proc_evidence ??= [];
+  const filename = `proc-${String(report.proc_evidence.length + 1).padStart(3, "0")}-${label}.json`;
+  await writeFile(join(evidence, filename), JSON.stringify({ time: new Date().toISOString(), snapshots }, null, 2) + "\n");
+  report.proc_evidence.push(filename);
+}
+async function signalOwned(owned, signal) {
+  const current = await procIdentity(owned.pid);
+  if (!current) return "already-gone";
+  assert(sameProcess(current, owned), `refusing to signal changed process identity ${owned.pid}`);
+  try { process.kill(owned.pid, signal); return "signalled"; }
+  catch (error) { if (error.code === "ESRCH") return "already-gone"; throw error; }
+}
+async function assertProcessGone(owned) {
+  const current = await procIdentity(owned.pid);
+  assert(!current, `accepted process did not physically disappear: ${JSON.stringify({ owned, current })}`);
+  assert.throws(() => process.kill(owned.pid, 0), { code: "ESRCH" });
+}
 
 function command(program, args, options = {}) {
   const entry = { program, args, cwd: options.cwd ?? root };
@@ -75,18 +132,23 @@ async function makeServer(name, config) {
   const configPath = join(home, "config.json");
   const env = { PATH: process.env.PATH, HOME: directory, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
   await writeFile(configPath, JSON.stringify(config));
-  let child, sequence = 0, stderr = "";
+  let child, childIdentity, exited, stopping, sequence = 0, stderr = "";
   const transcript = [], sent = [];
   const server = {
     name, home, workspace, directory, transcript,
     publish(path) { return command(binary, ["plugin", "dev", "--watch=false", path], { cwd: directory, env }); },
     async start() {
       child = spawn(binary, ["app-server", "--workdir", workspace, "--config", configPath], { env, stdio: ["pipe", "pipe", "pipe"] });
+      exited = once(child, "exit"); stopping = undefined;
+      exited.catch(() => {});
+      child.stdin.on("error", error => { stderr += `\nstdin: ${error}`; });
       child.stderr.setEncoding("utf8").on("data", data => { stderr += data; });
       createInterface({ input: child.stdout }).on("line", line => {
         try { const message = JSON.parse(line); transcript.push(message); events.emit(name, message); }
         catch { stderr += `\nnon-JSON stdout: ${line}`; }
       });
+      await once(child, "spawn");
+      childIdentity = await ownProcess(`${name}-app-server`, child.pid);
       return await server.rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "external-composition-acceptance" } });
     },
     async raw(method, params = {}) {
@@ -127,11 +189,30 @@ async function makeServer(name, config) {
       return await server.terminal(turn);
     },
     async stop() {
-      if (!child || child.exitCode !== null) return;
-      const exited = once(child, "exit");
-      child.stdin.end();
-      const term = setTimeout(() => child.kill("SIGTERM"), 5000), kill = setTimeout(() => child.kill("SIGKILL"), 8000);
-      await exited; clearTimeout(term); clearTimeout(kill);
+      if (!child) return;
+      if (!stopping) stopping = (async () => {
+        await saveProcessEvidence(`${name}-before-eof`);
+        const began = Date.now(), fallback = [], rescue = [];
+        child.stdin.end();
+        const emergency = signal => {
+          fallback.push(signal);
+          const action = (async () => { await saveProcessEvidence(`${name}-before-${signal}`); await signalOwned(childIdentity, signal); })();
+          action.catch(() => {}); rescue.push(action);
+        };
+        // Rescue is only for failed fixtures. Either timer firing is a hard
+        // failure, never evidence that app-server EOF cleaned its resources.
+        const term = setTimeout(() => emergency("SIGTERM"), 15000), kill = setTimeout(() => emergency("SIGKILL"), 20000);
+        let code, signal;
+        try { [code, signal] = await exited; }
+        finally { clearTimeout(term); clearTimeout(kill); await Promise.all(rescue); }
+        report.app_server_shutdowns ??= [];
+        report.app_server_shutdowns.push({ name, pid: child.pid, code, signal, elapsed_ms: Date.now() - began, fallback });
+        await saveProcessEvidence(`${name}-after-eof`);
+        assert.deepEqual(fallback, [], `${name}: app-server EOF needed forced termination`);
+        assert.equal(signal, null, `${name}: app-server EOF exited on ${signal}`);
+        assert.equal(code, 0, `${name}: app-server EOF exited ${code}`);
+      })();
+      return await stopping;
     },
     async save() {
       await writeFile(join(evidence, `${name}.jsonl`), transcript.map(JSON.stringify).join("\n") + "\n");
@@ -315,7 +396,7 @@ async function remoteProcesses(endpoint, mode = "native") {
   assert.equal(retirementObserved.cwd, remote);
   assert.equal(retirementObserved.status, "running", "default environment change stopped unrelated accepted background work");
   assert(retirementObserved.pid > 0);
-  globalThis.process.kill(retirementObserved.pid, 0);
+  const retirementIdentity = await ownProcess(`${name}-retained-managed-process`, retirementObserved.pid);
   const marker = join(remote, "cancelled-must-not-run");
   const cancelled = await probe({ action: "preaborted", key: "cancelled", command: "printf forbidden > cancelled-must-not-run" });
   assert.equal(cancelled.ok, false); await assert.rejects(stat(marker), { code: "ENOENT" });
@@ -326,13 +407,95 @@ async function remoteProcesses(endpoint, mode = "native") {
   assert.equal(bad.ok, false); await assert.rejects(stat(join(app.workspace, "must-not-run-locally")), { code: "ENOENT" });
   report.checks.push("remote start failure never falls back to the host workspace");
   await app.stop();
-  assert.throws(() => globalThis.process.kill(retirementObserved.pid, 0), { code: "ESRCH" }, "app-server close leaked an accepted backend process");
+  await assertProcessGone(retirementIdentity);
   if (mode !== "native") {
     const journal = JSON.parse(await readFile(join(remote, ".acceptance-execution", thread.id, "processes.json"), "utf8"));
     const closed = journal.find(item => item.process.command === retiringCommand)?.process;
     assert.equal(closed?.status, "stopped"); assert.equal(closed.terminal_cause, "requested_stop");
   }
   report.checks.push(`${mode} backend physically stops accepted background work on app-server shutdown, without changing its binding during settings refresh`);
+}
+
+async function nativeDelegationShutdown() {
+  const name = "native-delegation-shutdown", directory = join(independent, name), remote = join(directory, "workspace");
+  await mkdir(remote, { recursive: true });
+  const command = [process.execPath, join(project, "audit-worker.ts"), binary, "execution-worker"];
+  const child = spawn(command[0], command.slice(1), { env: { PATH: process.env.PATH, HOME: directory, WUU_HOME: join(directory, "home") }, stdio: ["pipe", "pipe", "pipe"] });
+  const exited = once(child, "exit"); exited.catch(() => {});
+  const transcript = [], sent = [], accepted = [];
+  let sequence = 0, stderr = "", peerIdentity;
+  child.stdin.on("error", error => { stderr += `\nstdin: ${error}`; });
+  child.stderr.setEncoding("utf8").on("data", value => { stderr += value; });
+  createInterface({ input: child.stdout }).on("line", line => {
+    try { const message = JSON.parse(line); transcript.push(message); events.emit(name, message); }
+    catch { stderr += `\nnon-JSON stdout: ${line}`; }
+  });
+  const request = async (method, data) => {
+    const id = `${name}-${++sequence}`, pending = waitFor(name, transcript, message => message.id === id, method);
+    const frame = { id, method, data, token: "d".repeat(64) }; sent.push(frame);
+    child.stdin.write(JSON.stringify(frame) + "\n");
+    const response = await pending; assert(!response.error, JSON.stringify(response)); return response.data;
+  };
+  await once(child, "spawn");
+  const childIdentity = await ownProcess(`${name}-adapter`, child.pid);
+  const binding = { version: 4, root: remote, session: "native-delegation-session", identity: "native-delegation-world" };
+  report.native_delegation_shutdown = { binding, accepted, command };
+  try {
+    const initialized = await request("initialize", binding);
+    assert.equal(initialized.version, 4); assert(initialized.capabilities.includes("process.start.v1"));
+    for (let index = 0; index < 3; index++) {
+      const marker = `${name}-${index}-${hash(independent).slice(0, 12)}`;
+      const code = `process.on('SIGTERM', () => {}); process.stdout.write('${marker}\\n'); setInterval(() => {}, 1000);`;
+      const command = `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(code)} -- ${JSON.stringify(marker)}`;
+      const record = await request("process/start", { actor: binding.session, permission_mode: "unconfined", operation_id: marker, command });
+      assert.equal(record.lifecycle, "managed"); assert.equal(record.cwd, remote);
+      let output = "", offset = 0;
+      const deadline = Date.now() + 10000;
+      while (!output.includes(marker)) {
+        assert(Date.now() < deadline, `TERM-resistant process was not ready: ${marker}`);
+        const read = await request("process/read", { id: record.id, options: { OffsetBytes: offset, MaxBytes: 4096, Wait: 1000000000 } });
+        assert.equal(read.Process.status, "running"); output += read.Output; offset = read.EndOffset;
+      }
+      const identity = await ownProcess(marker, record.pid);
+      assert(identity.cmdline.includes(marker)); accepted.push({ record, identity });
+    }
+    const live = await request("process/list", null);
+    assert.equal(live.length, 3); assert(live.every(item => item.status === "running"));
+    report.native_delegation_shutdown.before_eof = live;
+  } finally {
+    await saveProcessEvidence(`${name}-before-eof`);
+    const peers = [...ownedProcesses.values()].filter(item => item.label === `${name}-adapter` && item.cmdline[0] === binary && item.cmdline[1] === "execution-worker");
+    if (peers.length === 1) peerIdentity = peers[0];
+    const began = Date.now(), fallback = [], rescue = [];
+    child.stdin.end();
+    const emergency = signal => {
+      fallback.push(signal);
+      const action = (async () => { await saveProcessEvidence(`${name}-before-${signal}`); await signalOwned(childIdentity, signal); })();
+      action.catch(() => {}); rescue.push(action);
+    };
+    const term = setTimeout(() => emergency("SIGTERM"), 15000), kill = setTimeout(() => emergency("SIGKILL"), 20000);
+    let code, signal;
+    try { [code, signal] = await exited; }
+    finally { clearTimeout(term); clearTimeout(kill); await Promise.all(rescue); }
+    report.native_delegation_shutdown.exit = { code, signal, fallback, elapsed_ms: Date.now() - began };
+    await writeFile(join(evidence, `${name}.jsonl`), transcript.map(JSON.stringify).join("\n") + "\n");
+    await writeFile(join(evidence, `${name}-requests.jsonl`), sent.map(JSON.stringify).join("\n") + "\n");
+    await writeFile(join(evidence, `${name}.stderr.log`), stderr);
+    await saveProcessEvidence(`${name}-after-eof`);
+    assert.deepEqual(fallback, [], "native delegate EOF required harness termination");
+    assert.equal(signal, null); assert.equal(code, 0, `native delegate EOF failed: ${stderr}`);
+  }
+  assert(peerIdentity, "native delegate was not observed as an actual child process");
+  await assertProcessGone(childIdentity); await assertProcessGone(peerIdentity);
+  for (const item of accepted) {
+    await assertProcessGone(item.identity);
+    const journal = join(directory, ".wuu-execution", binding.identity, binding.session, "runtime", "processes", `${item.record.id}.json`);
+    item.terminal_receipt = JSON.parse(await readFile(journal, "utf8"));
+    assert.equal(item.terminal_receipt.status, "stopped");
+    assert.equal(item.terminal_receipt.terminal_cause, "requested_stop");
+    assert(item.terminal_receipt.stopped_at);
+  }
+  report.checks.push("explicit SDK delegation to native worker drains three TERM-resistant managed processes only on transport EOF; adapter, native worker and managed processes disappear, terminal receipts persist and adapter exits 0 without harness signals");
 }
 
 async function monitorConsumer(endpoint) {
@@ -425,11 +588,14 @@ async function externalFilesystem(endpoint, mode = "external") {
 async function backendProtocol() {
   const workspace = join(independent, "protocol-worker-root"); await mkdir(workspace);
   const child = spawn(process.execPath, [join(project, "external-worker.ts")], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = once(child, "exit"); exited.catch(() => {});
   const token = "a".repeat(64), transcript = [], sent = [];
   let sequence = 0, stderr = "";
+  child.stdin.on("error", error => { stderr += `\nstdin: ${error}`; });
   child.stderr.setEncoding("utf8").on("data", value => { stderr += value; });
   createInterface({ input: child.stdout }).on("line", line => {
-    const message = JSON.parse(line); transcript.push(message); events.emit("backend-protocol", message);
+    try { const message = JSON.parse(line); transcript.push(message); events.emit("backend-protocol", message); }
+    catch { stderr += `\nnon-JSON stdout: ${line}`; }
   });
   const send = (id, method, data, secret = token) => {
     const frame = { id, method, data, token: secret }; sent.push(frame); child.stdin.write(JSON.stringify(frame) + "\n");
@@ -439,7 +605,9 @@ async function backendProtocol() {
     send(id, method, data, secret); return await result;
   };
   const binding = { version: 4, root: workspace, session: "protocol-session", identity: "protocol-environment" };
-  let record;
+  let record, managedIdentity;
+  await once(child, "spawn");
+  const childIdentity = await ownProcess("external-backend-protocol-worker", child.pid);
   try {
     assert((await request("initialize", { ...binding, version: 3 })).error);
     assert((await request("process/list", null)).error);
@@ -463,6 +631,7 @@ async function backendProtocol() {
     assert(denied.error); await assert.rejects(stat(join(workspace, "forbidden")), { code: "ENOENT" });
     const started = await request("process/start", { actor: binding.session, permission_mode: "unconfined", operation_id: "accepted-operation", command: "printf 'external-protocol-ready'; while :; do sleep 1; done" });
     assert(!started.error, JSON.stringify(started)); record = started.data;
+    managedIdentity = await ownProcess("external-backend-protocol-managed", record.pid);
     assert.equal(record.operation_id, "accepted-operation"); assert.equal(record.root_thread_id, binding.session);
     send(started.id, "cancel");
     const alive = await request("process/get", { id: record.id });
@@ -480,18 +649,28 @@ async function backendProtocol() {
     report.checks.push("actual external backend rejects wrong protocol/token and read-only shell before effects; pins session and preserves operation receipt",
       "accepted external process survives completed request cancellation and addressed pending-read cancellation; byte-cursor reads do not consume output");
   } finally {
-    const exited = once(child, "exit"); child.stdin.end();
-    const kill = setTimeout(() => child.kill("SIGKILL"), 5000);
-    const [code, signal] = await exited; clearTimeout(kill);
+    await saveProcessEvidence("external-backend-protocol-before-eof");
+    child.stdin.end();
+    let forced = false, rescue;
+    const kill = setTimeout(() => {
+      forced = true;
+      rescue = (async () => { await saveProcessEvidence("external-backend-protocol-before-SIGKILL"); await signalOwned(childIdentity, "SIGKILL"); })();
+      rescue.catch(() => {});
+    }, 15000);
+    const [code, signal] = await exited; clearTimeout(kill); await rescue;
     await writeFile(join(evidence, "external-backend-protocol.jsonl"), transcript.map(JSON.stringify).join("\n") + "\n");
     await writeFile(join(evidence, "external-backend-protocol-requests.jsonl"), sent.map(JSON.stringify).join("\n") + "\n");
     await writeFile(join(evidence, "external-backend-protocol.stderr.log"), stderr);
+    await saveProcessEvidence("external-backend-protocol-after-eof");
+    report.backend_protocol_shutdown = { code, signal, forced };
+    assert.equal(forced, false, "backend EOF required harness SIGKILL");
+    assert.equal(signal, null, `backend cleanup failed: ${signal}`);
     assert.equal(code, 0, `backend cleanup failed: ${signal ?? stderr}`);
   }
   const journal = JSON.parse(await readFile(join(workspace, ".acceptance-execution", binding.session, "processes.json"), "utf8"));
   const stopped = journal.find(item => item.process.id === record.id)?.process;
   assert.equal(stopped.status, "stopped"); assert.equal(stopped.terminal_cause, "requested_stop");
-  assert.throws(() => process.kill(record.pid, 0), { code: "ESRCH" });
+  await assertProcessGone(managedIdentity);
   report.checks.push("transport EOF drains and physically stops accepted external process; stopped receipt remains reconcilable in provider journal");
 }
 
@@ -572,6 +751,7 @@ try {
       await remoteProcesses(endpoint, "audit");
       await externalFilesystem(endpoint, "audit");
       await externalFilesystem(endpoint, "memory");
+      await nativeDelegationShutdown();
     }
     if (process.argv.includes("--policy")) {
       const result = command("go", ["test", "-race", "-count=1", "-timeout=2m", "-v", "./internal/runtime", "-run", "^TestDefaultPolicyExternalComposition$"],
@@ -585,9 +765,28 @@ try {
 } catch (error) { report.error = `${error.stack ?? error}\n${error.stdout ?? ""}${error.stderr ?? ""}`; process.exitCode = 1; console.error(report.error); }
 finally {
   for (const release of held.values()) release();
-  for (const server of servers) { await server.stop(); await server.save(); }
+  for (const server of servers) {
+    try { await server.stop(); }
+    catch (error) {
+      report.status = "failed"; process.exitCode = 1;
+      (report.cleanup_errors ??= []).push(`${server.name}: ${error.stack ?? error}`);
+    }
+    await server.save();
+  }
   control?.closeAllConnections(); control?.close();
   await writeFile(join(evidence, "observations.jsonl"), observations.map(JSON.stringify).join("\n") + "\n");
   await writeFile(join(evidence, "report.json"), JSON.stringify(report, null, 2) + "\n");
+  if (report.status === "failed" && ownedProcesses.size) {
+    // Preserve the failure first. Cleanup can only target this run's observed
+    // identities, and a changed cmdline/PGID/starttime is never kill authority.
+    await saveProcessEvidence("failure-before-owned-cleanup");
+    report.fixture_cleanup = [];
+    for (const owned of ownedProcesses.values()) {
+      try { report.fixture_cleanup.push({ owned, outcome: await signalOwned(owned, "SIGKILL") }); }
+      catch (error) { report.fixture_cleanup.push({ owned, outcome: "not-signalled", error: String(error) }); }
+    }
+    await saveProcessEvidence("failure-after-owned-cleanup");
+    await writeFile(join(evidence, "report.json"), JSON.stringify(report, null, 2) + "\n");
+  }
   console.log(`External composition ${report.status}: ${evidence}`);
 }

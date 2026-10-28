@@ -87,9 +87,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	profileJSON, _ := json.Marshal(e.profile)
 	env = append(env, "WUU_EXECUTION_PROFILE="+string(profileJSON), "WUU_EXECUTION_ID="+e.identity, "WUU_EXECUTION_SESSION="+e.session, "WUU_EXECUTION_STATE="+filepath.Join(e.stateDir, e.identity))
 	client := NewClient(argv, env)
-	if p := e.profile; p.Backend == "modal" || p.Backend == "daytona" || p.Backend == "vercel_sandbox" {
-		client.closeGrace = 90 * time.Second
-	}
+	client.closeGrace = e.profile.shutdownTimeout()
 	tokenDir := filepath.Join(e.stateDir, e.identity, e.session)
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
 		return nil, err
@@ -305,21 +303,24 @@ func (e *Environment) Close() error {
 	e.closed = true
 	client := e.client
 	e.mu.Unlock()
-	var closeErr error
 	if client != nil {
-		closeErr = client.Close()
+		if err := client.Close(); err != nil {
+			// A failed shutdown is not permission to destroy its recovery state
+			// or workspace. Keep the environment available for explicit recovery.
+			return err
+		}
 	}
 	if e.profile.Backend == "docker" && !e.profile.Persistent && !e.profile.Shared && e.prepared {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if out, err := exec.CommandContext(ctx, "docker", "rm", "--force", e.identity).CombinedOutput(); err != nil {
-			return errors.Join(closeErr, fmt.Errorf("remove execution container: %w: %s", err, out))
+			return fmt.Errorf("remove execution container: %w: %s", err, out)
 		}
 	}
 	if e.profile.Backend == "singularity" && !e.profile.Persistent && !e.profile.Shared && e.prepared {
-		return errors.Join(closeErr, os.RemoveAll(filepath.Join(e.stateDir, e.identity)))
+		return os.RemoveAll(filepath.Join(e.stateDir, e.identity))
 	}
-	return closeErr
+	return nil
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }

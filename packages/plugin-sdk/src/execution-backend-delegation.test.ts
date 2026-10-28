@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { watch } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { delegateExecutionBackendV4, type ExecutionBackendContextV4 } from "./execution-backend.js";
 
 // Real peer processes protect the delegation contract: explicit peer selection,
@@ -126,4 +128,79 @@ test("a real broken stdout pipe drains backend cleanup while stdin remains open"
     assert.equal(await readFile(marker, "utf8"), "closed");
     assert.match(diagnostics, /handled:/);
   } finally { child.kill(); child.stdin.destroy(); await exited; await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("spawned peers receive enough default grace to finish cleanup beyond three seconds", { timeout: 15000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "wuu-execution-cleanup-"));
+  const marker = join(directory, "closed");
+  const watcher = watch(directory);
+  const entered = new Promise<void>(resolve => watcher.on("change", (_event, name) => {
+    if (name === "closing") resolve();
+  }));
+  const peer = delegateExecutionBackendV4({ command: [process.execPath, "--input-type=module", "-e", `
+    import {runExecutionBackendV4} from ${JSON.stringify(sdk)};
+    import {watch} from 'node:fs';
+    import {writeFile} from 'node:fs/promises';
+    await runExecutionBackendV4({initialize(){},methods:{},async close(){
+      const gate = watch(${JSON.stringify(directory)});
+      const released = new Promise(resolve => gate.on('change', (_event, name) => {
+        if(name === 'release') { gate.close(); resolve(); }
+      }));
+      await writeFile(${JSON.stringify(join(directory, "closing"))}, 'closing');
+      await released;
+      await writeFile(${JSON.stringify(marker)}, 'closed');
+    }});
+  `] });
+  try {
+    await peer.initialize(binding, context());
+    const closing = Promise.resolve(peer.close!());
+    void closing.catch(() => {});
+    await entered;
+    // Hold real cleanup past the old three-second kill deadline, then release
+    // it explicitly rather than making the peer guess when the test is ready.
+    await delay(3200);
+    await writeFile(join(directory, "release"), "release");
+    await closing;
+    assert.equal(await readFile(marker, "utf8"), "closed");
+  } finally {
+    watcher.close();
+    await Promise.resolve(peer.close!()).catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an explicit shutdown budget terminates a stuck peer without claiming its resources stopped", { timeout: 5000 }, async () => {
+  const peer = delegateExecutionBackendV4({
+    command: [process.execPath, "--input-type=module", "-e", `
+      import {runExecutionBackendV4} from ${JSON.stringify(sdk)};
+      await runExecutionBackendV4({initialize(){},methods:{},close(){
+        return new Promise(() => setInterval(() => {}, 1000));
+      }});
+    `],
+    shutdown_grace_ms: 100,
+  });
+  try {
+    await peer.initialize(binding, context());
+    await assert.rejects(Promise.resolve(peer.close!()), /timed out; resource outcome may be unknown/);
+    await assert.rejects(Promise.resolve(peer.close!()), /timed out; resource outcome may be unknown/);
+  } finally { await Promise.resolve(peer.close!()).catch(() => {}); }
+});
+
+test("shutdown budgets reject invalid timer ranges and cannot configure an attached transport", () => {
+  for (const shutdown_grace_ms of [0, -1, 0.5, NaN, Infinity, 2_147_483_648, null, "100"]) {
+    // @ts-expect-error JavaScript callers must also supply an integer budget.
+    assert.throws(() => delegateExecutionBackendV4({ command: [process.execPath], shutdown_grace_ms }), /shutdown_grace_ms/);
+  }
+  for (const shutdown_grace_ms of [1, 90_000, 2_147_483_647]) {
+    assert.doesNotThrow(() => delegateExecutionBackendV4({ command: [process.execPath], shutdown_grace_ms }));
+  }
+  const input = new PassThrough();
+  try {
+    // @ts-expect-error Attached transports own their shutdown budget.
+    assert.throws(() => delegateExecutionBackendV4({
+      transport: { input, output: { write() {} }, async close() {} },
+      shutdown_grace_ms: 100,
+    }), /shutdown_grace_ms.*command/);
+  } finally { input.destroy(); }
 });

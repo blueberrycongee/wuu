@@ -1753,6 +1753,39 @@ func (m *Manager) CleanupSession() error {
 	return err
 }
 
+// CleanupOwned stops and reaps every process still controlled by this manager.
+// Callers must drain process starts first. Registry records can belong to other
+// live managers, so only in-memory handles establish shutdown ownership.
+func (m *Manager) CleanupOwned() error {
+	if m.remote != nil {
+		return errors.New("owned process cleanup must run in the execution worker")
+	}
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.handles))
+	for id := range m.handles {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	// A worker has one shutdown budget, not one per background command. Stop
+	// all owned commands concurrently while retaining Stop's identity checks,
+	// durable terminal receipts and output-monitor/reaping barrier.
+	results := make(chan error, len(ids))
+	for _, id := range ids {
+		go func() {
+			_, err := m.Stop(id)
+			if err != nil {
+				err = fmt.Errorf("cleanup owned process %s: %w", id, err)
+			}
+			results <- err
+		}()
+	}
+	var err error
+	for range ids {
+		err = errors.Join(err, <-results)
+	}
+	return err
+}
+
 func (m *Manager) CleanupSessionWithResult() (CleanupResult, error) {
 	if m.remote != nil {
 		var result CleanupResult

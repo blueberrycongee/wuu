@@ -73,7 +73,14 @@ Linux 命令写入限制需要 Landlock ABI 3 或更新版本。若不可用，�
 }
 ```
 
-可选字段包括 `shared`、`user`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
+可选字段包括 `shared`、`user`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`shutdown_timeout_ms`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
+
+`shutdown_timeout_ms` 设置宿主从 EOF 到退出的总预算，包含请求排空和提供者资源清理。
+正值必须为 1 到 2,147,483,647 毫秒之间的整数；省略或为零时使用后端默认值：原生 worker
+7 秒、云后端 90 秒、命令适配器 60 秒。命令默认预算涵盖 SDK 最多 35 秒的取消排空、
+10 秒的委派清理及传输余量；清理成功立即返回，不会等待预算耗尽。委派或嵌套适配器的
+外层预算必须长于整条内层
+请求排空和清理链。超时后 Wuu 会终止传输并报告失败，远程资源状态仍可能未知。
 
 ## 使用公共 SDK 实现后端
 
@@ -145,10 +152,19 @@ peer 仅在初始化时启动，必须接受相同的完整绑定、协议版本
 每次调用保留该绑定和当前取消信号。代码回调使用原始外层请求的 `invokeTool`，进程事件
 仍归外层连接生命周期。peer 缺失或失败时不重试、不替换。传输终态失败会立即关闭 peer，
 即使外层输入仍保持打开。取消最多等待 35 秒取得 peer 的终态回复，随后关闭无响应的 peer。
-所启动的 peer 通过 EOF 开始清理，3 秒后仍未退出会被终止，并报告清理失败，不能据此声称
-所有远程资源已停止。也可显式提供 `{ input, output, close }` 传输代替 `command`，此时
-`close` 负责物理清理。未提供 `env` 时，子进程继承适配器环境，因此只能选择可信 peer，
-必要时应显式提供受限环境。
+所启动的 peer 通过 EOF 开始清理，默认退出预算为 10 秒。仅 `command` 可设置
+`shutdown_grace_ms`，取值为 1 到 2,147,483,647 毫秒之间的整数，例如云适配器可设置
+`90_000`，同时将其外层命令配置设为 `"shutdown_timeout_ms": 150000`。外层配置的
+`shutdown_timeout_ms` 必须长于完整的请求排空和清理链，包含
+每一层嵌套委派。超时后 peer 会被终止并报告清理失败；远程资源状态仍可能未知，不能据此
+声称所有资源已停止。也可显式提供 `{ input, output, close }` 传输代替 `command`，此时
+`close` 负责物理清理，不能同时设置 `shutdown_grace_ms`。未提供 `env` 时，子进程继承
+适配器环境，因此只能选择可信 peer，必要时应显式提供受限环境。
+
+原生 worker 关闭时会停止并回收其仍持有控制句柄的全部进程，包括 managed 进程，
+但不会停止共享注册表中属于其他 worker 的进程。清理错误会返回调用方。原生进程清理
+或宿主传输清理失败时，Wuu 会保留 worker 工作区，并跳过宿主容器和状态目录删除，
+供显式恢复时检查。
 
 委派必须保持同一执行世界。如果文件覆盖改用无关的内存或远程文件系统，应省略委派的
 进程方法和 `process.start.v1`，而非让命令读取另一套文件。

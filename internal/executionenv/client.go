@@ -335,7 +335,7 @@ func (c *Client) closeTimeout() time.Duration {
 	if c.closeGrace > 0 {
 		return c.closeGrace
 	}
-	return 3 * time.Second
+	return (Profile{}).shutdownTimeout()
 }
 
 func (c *Client) Failed() bool {

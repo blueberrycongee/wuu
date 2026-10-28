@@ -37,6 +37,9 @@
     "desktop/scripts/first-send-continuity-e2e.cjs": "session",
     "desktop/scripts/error-message-style-e2e.cjs": "session",
     "desktop/scripts/confirmed-archive-e2e.cjs": "session",
-    "desktop/scripts/composer-footer-e2e.cjs": "session"
+    "desktop/scripts/composer-footer-e2e.cjs": "session",
+    "scripts/external-composition-acceptance/ui/visual-preview.tsx": "layout",
+    "scripts/external-composition-acceptance/ui/visual.html": "layout",
+    "scripts/external-composition-acceptance/ui/visual.mjs": "layout"
   }
 }

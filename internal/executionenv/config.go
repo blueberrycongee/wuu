@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/process"
 )
 
 // Config is user-owned configuration. Projects cannot supply executable profiles.
@@ -41,6 +44,9 @@ type Profile struct {
 	ForwardEnv      []string `json:"forward_env,omitempty"`
 	// Command is an explicitly installed transport adapter using the worker protocol.
 	Command []string `json:"command,omitempty"`
+	// ShutdownTimeoutMS bounds the whole transport EOF drain and cleanup.
+	// Zero selects the backend default; it is not an unlimited timeout.
+	ShutdownTimeoutMS int `json:"shutdown_timeout_ms,omitempty"`
 }
 
 var profileName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
@@ -117,12 +123,34 @@ func (p Profile) Validate() error {
 	if p.CPUs < 0 || p.MemoryMB < 0 || p.LifetimeSeconds < 0 {
 		return fmt.Errorf("resource limits cannot be negative")
 	}
+	if p.ShutdownTimeoutMS < 0 || p.ShutdownTimeoutMS > 2147483647 {
+		return fmt.Errorf("shutdown_timeout_ms must be between 0 and 2147483647")
+	}
 	for _, name := range p.ForwardEnv {
 		if !envName.MatchString(name) {
 			return fmt.Errorf("invalid forwarded environment variable %q", name)
 		}
 	}
 	return nil
+}
+
+func (p Profile) shutdownTimeout() time.Duration {
+	if p.ShutdownTimeoutMS > 0 {
+		return time.Duration(p.ShutdownTimeoutMS) * time.Millisecond
+	}
+	switch p.Backend {
+	case "command":
+		// Allow the SDK's 35-second accepted-request cancellation drain plus
+		// its default 10-second delegated cleanup, with transport overhead.
+		// Longer cloud teardown or nested delegation needs an explicit budget.
+		return 60 * time.Second
+	case "modal", "daytona", "vercel_sandbox":
+		return 90 * time.Second
+	default:
+		// Native shutdown can spend one grace window each on TERM, force-kill,
+		// and output-monitor reaping. Leave time to flush the terminal receipt.
+		return 3*process.DefaultStopGracePeriod + time.Second
+	}
 }
 
 func (p Profile) WorkingDirectory() string {

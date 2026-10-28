@@ -29,6 +29,9 @@ import { TruncatedText } from "./TruncatedText";
 import { ArtifactPreviewContext, ArtifactThreadContext, ArtifactLocatorContext, restoreArtifactPreviewFocus } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
 import { videoMimeType } from "../shared/videoMimeType";
+import { streamTextKey, useStreamedText } from "./StreamText";
+import { useArtifactInteraction } from "./ArtifactInteractionContext";
+import type { RegisteredRendererV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -45,6 +48,8 @@ export type TurnArtifact = Readonly<{
   data?: string;
   remoteRef?: string;
   text?: string;
+  /** Ordinary text accompanying an inline resource remains readable without its renderer. */
+  fallbackText?: string;
   foldText?: boolean;
   foldPreview?: boolean;
   uri?: string;
@@ -54,24 +59,64 @@ export type TurnArtifact = Readonly<{
   sha256?: string;
   sizeBytes?: number;
   delivered?: boolean;
+  /** Transient model-input previews are never persisted as tool results. */
+  preview?: boolean;
+  toolInput?: Readonly<{
+    turnId: string;
+    argumentsText: string;
+    status: ThreadItem["status"] | "interrupted";
+    error?: string;
+  }>;
 }>;
 
-export function collectTurnArtifacts(turn: Pick<Turn, "items">): readonly TurnArtifact[] {
+export function collectTurnArtifacts(turn: Pick<Turn, "items"> & Partial<Pick<Turn, "id" | "status">>): readonly TurnArtifact[] {
+  return collectTurnArtifactsWithRenderers(turn, []);
+}
+
+export function collectTurnArtifactsWithRenderers(
+  turn: Pick<Turn, "items"> & Partial<Pick<Turn, "id" | "status">>,
+  renderers: readonly RegisteredRendererV1[],
+): readonly TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
   const presented = new Map<string, string>();
   for (const item of turn.items) {
-    if (item.type !== "tool_call" || !item.result_detail?.content) continue;
-    const content = item.result_detail.content;
+    if (item.type !== "tool_call") continue;
+    const content = item.result_detail?.content ?? [];
+    const renderer = item.display?.capability
+      ? toolInputRenderer(renderers, item.display.capability) : undefined;
+    const previewMime = typeof renderer?.match === "string" ? renderer.match : undefined;
+    const previewId = `${item.id}:input-preview`;
+    const toolInput = previewMime ? {
+      turnId: turn.id ?? "",
+      argumentsText: item.arguments ?? "",
+      status: turn.status === "interrupted" ? "interrupted" as const
+        : turn.status === "failed" || item.result_detail?.is_error ? "failed" as const : item.status,
+      error: item.error ?? (item.result_detail?.is_error ? item.result
+        || content.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") : undefined),
+    } : undefined;
+    const itemArtifacts = content.map((part, index) => artifactFromContentPart(item, part, index, contentPartPlacement(content, index)));
+    const finalPreviewIndex = previewMime ? itemArtifacts.findIndex((artifact) => artifact?.type === "resource"
+      && artifact.mimeType === previewMime) : -1;
+    if (previewMime && finalPreviewIndex === -1) {
+      artifacts.push(Object.freeze({
+        id: previewId, itemId: item.id, index: 0, type: "resource", mimeType: previewMime,
+        name: item.display?.label ?? item.name ?? "", placement: "inline", preview: true, toolInput,
+      }));
+    }
     // Retain ordered mixed results here. Presentation decides which parts belong
     // in the image stream or document output, without modifying the tool result.
     if (!content.some((part) => part.type !== "text")) continue;
-    content.forEach((part, index) => {
-      const artifact = artifactFromContentPart(item, part, index, contentPartPlacement(content, index));
+    itemArtifacts.forEach((initialArtifact, index) => {
+      let artifact = initialArtifact;
       if (!artifact) return;
+      if (index === finalPreviewIndex) artifact = Object.freeze({ ...artifact, id: previewId, preview: false, toolInput });
       // Re-publishing an unchanged snapshot in the same turn should not repeat
       // its preview. Preserve ordered mixed results and different file versions.
       if (artifact.type !== "text" && artifact.sha256) {
-        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered, artifact.foldPreview]);
+        // Resource refs can name independent interactive instances even when
+        // their initial content is identical. File/image snapshots still dedupe.
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered, artifact.foldPreview,
+          artifact.type === "resource" ? artifact.ref : undefined]);
         const owner = presented.get(key);
         if (owner && owner !== item.id) return;
         presented.set(key, item.id);
@@ -80,6 +125,20 @@ export function collectTurnArtifacts(turn: Pick<Turn, "items">): readonly TurnAr
     });
   }
   return artifacts;
+}
+
+function toolInputRenderer(renderers: readonly RegisteredRendererV1[], capability: string): RegisteredRendererV1 | undefined {
+  const candidates = [...renderers].reverse().filter(renderer => renderer.category === "tool-result");
+  return candidates.find(renderer => {
+    if (renderer.toolInput?.capability !== capability || typeof renderer.match !== "string") return false;
+    const mime = renderer.match;
+    return candidates.find(candidate => {
+      if (typeof candidate.match === "string") return candidate.match.endsWith("/*")
+        ? mime.startsWith(candidate.match.slice(0, -1)) : candidate.match === mime;
+      candidate.match.lastIndex = 0;
+      return candidate.match.test(mime);
+    }) === renderer;
+  });
 }
 
 export function turnEndFileArtifacts(artifacts: readonly TurnArtifact[]): readonly TurnArtifact[] {
@@ -351,13 +410,31 @@ function ArtifactRenderer({
   inspectionExpanded?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
+  const { application, slots, slotOwner } = useConversationControls();
+  const contextualThreadId = useContext(ArtifactThreadContext);
+  const { threadId: identityThreadId, turnId } = useConversationTurnIdentity();
+  const threadId = identityThreadId ?? contextualThreadId;
+  const interaction = useArtifactInteraction(artifact, threadId);
+  const argumentsText = useStreamedText(
+    streamTextKey(artifact.toolInput?.turnId ?? "", artifact.itemId, "arguments"),
+    artifact.toolInput?.argumentsText ?? "",
+    artifact.preview === true && artifact.toolInput?.status === "in_progress",
+  );
   const [expanded, setExpanded] = useState(false);
-  const fallback = artifact.type === "text" ? (
+  const fallback = artifact.preview ? null : artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
       <ToolResultText text={artifact.text ?? ""} folded={artifact.foldText} cwd={cwd} onOpenFile={onOpenFile} />
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
+  ) : variant === "inline" && artifact.type === "resource" && artifact.fallbackText ? (
+    <>
+      <div className="turn-artifact-text-part">
+        <p>{t("artifacts.previewUnavailable")}</p>
+        <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{artifact.fallbackText}</p>
+      </div>
+      <ArtifactCard artifact={artifact} cwd={cwd} onOpenFile={onOpenFile} onPreview={onPreview} />
+    </>
   ) : (
     <ArtifactCard
       artifact={artifact}
@@ -366,11 +443,28 @@ function ArtifactRenderer({
       onPreview={onPreview}
     />
   );
-  const { slots, slotOwner } = useConversationControls();
-  const { threadId, turnId } = useConversationTurnIdentity();
+  const rendered = application.workbench.renderContent({
+      category: "tool-result",
+      contentType: artifact.mimeType,
+      content: artifact,
+      metadata: {
+        artifactId: artifact.ref ?? artifact.id,
+        partId: artifact.id,
+        itemId: artifact.itemId,
+        threadId,
+        placement: artifact.placement,
+        variant,
+        toolInput: artifact.toolInput ? { ...artifact.toolInput, argumentsText } : undefined,
+        interaction: interaction.snapshot,
+        sourceRevision: artifact.sha256 ?? artifact.text,
+      },
+      actions: artifact.preview ? [] : interaction.actions,
+      dispatchAction: interaction.dispatchAction,
+      fallback,
+  });
   const content = <slots.Slot name={`${slotOwner}/conversation.artifact`}
     context={{threadId, turnId, itemId: artifact.itemId, partId: artifact.id, variant}}
-    fallback={fallback} />;
+    fallback={rendered} />;
   if (variant === "inline" && artifact.foldPreview && !inspectionExpanded) {
     return (
       <div className="process-surface">
@@ -602,6 +696,8 @@ export function ArtifactPreview({
   const lifetime = useArtifactLifetime(artifact);
   const contextualThreadID = useContext(ArtifactThreadContext);
   const ownerThreadID = threadID ?? contextualThreadID;
+  const { application } = useConversationControls();
+  const interaction = useArtifactInteraction(artifact, ownerThreadID);
   const source = useArtifactPreviewSource(artifact, cwd, ownerThreadID);
   const fileActions = useArtifactFileActions(cwd, ownerThreadID);
   const nativeActions = nativeArtifactActionsAvailable(service, artifact, ownerThreadID);
@@ -688,6 +784,15 @@ export function ArtifactPreview({
   } else {
     body = <div className="artifact-preview-empty">{t("artifacts.previewUnavailable")}</div>;
   }
+
+  if (artifact.type === "resource") body = application.workbench.renderContent({
+      category: "tool-result", contentType: artifact.mimeType, content: artifact,
+      metadata: { artifactId: artifact.ref ?? artifact.id, partId: artifact.id, itemId: artifact.itemId,
+        threadId: ownerThreadID, placement: artifact.placement, variant: "preview",
+        toolInput: artifact.toolInput, interaction: interaction.snapshot, sourceRevision: artifact.sha256 ?? artifact.text },
+      actions: active && !artifact.preview ? interaction.actions : [],
+      dispatchAction: interaction.dispatchAction, fallback: body,
+  });
 
   return (
     <div
@@ -776,6 +881,10 @@ function artifactFromContentPart(
     remoteRef: part.remote_ref,
     data,
     text,
+    fallbackText: part.type === "resource"
+      ? item.result_detail?.content?.filter((candidate) => candidate.type === "text")
+        .map((candidate) => candidate.text ?? "").join("\n").slice(0, 16_384) || undefined
+      : undefined,
     foldText: part.type === "text" && !part.artifact?.placement,
     // Explicit presentation survives PTC/background forwarding; ordinary tool
     // images are inspection evidence and mount only when the user expands them.

@@ -75,7 +75,19 @@ Profiles are user-owned. Project configuration cannot install or override execut
 }
 ```
 
-Optional fields include `shared`, `user`, `host_workspace`, `mount_read_only`, `forward_env`, `worker`, `lifetime_seconds`, `python`, and SSH `host`, `port`, `identity_file`, `known_hosts_file`. A command adapter uses an executable-and-arguments array in `command`. Adapters are trusted local programs; selecting one grants it the host permissions of Wuu.
+Optional fields include `shared`, `user`, `host_workspace`, `mount_read_only`, `forward_env`, `worker`, `lifetime_seconds`, `shutdown_timeout_ms`, `python`, and SSH `host`, `port`, `identity_file`, `known_hosts_file`. A command adapter uses an executable-and-arguments array in `command`. Adapters are trusted local programs; selecting one grants it the host permissions of Wuu.
+
+`shutdown_timeout_ms` sets the host's total EOF-to-exit budget for draining
+requests and cleaning up provider resources. Positive values must be integers
+from 1 to 2,147,483,647 milliseconds; omitted or zero uses the backend default:
+7 seconds for native workers, 90 seconds for cloud backends, and 60 seconds for
+command adapters. The command default allows the SDK's 35-second cancellation
+drain and 10-second delegated cleanup plus transport overhead; successful cleanup
+returns immediately rather than waiting out the budget. For delegated or nested
+adapters, configure an outer budget
+longer than the entire inner request drain and cleanup chain. If the budget
+expires, Wuu terminates the transport and reports failure; remote resource state
+may remain unknown.
 
 ## Implement a backend with the public SDK
 
@@ -165,12 +177,25 @@ the exact outer request's `invokeTool`; process events remain in the outer
 connection lifetime. A missing/failed peer is never retried or replaced. Terminal
 transport failure closes the peer immediately, even while the outer input stays
 open. Cancellation waits up to 35 seconds for the peer's terminal reply before
-closing an unresponsive peer. A spawned peer receives EOF for cleanup; after
-3 seconds it is terminated and cleanup failure is reported, not treated as proof
-that all remote resources stopped. An explicitly attached `{ input, output,
+closing an unresponsive peer. A spawned peer receives EOF for cleanup and has a
+10-second exit budget by default. Set command-only `shutdown_grace_ms` to an
+integer from 1 to 2,147,483,647 milliseconds when the selected peer needs another
+budget, for example `90_000` for a cloud adapter paired with
+`"shutdown_timeout_ms": 150000` in its outer command profile. The outer profile's
+`shutdown_timeout_ms` must exceed the complete request drain and cleanup chain,
+including each nested delegate. A peer that exceeds its budget is terminated and
+cleanup failure is reported; remote resource state may remain unknown, so this is
+not proof that all resources stopped. An explicitly attached `{ input, output,
 close }` transport can be supplied instead of `command`; its `close` owns physical
-cleanup. Spawned peers inherit the adapter's environment unless `env` is supplied,
-so only select trusted peers and provide a restricted environment when appropriate.
+cleanup and cannot be combined with `shutdown_grace_ms`. Spawned peers inherit the
+adapter's environment unless `env` is supplied, so only select trusted peers and
+provide a restricted environment when appropriate.
+
+Native worker shutdown stops and reaps all processes it still owns, including
+managed processes, without stopping another worker's processes in a shared
+registry. Cleanup errors propagate to the caller. If native process cleanup or
+host transport cleanup fails, Wuu preserves the worker workspace and skips host
+container/state removal so an explicit recovery can inspect them.
 
 Delegation is valid only for a coherent execution world. If an override replaces
 files with an unrelated in-memory or remote filesystem, omit delegated process

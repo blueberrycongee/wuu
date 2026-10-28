@@ -15,6 +15,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Install exact-version, integrity-pinned, self-contained npm plugins and replay saved distribution locks through the existing trust and generation lifecycle, without install scripts or automatic dependency downloads.
 - Separate goal and automation presentation into independently selectable UI plugins using public services and selected-provider slots. Composition version 5 preserves older explicit desktop selections while respecting exclusions and headless configurations.
 - Assemble native default providers through one lazy factory catalog and separate the default agent policy from its consumer contract, allowing external replacements without constructing disabled defaults.
+- Add a default-disabled experimental Generative UI plugin with composable layouts,
+  reactive local calculations, charts and forms, bounded data programs, per-result
+  state restoration, and readable fallback. Preview validated nodes while tool
+  arguments arrive and let explicit user actions continue the source conversation
+  without consuming composer drafts or attachments.
 
 - Expose opt-in, bounded progress snapshots for exact plugin-owned session requests, so independent bot and fleet views can observe live output without reading reasoning, tool payloads, or another request's activity.
 

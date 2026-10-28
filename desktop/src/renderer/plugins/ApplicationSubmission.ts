@@ -1,4 +1,4 @@
-import type { ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
+import type { ApplicationContentSourceV1, ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
 import type { MessageContentPart, ResponseSelection, RuntimeContext, ServerEvent, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
 import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, createThreadSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
 import { awaitComposerFiles, awaitComposerImages, composerContextFromMessage, createComposerMessage, createOptimisticTurn, dropOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer, interruptOptimisticTurn, isOptimisticTurnInterrupted, OPTIMISTIC_TURN_ID_PREFIX, replaceOptimisticTurn, threadHasAcceptedComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
@@ -15,6 +15,7 @@ import { rememberCollapsedPromptParts, readCollapsedPromptParts } from "../Compo
 import { writeComposerDraftRecovery } from "../ComposerDraftRecovery";
 import { hasAuthenticatedProvider } from "../RuntimeHelpers";
 import { isRecord, recordValue, stringValue } from "../ToolActivity";
+import { parseContentSubmission } from "../ContentSubmission";
 
 export interface ApplicationSubmissionOptions {
   artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1;
@@ -52,6 +53,7 @@ type Operation = {
   clickedAtMs: number;
   retainResult: boolean;
   draft?: ComposerDraftState;
+  guard?: () => boolean;
 };
 
 /** One submission owner for all shells, sharing the controller's drafts and queues. */
@@ -170,13 +172,13 @@ export class ApplicationSubmission {
     return { accepted: true, operationID: operation.view.operationID, threadId: thread?.id };
   }
 
-  private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread, draft?: ComposerDraftState): Operation {
+  private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread, draft?: ComposerDraftState, guard?: () => boolean): Operation {
     let resolve!: Operation["resolve"]; let cancelPreparation!: () => void;
     // A result belongs to its composing action, not an unbounded history log.
     for (const [id, view] of this.results) if (view.ownerTabId === source.id || thread && view.threadId === thread.id) this.results.delete(id);
     for (const active of this.operations.values()) if (active.source.id === source.id || thread && active.thread?.id === thread.id) active.retainResult = false;
     const clickedAtMs = Date.now();
-    const operation: Operation = { retainResult: true, clickedAtMs, draft: draft && cloneComposerDraft(draft), view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing", ...(draft ? { draftPending: true } : {}) },
+    const operation: Operation = { retainResult: true, clickedAtMs, guard, draft: draft && cloneComposerDraft(draft), view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing", ...(draft ? { draftPending: true } : {}) },
       message, source, context: thread ? resolveThreadRuntimeContext(thread, this.options.getState().projects) : source.context,
       thread, optimistic: createOptimisticTurn(message, clickedAtMs), previousTurnIDs: new Set(thread?.turns.map(turn => turn.id)),
       ready: new Promise(done => { resolve = done; }), resolve: thread => resolve(thread),
@@ -385,6 +387,7 @@ export class ApplicationSubmission {
         this.options.updateState(state => updateThreadByID(state, thread!.id, current => interruptOptimisticTurn(current, optimistic.id, Date.now()), activeThreadIDForState(state) === thread!.id ? { running: false } : {}));
         return false;
       }
+      if (operation.guard && !operation.guard()) throw new Error("Content action source is no longer active");
       operation.sent = true; this.phase(operation, "sending");
       const [images, files] = attachments;
       const result = await window.wuu.startTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), inputFilesFromComposer(files), thread.permission_mode || runtime.params.permission_mode, message.activeDocument, message.contentParts, context, message.id);
@@ -402,7 +405,7 @@ export class ApplicationSubmission {
       const accepted = threadHasAcceptedComposerMessage(current, message, optimistic.id, operation.previousTurnIDs);
       if (operation.draft && interrupted && !accepted) forgetLocalTurnTiming(optimistic.id);
       const busy = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
-      if (!interrupted && !accepted && operation.sent && operation.thread && (raw.endsWith(busy) || raw.endsWith(`${busy} in another app-server: thread execution is owned by another app-server`))) {
+      if (!operation.guard && !interrupted && !accepted && operation.sent && operation.thread && (raw.endsWith(busy) || raw.endsWith(`${busy} in another app-server: thread execution is owned by another app-server`))) {
         this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => dropOptimisticTurn(current, optimistic.id)));
         this.options.pending.enqueueComposerMessage(operation.thread.id, { ...message, operationState: "preparing" });
         return await this.deliverPending(operation, "queue", () => operation.stopped);
@@ -566,7 +569,7 @@ export class ApplicationSubmission {
     }
     for (const id of this.recoveryText.keys()) if (!tabs.has(id)) this.recoveryText.delete(id);
     for (const operation of this.operations.values()) {
-      if (operation.view.phase !== "preparing" && operation.view.phase !== "sending") continue;
+      if (operation.guard || operation.view.phase !== "preparing" && operation.view.phase !== "sending") continue;
       const parts = operation.message.contentParts;
       const prompt = parts ? parts.filter(part => part.type === "text" || part.type === "pasted_text").map(part => part.text).join("") : operation.message.text;
       const id = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
@@ -600,12 +603,12 @@ export class ApplicationSubmission {
       return sent;
     } finally { release(); this.finishOperation(operation); }
   }
-  private submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer" | "background", prepareThread?: () => Promise<Thread>, context?: RuntimeContext): Promise<boolean> {
+  private submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer" | "background", prepareThread?: () => Promise<Thread>, context?: RuntimeContext, guard?: () => boolean): Promise<boolean> {
     if (this.disposed || thread.read_only || kind !== "background" && !threadForTab(this.options.getState(), thread.id)) return Promise.resolve(false);
     const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)
       ?? createThreadSessionTab(thread, context ?? resolveThreadRuntimeContext(thread, this.options.getState().projects));
     if (source.kind === "skills") return Promise.resolve(false);
-    const operation = this.createOperation(message, source, thread);
+    const operation = this.createOperation(message, source, thread, undefined, guard);
     if (context) { operation.context = { ...context }; operation.capturedContext = true; }
     return this.runInternal(operation, kind, prepareThread);
   }
@@ -627,6 +630,38 @@ export class ApplicationSubmission {
   submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
     return this.submitInternal(message, thread, "send", prepareThread);
   }
+  private contentSource(source: ApplicationContentSourceV1): { thread: Thread; turnID: string; name: string } | undefined {
+    if (!source || !Number.isInteger(source.index) || source.index < 0) return undefined;
+    const state = this.options.getState();
+    const thread = [state.thread, state.secondaryThread].find(candidate => candidate?.id === source.threadId);
+    if (!thread || thread.read_only || thread.archived) return undefined;
+    const turn = thread.turns.find(candidate => candidate.items.some(item => item.id === source.itemId));
+    const item = turn?.items.find(candidate => candidate.id === source.itemId);
+    if (!turn || turn.status !== "completed" || item?.status !== "completed" || item.read_only || item.result_detail?.is_error) return undefined;
+    const artifact = collectTurnArtifacts(turn).find(candidate => candidate.itemId === source.itemId && candidate.index === source.index);
+    if (!artifact || artifact.type !== "resource" || artifact.ref !== source.ref || artifact.sha256 !== source.sha256
+      || artifact.mimeType !== source.mimeType || artifact.text !== source.text
+      || JSON.stringify(artifact.resource) !== JSON.stringify(source.resource)) return undefined;
+    return { thread, turnID: turn.id, name: artifact.name };
+  }
+  async submitContent(source: ApplicationContentSourceV1, input: unknown, signal?: AbortSignal): Promise<{ accepted: boolean }> {
+    const content = parseContentSubmission(input);
+    const captured = this.contentSource(source);
+    if (!captured || this.disposed || signal?.aborted || this.options.isNavigationPending()
+      || !this.options.getState().initialized || isThreadRunning(captured.thread)
+      || this.admissions.has(captured.thread.id) || this.lanes.has(captured.thread.id) || this.stopRequests.has(captured.thread.id)) return { accepted: false };
+    const pending = this.options.pending.pendingComposerMessagesForThread(captured.thread.id);
+    if (pending.queued.length || pending.guides.length) return { accepted: false };
+    const attribution = { threadId: source.threadId, turnId: captured.turnID, itemId: source.itemId,
+      artifactId: source.ref ?? `${source.itemId}:artifact:${source.index}`, title: captured.name,
+      ...(content.context === undefined ? {} : { values: content.context }) };
+    const context = `\n\nSubmitted artifact context (JSON):\n${JSON.stringify(attribution)}`;
+    const message = createComposerMessage(content.text + context, [], [], [
+      { type: "text", text: content.text }, { type: "pasted_text", title: "Interactive response", text: context },
+    ])!;
+    const guard = () => !signal?.aborted && Boolean(this.contentSource(source));
+    return { accepted: await this.submitInternal(message, captured.thread, "send", undefined, undefined, guard) };
+  }
   steerToThread(message: QueuedComposerMessage, thread: Thread): Promise<boolean> {
     return this.submitInternal(message, thread, "steer");
   }
@@ -646,6 +681,7 @@ export class ApplicationSubmission {
     const recovery: SessionTab[] = [];
     for (const operation of this.operations.values()) {
       if (!["preparing", "sending"].includes(operation.view.phase) || !this.resultOwnerExists(operation.view)) continue;
+      if (operation.guard) continue;
       const owner = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
       if (this.ownsDraft(operation, owner) && operation.draft?.prompt === operation.message.text) continue;
       const { message } = operation;

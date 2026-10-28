@@ -165,8 +165,13 @@ export interface ExecutionBackendPeerTransportV4 {
   close(): Promise<void>;
 }
 export type ExecutionBackendDelegateOptionsV4 = (
-  | { command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>>; transport?: never }
-  | { transport: ExecutionBackendPeerTransportV4; command?: never; cwd?: never; env?: never }
+  | {
+    command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>>; transport?: never;
+    /** EOF-to-exit cleanup budget, default 10,000 ms; integer 1..2,147,483,647.
+     * Timeout terminates the peer but cannot prove remote resource cleanup. */
+    shutdown_grace_ms?: number;
+  }
+  | { transport: ExecutionBackendPeerTransportV4; command?: never; cwd?: never; env?: never; shutdown_grace_ms?: never }
 ) & {
   /** Required from the selected peer before this backend can initialize. */
   capabilities?: readonly "process.start.v1"[];
@@ -181,6 +186,9 @@ export type ExecutionBackendDelegateOptionsV4 = (
 export function delegateExecutionBackendV4(options: ExecutionBackendDelegateOptionsV4): ExecutionBackendV4 {
   if ((options.command !== undefined) === (options.transport !== undefined) ||
     options.command !== undefined && (!options.command.length || !options.command[0])) throw new Error("select exactly one explicit execution backend peer");
+  if (options.transport !== undefined && options.shutdown_grace_ms !== undefined) throw new Error("shutdown_grace_ms requires a command peer; attached transports own cleanup");
+  const shutdownGraceMS = options.shutdown_grace_ms === undefined ? 10_000 : options.shutdown_grace_ms;
+  if (!Number.isInteger(shutdownGraceMS) || shutdownGraceMS < 1 || shutdownGraceMS > 2_147_483_647) throw new Error("shutdown_grace_ms must be an integer from 1 to 2147483647");
   const capabilities = Object.freeze([...options.capabilities ?? []]);
   const lifetime = new AbortController();
   let transport: ExecutionBackendPeerTransportV4 | undefined;
@@ -313,7 +321,7 @@ export function delegateExecutionBackendV4(options: ExecutionBackendDelegateOpti
             const { randomBytes } = await import("node:crypto");
             context.signal.throwIfAborted();
             token = randomBytes(32).toString("hex");
-            return options.transport ?? await spawnExecutionPeer(options as { command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>> });
+            return options.transport ?? await spawnExecutionPeer(options as { command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>> }, shutdownGraceMS);
           })();
           transport = await opening;
           if (closed) throw new Error("execution delegate is closed");
@@ -330,7 +338,7 @@ export function delegateExecutionBackendV4(options: ExecutionBackendDelegateOpti
   };
 }
 
-async function spawnExecutionPeer(options: { command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>> }): Promise<ExecutionBackendPeerTransportV4> {
+async function spawnExecutionPeer(options: { command: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>> }, shutdownGraceMS: number): Promise<ExecutionBackendPeerTransportV4> {
   const { spawn } = await import("node:child_process");
   const child = spawn(options.command[0]!, [...options.command.slice(1)], { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
   let inputFailure: Error | undefined;
@@ -356,7 +364,7 @@ async function spawnExecutionPeer(options: { command: readonly string[]; cwd?: s
       if (!closing) closing = (async () => {
         child.stdin.end();
         let expired = false;
-        const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, 3000);
+        const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, shutdownGraceMS);
         try {
           const result = await exited;
           if (expired || result.code !== 0) throw new Error(`execution delegate cleanup failed${expired ? " (timed out; resource outcome may be unknown)" : ""}: ${diagnostic || result.signal || result.code}`);

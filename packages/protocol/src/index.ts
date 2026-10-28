@@ -415,6 +415,8 @@ export type ExecutionEnvironmentProfile = {
   cpus?: number;
   memory_mb?: number;
   lifetime_seconds?: number;
+  /** Total EOF drain/cleanup budget in milliseconds; zero selects the backend default. */
+  shutdown_timeout_ms?: number;
   forward_env?: string[];
   command?: string[];
 };
