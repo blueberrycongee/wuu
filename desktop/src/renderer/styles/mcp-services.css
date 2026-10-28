@@ -1,8 +1,8 @@
 .mcp-service {
-  display: grid;
-  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr);
-  gap: var(--space-3);
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
   padding-block: var(--settings-row-pad-block);
 }
 
@@ -11,11 +11,13 @@
 }
 
 .mcp-service-icon {
+  align-self: flex-start;
   margin-top: 0.2em;
   color: var(--ink-secondary);
 }
 
 .mcp-service-copy {
+  flex: 1 1 16ch;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -51,10 +53,10 @@
 }
 
 .mcp-service-actions {
-  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  margin-inline-start: auto;
 }
 
 .mcp-form {
