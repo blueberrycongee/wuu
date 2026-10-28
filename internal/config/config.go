@@ -482,14 +482,14 @@ func LoadFrom(workdir, home string) (Config, string, error) {
 	}
 
 	for _, candidate := range userCandidates {
-		cfg, readErr := readConfig(candidate)
+		cfg, source, readErr := readConfig(candidate)
 		if readErr != nil {
 			if errors.Is(readErr, os.ErrNotExist) {
 				continue
 			}
 			return Config{}, "", readErr
 		}
-		layered, appliedLayers, layerErr := applyRestrictedProjectLayers(candidate, workdir, cfg)
+		layered, appliedLayers, layerErr := applyRestrictedProjectLayers(candidate, workdir, cfg, source)
 		if layerErr != nil {
 			return Config{}, "", layerErr
 		}
@@ -525,14 +525,14 @@ func LoadProjectConfig(workdir string) (Config, string, error) {
 		filepath.Join(workdir, localFallbackConfig),
 	}
 	for _, candidate := range candidates {
-		cfg, err := readConfig(candidate)
+		cfg, source, err := readConfig(candidate)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			return Config{}, "", err
 		}
-		layered, appliedLayers, err := applyProjectSettingsLayers(candidate, workdir, cfg)
+		layered, appliedLayers, err := applyProjectSettingsLayers(candidate, workdir, cfg, source)
 		if err != nil {
 			return Config{}, "", err
 		}
@@ -557,7 +557,7 @@ func LoadPath(path string) (Config, string, error) {
 	if err != nil {
 		return Config{}, "", fmt.Errorf("resolve config path: %w", err)
 	}
-	cfg, err := readConfig(abs)
+	cfg, _, err := readConfig(abs)
 	if err != nil {
 		return Config{}, "", err
 	}
@@ -568,12 +568,13 @@ func LoadPath(path string) (Config, string, error) {
 	return cfg, abs, nil
 }
 
-func readConfig(path string) (Config, error) {
+func readConfig(path string) (Config, []byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("read config %s: %w", path, err)
+		return Config{}, nil, fmt.Errorf("read config %s: %w", path, err)
 	}
-	return decodeConfig(data, path)
+	cfg, err := decodeConfig(data, path)
+	return cfg, data, err
 }
 
 // decodeConfig parses config bytes with the same strict semantics as the

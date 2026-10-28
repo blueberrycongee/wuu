@@ -263,3 +263,27 @@ func TestTrustedProjectServiceValidatesAfterCompleteLayering(t *testing.T) {
 		t.Fatal("failed effective validation changed source")
 	}
 }
+
+// The selected source and its effective config must describe the same
+// snapshot even if an external editor changes the backing file mid-read.
+func TestConfigurationServiceLayersCapturedSource(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.json")
+	oldSource := []byte(`{"default_provider":"main","providers":{"main":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"old"}},"agent":{"permission_mode":"read_only"}}`)
+	captured := bytes.Replace(oldSource, []byte(`"model":"old"`), []byte(`"model":"captured"`), 1)
+	if err := os.WriteFile(path, oldSource, 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectSettings(t, root, sharedSettingsFile, `{"agent":{"max_steps":7,"permission_mode":"unconfined"}}`)
+	service := NewService("test.config", path, root)
+	cfg, err := service.effectiveConfig(path, captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers["main"].Model; got != "captured" {
+		t.Fatalf("effective model %q does not match captured source", got)
+	}
+	if cfg.Agent.MaxSteps != 7 || cfg.Agent.PermissionMode != PermissionModeReadOnly {
+		t.Fatalf("project overlay or trust boundary lost: max_steps=%d permission=%s", cfg.Agent.MaxSteps, cfg.Agent.PermissionMode)
+	}
+}
