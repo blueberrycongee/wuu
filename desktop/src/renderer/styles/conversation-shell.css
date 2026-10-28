@@ -211,7 +211,7 @@
   );
   /* Floating status controls follow the reading content beside the tool rail.
      The bottom composer uses the full canvas independently of the rail. */
-  --conversation-visible-inset-left: 0px;
+  --conversation-visible-inset-left: var(--workspace-tool-rail-inset, 0px);
   --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;

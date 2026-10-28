@@ -49,7 +49,31 @@ async function run() {
     const geometry = await settledGeometry(win, width);
     checkGeometry(geometry);
     populated.set(width, geometry);
+    if (width === 1380 || width === 390) {
+      fs.writeFileSync(path.join(userData, `conversation-${width}.png`), (await win.webContents.capturePage()).toPNG());
+    }
   }
+  fs.writeFileSync(path.join(userData, "geometry.json"), JSON.stringify([...populated.entries()], null, 2));
+  console.log(`Geometry and screenshots: ${userData}`);
+  for (const theme of ["light", "dark"]) {
+    for (const size of [15, 20]) {
+      await evaluate(win, ({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+        window.dispatchEvent(new Event("wuu-content-size-change"));
+      }, { theme, size });
+      for (const width of [1380, 600]) {
+        win.setContentSize(width, 820);
+        checkGeometry(await settledGeometry(win, width));
+        fs.writeFileSync(path.join(userData, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+    }
+  }
+  await evaluate(win, () => {
+    document.documentElement.style.removeProperty("--conversation-message-font-size");
+    document.documentElement.dataset.theme = "light";
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
   const samples = [...populated.entries()];
   for (let index = 1; index < samples.length; index += 1) {
     const [width, current] = samples[index];
@@ -176,8 +200,8 @@ function checkGeometry(value) {
     `Composer must stay centered: ${JSON.stringify(value)}`);
   assert.ok(value.composerWidth >= value.flowRight - value.flowLeft - 1,
     `Composer must be at least as wide as the content column: ${JSON.stringify(value)}`);
-  assert.ok(Math.abs((value.flowLeft + value.flowRight + value.railInset) - (value.composerLeft + value.composerRight)) <= 2,
-    `Composer centerline must ignore the reading column's tool-rail inset: ${JSON.stringify(value)}`);
+  assert.ok(Math.abs((value.flowLeft + value.flowRight) - (value.composerLeft + value.composerRight)) <= 2,
+    `Composer and reading column must share a centerline: ${JSON.stringify(value)}`);
 }
 
 async function settledGeometry(win, width, paneSelector = ".conversation-pane") {
@@ -201,10 +225,10 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const contentStyle = content ? getComputedStyle(content) : null;
       const scrollbarWidth = scroll.offsetWidth - scroll.clientWidth;
       // Scrollbars and environment panels still constrain the dock. The
-      // primary composer alone ignores the message content's tool-rail inset.
+      // primary composer alone ignores the message content's symmetric rail insets.
       const railInset = pane.querySelector('[data-main-conversation-composer="dock"]')
         ? parseFloat(contentStyle?.paddingRight || "0") : 0;
-      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft) + parseFloat(contentStyle?.paddingLeft || "0");
+      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft) + parseFloat(contentStyle?.paddingLeft || "0") - railInset;
       const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight) - parseFloat(contentStyle?.paddingRight || "0") + railInset;
       return {
         windowWidth: innerWidth,
