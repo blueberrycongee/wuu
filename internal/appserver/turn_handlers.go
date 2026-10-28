@@ -666,7 +666,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	msg.ClientID = queueID
 	if !params.Hold {
 		phaseStarted = req.timing.now()
-		if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
+		if err := s.takeSessionControlForInput(binding, params.ThreadID, req.timing); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		req.timing.span("queue_session_control", phaseStarted)
@@ -2162,7 +2162,10 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
+	req.timing = req.timing.forThread(threadID)
+	started := req.timing.now()
 	binding, runID, err := s.retainUserThreadExecutionState(threadID, false)
+	req.timing.span("interrupt_state", started)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2170,7 +2173,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if _, err := s.requireRequestAccess(req, MethodTurnInterrupt, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	err = s.interruptThreadForUserState(binding, threadID, runID, "", req.timing.forThread(threadID))
+	err = s.interruptThreadForUserState(binding, threadID, runID, "", req.timing)
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
@@ -2230,7 +2233,7 @@ func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, r
 		timing = timings[0]
 	}
 	started := timing.now()
-	controlErr := s.takeSessionControl(binding, threadID, session.ControlPaused)
+	controlErr := s.takeSessionControl(binding, threadID, session.ControlPaused, timing)
 	timing.span("interrupt_session_control", started)
 	if err := controlErr; err != nil {
 		return err

@@ -7,7 +7,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppServerResponseError } from "./appServerErrors";
 import { requestTrustedRemote, bindRemoteEventAuthorization, type TrustedRemotePeer } from "./trustedRemoteTransport";
-import type { ServerEvent } from "../shared/protocol";
+import type { AppServerResponse, ServerEvent } from "../shared/protocol";
 
 vi.mock("electron", () => ({
   app: {
@@ -387,6 +387,218 @@ describe("AppServerClientPool session routing", () => {
     expect(await followUp).toEqual({ owner: true });
     expect(await steer).toEqual({ owner: true });
     pool.shutdown();
+  });
+
+  describe("completion during an in-flight resume", () => {
+    function fixture() {
+      vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+      const active = { kind: "no_project" as const, cwd: "/active" };
+      const owner = { kind: "no_project" as const, cwd: "/owner" };
+      const children = new Map<string, FakeAppServerChild>();
+      const requests = new Map<string, Array<{ id: string; method: string }>>();
+      const pool = new AppServerClientPool(() => active, () => active.cwd, () => {}, (_cmd, _args, options) => {
+        const child = new FakeAppServerChild();
+        children.set(options.cwd, child);
+        requests.set(options.cwd, []);
+        child.stdin.on("data", data => {
+          const request = JSON.parse(String(data));
+          requests.get(options.cwd)!.push(request);
+          if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null));
+        });
+        return child.asChildProcess();
+      });
+      pool.prewarmContexts([active, owner]);
+      const send = (message: unknown) => children.get(owner.cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
+      const turn = (method: string, id: string, threadID = "session") => send({
+        method, params: { thread_id: threadID, turn: {
+          id, status: method === "turn/started" ? "in_progress" : method === "turn/error" ? "interrupted" : "completed",
+        } },
+      });
+      const snapshot = (id: string) => ({ thread: {
+        id: "session", cwd: owner.cwd, status: "in_progress", turns: [{ id, status: "in_progress" }],
+      } });
+      const reply = (result: unknown) => send({ id: requests.get(owner.cwd)!.at(-1)!.id, result });
+      const resume = (onResponse?: (response: AppServerResponse) => void, sessionID = "session") => pool.requestForSession(
+        active, "session", "thread/resume", { session_id: sessionID, response_only: true }, onResponse,
+      );
+      return { pool, active, owner, requests, send, turn, snapshot, reply, resume };
+    }
+
+    it.each([
+      ["turn/completed", "session"], ["turn/error", "session"],
+      ["turn/completed", ""], ["turn/error", ""],
+    ])("does not revive %s via a late same-turn resume (%s) or lose the interrupt route", async (method, sessionID) => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const visible: unknown[] = [];
+        f.pool.setRunningThreadsChangedHandler(snapshot => visible.push(snapshot));
+        let atResponse: unknown;
+        const read = f.resume(() => { atResponse = f.pool.runningThreadsSnapshot(); }, sessionID);
+        f.turn(method, "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        f.reply(f.snapshot("turn-a"));
+        await read;
+        expect(atResponse).toEqual([]);
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        expect(visible.at(-1)).toEqual([]);
+        const stop = f.pool.requestInContext(f.active, "turn/interrupt", { thread_id: "session" });
+        expect(f.requests.get(f.owner.cwd)!.at(-1)!.method).toBe("turn/interrupt");
+        expect(f.requests.get(f.active.cwd)).toEqual([]);
+        f.reply({ ok: true });
+        await stop;
+        // The completed request must not leave permanent history/tombstones.
+        const fresh = f.resume();
+        f.reply(f.snapshot("turn-a"));
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each(["session", ""])("preserves stopped input in both resume deliveries (%s), including its wire content", async sessionID => {
+      const f = fixture();
+      const queued = { id: "queue-a", thread_id: "session", origin: "queue", prompt: "keep", delivery_unconfirmed: true,
+        files: [{ media_type: "text/plain", filename: "note.txt", data: "a2VlcA==" }],
+        content_parts: [{ type: "text", text: "keep" }], active_document: { path: "/note.txt" } };
+      try {
+        f.turn("turn/started", "turn-a");
+        let published: unknown;
+        const read = f.resume(response => { published = response.result; }, sessionID);
+        const guide = { ...queued, id: "guide-a", origin: "steer" };
+        f.send({ method: "turn/held", params: { thread_id: "session", messages: [guide, queued] } });
+        const stale = { ...f.snapshot("turn-a"), held_user_messages: [], pending_user_messages: [guide, queued] };
+        f.reply(stale);
+        const result = await read;
+        expect(result).toMatchObject({ ...stale, held_user_messages: [guide, queued], pending_user_messages: [] });
+        expect(published).toEqual(result);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("replays composer edits, consumption, mode changes, and new input in order without resurrecting materialized IDs", async () => {
+      const f = fixture();
+      const entry = (id: string, origin = "queue", prompt = id) => ({ id, origin, prompt, thread_id: "session" });
+      const notify = (method: string, params: Record<string, unknown>) => f.send({ method, params: { thread_id: "session", ...params } });
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        const stopped = [entry("keep"), entry("edit"), entry("consume"), entry("materialized")];
+        notify("turn/held", { messages: stopped });
+        notify("turn/dequeued", { queue_id: "edit" });
+        notify("turn/started", { queue_id: "consume", turn: { id: "turn-b", status: "in_progress" } });
+        notify("item/completed", { item: { id: "item-materialized", type: "user_message", source_id: "materialized" } });
+        notify("turn/queued", { message: entry("fresh", "queue", "new input") });
+        notify("turn/queued", { message: entry("keep", "queue", "edited input") });
+        notify("turn/steered", { message: entry("mode", "steer") });
+        notify("turn/queued", { message: entry("mode") });
+        notify("turn/unsteered", { steer_id: "mode" }); // Cannot remove the newer queue mode.
+        notify("turn/queued", { message: entry("removed") });
+        notify("turn/steered", { message: entry("removed", "steer") });
+        notify("turn/dequeued", { queue_id: "removed" });
+        notify("turn/unsteered", { steer_id: "removed" });
+        notify("turn/queued", { message: entry("in-history") });
+        // Another session's authoritative held snapshot cannot replace ours.
+        notify("turn/held", { thread_id: "other", messages: [entry("fresh")] });
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, turns: [{ id: "turn-b", status: "in_progress",
+          items: [{ type: "user_message", source_id: "in-history" }] }] },
+          held_user_messages: [], pending_user_messages: stopped });
+        expect(await read).toMatchObject({ held_user_messages: [], pending_user_messages: [
+          entry("fresh", "queue", "new input"), entry("keep", "queue", "edited input"), entry("mode"),
+        ] });
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("applies later empty held snapshots and releases composer evidence after a response error", async () => {
+      const f = fixture();
+      const queued = { id: "queue-a", thread_id: "session", origin: "queue", prompt: "keep" };
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        for (const messages of [[queued], []]) f.send({ method: "turn/held", params: { thread_id: "session", messages } });
+        f.reply({ ...f.snapshot("turn-a"), held_user_messages: [queued], pending_user_messages: [] });
+        expect(await read).toMatchObject({ held_user_messages: [], pending_user_messages: [] });
+        const failed = f.resume();
+        const failure = expect(failed).rejects.toThrow("revoked");
+        f.send({ method: "turn/held", params: { thread_id: "session", messages: [queued] } });
+        f.send({ id: f.requests.get(f.owner.cwd)!.at(-1)!.id, error: { code: "error", message: "revoked" } });
+        await failure;
+        const fresh = f.resume();
+        const snapshot = { ...f.snapshot("turn-a"), held_user_messages: [], pending_user_messages: [queued] };
+        f.reply(snapshot);
+        expect(await fresh).toMatchObject(snapshot);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("forgets terminal and composer receipt evidence when the owning process exits", async () => {
+      const children: FakeAppServerChild[] = [];
+      const { client } = makeClient(() => {
+        const child = new FakeAppServerChild();
+        children.push(child);
+        return child.asChildProcess();
+      });
+      const send = (message: unknown) => children.at(-1)!.stdout.write(`${JSON.stringify(message)}\n`);
+      const queued = { id: "same-input", thread_id: "session", origin: "queue", prompt: "keep" };
+      const first = client.request("thread/resume", { session_id: "session" });
+      const failure = expect(first).rejects.toThrow();
+      send({ method: "turn/error", params: { thread_id: "session", turn: { id: "same-turn", status: "interrupted" } } });
+      send({ method: "turn/held", params: { thread_id: "session", messages: [queued] } });
+      children[0].emit("exit", 1, null);
+      await failure;
+      const restarted = client.request("thread/resume", { session_id: "session" });
+      const result = { thread: { id: "session", status: "in_progress", turns: [{ id: "same-turn", status: "in_progress" }] },
+        held_user_messages: [], pending_user_messages: [queued] };
+      send({ id: "client-2", result });
+      expect(await restarted).toEqual(result);
+      expect(client.runningThreadIDsList()).toEqual(["session"]);
+      children[1].emit("exit", 0, null);
+    });
+
+    it.each(["turn-a", "turn-b"])("preserves a newer live turn when the late response contains %s", async snapshotTurn => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/completed", "turn-a");
+        f.turn("turn/started", "turn-b");
+        f.reply(f.snapshot(snapshotTurn));
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("scopes terminal identity to the session and releases it on an error response", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "same-turn-id");
+        const read = f.resume();
+        f.turn("turn/completed", "same-turn-id", "other-session");
+        f.reply(f.snapshot("same-turn-id"));
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        const failed = f.resume();
+        const failure = expect(failed).rejects.toThrow("revoked");
+        f.turn("turn/error", "same-turn-id");
+        f.send({ id: f.requests.get(f.owner.cwd)!.at(-1)!.id, error: { code: "error", message: "revoked" } });
+        await failure;
+        const fresh = f.resume();
+        f.reply(f.snapshot("same-turn-id"));
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
   });
 
   it("reads the execution owner across workspaces, retains completion, and forgets exited owners", async () => {

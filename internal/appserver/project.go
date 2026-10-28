@@ -367,8 +367,8 @@ func (s *ProjectCoordinationProvider) restoreProjectMembership(id string, old se
 	if err != nil || th == nil {
 		return err
 	}
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
+	unlock := s.lockSessionControls(id)
+	defer unlock()
 	current, ok, err := s.store.ReadControl(id)
 	if err != nil || !ok || current != old {
 		return err

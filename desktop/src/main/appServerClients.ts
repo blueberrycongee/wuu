@@ -1,3 +1,5 @@
+import { pendingComposerUpdateFromNotification, type PendingComposerUpdate } from "../shared/pendingComposerMessages";
+import { rebaseResumeComposerResult, wireComposerMessage, type WireComposerMessage } from "./resumeComposerReceipt";
 import { defaultDesktopSessionRoutes, SessionOutcomeUnknownError, sessionRouteHost, sessionRouteKey, type DesktopSessionRoutes, type SessionRoute } from "./sessionRoutes";
 import { RemoteAppServerClient, type PooledAppServerClient } from "./remoteAppServerClient";
 import { shutdownChild } from "./childShutdown";
@@ -55,6 +57,10 @@ type PendingRequest = {
   onResponse?: (response: AppServerResponse) => void;
   method: string;
   params?: unknown;
+  // Resume can finish after turn/input lifecycle notifications. Keep evidence
+  // only for the lifetime of that request, not an unbounded session history.
+  settledTurnIDs?: Map<string, Set<string>>;
+  composerUpdates?: PendingComposerUpdate<WireComposerMessage>[];
   resolve: (value: unknown) => void;
   reject: (reason?: unknown) => void;
 };
@@ -1096,6 +1102,15 @@ export class AppServerClient {
         maybeNotification.params = this.routedActivity(maybeNotification.params);
       }
       updateStoppedActivityIDs(this.stoppedActivityIDs, maybeNotification);
+      const composerUpdate = pendingComposerUpdateFromNotification(maybeNotification, wireComposerMessage);
+      if (composerUpdate) {
+        for (const pending of this.pending.values()) {
+          if (pending.method !== "thread/resume") continue;
+          const sessionID = isRecord(pending.params) ? pending.params.session_id : undefined;
+          if (typeof sessionID === "string" && sessionID.trim() !== "" && sessionID.trim() !== composerUpdate.threadID) continue;
+          (pending.composerUpdates ??= []).push(composerUpdate);
+        }
+      }
       this.updateRunningFromNotification(maybeNotification);
       this.emit(this, { kind: "notification", message: maybeNotification });
       this.onStateChange();
@@ -1109,6 +1124,9 @@ export class AppServerClient {
       return;
     }
     this.pending.delete(key);
+    if (!response.error && pending.composerUpdates) {
+      response.result = rebaseResumeComposerResult(response.result, pending.composerUpdates);
+    }
     if (pending.method.startsWith("activity/") && isRecord(response.result)) {
       const result = response.result;
       if (result.activity) result.activity = this.routedActivity(result.activity);
@@ -1118,6 +1136,7 @@ export class AppServerClient {
       pending.method,
       pending.params,
       response.result,
+      pending.settledTurnIDs,
     );
     this.onStateChange();
     // Forward before parsing the next stdout line. Promise continuations can
@@ -1172,6 +1191,18 @@ export class AppServerClient {
       case "turn/error":
         if (threadID) {
           this.runningThreadIDs.delete(threadID);
+          const turn = isRecord(params?.turn) ? params.turn : undefined;
+          if (typeof turn?.id === "string") {
+            for (const pending of this.pending.values()) {
+              if (pending.method !== "thread/resume") continue;
+              const sessionID = isRecord(pending.params) ? pending.params.session_id : undefined;
+              if (typeof sessionID === "string" && sessionID.trim() !== "" && sessionID.trim() !== threadID) continue;
+              const settled = pending.settledTurnIDs ??= new Map();
+              const turns = settled.get(threadID) ?? new Set<string>();
+              turns.add(turn.id);
+              settled.set(threadID, turns);
+            }
+          }
         }
         return;
       case "thread/started":
@@ -1186,6 +1217,7 @@ export class AppServerClient {
     method: string,
     params: unknown,
     result: unknown,
+    settledTurnIDs?: Map<string, Set<string>>,
   ): void {
     if (method === "turn/queue" && isRecord(result)) {
       const queued = isRecord(result.queued) ? result.queued : undefined;
@@ -1216,7 +1248,7 @@ export class AppServerClient {
         method === "thread/edit-message") &&
       isRecord(result)
     ) {
-      this.updateRunningFromThread(result.thread);
+      this.updateRunningFromThread(result.thread, settledTurnIDs);
       return;
     }
     if (
@@ -1231,7 +1263,7 @@ export class AppServerClient {
     }
   }
 
-  private updateRunningFromThread(value: unknown): void {
+  private updateRunningFromThread(value: unknown, settledTurnIDs?: Map<string, Set<string>>): void {
     if (!isRecord(value) || typeof value.id !== "string") {
       return;
     }
@@ -1239,6 +1271,15 @@ export class AppServerClient {
       this.threadCwdsByID.set(value.id, value.cwd);
     }
     if (value.status === "in_progress") {
+      const settled = settledTurnIDs?.get(value.id);
+      if (settled && Array.isArray(value.turns)) {
+        const active = value.turns.filter(turn => isRecord(turn) && turn.status === "in_progress");
+        if (active.length > 0 && active.every(turn => typeof turn.id === "string" && settled.has(turn.id))) {
+          // Ignore this stale running fact, rather than clearing a newer turn
+          // which may already have started while the resume was in flight.
+          return;
+        }
+      }
       this.runningThreadIDs.add(value.id);
     } else {
       this.runningThreadIDs.delete(value.id);
