@@ -2,6 +2,7 @@ import * as React from "react";
 import { useEffect } from "react";
 
 import type { ExtensionInventoryRecord } from "../../shared/protocol";
+import type { CatalogExtensionV1 } from "../../../../packages/plugin-sdk/src/ui-catalog";
 import { syncExtensionTheme } from "../Theme";
 import { syncShellSkins } from "../background/ShellSkin";
 import {
@@ -96,6 +97,7 @@ export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
 export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();
+  private readonly activePlugins = new Map<string, ExtensionInventoryRecord>();
   private desiredPlugins = new Map<string, ExtensionInventoryRecord>();
   private readonly activeDependencies = new Map<string, string>();
   private readonly pendingDependencies = new Map<string, { signature: string }>();
@@ -110,6 +112,25 @@ export class DesktopPluginRuntime {
     readonly host: PluginHost,
     private readonly loadModule: ModuleLoader = importDesktopPluginModule,
   ) {}
+
+  /** A retained UI may write state only to an approved update of the same source. */
+  storageFingerprint(pluginId: string, generation: string, current: CatalogExtensionV1): string {
+    if (!this.host.isGenerationActive(pluginId, generation) || current.id !== pluginId
+      || current.kind !== "plugin" || current.enabled === false
+      || !["granted", "active"].includes(current.state)
+      || !["granted", "official"].includes(current.approval_state ?? "") || !current.fingerprint) {
+      throw new Error("Plugin storage context is no longer active");
+    }
+    if (current.fingerprint === generation) return generation;
+    const active = this.activePlugins.get(pluginId);
+    if (!active || active.fingerprint !== generation || active.package_source !== current.package_source
+      || active.provenance.kind !== current.provenance.kind || active.provenance.source !== current.provenance.source
+      || active.provenance.scope !== current.provenance.scope || active.provenance.path !== current.provenance.path
+      || active.provenance.plugin_id !== current.provenance.plugin_id || active.provenance.official !== current.provenance.official) {
+      throw new Error("Plugin storage source is no longer active");
+    }
+    return current.fingerprint;
+  }
 
   sync(
     inventory: readonly ExtensionInventoryRecord[],
@@ -136,6 +157,7 @@ export class DesktopPluginRuntime {
       await Promise.allSettled([...this.synchronizations]);
       await this.host.flushActivationReports();
       this.activeGenerations.clear();
+      this.activePlugins.clear();
       this.activeDependencies.clear();
       this.pendingDependencies.clear();
       this.desiredPlugins.clear();
@@ -158,6 +180,7 @@ export class DesktopPluginRuntime {
     const unload = (id: string): Promise<void> | undefined => {
       const cleanup = this.host.unloadAndWait(id, preparedApplication?.id === id);
       this.activeGenerations.delete(id);
+      this.activePlugins.delete(id);
       this.activeDependencies.delete(id);
       this.pendingDependencies.delete(id);
       return cleanup;
@@ -339,6 +362,7 @@ export class DesktopPluginRuntime {
             else await this.host.activateGeneration(activationOptions(plugin));
             if (epoch === this.syncEpoch) {
               this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
+              this.activePlugins.set(plugin.id, plugin);
               this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
               // Recovery changes availability without changing inventory. Fence
               // every affected consumer in reverse order before any can restart.

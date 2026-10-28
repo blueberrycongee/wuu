@@ -733,14 +733,16 @@ type ModelStepSummary = pluginprotocol.ModelStepSummaryV1
 type ModelStepUsage = pluginprotocol.ModelStepUsageV1
 
 type StreamEvent struct {
-	ModelStep        *ModelStepSummary
-	Image            *InputImage
-	Type             StreamEventType
-	Content          string
-	Phase            MessagePhase
-	ProviderItemID   string
-	Message          *ChatMessage
-	ReasoningBlock   *ReasoningBlock
+	ModelStep      *ModelStepSummary
+	Image          *InputImage
+	Type           StreamEventType
+	Content        string
+	Phase          MessagePhase
+	ProviderItemID string
+	Message        *ChatMessage
+	ReasoningBlock *ReasoningBlock
+	// ToolCall identifies the owner on argument deltas, as well as carrying
+	// the complete call on start/end. Legacy producers may omit delta owners.
 	ToolCall         *ToolCall
 	ToolResult       string
 	ToolResultDetail *toolresult.Result

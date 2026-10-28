@@ -5,6 +5,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { SideConversationAvailableContext } from "./ResponseSelection";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { ArtifactInteractionProvider } from "./ArtifactInteractionContext";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
 import {
@@ -1683,6 +1684,7 @@ export function App({ application, slots, shellPluginId }: {
       <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+      <ArtifactInteractionProvider application={application}>
         <div
           ref={appShellRef}
           tabIndex={-1}
@@ -2022,6 +2024,7 @@ export function App({ application, slots, shellPluginId }: {
         </button>
       ) : null}
       </div>
+    </ArtifactInteractionProvider>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
     </ProjectActionsProvider>

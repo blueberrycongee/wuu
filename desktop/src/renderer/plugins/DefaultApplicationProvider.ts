@@ -3,6 +3,7 @@ import type { PluginGenerationApi } from "../../../../packages/plugin-sdk/src";
 import type { WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationController } from "./ApplicationController";
 import { createDefaultWorkbench } from "./Workbench";
+import { desktopPluginRuntime } from "./DesktopPluginRuntime";
 
 const checkpointSchema = "wuu.application/v1";
 type Checkpoint = ReturnType<ApplicationController["exportCheckpoint"]> & { workbench: WorkbenchSnapshotV1 };
@@ -34,7 +35,8 @@ export function activate(api: PluginGenerationApi): void {
       activate: async (saved?: ApplicationCheckpointV1) => {
         if (saved && saved.schema !== checkpointSchema) throw new Error(`Unsupported application checkpoint: ${saved.schema}`);
         const restored = saved?.value as Checkpoint | undefined;
-        workbench = createDefaultWorkbench(api.contributions, requireController, restored?.workbench);
+        workbench = createDefaultWorkbench(api.contributions, requireController, restored?.workbench,
+          (pluginId, generation, current) => desktopPluginRuntime.storageFingerprint(pluginId, generation, current));
         controller = new ApplicationController(restored && { ...restored.state, initialized: undefined }, {
           applicationProviderId: api.pluginId,
           contributions: api.contributions,

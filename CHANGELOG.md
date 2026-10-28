@@ -10,6 +10,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a default-disabled experimental Generative UI plugin with composable layouts,
+  reactive local calculations, charts and forms, bounded data programs, per-result
+  state restoration, and readable fallback. Preview validated nodes while tool
+  arguments arrive and let explicit user actions continue the source conversation
+  without consuming composer drafts or attachments.
+
 - Expose opt-in, bounded progress snapshots for exact plugin-owned session requests, so independent bot and fleet views can observe live output without reading reasoning, tool payloads, or another request's activity.
 
 - Let selected tool-service decorators explicitly continue the original invocation once, preserving its process authority and captured generation without granting ordinary service calls tool authority.
