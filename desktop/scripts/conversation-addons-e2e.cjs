@@ -10,6 +10,8 @@ const desktop = path.resolve(__dirname, "..");
 const renderer = process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html");
 const output = process.env.WUU_CONVERSATION_ADDONS_OUTPUT || path.join(desktop, "out/e2e/conversation-addons");
 const example = path.join(desktop, "../examples/plugins/conversation-metrics/desktop.js");
+const messageAddons = Object.fromEntries(["slot", "command"].map(kind => [kind,
+  fs.readFileSync(path.join(desktop, `../packages/plugin-sdk/test/fixtures/message-${kind}-addon.js`), "utf8")]));
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(os.tmpdir(), "wuu-conversation-addons-")));
 process.env.WUU_RESIZE_E2E_CWD = path.dirname(desktop);
@@ -27,11 +29,14 @@ const peer = `export function activatePresentation(api) {
   }
 }`;
 const broken = `export function activatePresentation(api) {
-  api.registerUIContribution({ id: 'broken', target: 'wuu.default-conversation/conversation.turn.after',
+  for (const target of ['turn.after', 'message.actions']) api.registerUIContribution({ id: target,
+    target: 'wuu.default-conversation/conversation.' + target,
     render() { throw new Error('Expected conversation addon failure'); } });
 }`;
 const report = { fixture: "production renderer with synthetic backend", phase: "startup", checks: [], geometry: [], captures: [], errors: [], console: [],
-  exampleSha256: crypto.createHash("sha256").update(fs.readFileSync(example)).digest("hex") };
+  exampleSha256: crypto.createHash("sha256").update(fs.readFileSync(example)).digest("hex"),
+  messageAddonSha256: Object.fromEntries(Object.entries(messageAddons).map(([name, source]) => [name,
+    crypto.createHash("sha256").update(source).digest("hex")])) };
 let win, watchdog, failing = false;
 const save = () => fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(report, null, 2));
 const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
@@ -91,7 +96,7 @@ app.whenReady().then(async () => {
   watchdog = setTimeout(() => fail(new Error(`Timed out during ${report.phase}`)), 120000);
   protocol.handle("wuu-plugin", request => {
     const name = new URL(request.url).hostname;
-    const source = name === "metrics" ? fs.readFileSync(example) : name === "peer" ? peer : name === "broken" ? broken : undefined;
+    const source = name === "metrics" ? fs.readFileSync(example) : name === "peer" ? peer : name === "broken" ? broken : messageAddons[name];
     return source === undefined ? new Response("Unknown fixture", { status: 404 })
       : new Response(source, { headers: { "Content-Type": "text/javascript" } });
   });
@@ -126,6 +131,103 @@ app.whenReady().then(async () => {
         composer: document.querySelector('[data-main-conversation-composer] textarea') };
     });
   });
+  await check("independent message commands and raw actions preserve peers, native controls and focus in bubble and IM", async () => {
+    for (const style of ["bubble", "im"]) {
+      await evaluate(style => {
+        document.documentElement.dataset.messageStyle = style;
+        window.__messageNativeNodes = { messages: [...document.querySelectorAll('[data-wuu-component="message"]')],
+          rows: [...document.querySelectorAll('.message-actions')], buttons: [...document.querySelectorAll('.message-actions button')] };
+      }, style);
+      const baseline = await evaluate(async () => {
+        const requests = await window.wuu.testMessageActionRequests();
+        return { mounted: requests.filter(row => row.method === 'mounted').length,
+          inspected: requests.filter(row => row.id === 'user:conversation-addon-slot' && row.method === 'inspect').length };
+      });
+      await inventory(["slot"]);
+      await until(() => document.querySelectorAll('button[aria-label="Inspect raw message"]').length === 4);
+      await until(async before => (await window.wuu.testMessageActionRequests()).filter(row => row.method === 'mounted').length === before + 4, baseline.mounted);
+      await evaluate(() => {
+        const raw = [...document.querySelectorAll('button[aria-label="Inspect raw message"]')];
+        raw.forEach(button => button.click()); raw[0].focus();
+        window.__messageAddonNodes = { raw, rows: raw.map(node => node.closest('.message-actions')),
+          native: [...document.querySelectorAll('.message-actions button')].filter(node => !raw.includes(node)) };
+      });
+      assert.equal(await evaluate(() => {
+        const before = window.__messageNativeNodes;
+        return before.messages.length === 4 && before.buttons.length >= 4
+          && [...before.messages, ...before.rows, ...before.buttons].every(node => node.isConnected);
+      }), true, 'adding raw actions preserves the native messages, rows, copy and edit/fork controls');
+      await until(async before => (await window.wuu.testMessageActionRequests()).filter(row => row.id === 'user:conversation-addon-slot' && row.method === 'inspect').length === before + 4, baseline.inspected);
+      const mounted = baseline.mounted + 4;
+      assert.equal(await evaluate(() => window.__messageAddonNodes.raw[0].textContent), "Raw 1");
+      await inventory(["slot", "command"]);
+      await until(() => document.querySelectorAll('button[aria-label="Inspect command message"]').length === 4);
+      assert.equal(await evaluate(() => {
+        const before = window.__messageAddonNodes;
+        before.commands = [...document.querySelectorAll('button[aria-label="Inspect command message"]')];
+        return before.raw.every((node, index) => node.isConnected && node.closest('.message-actions') === before.rows[index])
+          && before.raw[0].textContent === 'Raw 1' && document.activeElement === before.raw[0]
+          && before.native.every(node => node.isConnected)
+          && before.rows.every(row => row.querySelectorAll('button').length === before.native.filter(node => row.contains(node)).length + 2);
+      }), true, `${style}: adding commands must retain the raw nodes, state, focus and native controls`);
+      const commandCalls = await evaluate(async () => (await window.wuu.testMessageActionRequests()).filter(row => row.id === 'user:conversation-addon-command' && row.method === 'inspect').length);
+      await evaluate(() => window.__messageAddonNodes.commands.forEach(button => button.click()));
+      await until(async before => (await window.wuu.testMessageActionRequests()).filter(row => row.id === 'user:conversation-addon-command' && row.method === 'inspect').length === before + 4, commandCalls);
+      const requests = await evaluate(() => window.wuu.testMessageActionRequests());
+      assert.equal(requests.filter(row => row.method === 'mounted').length, mounted, 'adding a command cannot remount raw actions');
+      const expectedMessages = ['single', 'multiple'].flatMap(turnId => ['user', 'answer'].map(kind => ({
+        threadId: 'resize-thread', turnId, itemId: `${turnId}-${kind}`,
+      })));
+      const rawCalls = requests.filter(row => row.id === 'user:conversation-addon-slot' && row.method === 'inspect').slice(-4);
+      assert.ok(rawCalls.every(row => row.input.snapshot.id === row.input.itemId));
+      assert.deepEqual(rawCalls.map(row => ({ threadId: row.input.threadId, turnId: row.input.turnId, itemId: row.input.itemId })), expectedMessages,
+        'raw user and assistant actions route the displayed message snapshot');
+      assert.deepEqual(requests.filter(row => row.id === 'user:conversation-addon-command' && row.method === 'inspect').slice(-4).map(row => ({
+        threadId: row.input.threadId, turnId: row.input.turnId, itemId: row.input.item.id,
+      })), expectedMessages, 'command user and assistant actions route the displayed message snapshot');
+      await evaluate(() => window.__messageAddonNodes.commands[0].focus());
+      await inventory(["command"]);
+      await until(() => !document.querySelector('button[aria-label="Inspect raw message"]'));
+      assert.equal(await evaluate(() => window.__messageAddonNodes.commands.every(node => node.isConnected)
+        && document.activeElement === window.__messageAddonNodes.commands[0]), true,
+      `${style}: removing raw actions must retain command nodes and focus`);
+      await inventory(["slot", "command"]);
+      await until(() => document.querySelectorAll('button[aria-label="Inspect raw message"]').length === 4);
+      assert.equal(await evaluate(() => window.__messageAddonNodes.commands.every(node => node.isConnected)
+        && document.activeElement === window.__messageAddonNodes.commands[0]
+        && [...document.querySelectorAll('button[aria-label="Inspect raw message"]')].every(node => node.textContent === 'Raw 0')), true,
+      're-enabling raw actions restarts only their own local state');
+      await evaluate(() => {
+        window.__messageAddonNodes.raw = [...document.querySelectorAll('button[aria-label="Inspect raw message"]')];
+        window.__messageAddonNodes.raw[0].click(); window.__messageAddonNodes.raw[0].focus();
+      });
+      const failures = await evaluate(async () => (await window.wuu.testDesktopActivations()).filter(row => row.id === 'user:conversation-addon-broken' && row.status === 'failed').length);
+      await inventory(["slot", "command", "broken"]);
+      await until(async before => (await window.wuu.testDesktopActivations()).filter(row => row.id === 'user:conversation-addon-broken' && row.status === 'failed').length > before, failures);
+      assert.equal(await evaluate(() => {
+        const before = window.__messageAddonNodes;
+        return before.raw.every(node => node.isConnected) && before.commands.every(node => node.isConnected)
+          && before.native.every(node => node.isConnected) && before.raw[0].textContent === 'Raw 1'
+          && document.activeElement === before.raw[0];
+      }), true, 'a failed raw contribution cannot discard either working addon or native controls');
+      await inventory(["slot"]);
+      await until(() => !document.querySelector('button[aria-label="Inspect command message"]'));
+      assert.equal(await evaluate(() => window.__messageAddonNodes.raw.every(node => node.isConnected)
+        && window.__messageAddonNodes.raw[0].textContent === 'Raw 1'
+        && document.activeElement === window.__messageAddonNodes.raw[0]), true,
+      `${style}: removing commands must retain raw nodes, state and focus`);
+      await inventory([]);
+      await until(() => !document.querySelector('button[aria-label="Inspect raw message"]'));
+      assert.equal(await evaluate(() => {
+        const before = window.__messageNativeNodes;
+        return [...before.messages, ...before.rows, ...before.buttons].every(node => node.isConnected)
+          && document.querySelectorAll('.message-actions button').length === before.buttons.length;
+      }), true, 'removing both addons restores exactly the original native controls without remounting messages');
+      await evaluate(() => window.__addonNativeNodes.focus.focus());
+      await preserved();
+    }
+    report.messageActionRequests = await evaluate(() => window.wuu.testMessageActionRequests());
+  });
   await check("independent addons render in order with frozen addressed payloads", async () => {
     await inventory(["metrics", "peer"]);
     await until(() => document.querySelectorAll('[data-conversation-metrics-turn]').length === 2 && document.querySelectorAll('[data-conversation-metrics-tool]').length === 3);
@@ -141,8 +243,9 @@ app.whenReady().then(async () => {
     await evaluate(() => document.querySelector('[data-conversation-metrics-tool] button').click());
     await until(() => document.querySelector('[data-conversation-metrics-tool] pre')?.textContent === 'Reported result 0');
     await evaluate(() => window.__addonNativeNodes.focus.focus());
+    const failures = await evaluate(async () => (await window.wuu.testDesktopActivations()).filter(row => row.id === 'user:conversation-addon-broken' && row.status === 'failed').length);
     await inventory(["metrics", "peer", "broken"]);
-    await until(async () => (await window.wuu.testDesktopActivations()).some(report => report.id === 'user:conversation-addon-broken' && report.status === 'failed'));
+    await until(async before => (await window.wuu.testDesktopActivations()).filter(row => row.id === 'user:conversation-addon-broken' && row.status === 'failed').length > before, failures);
     await preserved();
     assert.equal(await evaluate(() => document.querySelector('[data-conversation-metrics-tool] button').getAttribute('aria-expanded')), 'true');
   });
@@ -236,6 +339,8 @@ app.whenReady().then(async () => {
     await preserved();
   });
   await check("bubble and IM layouts retain usable addons in light/dark wide/narrow views", async () => {
+    await inventory(["metrics", "peer", "slot", "command"]);
+    await until(() => document.querySelectorAll('button[aria-label="Inspect command message"]').length === 4);
     for (const [style, theme, width, size] of [["bubble", "light", 1280, 15], ["im", "light", 1280, 15], ["bubble", "dark", 760, 20], ["im", "dark", 760, 20]]) {
       win.setContentSize(width, 900);
       await evaluate(({ style, theme, size }) => {
@@ -248,11 +353,38 @@ app.whenReady().then(async () => {
       assert.equal(await evaluate(() => [...document.querySelectorAll('[data-conversation-metrics-turn], [data-conversation-metrics-tool]')].every(node => node.scrollWidth <= node.clientWidth + 1)), true, 'addon contents do not clip horizontally');
       const name = `${style}-${theme}-${width}-${size}.png`;
       fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG()); report.captures.push(name);
+      for (const variant of ["user", "agent"]) {
+        await evaluate(variant => {
+          const button = document.querySelector(`[data-wuu-variant="${variant}"] button[aria-label="Inspect raw message"]`);
+          button.scrollIntoView({ block: 'center' }); button.focus();
+        }, variant);
+        await frames();
+        const actionGeometry = await evaluate(variant => {
+          const raw = document.querySelector(`[data-wuu-variant="${variant}"] button[aria-label="Inspect raw message"]`);
+          const row = raw.closest('.message-actions');
+          const rectangles = [...row.querySelectorAll('button')].map(button => {
+            const rect = button.getBoundingClientRect();
+            return { label: button.getAttribute('aria-label'), x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+              inside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight };
+          });
+          return { rectangles, visible: getComputedStyle(row).display !== 'none' && Number(getComputedStyle(row).opacity) > 0 };
+        }, variant);
+        report.geometry.push({ style, theme, width, size, variant, messageActions: actionGeometry });
+        assert.equal(actionGeometry.visible, true, 'focused action row is visible');
+        assert.ok(actionGeometry.rectangles.every(rect => rect.inside && rect.width > 0 && rect.height > 0), 'native and addon controls are in view');
+        for (let index = 1; index < actionGeometry.rectangles.length; index++) {
+          const previous = actionGeometry.rectangles[index - 1], current = actionGeometry.rectangles[index];
+          assert.ok(current.x >= previous.x + previous.width - 1, 'peer message actions do not overlap');
+        }
+        const messageName = `message-actions-${variant}-${name}`;
+        fs.writeFileSync(path.join(output, messageName), (await win.webContents.capturePage()).toPNG()); report.captures.push(messageName);
+      }
     }
+    await evaluate(() => window.__addonNativeNodes.focus.focus());
   });
   await check("disabling all addons leaves no hidden UI", async () => {
     await inventory([]);
-    await until(() => !document.querySelector('[data-peer-addon], [data-conversation-metrics-turn], [data-conversation-metrics-tool]'));
+    await until(() => !document.querySelector('[data-peer-addon], [data-conversation-metrics-turn], [data-conversation-metrics-tool], button[aria-label="Inspect raw message"], button[aria-label="Inspect command message"]'));
     await preserved();
   });
   await check("the real side command routes addressed turn and tool addons through default-preview", async () => {

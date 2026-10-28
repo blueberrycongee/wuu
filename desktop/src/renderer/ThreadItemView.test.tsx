@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +17,11 @@ import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { registerConversationSlots } from "./ConversationSlots";
+import { applyAppearance, readAppearance } from "./AppearancePreferences";
 
 beforeEach(() => {
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
@@ -124,6 +132,14 @@ afterEach(() => {
   container = undefined;
 });
 
+// The additive package runner supplies copies checked outside the checkout
+// against the packed public SDK; ordinary renderer runs use the same sources.
+function loadMessageAddon(name: string): (api: PluginGenerationApi) => void {
+  const directory = process.env.WUU_MESSAGE_ACTION_ADDONS ?? resolve(process.cwd(), "../packages/plugin-sdk/test/fixtures");
+  const source = readFileSync(resolve(directory, `${name}.js`), "utf8");
+  return Function(source.replace("export function activate(api)", "return function activate(api)"))();
+}
+
 describe("ThreadItemView", () => {
   it("supplies the rendered message and live text directly to public contributions", () => {
     const snapshots: unknown[] = [];
@@ -154,6 +170,123 @@ describe("ThreadItemView", () => {
     enabled = false;
     render({ item: { ...item }, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     expect(container!.querySelector('button[aria-label="Inspect plugin message"]')).toBeNull();
+  });
+
+  // Independent addons must coexist, preserve local state when their peer changes,
+  // and leave the shared action row empty only when neither contributes actions.
+  it.each(["user_message", "agent_message"] as const)("composes command and raw-slot addons on %s without remounting peers", async type => {
+    const invokeRuntime = vi.fn<NonNullable<ConstructorParameters<typeof PluginHost>[0]["invokeRuntime"]>>(async () => undefined);
+    const host = new PluginHost({ react: React, application: new ApplicationController(), invokeRuntime });
+    await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "one", register: registerConversationSlots });
+    composition = createUIComposition(host);
+    const commandAddon = loadMessageAddon("message-command-addon");
+    const rawAddon = loadMessageAddon("message-slot-addon");
+    const appearance = readAppearance();
+    const activate = async (pluginId: string, register: (api: PluginGenerationApi) => void) => {
+      await act(async () => { await host.activateGeneration({ pluginId, generation: "one", register }); });
+    };
+    const unload = async (pluginId: string) => { await act(async () => { host.unload(pluginId); }); };
+    const item: ThreadItem = { id: "addon-message", type, status: "completed", text: "" };
+    const view = (value = item) => render({ item: value, owningThreadID: "side-thread", turnStatus: "completed", streaming: false,
+      actionableAgentMessageID: value.id, onEditMessage: vi.fn(), onForkMessage: vi.fn() });
+    const row = () => container!.querySelector<HTMLElement>(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")!;
+    const raw = () => row().querySelector<HTMLButtonElement>('button[aria-label="Inspect raw message"]');
+    const command = () => row().querySelector<HTMLButtonElement>('button[aria-label^="Inspect command message"]');
+    try {
+      view();
+      expect(row().style.display).toBe("none");
+      await activate("raw-addon", rawAddon);
+      const originalRaw = raw()!;
+      expect(row().style.display).toBe("");
+      await act(async () => { originalRaw.click(); });
+      expect(originalRaw.textContent).toBe("Raw 1");
+      expect(invokeRuntime).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "raw-addon", method: "inspect",
+        input: expect.objectContaining({ threadId: "side-thread", turnId: "turn-1", itemId: item.id,
+          snapshot: expect.objectContaining({ id: item.id, text: "" }) }) }));
+
+      act(() => originalRaw.focus());
+      await activate("command-addon", commandAddon);
+      expect(document.activeElement).toBe(originalRaw);
+      expect(raw()).toBe(originalRaw);
+      expect(raw()?.textContent).toBe("Raw 1");
+      expect(command()).not.toBeNull();
+      expect(row().style.display).toBe("");
+      for (const messageStyle of ["bubble", "im"] as const) {
+        applyAppearance({ ...appearance, messageStyle });
+        await act(async () => { command()!.click(); });
+        expect(raw()).toBe(originalRaw);
+        expect(invokeRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ pluginId: "command-addon", method: "inspect",
+          input: expect.objectContaining({ threadId: "side-thread", turnId: "turn-1",
+            item: expect.objectContaining({ id: item.id, text: "" }) }) }));
+      }
+      expect(row().querySelectorAll("button")).toHaveLength(2);
+      invokeRuntime.mockRejectedValueOnce(new Error("Synthetic command failure"));
+      await act(async () => { command()!.click(); });
+      expect(host.getGenerationDiagnostics("command-addon", "one").some(row => row.kind === "render")).toBe(true);
+      expect(raw()).toBe(originalRaw);
+      expect(document.activeElement).toBe(originalRaw);
+      await act(async () => { command()!.click(); });
+      expect(command()?.disabled).toBe(false);
+      const originalCommandWithPeer = command();
+      const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await activate("broken-addon", api => api.registerUIContribution({ id: "broken",
+          target: "wuu.default-conversation/conversation.message.actions",
+          render: () => { throw new Error("Synthetic message addon render failure"); },
+        }));
+        expect(host.getGenerationDiagnostics("broken-addon", "one").some(row => row.kind === "render")).toBe(true);
+        expect(raw()).toBe(originalRaw);
+        expect(command()).toBe(originalCommandWithPeer);
+        expect(document.activeElement).toBe(originalRaw);
+      } finally { await unload("broken-addon"); logging.mockRestore(); }
+
+      // Native copy and edit/fork remain single actions alongside both addons.
+      view({ ...item, text: "Native actions", terminal: true });
+      expect(row().querySelectorAll("button")).toHaveLength(4);
+      view();
+      await unload("command-addon");
+      expect(document.activeElement).toBe(originalRaw);
+      expect(raw()).toBe(originalRaw);
+      expect(row().style.display).toBe("");
+      await activate("command-addon", commandAddon);
+      expect(raw()).toBe(originalRaw);
+      expect(raw()?.textContent).toBe("Raw 1");
+      expect(invokeRuntime.mock.calls.filter(([request]) => request.method === "mounted")).toHaveLength(1);
+
+      const originalCommand = command();
+      await unload("raw-addon");
+      expect(command()).toBe(originalCommand);
+      expect(row().style.display).toBe("");
+      view({ ...item, status: "in_progress" });
+      expect(command()?.disabled).toBe(true);
+      expect(row().style.display).toBe("");
+      view({ ...item, id: "without-commands" });
+      expect(command()).toBeNull();
+      expect(row().style.display).toBe("none");
+      view();
+      expect(command()?.disabled).toBe(false);
+      expect(row().style.display).toBe("");
+      await unload("command-addon");
+      expect(row().querySelectorAll("button")).toHaveLength(0);
+      expect(row().style.display).toBe("none");
+      await activate("command-addon", commandAddon);
+      const restoredCommand = command();
+      expect(restoredCommand).not.toBeNull();
+      expect(row().style.display).toBe("");
+      await activate("raw-addon", rawAddon);
+      expect(raw()?.textContent).toBe("Raw 0");
+      expect(command()).toBe(restoredCommand);
+      await unload("command-addon");
+      expect(raw()).not.toBeNull();
+      expect(row().style.display).toBe("");
+      await unload("raw-addon");
+      expect(row().style.display).toBe("none");
+    } finally {
+      await unload("raw-addon");
+      await unload("command-addon");
+      await unload("wuu.default-conversation");
+      applyAppearance(appearance);
+    }
   });
 
   it("keeps selection actions within the viewport and falls below a top-edge passage", () => {
