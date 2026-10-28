@@ -716,28 +716,23 @@ export function AppSidebar({
         .sort((left, right) => left.name.localeCompare(right.name, locale)),
     };
   }, [locale, extensionInventory, navigation]);
-  // Temporary workspace-close CI diagnostics; remove when navigation handoff is understood.
-  const traceCloseNavigation = (stage: string, detail?: unknown): void => {
-    if (Reflect.get(window, "__wuuCloseNavigationTrace")) console.info("[workspace-close trace]", JSON.stringify({ stage, detail }));
-  };
   const activateNative = useCallback((action: () => void, retainDraftIntent = false): void => {
-    traceCloseNavigation("show-native:start");
-    if (navigation) void navigation.invoke("navigation.show-native", {}).then(() => { traceCloseNavigation("show-native:resolved"); action(); }).catch(error => {
-      traceCloseNavigation("show-native:error", { name: error?.name, message: error?.message, code: error?.code });
+    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(error => {
       // The draft action has not run yet; let its owner carry the user's intent.
       if (retainDraftIntent && error instanceof PluginActionNotStartedError) action();
       else showErrorToast(error);
     });
     else { workbenchController?.deactivateRegion("primary"); action(); }
   }, [workbenchController, navigation]);
+  // The navigation surface owns thread selection across provider handoffs.
   const onSelectThread = useCallback((id: string) => {
-    traceCloseNavigation("select-thread", id);
-    activateNative(() => selectNativeThread(id));
-  }, [activateNative, selectNativeThread]);
+    if (navigation) selectNativeThread(id);
+    else activateNative(() => selectNativeThread(id));
+  }, [activateNative, navigation, selectNativeThread]);
   const onSelectWorkspaceThread = useCallback((workspaceID: string, threadID: string) => {
-    traceCloseNavigation("select-workspace-thread", { workspaceID, threadID });
-    activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
-  }, [activateNative, selectNativeWorkspaceThread]);
+    if (navigation) selectNativeWorkspaceThread(workspaceID, threadID);
+    else activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
+  }, [activateNative, navigation, selectNativeWorkspaceThread]);
   const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
     onLeaveSettings?.();
     if (navigation) { void navigation.invoke("navigation.open-plugin", { pluginId, viewTypeId, instanceId }).catch(showErrorToast); return; }

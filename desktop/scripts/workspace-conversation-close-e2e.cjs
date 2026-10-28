@@ -28,7 +28,7 @@ delete process.env.ELECTRON_RENDERER_URL;
 for (const name of Object.keys(process.env)) if (/(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|PASSWORD)$/.test(name)) delete process.env[name];
 fs.writeFileSync(path.join(workspace, 'README.md'), '# Synthetic file\n\n' + 'Keep the reading position.\n\n'.repeat(100));
 
-const report = { status: 'running', checks: [], screenshots: [], forbiddenCalls: [], errors: [], navigation: [], threadClicks: [], actionTrace: [], modelRequests: 0, threadStarts: 0,
+const report = { status: 'running', checks: [], screenshots: [], forbiddenCalls: [], errors: [], navigation: [], threadClicks: [], modelRequests: 0, threadStarts: 0,
   fixture: 'production Electron/main/preload/Go, isolated profile and loopback model' };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 let win, response, targetThread;
@@ -50,10 +50,7 @@ ipcMain.handle = (channel, handler) => register(channel, async (event, ...args) 
 app.on('browser-window-created', (_event, created) => {
   if (win) return;
   win = created;
-  win.webContents.on('console-message', event => {
-    if (event.level === 'error') report.errors.push(event.message);
-    if (event.message.startsWith('[workspace-close trace]')) report.actionTrace.push(event.message);
-  });
+  win.webContents.on('console-message', event => { if (event.level === 'error') report.errors.push(event.message); });
 });
 const server = http.createServer((req, res) => {
   let raw = '';
@@ -218,7 +215,6 @@ async function run() {
   await until(() => evaluate(selector => document.querySelector(selector)?.value === '', composer), 'new session after second close');
   assert.equal(response.destroyed, false);
   await evaluate(() => {
-    window.__wuuCloseNavigationTrace = true;
     const trace = window.closeFixtureNavigationTrace = [];
     const snapshot = () => ({
       heading: document.querySelector('.conversation-title-heading h1')?.textContent,
