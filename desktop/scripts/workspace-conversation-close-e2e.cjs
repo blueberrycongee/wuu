@@ -214,10 +214,46 @@ async function run() {
   await click('.workspace-panel-globalize');
   await until(() => evaluate(selector => document.querySelector(selector)?.value === '', composer), 'new session after second close');
   assert.equal(response.destroyed, false);
+  await evaluate(() => {
+    const trace = window.closeFixtureNavigationTrace = [];
+    const snapshot = () => ({
+      heading: document.querySelector('.conversation-title-heading h1')?.textContent,
+      rows: [...document.querySelectorAll('.thread-row-main')].map(row => ({ label: row.getAttribute('aria-label'),
+        current: row.closest('.thread-row')?.getAttribute('aria-current'), inert: Boolean(row.closest('[inert]')) })),
+      frames: [...document.querySelectorAll('[data-wuu-presentation-frame]')].map(frame => frame.getAttribute('data-wuu-presentation-frame')),
+      focus: document.activeElement?.getAttribute('aria-label') || document.activeElement?.className,
+    });
+    const record = (event, extra = {}) => { if (trace.length < 150) trace.push({ time: Math.round(performance.now()), event, ...extra, ...snapshot() }); };
+    let previous = JSON.stringify(snapshot());
+    const observer = new MutationObserver(() => {
+      const current = JSON.stringify(snapshot());
+      if (current !== previous) { previous = current; record('mutation'); }
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['aria-label', 'aria-current', 'class', 'inert', 'data-wuu-presentation-frame'] });
+    const listeners = [];
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+      for (const capture of [true, false]) {
+        const listener = event => {
+          if (!(event.target instanceof Element) || !event.target.closest('.project-row-new-thread, .thread-row-main')) return;
+          const target = event.target;
+          record(`${type}:${capture ? 'capture' : 'bubble'}`, { label: target.closest('button')?.getAttribute('aria-label'), defaultPrevented: event.defaultPrevented });
+          if (type === 'click' && capture) queueMicrotask(() => record('click:microtask', {
+            connected: target.isConnected, label: target.closest('button')?.getAttribute('aria-label'), defaultPrevented: event.defaultPrevented,
+          }));
+        };
+        document.addEventListener(type, listener, { capture });
+        listeners.push(() => document.removeEventListener(type, listener, { capture }));
+      }
+    }
+    window.closeFixtureStopNavigationTrace = () => { observer.disconnect(); listeners.forEach(remove => remove()); };
+    record('start');
+  });
   await click('.project-row-new-thread[aria-label*="Another workspace"]');
   await until(() => evaluate(() => document.querySelector('.conversation-title-heading h1')?.textContent.includes('Another workspace')), 'workspace switch');
   await click('.thread-row:not([data-draft-id]) .thread-row-main');
   await until(() => evaluate(selector => document.querySelector(selector)?.value === 'Retain this unsent draft', composer), 'draft after workspace switch');
+  report.workspaceSwitchTrace = await evaluate(() => { window.closeFixtureStopNavigationTrace(); return window.closeFixtureNavigationTrace; });
   assert.equal(await evaluate(() => document.querySelector('.workspace-file-resource') === window.closeFixtureFile), true);
   if (!await evaluate(() => document.querySelector('.app-shell').classList.contains('right-panel-open'))) {
     await click('[data-wuu-component="right-sidebar-toggle"]');
@@ -261,6 +297,7 @@ run().then(() => { server.close(); app.once('will-quit', () => app.exit(0)); app
         ]);
         const thread = listed?.threads.find(item => item.id === target);
         return { rows, clickTarget: window.closeFixtureClickTarget, pointerEvents: window.closeFixturePointerEvents,
+          workspaceSwitchTrace: window.closeFixtureNavigationTrace,
           targetListingAvailable: Boolean(listed), target: thread && { id: thread.id, cwd: thread.cwd, workspaceId: thread.workspace_id,
             title: thread.title, preview: thread.preview, status: thread.status } };
       }, targetThread);
