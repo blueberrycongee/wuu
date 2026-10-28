@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,23 +231,65 @@ func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 	}, nil)
 }
 
-func (s *Server) handlePluginPackageInspect(req Request) error {
+func (s *Server) handlePluginPackageSource(ctx context.Context, req Request) error {
 	var params PluginPackageInspectParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	inspected, err := pluginpkg.InspectPackage(params.Path)
+	handle := s.handlePluginPackageInspect
+	if req.Method == MethodPluginPackageInstall {
+		handle = s.handlePluginPackageInstall
+	}
+	if !strings.HasPrefix(params.Path, "npm:") && !strings.HasPrefix(params.Path, "lock:") {
+		return handle(ctx, req)
+	}
+	// Registry IO cannot occupy the serial stdio loop. Keep the authenticated
+	// request context and join the existing background shutdown ownership.
+	operationCtx, cancel := context.WithCancel(ctx)
+	stop := func() bool { return false }
+	if s.packageDownloadCtx != nil {
+		stop = context.AfterFunc(s.packageDownloadCtx, cancel)
+	}
+	if !s.startBackground(func() {
+		defer stop()
+		defer cancel()
+		if err := handle(operationCtx, req); err != nil {
+			log.Printf("wuu: %s: %v", req.Method, err)
+		}
+	}) {
+		stop()
+		cancel()
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	return nil
+}
+
+func (s *Server) handlePluginPackageInspect(ctx context.Context, req Request) error {
+	var params PluginPackageInspectParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, params.Path, pluginpkg.DistributionOptions{Registry: params.Registry, Integrity: params.Integrity})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect plugin package: %w", err))
 	}
+	defer resolved.Close()
 	return s.writeResponse(req.ID, PluginPackageInspectResult{
-		Package: pluginPackageMetadata(inspected),
+		Package: pluginPackageMetadata(resolved.Inspection),
 	}, nil)
 }
 
-func (s *Server) handlePluginPackageInstall(req Request) error {
+func (s *Server) handlePluginPackageInstall(ctx context.Context, req Request) error {
 	var params PluginPackageInstallParams
 	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, params.Path, pluginpkg.DistributionOptions{Registry: params.Registry, Integrity: params.Integrity})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("install plugin package: %w", err))
+	}
+	defer resolved.Close()
+	if err := ctx.Err(); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	releaseMutation, err := s.beginPluginGenerationMutation("install", pluginGenerationMutationCatalog)
@@ -255,22 +298,16 @@ func (s *Server) handlePluginPackageInstall(req Request) error {
 	}
 	defer releaseMutation()
 
-	inspected, err := pluginpkg.InspectPackage(params.Path)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("install plugin package: %w", err))
-	}
+	inspected := resolved.Inspection
 	services, releaseServices, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseServices()
-	identity, err := pluginpkg.PackageSourceIdentity(params.Path)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
+	identity := resolved.Identity
 	installedPath := filepath.Join(s.rt.WuuHome, "plugins", inspected.ID)
 	if _, statErr := os.Lstat(installedPath); statErr == nil {
-		pending, err := pluginpkg.StagePackageUpdate(s.rt.WuuHome, identity)
+		pending, err := pluginpkg.StagePackageUpdateFromSource(s.rt.WuuHome, resolved.Path, identity)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("stage plugin package update: %w", err))
 		}
@@ -306,7 +343,7 @@ func (s *Server) handlePluginPackageInstall(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect installed plugin package %q: %w", inspected.ID, statErr))
 	}
 
-	installed, err := pluginpkg.InstallPackage(s.rt.WuuHome, identity)
+	installed, err := pluginpkg.InstallPackage(s.rt.WuuHome, resolved.Path)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("install plugin package: %w", err))
 	}
@@ -763,6 +800,7 @@ func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetada
 		RequestedPermissions: append([]string(nil), item.RequestedPermissions...),
 		EffectivePermissions: append([]string(nil), item.EffectivePermissions...),
 		UnsupportedFields:    append([]string(nil), item.UnsupportedFields...),
+		Distribution:         item.Distribution,
 	}
 }
 

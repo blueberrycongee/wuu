@@ -52,14 +52,22 @@ var pendingUpdatesMu sync.Mutex
 // update store. The package must update an installed user plugin with the same
 // id and different content. Staging never publishes or executes the package.
 func StagePackageUpdate(wuuHome, source string) (PendingUpdate, error) {
-	pendingUpdatesMu.Lock()
-	defer pendingUpdatesMu.Unlock()
-
 	identity, err := PackageSourceIdentity(source)
 	if err != nil {
 		return PendingUpdate{}, err
 	}
-	source = identity
+	return StagePackageUpdateFromSource(wuuHome, identity, identity)
+}
+
+// StagePackageUpdateFromSource stages resolved bytes while retaining the
+// distribution identity used by the trust policy. Callers resolve/download
+// before acquiring the catalog lease; staging itself never uses the network.
+func StagePackageUpdateFromSource(wuuHome, source, identity string) (PendingUpdate, error) {
+	pendingUpdatesMu.Lock()
+	defer pendingUpdatesMu.Unlock()
+	if strings.TrimSpace(identity) == "" {
+		return PendingUpdate{}, errors.New("plugin source identity is required")
+	}
 	root, err := pendingUpdatesRoot(wuuHome)
 	if err != nil {
 		return PendingUpdate{}, err
