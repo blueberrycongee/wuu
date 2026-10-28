@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const script = resolve('.github/scripts/select-ci.mjs');
-const suites = ['unit', 'selection', 'corpus', 'layout', 'session', 'shell'];
+const suites = ['unit', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
 function select(paths, event = 'pull_request', remove = false) {
   const cwd = mkdtempSync(join(tmpdir(), 'wuu-ci-selection-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -41,6 +41,11 @@ test('isolated image test selects layout without unrelated platform jobs', () =>
 });
 test('multiple test changes union suites, including deleted entries', () => {
   assert.deepEqual(JSON.parse(select(['desktop/scripts/image-layout-e2e.cjs', 'desktop/scripts/file-selection-e2e.cjs'], 'pull_request', true).desktop_suites), ['selection', 'layout']);
+});
+test('session-specific changes retain all session checks across both shards', () => {
+  for (const path of ['desktop/scripts/session-message-e2e.cjs', 'desktop/scripts/composer-footer-e2e.cjs', 'desktop/scripts/session-switch-e2e.cjs']) {
+    assert.deepEqual(JSON.parse(select([path]).desktop_suites), ['session', 'session-lifecycle'], path);
+  }
 });
 for (const path of ['desktop/src/renderer/RichContent.tsx', 'desktop/scripts/new-helper.cjs', 'desktop/scripts/image-layout-e2e-preload.cjs', 'desktop/package-lock.json', '.github/workflows/ci.yml', 'internal/session/run.go']) {
   test(`shared or unknown input retains every Desktop suite: ${path}`, () => {

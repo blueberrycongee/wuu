@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Only superseded PR revisions are cancelled; manual runs stay independent.
+  group: execution-environments-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   docker-tools:
     # The pinned Apptainer deb needs libfuse3-3/libsubid4, absent on Ubuntu 26.04.

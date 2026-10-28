@@ -203,7 +203,7 @@ func (s *Service) effectiveConfig(path string, source []byte) (Config, error) {
 	if s.trustedProject {
 		cfg, _, err = applySettingsLayersSource(path, source, cfg, projectSettingsLayers(s.project))
 	} else {
-		cfg, _, err = applyRestrictedProjectLayers(path, s.project, cfg)
+		cfg, _, err = applyRestrictedProjectLayers(path, s.project, cfg, source)
 	}
 	if err != nil {
 		return Config{}, err

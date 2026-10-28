@@ -1,5 +1,6 @@
 import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
+import { PluginActionNotStartedError } from "../shared/PluginLifecycle";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
@@ -715,8 +716,12 @@ export function AppSidebar({
         .sort((left, right) => left.name.localeCompare(right.name, locale)),
     };
   }, [locale, extensionInventory, navigation]);
-  const activateNative = useCallback((action: () => void): void => {
-    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(showErrorToast);
+  const activateNative = useCallback((action: () => void, retainDraftIntent = false): void => {
+    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(error => {
+      // The draft action has not run yet; let its owner carry the user's intent.
+      if (retainDraftIntent && error instanceof PluginActionNotStartedError) action();
+      else showErrorToast(error);
+    });
     else { workbenchController?.deactivateRegion("primary"); action(); }
   }, [workbenchController, navigation]);
   const onSelectThread = useCallback((id: string) => {
@@ -1835,7 +1840,7 @@ export function AppSidebar({
         <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
           <button
             className="nav-item"
-            onClick={() => activateNative(onStartNewThread)}
+            onClick={() => activateNative(onStartNewThread, true)}
             disabled={!hasRuntimeContext}
           >
             <MessageSquarePlus className="icon-lg" />
@@ -2206,7 +2211,7 @@ export function AppSidebar({
                         onClick={() => {
                           setRecentsCollapsed(false);
                           persistSidebarRecentsCollapsed(false);
-                          activateNative(onStartNewThread);
+                          activateNative(onStartNewThread, true);
                         }}
                       >
                         <SquarePen className="icon" aria-hidden="true" />
