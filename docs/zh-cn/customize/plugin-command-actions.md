@@ -22,6 +22,12 @@ SDK 的 `PluginCommandActionContext` 是可区分联合类型。读取某个位�
 
 未声明 `placements` 的命令保持原有行为。从命令面板或直接调用命令时，输入仍可能缺失或使用其他结构。`execute(input?: unknown)` 应校验上下文，不要直接断言类型。消息上下文已标识目标时，不要改用全局状态猜测当前线程。
 
+默认会话界面会同时呈现放置的命令按钮、直接注册到
+`conversation.message.actions` 插槽的贡献以及原生消息操作。
+添加或移除放置的命令会保留直接插槽贡献及其本地状态和键盘焦点；
+添加或移除直接插槽贡献同样会保留放置的命令控件。两类贡献都不存在时，
+界面保持原有的原生操作和空操作栏行为。
+
 ## 试用 Action Notes 示例
 
 [Action Notes 示例](../../../examples/plugins/action-notes/README.md) 是仅含桌面入口的插件，提供两个操作：
