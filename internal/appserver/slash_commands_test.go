@@ -123,6 +123,7 @@ func TestExplicitSkillCatalogHonorsThreadBoundaries(t *testing.T) {
 			rt.Toolkit = kit
 			out := &lockedBuffer{}
 			srv := New(rt, out)
+			t.Cleanup(srv.Close)
 			dispatchPayload(t, srv, "start", MethodThreadStart, ThreadStartParams{})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
 			th := srv.thread(threadID)
@@ -133,11 +134,17 @@ func TestExplicitSkillCatalogHonorsThreadBoundaries(t *testing.T) {
 				}
 				thread.Toolkit.ConfigureSurfaceForProviderModel("ollama", "llama-coder", true)
 			} else {
-				th.EngineID = "external-fixture"
+				var checkout string
 				if mode == "external-checkout" {
-					th.CWD = t.TempDir()
+					checkout = t.TempDir()
+				}
+				th.mu.Lock()
+				th.EngineID = "external-fixture"
+				if checkout != "" {
+					th.CWD = checkout
 					th.WorkspaceID = ""
 				}
+				th.mu.Unlock()
 			}
 			dispatchPayload(t, srv, "list", MethodSkillList, SkillListParams{ThreadID: threadID})
 			response := responseByID(t, parseOutput(t, out.String()), "list")
