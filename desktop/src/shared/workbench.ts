@@ -792,6 +792,8 @@ export interface HeaderTabDescriptorV1 {
   readonly busy?: boolean;
   readonly dirty?: boolean;
   readonly disabled?: boolean;
+  /** Whether this tab can be closed; omitted by older hosts. */
+  readonly closable?: boolean;
 }
 
 export interface HeaderSnapshotV1 {

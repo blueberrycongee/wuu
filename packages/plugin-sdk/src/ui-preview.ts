@@ -54,8 +54,8 @@ export interface ApplicationPreviewWorkspaceV1 {
   readonly tabs: readonly ApplicationPreviewTabV1[];
   readonly activeTabId?: string;
   readonly activeFileTabId?: string;
-  /** Whether the current conversation has an entry in the expanded workspace. */
-  readonly conversationOpen: boolean;
+  /** Whether the conversation entry is open. Omitted by V1 providers without open/close support. */
+  readonly conversationOpen?: boolean;
   readonly conversationSelected: boolean;
 }
 export interface ApplicationPreviewActionMapV1 {

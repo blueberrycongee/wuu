@@ -290,8 +290,9 @@ function WorkspacePanelContent({
   const onOpenFile = useCallback((path: string, context = workspaceContext) => {
     if (context) void application.invoke("preview.open-file", { context, path }).catch(showErrorToast);
   }, [application, workspaceContext]);
-  const conversationTab = conversationTabVisible && preview.conversationOpen ? {
+  const conversationTab = conversationTabVisible && preview.conversationOpen !== false ? {
     id: snapshot.tabs.activeTabId, title: preview.conversationTitle, active: preview.conversationSelected,
+    closable: preview.conversationOpen === true,
     onSelect: () => { void application.invoke("preview.show-conversation", {}).catch(showErrorToast); },
   } : undefined;
   const sideThreadRunning = snapshot.sideConversation.entry?.streaming ?? false;
@@ -731,7 +732,7 @@ function WorkspacePanelContent({
     scope: "workspace",
     title: conversationActive ? conversationTab?.title : activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
     subtitle: !conversationActive && (activeTab?.kind === "file" || activeTab?.kind === "diff") ? activeTab.path : undefined,
-    tabs: conversationTab ? [{ id: conversationTab.id, title: conversationTab.title, kind: "conversation" }, ...headerTabs] : headerTabs,
+    tabs: conversationTab ? [{ id: conversationTab.id, title: conversationTab.title, kind: "conversation", closable: conversationTab.closable }, ...headerTabs] : headerTabs,
     activeTabId: conversationActive ? conversationTab?.id : selectedTabID,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
@@ -842,7 +843,7 @@ function WorkspacePanelContent({
                       <span>{conversationTab.title}</span>
                     </button>
                   </Tooltip>
-                  <button
+                  {conversationTab.closable ? <button
                     className="workspace-tool-tab-close"
                     type="button"
                     data-wuu-component="workspace-conversation-tab-close"
@@ -854,7 +855,7 @@ function WorkspacePanelContent({
                     }}
                   >
                     <X className="icon-xs" />
-                  </button>
+                  </button> : null}
                 </div>
               ) : null}
               {tabEntries.map((entry) => {

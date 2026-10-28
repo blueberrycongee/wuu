@@ -243,11 +243,14 @@ function presenterActions(props: ContributionViewProps, target: string, value: u
       } : {}),
       [HEADER_ACTIONS.selectTab]: input => {
         const tab = selectedTab(input);
+        if (tab.kind === "conversation" && tab.closable !== undefined
+          && props.application.getSnapshot().tabs.activeTabId !== tab.id) throw new Error("Conversation entry is no longer active");
         return tab.kind === "conversation" ? props.application.invoke("preview.show-conversation", {})
           : props.application.invoke("preview.focus-tab", { tabId: tab.id });
       },
       [HEADER_ACTIONS.closeTab]: input => {
         const tab = selectedTab(input);
+        if (tab.kind === "conversation" && tab.closable === false) return;
         return tab.kind === "conversation" ? props.application.invoke("preview.close-conversation", { tabId: tab.id })
           : props.application.invoke("preview.close-tab", { tabId: tab.id });
       },

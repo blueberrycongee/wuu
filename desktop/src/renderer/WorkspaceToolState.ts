@@ -51,7 +51,7 @@ export function useWorkspaceToolState({
   const workspaceActiveFileTabID = snapshot.activeFileTabId;
   const conversationSelected = snapshot.conversationSelected;
   useLayoutEffect(() => {
-    if (!rightPanelGlobalized && !snapshot.conversationOpen) {
+    if (!rightPanelGlobalized && snapshot.conversationOpen === false) {
       void application.invoke("preview.open-conversation", {}).catch(showErrorToast);
     }
   }, [application, rightPanelGlobalized, snapshot.conversationOpen]);
@@ -161,7 +161,7 @@ export function useWorkspaceToolState({
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
-    workspaceConversationOpen: snapshot.conversationOpen,
+    workspaceConversationOpen: snapshot.conversationOpen !== false,
     workspaceConversationActive: rightPanelGlobalized && conversationSelected,
     focusWorkspaceConversation,
     ensureWorkspaceToolTab,
