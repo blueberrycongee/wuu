@@ -221,6 +221,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
 
+- Avoid redundant workspace snapshots around read-only tools and tool orchestrators. Keep leaf result revisions and mutation evidence; optional read-only telemetry no longer samples whole-workspace freshness.
+
 - Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.
 
 - Keep experimental project scheduling active through explicitly selected coordination decorators, while preserving stopped-generation completion and rejecting unreachable native fallback.
