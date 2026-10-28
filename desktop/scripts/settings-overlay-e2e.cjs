@@ -34,7 +34,7 @@ esbuild.buildSync({ stdin: { contents: preload, resolveDir: __dirname }, outfile
 const report = { status: "running", platform: process.platform, versions: process.versions, cases: [],
   limitations: ["Synthetic backend, no inference or account access.", "Captures record shell and native menu separately; not a composed OS screenshot."] };
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
-const trace = value => fs.appendFileSync(path.join(output, "events.jsonl"), JSON.stringify(value) + "\n");
+const trace = value => fs.appendFileSync(path.join(output, "events.jsonl"), JSON.stringify({ at: Date.now(), ...value }) + "\n");
 let win, host, page, dropPaint = false;
 const failures = [];
 app.on("web-contents-created", (_event, contents) => {
@@ -122,6 +122,7 @@ async function run() {
   ipcMain.on("wuu:chrome-overlay-command", (event, command) => host.command(event, command));
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
     webPreferences: { preload: path.join(fixture, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  for (const event of ["focus", "blur"]) win.on(event, () => trace({ kind: "window", event }));
   for (const { width, font, theme } of [{ width: 1180, font: 15, theme: "light" }, { width: 760, font: 20, theme: "dark" }]) {
     win.setContentSize(1180, 820);
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
@@ -142,8 +143,12 @@ async function run() {
     const name = `${width}-${font}-${theme}`;
     const scenario = { name, checks: [] }; report.cases.push(scenario); save();
     await click(win.webContents, "textarea");
+    win.webContents.selectAll();
+    key(win.webContents, "Backspace");
+    await until(() => evaluate(win.webContents, () => document.querySelector("textarea")?.value === ""), "empty draft before scenario");
     const draft = `Retain this draft through Settings: ${name}`;
     await win.webContents.insertText(draft);
+    await until(() => evaluate(win.webContents, draft => document.querySelector("textarea")?.value === draft, draft), "scenario draft entered");
     const opened = await openMenu(); scenario.menu = { bounds: opened.bounds, rows: opened.rows };
     await capture(name, opened.view);
     key(opened.view.webContents, "Escape"); await closed();
@@ -168,9 +173,10 @@ async function run() {
   dropPaint = true;
   await click(win.webContents, ".sidebar-account-trigger");
   const stalled = await until(() => menuView(), "unpresented native opening");
+  const stalledContents = stalled.webContents;
   await until(() => failures.length === 1, "missing first paint reports failure within the opening budget");
   await closed();
-  assert.ok(stalled.webContents.isDestroyed(), "An unresponsive renderer is retired rather than reused forever");
+  assert.ok(stalledContents.isDestroyed(), "An unresponsive renderer is retired rather than reused forever");
   dropPaint = false;
   const recovered = await openMenu();
   assert.notEqual(recovered.view, stalled, "A new user click gets a fresh native renderer");
