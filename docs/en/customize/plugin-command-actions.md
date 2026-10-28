@@ -22,6 +22,13 @@ Use `registerCommand` with `placements`:
 
 A command without `placements` keeps its existing behavior. Its normal command-palette or direct invocation can still have no input, or an input of another shape. `execute(input?: unknown)` must validate context instead of casting blindly. Do not infer the current thread from global state when a message context already identifies the target.
 
+The default conversation surface renders placed command buttons alongside direct
+`conversation.message.actions` slot contributions and native message actions.
+Adding or removing placed commands preserves direct slot contributions and their
+local state and keyboard focus; adding or removing direct slot contributions
+likewise preserves placed command controls. Without either contribution, the
+surface retains its normal native-action and empty-row behavior.
+
 ## Try the action-notes example
 
 The [Action Notes example](../../../examples/plugins/action-notes/README.md) is a desktop-only plugin with two actions:
