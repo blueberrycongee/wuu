@@ -123,7 +123,7 @@ it("clears a failed connection on retry success without changing another service
   servers = [connected, servers[1]];
   await act(async () => resolveRetry({ status: connected }));
   expect(button(row(), "mcp.disconnect").disabled).toBe(false);
-  expect(row().querySelector('button[aria-expanded]')).toBeNull();
+  expect(row().querySelector('button[aria-expanded]:not([aria-haspopup])')).toBeNull();
   expect(container.textContent).not.toContain("ECONNREFUSED");
   expect(container.querySelector('[data-mcp="healthy"]')).not.toBeNull();
 });
@@ -139,7 +139,7 @@ it("keeps list failures concise and recoverable rather than presenting an empty 
   expect(source.listMCPServers).toHaveBeenCalledTimes(2);
   expect(row()).not.toBeNull();
   expect(container.querySelector('[data-testid="mcp-list-retry"]')).toBeNull();
-  expect(container.querySelector('button[aria-expanded]')).toBeNull();
+  expect(container.querySelector('button[aria-expanded]:not([aria-haspopup])')).toBeNull();
 });
 
 it("retries a failed browser login and cancels the new pending attempt on dismissal", async () => {
@@ -182,7 +182,7 @@ it("clears an earlier row action failure only after browser login succeeds", asy
   expect(source.pollMCPLogin).toHaveBeenCalledWith("successful-login");
   expect(container.querySelector('[role="dialog"]')).toBeNull();
   expect(button(row(), "mcp.disconnect").disabled).toBe(false);
-  expect(row().querySelector('button[aria-expanded]')).toBeNull();
+  expect(row().querySelector('button[aria-expanded]:not([aria-haspopup])')).toBeNull();
   expect(container.textContent).not.toContain(authFailure);
 });
 
@@ -215,7 +215,32 @@ it("retries connection after manual authorization without exchanging a consumed 
   expect(source.connectMCPServer).toHaveBeenCalledTimes(2);
   expect(container.querySelector('[role="dialog"]')).toBeNull();
   expect(button(row(), "mcp.disconnect").disabled).toBe(false);
-  expect(row().querySelector('button[aria-expanded]')).toBeNull();
+  expect(row().querySelector('button[aria-expanded]:not([aria-haspopup])')).toBeNull();
+});
+
+it("reads the current definition when Edit is selected and preserves a rejected stale draft", async () => {
+  let revision = "before-menu";
+  const source = controls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connected, editable: true }] }),
+    readMCPDefinition: vi.fn(async () => ({ config: { url: "https://fixture.example.test/mcp", tool_timeout_ms: revision === "after-menu" ? 35000 : 10000 }, revision })),
+    configureMCPServers: vi.fn().mockRejectedValue(new Error("configuration changed")),
+  });
+  await render(source);
+  await click(row().querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!);
+  expect(source.readMCPDefinition).not.toHaveBeenCalled();
+  revision = "after-menu";
+  await click(button(document, "common.edit"));
+  expect(source.readMCPDefinition).toHaveBeenCalledOnce();
+  const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+  const advanced = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
+  expect(JSON.parse(advanced.value).tool_timeout_ms).toBe(35000);
+  revision = "after-edit";
+  await click(button(dialog, "common.save"));
+  expect(source.configureMCPServers).toHaveBeenCalledOnce();
+  expect(source.configureMCPServers).toHaveBeenCalledWith(expect.objectContaining({ revision: "after-menu" }));
+  expect(container.querySelector('[role="dialog"]')).toBe(dialog);
+  expect(JSON.parse(advanced.value).tool_timeout_ms).toBe(35000);
+  expect(dialog.querySelector('[role="alert"]')).not.toBeNull();
 });
 
 it("preserves an MCP editor draft after a save rejection and clears diagnostics when retry succeeds", async () => {
@@ -346,7 +371,7 @@ it("clears a retained auth failure when a dismissed pending login connection lat
   await act(async () => resolveConnection({ status: connected }));
   await act(async () => notifyStatus());
   expect(button(row(), "mcp.disconnect").disabled).toBe(false);
-  expect(row().querySelector('button[aria-expanded]')).toBeNull();
+  expect(row().querySelector('button[aria-expanded]:not([aria-haspopup])')).toBeNull();
   expect(row().querySelector('[role="status"]')).toBeNull();
   expect(container.textContent).not.toContain(authFailure);
 });
@@ -360,7 +385,8 @@ it("retains a failed refresh operation when authoritative status still reports a
     refreshMCPServer: vi.fn().mockRejectedValue(new Error(diagnostic)),
   });
   await render(source);
-  await click(button(row(), "mcp.refresh"));
+  await click(row().querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!);
+  await click(button(document, "mcp.refresh"));
   expect(source.refreshMCPServer).toHaveBeenCalledWith("docs");
   expect(button(row(), "mcp.disconnect").disabled).toBe(false);
   expect(row().querySelector('[role="status"]')).not.toBeNull();
