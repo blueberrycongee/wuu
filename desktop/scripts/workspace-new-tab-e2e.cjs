@@ -692,9 +692,14 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
   await win.loadFile(rendererHtml);
-  await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-markdown-reading')));
+  await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-panel-empty button, .workspace-file-resource.active .workspace-markdown-reading')));
   assert.equal((await tabs()).length, 1, "Restoring an open panel retains its file tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
+  // The synthetic preload can inject its first-read failure again after reload.
+  if (await evaluate(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-panel-empty button')))) {
+    await click('.workspace-file-resource.active .workspace-panel-empty button');
+  }
+  await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-markdown-reading')));
   await capture("restored-file-light");
   results.push({ scenario: "restored open panel has its selected file", passed: true });
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
