@@ -290,8 +290,8 @@ function WorkspacePanelContent({
   const onOpenFile = useCallback((path: string, context = workspaceContext) => {
     if (context) void application.invoke("preview.open-file", { context, path }).catch(showErrorToast);
   }, [application, workspaceContext]);
-  const conversationTab = conversationTabVisible ? {
-    title: preview.conversationTitle, active: preview.conversationSelected,
+  const conversationTab = conversationTabVisible && preview.conversationOpen ? {
+    id: snapshot.tabs.activeTabId, title: preview.conversationTitle, active: preview.conversationSelected,
     onSelect: () => { void application.invoke("preview.show-conversation", {}).catch(showErrorToast); },
   } : undefined;
   const sideThreadRunning = snapshot.sideConversation.entry?.streaming ?? false;
@@ -731,8 +731,8 @@ function WorkspacePanelContent({
     scope: "workspace",
     title: conversationActive ? conversationTab?.title : activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
     subtitle: !conversationActive && (activeTab?.kind === "file" || activeTab?.kind === "diff") ? activeTab.path : undefined,
-    tabs: conversationTab ? [{ id: WORKSPACE_CONVERSATION_TAB_ID, title: conversationTab.title, kind: "conversation" }, ...headerTabs] : headerTabs,
-    activeTabId: selectedTabID,
+    tabs: conversationTab ? [{ id: conversationTab.id, title: conversationTab.title, kind: "conversation" }, ...headerTabs] : headerTabs,
+    activeTabId: conversationActive ? conversationTab?.id : selectedTabID,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
   });
@@ -842,6 +842,19 @@ function WorkspacePanelContent({
                       <span>{conversationTab.title}</span>
                     </button>
                   </Tooltip>
+                  <button
+                    className="workspace-tool-tab-close"
+                    type="button"
+                    data-wuu-component="workspace-conversation-tab-close"
+                    aria-label={t("workspace.closeTab", { label: conversationTab.title })}
+                    disabled={!open}
+                    onClick={() => {
+                      requestFocusRestoration();
+                      void application.invoke("preview.close-conversation", { tabId: conversationTab.id }).catch(showErrorToast);
+                    }}
+                  >
+                    <X className="icon-xs" />
+                  </button>
                 </div>
               ) : null}
               {tabEntries.map((entry) => {

@@ -295,6 +295,19 @@ describe("createThreadActivationActions", () => {
     expect(harness.getAppState().thread?.id).toBe("thread-2");
   });
 
+  it("uses the retained session binding when a closed thread is reopened after a workspace switch", async () => {
+    const target = thread("retained", "/tmp/project-2");
+    const targetContext = projectContext("project-2");
+    installWuuApi(target);
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext("project-1"),
+      activeProjectId: "project-1", projects: [project("project-1"), project("project-2")],
+      sessionTabs: [createThreadSessionTab(target, targetContext, { ...emptyComposerDraft(), prompt: "keep draft" })] } });
+    await harness.actions.activateThread(target.id);
+    expect(harness.selectRuntimeContext).toHaveBeenCalledWith(targetContext);
+    expect(harness.getAppState().thread?.id).toBe(target.id);
+    expect(harness.getDraft().prompt).toBe("keep draft");
+  });
+
   it("keeps the source context until a loaded cross-project target has resumed", async () => {
     const workspaceTwo = project("project-2");
     const targetContext = projectContext("project-2");

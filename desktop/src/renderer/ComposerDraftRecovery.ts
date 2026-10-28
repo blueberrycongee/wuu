@@ -105,7 +105,9 @@ export function readComposerDraftRecovery(): ComposerRecovery {
     previous = { version: 1, activeTabID: validString(data.activeTabID, 512) ? data.activeTabID : "", drafts };
     writeStored(previous);
     const tabs = drafts.filter((entry) => now - entry.updatedAt < MAX_AGE_MS).map(tabFromDraft);
-    return { tabs, activeTabID: tabs.some((tab) => tab.id === previous!.activeTabID) ? previous.activeTabID : "" };
+    // The selected empty draft has no recovery entry, but its identity still
+    // distinguishes the new-conversation page from an older saved draft.
+    return { tabs, activeTabID: previous.activeTabID };
   } catch {
     try { window.sessionStorage.removeItem(STORAGE_KEY); } catch { /* No usable recovery store. */ }
     return empty;

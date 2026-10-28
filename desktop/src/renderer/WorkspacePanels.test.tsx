@@ -233,7 +233,9 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
   React.useEffect(() => () => previewContent.dispose(), [previewContent]);
   const snapshot = {
     connection: { status: "connected" },
+    tabs: { activeTabId: "draft:one" },
     previewWorkspace: { ownerTabId: "draft:one", tabs: props.tabs, activeTabId: props.activeTabID, activeFileTabId: props.activeFileTabID,
+      conversationOpen: true,
       conversationSelected: Boolean(props.conversationTab?.active), conversationTitle: props.conversationTab?.title ?? "Conversation",
       activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
       fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },

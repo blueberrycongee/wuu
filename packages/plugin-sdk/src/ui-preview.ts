@@ -54,6 +54,8 @@ export interface ApplicationPreviewWorkspaceV1 {
   readonly tabs: readonly ApplicationPreviewTabV1[];
   readonly activeTabId?: string;
   readonly activeFileTabId?: string;
+  /** Whether the current conversation has an entry in the expanded workspace. */
+  readonly conversationOpen: boolean;
   readonly conversationSelected: boolean;
 }
 export interface ApplicationPreviewActionMapV1 {
@@ -72,5 +74,9 @@ export interface ApplicationPreviewActionMapV1 {
   "preview.reorder-tab": { input: { readonly tabId: string; readonly overTabId: string }; result: void };
   "preview.close-tabs": { input: { readonly tabIds: readonly string[] }; result: void };
   "preview.follow-project": { input: { readonly project?: { readonly id: string; readonly title: string } }; result: void };
+  /** Restore the conversation entry without changing the selected resource. */
+  "preview.open-conversation": { input: Record<string, never>; result: void };
+  /** Close the entry for the selected session without deleting or stopping it. */
+  "preview.close-conversation": { input: { readonly tabId: string }; result: void };
   "preview.show-conversation": { input: Record<string, never>; result: void };
 }

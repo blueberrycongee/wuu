@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationPreview } from "./ApplicationPreview";
 
 // Public contracts: normalized resource identity, MRU focus restoration,
 // immutable caller data, and history-owned artifact provenance.
 describe("application preview ownership", () => {
+  afterEach(() => window.sessionStorage.clear());
   it("deduplicates normalized files and restores the most recently used surviving tab", async () => {
     const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn() });
     const context = { kind: "no_project" as const, cwd: "/workspace" };
@@ -24,6 +25,22 @@ describe("application preview ownership", () => {
     await preview.invoke("preview.open-tool", { toolId: "terminal", activate: false });
     expect(preview.getSnapshot().activeTabId).toBe(tabId);
     expect(preview.getSnapshot().tabs.map(tab => tab.id)).toEqual([tabId, "terminal"]);
+  });
+
+  it("keeps resource selection when the conversation entry is closed, including later closes", async () => {
+    const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn() });
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    await preview.invoke("preview.open-file", { context, path: "a.md" });
+    const first = preview.getSnapshot().activeTabId!;
+    await preview.invoke("preview.open-file", { context, path: "b.md" });
+    const second = preview.getSnapshot().activeTabId!;
+    await preview.invoke("preview.show-conversation", {});
+    await preview.invoke("preview.close-conversation", { tabId: "thread:one" });
+    expect(preview.getSnapshot()).toMatchObject({ conversationOpen: false, conversationSelected: false, activeTabId: second });
+    await preview.invoke("preview.close-tab", { tabId: second });
+    expect(preview.getSnapshot()).toMatchObject({ conversationOpen: false, conversationSelected: false, activeTabId: first });
+    await preview.invoke("preview.close-tab", { tabId: first });
+    expect(preview.getSnapshot()).toMatchObject({ conversationOpen: true, conversationSelected: true, tabs: [] });
   });
 
   it("reopens a cited PDF from its verified immutable URI when history is absent", async () => {

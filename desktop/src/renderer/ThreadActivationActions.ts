@@ -403,6 +403,11 @@ export function createThreadActivationActions(
 
   async function activateThread(threadID: string): Promise<void> {
     const currentState = deps.getAppState();
+    const retained = currentState.sessionTabs.find((tab) => tab.kind === "thread" && tab.threadID === threadID);
+    if (retained && !sameRuntimeContext(retained.context, currentState.activeContext)) {
+      await selectContextThread(retained.context, threadID);
+      return;
+    }
     const project = currentState.projects.find((candidate) =>
       deps.getSidebarWorkspaceThreadsByWorkspaceID()[candidate.id]?.some(
         (thread) => thread.id === threadID,

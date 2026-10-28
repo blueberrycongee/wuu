@@ -248,7 +248,8 @@ function presenterActions(props: ContributionViewProps, target: string, value: u
       },
       [HEADER_ACTIONS.closeTab]: input => {
         const tab = selectedTab(input);
-        if (tab.kind !== "conversation") return props.application.invoke("preview.close-tab", { tabId: tab.id });
+        return tab.kind === "conversation" ? props.application.invoke("preview.close-conversation", { tabId: tab.id })
+          : props.application.invoke("preview.close-tab", { tabId: tab.id });
       },
     };
   }
