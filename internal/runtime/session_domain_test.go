@@ -72,10 +72,13 @@ func TestNativeSessionDomainPreservesNestedAdmission(t *testing.T) {
 	registry := pluginhost.NewServiceRegistry()
 	home := t.TempDir()
 	documents := persistence.NewService(persistence.SQLiteModule, filepath.Join(home, "documents"), "sqlite")
-	domain := newNativeSessionDomain(registry, home)
+	host := pluginhost.New()
+	domain := newNativeSessionDomain(registry, home, host)
 	consumer := &runtimeServiceConsumer{id: sessionStateConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: session.ServiceName, MajorVersion: 1, Required: true}}}
 	clients := []pluginhost.Client{documents, domain, consumer}
-	host := pluginhost.New(clients...)
+	for _, client := range clients {
+		host.Add(client)
+	}
 	host.AttachServiceRegistry(registry, registry.RegisterClients(clients...))
 	if err := host.Activate(ctx); err != nil {
 		t.Fatal(err)
