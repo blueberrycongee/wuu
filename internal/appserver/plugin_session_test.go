@@ -648,6 +648,12 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	if pendingSteers != 1 {
 		t.Fatalf("pending steers = %d, want 1", pendingSteers)
 	}
+	for requestID, wantAvailable := range map[string]bool{"first": true, "steer": false} {
+		view, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: requestID, IncludeProgress: true})
+		if err != nil || view.Progress == nil || view.Progress.Available != wantAvailable {
+			t.Fatalf("pending-steer progress for %s = %+v, %v", requestID, view.Progress, err)
+		}
+	}
 
 	unblockFirst()
 	select {
@@ -669,6 +675,12 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	}
 	if consumed != 1 {
 		t.Fatalf("second provider request consumed %d steers, want 1", consumed)
+	}
+	for _, requestID := range []string{"first", "steer"} {
+		view, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: requestID, IncludeProgress: true})
+		if err != nil || view.Progress == nil || view.Progress.Available || view.Progress.Reason != "request_not_exclusive" {
+			t.Fatalf("consumed-steer progress for %s = %+v, %v", requestID, view.Progress, err)
+		}
 	}
 	unblockSecond()
 	waitForTurnCompletedForThread(t, out, created.SessionID)

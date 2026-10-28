@@ -333,6 +333,28 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
 
+#### 会话实时进度
+
+状态卡或子代理面板可以声明
+`required_host_features: [SESSION_PROGRESS_HOST_FEATURE]`，同时声明普通
+`host.session.inspect` 服务依赖。检查时显式提供 `request_id` 和
+`include_progress: true`；默认检查不返回含正文的进度。`progress` 是版本 1
+的**快照**，不是事件流：每次读取后替换显示内容，不要当作新消息追加。
+
+调用插件必须拥有该会话，且该请求必须是轮次唯一的输入身份。排队请求尚无
+可投影的轮次；steer 请求不能借用原请求的进度。不同输入一旦进入同一轮次，
+任何一方都不能把输出归为自己的独占结果。此时 `available: false` 会返回
+`session_not_owned`、`request_not_exclusive` 或 `turn_unavailable`，不附带内容。
+共享会话仍可使用不带进度的普通检查。
+
+可用快照包含会话、请求、轮次及条目 ID，最多返回最近 32 个助手/工具展示条目，
+JSON 总量不超过 32 KiB。每条助手正文最多 4096 UTF-8 字节；`truncated`
+明确表示正文被缩短或条目被省略。不返回输入提示、推理、工具参数/结果、附件及
+提供方私有状态。尚未输出时 `items` 可以为空。读取不建立订阅，也不改变被观察
+任务。已结束轮次可以继续检查，但快照不证明持久成功、输入消费或消息送达；
+结算仍须使用既有终态检查和生命周期回执。本接口不提供事件重放或断线补偿。
+参见仅依赖公开 SDK 的[会话进度示例](../../../examples/plugins/session-progress/)。
+
 ### 共享文件锁
 
 文件的读改写需要跨插件进程协调时，声明

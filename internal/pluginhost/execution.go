@@ -104,6 +104,10 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx = context.Background()
 	}
 	id := fmt.Sprintf("exec-%d", t.seq.Add(1))
+	if continuation, ok := ctx.Value(serviceContinuationKey{}).(*serviceContinuation); ok && continuation.owner == pluginID && continuation.executionID == "" {
+		// Bind before publishing the scope; inherited records are already bound.
+		continuation.executionID = id
+	}
 	executionCtx, cancel := context.WithCancelCause(bindModelEventExecution(ctx, pluginID, id))
 	kind := "callback"
 	if tool {

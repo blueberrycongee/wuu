@@ -235,6 +235,9 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 	if params.SessionID == "" || strings.TrimSpace(pluginID) == "" {
 		return pluginhost.SessionInspectResult{}, errors.New("plugin owner and session_id are required")
 	}
+	if params.IncludeProgress && params.RequestID == "" {
+		return pluginhost.SessionInspectResult{}, errors.New("include_progress requires an explicit request_id")
+	}
 	if params.Wait != pluginhost.SessionInspectWaitNone && params.Wait != pluginhost.SessionInspectWaitTerminal {
 		return pluginhost.SessionInspectResult{}, errors.New("wait must be none or terminal")
 	}
@@ -243,7 +246,15 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 		return pluginhost.SessionInspectResult{}, fmt.Errorf("timeout_ms must be between 0 and %d", maxTimeoutMS)
 	}
 	inspect := func() (pluginhost.SessionInspectResult, bool, error) {
-		return s.inspectPluginSessionOnce(binding, pluginID, params)
+		result, terminal, err := s.inspectPluginSessionOnce(binding, pluginID, params)
+		if err == nil && params.IncludeProgress {
+			turnID := ""
+			if result.Turn != nil {
+				turnID = result.Turn.TurnID
+			}
+			result.Progress = readPluginSessionProgress(s.threadForState(binding, params.SessionID), strings.TrimSpace(pluginID), params.RequestID, turnID)
+		}
+		return result, terminal, err
 	}
 	result, terminal, err := inspect()
 	if err != nil || params.Wait == pluginhost.SessionInspectWaitNone || result.Turn == nil || terminal {

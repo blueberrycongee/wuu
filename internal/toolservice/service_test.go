@@ -17,13 +17,55 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
+// Even direct provider tests execute through host admission, not a privileged
+// private Scope-only entry point that external implementations cannot use.
+type nativeServiceTestConsumer struct{}
+
+func (*nativeServiceTestConsumer) ID() string { return "test.consumer" }
+func (c *nativeServiceTestConsumer) Status() pluginhost.Status {
+	return pluginhost.Status{ID: c.ID(), State: pluginhost.StateActive}
+}
+func (*nativeServiceTestConsumer) Close(context.Context) error                      { return nil }
+func (*nativeServiceTestConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (*nativeServiceTestConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: ServiceName, MajorVersion: 1, Required: true}}
+}
+func nativeServiceTestClient(t *testing.T, service *Service) *Client {
+	t.Helper()
+	consumer := &nativeServiceTestConsumer{}
+	registry, conflicts := pluginhost.BuildServiceRegistry(service, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host := pluginhost.New(service, consumer)
+	host.AttachServiceRegistry(registry, conflicts)
+	registry.Activate()
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	return NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		if method == "execute" {
+			var request CallRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				return nil, err
+			}
+			input := pluginhost.ToolExecuteInput{SessionID: "session", ThreadID: "thread", TurnID: "turn", ActorID: "actor", CallID: "test-call", Tool: request.Call.Name, CWD: t.TempDir(), Arguments: json.RawMessage(request.Call.Arguments)}
+			result, err := host.CallToolService(ctx, consumer.ID(), ServiceName, method, raw, input)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+		result, err := host.CallService(ctx, consumer.ID(), ServiceName, method, raw)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	})
+}
+
 func TestNativeServiceUsesBoundToolkitAndLifecycle(t *testing.T) {
 	ctx := context.Background()
 	service := NewService()
-	invoke := func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
-	}
-	client := NewClient(invoke)
+	client := nativeServiceTestClient(t, service)
 	if _, err := client.List(ctx); err == nil {
 		t.Fatal("prepared provider accepted invocation")
 	}
@@ -133,9 +175,7 @@ func TestNativeProviderOwnsLazyScopeAndCleanup(t *testing.T) {
 	if err := native.Activate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		return native.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
-	})
+	client := nativeServiceTestClient(t, native)
 	if _, err := client.List(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -289,9 +329,7 @@ func TestPreparePreservesNativeSkillAdmission(t *testing.T) {
 	defer native.Close(ctx)
 	scope := NewScope(func(context.Context) (Backend, error) { return Backend{Executor: kit, Toolkit: kit}, nil })
 	ctx = WithScope(ctx, scope)
-	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		return native.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
-	})
+	client := nativeServiceTestClient(t, native)
 	messages, err := client.Prepare(ctx, nil)
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("prepare: %+v %v", messages, err)
@@ -354,9 +392,7 @@ func TestFinalizeRunsOnceAfterSuccessOrNormalizedFailure(t *testing.T) {
 	}
 	defer native.Close(ctx)
 	ctx = WithScope(ctx, NewScope(func(context.Context) (Backend, error) { return Backend{Executor: probe}, nil }))
-	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		return native.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
-	})
+	client := nativeServiceTestClient(t, native)
 	call := providers.ToolCall{Name: "probe", ID: "call"}
 	result, err := client.ExecuteResult(ctx, call)
 	if err != nil || probe.count != 0 {
@@ -425,14 +461,29 @@ func TestNativeServiceDoesNotAttributeSharedLegacyContext(t *testing.T) {
 	defer service.Close(context.Background())
 	executor := &legacyServiceContextTools{}
 	ctx := WithScope(context.Background(), NewScope(func(context.Context) (Backend, error) { return Backend{Executor: executor}, nil }))
-	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
-	})
+	client := nativeServiceTestClient(t, service)
 	result, err := client.Execute(ctx, providers.ToolCall{ID: "A", Name: "echo", Arguments: `{}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.AdditionalContext != "" || executor.reads.Load() != 0 {
 		t.Fatalf("service attributed a shared slot to A: context=%q reads=%d", result.AdditionalContext, executor.reads.Load())
+	}
+}
+
+func TestNativeServiceRejectsScopeOnlyExecutionBeforeBackend(t *testing.T) {
+	service := NewService()
+	if err := service.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close(context.Background())
+	var factories atomic.Int32
+	ctx := WithScope(context.Background(), NewScope(func(context.Context) (Backend, error) {
+		factories.Add(1)
+		return Backend{}, errors.New("must not initialize")
+	}))
+	_, err := service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: "execute", ExecutionID: "forged", Params: json.RawMessage(`{"call":{"id":"forged","name":"read_file","arguments":"{}"}}`), CallerScope: &pluginhost.ExecutionScope{ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "forged", Kind: "tool", ThreadID: "thread", TurnID: "turn", CallID: "call"}, Context: ctx}})
+	if err == nil || factories.Load() != 0 {
+		t.Fatalf("scope-only invocation reached backend: factories=%d err=%v", factories.Load(), err)
 	}
 }

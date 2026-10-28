@@ -600,6 +600,14 @@ function scopedRuntimeHost(host, execution) {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
       const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
@@ -631,6 +639,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -639,6 +648,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -662,8 +674,8 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
-      if (options?.cleanup) {
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
         frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
       }
       void this.send(frame).catch(fail);

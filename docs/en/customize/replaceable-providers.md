@@ -83,6 +83,40 @@ caller, transfer a caller's tool authority, or make provider-owned resource
 handles interchangeable. Such methods still need their contract's explicit
 ownership/delegation mechanism.
 
+For an admitted `agent.tools.execute`, use the explicit
+`continueService<ToolServiceExecution>(host, input)` inside the override; see the
+[tool-service decorator](../../../examples/plugins/tool-service-decorator.ts).
+Declare `SERVICE_CONTINUATION_HOST_FEATURE` (`service.continuation.v1`) in
+`required_host_features`, provide `TOOL_SERVICE_DESCRIPTOR`, and require
+`agent.tools@1` in runtime requirements (a renderer-only dependency is not a
+backend delegation edge). Select the decorator globally and bind its own same-service
+dependency to the native or external implementation, as in the settings example.
+Other methods can still use ordinary `delegateService` forwarding.
+
+The separate `host.service.continue` gateway accepts only the callback execution
+ID and its opaque `continuation_id`. The SDK supplies the actual callback ID;
+the host captures the original service major, method, arguments, tool identity,
+generation and configured delegate. A continuation cannot rewrite a request,
+choose another target or lend authority to an ordinary descendant callback.
+Each decorator layer may continue once; delegate failure consumes it too.
+Returning from the callback, cancellation or explicit removal/disable revokes
+it. Normal generation replacement retains admitted callbacks and their original
+dependencies: an old continuation never switches to the replacement provider.
+The native tool provider also requires its own admitted tool callback, before
+initializing its backend. An inherited backend scope or upstream `caller_scope`
+is not enough. Ordinary forwarding that previously worked only with the native
+implementation must use `continueService` for `execute`.
+Process execution still passes the selected permission and sandbox services;
+retaining work never retains an earlier permission decision.
+
+Run `node scripts/service-continuation-e2e.mjs` for the packed-SDK decorator and
+independent process backend. It checks chained decoration, denied and ordinary
+calls to both native and external delegates, duplicate/failing continuations,
+cancellation, owner/delegate removal,
+post-pause permission denial, and replacement
+while paused before continuation. Reports and logs are written to
+`.tmp/e2e/service-continuation/`.
+
 In a `project_agent` development build, the [project decorator](../../../examples/plugins/project-decorator.ts)
 changes only instructions and enables `concurrentServices` because managed-session
 creation can reenter coordination before returning. Select it for `project.coordination@1` and bind its

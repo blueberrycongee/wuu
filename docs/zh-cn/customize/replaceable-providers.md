@@ -75,6 +75,30 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 上游调用者、转移调用者的工具权限，或让不同 provider 的资源句柄可以互换。
 这类方法仍须遵循各自契约明确的所有权和委托机制。
 
+对于已获准入的 `agent.tools.execute`，在覆盖方法中显式调用
+`continueService<ToolServiceExecution>(host, input)`，参见
+[工具服务装饰器](../../../examples/plugins/tool-service-decorator.ts)。在
+`required_host_features` 中声明 `SERVICE_CONTINUATION_HOST_FEATURE`
+（`service.continuation.v1`），提供 `TOOL_SERVICE_DESCRIPTOR`，在 runtime 需求中声明
+`agent.tools@1`；仅 renderer 的依赖不能建立后端委托边。
+与设置示例相同，将装饰器选为全局提供者，并将它自身的同服务依赖绑定到原生或外部实现。
+其他方法仍可通过普通 `delegateService` 转发。
+
+独立的 `host.service.continue` 入口只接受当前回调的执行 ID 和不透明的
+`continuation_id`。SDK 绑定实际回调 ID；宿主捕获原服务主版本、方法、参数、工具身份、
+generation 和已配置的委托目标。续调不能改写请求、改选目标，也不能把权限借给普通
+下游回调。每层装饰器只能续调一次，委托失败也会消耗它，不会重试或回退。
+回调返回、取消或显式移除/禁用后失效；正常 generation 替换保留已获准入的回调及其
+原依赖，旧续调不会跳转到新实现。原生工具提供者同样必须拥有当前回调自己的工具
+准入，检查发生在初始化后端之前；继承的后端 scope 或上游 `caller_scope` 都不够。
+过去仅在原生实现中碰巧可用的普通 `execute` 转发，现在必须改用 `continueService`。
+进程执行仍经过所选权限与沙箱服务；保留工作不会保留先前的权限决策。
+
+运行 `node scripts/service-continuation-e2e.mjs` 可验证仅依赖打包 SDK 的装饰器和独立
+进程后端，覆盖多层装饰、权限拒绝、原生与外部委托的普通调用拒绝、重复及失败续调、
+取消、所有者及委托者
+移除、暂停后的权限撤销，以及暂停在续调前发生的 generation 替换。报告与日志保存在 `.tmp/e2e/service-continuation/`。
+
 在启用 `project_agent` 的开发构建中，[项目装饰器](../../../examples/plugins/project-decorator.ts)
 只修改指令，并启用 `concurrentServices`，因为托管会话创建可能在返回前重入协调服务。
 将其选为 `project.coordination@1` 提供者，再把它的同服务依赖绑定到

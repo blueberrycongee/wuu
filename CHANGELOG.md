@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Expose opt-in, bounded progress snapshots for exact plugin-owned session requests, so independent bot and fleet views can observe live output without reading reasoning, tool payloads, or another request's activity.
+
+- Let selected tool-service decorators explicitly continue the original invocation once, preserving its process authority and captured generation without granting ordinary service calls tool authority.
+
 - Add opt-in, metadata-only `model.request.metrics` observations with exact request/turn correlation, host-observed first-output timing, explicit adapter-reported usage, and bounded nonblocking delivery across cancellation and plugin replacement.
 
 - Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
@@ -217,6 +221,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
 - Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
+- Require the default native tool provider to use its own admitted tool callback before executing; inherited scopes and ordinary service forwarding can no longer bypass the authority boundary enforced for external providers.
 
 - Keep independently contributed message-action controls alongside placed command buttons, preserving peer state and keyboard focus when either plugin is enabled or disabled.
 
