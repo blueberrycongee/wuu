@@ -589,7 +589,9 @@ async function run() {
   // An unfinished selection comment belongs to its original conversation. A
   // normal pane switch must discard it without attaching or sending it anywhere.
   await click('.workspace-panel-globalize');
-  await waitFor(() => !document.querySelector('.conversation-pane[inert]'));
+  await waitFor(() => !document.querySelector('.conversation-pane[inert]')
+    && document.querySelector('.workspace-right-panel:not([data-sheet])'));
+  await fittedPdf();
   await evaluate(() => {
     const host = document.querySelector('[data-workspace-pdf-preview]');
     const root = host.shadowRoot;
