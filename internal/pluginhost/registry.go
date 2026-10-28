@@ -731,10 +731,18 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	}
 	callbackParent, cancel := context.WithCancel(retainServiceCompletion(ctx))
 	input := ToolExecuteInput{}
+	var continuation *serviceContinuation
 	if toolScope != nil {
 		input = *toolScope
+		continuation = r.newServiceContinuation(provider, params, input)
+		if continuation != nil {
+			callbackParent = context.WithValue(callbackParent, serviceContinuationKey{}, continuation)
+		}
 	}
 	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, input, toolScope != nil)
+	if continuation != nil {
+		params.ContinuationID = continuation.id
+	}
 	r.mu.Lock()
 	r.executions[executionID] = &serviceExecution{
 		ctx: callbackCtx, cancel: cancel, refs: 1,

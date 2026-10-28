@@ -170,6 +170,10 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 
 	initCtx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
+	supportedServices := []HostServiceMethod{ServiceCallMethod}
+	if _, ok := config.ServiceRouter.(ServiceContinuationRouter); ok {
+		supportedServices = append(supportedServices, ServiceContinueMethod)
+	}
 	var initialized CapabilityInitializeResult
 	if err := client.call(initCtx, "initialize", CapabilityInitializeParams{
 		InitializeParams: InitializeParams{
@@ -182,8 +186,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 			WorkspaceStateDir: config.WorkspaceStateDir,
 		},
 		CapabilityProtocolVersion: CapabilityProtocolVersion,
-		SupportedHostServices:     []HostServiceMethod{ServiceCallMethod},
-		SupportedHostFeatures:     SupportedHostFeatures(),
+		SupportedHostServices:     supportedServices,
+		SupportedHostFeatures:     hostFeaturesForServices(supportedServices),
 		LifecycleVersion:          RuntimeLifecycleVersion,
 	}, &initialized); err != nil {
 		_ = client.stopProcess()
@@ -195,7 +199,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		client.setFailure(err)
 		return nil, fmt.Errorf("initialize plugin %q: invalid tool registrations: %w", config.ID, err)
 	}
-	if err := ValidateCapabilityNegotiation(initialized, []HostServiceMethod{ServiceCallMethod}); err != nil {
+	if err := ValidateCapabilityNegotiation(initialized, supportedServices); err != nil {
 		_ = client.stopProcess()
 		negotiationErr := &CapabilityNegotiationError{Err: err}
 		client.setFailure(negotiationErr)
@@ -222,6 +226,9 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
+	for _, service := range supportedServices {
+		client.activationServices[service] = struct{}{}
+	}
 	client.negotiated = cloneHostServiceSet(client.activationServices)
 	client.lifecycleVersion = initialized.LifecycleVersion
 	client.mu.Unlock()
@@ -866,10 +873,25 @@ func (c *ProcessClient) dispatchHostService(ctx context.Context, call HostServic
 	if !negotiated {
 		return c.rejectHostService(call.ID, "service_not_negotiated", fmt.Sprintf("host service %q was not negotiated", call.Method))
 	}
-	if call.Method != ServiceCallMethod {
+	switch call.Method {
+	case ServiceCallMethod:
+		return c.dispatchServiceCall(ctx, call)
+	case ServiceContinueMethod:
+		var params ServiceContinueParams
+		decoder := json.NewDecoder(bytes.NewReader(call.Params))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err != nil {
+			return c.rejectHostService(call.ID, "invalid_request", "service.continue accepts only execution_id and continuation_id")
+		}
+		router, ok := c.config.ServiceRouter.(ServiceContinuationRouter)
+		if !ok {
+			return c.rejectHostService(call.ID, "service_unavailable", "service continuation routing is unavailable")
+		}
+		result, serviceErr := router.RouteServiceContinue(ctx, c.config.ID, params)
+		return c.respondServiceCall(call.ID, result, serviceErr)
+	default:
 		return c.rejectHostService(call.ID, "method_not_found", fmt.Sprintf("unknown host service %q", call.Method))
 	}
-	return c.dispatchServiceCall(ctx, call)
 }
 
 // dispatchServiceCall routes a validated service.call frame into the active
@@ -884,7 +906,11 @@ func (c *ProcessClient) dispatchServiceCall(ctx context.Context, call HostServic
 		return c.rejectHostService(call.ID, "service_unavailable", "service routing is unavailable for this plugin process")
 	}
 	result, serviceErr := c.config.ServiceRouter.RouteServiceCall(ctx, c.config.ID, params)
-	response := HostServiceResult{ID: call.ID}
+	return c.respondServiceCall(call.ID, result, serviceErr)
+}
+
+func (c *ProcessClient) respondServiceCall(id string, result json.RawMessage, serviceErr *HostServiceError) error {
+	response := HostServiceResult{ID: id}
 	if serviceErr != nil {
 		response.Error = &HostServiceError{Code: strings.TrimSpace(serviceErr.Code), Message: strings.TrimSpace(serviceErr.Message)}
 		if response.Error.Code == "" {

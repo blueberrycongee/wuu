@@ -1,4 +1,19 @@
-import type { RuntimePlugin, ServiceDescriptor } from './index.js';
+import type { RuntimeHost, RuntimePlugin, ServiceDescriptor, ServiceInvokeParams } from './index.js';
+
+export const SERVICE_CONTINUATION_HOST_FEATURE = 'service.continuation.v1';
+
+/** Forward this selected tool-service invocation once to its configured
+ * same-service delegate. The host preserves the original request and tool
+ * authority; this helper sends no caller, target, or replacement arguments.
+ * Use the callback's host. Returning, cancellation or explicit revocation ends
+ * the authority; admitted callbacks retain their old generation across updates.
+ * A failed delegate consumes the continuation too. There is no retry/fallback.
+ * Declare SERVICE_CONTINUATION_HOST_FEATURE in required_host_features.
+ */
+export async function continueService<T = unknown>(host: RuntimeHost, invocation: ServiceInvokeParams): Promise<T> {
+  if (!invocation.continuation_id) throw new Error('This invocation has no selected-service continuation');
+  return await host.call('host.service.continue', {continuation_id: invocation.continuation_id}) as T;
+}
 
 /** Same callback identity and cancellation context as RuntimePlugin.invokeService. */
 export type ServiceMethodOverride = NonNullable<RuntimePlugin['invokeService']>;
