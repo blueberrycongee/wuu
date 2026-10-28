@@ -57,7 +57,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Verify CI selection contracts
-        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs
+        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs .github/scripts/go-check-contract.test.mjs
 
       - name: Check repository metadata
         run: make repository-check
@@ -99,14 +99,6 @@ jobs:
 
       - name: Check
         run: make check-go check-plugins
-
-      - name: Guard generation admission under race detector
-        timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
-
-      - name: Guard shared authority and model receipt lifecycle under race detector
-        timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
       - name: Test
         run: make test-go test-plugins
@@ -202,6 +194,50 @@ jobs:
             ${{ runner.temp }}/wuu-plugin-generation-evidence/
           if-no-files-found: ignore
           retention-days: 14
+
+  go-race:
+    name: Go race guards
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    env:
+      WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: wuu
+          POSTGRES_PASSWORD: wuu_test
+          POSTGRES_DB: wuu_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wuu -d wuu_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install plugin and SDK dependencies
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
+
+      # These guards remain required, but no longer serialize the full Go suite.
+      - name: Guard generation admission under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
+
+      - name: Guard shared authority and model receipt lifecycle under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
   architecture-conformance:
     name: Public provider conformance
@@ -526,7 +562,7 @@ jobs:
   go-check:
     name: Go check
     runs-on: ubuntu-latest
-    needs: [changes, go-validation, project-agent-check, architecture-conformance]
+    needs: [changes, go-validation, go-race, project-agent-check, architecture-conformance]
     if: always()
     steps:
       - name: Require selected Go suites
@@ -536,14 +572,17 @@ jobs:
           ARCHITECTURE_REQUIRED: ${{ needs.changes.outputs.architecture }}
           ARCHITECTURE_RESULT: ${{ needs.architecture-conformance.result }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
+          GO_RACE_RESULT: ${{ needs.go-race.result }}
           PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
         run: |
           test "$SELECTION_RESULT" = success
           if [ "$GO_REQUIRED" = true ]; then
             test "$GO_VALIDATION_RESULT" = success
+            test "$GO_RACE_RESULT" = success
             test "$PROJECT_AGENT_RESULT" = success
           else
             test "$GO_VALIDATION_RESULT" = skipped
+            test "$GO_RACE_RESULT" = skipped
             test "$PROJECT_AGENT_RESULT" = skipped
           fi
           if [ "$ARCHITECTURE_REQUIRED" = true ]; then
