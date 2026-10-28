@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { Composer, SplitPaneComposer } from "../ComposerView";
 import { createComposerControls } from "../ComposerControls";
 import { ComposerServicesProvider } from "../ComposerServicesContext";
@@ -90,6 +91,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   // branch control for a known non-repository or an as-yet unknown target.
   const branchPickerPending = environmentPending && liveEnvironment.status?.is_repo !== false && Boolean(liveEnvironment.root)
     && Boolean(liveEnvironment.status?.is_repo || settledVisual.current.environment.status?.is_repo);
+  const tab = view.tabs.items.find(row => row.id === ownerTabId);
+  const textOwner = JSON.stringify([pane, ownerTabId, tab?.workspaceId, tab?.workspaceRoot]);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
   const [, redraw] = useReducer(value => value + 1, 0);
@@ -109,9 +112,28 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
+  const pendingText = useRef<{ owner: string; text: string } | undefined>(undefined);
+  const setText = useCallback((text: string) => {
+    const edit = { owner: textOwner, text };
+    pendingText.current = edit;
+    void controls.setText(text).then(() => {
+      if (pendingText.current === edit) pendingText.current = undefined;
+    }, error => {
+      if (!isPluginLifecycleCancellation(error)) {
+        if (pendingText.current === edit) pendingText.current = undefined;
+        reportPresentedNavigationError(error);
+      }
+    });
+  }, [controls, textOwner]);
+  useEffect(() => {
+    const edit = pendingText.current;
+    if (!edit) return;
+    // Only replay text into the same draft after its application rebinds.
+    if (edit.owner !== textOwner) { pendingText.current = undefined; return; }
+    setText(edit.text);
+  }, [setText, textOwner]);
   useEffect(() => { run(controls.refreshEngines()); }, [controls, run, liveRuntime?.engineSelectionPending]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
-  const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const draft = view.drafts[pane];
   if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
   const Input = view.drafts.split ? SplitPaneComposer : Composer;
@@ -139,9 +161,11 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const offer = view.conversationActions.questions.find(row => row.thread_id === presentation.threadId && row.mode === "offer");
   const document = variant === "document" ? view.previewWorkspace.tabs.find(row => row.id === view.previewWorkspace.activeTabId) : undefined;
   const submit = async (mode: "queue" | "steer", text?: string, contentParts?: MessageContentPart[]) => {
+    const edit = pendingText.current;
     const result = await controls.submit(mode, { text, contentParts, consumedOfferID: offer?.request_id,
       ...(document?.kind === "file" ? { activeDocument: { path: document.path } } : {}),
       ...(document?.kind === "artifact" ? { artifact: { id: document.artifact.id, threadId: document.threadID, sha: document.artifact.sha256 ?? "" } } : {}) });
+    if (result.accepted && pendingText.current === edit) pendingText.current = undefined;
     return result.accepted;
   };
   const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
@@ -164,7 +188,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
-      prompt={draft.text} promptRevision={draft.revision} setPrompt={text => run(controls.setText(text))}
+      prompt={draft.text} promptRevision={draft.revision} setPrompt={setText}
       files={files(draft.fileIds)} images={images(draft.imageIds)} selections={structuredClone(draft.selections) as ResponseSelection[]}
       onChangeSelection={selection => run(controls.setSelections(draft.selections.map(row => row.id === selection.id ? selection : row)))}
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
