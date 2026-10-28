@@ -39,9 +39,10 @@ phone control is exposed to this tool. Do not turn VoiceOver on speculatively.
    semantic action or known shortcut when available. If that cannot complete the
    task and visible control is acceptable, use the built-in foreground path:
    reveal a concealed app, observe again, then send the intended input with
-   `foreground_policy="allow"`. It activates the Mac app and uses global input,
-   which can move the user's pointer. Set the policy on each input that needs it;
-   a successful foreground action does not change the default for later calls.
+   `foreground_policy="allow"`. Native input activates the Mac app and uses global
+   input, which can move the user's pointer. Set the policy on each input that
+   needs it; a successful foreground action does not change the default for later
+   calls.
 5. Verify the phone result again. If delivery remains uncertain, especially for
    sending, purchasing, or deleting, inspect the resulting state before any
    repeat. Stop if neither semantic nor foreground input produces a verified
@@ -49,10 +50,13 @@ phone control is exposed to this tool. Do not turn VoiceOver on speculatively.
    instead of taking over the foreground.
 
 Use `click` with an element and fresh `snapshot_id` (or fresh coordinates) for a
-foreground click fallback. `activate_control` and `perform_action` use AX actions;
-they are not substitutes for a native pointer event. For typing, first establish
-the phone field's focus and verify the resulting text. Do not assume that a Mac
-clipboard paste reached the phone; Universal Clipboard is a separate dependency.
+foreground click fallback. Check the returned `mechanism`: a frameless element can
+still fall back to `background_ax`. If that action visibly failed and a native click
+is needed, use fresh screenshot coordinates instead. `activate_control` and
+`perform_action` use AX actions; they are not substitutes for a native pointer
+event. For typing, first establish the phone field's focus and verify the
+resulting text. Do not assume that a Mac clipboard paste reached the phone;
+Universal Clipboard is a separate dependency.
 
 Use the existing computer tool for these input paths. Do not replace an ineffective
 background click with ad hoc `osascript`, System Events, or shell mouse scripts:
