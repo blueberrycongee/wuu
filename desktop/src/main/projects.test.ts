@@ -8,12 +8,19 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
 
 import { ProjectManager } from "./projects";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, stat: vi.fn(actual.stat) };
+});
 
 let home: string;
 let legacyUserData: string;
@@ -27,6 +34,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalWuuHome === undefined) {
     delete process.env.WUU_HOME;
   } else {
@@ -113,6 +121,65 @@ async function expectRejectedCanonicalStore(
   expect(await readFile(legacyStorePath(), "utf8")).toBe(legacyContents);
   expect(await legacyArchiveNames()).toEqual([]);
 }
+
+describe("ProjectManager nonblocking runtime reads", () => {
+  it("does not initialize scratch while rejecting a captured submission after reload", async () => {
+    await writeStore(canonicalStorePath(), [], { kind: "project", project_id: "removed", cwd: join(home, "removed") });
+    const before = await readFile(canonicalStorePath(), "utf8");
+    const manager = new ProjectManager();
+    expect(() => manager.resolveSubmissionContext({ kind: "project", project_id: "removed", cwd: join(home, "removed") })).toThrow("no longer registered");
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(before);
+    expect(await pathExists(join(home, "scratch"))).toBe(false);
+  });
+
+  it("rejects reads before initialization without creating workspace state", async () => {
+    await expect(new ProjectManager().readRuntimeContext()).rejects.toThrow("not initialized");
+    expect(await readdir(home)).toEqual([]);
+  });
+
+  it.each(["resolve", "reject"])("captures the selected workspace before asynchronous availability checks %s", async (outcome) => {
+    const firstPath = await createProjectDir("first");
+    const secondPath = await createProjectDir("second");
+    const first = project("first", "first", firstPath);
+    const second = project("second", "second", secondPath);
+    await writeStore(canonicalStorePath(), [first, second], { kind: "project", project_id: first.id, cwd: firstPath });
+    const manager = new ProjectManager();
+    manager.load();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const actualStat = fsPromises.stat;
+    const check = vi.spyOn(fsPromises, "stat").mockImplementationOnce(async () => {
+      await blocked;
+      if (outcome === "reject") throw new Error("volume unavailable");
+      return actualStat(firstPath);
+    });
+    const pending = manager.readRuntimeContext();
+    let completed = false;
+    void pending.then(() => { completed = true; }, () => { completed = true; });
+    try {
+      expect(check).toHaveBeenCalledWith(firstPath);
+      await setImmediate();
+      expect(completed).toBe(false);
+      manager.select(second.id);
+      await expect(manager.readRuntimeContext()).resolves.toEqual({ kind: "project", project_id: second.id, cwd: secondPath });
+      expect(completed).toBe(false);
+    } finally {
+      release();
+    }
+    if (outcome === "reject") await expect(pending).rejects.toThrow(firstPath);
+    else await expect(pending).resolves.toEqual({ kind: "project", project_id: first.id, cwd: firstPath });
+    expect(manager.activeWorkdir()).toBe(secondPath);
+  });
+
+  it.each(["empty", "dangling"])("initializes %s selection during load, not during read-only requests", async (selection) => {
+    if (selection === "dangling") await writeStore(canonicalStorePath(), [], { kind: "project", project_id: "removed", cwd: join(home, "missing") });
+    const manager = new ProjectManager();
+    manager.load();
+    const before = await readFile(canonicalStorePath(), "utf8");
+    await expect(manager.readRuntimeContext()).resolves.toEqual({ kind: "no_project", cwd: join(home, "scratch", "default") });
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(before);
+  });
+});
 
 describe("ProjectManager project store migration", () => {
   it("imports and archives the legacy project store when the canonical store is missing", async () => {
@@ -298,6 +365,7 @@ describe("ProjectManager runtime context availability", () => {
     expect(() => manager.ensureRuntimeContext()).toThrow(
       "工作区目录当前不可用",
     );
+    await expect(manager.readRuntimeContext()).rejects.toThrow("工作区目录当前不可用");
     expect(await readFile(canonicalStorePath(), "utf8")).toBe(persistedBefore);
     expect(await pathExists(join(home, "scratch", "default"))).toBe(false);
 

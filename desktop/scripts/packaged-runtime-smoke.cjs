@@ -43,6 +43,10 @@ function verifyResources(resources) {
     for (const file of files) assert.ok(asar.extractFile(archive, path.normalize(file)).length > 0, `Empty worker: ${file}`);
     workers[name] = files;
   }
+  const directoryWorkers = entries.filter(file => /^out\/main\/workspaceDirectoryWorker-[^/]+\.js$/.test(file));
+  assert.equal(directoryWorkers.length, 1, "Missing or ambiguous packaged directory worker");
+  assert.ok(asar.extractFile(archive, path.normalize(directoryWorkers[0])).length > 0, "Empty directory worker");
+  workers.workspaceDirectoryWorker = directoryWorkers;
   const bindings = entries.filter(file => /node_modules\/node-pty\/.*\.node$/.test(file));
   assert.ok(bindings.length, "Missing packaged native PTY binding");
   for (const file of bindings) {
@@ -174,6 +178,9 @@ async function main() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-packaged-smoke-"));
   const home = path.join(scratch, "home");
   const workspace = path.join(home, "workspace");
+  const otherWorkspace = path.join(home, "other-workspace");
+  fs.mkdirSync(otherWorkspace, { recursive: true });
+  fs.writeFileSync(path.join(otherWorkspace, "other.txt"), "other workspace\n");
   fs.mkdirSync(workspace, { recursive: true });
   fs.writeFileSync(path.join(workspace, "smoke.ts"), 'const packagedSmoke: number = "intentional type error";\nconsole.log(packagedSmoke);\n');
   fs.writeFileSync(path.join(workspace, "smoke.pdf"), makePDF());
@@ -250,6 +257,25 @@ async function main() {
       if (selected.active_context?.cwd !== workspace) throw new Error("Fixture workspace was not selected");
       return { build: await window.wuu.getBuildInfo(), updater: await window.wuu.getDesktopUpdateState() };
     }, workspace);
+    result.checks.directoryWorker = await evaluate(async ({ workspace, otherWorkspace }) => {
+      // Real preload/IPC and the worker emitted into app.asar, not a source or
+      // esbuild fixture. Deterministic blocked-I/O concurrency is a separate gate.
+      const roots = [workspace, otherWorkspace];
+      const results = await Promise.all(roots.map(root => window.wuu.listWorkspaceDirectory("", root)));
+      for (const [index, listing] of results.entries()) {
+        if (listing.root !== roots[index] || listing.path !== "") throw new Error("Directory worker changed request identity");
+      }
+      const names = results.map(listing => listing.entries.map(entry => entry.name).sort());
+      const fixtureNames = ["smoke.md", "smoke.pdf", "smoke.ts"];
+      if (!fixtureNames.every(name => names[0].includes(name)) || names[0].includes("other.txt") ||
+          !names[1].includes("other.txt") || fixtureNames.some(name => names[1].includes(name))) {
+        throw new Error(`Packaged directory worker returned incorrect entries: ${JSON.stringify(names)}`);
+      }
+      let missingError;
+      try { await window.wuu.listWorkspaceDirectory("missing", workspace); } catch (error) { missingError = String(error); }
+      if (!missingError?.includes("ENOENT")) throw new Error("Packaged directory worker did not preserve missing-path failure");
+      return { scopes: results.map(listing => ({ root: listing.root, path: listing.path })), names, missingPathRejected: true };
+    }, { workspace, otherWorkspace });
     assert.equal(result.checks.core.build.desktop.version, result.artifact.version);
     assert.ok(result.checks.core.build.core.version, "Packaged core must answer build-info");
     if (updaterConfigured) {
@@ -295,7 +321,7 @@ async function main() {
       await until(() => evaluate(name => Boolean(document.querySelector("file-tree-container")?.shadowRoot?.querySelector(`[data-item-path="${name}"]`)), name), `${name} in fixture tree`);
       await evaluate(name => document.querySelector("file-tree-container").shadowRoot.querySelector(`[data-item-path="${name}"]`).click(), name);
     }
-    const workerAssetRoot = pathToFileURL(path.join(copy, "Contents/Resources/app.asar/out/renderer/assets") + path.sep).href;
+    const workerAssetRoot = pathToFileURL(path.join(fs.realpathSync(copy), "Contents/Resources/app.asar/out/renderer/assets") + path.sep).href;
     async function worker(name) {
       result.workerObserver = await evaluate(workerObserverStatus);
       assert.ok(result.workerObserver.installed && result.workerObserver.token === observerToken

@@ -243,6 +243,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
 
+- Keep directory browsing from blocking the desktop main event loop on slow filesystems, including workspace availability and symlink checks; pending reads remain bound to their original workspace.
+
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 
 - Report missing capability protocol declarations directly from SDK initialization, without silently upgrading legacy tool-only plugins, and make new plugin templates and the single-file authoring example declare their version explicitly.

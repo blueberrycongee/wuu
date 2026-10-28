@@ -88,9 +88,11 @@ test("signed app checkpoint verifies runtime payloads and includes the update fe
   const dir = mkdtempSync(join(tmpdir(), "wuu-update-feed-test-"));
   try {
     const source = join(dir, "source");
+    const directoryWorker = "out/main/workspaceDirectoryWorker-fixture.js";
     const files = {
       "package.json": JSON.stringify({ version: "2026.10.19", main: "out/main/index.js" }),
       "out/main/index.js": "// main",
+      [directoryWorker]: "// directory worker",
       "out/preload/index.cjs": "// preload",
       "out/renderer/index.html": "<!doctype html>",
       "out/renderer/THIRD-PARTY-LICENSES.txt": "monaco-editor@1 pdfjs-dist@1 pele@1 blobatar@1",
@@ -142,6 +144,28 @@ test("signed app checkpoint verifies runtime payloads and includes the update fe
     delete rendererFiles["THIRD-PARTY-LICENSES.txt"];
     assert.throws(() => smokeModule.exports.verifyResources(dir), /THIRD-PARTY-LICENSES/);
     rendererFiles["THIRD-PARTY-LICENSES.txt"] = notice;
+    const rebuildArchive = async () => {
+      await asar.createPackageWithOptions(source, join(dir, "app.asar"), { unpack: "**/*.node" });
+      asar.uncache(join(dir, "app.asar"));
+      windowsFilesystem.setHeader(asar.getRawHeader(join(dir, "app.asar")).header, 0);
+    };
+    // Exercise the real archive inventory and Windows nested lookup for missing,
+    // ambiguous and empty workers; restore the valid package for the release hook.
+    rmSync(join(source, directoryWorker));
+    await rebuildArchive();
+    assert.throws(() => smokeModule.exports.verifyResources(dir), /Missing or ambiguous packaged directory worker/);
+    writeFileSync(join(source, directoryWorker), files[directoryWorker]);
+    const duplicateWorker = join(source, "out/main/workspaceDirectoryWorker-duplicate.js");
+    writeFileSync(duplicateWorker, files[directoryWorker]);
+    await rebuildArchive();
+    assert.throws(() => smokeModule.exports.verifyResources(dir), /Missing or ambiguous packaged directory worker/);
+    rmSync(duplicateWorker);
+    writeFileSync(join(source, directoryWorker), "");
+    await rebuildArchive();
+    assert.throws(() => smokeModule.exports.verifyResources(dir), /Empty directory worker/);
+    writeFileSync(join(source, directoryWorker), files[directoryWorker]);
+    await rebuildArchive();
+    assert.doesNotThrow(() => smokeModule.exports.verifyResources(dir));
     const runHook = () => execFileSync(process.execPath, ["-e", `
       const fs = require("node:fs");
       const path = require("node:path");
