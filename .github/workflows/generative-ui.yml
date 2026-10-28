@@ -6,6 +6,7 @@ on:
       - ".github/workflows/generative-ui.yml"
       - "plugins/generative-ui/**"
       - "plugins/package*.json"
+      - "clients/core/**"
       - "scripts/build-bundled-plugins.mjs"
       - "internal/plugin/**"
       - "internal/runtime/**"
@@ -55,6 +56,8 @@ jobs:
           cache: npm
           cache-dependency-path: |
             desktop/package-lock.json
+            clients/core/package-lock.json
+            packages/plugin-sdk/package-lock.json
             plugins/package-lock.json
       - name: Install desktop dependencies
         run: |
@@ -67,6 +70,8 @@ jobs:
       - name: Build TypeScript UI tool
         id: plugin-runtime
         run: |
+          npm ci --prefix clients/core
+          npm ci --prefix packages/plugin-sdk
           npm ci --prefix plugins
           npm --prefix plugins run typecheck
           npm --prefix plugins run build -- --plugin=generative-ui
