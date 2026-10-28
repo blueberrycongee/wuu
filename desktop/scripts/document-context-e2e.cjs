@@ -88,7 +88,7 @@ const server = http.createServer((req, res) => {
   });
 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let main, threadID, selectionDiagnostics, selectionInput, phase = 'startup';
+let main, threadID, selectionDiagnostics, selectionInput, selectionTrace, phase = 'startup';
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 const evaluate = (fn, arg) => main.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
 async function waitFor(fn, arg, timeout = 30000) {
@@ -262,7 +262,7 @@ function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
     boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
     core: process.env.WUU_DESKTOP_CORE, buildDir, annotationAcceptance, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
-    originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics }, null, 2));
+    originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics, selectionTrace }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, annotationAcceptance ? 420000 : 180000);
@@ -590,8 +590,34 @@ async function run() {
   // normal pane switch must discard it without attaching or sending it anywhere.
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.conversation-pane[inert]'));
+  await evaluate(() => {
+    const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
+    const describe = node => node ? `${node.nodeName}.${typeof node.className === 'string' ? node.className : ''}` : null;
+    window.__pdfFocusTrace = [];
+    const record = (event, target) => {
+      if (window.__pdfFocusTrace.length >= 150) return;
+      const selection = root.getSelection();
+      const menu = document.querySelector('.pdf-selection-action-menu');
+      window.__pdfFocusTrace.push({ event, target: describe(target), active: describe(document.activeElement),
+        selection: selection?.toString(), menu: menu?.className || null,
+        input: Boolean(menu?.querySelector('textarea')), time: Math.round(performance.now()) });
+    };
+    window.__recordPdfFocus = record;
+    for (const type of ['focusin', 'focusout', 'selectionchange']) {
+      document.addEventListener(type, event => record(`document:${type}`, event.composedPath()[0]), true);
+    }
+    root.addEventListener('selectionchange', event => record('shadow:selectionchange', event.target));
+    const relevant = node => node instanceof Element && (node.matches('.pdf-selection-menu, .pdf-selection-menu__actions, .pdf-selection-comment')
+      || node.querySelector('.pdf-selection-menu, .pdf-selection-menu__actions, .pdf-selection-comment'));
+    new MutationObserver(records => {
+      if (records.some(change => [...change.addedNodes, ...change.removedNodes].some(relevant))) record('menu:mutation');
+    }).observe(document.querySelector('[data-wuu-layer-host]') || document.body, { childList: true, subtree: true });
+    record('trace:start');
+  });
   await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-menu__comment-toggle'));
+  await evaluate(() => window.__recordPdfFocus('comment:click'));
   await click('.pdf-selection-menu__comment-toggle');
+  await evaluate(() => window.__recordPdfFocus('comment:clicked'));
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Never move this unfinished comment to another conversation.');
   await activateSplit(relatedID);
@@ -630,6 +656,7 @@ async function run() {
   const otherThread = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, relatedID);
   assert.equal(otherThread.turns.length, 0);
   checks.push('covered workspace PDF selection survives closing the panel and other split pane, then sends only to its intended conversation');
+  selectionTrace = await evaluate(() => window.__pdfFocusTrace);
   phase = 'completed'; writeEvidence(true); clearTimeout(timeout); server.close(); app.quit();
 }
 
@@ -651,12 +678,13 @@ async function fail(error) {
         ancestors.push({ node: describe(node), display: style.display, visibility: style.visibility,
           userSelect: style.userSelect, pointerEvents: style.pointerEvents, inert: node.inert, hidden: node.hidden });
       }
-      return { documentFocused: document.hasFocus(), bounds: bounds.toJSON(), ancestors, shadowSelection: summarize(root.getSelection()),
+      return { documentFocused: document.hasFocus(), activeElement: describe(document.activeElement), bounds: bounds.toJSON(), ancestors, shadowSelection: summarize(root.getSelection()),
         windowSelection: summarize(window.getSelection()), textLayer: span.parentElement.outerHTML.slice(0, 3000),
         hit: describe(root.elementFromPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2)) };
     });
     selectionDiagnostics.windowFocused = main.isFocused();
     selectionDiagnostics.webContentsFocused = main.webContents.isFocused();
+    selectionTrace = await evaluate(() => window.__pdfFocusTrace);
   } catch {} }
   if (main && !main.isDestroyed()) { try { await capture('failure'); } catch {} }
   if (main && !main.isDestroyed() && phase === 'quote stays in draft') { try {

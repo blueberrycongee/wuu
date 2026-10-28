@@ -111,7 +111,9 @@ async function click(selector) {
     }, { capture: true, once: true });
     const row = el.closest('.thread-row');
     return { x, y, row: row ? { label: el.getAttribute('aria-label'), draftId: row.getAttribute('data-draft-id'),
-      current: row.getAttribute('aria-current'), className: row.className } : undefined };
+      current: row.getAttribute('aria-current'), className: row.className,
+      section: row.closest('[data-section-id]')?.getAttribute('data-section-id'),
+      heading: document.querySelector('.conversation-title-heading h1')?.textContent } : undefined };
   }, selector), `click target ${selector}`);
   win.focus(); win.webContents.focus();
   for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, x: target.x, y: target.y, button: 'left', clickCount: 1 });
