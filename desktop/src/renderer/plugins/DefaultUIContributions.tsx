@@ -6,6 +6,7 @@ import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS } from "../../shared/workbench";
 import type { UIContributionRegistryV1 as PluginHost, RegisteredPresenterV1 as RegisteredPresenter } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { PluginConversationCards } from "./PluginConversationCards";
 import { PluginCommandActions } from "./PluginCommandActions";
+import { MessageActionsPresenceContext } from "../MessageActions";
 import { createPluginTranslator } from "./pluginI18n";
 import { useI18n } from "../i18n";
 import { dispatchFilePreviewAction } from "./FilePreviewPresentation";
@@ -96,12 +97,13 @@ function Cards(props: ContributionViewProps): React.ReactNode {
 function MessageActions(props: ContributionViewProps): React.ReactNode {
   const commands = useRegistry(props.host, () => props.host.getCommands());
   const item = props.context.snapshot as ConversationItemSnapshotV1 | undefined;
-  if (!item || typeof props.context.turnId !== "string") return props.fallback;
-  const context = Object.freeze({ contractVersion: 1 as const, target: "conversation.message.actions" as const,
-    threadId: typeof props.context.threadId === "string" ? props.context.threadId : undefined, turnId: props.context.turnId, item });
-  const applicable = props.host.resolveCommandActions(context).actions;
-  if (!applicable.length) return props.fallback;
-  return retain(props.host, commands, <PluginCommandActions host={props.host} context={context} />);
+  const context = item && typeof props.context.turnId === "string" ? Object.freeze({ contractVersion: 1 as const, target: "conversation.message.actions" as const,
+    threadId: typeof props.context.threadId === "string" ? props.context.threadId : undefined, turnId: props.context.turnId, item }) : undefined;
+  const present = !!context && props.host.resolveCommandActions(context).actions.length > 0;
+  return <MessageActionsPresenceContext.Provider value={present}>
+    {props.fallback}
+    {present && context && retain(props.host, commands, <PluginCommandActions host={props.host} context={context} />)}
+  </MessageActionsPresenceContext.Provider>;
 }
 
 function WorkspaceTools(props: ContributionViewProps): React.ReactNode {

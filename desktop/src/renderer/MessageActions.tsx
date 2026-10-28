@@ -11,13 +11,24 @@ import {
   Split,
   X,
 } from "./WuuIcons";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";
 import { useConversationRenderActive, useConversationRevealSnap } from "./ConversationRenderActivity";
 import { useImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
+
+// The default slot wrapper adds command actions beside composed content. Its
+// empty fallback must account for those actions without removing the content.
+export const MessageActionsPresenceContext = createContext(false);
+
+/** Presence is presentation state; the slot remains mounted when its row is hidden. */
+export function EmptyMessageActions({ onEmpty }: { onEmpty: (empty: boolean) => void }): null {
+  const present = useContext(MessageActionsPresenceContext);
+  useLayoutEffect(() => { onEmpty(!present); return () => onEmpty(false); }, [onEmpty, present]);
+  return null;
+}
 
 export function AgentMessageActions({
   getText,

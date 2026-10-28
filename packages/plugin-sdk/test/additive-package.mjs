@@ -15,6 +15,10 @@ for (const name of ['result.json', 'failure.log', 'renderer.log', 'transcript.js
 const temporary = await mkdtemp(join(tmpdir(), 'wuu-additive-author-'));
 try {
   const {tsc, project, packed} = await preparePublicSDK({sdk, temporary});
+  const messageAddons = join(project, 'message-actions');
+  await mkdir(messageAddons);
+  for (const name of ['message-command-addon.js', 'message-slot-addon.js']) await cp(join(sdk, 'test/fixtures', name), join(messageAddons, name));
+  await exec(process.execPath, [tsc, 'message-command-addon.js', 'message-slot-addon.js', '--allowJs', '--checkJs', '--noEmit', '--strict', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022'], {cwd: messageAddons});
   for (const name of ['additive-counter', 'additive-counter-controls']) await cp(join(repo, 'examples/plugins', name), join(project, name), {recursive: true});
   // A publishes its contract as an ordinary package export. B consumes that
   // public package, not A's source path or the host's internal implementations.
@@ -43,8 +47,8 @@ try {
   await writeFile(join(peer, 'plugin.json'), JSON.stringify(peerManifest));
   await cp(packed, join(output, 'sdk.tgz'));
   await writeFile(join(output, 'inputs.json'), JSON.stringify({sdkSHA256:createHash('sha256').update(await readFile(packed)).digest('hex'),binary:resolve(binary),binarySHA256:createHash('sha256').update(await readFile(binary)).digest('hex')}, null, 2));
-  const checked = await exec(process.execPath, [join(repo, 'desktop/node_modules/vitest/vitest.mjs'), 'run', 'src/renderer/plugins/AdditiveCooperation.integration.test.tsx', 'src/renderer/plugins/ApplicationShell.test.tsx', 'src/renderer/plugins/DesktopPluginRuntime.test.ts', '--maxWorkers=1'], {
-    cwd:join(repo, 'desktop'), env:{...process.env, WUU_ADDITIVE_BINARY:resolve(binary), WUU_ADDITIVE_PROJECT:project, WUU_ADDITIVE_OUTPUT:output}, maxBuffer:8*1024*1024,
+  const checked = await exec(process.execPath, [join(repo, 'desktop/node_modules/vitest/vitest.mjs'), 'run', 'src/renderer/plugins/AdditiveCooperation.integration.test.tsx', 'src/renderer/plugins/ApplicationShell.test.tsx', 'src/renderer/plugins/DesktopPluginRuntime.test.ts', 'src/renderer/ThreadItemView.test.tsx', 'src/renderer/plugins/DefaultUIContributions.test.tsx', '--maxWorkers=1'], {
+    cwd:join(repo, 'desktop'), env:{...process.env, WUU_ADDITIVE_BINARY:resolve(binary), WUU_ADDITIVE_PROJECT:project, WUU_ADDITIVE_OUTPUT:output, WUU_MESSAGE_ACTION_ADDONS:messageAddons}, maxBuffer:8*1024*1024,
   });
   await writeFile(join(output, 'renderer.log'), checked.stdout + checked.stderr); console.log(checked.stdout);
   const report = JSON.parse(await readFile(join(output, 'result.json'), 'utf8'));

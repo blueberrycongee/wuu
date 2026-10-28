@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -159,19 +160,40 @@ func TestForceArchivePreservesLivePartialHistory(t *testing.T) {
 	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	t.Cleanup(srv.Close)
+	queueLookup, resumeQueueLookup := make(chan struct{}), make(chan struct{})
+	reachedQueueLookup := sync.OnceFunc(func() { close(queueLookup) })
+	releaseQueueLookup := sync.OnceFunc(func() { close(resumeQueueLookup) })
+	srv.beforeQueuedTurnThreadLookupForTest = func() {
+		reachedQueueLookup()
+		<-resumeQueueLookup
+	}
+	defer func() {
+		releaseQueueLookup()
+		// Both runtime fixtures must outlive the server, including on failure.
+		srv.Close()
+	}()
+	// This fixture replaces the otherwise stable server runtime. Quiesce its
+	// unrelated readers and pause queue admission across the replacement.
+	srv.stopInferenceJournalMaintenance()
 	dispatchPayload(t, srv, "start", MethodThreadStart, ThreadStartParams{})
 	started := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"])
 	id := started.Thread.ID
+	srv.backgroundWG.Wait() // Join initial prewarm before starting the live turn.
 	dispatchPayload(t, srv, "turn", MethodTurnStart, TurnStartParams{ThreadID: id, Prompt: "work"})
 	waitForMethod(t, out, NotificationAgentMessageDelta)
 	dispatchPayload(t, srv, "queued", MethodTurnQueue, TurnQueueParams{ThreadID: id, Prompt: "keep this queued input", ClientID: "queued-before-archive"})
 	require.Nil(t, responseByID(t, parseOutput(t, out.String()), "queued")["error"])
+	select {
+	case <-queueLookup:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued turn did not reach the admission lookup")
+	}
 	successor := newTestRuntime(t, &fakeClient{})
 	successor.RootDir, successor.SessionDir = rt.RootDir, rt.SessionDir
 	successor.ActivityRegistry = rt.ActivityRegistry
 	successor.Documents, successor.Sessions = rt.Documents, rt.Sessions.WithContext(context.Background())
 	srv.rt = successor
+	releaseQueueLookup()
 	dispatchPayload(t, srv, "archive", MethodThreadArchive, ThreadArchiveParams{ThreadID: id, Archived: true, Force: true})
 	require.Nil(t, responseByID(t, parseOutput(t, out.String()), "archive")["error"])
 	messages, err := loadChatMessages(successor.Sessions, id)

@@ -210,11 +210,15 @@ func (e *selectedToolExecutor) PrepareModelStep(ctx context.Context, history []p
 // The agent calls settlement after normalizing execution errors. Do not settle
 // in ExecuteResult as well, or successes are finalized twice and failures skip it.
 func (e *selectedToolExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	return e.FinalizeToolOutcome(call, result).Result
+}
+
+func (e *selectedToolExecutor) FinalizeToolOutcome(call providers.ToolCall, result toolresult.Result) agent.ToolFinalization {
 	settled, err := e.client.Finalize(context.Background(), call, result)
 	if err != nil {
-		return toolresult.FromErrorText(fmt.Sprintf("selected tool finalization failed: %v", err))
+		return agent.ToolFinalization{Result: toolresult.FromErrorText(fmt.Sprintf("selected tool finalization failed: %v", err))}
 	}
-	return settled
+	return agent.ToolFinalization{Result: settled.Result, DiscoveredTools: settled.DiscoveredTools, AdditionalContext: settled.AdditionalContext}
 }
 func selectedToolSurface(ctx context.Context, executor agent.ToolExecutor) (capability.Surface, error) {
 	if hooked, ok := executor.(*hooks.HookedExecutor); ok {

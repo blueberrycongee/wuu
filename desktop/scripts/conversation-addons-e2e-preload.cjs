@@ -21,6 +21,7 @@ module.exports = api => {
     status: "idle", revision: 1, created_at: now, updated_at: now };
   let enabled = [], epoch = 0, baseInventory = [];
   const listeners = new Set();
+  const messageActionRequests = [];
   const inventory = () => enabled.map(name => ({ id: `user:conversation-addon-${name}`, kind: "plugin", name: `Conversation addon ${name}`,
     provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: `conversation-addon-${name}` },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
@@ -31,6 +32,15 @@ module.exports = api => {
       message: { method: "plugin/inventory/changed", params: { epoch: ++epoch, extension_inventory: [...baseInventory, ...inventory()], skills: [] } } });
   });
   return { ...api,
+    testMessageActionRequests: async () => messageActionRequests,
+    requestPluginRuntime: async request => {
+      if (!["user:conversation-addon-slot", "user:conversation-addon-command"].includes(request.id)) return api.requestPluginRuntime(request);
+      messageActionRequests.push(request);
+      return { result: null };
+    },
+    cancelPluginRuntime: async request => {
+      if (!["user:conversation-addon-slot", "user:conversation-addon-command"].includes(request.id)) return api.cancelPluginRuntime(request);
+    },
     initialize: async () => { const initial = await api.initialize(); baseInventory = initial.extension_inventory; return { ...initial, extension_inventory: [...baseInventory, ...inventory()] }; },
     startThread: async () => ({ thread }), resumeThread: async () => ({ thread }),
     listThreads: async () => ({ threads: [thread] }), listAllThreads: async () => ({ threads: [thread] }),

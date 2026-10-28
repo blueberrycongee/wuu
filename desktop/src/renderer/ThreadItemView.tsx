@@ -42,6 +42,7 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
 import {
   AgentMessageActions,
+  EmptyMessageActions,
   MessageCopyButton,
   MessageEditButton,
   MessageFileList,
@@ -130,12 +131,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     <slots.Slot name={`${slotOwner}/conversation.message.after`} context={context} />
   </>;
 });
-
-/** Presence is presentation state; the slot remains mounted when its row is hidden. */
-function EmptyMessageActions({ onEmpty }: { onEmpty: (empty: boolean) => void }): null {
-  useLayoutEffect(() => { onEmpty(true); return () => onEmpty(false); }, [onEmpty]);
-  return null;
-}
 
 function BuiltInThreadItemView({
   turnID,

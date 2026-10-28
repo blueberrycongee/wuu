@@ -230,6 +230,8 @@ registry 的实际调用者，绝不接受请求 JSON 指定。重复同一声�
 
 `agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
 
+`finalize` 对归一化后的结果只执行一次，包括执行失败和通过所选批次资源结算的拒绝。其 `additional_context` 追加在同一次调用的 execute 上下文之后；`discovered_tools` 按名称合并，同名时采用 finalize 定义。即使并行调用乱序完成，这些补充信息仍绑定到对应的已结算调用。发现的工具定义仅附在该调用对模型可见的工具结果中。上下文也适用于嵌套调用，并保存在下一次模型输入回执中，不进入普通会话历史，也不泄漏到之后的新回合。hook 装饰器、原生服务适配器和所选批次不会从旧式共享的“最后一次结果”上下文槽推断调用归属；这些集成必须提供按调用归属的上下文。共享槽 API 仅保留给没有流式推测或嵌套执行的直接串行叶子工具消费方使用。
+
 `agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
 
 Personal 策略是 `personal` 提供的普通 `agent.prompt@1` 服务。
