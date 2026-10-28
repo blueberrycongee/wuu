@@ -3243,7 +3243,7 @@
   color: var(--wuu-ink-soft);
 }
 
-.process-surface-tool-list .tool-activity-marker {
+.process-surface-tool-list :is(.tool-activity-marker, .workspace-tool-chevron, .program-tool-chevron) {
   align-self: flex-start;
   /* Center on the first text line, including at larger user font sizes. */
   margin-top: calc((1lh - 14px) / 2);
