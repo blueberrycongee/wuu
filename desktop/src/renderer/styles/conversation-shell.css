@@ -193,10 +193,8 @@
     var(--environment-panel-width) + var(--environment-panel-flow-gap)
   );
   --environment-panel-edge-gap: 18px;
-  /* Reserve only the space needed to keep a centered composer clear of the
-     right panel. As the effective sidebar shrinks and the conversation pane
-     grows, this falls smoothly to zero so the message flow returns to the
-     visual center of the window. */
+  /* Reserve only the space needed to keep the reading column clear of the
+     right panel. As the pane grows, this falls smoothly to zero. */
   --environment-panel-content-inset: clamp(
     0px,
     calc(
@@ -209,19 +207,16 @@
     ),
     var(--environment-panel-reserved-width)
   );
-  /* Keep a useful reading measure as the pane shrinks. Once the symmetric
-     gutter would leave less than 20 font-size units, give that space back and
-     move the composer and status controls onto the same remaining axis. */
+  /* Only add a leading gutter when the centered composer reaches its width
+     cap. This keeps message frames inside the composer without mirroring the
+     tool rail's entire footprint in narrower panes. */
   --conversation-environment-inset: 0px;
   --conversation-rail-start: clamp(
     0px,
-    calc(100cqi - var(--conversation-environment-inset) - 2 * var(--scrollbar-width) -
-      var(--workspace-tool-rail-inset, 0px) - 2 * var(--session-outer-padding-inline) -
-      20 * var(--conversation-message-font-size)),
-    var(--workspace-tool-rail-inset, 0px)
+    calc((100cqi - 2 * var(--scrollbar-width) - 2 * var(--session-outer-padding-inline) -
+      var(--session-composer-width)) / 2),
+    calc(var(--workspace-tool-rail-inset, 0px) + var(--conversation-environment-inset))
   );
-  --conversation-visible-inset-left: var(--conversation-rail-start);
-  --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;
   grid-row: 1;
@@ -305,7 +300,6 @@
 
 .conversation-pane.environment-panel-reserved {
   --conversation-environment-inset: var(--environment-panel-content-inset);
-  --conversation-visible-inset-right: calc(var(--environment-panel-content-inset) + var(--workspace-tool-rail-inset, 0px));
 }
 
 /* Both headers share the same row height and continuous baseline. */
@@ -1199,20 +1193,16 @@
   --conversation-status-gap: 8px;
   position: absolute;
   bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
-  left: var(--conversation-visible-inset-left);
-  /* Status controls share the reading column's centerline. Its symmetric
-     scrollbar gutters do not shift the center. */
-  right: var(--conversation-visible-inset-right);
-  /* The width fits between the insets like the composer's does; a wider
-     box would be pinned to the left inset and leave the centreline. */
+  left: 0;
+  right: 0;
+  /* Keep the centered status row clear of the rail and environment panel. */
+  --conversation-status-inset: max(
+    var(--session-outer-padding-inline),
+    calc(var(--workspace-tool-rail-inset, 0px) + var(--conversation-environment-inset))
+  );
   --jump-to-latest-max-width: min(
     var(--session-composer-width),
-    calc(
-      100% - var(--conversation-visible-inset-left) -
-        var(--conversation-visible-inset-right) -
-        var(--session-outer-padding-inline) -
-        var(--session-outer-padding-inline)
-    )
+    max(0px, 100% - 2 * var(--conversation-status-inset))
   );
   display: flex;
   width: var(--jump-to-latest-max-width);

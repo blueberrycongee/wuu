@@ -127,8 +127,8 @@
   --workspace-tool-rail-bottom-clearance: var(--workspace-conversation-dock-height, 0px);
 }
 
-/* Keep the viewport and scrollbar at the canvas edge. A matching gutter
- * centers wide reading columns; narrow panes give that gutter back. */
+/* Keep the viewport and scrollbar at the canvas edge. Reading content clears
+ * the rail on the right and follows the composer's leading edge when capped. */
 .conversation-pane .scroll-region-content {
   padding-left: var(--conversation-rail-start);
   padding-right: var(--workspace-tool-rail-inset, 0px);
@@ -3273,7 +3273,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   --workspace-right-panel-width: initial;
   --workspace-right-panel-reserved-width: initial;
   --environment-panel-content-inset: initial;
-  --conversation-visible-inset-right: initial;
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow.
      Each flow item owns its semantic trailing boundary; the grid itself must
      not add another anonymous row gap between turns. */

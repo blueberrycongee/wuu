@@ -379,7 +379,7 @@
    * ::-webkit-scrollbar sizing and Monaco's editor-scrollbar sizing).
    * ScrollbarMetrics.ts replaces it on the document root with the
    * platform's real scrollbar gutter width before first paint so the dock
-   * composer and message flow share one centerline on every machine. */
+   * composer and message flow use the same available width on every machine. */
   --scrollbar-width: 10px;
   --scrollbar-radius: var(--radius-pill);
   --scrollbar-track-bg: transparent;
