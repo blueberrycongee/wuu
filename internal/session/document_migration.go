@@ -211,6 +211,10 @@ type legacySessionConversion struct {
 
 func (c *legacySessionConversion) table(table string, rows []map[string]any) (bool, error) {
 	switch table {
+	case "fusion_dispatches", "fusion_tasks":
+		// Fusion's retired coordination state has no live consumer; the migration
+		// archives its schema and raw rows alongside the converted session data.
+		return true, nil
 	case "sessions", "session_messages", "session_folders", "session_controls", "project_work", "project_work_operations", "session_inbox", "plugin_turn_lifecycle_outbox", "plugin_turn_lifecycle", "held_user_work", "session_history_retractions", "session_history_checkpoints", "session_driver_bindings", "session_driver_checkpoints", "session_compaction_notes", "session_model_input_receipts", "participants", "participant_runs", "thread_execution_resets", "session_plugin_generation_snapshots", "context_seeds", "session_launches", "client_input_receipts":
 	default:
 		return false, nil

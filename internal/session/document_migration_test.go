@@ -650,3 +650,53 @@ func TestLegacyPersonalReceiptMigrationPreservesScopeAndPayload(t *testing.T) {
 		}
 	})
 }
+
+func TestLegacyMigrationArchivesRetiredFusionData(t *testing.T) {
+	ctx := context.Background()
+	legacy := t.TempDir()
+	if _, err := Create(legacy, "original"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := openStore(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE fusion_dispatches (id TEXT, payload BLOB); INSERT INTO fusion_dispatches VALUES ('dispatch', X'00FF'); CREATE TABLE fusion_tasks (id TEXT, payload TEXT); INSERT INTO fusion_tasks VALUES ('task', 'preserve me')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := persistence.Open(ctx, t.TempDir(), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	result, err := MigrateLegacySQLite(ctx, legacy, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"fusion_dispatches", "fusion_tasks"} {
+		if result.Rows[table] != 1 {
+			t.Fatalf("%s: missing row count", table)
+		}
+		view, err := provider.Read(ctx, persistence.Query{Namespace: documentNamespace("legacy_sqlite_rows"), Prefix: documentPrefix(table)})
+		if err != nil || len(view.Documents) != 1 {
+			t.Fatalf("%s archive: %d, %v", table, len(view.Documents), err)
+		}
+		var row legacysqlite.Row
+		if err := json.Unmarshal(view.Documents[0].Value, &row); err != nil {
+			t.Fatal(err)
+		}
+		if table == "fusion_dispatches" && row.Values["payload"] != "AP8=" {
+			t.Fatalf("blob not preserved: %#v", row)
+		}
+		if table == "fusion_tasks" && row.Values["payload"] != "preserve me" {
+			t.Fatalf("task not preserved: %#v", row)
+		}
+	}
+	if result, err := MigrateLegacySQLite(ctx, legacy, provider); err != nil || !result.AlreadyMigrated {
+		t.Fatalf("retry: %+v, %v", result, err)
+	}
+}
