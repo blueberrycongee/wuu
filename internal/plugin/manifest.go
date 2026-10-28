@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,9 +105,8 @@ type Manifest struct {
 	CommandPaths         []string                          `json:"-"`
 	Desktop              *DesktopSpec                      `json:"desktop,omitempty"`
 	Themes               []ThemeSpec                       `json:"themes,omitempty"`
+	Skins                []SkinSpec                        `json:"skins,omitempty"`
 	Settings             map[string]SettingDefinition      `json:"settings,omitempty"`
-	Slots                []SlotContributionSpec            `json:"slots,omitempty"`
-	Surfaces             []SurfaceContributionSpec         `json:"surfaces,omitempty"`
 	Presenters           []PresenterContributionSpec       `json:"presenters,omitempty"`
 	Navigation           []ViewEntryContributionSpec       `json:"navigation,omitempty"`
 	WorkspaceTools       []ViewEntryContributionSpec       `json:"workspace_tools,omitempty"`
@@ -131,7 +131,9 @@ func (m Manifest) EnabledByDefault() bool {
 // DesktopSpec identifies the package-relative browser module for Desktop
 // contributions. Entry is intentionally never an absolute package path.
 type DesktopSpec struct {
-	Entry string `json:"entry"`
+	Entry            string                          `json:"entry"`
+	Services         []pluginhost.ServiceDescriptor  `json:"services,omitempty"`
+	RequiredServices []pluginhost.ServiceRequirement `json:"required_services,omitempty"`
 }
 
 type ThemeSpec struct {
@@ -148,21 +150,6 @@ const (
 	ContributionModeReplace ContributionMode = "replace"
 	ContributionModeWrap    ContributionMode = "wrap"
 )
-
-type SlotContributionSpec struct {
-	ID     string `json:"id"`
-	Target string `json:"target"`
-	Order  int    `json:"order,omitempty"`
-	Title  string `json:"title,omitempty"`
-}
-
-type SurfaceContributionSpec struct {
-	ID     string           `json:"id"`
-	Target string           `json:"target"`
-	Mode   ContributionMode `json:"mode"`
-	Order  int              `json:"order,omitempty"`
-	Title  string           `json:"title,omitempty"`
-}
 
 type PresenterContributionSpec struct {
 	ID       string           `json:"id"`
@@ -281,6 +268,10 @@ func normalizeIconValue(root, field string, icon *IconSpec) (*IconSpec, error) {
 }
 
 func normalizeIconAssetPath(root, field, value string) (string, error) {
+	return normalizeImageAssetPath(root, field, value, maxPluginIconSize, false)
+}
+
+func normalizeImageAssetPath(root, field, value string, maxSize int64, allowJPEG bool) (string, error) {
 	if strings.Contains(value, `\`) {
 		return "", fmt.Errorf("%s path %q must use package-relative slash separators", field, value)
 	}
@@ -290,6 +281,10 @@ func normalizeIconAssetPath(root, field, value string) (string, error) {
 	}
 	switch strings.ToLower(filepath.Ext(rel)) {
 	case ".svg", ".png", ".webp":
+	case ".jpg", ".jpeg":
+		if !allowJPEG {
+			return "", fmt.Errorf("%s %q must be an SVG, PNG, or WebP image", field, value)
+		}
 	default:
 		return "", fmt.Errorf("%s %q must be an SVG, PNG, or WebP image", field, value)
 	}
@@ -308,8 +303,8 @@ func normalizeIconAssetPath(root, field, value string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s %s must be a regular file", field, rel)
 	}
-	if info.Size() > maxPluginIconSize {
-		return "", fmt.Errorf("%s %s exceeds %d bytes", field, rel, maxPluginIconSize)
+	if info.Size() > maxSize {
+		return "", fmt.Errorf("%s %s exceeds %d bytes", field, rel, maxSize)
 	}
 	if strings.EqualFold(filepath.Ext(rel), ".svg") {
 		data, err := os.ReadFile(path)
@@ -379,6 +374,7 @@ const (
 	SettingTypeString  SettingType = "string"
 	SettingTypeNumber  SettingType = "number"
 	SettingTypeEnum    SettingType = "enum"
+	SettingTypeSecret  SettingType = "secret"
 )
 
 type SettingScope string
@@ -391,20 +387,22 @@ const (
 type SettingApplyMode string
 
 const (
-	SettingApplyLive    SettingApplyMode = "live"
-	SettingApplyRestart SettingApplyMode = "restart"
+	SettingApplyLive          SettingApplyMode = "live"
+	SettingApplyNextOperation SettingApplyMode = "next-operation"
+	SettingApplyRestart       SettingApplyMode = "restart"
 )
 
 // SettingDefinition is a validated generated-control definition. Settings are
 // stored in Manifest.Settings under their plugin-qualified public ids.
 type SettingDefinition struct {
-	Type        SettingType      `json:"type"`
-	Title       string           `json:"title"`
-	Description string           `json:"description,omitempty"`
-	Default     any              `json:"default"`
-	Enum        []string         `json:"enum,omitempty"`
-	Scope       SettingScope     `json:"scope"`
-	Apply       SettingApplyMode `json:"apply"`
+	Type              SettingType      `json:"type"`
+	Title             string           `json:"title"`
+	Description       string           `json:"description,omitempty"`
+	Default           any              `json:"default"`
+	Enum              []string         `json:"enum,omitempty"`
+	Scope             SettingScope     `json:"scope"`
+	Apply             SettingApplyMode `json:"apply"`
+	CredentialOrigins []string         `json:"credential_origins,omitempty"`
 }
 
 // RuntimeSpec declares a long-lived external plugin process. Installing or
@@ -465,9 +463,8 @@ type rawManifest struct {
 type rawContributes struct {
 	Commands       json.RawMessage `json:"commands"`
 	Themes         json.RawMessage `json:"themes"`
+	Skins          json.RawMessage `json:"skins"`
 	Settings       json.RawMessage `json:"settings"`
-	Slots          json.RawMessage `json:"slots"`
-	Surfaces       json.RawMessage `json:"surfaces"`
 	Presenters     json.RawMessage `json:"presenters"`
 	Navigation     json.RawMessage `json:"navigation"`
 	WorkspaceTools json.RawMessage `json:"workspaceTools"`
@@ -533,7 +530,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		return Manifest{}, err
 	}
 	if contributes, ok := fields["contributes"]; ok {
-		if err := validateObjectFields("contributes", contributes, "commands", "themes", "settings", "slots", "surfaces", "presenters", "navigation", "workspaceTools", "settingsPages"); err != nil {
+		if err := validateObjectFields("contributes", contributes, "commands", "themes", "skins", "settings", "presenters", "navigation", "workspaceTools", "settingsPages"); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -594,6 +591,10 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 	if err != nil {
 		return Manifest{}, err
 	}
+	skins, err := normalizeSkins(root, raw.Contributes.Skins)
+	if err != nil {
+		return Manifest{}, err
+	}
 	settings, err := normalizeSettings(id, raw.Contributes.Settings)
 	if err != nil {
 		return Manifest{}, err
@@ -644,9 +645,8 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		CommandPaths:         commandPaths,
 		Desktop:              desktop,
 		Themes:               themes,
+		Skins:                skins,
 		Settings:             settings,
-		Slots:                ui.slots,
-		Surfaces:             ui.surfaces,
 		Presenters:           ui.presenters,
 		Navigation:           ui.navigation,
 		WorkspaceTools:       ui.workspaceTools,
@@ -702,12 +702,30 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	if err := validateObjectFields("desktop", trimmed, "entry"); err != nil {
+	if err := validateObjectFields("desktop", trimmed, "entry", "services", "required_services"); err != nil {
 		return nil, err
 	}
 	var spec DesktopSpec
 	if err := json.Unmarshal(trimmed, &spec); err != nil {
 		return nil, fmt.Errorf("desktop: %w", err)
+	}
+	seen := make(map[string]bool)
+	for _, service := range spec.Services {
+		if err := pluginhost.ValidateServiceDescriptor(service); err != nil {
+			return nil, fmt.Errorf("desktop: %w", err)
+		}
+		if !strings.HasPrefix(service.Name, "ui.") || service.Version != "1.0.0" || len(service.Methods) != 1 || service.Methods[0].Name != "describe" {
+			return nil, fmt.Errorf("desktop service %q must implement a ui.* 1.0.0 describe contract", service.Name)
+		}
+		if seen[service.Name] {
+			return nil, fmt.Errorf("duplicate desktop service %q", service.Name)
+		}
+		seen[service.Name] = true
+	}
+	for _, requirement := range spec.RequiredServices {
+		if err := pluginhost.ValidateServiceRequirement(requirement); err != nil {
+			return nil, fmt.Errorf("desktop: %w", err)
+		}
 	}
 	if strings.Contains(spec.Entry, `\`) {
 		return nil, fmt.Errorf("desktop.entry path %q must use package-relative slash separators", spec.Entry)
@@ -739,7 +757,8 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 	if info.Size() > maxDesktopEntrySize {
 		return nil, fmt.Errorf("desktop.entry %s exceeds %d bytes", entry, maxDesktopEntrySize)
 	}
-	return &DesktopSpec{Entry: entry}, nil
+	spec.Entry = entry
+	return &spec, nil
 }
 
 func normalizeThemes(raw json.RawMessage) ([]ThemeSpec, error) {
@@ -793,25 +812,13 @@ func normalizeThemes(raw json.RawMessage) ([]ThemeSpec, error) {
 	return themes, nil
 }
 
-var knownSlotTargets = map[string]struct{}{
-	"sidebar.primary": {}, "sidebar.footer": {}, "workspace.header": {}, "conversation.header": {},
-	"conversation.message.before": {}, "conversation.message.after": {}, "composer.above": {},
-	"composer.toolbar": {},
-}
-
-var knownSurfaceTargets = map[string]struct{}{
-	"conversation.timeline": {}, "conversation.message": {},
-}
-
 var knownPresenterTargets = map[string]struct{}{
-	"conversation.item": {}, "conversation.process": {}, "conversation.tool-activity": {},
+	"conversation.item": {}, "conversation.process": {},
 	"conversation.composer": {}, "header.conversation": {}, "header.workspace": {},
 	"navigation.primary": {}, "app.status": {}, "content.preview": {}, "settings": {},
 }
 
 type normalizedUIContributions struct {
-	slots          []SlotContributionSpec
-	surfaces       []SurfaceContributionSpec
 	presenters     []PresenterContributionSpec
 	navigation     []ViewEntryContributionSpec
 	workspaceTools []ViewEntryContributionSpec
@@ -820,14 +827,6 @@ type normalizedUIContributions struct {
 
 func normalizeUIContributions(root string, raw rawContributes) (normalizedUIContributions, error) {
 	seen := make(map[string]string)
-	slots, err := normalizeSlots(raw.Slots, seen)
-	if err != nil {
-		return normalizedUIContributions{}, err
-	}
-	surfaces, err := normalizeSurfaces(raw.Surfaces, seen)
-	if err != nil {
-		return normalizedUIContributions{}, err
-	}
 	presenters, err := normalizePresenters(raw.Presenters, seen)
 	if err != nil {
 		return normalizedUIContributions{}, err
@@ -845,7 +844,7 @@ func normalizeUIContributions(root string, raw rawContributes) (normalizedUICont
 		return normalizedUIContributions{}, err
 	}
 	return normalizedUIContributions{
-		slots: slots, surfaces: surfaces, presenters: presenters,
+		presenters: presenters,
 		navigation: navigation, workspaceTools: workspaceTools, settingsPages: settingsPages,
 	}, nil
 }
@@ -887,55 +886,6 @@ func normalizeViewEntries(root, field string, raw json.RawMessage, seen map[stri
 			return nil, fmt.Errorf("%s requires title", itemField)
 		}
 		seen[spec.ID] = itemField
-		out = append(out, spec)
-	}
-	return out, nil
-}
-
-func normalizeSlots(raw json.RawMessage, seen map[string]string) ([]SlotContributionSpec, error) {
-	items, err := decodeContributionArray("contributes.slots", raw)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SlotContributionSpec, 0, len(items))
-	for index, item := range items {
-		field := fmt.Sprintf("contributes.slots[%d]", index)
-		if err := validateObjectFields(field, item, "id", "target", "order", "title"); err != nil {
-			return nil, err
-		}
-		var spec SlotContributionSpec
-		if err := json.Unmarshal(item, &spec); err != nil {
-			return nil, fmt.Errorf("%s: %w", field, err)
-		}
-		if err := normalizeContributionIdentity(field, &spec.ID, &spec.Target, &spec.Title, knownSlotTargets, seen); err != nil {
-			return nil, err
-		}
-		out = append(out, spec)
-	}
-	return out, nil
-}
-
-func normalizeSurfaces(raw json.RawMessage, seen map[string]string) ([]SurfaceContributionSpec, error) {
-	items, err := decodeContributionArray("contributes.surfaces", raw)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SurfaceContributionSpec, 0, len(items))
-	for index, item := range items {
-		field := fmt.Sprintf("contributes.surfaces[%d]", index)
-		if err := validateObjectFields(field, item, "id", "target", "mode", "order", "title"); err != nil {
-			return nil, err
-		}
-		var spec SurfaceContributionSpec
-		if err := json.Unmarshal(item, &spec); err != nil {
-			return nil, fmt.Errorf("%s: %w", field, err)
-		}
-		if err := normalizeContributionIdentity(field, &spec.ID, &spec.Target, &spec.Title, knownSurfaceTargets, seen); err != nil {
-			return nil, err
-		}
-		if err := validateContributionMode(field, spec.Mode); err != nil {
-			return nil, err
-		}
 		out = append(out, spec)
 	}
 	return out, nil
@@ -1026,13 +976,14 @@ func normalizeTokenMap(field string, values map[string]string, allowed map[strin
 }
 
 type rawSettingDefinition struct {
-	Type        SettingType      `json:"type"`
-	Title       string           `json:"title"`
-	Description string           `json:"description"`
-	Default     json.RawMessage  `json:"default"`
-	Enum        []string         `json:"enum"`
-	Scope       SettingScope     `json:"scope"`
-	Apply       SettingApplyMode `json:"apply"`
+	Type              SettingType      `json:"type"`
+	Title             string           `json:"title"`
+	Description       string           `json:"description"`
+	Default           json.RawMessage  `json:"default"`
+	Enum              []string         `json:"enum"`
+	Scope             SettingScope     `json:"scope"`
+	Apply             SettingApplyMode `json:"apply"`
+	CredentialOrigins []string         `json:"credential_origins,omitempty"`
 }
 
 func normalizeSettings(pluginID string, raw json.RawMessage) (map[string]SettingDefinition, error) {
@@ -1050,7 +1001,7 @@ func normalizeSettings(pluginID string, raw json.RawMessage) (map[string]Setting
 			return nil, fmt.Errorf("contributes.settings contains invalid plugin-local id %q", localID)
 		}
 		field := "contributes.settings." + localID
-		if err := validateObjectFields(field, rawDefinition, "type", "title", "description", "default", "enum", "scope", "apply"); err != nil {
+		if err := validateObjectFields(field, rawDefinition, "type", "title", "description", "default", "enum", "scope", "apply", "credential_origins"); err != nil {
 			return nil, err
 		}
 		var rawSetting rawSettingDefinition
@@ -1076,15 +1027,15 @@ func normalizeSettingDefinition(field string, raw rawSettingDefinition) (Setting
 		return SettingDefinition{}, fmt.Errorf("%s requires title", field)
 	}
 	switch raw.Type {
-	case SettingTypeBoolean, SettingTypeString, SettingTypeNumber, SettingTypeEnum:
+	case SettingTypeBoolean, SettingTypeString, SettingTypeNumber, SettingTypeEnum, SettingTypeSecret:
 	default:
 		return SettingDefinition{}, fmt.Errorf("%s has unsupported type %q", field, raw.Type)
 	}
 	if raw.Scope != SettingScopeUser && raw.Scope != SettingScopeWorkspace {
 		return SettingDefinition{}, fmt.Errorf("%s scope must be user or workspace", field)
 	}
-	if raw.Apply != SettingApplyLive && raw.Apply != SettingApplyRestart {
-		return SettingDefinition{}, fmt.Errorf("%s apply must be live or restart", field)
+	if raw.Apply != SettingApplyLive && raw.Apply != SettingApplyNextOperation && raw.Apply != SettingApplyRestart {
+		return SettingDefinition{}, fmt.Errorf("%s apply must be live, next-operation or restart", field)
 	}
 	defaultValue, err := decodeJSONDefault(raw.Default)
 	if err != nil {
@@ -1095,7 +1046,7 @@ func normalizeSettingDefinition(field string, raw rawSettingDefinition) (Setting
 		if _, ok := defaultValue.(bool); !ok {
 			return SettingDefinition{}, fmt.Errorf("%s default must be boolean", field)
 		}
-	case SettingTypeString:
+	case SettingTypeString, SettingTypeSecret:
 		if _, ok := defaultValue.(string); !ok {
 			return SettingDefinition{}, fmt.Errorf("%s default must be string", field)
 		}
@@ -1117,12 +1068,29 @@ func normalizeSettingDefinition(field string, raw rawSettingDefinition) (Setting
 			return SettingDefinition{}, fmt.Errorf("%s default %q is not an enum choice", field, value)
 		}
 	}
+	if raw.Type == SettingTypeSecret {
+		if defaultValue != "" || raw.Scope != SettingScopeUser || raw.Apply != SettingApplyLive {
+			return SettingDefinition{}, fmt.Errorf("%s secret requires empty default, user scope and live apply", field)
+		}
+		if len(raw.CredentialOrigins) == 0 || len(raw.CredentialOrigins) > 8 {
+			return SettingDefinition{}, fmt.Errorf("%s secret requires 1 to 8 exact HTTPS credential_origins", field)
+		}
+		for _, origin := range raw.CredentialOrigins {
+			parsed, err := url.Parse(origin)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Opaque != "" || parsed.String() != origin || strings.ToLower(parsed.Host) != parsed.Host {
+				return SettingDefinition{}, fmt.Errorf("%s credential_origins must contain exact HTTPS origins without paths or credentials", field)
+			}
+		}
+		sort.Strings(raw.CredentialOrigins)
+	} else if len(raw.CredentialOrigins) != 0 {
+		return SettingDefinition{}, fmt.Errorf("%s credential_origins requires type secret", field)
+	}
 	if raw.Type != SettingTypeEnum && len(raw.Enum) > 0 {
 		return SettingDefinition{}, fmt.Errorf("%s enum choices require type enum", field)
 	}
 	return SettingDefinition{
 		Type: raw.Type, Title: raw.Title, Description: raw.Description, Default: defaultValue,
-		Enum: raw.Enum, Scope: raw.Scope, Apply: raw.Apply,
+		Enum: raw.Enum, Scope: raw.Scope, Apply: raw.Apply, CredentialOrigins: raw.CredentialOrigins,
 	}, nil
 }
 
@@ -1691,4 +1659,35 @@ func normalizeStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ValidateSettingValue applies the same primitive schema at read and write boundaries.
+func ValidateSettingValue(definition SettingDefinition, raw json.RawMessage) error {
+	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
+		return errors.New("plugin setting value must be valid JSON within 65536 bytes")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return errors.New("plugin setting value is invalid")
+	}
+	valid := false
+	switch definition.Type {
+	case SettingTypeBoolean:
+		_, valid = value.(bool)
+	case SettingTypeString, SettingTypeSecret:
+		_, valid = value.(string)
+	case SettingTypeNumber:
+		_, valid = value.(json.Number)
+	case SettingTypeEnum:
+		text, ok := value.(string)
+		for _, candidate := range definition.Enum {
+			valid = valid || (ok && text == candidate)
+		}
+	}
+	if !valid {
+		return fmt.Errorf("plugin setting value does not match declared type %q", definition.Type)
+	}
+	return nil
 }

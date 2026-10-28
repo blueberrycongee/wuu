@@ -46,6 +46,10 @@ describe("standalone onboarding CLI discovery", () => {
     const directory = temporaryDirectory();
     mkdirSync(join(directory, "codex"));
     chmodSync(binary(directory, "claude"), 0o644);
-    expect(discoverPreviewEngines({ PATH: directory }).engines.slice(1).every((engine) => !engine.binary_ok)).toBe(true);
+    expect(discoverPreviewEngines({
+      PATH: directory,
+      WUU_CODEX_BINARY: join(directory, "codex"),
+      WUU_CLAUDE_BINARY: join(directory, "claude"),
+    }).engines.slice(1).every((engine) => !engine.binary_ok)).toBe(true);
   });
 });

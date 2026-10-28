@@ -14,7 +14,7 @@ const (
 	projectWaitMaximum = 5 * time.Minute
 )
 
-func (s *Server) finishProjectDispatch(ctx context.Context, project, actor session.Session, clientID string, request tools.ProjectSessionRequest, result any, err error) (any, error) {
+func (s *ProjectCoordinationProvider) finishProjectDispatch(ctx context.Context, project, actor session.Session, clientID string, request tools.ProjectSessionRequest, result any, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +28,7 @@ func (s *Server) finishProjectDispatch(ctx context.Context, project, actor sessi
 	view := result.(projectSessionView)
 	request.SessionID, request.TurnID = view.SessionID, view.TurnID
 	// Legacy create-side can return an existing side without dispatching.
-	recorded, err := session.InboxHas(s.rt.SessionDir, clientID)
+	recorded, err := s.store.InboxHas(clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (s *Server) finishProjectDispatch(ctx context.Context, project, actor sessi
 }
 
 // Waiting observes one dispatch/turn; it never cancels the target execution.
-func (s *Server) waitProjectSession(ctx context.Context, project, actor session.Session, request tools.ProjectSessionRequest, clientID string) (any, error) {
+func (s *ProjectCoordinationProvider) waitProjectSession(ctx context.Context, project, actor session.Session, request tools.ProjectSessionRequest, clientID string) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 	// fences without generating model polling turns.
 	recheck := time.NewTicker(100 * time.Millisecond)
 	defer recheck.Stop()
-	th, err := s.ensureThreadLoaded(metadata.ID)
+	th, err := s.ensureThreadLoaded(s.binding, metadata.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 			return nil, err
 		}
 		if clientID != "" {
-			if err := session.ValidateInboxControls(s.rt.SessionDir, clientID); err != nil {
+			if err := s.store.ValidateInboxControls(clientID); err != nil {
 				return nil, err
 			}
 			if turnID == "" {
@@ -138,7 +138,7 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 			if clientID == "" {
 				return nil, errors.New("target session has no turn to wait for")
 			}
-			pending, err := session.PendingInbox(s.rt.SessionDir, metadata.ID)
+			pending, err := s.store.PendingInbox(metadata.ID)
 			if err != nil {
 				return nil, err
 			}

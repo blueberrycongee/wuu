@@ -14,7 +14,9 @@ func TestGitCommitMessageUsesConfiguredBYOKRuntime(t *testing.T) {
 	rt.StreamRunner.Effort = "low"
 	rt.StreamRunner.ProviderOptions = map[string]any{"thinking": "disabled"}
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(
 		`{"id":"commitmsg","method":"git/commit-message","params":{"diff":"diff --git a/a.go b/a.go\n+hello","files":["a.go","a.go"," b.go "]}}`,

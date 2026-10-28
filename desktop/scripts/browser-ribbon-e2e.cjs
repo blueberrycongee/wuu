@@ -1,0 +1,314 @@
+// Exercise the compact shipping ribbon and persistent native capsule over a live page.
+// Synthetic tab models complement the full native workspace acceptance.
+// WUU_RIBBON_DEV=1 exercises the same host through the shipping Vite config.
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const assert = require("node:assert/strict");
+const root = path.resolve(__dirname, "..");
+const output = process.env.WUU_RIBBON_E2E_OUTPUT || path.join(root, "out/e2e/browser-ribbon");
+if (!process.versions.electron) {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-ribbon-e2e-"));
+  try {
+    const result = require("node:child_process").spawnSync(process.env.WUU_E2E_ELECTRON || String(require("electron")), [
+      ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless"] : [])] : []), __filename,
+    ], { stdio: "inherit", env: { ...process.env, WUU_RIBBON_PROFILE: profile } });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 1;
+  } finally { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  return;
+}
+const { app, BrowserWindow, WebContentsView, ipcMain, protocol } = require("electron");
+assert(process.env.WUU_RIBBON_PROFILE);
+app.setPath("userData", process.env.WUU_RIBBON_PROFILE);
+fs.mkdirSync(output, { recursive: true });
+for (const name of ["failure.txt", "failure.png", "failure-events.json"]) fs.rmSync(path.join(output, name), { force: true });
+const checks = [], screenshots = [], limitations = [];
+const nativeEvents = [];
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+let win, nativeHost, devServer;
+let phase = "startup";
+const phases = [{ phase, at: performance.now() }];
+const surfacesNow = () => win && !win.isDestroyed() ? win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(view => ({
+  url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
+})) : [];
+async function bounded(promise, label, timeout = 3000) {
+  if (phase !== label) phases.push({ phase: label, at: performance.now() });
+  phase = label;
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Timed out awaiting: " + label)), timeout);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+require("esbuild").buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayHost.ts")], outfile: path.join(output, "native-host.cjs"),
+  bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+const { ChromeOverlayHost, chromeOverlayScheme } = require(path.join(output, "native-host.cjs"));
+protocol.registerSchemesAsPrivileged([chromeOverlayScheme]);
+async function until(fn, label) {
+  for (let i = 0; i < 150; i++) { if (await bounded(Promise.resolve().then(fn), label)) return; await delay(20); }
+  throw new Error("Timed out: " + label);
+}
+const run = code => bounded(win.webContents.executeJavaScript(code, true), "shell: " + code.slice(0, 160));
+function key(keyCode) {
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode });
+}
+(async () => {
+  await app.whenReady();
+  let devURL;
+  if (process.env.WUU_RIBBON_DEV === "1") {
+    const { loadConfigFromFile } = await import("electron-vite");
+    const { createServer } = await import("vite");
+    const loaded = await loadConfigFromFile({ command: "serve", mode: "development" }, path.join(root, "electron.vite.config.ts"), root);
+    devServer = await createServer({ ...loaded.config.renderer, configFile: false, root,
+      cacheDir: path.join(root, "node_modules/.vite/ribbon-acceptance"),
+      server: { ...loaded.config.renderer.server, host: "127.0.0.1", port: 0, open: false } });
+    await devServer.listen();
+    devURL = `http://127.0.0.1:${devServer.httpServer.address().port}`;
+  }
+  await require("esbuild").build({
+    stdin: { resolveDir: root, loader: "tsx", contents: `
+      import React,{useState} from "react";import{createRoot}from"react-dom/client";
+      import{NavigationRibbon}from"./src/renderer/NavigationRibbon";import{Settings}from"./src/renderer/WuuIcons";import{startFocusModality}from"./src/renderer/FocusModality";
+      import"./src/renderer/styles.css";startFocusModality();
+      function Fixture(){const[tabs,setTabs]=useState(Array.from({length:48},(_,i)=>({id:"tab-"+i,title:i===0?"Playing audio · a very long page title that must not overlap controls":i===1?"Pinned and muted · 固定的标签页":i===2?"Loading the next page…":"Reference "+i+" · 浏览器标签页",url:"https://example.com/"+i,audible:i===0,muted:i===1,pinned:i===1,loading:i===2})));
+      const[active,setActive]=useState("tab-0");window.fixture={tabs,active};
+      return <><aside className="sidebar" style={{position:"absolute",inset:0,width:52}}><NavigationRibbon items={[]} websites={tabs} activeWebsiteId={active} onSelectWebsite={tab=>setActive(tab.id)}
+        onCloseTab={id=>setTabs(tabs.filter(tab=>tab.id!==id))} onMuteTab={(id,muted)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,muted}:tab))}
+        onPinTab={(id,pinned)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,pinned}:tab))} onNewTab={()=>{}}
+        footer={<button className="sidebar-ribbon-button" aria-label="Settings"><Settings/><span className="sidebar-ribbon-label">Settings</span></button>}/></aside>
+        <div role="toolbar" style={{position:"absolute",top:0,left:52,right:0,height:"var(--web-workspace-toolbar-height)",background:"var(--workbench-canvas-bg)",display:"flex",alignItems:"center",gap:20,paddingLeft:40}}>
+          <button aria-label="Browser back">Back</button><span>Search or enter address</span>
+        </div><main style={{marginLeft:280,padding:80}}><h1>Browser ribbon acceptance</h1>
+        <p>The production ribbon with 48 fixture tabs.</p><input aria-label="Page editor" placeholder="Page input keeps focus when a background tab closes"/></main></>}
+      createRoot(document.getElementById("root")).render(<Fixture/>);` },
+    outfile: path.join(output, "ribbon.js"), bundle: true, platform: "browser", format: "iife", define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' }, loader: { ".woff2": "file", ".ttf": "file", ".png": "file", ".svg": "file" },
+    plugins: [{ name: "raw-svg", setup(build) {
+      build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg" }));
+      build.onLoad({ filter: /.*/, namespace: "raw-svg" }, args => ({ contents: fs.readFileSync(args.path, "utf8"), loader: "text" }));
+    } }],
+  });
+  fs.writeFileSync(path.join(output, "index.html"), `<!doctype html><html data-theme="light"><meta charset="utf-8">
+    <link rel="stylesheet" href="ribbon.css"><style>:root{--sidebar-ribbon-width:52px;--workbench-top:0px;--conversation-message-font-size:15px}body{background:var(--workbench-canvas-bg);margin:0}main{font-size:var(--font-ui)}input{width:100%}</style>
+    <div id="root"></div><script>window.wuu={};</script><script src="ribbon.js"></script></html>`);
+  win = new BrowserWindow({ width: 1000, height: 760, webPreferences: { sandbox: true } });
+  await win.loadFile(path.join(output, "index.html"));
+  await until(() => run('document.querySelectorAll("[data-ribbon-id]").length===48'), "rendered tabs");
+  await run('document.querySelector("[data-ribbon-id]").focus()');
+  key("END");
+  await until(() => run('document.activeElement.dataset.ribbonId==="tab-47"'), "End navigation");
+  assert(await run('document.querySelector(".sidebar-ribbon-main").scrollTop>0'));
+  checks.push("End focuses and scrolls to the last of 48 tabs");
+  key("HOME");
+  await until(() => run('document.activeElement.dataset.ribbonId==="tab-0"'), "Home navigation");
+  key("DOWN");
+  await until(() => run('document.activeElement.dataset.ribbonId==="tab-1"'), "Arrow navigation");
+  assert.equal(await run('window.fixture.active'), "tab-0");
+  checks.push("Arrow navigation moves focus without changing the active page");
+  await run('document.querySelector("[data-ribbon-id=tab-0]").dispatchEvent(new MouseEvent("contextmenu", {bubbles:true,clientX:30,clientY:150}))');
+  await until(() => run('!!document.querySelector("[role=menu]")'), "tab menu");
+  await run('document.querySelectorAll("[role=menuitem]")[1].click()');
+  await until(() => run('window.fixture.tabs[0].muted'), "mute menu action");
+  assert.equal(await run('window.fixture.active'), "tab-0");
+  checks.push("The tab menu toggles mute without selecting another tab");
+  key("HOME");
+  for (const theme of ["light", "dark"]) for (const size of [15, 20]) {
+    await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty("--conversation-message-font-size","${size}px");
+      document.querySelector("[data-ribbon-id]").focus();`);
+    key("HOME");
+    assert.equal(await run('document.querySelector("nav").getBoundingClientRect().width'), 52, "Keyboard focus preserves compact width");
+    await run('document.querySelector(".sidebar-ribbon-footer button").focus()');
+    await delay(250);
+    const seam = await run(`(()=>{const nav=document.querySelector("nav"),toolbar=document.querySelector("[role=toolbar]");
+      return {ribbonTop:nav.getBoundingClientRect().top+parseFloat(getComputedStyle(nav).paddingTop),pageTop:toolbar.getBoundingClientRect().bottom}})()`);
+    assert.equal(seam.ribbonTop, seam.pageTop, `${theme}/${size}: shell header and browser viewport must meet without a gap`);
+    const file = `${theme}-${size}px.png`;
+    fs.writeFileSync(path.join(output, file), (await win.webContents.capturePage()).toPNG()); screenshots.push(file);
+  }
+  checks.push("Keyboard navigation keeps the compact width in light/dark at 15/20px");
+  checks.push("Browser viewport and ribbon header share one boundary in light/dark at 15/20px");
+  await run('document.querySelector("input").focus();document.querySelector("[data-ribbon-id=tab-2]").dispatchEvent(new MouseEvent("auxclick",{button:1,bubbles:true}))');
+  win.webContents.sendInputEvent({ type: "mouseMove", x: 500, y: 400 });
+  await until(() => run('!document.querySelector("[data-ribbon-id=tab-2]")'), "background close");
+  assert.equal(await run('document.activeElement.tagName'), "INPUT");
+  checks.push("Closing a background tab preserves the page editor focus");
+  await until(() => run('document.querySelector("nav").dataset.expanded!=="true"'), "collapsed ribbon");
+  await delay(250);
+  assert.equal(await run(`(()=>{const row=document.querySelector("[data-ribbon-id=tab-1]").closest(".sidebar-ribbon-tab-row");
+    return row.querySelector(".sidebar-ribbon-audio-badge").getBoundingClientRect().bottom<=row.querySelector(".sidebar-ribbon-pin").getBoundingClientRect().top})()`), true);
+  checks.push("Collapsed audio and pinned indicators occupy separate corners");
+  fs.writeFileSync(path.join(output, "dark-20px-collapsed.png"), (await win.webContents.capturePage()).toPNG());
+  screenshots.push("dark-20px-collapsed.png");
+
+  // Exercise the remaining native capsule over a live webpage.
+  const esbuild = require("esbuild");
+  await esbuild.build({ entryPoints: [path.join(root, "src/renderer/chromeOverlayMain.tsx")], outfile: path.join(output, "assets/native-ribbon.js"),
+    bundle: true, platform: "browser", format: "iife", jsx: "automatic",
+    define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' },
+    loader: { ".woff2": "file", ".ttf": "file", ".png": "file", ".svg": "file" },
+    plugins: [{ name: "native-raw-svg", setup(build) {
+      build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg" }));
+      build.onLoad({ filter: /.*/, namespace: "raw-svg" }, args => ({ contents: fs.readFileSync(args.path, "utf8"), loader: "text" }));
+    } }] });
+  esbuild.buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayPreload.ts")], outfile: path.join(output, "native-preload.cjs"),
+    bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+  fs.writeFileSync(path.join(output, "chrome-overlay.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="wuu-chrome://ui/assets/native-ribbon.css"><div id="root"></div><script src="wuu-chrome://ui/assets/native-ribbon.js"></script>');
+  const page = new WebContentsView({ webPreferences: { sandbox: true } });
+  await run('document.documentElement.style.setProperty("--conversation-message-font-size","15px")');
+  const pageTop = await run('Math.ceil(document.querySelector("[role=toolbar]").getBoundingClientRect().bottom)');
+  const pageBounds = { x: 52, y: pageTop, width: 948, height: 720 - pageTop };
+  page.setBounds(pageBounds);
+  win.contentView.addChildView(page);
+  await page.webContents.loadURL('data:text/html,' + encodeURIComponent('<body style="background:#badced"><h1>Live browser page</h1><input placeholder="Page focus target"><script>window.framesSeen=[];function tick(t){framesSeen.push({t,visibility:document.visibilityState});if(framesSeen.length>400)framesSeen.shift();requestAnimationFrame(tick)}requestAnimationFrame(tick)</script>'));
+  page.webContents.focus();
+  const appearance = await run(`(()=>{const c=getComputedStyle(document.querySelector("nav"));return{theme:"dark",locale:"en-US",fontFamily:c.fontFamily,variables:Object.fromEntries([...c].filter(k=>k.startsWith("--")).map(k=>[k,c.getPropertyValue(k)]))}})()`);
+  nativeHost = new ChromeOverlayHost((_owner, event) => {
+    nativeEvents.push({ type: "command", command: event.command, at: performance.now() });
+  }, devURL ? path.join(root, "out/renderer") : output, path.join(output, "native-preload.cjs"), devURL);
+  const readySurfaces = new Set();
+  ipcMain.handle("wuu:chrome-overlay-ready", event => { readySurfaces.add(event.sender.id); return nativeHost.ready(event); });
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => nativeHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-command", (event, message) => nativeHost.command(event, message));
+  app.on("web-contents-created", (_event, contents) => {
+    contents.on("console-message", event => console.error("Native renderer:", event.message));
+    contents.on("did-fail-load", (_event, code, description, url) => console.error("Native load:", code, description, url));
+    contents.on("preload-error", (_event, _path, error) => console.error("Native preload:", error));
+  });
+  const chromeSession = require("electron").session.fromPartition("wuu-chrome-overlays");
+  chromeSession.webRequest.onCompleted(details => {
+    if (details.statusCode >= 400) console.error("Native resource failed:", details.statusCode, details.url);
+  });
+  nativeHost.prepare(win);
+  if (devURL) {
+    for (const resource of ["/vendor/blobatar/README.md", "/vendor/blobatar/package.json", "/vendor/blobatar/src/../../package.json", "/@fs/etc/passwd"]) {
+      assert.equal((await chromeSession.fetch("wuu-chrome://ui" + resource)).status, 403, `Private chrome rejects ${resource}`);
+    }
+    checks.push("Dev chrome refuses vendor metadata and arbitrary filesystem access");
+  }
+  // A persistent editor must not disappear between owner resize notifications,
+  // even if a microtask makes it visible again before the final screenshot.
+  const capsuleRequest = { version: 1, token: "native-capsule-resize", generation: 1,
+    bounds: { x: 280, y: 400, width: 416, height: 96 }, focus: true, appearance,
+    model: { kind: "capsule", expanded: true, menuOpen: false, draft: "", busy: false,
+      sourceTitle: "Live browser page", label: "Ask Wuu", placeholder: "Ask about this page",
+      sendLabel: "Send", openLabel: "Open chat", collapseLabel: "Collapse and keep draft" } };
+  nativeHost.show(win, capsuleRequest);
+  let capsule;
+  await until(() => {
+    capsule = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=capsule"));
+    return capsule?.getVisible() && capsule.webContents.isFocused();
+  }, "native capsule editor visible and focused");
+  const capsuleRun = code => bounded(capsule.webContents.executeJavaScript(code, true), "capsule: " + code.slice(0, 160));
+  // The native paint handshake precedes the finite clip-path unfold. A click
+  // on the still-clipped editor hits its background and legitimately blurs it.
+  // Wait for the actual hit target, not an arbitrary delay or forced DOM focus.
+  let editorPoint;
+  await until(async () => {
+    editorPoint = await capsuleRun(`(()=>{const input=document.querySelector("[data-context-capsule] input");
+      if(!input)return null;const r=input.getBoundingClientRect();
+      const point={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};
+      return r.width>0&&r.height>0&&document.elementFromPoint(point.x,point.y)===input?point:null})()`);
+    return editorPoint;
+  }, "capsule input center is hit-testable after reveal");
+  capsule.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...editorPoint });
+  capsule.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...editorPoint });
+  await until(() => capsuleRun('document.activeElement?.matches("[data-context-capsule] input")'), "capsule input owns focus");
+  const draft = "Keep this browser draft through window resizing";
+  await capsule.webContents.insertText(draft);
+  await until(() => capsuleRun(`document.querySelector("[data-context-capsule] input").value===${JSON.stringify(draft)}`), "native capsule accepts draft");
+  await capsuleRun('document.querySelector("[data-context-capsule] input").setSelectionRange(5,22)');
+  const resizeEvidence = { type: "capsule-resize", transitions: [], samples: [] };
+  nativeEvents.push(resizeEvidence);
+  const capsuleSetVisible = capsule.setVisible.bind(capsule);
+  capsule.setVisible = visible => {
+    const before = capsule.getVisible();
+    const result = capsuleSetVisible(visible);
+    const after = capsule.getVisible();
+    if (before !== after) resizeEvidence.transitions.push({ visible: after, at: performance.now() });
+    return result;
+  };
+  for (const [width, height] of [[940, 720], [1080, 800], [820, 660], [1140, 820], [900, 700], [1000, 760]]) {
+    const resized = new Promise(resolve => win.once("resize", resolve));
+    win.setSize(width, height);
+    await bounded(resized, `owner resize event ${width}x${height}`);
+    const editor = await capsuleRun(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const input=document.querySelector("[data-context-capsule] input");
+      resolve({value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input});
+    })))`);
+    resizeEvidence.samples.push({ window: win.getBounds(), visible: capsule.getVisible(),
+      focused: capsule.webContents.isFocused(), editor });
+  }
+  fs.writeFileSync(path.join(output, "capsule-resize.json"), JSON.stringify(resizeEvidence, null, 2));
+  assert.equal(resizeEvidence.transitions.some(event => !event.visible), false, "Resizing the owner must never hide the persistent capsule");
+  for (const sample of resizeEvidence.samples) {
+    assert.equal(sample.visible, true);
+    assert.equal(sample.focused, true, "Resizing preserves the native capsule keyboard owner");
+    assert.deepEqual(sample.editor, { value: draft, start: 5, end: 22, active: true }, "Resizing preserves the capsule draft and selection");
+  }
+  fs.writeFileSync(path.join(output, "native-capsule-after-resize.png"), (await capsule.webContents.capturePage()).toPNG());
+  screenshots.push("native-capsule-after-resize.png");
+  checks.push("Repeated owner resize keeps the native capsule continuously visible and preserves editor draft, selection and focus");
+  const paintEvidence = { type: "capsule-model-paint", samples: [] };
+  nativeEvents.push(paintEvidence);
+  let capsuleGeneration = capsuleRequest.generation;
+  for (const focusOwner of ["capsule", "page"]) {
+    if (focusOwner === "page") {
+      await page.webContents.executeJavaScript('document.querySelector("input").focus()');
+      page.webContents.focus();
+      await until(() => page.webContents.isFocused(), "page owns native keyboard focus before chrome updates");
+    }
+    for (let step = 0; step < 4; step++) {
+      const update = { ...capsuleRequest, generation: ++capsuleGeneration, focus: false,
+        bounds: { ...capsuleRequest.bounds, x: 280 + step * 5, y: 400 + step * 3 },
+        model: { ...capsuleRequest.model, expanded: focusOwner === "capsule", draft, sourceTitle: `Updated page ${step}` } };
+      const painted = new Promise(resolve => {
+        const observe = (_event, token, generation) => {
+          if (token !== update.token || generation !== update.generation) return;
+          ipcMain.removeListener("wuu:chrome-overlay-painted", observe);
+          resolve();
+        };
+        ipcMain.on("wuu:chrome-overlay-painted", observe);
+      });
+      nativeHost.show(win, update);
+      await bounded(painted, `capsule painted generation ${update.generation}`);
+      const editor = await capsuleRun(`(()=>{const input=document.querySelector("[data-context-capsule] input");
+        return input?{value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input}:null})()`);
+      paintEvidence.samples.push({ focusOwner, generation: update.generation, visible: capsule.getVisible(),
+        capsuleFocused: capsule.webContents.isFocused(), pageFocused: page.webContents.isFocused(), editor });
+    }
+  }
+  fs.writeFileSync(path.join(output, "capsule-model-paint.json"), JSON.stringify(paintEvidence, null, 2));
+  for (const sample of paintEvidence.samples) {
+    assert.equal(sample.visible, true);
+    assert.equal(sample.focusOwner === "capsule" ? sample.capsuleFocused : sample.pageFocused, true, "Painting visible chrome preserves the current native keyboard owner");
+    if (sample.focusOwner === "capsule") assert.deepEqual(sample.editor, { value: draft, start: 5, end: 22, active: true }, "Chrome model updates preserve the editor draft and selection");
+  }
+  checks.push("Visible capsule model and bounds updates preserve page or editor focus without disturbing the draft and selection");
+  fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
+    nativeEvents, phases, devServer: Boolean(devURL), scope: "Shipping React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
+  console.log(checks.join("\n"));
+  console.log("Evidence:", output);
+})().catch(async error => {
+  fs.writeFileSync(path.join(output, "failure-progress.json"), JSON.stringify({ phase, phases, surfaces: surfacesNow(), checks, nativeEvents }, null, 2));
+  if (win && !win.isDestroyed()) {
+    const surfaces = await Promise.all(win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(async view => ({
+      url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
+      renderer: await bounded(view.webContents.executeJavaScript(`(()=>{const ribbon=document.querySelector(".sidebar-ribbon");return {
+        visibility:document.visibilityState,reducedMotion:matchMedia("(prefers-reduced-motion: reduce)").matches,
+        active:document.activeElement?.outerHTML?.slice(0,400),
+        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))}})()`), "failure renderer diagnostics").catch(reason => ({ error: String(reason) })),
+    })));
+    fs.writeFileSync(path.join(output, "failure-surfaces.json"), JSON.stringify(surfaces, null, 2));
+    const screenshot = await bounded(win.webContents.capturePage(), "failure screenshot").catch(() => null);
+    if (screenshot) fs.writeFileSync(path.join(output, "failure.png"), screenshot.toPNG());
+  }
+  fs.writeFileSync(path.join(output, "failure-events.json"), JSON.stringify(nativeEvents, null, 2));
+  console.error(error); fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack)); process.exitCode = 1;
+}).finally(async () => { if (win) nativeHost?.close(win); win?.destroy(); await devServer?.close(); app.exit(process.exitCode || 0); });
+setTimeout(() => {
+  fs.writeFileSync(path.join(output, "failure-progress.json"), JSON.stringify({ phase, phases, surfaces: surfacesNow(), checks, nativeEvents, watchdog: true }, null, 2));
+  console.error("Ribbon watchdog expired during:", phase);
+  app.exit(1);
+}, 60000).unref();

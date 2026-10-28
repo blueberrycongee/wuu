@@ -19,7 +19,7 @@ Object.defineProperty(app, 'isPackaged', { get: () => true });
 Object.assign(process.env, {
   HOME: home, WUU_HOME: home, CODEX_HOME: path.join(home, '.codex'),
   WUU_DESKTOP_CORE: path.join(desktop, 'build/bin/wuu-core'),
-  WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '1',
+  WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '0',
 });
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
@@ -45,6 +45,9 @@ async function waitFor(win, fn, arg) {
 const modifier = process.platform === 'darwin' ? 'meta' : 'control';
 async function key(win, keyCode, modifiers = [modifier]) {
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+  // Printable input needs its character event; keyDown alone is only the
+  // shortcut phase on macOS and does not insert text into the composer.
+  if (modifiers.length === 0 && keyCode.length === 1) win.webContents.sendInputEvent({ type: 'char', keyCode });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
 }
 async function zoom(win, keyCode, expected, modifiers) {
@@ -63,7 +66,10 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
   fs.writeFileSync(path.join(output, 'default-100.png'), (await main.webContents.capturePage()).toPNG());
   results.push('first launch defaults to 100%');
   main.show(); main.focus();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+  main.webContents.focus();
   await evaluate(main, () => document.querySelector('.composer textarea').focus());
+  await waitFor(main, () => document.hasFocus() && document.activeElement?.matches('.composer textarea'));
   await zoom(main, '0', 100);
   await zoom(main, '=', 110);
   await zoom(main, '+', 120, [modifier, 'shift']);

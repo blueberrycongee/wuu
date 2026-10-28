@@ -113,6 +113,9 @@ button:focus-visible {
   isolation: isolate;
   inset: 0;
   overflow: auto;
+  /* Fit-width scaling can otherwise toggle a classic scrollbar as page height
+     crosses the viewport, repeatedly resizing and cancelling PDF renders. */
+  scrollbar-gutter: stable;
   background: var(--paper);
 }
 

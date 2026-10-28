@@ -13,6 +13,8 @@ import {
   filePreviewContentType,
   toFilePreviewSnapshot,
 } from "./FilePreviewPresentation";
+import { PreviewContentProvider } from "../PreviewContentContext";
+import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { PluginHost } from "./PluginHost";
 import { WorkbenchController } from "./Workbench";
 
@@ -188,3 +190,18 @@ function textFileBase(): WorkspaceFileReadResult {
     truncated: false, text: "const ok = true;",
   };
 }
+
+it("routes a provided public preview through its selected slot without the private presenter", () => {
+  const service = new ApplicationPreviewContent({
+    listWorkspaceDirectory: vi.fn(), readWorkspaceFile: vi.fn(), revealWorkspaceItem: vi.fn(), showWorkspaceItemMenu: vi.fn(),
+  });
+  const renderSlot = vi.fn(({ name, context }: import("../../../../packages/plugin-sdk/src/ui").UISlotProps) =>
+    <div data-public-slot={name}>{String((context?.snapshot as { text: string }).text)}</div>);
+  act(() => root.render(<PreviewContentProvider service={service} slots={{ Slot: renderSlot }}>
+    <FilePreviewPresentation workspaceRoot="/repo" workspaceRelativePath="x.txt" text="public content"
+      loading={false} fallback={<div>native fallback</div>} />
+  </PreviewContentProvider>));
+  expect(container.textContent).toBe("public content");
+  expect(renderSlot.mock.calls[0][0].context?.resource).toEqual({ root: "/repo", path: "x.txt" });
+  expect(renderSlot.mock.calls[0][0].context).not.toHaveProperty("dispatchAction");
+});

@@ -1,5 +1,7 @@
-import { hostSupports } from "./HostCapabilities";
+import { useSettingsControls, SettingsControlsProvider } from "./SettingsControlsContext";
+import { MCPDiagnostic } from "./MCPDiagnostic";
 import { isTouchWebShell } from "./ComposerFocus";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import {
   AlertCircle,
   AlertTriangle,
@@ -31,6 +33,7 @@ import {
 import type {
   CodexPetSettingsUpdate,
   EngineListResult,
+  ExtensionInventoryRecord,
   EngineUpdateParams,
   ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
@@ -49,14 +52,14 @@ import {
   useState,
   useSyncExternalStore
 } from "react";
+import { isConfigurablePlugin } from "./SettingsPageAvailability";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
-import { useSidebarDrawerState } from "./SidebarDrawerState";
+import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
-  ExtensionInventoryRecord,
   InitializeResult,
   MCPAuthStartResult,
   MCPServerStatus,
@@ -78,24 +81,20 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
-import { BackgroundSettings } from "./background/BackgroundSettings";
-import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
+import { ShellSkinSettings } from "./background/ShellSkinSettings";
+import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
-import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
-import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
-import { DefaultModelRows, ModelServicesPage } from "./ModelServicesPage";
-import { SubscriptionDashboard } from "./SubscriptionDashboard";
+import { ModelServicesPage } from "./ModelServicesPage";
 import { SettingsRemotePage } from "./SettingsRemotePage";
-import { ThemePreferenceControl } from "./ThemePreferenceSection";
+import { ContentThemeControl, ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
@@ -107,13 +106,6 @@ import {
   usageTokenTotal,
   type UsageHeatmapCell,
 } from "./UsageActivity";
-import { SettingsPresentation } from "./plugins/SettingsPresentation";
-import {
-  desktopPluginHost,
-  desktopWorkbenchController,
-} from "./plugins/DesktopPluginRuntime";
-import type { PluginHost } from "./plugins/PluginHost";
-import { PluginViewContent, type WorkbenchController } from "./plugins/Workbench";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { PluginIcon } from "./PublicIcon";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
@@ -170,21 +162,6 @@ const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0
   archive: "settings.searchKeywords.archive",
 };
 
-function remoteControlAvailable(): boolean {
-  return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
-}
-
-function browserSettingsAvailable(): boolean {
-  return Boolean(
-    window.wuu?.listBrowserProfiles &&
-      window.wuu.importBrowserCookies &&
-      window.wuu.listBrowserExtensions &&
-      window.wuu.addBrowserExtension &&
-      window.wuu.setBrowserExtensionEnabled &&
-      window.wuu.removeBrowserExtension,
-  );
-}
-
 // App-level preferences stay at the top of the rail; less frequent setup follows
 // under labeled groups. Page IDs stay flat for plugin snapshots and deep links
 // ("advanced" is still the built-in agent page).
@@ -194,15 +171,15 @@ type NativeSettingsGroup = {
   pages: NativeSettingsPage[];
 };
 
-function nativeSettingsGroups(): NativeSettingsGroup[] {
+function nativeSettingsGroups(browserSettingsAllowed: boolean, capabilities: import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1): NativeSettingsGroup[] {
   return [
     {
       id: "app",
       pages: [
         "general",
         "appearance",
-        ...(browserSettingsAvailable() ? ["browser" as const] : []),
-        ...(remoteControlAvailable() ? ["remote" as const] : []),
+        ...(browserSettingsAllowed && capabilities.browser ? ["browser" as const] : []),
+        ...(capabilities.remote ? ["remote" as const] : []),
       ],
     },
     {
@@ -210,16 +187,13 @@ function nativeSettingsGroups(): NativeSettingsGroup[] {
       labelKey: "settings.navModelsAgentsTools",
       pages: [
         "providers",
-        "agents",
         "advanced",
-        "mcp",
       ],
     },
     {
       id: "account-data",
       labelKey: "settings.navAccountData",
       pages: [
-        ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
         "usage",
         "archive",
       ],
@@ -231,23 +205,16 @@ type CopyState = "idle" | "copying" | "copied";
 
 const COPY_RESET_MS = 1500;
 
-function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
-  const next = page ?? "providers";
-  if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
-    return "providers";
-  }
-  if (next === "remote" && !remoteControlAvailable()) {
-    return "providers";
-  }
-  if (next === "browser" && !browserSettingsAvailable()) {
-    return "providers";
-  }
-  return next;
-}
-
-export function SettingsView({
+function SettingsViewContent({
+  browserSettingsAllowed = true,
+  embedded = false,
+  embeddedDrawerPhase,
+  onSidebarPointerEnter,
+  onSidebarPointerLeave,
   initialized,
   initialPage,
+  page,
+  onPageChange,
   running,
   usage,
   usageLoading = false,
@@ -267,6 +234,8 @@ export function SettingsView({
   onSave,
   onRemoveProvider,
   onRefreshModelCatalog,
+  onProvidersChanged,
+  onProviderModelsChanged,
   onRefreshEngineInventory,
   onUpdateEngineInventory,
   onAdvancedSave,
@@ -287,11 +256,16 @@ export function SettingsView({
   sidebarCollapsed,
   sidebarAnimating,
   onToggleSidebar,
-  pluginHost = desktopPluginHost,
-  workbenchController = desktopWorkbenchController,
 }: {
+  browserSettingsAllowed?: boolean;
+  embedded?: boolean;
+  embeddedDrawerPhase?: SidebarDrawerPhase;
+  onSidebarPointerEnter?: () => void;
+  onSidebarPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
   initialized?: InitializeResult;
   initialPage?: SettingsPage;
+  page?: SettingsPage;
+  onPageChange?: (page: SettingsPage) => void;
   running: boolean;
   usage?: SettingsUsageResponse;
   usageLoading?: boolean;
@@ -311,6 +285,8 @@ export function SettingsView({
   onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
+  onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
+  onProviderModelsChanged?: (name: string, accountId: string, models: NonNullable<NonNullable<InitializeResult["providers"]>[number]["models"]>) => void;
   onRefreshEngineInventory: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;
   onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
@@ -329,9 +305,14 @@ export function SettingsView({
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
-  pluginHost?: PluginHost;
-  workbenchController?: WorkbenchController;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const loadPluginIcon = useMemo(() => controls.loadPluginIconURL.bind(controls), [controls]);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const { t } = useI18n();
   const providers = initialized?.providers ?? [];
   const runningProviderNameSet = useMemo(
@@ -339,14 +320,15 @@ export function SettingsView({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
-  const [activePage, setActivePage] = useState<SettingsPage>(() =>
-    availableSettingsPage(initialPage),
+  const [localPage, setActivePage] = useState<SettingsPage>(() =>
+    availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities),
   );
+  const activePage = availableSettingsPage(page ?? localPage, browserSettingsAllowed, controls.capabilities);
   const [navQuery, setNavQuery] = useState("");
   const customPluginSettingsPages = useSyncExternalStore(
-    (listener) => pluginHost.subscribe(listener),
-    () => pluginHost.getSettingsPages(),
-    () => pluginHost.getSettingsPages(),
+    (listener) => controls.subscribe(listener),
+    () => controls.getPages(),
+    () => controls.getPages(),
   );
   const pluginSettingsRecords = useMemo(
     () => (initialized?.extension_inventory ?? []).filter(isConfigurablePlugin),
@@ -387,7 +369,11 @@ export function SettingsView({
   const [mcpServers, setMCPServers] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMCPLoading] = useState(false);
   const [mcpError, setMCPError] = useState("");
+  const [mcpActionErrors, setMCPActionErrors] = useState<Record<string, MCPActionFailure>>({});
+  const [mcpListRevision, setMCPListRevision] = useState(0);
   const [mcpBusyServer, setMCPBusyServer] = useState("");
+  const currentMCPControls = useRef(controls);
+  currentMCPControls.current = controls;
   const [autoCompactDraft, setAutoCompactDraft] = useState(true);
   const [compactThresholdDraft, setCompactThresholdDraft] = useState("");
   const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
@@ -404,16 +390,23 @@ export function SettingsView({
   const advancedCommittedRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    setActivePage(availableSettingsPage(initialPage));
-  }, [initialPage]);
+    setActivePage(availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities));
+  }, [initialPage, browserSettingsAllowed]);
+
+  useLayoutEffect(() => {
+    if (page !== undefined && activePage !== page) onPageChange?.(activePage);
+  }, [activePage, page, onPageChange]);
 
   useLayoutEffect(() => {
     const missingGeneratedPage = activePage.startsWith("plugin-settings:")
       && activePluginSettingsRecord === undefined;
     const missingCustomPage = activePage.startsWith("plugin-view:")
       && activeCustomPluginPage === undefined;
-    if (missingGeneratedPage || missingCustomPage) setActivePage("providers");
-  }, [activeCustomPluginPage, activePage, activePluginSettingsRecord]);
+    if (missingGeneratedPage || missingCustomPage) {
+      setActivePage("providers");
+      onPageChange?.("providers");
+    }
+  }, [activeCustomPluginPage, activePage, activePluginSettingsRecord, onPageChange]);
 
   useLayoutEffect(() => {
     if (settingsScrollRef.current) {
@@ -423,22 +416,29 @@ export function SettingsView({
 
   useEffect(() => {
     let cancelled = false;
-    if (!hostSupports("getBuildInfo")) return;
-    void window.wuu.getBuildInfo().then((info) => {
+    if (!controls.capabilities.build) return;
+    void controls.getBuildInfo().then((info) => {
       if (!cancelled) {
         setDesktopBuild(info.desktop);
       }
+    }).catch((error: unknown) => {
+      if (!cancelled && !isPluginLifecycleCancellation(error)) console.error("Failed to read desktop build information", error);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [controls]);
+
+  useEffect(() => {
+    setMCPActionErrors({});
+    setMCPBusyServer("");
+  }, [controls]);
 
   useEffect(() => {
     let cancelled = false;
     setMCPLoading(true);
     setMCPError("");
-    void window.wuu
+    void controls
       .listMCPServers()
       .then((result) => {
         if (!cancelled) {
@@ -458,7 +458,7 @@ export function SettingsView({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [controls, mcpListRevision]);
 
   const core = initialized?.core;
   useEffect(() => {
@@ -480,62 +480,86 @@ export function SettingsView({
 
   async function runMCPAction(name: string, action: "connect" | "disconnect" | "refresh"): Promise<void> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
       const result =
         action === "connect"
-          ? await window.wuu.connectMCPServer(name)
+          ? await controls.connectMCPServer(name)
           : action === "disconnect"
-            ? await window.wuu.disconnectMCPServer(name)
-            : await window.wuu.refreshMCPServer(name);
-      setMCPServers((servers) => upsertMCPServerStatus(servers, result.status));
+            ? await controls.disconnectMCPServer(name)
+            : await controls.refreshMCPServer(name);
+      if (mcpActionCurrent()) setMCPServers((servers) => upsertMCPServerStatus(servers, result.status));
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, action, err);
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
+    }
+  }
+
+  function mcpActionCurrent(): boolean {
+    return mounted.current && currentMCPControls.current === controls;
+  }
+
+  async function recordMCPActionFailure(name: string, action: MCPActionFailure["action"], error: unknown): Promise<void> {
+    if (!mcpActionCurrent() || isPluginLifecycleCancellation(error)) return;
+    setMCPActionErrors((errors) => ({ ...errors, [name]: { action, message: error instanceof Error ? error.message : String(error) } }));
+    // Failed actions reject over IPC, but the manager retains the classified
+    // state. Read it through the same public control rather than parsing logs.
+    try {
+      const result = await controls.listMCPServers();
+      if (mcpActionCurrent()) {
+        const status = result.servers.find((server) => server.name === name);
+        if (status) setMCPServers((servers) => upsertMCPServerStatus(servers, status));
+        setMCPError("");
+      }
+    } catch (statusError) {
+      if (!isPluginLifecycleCancellation(statusError)) console.error("Failed to read MCP status after an action failure", statusError);
     }
   }
 
   async function startMCPAuth(name: string): Promise<MCPAuthStartResult | undefined> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
-      const result = await window.wuu.startMCPAuth(name);
-      await window.wuu.openExternal(result.authorization_url);
+      const result = await controls.startMCPAuth(name);
+      if (!mcpActionCurrent()) return undefined;
+      await controls.openExternal(result.authorization_url);
+      if (!mcpActionCurrent()) return undefined;
       return result;
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "login", err);
       return undefined;
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
   async function finishMCPAuth(name: string, state: string, code: string): Promise<boolean> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
-      const result = await window.wuu.finishMCPAuth(name, state, code);
+      const result = await controls.finishMCPAuth(name, state, code);
+      if (!mcpActionCurrent()) return false;
       setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
       return true;
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "login", err);
       return false;
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
   async function removeMCPAuth(name: string): Promise<void> {
     setMCPBusyServer(name);
-    setMCPError("");
+    setMCPActionErrors((errors) => withoutRecordKey(errors, name));
     try {
-      const result = await window.wuu.removeMCPAuth(name);
-      setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
+      const result = await controls.removeMCPAuth(name);
+      if (mcpActionCurrent()) setMCPServers((servers) => upsertMCPServerStatus(servers, result.server));
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      await recordMCPActionFailure(name, "logout", err);
     } finally {
-      setMCPBusyServer("");
+      if (mcpActionCurrent()) setMCPBusyServer("");
     }
   }
 
@@ -654,27 +678,29 @@ export function SettingsView({
 
   // Mirror the main view's sidebar collapse/hover logic so the settings shell
   // behaves the same way: a persistent `sidebarCollapsed` flag hides the rail
-  // and only the left-edge hover zone + the toggle button can reopen it as a
-  // drawer overlay. Navigating between settings pages does not close it;
+  // and only the left-edge hover zone can reopen it as a drawer overlay.
+  // The toggle explicitly pins or collapses it. Navigating between settings pages does not close it;
   // pointer exit and window-level dismissal remain the close signals.
   const fallbackShellRef = useRef<HTMLDivElement>(null);
   const effectiveShellRef = shellRef ?? fallbackShellRef;
   const {
-    sidebarDrawerPhase,
+    sidebarDrawerPhase: standaloneDrawerPhase,
     sidebarHoverZoneRef,
     scheduleSidebarDrawerOpen,
     cancelSidebarDrawerOpen,
     openSidebarDrawer,
+    closeSidebarDrawer,
     scheduleSidebarDrawerCloseFromPointerLeave
   } = useSidebarDrawerState({
     appShellRef: effectiveShellRef,
-    sidebarCollapsed,
+    sidebarCollapsed: !embedded && sidebarCollapsed,
     resizingSidebar,
     motionMs: sidebarDrawerExitMs,
     dockingMotionMs: sidebarMotionMs,
     closeOnWindowResize: true
   });
-  const shellClassName = `settings-shell${resizingSidebar ? " resizing-sidebar" : ""}${
+  const sidebarDrawerPhase = embedded ? embeddedDrawerPhase : standaloneDrawerPhase;
+  const shellClassName = `settings-shell${embedded ? " settings-embedded" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
     sidebarCollapsed ? " sidebar-collapsed" : ""
   }${
     sidebarCollapsed && sidebarDrawerPhase === "open" ? " sidebar-drawer-open" : ""
@@ -689,7 +715,7 @@ export function SettingsView({
   }${sidebarAnimating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
-  const nativeGroups = nativeSettingsGroups();
+  const nativeGroups = nativeSettingsGroups(browserSettingsAllowed, controls.capabilities);
   const nativePages = nativeGroups.flatMap((group) => group.pages);
   const normalizedNavQuery = navQuery.trim().toLocaleLowerCase();
   const pluginSearchTerms = `${t("settings.navPlugins")} plugin 插件`.toLocaleLowerCase();
@@ -697,7 +723,9 @@ export function SettingsView({
     if (!normalizedNavQuery) {
       return true;
     }
-    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])}`
+    const connectionTerms = page === "providers"
+      ? `${t(NATIVE_PAGE_SEARCH_KEY.agents)} ${t(NATIVE_PAGE_SEARCH_KEY.subscriptions)}` : "";
+    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])} ${connectionTerms}`
       .toLocaleLowerCase()
       .includes(normalizedNavQuery);
   };
@@ -730,10 +758,17 @@ export function SettingsView({
       id: pluginViewSettingsPageId(entry.pluginId, entry.id),
       label: entry.title,
     })),
-    // nativePages is derived from build flags and host capabilities,
-    // which do not change while the page is mounted.
+    // Apart from the window's browser-settings scope, nativePages is derived
+    // from build flags and host capabilities that stay fixed while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
+  ]), [browserSettingsAllowed, customPluginSettingsPages, pluginSettingsRecords, t]);
+
+  function selectPage(nextPage: SettingsPage): void {
+    const next = availableSettingsPage(nextPage, browserSettingsAllowed, controls.capabilities);
+    if (next === activePage) return;
+    setActivePage(next);
+    onPageChange?.(next);
+  }
 
   const sidebarToggle = (
     <button
@@ -742,8 +777,7 @@ export function SettingsView({
       data-wuu-component="sidebar-toggle"
       aria-label={sidebarCollapsed ? t("settings.expandSidebar") : t("settings.collapseSidebar")}
       aria-pressed={!sidebarCollapsed}
-      onClick={onToggleSidebar}
-      onPointerEnter={scheduleSidebarDrawerOpen}
+      onClick={() => { closeSidebarDrawer(); onToggleSidebar(); }}
       onPointerLeave={(event) =>
         scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
       }
@@ -754,18 +788,19 @@ export function SettingsView({
 
   const nativeSettings = (
     <div ref={effectiveShellRef} className={shellClassName} style={shellStyle} data-wuu-component="settings-shell">
-      <div
+      {!embedded ? <div
         ref={sidebarHoverZoneRef}
         className="sidebar-hover-zone"
         aria-hidden="true"
         onPointerEnter={scheduleSidebarDrawerOpen}
         onPointerLeave={cancelSidebarDrawerOpen}
-      />
+      /> : null}
       <aside
         className="settings-sidebar"
         data-wuu-component="settings-sidebar"
-        onPointerEnter={openSidebarDrawer}
-        onPointerLeave={(event) =>
+        inert={embedded && sidebarCollapsed && sidebarDrawerPhase !== "open"}
+        onPointerEnter={embedded ? onSidebarPointerEnter : openSidebarDrawer}
+        onPointerLeave={embedded ? onSidebarPointerLeave : (event) =>
           scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
         }
       >
@@ -775,11 +810,12 @@ export function SettingsView({
           * 淡出/位移也复用 sidebar.css 里同一组规则。
           */}
         <div className="sidebar-content">
-          <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div>
-          <button className="settings-back-button" type="button" onClick={onBack}>
+          {!embedded ? <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div> : null}
+          {embedded ? <h2 className="sidebar-section-title settings-navigation-title">{t("settings.navigation")}</h2> : null}
+          {!embedded ? <button className="settings-back-button" type="button" onClick={onBack}>
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
-          </button>
+          </button> : null}
           <div className="settings-search" role="search">
             <Search className="icon" aria-hidden="true" />
             <input
@@ -816,7 +852,7 @@ export function SettingsView({
                 {group.pages.map((page) => {
                   const Icon = NATIVE_PAGE_ICONS[page];
                   return (
-                    <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                    <SettingsNavItem key={page} pageID={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => selectPage(page)}>
                       {settingsPageTitle(page, t)}
                     </SettingsNavItem>
                   );
@@ -831,9 +867,10 @@ export function SettingsView({
                   return (
                     <SettingsNavItem
                       key={pageId}
+                      pageID={pageId}
                       icon={<PluginBlocksIcon className="icon-lg" />}
                       active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
+                      onClick={() => selectPage(pageId)}
                     >
                       {plugin.name}
                     </SettingsNavItem>
@@ -844,9 +881,10 @@ export function SettingsView({
                   return (
                     <SettingsNavItem
                       key={pageId}
-                      icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
+                      pageID={pageId}
+                      icon={<PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
                       active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
+                      onClick={() => selectPage(pageId)}
                     >
                       {entry.title}
                     </SettingsNavItem>
@@ -860,7 +898,7 @@ export function SettingsView({
           </nav>
         </div>
       </aside>
-      {sidebarCollapsed ? null : (
+      {sidebarCollapsed || embedded ? null : (
         <div
           className="sidebar-resizer"
           role="separator"
@@ -883,9 +921,7 @@ export function SettingsView({
             {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
-            {sidebarCollapsed ? sidebarToggle : null}
-            <span className="settings-crumb-root">{t("settings.navigation")}</span>
-            <span className="settings-crumb-separator" aria-hidden="true">/</span>
+            {sidebarCollapsed && !embedded ? sidebarToggle : null}
             <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
           </div>
           <div ref={settingsScrollRef} className="settings-scroll">
@@ -898,41 +934,27 @@ export function SettingsView({
               {activePluginSettingsRecord ? (
                 <>
                   <SettingsPageHeader title={activePluginSettingsRecord.name} />
-                  <PluginSettingsEditor plugin={activePluginSettingsRecord} />
+                  <PluginSettingsEditor plugin={activePluginSettingsRecord} workspaceRoot={initialized?.workspace_root} />
                 </>
               ) : activeCustomPluginPage ? (
                 <>
                   <SettingsPageHeader title={pluginPageTitle ?? activeCustomPluginPage.title} />
-                  <PluginViewContent
-                    controller={workbenchController}
-                    pluginId={activeCustomPluginPage.pluginId}
-                    viewTypeId={activeCustomPluginPage.view}
-                    context={Object.freeze({ surface: "settings" })}
-                    settings={settingsPageHost}
-                    onFailure={() => setActivePage("providers")}
-                  />
+                  {controls.renderPage({pluginId:activeCustomPluginPage.pluginId,view:activeCustomPluginPage.view,settings:settingsPageHost,onFailure:()=>selectPage("providers")})}
                 </>
-              ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
-                <SubscriptionDashboard
-                  inventory={engineInventory}
-                  providers={providers}
-                  onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
-                />
               ) : activePage === "providers" ? (
                 <ModelServicesPage
+                  inventory={engineInventory}
+                  inventoryError={engineInventoryError}
+                  onRefreshEngines={onRefreshEngineInventory}
+                  onUpdateEngines={onUpdateEngineInventory}
                   initialized={initialized}
                   running={running}
                   runningProviderNames={runningProviderNameSet}
                   onSave={onSave}
                   onRemoveProvider={onRemoveProvider}
                   onRefreshModelCatalog={onRefreshModelCatalog}
-                />
-              ) : activePage === "agents" ? (
-                <EngineSettingsSection
-                  result={engineInventory}
-                  loadError={engineInventoryError}
-                  onRefresh={onRefreshEngineInventory}
-                  onUpdate={onUpdateEngineInventory}
+                  onProvidersChanged={onProvidersChanged}
+                  onProviderModelsChanged={onProviderModelsChanged}
                 />
               ) : activePage === "advanced" ? (
                 <SettingsRuntimePage
@@ -962,13 +984,6 @@ export function SettingsView({
                 />
               ) : activePage === "general" ? (
                 <SettingsGeneralPage
-                  initialized={initialized}
-                  running={running}
-                  engineInventory={engineInventory}
-                  onUpdateEngineInventory={onUpdateEngineInventory}
-                  onSave={onSave}
-                  onGeneralSave={onGeneralSave}
-                  onAddService={() => setActivePage("providers")}
                   desktopBuild={desktopBuild}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
@@ -977,6 +992,7 @@ export function SettingsView({
                 <BrowserSettingsSection />
               ) : activePage === "appearance" ? (
                 <SettingsAppearancePage
+                  inventory={initialized?.extension_inventory}
                   codexPets={codexPets}
                   codexPetsLoading={codexPetsLoading}
                   codexPetsError={codexPetsError}
@@ -990,14 +1006,16 @@ export function SettingsView({
                   mcpServers={mcpServers}
                   mcpLoading={mcpLoading}
                   mcpError={mcpError}
+                  mcpActionErrors={mcpActionErrors}
                   mcpBusyServer={mcpBusyServer}
+                  onMCPListRetry={() => setMCPListRevision((revision) => revision + 1)}
                   onGeneralSave={onGeneralSave}
                   onMCPAction={runMCPAction}
                   onMCPAuthStart={startMCPAuth}
                   onMCPAuthFinish={finishMCPAuth}
                   onMCPAuthRemove={removeMCPAuth}
                 />
-              ) : activePage === "remote" && remoteControlAvailable() ? (
+              ) : activePage === "remote" && controls.capabilities.remote ? (
                 <>
                   <SettingsPageHeader title={t("settings.remote")} />
                   <SettingsRemotePageContainer />
@@ -1023,21 +1041,10 @@ export function SettingsView({
       </main>
     </div>
   );
-  return (
-    <SettingsPresentation
-      initialized={initialized}
-      activePageId={activePage}
-      availablePages={availablePages}
-      runningProviderNames={runningProviderNames}
-      busy={running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer)}
-      hasError={Boolean(advancedError || usageError || mcpError || codexPetsError)}
-      fallback={nativeSettings}
-      onOpenPage={(pageId) => setActivePage(pageId as SettingsPage)}
-      onAdvancedSave={onAdvancedSave}
-      onGeneralSave={onGeneralSave}
-      onRefresh={onRefreshModelCatalog}
-    />
-  );
+  return <>{controls.renderPresentation({initialized,activePageId:activePage,availablePages,runningProviderNames,
+    busy:running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer),
+    hasError:Boolean(advancedError || usageError || mcpError || Object.keys(mcpActionErrors).length || mcpServers.some((server) => server.error) || codexPetsError),fallback:nativeSettings,
+    onOpenPage:pageId=>selectPage(pageId as SettingsPage),onAdvancedSave,onGeneralSave,onRefresh:onRefreshModelCatalog})}</>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1045,11 +1052,13 @@ export function SettingsView({
 /* -------------------------------------------------------------------------- */
 
 function SettingsNavItem({
+  pageID,
   icon,
   active,
   onClick,
   children
 }: {
+  pageID?: SettingsPage;
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
@@ -1059,6 +1068,7 @@ function SettingsNavItem({
     <button
       className={`settings-nav-item${active ? " active" : ""}`}
       data-wuu-component="settings-navigation-item"
+      data-wuu-page={pageID}
       type="button"
       aria-current={active ? "page" : undefined}
       onClick={onClick}
@@ -1358,24 +1368,10 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
-  initialized,
-  running,
-  engineInventory,
-  onUpdateEngineInventory,
-  onSave,
-  onGeneralSave,
-  onAddService,
   desktopBuild,
   copyState,
   onCopyVersion
 }: {
-  initialized?: InitializeResult;
-  running: boolean;
-  engineInventory?: EngineListResult;
-  onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;
-  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
-  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
-  onAddService: () => void;
   desktopBuild: DesktopBuildInfo | undefined;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
@@ -1384,24 +1380,6 @@ function SettingsGeneralPage({
   return (
     <>
       <SettingsPageHeader title={t("settings.general")} />
-      {/* How a new conversation starts, gathered from the pages that own each
-        * part: the agent, then the built-in agent's model and environment. */}
-      <SettingsSection
-        title={t("settings.newConversations")}
-        description={t("settings.newConversationsDescription")}
-        testID="settings-new-conversations"
-      >
-        <SettingsGroup>
-          <DefaultEngineRow result={engineInventory} onUpdate={onUpdateEngineInventory} />
-          <DefaultModelRows initialized={initialized} running={running} onSave={onSave} onAddService={onAddService} />
-          <DefaultEnvironmentRow
-            value={initialized?.general_settings?.execution_environments ?? {}}
-            disabled={running || !initialized}
-            onSave={onGeneralSave}
-          />
-        </SettingsGroup>
-      </SettingsSection>
-
       <SettingsSection title={t("settings.textInterface")} testID="settings-general">
         <SettingsGroup>
           <SettingsRow title={t("settings.language")}>
@@ -1410,7 +1388,6 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
-      <ActivityPreviewPreferenceSection />
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection />
 
@@ -1420,16 +1397,15 @@ function SettingsGeneralPage({
             <span className="settings-row-control-value">
               {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
             </span>
-            <button
+            <Tooltip asChild content={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}><button
               className="settings-button settings-button-ghost settings-icon-button"
               type="button"
               aria-label={t("settings.copyVersion")}
-              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
               onClick={() => void onCopyVersion()}
               disabled={!desktopBuild || copyState === "copying"}
             >
               {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
-            </button>
+            </button></Tooltip>
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
@@ -1449,23 +1425,24 @@ type CodexPetSettingsProps = {
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
 };
 
-function SettingsAppearancePage(petProps: CodexPetSettingsProps): JSX.Element {
+function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProps & { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   return (
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
-      {/* The background image is part of the look the theme sets. */}
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl />
-        {isTouchWebShell() ? null : (
-          <div data-testid="settings-background">
-            <SettingsGroup><BackgroundSettings /></SettingsGroup>
-          </div>
-        )}
+        <ContentThemeControl inventory={inventory} />
       </SettingsSection>
+      {isTouchWebShell() ? null : (
+        <SettingsSection title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")} testID="settings-background">
+          <ShellSkinSettings />
+        </SettingsSection>
+      )}
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
-      {hostSupports("listCodexPets") ? <CodexPetSection {...petProps} /> : null}
+      {controls.capabilities.pets ? <CodexPetSection {...petProps} /> : null}
     </>
   );
 }
@@ -1478,8 +1455,16 @@ function CodexPetSection({
   onCodexPetsUpdate,
 }: CodexPetSettingsProps): JSX.Element {
   const { t } = useI18n();
+  const controls = useSettingsControls();
+  const authority = useMemo(() => ({ active: true }), [controls]);
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
+  useEffect(() => {
+    authority.active = true;
+    setCodexPetBusy(false);
+    setCodexPetLocalError("");
+    return () => { authority.active = false; };
+  }, [authority]);
   const codexPetOptions = codexPets?.pets ?? [];
   const codexPetSelectedID = codexPets?.selected_id ?? "";
   const codexPetEnabled = Boolean(codexPets?.enabled);
@@ -1487,26 +1472,28 @@ function CodexPetSection({
   const codexPetsHome = codexPets?.home ?? "~/.wuu/pets";
 
   async function refreshCodexPets(): Promise<void> {
+    if (!authority.active) return;
     setCodexPetBusy(true);
     setCodexPetLocalError("");
     try {
       await onCodexPetsRefresh();
     } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
+      if (authority.active && !isPluginLifecycleCancellation(error)) setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
     } finally {
-      setCodexPetBusy(false);
+      if (authority.active) setCodexPetBusy(false);
     }
   }
 
   async function updateCodexPets(settings: CodexPetSettingsUpdate): Promise<void> {
+    if (!authority.active) return;
     setCodexPetBusy(true);
     setCodexPetLocalError("");
     try {
       await onCodexPetsUpdate(settings);
     } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
+      if (authority.active && !isPluginLifecycleCancellation(error)) setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
     } finally {
-      setCodexPetBusy(false);
+      if (authority.active) setCodexPetBusy(false);
     }
   }
 
@@ -1535,16 +1522,15 @@ function CodexPetSection({
               }))}
             />
           ) : null}
-          <button
+          <Tooltip asChild content={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}><button
             className="settings-button settings-button-ghost settings-icon-button"
             type="button"
-            title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
             aria-label={t("settings.refreshPets")}
             disabled={codexPetsLoading || codexPetBusy}
             onClick={() => void refreshCodexPets()}
           >
             <RefreshCw className="icon" aria-hidden="true" />
-          </button>
+          </button></Tooltip>
           <button
             className="settings-switch"
             type="button"
@@ -1567,13 +1553,20 @@ function CodexPetSection({
 /*  MCP servers page                                                           */
 /* -------------------------------------------------------------------------- */
 
+type MCPActionFailure = {
+  action: "connect" | "disconnect" | "refresh" | "login" | "logout";
+  message: string;
+};
+
 function SettingsMCPPage({
   initialized,
   running,
   mcpServers,
   mcpLoading,
   mcpError,
+  mcpActionErrors,
   mcpBusyServer,
+  onMCPListRetry,
   onGeneralSave,
   onMCPAction,
   onMCPAuthStart,
@@ -1585,7 +1578,9 @@ function SettingsMCPPage({
   mcpServers: MCPServerStatus[];
   mcpLoading: boolean;
   mcpError: string;
+  mcpActionErrors: Record<string, MCPActionFailure>;
   mcpBusyServer: string;
+  onMCPListRetry: () => void;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   onMCPAction: (name: string, action: "connect" | "disconnect" | "refresh") => Promise<void>;
   onMCPAuthStart: (name: string) => Promise<MCPAuthStartResult | undefined>;
@@ -1597,7 +1592,7 @@ function SettingsMCPPage({
   const configuredMCPKey = stableBoolRecordSignature(configuredMCPEnabled);
   const [mcpEnabledDraft, setMCPEnabledDraft] = useState<Record<string, boolean>>(() => ({ ...configuredMCPEnabled }));
   const [mcpToggleBusy, setMCPToggleBusy] = useState("");
-  const [mcpToggleError, setMCPToggleError] = useState("");
+  const [mcpToggleErrors, setMCPToggleErrors] = useState<Record<string, string>>({});
   const [mcpAuthStates, setMCPAuthStates] = useState<Record<string, string>>({});
   const [mcpAuthCodes, setMCPAuthCodes] = useState<Record<string, string>>({});
 
@@ -1610,12 +1605,12 @@ function SettingsMCPPage({
     const next = { ...previous, [name]: enabled };
     setMCPEnabledDraft(next);
     setMCPToggleBusy(name);
-    setMCPToggleError("");
+    setMCPToggleErrors((errors) => withoutRecordKey(errors, name));
     try {
       await onGeneralSave({ mcp_enabled_toggles: next });
     } catch (toggleError) {
       setMCPEnabledDraft(previous);
-      setMCPToggleError(toastErrorMessage(toggleError, t("settings.saveFailed")));
+      setMCPToggleErrors((errors) => ({ ...errors, [name]: toastErrorMessage(toggleError, t("settings.saveFailed")) }));
     } finally {
       setMCPToggleBusy("");
     }
@@ -1644,7 +1639,7 @@ function SettingsMCPPage({
 
   const mcpServerByName = new Map(mcpServers.map((server) => [server.name, server]));
   const mcpRowNames = Array.from(
-    new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft)]),
+    new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft), ...Object.keys(mcpActionErrors)]),
   ).sort((a, b) => a.localeCompare(b));
 
   // Servers are defined only in the user configuration; the page says where,
@@ -1659,29 +1654,45 @@ function SettingsMCPPage({
     <>
       <SettingsPageHeader title={t("settings.mcpServers")} description={description} />
       <SettingsSection testID="settings-mcp">
-        <SettingsGroup>
+        {mcpLoading || mcpRowNames.length > 0 || !mcpError ? <SettingsGroup>
           {mcpLoading && mcpRowNames.length === 0 ? (
             <p className="settings-group-empty">{t("settings.loading")}</p>
           ) : mcpRowNames.length > 0 ? (
             mcpRowNames.map((name) => {
               const server = mcpServerByName.get(name);
               const busy = mcpBusyServer === name || mcpToggleBusy === name;
+              const controlsBusy = Boolean(mcpBusyServer || mcpToggleBusy);
               const connected = server ? server.connected || server.state === "connected" || server.state === "ready" : false;
               const disabledByConfig = server?.state === "disabled";
               const enabled = mcpEnabledDraft[name] ?? !disabledByConfig;
               const oauthPending = Boolean(mcpAuthStates[name]);
               const oauthCode = mcpAuthCodes[name] ?? "";
+              const failure = mcpActionErrors[name];
+              const working = busy && !failure && !mcpToggleErrors[name];
+              const needsAuth = server?.state === "auth_required" || server?.state === "needs_auth" || server?.state === "needs_client_registration";
+              const diagnostic = working ? "" : mcpToggleErrors[name] || failure?.message || (!oauthPending ? server?.error : "") || "";
+              const state = working ? "starting" : needsAuth ? server!.state : diagnostic ? "error" : server?.state ?? "stopped";
+              const status = working ? t("mcp.working")
+                : mcpToggleErrors[name] ? t("mcp.saveFailed")
+                : failure?.action === "login" ? t("mcp.loginFailed")
+                : failure?.action === "logout" ? t("mcp.logoutFailed")
+                : failure?.action === "disconnect" ? t("mcp.disconnectFailed")
+                : failure?.action === "refresh" ? t("mcp.refreshFailed")
+                : oauthPending ? t("mcp.enterAuthCode")
+                : needsAuth ? t("mcp.loginToConnect")
+                : diagnostic || mcpStateTone(state) === "danger" ? t("mcp.connectionFailed")
+                : server ? formatMCPServerMeta(server, t) : "";
               return (
                 <SettingsRow
                   key={name}
                   title={name}
-                  description={server ? (
-                    <>
-                      <MCPStateMark state={server.state} />
-                      {formatMCPServerMeta(server, t)}
-                    </>
+                  description={status ? (
+                    <span className="settings-mcp-status" role={diagnostic || needsAuth || busy ? "status" : undefined}>
+                      <MCPStateMark state={state} label={failure || mcpToggleErrors[name] || busy ? status : undefined} />
+                      <span>{status}</span>
+                    </span>
                   ) : undefined}
-                  error={server?.error}
+                  detail={diagnostic ? <MCPDiagnostic key={diagnostic} message={diagnostic} /> : undefined}
                 >
                   {server ? (
                     oauthPending ? (
@@ -1692,81 +1703,76 @@ function SettingsMCPPage({
                           autoComplete="off"
                           placeholder={t("mcp.authCode")}
                           value={oauthCode}
-                          disabled={busy}
+                          disabled={controlsBusy}
                           onChange={(event) => {
                             const value = event.currentTarget.value;
                             setMCPAuthCodes((codes) => ({ ...codes, [name]: value }));
                           }}
                         />
-                        <button
+                        <Tooltip asChild content={t("mcp.finishLogin")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.finishLogin")}
                           aria-label={t("mcp.finishLoginNamed", { name })}
-                          disabled={busy || oauthCode.trim() === ""}
+                          disabled={controlsBusy || oauthCode.trim() === ""}
                           onClick={() => void completeMCPAuth(name)}
                         >
                           <Check className="icon" aria-hidden="true" />
-                        </button>
-                        <button
+                        </button></Tooltip>
+                        <Tooltip asChild content={t("mcp.cancelLogin")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.cancelLogin")}
                           aria-label={t("mcp.cancelLoginNamed", { name })}
-                          disabled={busy}
+                          disabled={controlsBusy}
                           onClick={() => {
                             setMCPAuthStates((states) => withoutRecordKey(states, name));
                             setMCPAuthCodes((codes) => withoutRecordKey(codes, name));
                           }}
                         >
                           <X className="icon" aria-hidden="true" />
-                        </button>
+                        </button></Tooltip>
                       </>
                     ) : (
                       <div className="settings-row-actions">
-                        {server.auth_status === "not_logged_in" ? (
-                          <button
-                            className="settings-button settings-button-ghost settings-icon-button"
+                        {server.auth_status === "not_logged_in" || needsAuth ? (
+                          <Tooltip asChild content={t("mcp.oauthLogin")}><button
+                            className="settings-button settings-button-ghost"
                             type="button"
-                            title={t("mcp.oauthLogin")}
                             aria-label={t("mcp.loginNamed", { name })}
-                            disabled={busy || disabledByConfig}
+                            disabled={controlsBusy || disabledByConfig}
                             onClick={() => void beginMCPAuth(name)}
                           >
                             <KeyRound className="icon" aria-hidden="true" />
-                          </button>
+                            {t("mcp.login")}
+                          </button></Tooltip>
                         ) : server.auth_status === "oauth" ? (
-                          <button
+                          <Tooltip asChild content={t("mcp.removeLogin")}><button
                             className="settings-button settings-button-ghost settings-icon-button"
                             type="button"
-                            title={t("mcp.removeLogin")}
                             aria-label={t("mcp.removeLoginNamed", { name })}
-                            disabled={busy}
+                            disabled={controlsBusy}
                             onClick={() => void onMCPAuthRemove(name)}
                           >
                             <LogOut className="icon" aria-hidden="true" />
-                          </button>
+                          </button></Tooltip>
                         ) : null}
-                        <button
+                        <Tooltip asChild content={t("mcp.refresh")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={t("mcp.refresh")}
                           aria-label={t("mcp.refreshNamed", { name })}
-                          disabled={busy || disabledByConfig}
+                          disabled={controlsBusy || disabledByConfig}
                           onClick={() => void onMCPAction(name, "refresh")}
                         >
                           <RefreshCw className="icon" aria-hidden="true" />
-                        </button>
-                        <button
+                        </button></Tooltip>
+                        <Tooltip asChild content={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}><button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
-                          title={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}
                           aria-label={`${connected ? t("mcp.disconnect") : t("mcp.connect")} ${name}`}
-                          disabled={busy || disabledByConfig}
+                          disabled={controlsBusy || disabledByConfig}
                           onClick={() => void onMCPAction(name, connected ? "disconnect" : "connect")}
                         >
                           {connected ? <PlugZap className="icon" aria-hidden="true" /> : <Plug className="icon" aria-hidden="true" />}
-                        </button>
+                        </button></Tooltip>
                       </div>
                     )
                   ) : null}
@@ -1776,7 +1782,7 @@ function SettingsMCPPage({
                     role="switch"
                     aria-checked={enabled}
                     data-testid={`settings-mcp-enabled-${name}`}
-                    disabled={running || !initialized || busy}
+                    disabled={running || !initialized || controlsBusy}
                     onClick={() => void toggleMCPServer(name, !enabled)}
                   >
                     <span className="settings-switch-thumb" aria-hidden="true" />
@@ -1788,9 +1794,16 @@ function SettingsMCPPage({
           ) : (
             <p className="settings-group-empty">{t("settings.noMcpServers")}</p>
           )}
-        </SettingsGroup>
-        {mcpError ? <p className="settings-error" role="alert">{mcpError}</p> : null}
-        {mcpToggleError ? <p className="settings-error" role="alert">{mcpToggleError}</p> : null}
+        </SettingsGroup> : null}
+        {mcpError ? (
+          <div className="settings-mcp-list-failure">
+            <p className="settings-section-note" role="status">{t("mcp.listFailed")}</p>
+            <button className="settings-button settings-button-ghost" type="button" data-testid="mcp-list-retry" disabled={mcpLoading} onClick={onMCPListRetry}>
+              <RefreshCw className="icon" aria-hidden="true" />{t("mcp.refresh")}
+            </button>
+            <MCPDiagnostic key={mcpError} message={mcpError} />
+          </div>
+        ) : null}
       </SettingsSection>
     </>
   );
@@ -1947,16 +1960,15 @@ function SettingsArchivePage({
                             {formatArchiveTime(thread.updated_at, formatDate)}
                           </time>
                         </div>
-                        <button
+                        <Tooltip asChild content={t("settings.restore")}><button
                           type="button"
                           className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
-                          title={t("settings.restore")}
                           disabled={deletion?.pending}
                           onClick={() => onUnarchiveThread(thread)}
                         >
                           <RotateCcw className="icon" aria-hidden="true" />
-                        </button>
+                        </button></Tooltip>
                       </div>
                     );
                   })}
@@ -2423,17 +2435,6 @@ function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
   }
 }
 
-function isConfigurablePlugin(
-  extension: ExtensionInventoryRecord,
-): boolean {
-  const approved = extension.approval_state === "official"
-    || extension.approval_state === "granted";
-  return extension.kind === "plugin"
-    && approved
-    && extension.enabled !== false
-    && (extension.contributions?.settings?.length ?? 0) > 0;
-}
-
 function pluginSettingsPageId(pluginId: string): `plugin-settings:${string}` {
   return `plugin-settings:${pluginId}`;
 }
@@ -2619,7 +2620,7 @@ function upsertMCPServerStatus(servers: MCPServerStatus[], status: MCPServerStat
   return next;
 }
 
-function withoutRecordKey(values: Record<string, string>, key: string): Record<string, string> {
+function withoutRecordKey<T>(values: Record<string, T>, key: string): Record<string, T> {
   const next = { ...values };
   delete next[key];
   return next;
@@ -2636,18 +2637,18 @@ function formatMCPServerMeta(server: MCPServerStatus, t: Translate): string {
 // A connected or idle server shows only its tools; the connect control and
 // the switch already say whether it runs. Work in progress and states that
 // need a look get one mark named by the state.
-function MCPStateMark({ state }: { state: string }): JSX.Element | null {
+function MCPStateMark({ state, label }: { state: string; label?: string }): JSX.Element | null {
   const { t } = useI18n();
   const tone = mcpStateTone(state);
   const busy = state === "starting" || state === "connecting" || state === "reconnecting";
   if (!busy && tone !== "danger" && tone !== "warning") return null;
-  const label = mcpStateLabel(state, t);
+  const statusLabel = label ?? mcpStateLabel(state, t);
   return (
-    <span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label} title={label}>
+    <Tooltip asChild content={statusLabel}><span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={statusLabel}>
       {busy ? <Loader2 className="icon-sm settings-spin" aria-hidden="true" />
         : tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" />
         : <AlertTriangle className="icon-sm" aria-hidden="true" />}
-    </span>
+    </span></Tooltip>
   );
 }
 
@@ -2717,14 +2718,19 @@ function mcpAuthLabel(status: string, t: Translate): string {
  *  main-process RemoteHostManager, re-pulls on every remote event (pairing
  *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
 function SettingsRemotePageContainer(): JSX.Element {
+  const controls = useSettingsControls();
   const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(null);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const authority = useMemo(() => ({ active: true }), [controls]);
 
   useEffect(() => {
     let cancelled = false;
+    authority.active = true;
+    setBusy(false);
+    setActionError("");
     const refresh = () => {
-      window.wuu
+      controls
         .getRemoteControlSnapshot()
         .then((snap) => {
           if (!cancelled) {
@@ -2735,22 +2741,26 @@ function SettingsRemotePageContainer(): JSX.Element {
         .catch(() => {});
     };
     refresh();
-    const off = window.wuu.onRemoteControlEvent(() => refresh());
+    const off = controls.subscribeRemote(() => refresh());
     return () => {
       cancelled = true;
+      authority.active = false;
       off();
     };
-  }, []);
+  }, [controls, authority]);
 
   const run = (action: () => Promise<RemoteControlSnapshot>) => {
+    if (!authority.active) return;
     setBusy(true);
     setActionError("");
-    action()
-      .then(setSnapshot)
+    Promise.resolve().then(action)
+      .then((next) => { if (authority.active) setSnapshot(next); })
       .catch((err: unknown) => {
-        setActionError(err instanceof Error ? err.message : String(err));
+        if (authority.active && !isPluginLifecycleCancellation(err)) {
+          setActionError(err instanceof Error ? err.message : String(err));
+        }
       })
-      .finally(() => setBusy(false));
+      .finally(() => { if (authority.active) setBusy(false); });
   };
 
   return (
@@ -2762,9 +2772,19 @@ function SettingsRemotePageContainer(): JSX.Element {
       pairUri={snapshot?.pair_uri ?? null}
       webUrl={snapshot?.web_url ?? null}
       busy={busy}
-      onToggleHost={(enabled) => run(() => window.wuu.setRemoteHostEnabled(enabled))}
-      onOpenPairing={() => run(() => window.wuu.startRemotePairing())}
-      onRemoveDevice={(device) => run(() => window.wuu.removeRemoteDevice(device.fingerprint))}
+      onToggleHost={(enabled) => run(() => controls.setRemoteHostEnabled(enabled))}
+      onOpenPairing={() => run(() => controls.startRemotePairing())}
+      onRemoveDevice={(device) => run(() => controls.removeRemoteDevice(device.fingerprint))}
     />
   );
+}
+
+function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
+ const next=page??"providers";
+ if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";
+ return next;
+}
+
+export function SettingsView({application,...props}:Parameters<typeof SettingsViewContent>[0] & {application:{readonly settingsControls:import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1}}):JSX.Element {
+ return <SettingsControlsProvider controls={application.settingsControls}><SettingsViewContent {...props}/></SettingsControlsProvider>;
 }

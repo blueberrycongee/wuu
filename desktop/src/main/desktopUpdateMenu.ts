@@ -1,4 +1,4 @@
-import { app, dialog, Menu } from "electron";
+import { app, dialog, Menu, type MenuItemConstructorOptions } from "electron";
 import updater from "electron-updater";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -6,10 +6,14 @@ import { createUpdateController, type UpdateState } from "./desktopUpdates";
 import { mainTranslate as t } from "./i18n";
 import { productionApplicationMenuTemplate } from "./appShellGuards";
 
-export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (state: UpdateState) => void) {
+export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (state: UpdateState) => void, recoveryItem?: MenuItemConstructorOptions) {
   // Development/ad-hoc builds never carry the release update configuration.
-  if (!app.isPackaged || process.platform !== "darwin" || !existsSync(join(process.resourcesPath, "app-update.yml"))) return;
-  const { autoUpdater } = updater;
+  const supportedPackage = process.platform === "darwin" ||
+    (process.platform === "linux" && process.arch === "x64" && Boolean(process.env.APPIMAGE) &&
+      Boolean(process.env.APPDIR) && process.execPath === join(process.env.APPDIR!, "wuu"));
+  if (!app.isPackaged || !supportedPackage || !existsSync(join(process.resourcesPath, "app-update.yml"))) return;
+  // Debian packages update through the package manager, never a privileged updater.
+  const autoUpdater = process.platform === "linux" ? new updater.AppImageUpdater() : updater.autoUpdater;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
@@ -43,7 +47,7 @@ export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (s
   autoUpdater.on("download-progress", ({ percent }) => controller.progress(percent));
   Menu.setApplicationMenu(Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, {
     id: "check-for-updates", label: t("updateCheck"), click: () => { void controller.check(true); },
-  })));
+  }, recoveryItem)));
   const initial = setTimeout(() => { void controller.check(false); }, 30_000);
   const periodic = setInterval(() => { void controller.check(false); }, 6 * 60 * 60_000);
   initial.unref();

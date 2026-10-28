@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -54,8 +54,8 @@ func ClassifyError(err error) ErrorClass {
 	// Empty answer without a stop reason is likely a proxy/compat
 	// issue — worth retrying. With a normal stop reason the model
 	// intentionally returned nothing; retrying won't help.
-	if agent.IsEmptyAnswer(err) {
-		var emptyErr *agent.EmptyAnswerError
+	if loopdriver.IsEmptyAnswer(err) {
+		var emptyErr *loopdriver.EmptyAnswerError
 		if errors.As(err, &emptyErr) && emptyErr.StopReason == "" {
 			return ErrorClassRetryable
 		}

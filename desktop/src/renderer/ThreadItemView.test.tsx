@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -8,13 +11,28 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
 import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
+import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { registerConversationSlots } from "./ConversationSlots";
+import { applyAppearance, readAppearance } from "./AppearancePreferences";
 
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
+
+let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
+let application: ReturnType<typeof createConversationTestApplication>;
+
+beforeEach(() => {
+  application = createConversationTestApplication();
+});
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 const rangeBoundsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
@@ -67,7 +85,7 @@ function render({
   }
   act(() => {
     root!.render(
-      <WuuUIRoot>
+      <ConversationControlsTestProvider composition={composition} service={application}>{<WuuUIRoot>
         <ImagePreviewProvider>
           <ArtifactThreadContext.Provider value={owningThreadID}>
             <ThreadItemView
@@ -85,7 +103,7 @@ function render({
           </ArtifactThreadContext.Provider>
           <ToastViewport />
         </ImagePreviewProvider>
-      </WuuUIRoot>,
+      </WuuUIRoot>}</ConversationControlsTestProvider>,
     );
   });
 }
@@ -105,71 +123,170 @@ afterEach(() => {
   container?.remove();
   streamTextStore.clearItem("turn-1", "final-1");
   clearToasts();
-  desktopPluginHost.unload("thread-item-production-test");
-  desktopPluginHost.setActiveConversationThread(undefined);
+  composition = { Slot: ({ fallback }) => fallback };
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   if (rangeBoundsDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundsDescriptor);
   else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   root = undefined;
   container = undefined;
 });
 
+// The additive package runner supplies copies checked outside the checkout
+// against the packed public SDK; ordinary renderer runs use the same sources.
+function loadMessageAddon(name: string): (api: PluginGenerationApi) => void {
+  const directory = process.env.WUU_MESSAGE_ACTION_ADDONS ?? resolve(process.cwd(), "../packages/plugin-sdk/test/fixtures");
+  const source = readFileSync(resolve(directory, `${name}.js`), "utf8");
+  return Function(source.replace("export function activate(api)", "return function activate(api)"))();
+}
+
 describe("ThreadItemView", () => {
-  it.each(["user_message", "agent_message"] as const)("mounts plugin actions for %s with only the public message snapshot", async (type) => {
-    const execute = vi.fn();
-    desktopPluginHost.setActiveConversationThread("another-active-thread");
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test", generation: "actions-one",
-      register(api) {
-        api.registerCommand({ id: "message.inspect", title: "Inspect plugin message", placements: ["conversation.message.actions"], execute });
-      },
-    });
+  it("supplies the rendered message and live text directly to public contributions", () => {
+    const snapshots: unknown[] = [];
+    composition = { Slot: ({ name, context, fallback }) => {
+      if (name.endsWith("/conversation.message")) snapshots.push(context?.snapshot);
+      return fallback;
+    } };
+    const item = { ...makeFinalAnswer("in_progress"), source_id: "private-source" };
+    render({ item, owningThreadID: "side-thread", turnStatus: "in_progress", streaming: true });
+    expect(snapshots.at(-1)).toMatchObject({ id: item.id, kind: "assistant-message", text: item.text, status: "streaming" });
+    expect(Object.isFrozen(snapshots.at(-1))).toBe(true);
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain("private-source");
+    act(() => { streamTextStore.set(streamTextKey("turn-1", item.id, "text"), "Live answer"); });
+    render({ item: { ...item }, owningThreadID: "side-thread", turnStatus: "in_progress", streaming: true });
+    expect(snapshots.at(-1)).toMatchObject({ text: "Live answer" });
+  });
+  it.each(["user_message", "agent_message"] as const)("mounts public contributed actions for %s with the rendered item and owning address", async (type) => {
+    const execute = vi.fn(); let enabled = true; let address: Readonly<Record<string, unknown>> | undefined;
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("message.actions") && enabled
+      ? <button aria-label="Inspect plugin message" onClick={() => { address = context; execute(); }}>Inspect</button> : fallback };
     const item = type === "user_message" ? makeUserMessage("") : makeFinalAnswer("completed");
-    (item as ThreadItem & { privateValue: string }).privateValue = "must-not-leak";
     render({ item, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Inspect plugin message"]')!;
-    expect(action).not.toBeNull();
     expect(action.closest(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")).not.toBeNull();
     await act(async () => action.click());
     expect(execute).toHaveBeenCalledOnce();
-    const context = execute.mock.calls[0]?.[0];
-    expect(context).toMatchObject({ contractVersion: 1, target: "conversation.message.actions", threadId: "public-thread", turnId: "turn-1", item: { id: item.id, kind: type === "user_message" ? "user-message" : "assistant-message", text: item.text } });
-    expect(Object.isFrozen(context)).toBe(true);
-    expect(Object.isFrozen(context.item)).toBe(true);
-    expect(context.item).not.toHaveProperty("privateValue");
-    expect(context.item).not.toHaveProperty("type");
-    await act(async () => desktopPluginHost.unload("thread-item-production-test"));
+    expect(address).toMatchObject({ threadId: "public-thread", turnId: "turn-1", itemId: item.id, snapshot: { id: item.id, text: item.text } });
+    enabled = false;
+    render({ item: { ...item }, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     expect(container!.querySelector('button[aria-label="Inspect plugin message"]')).toBeNull();
-    await act(async () => action.click());
-    expect(execute).toHaveBeenCalledOnce();
-    if (type === "user_message") expect(container!.querySelector(".user-message-actions")).toBeNull();
-    else expect(container!.querySelector('.agent-message-actions[aria-label]')).toBeNull();
   });
 
+  // Independent addons must coexist, preserve local state when their peer changes,
+  // and leave the shared action row empty only when neither contributes actions.
+  it.each(["user_message", "agent_message"] as const)("composes command and raw-slot addons on %s without remounting peers", async type => {
+    const invokeRuntime = vi.fn<NonNullable<ConstructorParameters<typeof PluginHost>[0]["invokeRuntime"]>>(async () => undefined);
+    const host = new PluginHost({ react: React, application: new ApplicationController(), invokeRuntime });
+    await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "one", register: registerConversationSlots });
+    composition = createUIComposition(host);
+    const commandAddon = loadMessageAddon("message-command-addon");
+    const rawAddon = loadMessageAddon("message-slot-addon");
+    const appearance = readAppearance();
+    const activate = async (pluginId: string, register: (api: PluginGenerationApi) => void) => {
+      await act(async () => { await host.activateGeneration({ pluginId, generation: "one", register }); });
+    };
+    const unload = async (pluginId: string) => { await act(async () => { host.unload(pluginId); }); };
+    const item: ThreadItem = { id: "addon-message", type, status: "completed", text: "" };
+    const view = (value = item) => render({ item: value, owningThreadID: "side-thread", turnStatus: "completed", streaming: false,
+      actionableAgentMessageID: value.id, onEditMessage: vi.fn(), onForkMessage: vi.fn() });
+    const row = () => container!.querySelector<HTMLElement>(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")!;
+    const raw = () => row().querySelector<HTMLButtonElement>('button[aria-label="Inspect raw message"]');
+    const command = () => row().querySelector<HTMLButtonElement>('button[aria-label^="Inspect command message"]');
+    try {
+      view();
+      expect(row().style.display).toBe("none");
+      await activate("raw-addon", rawAddon);
+      const originalRaw = raw()!;
+      expect(row().style.display).toBe("");
+      await act(async () => { originalRaw.click(); });
+      expect(originalRaw.textContent).toBe("Raw 1");
+      expect(invokeRuntime).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "raw-addon", method: "inspect",
+        input: expect.objectContaining({ threadId: "side-thread", turnId: "turn-1", itemId: item.id,
+          snapshot: expect.objectContaining({ id: item.id, text: "" }) }) }));
 
-  it.each([false, true])("aligns selection actions and comments to the same source start for reverse=%s", (reverse) => {
-    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains("response-selection-toolbar")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 280, this.classList.contains("selection-action-menu-commenting") ? 100 : 40);
-      return new DOMRect(0, 0, 1000, 700);
-    });
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: function () {
-      return this.collapsed ? new DOMRect(reverse ? 320 : 520, reverse ? 220 : 244, 0, 24) : new DOMRect(320, 220, 200, 48);
-    } });
-    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
-    const text = container!.querySelector(".agent-text p")!.firstChild!;
-    act(() => {
-      window.getSelection()!.setBaseAndExtent(text, reverse ? 18 : 0, text, reverse ? 0 : 18);
-      document.dispatchEvent(new Event("selectionchange"));
-    });
-    const actions = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(actions.style.left)).toBe(320);
-    expect(window.innerHeight - Number.parseFloat(actions.style.bottom)).toBe(212);
-    act(() => actions.querySelector<HTMLButtonElement>(".selection-action-comment-toggle")!.click());
-    const comment = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(comment.style.left)).toBe(320);
-    expect(window.innerHeight - Number.parseFloat(comment.style.bottom)).toBe(212);
-    expect(document.activeElement).toBe(comment.querySelector("textarea"));
+      act(() => originalRaw.focus());
+      await activate("command-addon", commandAddon);
+      expect(document.activeElement).toBe(originalRaw);
+      expect(raw()).toBe(originalRaw);
+      expect(raw()?.textContent).toBe("Raw 1");
+      expect(command()).not.toBeNull();
+      expect(row().style.display).toBe("");
+      for (const messageStyle of ["bubble", "im"] as const) {
+        applyAppearance({ ...appearance, messageStyle });
+        await act(async () => { command()!.click(); });
+        expect(raw()).toBe(originalRaw);
+        expect(invokeRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ pluginId: "command-addon", method: "inspect",
+          input: expect.objectContaining({ threadId: "side-thread", turnId: "turn-1",
+            item: expect.objectContaining({ id: item.id, text: "" }) }) }));
+      }
+      expect(row().querySelectorAll("button")).toHaveLength(2);
+      invokeRuntime.mockRejectedValueOnce(new Error("Synthetic command failure"));
+      await act(async () => { command()!.click(); });
+      expect(host.getGenerationDiagnostics("command-addon", "one").some(row => row.kind === "render")).toBe(true);
+      expect(raw()).toBe(originalRaw);
+      expect(document.activeElement).toBe(originalRaw);
+      await act(async () => { command()!.click(); });
+      expect(command()?.disabled).toBe(false);
+      const originalCommandWithPeer = command();
+      const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await activate("broken-addon", api => api.registerUIContribution({ id: "broken",
+          target: "wuu.default-conversation/conversation.message.actions",
+          render: () => { throw new Error("Synthetic message addon render failure"); },
+        }));
+        expect(host.getGenerationDiagnostics("broken-addon", "one").some(row => row.kind === "render")).toBe(true);
+        expect(raw()).toBe(originalRaw);
+        expect(command()).toBe(originalCommandWithPeer);
+        expect(document.activeElement).toBe(originalRaw);
+      } finally { await unload("broken-addon"); logging.mockRestore(); }
+
+      // Native copy and edit/fork remain single actions alongside both addons.
+      view({ ...item, text: "Native actions", terminal: true });
+      expect(row().querySelectorAll("button")).toHaveLength(4);
+      view();
+      await unload("command-addon");
+      expect(document.activeElement).toBe(originalRaw);
+      expect(raw()).toBe(originalRaw);
+      expect(row().style.display).toBe("");
+      await activate("command-addon", commandAddon);
+      expect(raw()).toBe(originalRaw);
+      expect(raw()?.textContent).toBe("Raw 1");
+      expect(invokeRuntime.mock.calls.filter(([request]) => request.method === "mounted")).toHaveLength(1);
+
+      const originalCommand = command();
+      await unload("raw-addon");
+      expect(command()).toBe(originalCommand);
+      expect(row().style.display).toBe("");
+      view({ ...item, status: "in_progress" });
+      expect(command()?.disabled).toBe(true);
+      expect(row().style.display).toBe("");
+      view({ ...item, id: "without-commands" });
+      expect(command()).toBeNull();
+      expect(row().style.display).toBe("none");
+      view();
+      expect(command()?.disabled).toBe(false);
+      expect(row().style.display).toBe("");
+      await unload("command-addon");
+      expect(row().querySelectorAll("button")).toHaveLength(0);
+      expect(row().style.display).toBe("none");
+      await activate("command-addon", commandAddon);
+      const restoredCommand = command();
+      expect(restoredCommand).not.toBeNull();
+      expect(row().style.display).toBe("");
+      await activate("raw-addon", rawAddon);
+      expect(raw()?.textContent).toBe("Raw 0");
+      expect(command()).toBe(restoredCommand);
+      await unload("command-addon");
+      expect(raw()).not.toBeNull();
+      expect(row().style.display).toBe("");
+      await unload("raw-addon");
+      expect(row().style.display).toBe("none");
+    } finally {
+      await unload("raw-addon");
+      await unload("command-addon");
+      await unload("wuu.default-conversation");
+      applyAppearance(appearance);
+    }
   });
 
   it("keeps selection actions within the viewport and falls below a top-edge passage", () => {
@@ -357,176 +474,36 @@ describe("ThreadItemView", () => {
     expect(container!.textContent).toContain(selection.comment);
     expect(container!.querySelector(".response-selection-source")).not.toBeNull();
     const submit = vi.fn();
-    act(() => root!.render(<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />));
+    act(() => root!.render(<ConversationControlsTestProvider composition={composition} service={application}>{<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />}</ConversationControlsTestProvider>));
     expect(container!.querySelector("textarea")!.value).toBe("  raw prompt  ");
     act(() => container!.querySelector<HTMLButtonElement>(".composer-send-button")!.click());
     expect(submit).toHaveBeenCalledWith("turn-1", item, message.text, [], [], message.contentParts);
   });
 
-  it("mounts sanitized frozen context before and after each conversation message", async () => {
-    const contexts: Array<Readonly<Record<string, unknown>>> = [];
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test",
-      generation: "one",
-      register(api) {
-        for (const slotId of ["conversation.message.before", "conversation.message.after"] as const) {
-          api.registerSlot(slotId, {
-            id: slotId,
-            render(context) {
-              contexts.push(context);
-              return <span data-testid={slotId}>{slotId}</span>;
-            },
-          });
-        }
-      },
-    });
-
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector('[data-testid="conversation.message.before"]')).not.toBeNull();
-    expect(container?.querySelector('[data-testid="conversation.message.after"]')).not.toBeNull();
-    expect(contexts).toHaveLength(2);
-    expect(contexts[0]).toEqual({
-      kind: "agent_message",
-      turnStatus: "completed",
-      streaming: false,
-      editing: false,
-      locale: "zh-CN",
-      translate: expect.any(Function),
-    });
+  it("renders public message slots with explicit identity and no business callback payload", () => {
+    const contexts: Readonly<Record<string, unknown>>[] = [];
+    composition = { Slot: ({ name, context, fallback }) => {
+      if (name.endsWith("message.before") || name.endsWith("message.after")) { contexts.push(context!); return <span data-slot={name} />; }
+      return fallback;
+    } };
+    render({ item: makeFinalAnswer("completed"), owningThreadID: "parent", turnStatus: "completed", streaming: false });
+    expect(container!.querySelectorAll("[data-slot]")).toHaveLength(2);
+    expect(contexts[0]).toEqual({ threadId: "parent", turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
     expect(Object.isFrozen(contexts[0])).toBe(true);
-    expect(contexts[0]).not.toHaveProperty("item");
-    expect(contexts[0]).not.toHaveProperty("text");
   });
 
-  it("uses a conversation item presenter for the complete production item root", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerPresenter({
-          id: "assistant-root",
-          target: "conversation.item",
-          key: "assistant-message",
-          render: ({ snapshot }) => (
-            <section data-production-presenter>
-              {(snapshot as { text?: string }).text}
-            </section>
-          ),
-        });
-      },
-    });
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector("[data-production-presenter]")?.textContent).toBe("Final answer text.");
-    expect(container?.querySelector(".agent-block")).toBeNull();
-  });
-
-  it("uses the legacy message surface as the exact native fallback with a sanitized context", async () => {
-    let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "legacy-message",
-          mode: "replace",
-          render: (context) => {
-            received = context;
-            return <section data-legacy-message>{String(context.kind)}</section>;
-          },
-        });
-      },
-    });
-
-    const item = makeFinalAnswer("completed");
-    (item as ThreadItem & { privateValue: string }).privateValue = "must-not-leak";
-    render({ item, turnStatus: "completed", streaming: false });
-
-    expect(container?.querySelector("[data-legacy-message]")?.textContent).toBe("assistant-message");
-    expect(container?.querySelector(".agent-block")).toBeNull();
-    expect(received).toEqual({
-      version: 1,
-      messageId: "final-1",
-      turnId: "turn-1",
-      kind: "assistant-message",
-      status: "completed",
-      phase: "final_answer",
-      streaming: false,
-      attachmentCount: 0,
-      actions: { edit: undefined, fork: undefined },
-    });
-    expect(received).not.toHaveProperty("item");
-    expect(received).not.toHaveProperty("text");
-    expect(received).not.toHaveProperty("privateValue");
-
-    act(() => desktopPluginHost.unload("thread-item-production-test"));
-    expect(container?.querySelector(".agent-block")).not.toBeNull();
-  });
-
-  it("exposes the active thread id on the conversation message surface", async () => {
-    let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test",
-      generation: "gen-thread-id",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "thread-aware-message",
-          mode: "replace",
-          render: (context) => {
-            received = context;
-            return <section data-thread-aware>{String(context.threadId)}</section>;
-          },
-        });
-      },
-    });
-
-    desktopPluginHost.setActiveConversationThread("thread-aware-1");
+  it("lets the optional public message contribution replace the default body", () => {
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("/conversation.message") ? <section data-message>{String(context?.itemId)}</section> : fallback };
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
-
-    expect(container?.querySelector("[data-thread-aware]")?.textContent).toBe("thread-aware-1");
-    expect(received).toHaveProperty("threadId", "thread-aware-1");
-    desktopPluginHost.setActiveConversationThread(undefined);
+    expect(container!.querySelector("[data-message]")?.textContent).toBe("final-1");
+    expect(container!.querySelector(".agent-block")).toBeNull();
   });
 
-  it("lets the keyed presenter replace the legacy surface and native fallback coherently", async () => {
-    const legacyRender = vi.fn(() => <section data-legacy-message />);
-    await desktopPluginHost.activateGeneration({
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "legacy-message",
-          mode: "replace",
-          render: legacyRender,
-        });
-        api.registerPresenter({
-          id: "assistant-root",
-          target: "conversation.item",
-          key: "assistant-message",
-          render: () => <section data-keyed-presenter />,
-        });
-      },
-    });
-
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector("[data-keyed-presenter]")).not.toBeNull();
-    expect(container?.querySelector("[data-legacy-message]")).toBeNull();
-    expect(container?.querySelector(".agent-block")).toBeNull();
-    expect(legacyRender).not.toHaveBeenCalled();
+  it("does not invent a thread identity for a standalone message", () => {
+    let received: Readonly<Record<string, unknown>> | undefined;
+    composition = { Slot: ({ name, context, fallback }) => { if (name.endsWith("/conversation.message")) { received = context; return null; } return fallback; } };
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
   });
 
   it("shows short user messages in full without a collapse control", () => {
@@ -800,11 +777,11 @@ describe("ThreadItemView", () => {
       latestAgentMessageID: "final-1",
       streaming: true,
     });
-    expect(container?.querySelector(".agent-message-actions")).toBeNull();
+    expect((container?.querySelector(".agent-message-actions") as HTMLElement)?.style.display).toBe("none");
     expect(container?.querySelector(".agent-block-with-action-slot")).toBeNull();
   });
 
-  it("keeps historical answer actions hover-revealed rather than persistent", () => {
+  it("keeps historical answer actions persistent", () => {
     render({
       item: makeFinalAnswer("completed"),
       turnStatus: "completed",
@@ -813,13 +790,13 @@ describe("ThreadItemView", () => {
       streaming: false,
     });
 
-    expect(actionBar().dataset.wuuPlacement).toBe("overlay");
+    expect(actionBar().dataset.wuuPlacement).toBe("persistent");
     const block = container?.querySelector(".agent-block");
-    expect(block?.classList.contains("agent-actions-overlay")).toBe(true);
-    expect(block?.classList.contains("agent-actions-persistent")).toBe(false);
+    expect(block?.classList.contains("agent-actions-overlay")).toBe(false);
+    expect(block?.classList.contains("agent-actions-persistent")).toBe(true);
   });
 
-  it("releases completed stream text after the settled view keeps the final answer", async () => {
+  it("leaves host stream ownership intact after rendering the settled answer", async () => {
     const key = streamTextKey("turn-1", "final-1", "text");
     streamTextStore.set(key, "Final answer text.");
 
@@ -836,7 +813,7 @@ describe("ThreadItemView", () => {
     });
 
     expect(container?.textContent).toContain("Final answer text.");
-    expect(streamTextStore.has(key)).toBe(false);
+    expect(streamTextStore.has(key)).toBe(true);
   });
 
   it("groups host events with legacy project history without folding generic host messages", () => {
@@ -875,8 +852,7 @@ describe("ThreadItemView", () => {
   });
 
   it.each(["host", "plugin"])("expands and copies a %s session message body and opens its source without exposing internal input", async (origin) => {
-    const openInSplit = vi.fn();
-    setOpenThreadInSplitHandler(openInSplit);
+    const invoke = vi.spyOn(application, "invoke").mockResolvedValue(undefined);
     const copy = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
     const body = "Coordination update.\n".repeat(100) + "End of update.";
@@ -902,11 +878,10 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
-    setOpenThreadInSplitHandler(undefined);
   });
 
   it("shows the user message time before its copy action", () => {
@@ -926,9 +901,8 @@ describe("ThreadItemView", () => {
     expect(time?.nextElementSibling).toBe(copy);
   });
 
-  it("splits the conversation and opens the related session", () => {
-    const openInSplit = vi.fn();
-    setOpenThreadInSplitHandler(openInSplit);
+  it("opens the related session in a split pane", () => {
+    const invoke = vi.spyOn(application, "invoke").mockResolvedValue(undefined);
     render({
       item: {
         id: "plugin-query-1",
@@ -952,9 +926,7 @@ describe("ThreadItemView", () => {
     expect(openRelated).toBeDefined();
 
     act(() => openRelated!.click());
-    expect(openInSplit).toHaveBeenCalledWith("20260817-171746-edd1069c0780f11a");
-
-    act(() => setOpenThreadInSplitHandler(undefined));
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "20260817-171746-edd1069c0780f11a" });
   });
 
 });

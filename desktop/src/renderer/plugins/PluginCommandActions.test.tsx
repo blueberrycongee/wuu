@@ -1,7 +1,9 @@
 import * as React from "react";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import type { PluginCommandActionContext } from "../../shared/workbench";
 import { PluginHost } from "./PluginHost";
 import { PluginCommandActions } from "./PluginCommandActions";
@@ -99,6 +101,51 @@ describe("PluginCommandActions", () => {
     act(() => reopened.click());
     expect(execute).toHaveBeenCalledTimes(1);
     await act(async () => { finish(); await pending; });
+  });
+
+  it.each([true, false])("treats only proven command-scope cancellation as quiet (cancelled=%s)", async cancelled => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "notes", generation: "one", register(api) {
+      api.registerCommand({ id: "refresh", title: "Refresh", placements: ["view.title"], execute: async () => {
+        throw cancelled ? new PluginLifecycleCancellationError() : new Error("command failed");
+      } });
+    } });
+    await act(async () => root.render(<PluginCommandActions host={host} context={context} />));
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(host.getGenerationDiagnostics("notes", "one")).toHaveLength(cancelled ? 0 : 1);
+    expect(container.querySelector("button")?.getAttribute("aria-label") === "Refresh").toBe(cancelled);
+  });
+
+  it("releases a retained command row for a successor registry without letting the old completion touch it", async () => {
+    const host = new PluginHost({ react: React });
+    let first!: UIContributionRegistryV1, next!: UIContributionRegistryV1;
+    let rejectOld!: (error: Error) => void, resolveNext!: () => void;
+    const oldResult = new Promise<void>((_, reject) => { rejectOld = reject; });
+    const nextResult = new Promise<void>(resolve => { resolveNext = resolve; });
+    const execute = vi.fn().mockReturnValueOnce(oldResult).mockReturnValueOnce(nextResult);
+    await host.activateGeneration({ pluginId: "notes", generation: "one", register(api) {
+      api.registerCommand({ id: "refresh", title: "Refresh", placements: ["view.title"], execute });
+    } });
+    await host.activateGeneration({ pluginId: "first-consumer", generation: "one", register(api) { first = api.contributions; } });
+    await host.activateGeneration({ pluginId: "next-consumer", generation: "one", register(api) { next = api.contributions; } });
+    await act(async () => root.render(<PluginCommandActions host={first} context={context} />));
+    const button = container.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => button.click());
+    await act(async () => root.render(<PluginCommandActions host={next} context={context} />));
+    expect(container.querySelector("button")).toBe(button);
+    expect(button.disabled).toBe(false);
+    await act(async () => button.click());
+    expect(execute).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      host.unload("first-consumer");
+      rejectOld(new Error("retired command failed"));
+      await oldResult.catch(() => {});
+    });
+    expect(button.disabled).toBe(true);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => { resolveNext(); await nextResult; });
+    expect(button.disabled).toBe(false);
+    expect(host.getGenerationDiagnostics("notes", "one")).toHaveLength(0);
   });
 
   it("prevents duplicate clicks while pending and does not surface retired-run failures", async () => {

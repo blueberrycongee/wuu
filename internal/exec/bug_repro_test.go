@@ -3,57 +3,18 @@ package exec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
-
-// blockingProvider blocks on stream events until released or context done.
-type bugReproProvider struct {
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func newBugReproProvider() *bugReproProvider {
-	return &bugReproProvider{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-}
-
-func (b *bugReproProvider) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
-	<-b.started
-	select {
-	case <-b.release:
-	case <-ctx.Done():
-		return providers.ChatResponse{}, ctx.Err()
-	}
-	return providers.ChatResponse{Content: "done"}, nil
-}
-
-func (b *bugReproProvider) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	b.once.Do(func() { close(b.started) })
-	ch := make(chan providers.StreamEvent, 4)
-	go func() {
-		defer close(ch)
-		select {
-		case <-b.release:
-		case <-ctx.Done():
-			ch <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
-			return
-		}
-		ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "hello"}
-		ch <- providers.StreamEvent{Type: providers.EventDone}
-	}()
-	return ch, nil
-}
 
 // TestCancellationEmitsTurnInterrupted verifies that when the parent
 // context is canceled mid-turn, the JSONL event stream ends with
@@ -64,12 +25,37 @@ func TestCancellationEmitsTurnInterrupted(t *testing.T) {
 	// sessions. Keep its user-level state out of the developer's actual ~/.wuu;
 	// otherwise every run leaks a "do work" session into the Desktop's
 	// projectless conversation list.
+	t.Setenv("HOME", root)
 	t.Setenv("WUU_HOME", filepath.Join(root, ".wuu"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	t.Setenv("WUU_SAFE_MODE", "")
+	started := make(chan struct{})
+	var once sync.Once
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode model request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Model != "gpt-test" {
+			t.Errorf("selected provider model = %q, want gpt-test", request.Model)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		once.Do(func() { close(started) })
+		<-r.Context().Done()
+	}))
+	defer endpoint.Close()
+	// Configure the selected model graph before activation; replacing the
+	// legacy StreamRunner field cannot replace its captured provider.
 	configPath := filepath.Join(root, ".wuu.json")
-	if err := writeMinimalConfig(configPath); err != nil {
+	if err := writeMinimalConfig(configPath, endpoint.URL+"/v1"); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	provider := newBugReproProvider()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -83,11 +69,6 @@ func TestCancellationEmitsTurnInterrupted(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
-	}
-	rt.StreamRunner = &agent.StreamRunner{
-		Client:       providers.AdaptStreamClient(provider),
-		Model:        "fake-model",
-		SystemPrompt: "fake prompt",
 	}
 	controller := newLocalControllerForRuntime(ctx, rt)
 
@@ -107,7 +88,9 @@ func TestCancellationEmitsTurnInterrupted(t *testing.T) {
 
 	// Wait for the provider to be hit (so the turn has started).
 	select {
-	case <-provider.started:
+	case <-started:
+	case err := <-runDone:
+		t.Fatalf("Run ended before selected provider started: %v\n%s", err, stdout.String())
 	case <-time.After(10 * time.Second):
 		t.Fatalf("provider never started")
 	}
@@ -146,18 +129,18 @@ func TestCancellationEmitsTurnInterrupted(t *testing.T) {
 
 }
 
-func writeMinimalConfig(path string) error {
-	content := `{
+func writeMinimalConfig(path, endpoint string) error {
+	content := fmt.Sprintf(`{
 		"default_provider": "test",
 		"providers": {
 			"test": {
 				"type": "openai-compatible",
-				"base_url": "https://example.test/v1",
+				"base_url": %q,
 				"api_key": "sk-test",
 				"model": "gpt-test"
 			}
 		},
 		"agent": {"permission_mode": "standard"}
-	}`
-	return os.WriteFile(path, []byte(content), 0o644)
+	}`, endpoint)
+	return os.WriteFile(path, []byte(content), 0o600)
 }

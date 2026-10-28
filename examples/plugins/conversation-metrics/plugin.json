@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "conversation-metrics",
+  "name": "Conversation metrics",
+  "version": "1.0.0",
+  "description": "Add reported turn usage and inspect tool results without replacing the conversation.",
+  "desktop": { "entry": "desktop.js" }
+}

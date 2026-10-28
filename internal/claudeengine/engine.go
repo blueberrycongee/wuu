@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -39,17 +38,7 @@ func envClaudeBinary() string {
 
 // Version reports the CLI version via `claude --version`. Empty on failure.
 func Version(binaryPath string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "--version")
-	// Version discovery must not hold up settings recovery when a CLI wrapper
-	// hangs or leaves a child with inherited output pipes.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return enginecatalog.ObserveVersion(context.Background(), "claude", binaryPath)
 }
 
 // Engine is the claude agent engine: the Claude Code CLI hosted as an
@@ -67,13 +56,15 @@ func NewEngine(binaryPath, rootDir string) *Engine {
 
 // Descriptor describes the claude engine.
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	version := Version(e.binaryPath)
+	requiresHostModel := false
 	return agentengine.Descriptor{
-		ID:      agentengine.EngineID("claude"),
-		Version: version,
+		ID:                agentengine.EngineID("claude"),
+		Version:           "1",
+		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"default-permission-unconfined",
 		},
 	}, nil
 }
@@ -293,9 +284,11 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 	}
 	if len(s.mcpServers) > 0 {
 		servers := make(map[string]any, len(s.mcpServers))
+		allowed := make([]string, 0, len(s.mcpServers))
 		for _, server := range s.mcpServers {
 			if strings.TrimSpace(server.Name) != "" && strings.TrimSpace(server.URL) != "" {
 				servers[server.Name] = map[string]any{"type": "http", "url": server.URL}
+				allowed = append(allowed, "mcp__"+server.Name+"__*")
 			}
 		}
 		if len(servers) > 0 {
@@ -303,7 +296,10 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 			if err != nil {
 				return nil, fmt.Errorf("encode named agent MCP config: %w", err)
 			}
-			args = append(args, "--mcp-config", string(encoded))
+			// dontAsk otherwise denies MCP calls before Wuu can enforce its own
+			// per-call policy. This process-local rule covers only host servers;
+			// Claude's explicit deny and ask rules still take precedence.
+			args = append(args, "--mcp-config", string(encoded), "--allowedTools", strings.Join(allowed, ","))
 		}
 	}
 	model := strings.TrimSpace(s.model)

@@ -52,12 +52,14 @@ export function SettingsSection({
   description,
   actions,
   testID,
+  ariaBusy,
   children,
 }: {
   title?: string;
   description?: string;
   actions?: ReactNode;
   testID?: string;
+  ariaBusy?: boolean;
   children: ReactNode;
 }): JSX.Element {
   const showDescription = Boolean(description) && !isTouchWebShell();
@@ -66,6 +68,7 @@ export function SettingsSection({
       className="settings-section"
       data-wuu-component="settings-section"
       {...(testID ? { "data-testid": testID } : {})}
+      {...(ariaBusy === undefined ? {} : { "aria-busy": ariaBusy })}
     >
       {title || showDescription || actions ? (
         <header className="settings-section-header">
@@ -81,8 +84,8 @@ export function SettingsSection({
   );
 }
 
-export function SettingsGroup({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="settings-group" data-wuu-component="settings-group">{children}</div>;
+export function SettingsGroup({ children, className }: { children: ReactNode; className?: string }): JSX.Element {
+  return <div className={className ? `settings-group ${className}` : "settings-group"} data-wuu-component="settings-group">{children}</div>;
 }
 
 export type SettingsStatusTone = "success" | "warning" | "danger" | "neutral";

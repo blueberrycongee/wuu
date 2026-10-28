@@ -68,31 +68,41 @@ async function waitFor(fn, arg) {
     const check = (${fn.toString()});
     const deadline = performance.now() + 20000;
     function tick() {
-      try { if (check(${JSON.stringify(arg)})) return resolve(true); } catch (error) { return reject(error); }
-      if (performance.now() > deadline) return reject(new Error('Timed out waiting for onboarding state'));
+      try { const value = check(${JSON.stringify(arg)}); if (value) return resolve(value); } catch (error) { return reject(error); }
+      if (performance.now() > deadline) return reject(new Error('Timed out waiting for onboarding state: ' + check.toString()));
       requestAnimationFrame(tick);
     }
     tick();
   })`);
 }
 async function click(label) {
-  await waitFor((text) => [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled), label);
-  const position = await evaluate((text) => {
+  await settleOnboarding();
+  // Plugin activation may replace the setup presentation while it settles.
+  // Sample readiness and geometry together before dispatching native input once.
+  const target = await waitFor((text) => {
     const element = [...document.querySelectorAll('button')].find((button) => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled);
-    if (!element) throw new Error(`Missing enabled button: ${text}`);
+    if (!element) return false;
     const box = element.getBoundingClientRect();
-    return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    const hit = document.elementFromPoint(point.x, point.y);
+    return { point, reachable: hit === element || element.contains(hit),
+      viewport: { width: innerWidth, height: innerHeight }, stage: document.querySelector('.onboarding-stage')?.className };
   }, label);
-  main.webContents.sendInputEvent({ type: 'mouseDown', ...position, button: 'left', clickCount: 1 });
-  main.webContents.sendInputEvent({ type: 'mouseUp', ...position, button: 'left', clickCount: 1 });
+  assert.ok(target.reachable, `Onboarding action must be reachable: ${label}`);
+  console.log('CLICK', JSON.stringify({ label, ...target }));
+  main.webContents.sendInputEvent({ type: 'mouseDown', ...target.point, button: 'left', clickCount: 1 });
+  main.webContents.sendInputEvent({ type: 'mouseUp', ...target.point, button: 'left', clickCount: 1 });
 }
-async function screenshot(name) {
-  console.log("CAPTURE", name);
+async function settleOnboarding() {
   await evaluate(async () => {
     await document.fonts.ready;
     await Promise.all((document.querySelector('.first-run-onboarding')?.getAnimations({ subtree: true }) ?? []).filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
+}
+async function screenshot(name) {
+  console.log("CAPTURE", name);
+  await settleOnboarding();
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
   const layout = await evaluate(() => ({
     viewport: { width: innerWidth, height: innerHeight, scale: devicePixelRatio },
@@ -156,6 +166,7 @@ async function run() {
   if (main.webContents.isLoading()) await new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   await waitFor(() => document.querySelector('.onboarding-stage-welcome'));
   const originalBounds = main.getBounds();
+  const originalViewport = await evaluate(() => ({ width: innerWidth, height: innerHeight }));
   main.setResizable(true);
   for (const theme of ['light', 'dark']) for (const size of [13, 15, 20]) {
     for (const width of [920, 620]) {
@@ -174,6 +185,8 @@ async function run() {
       configuredPositionDIP: process.platform === 'darwin' ? main.getWindowButtonPosition() : null,
       pixelVerification: 'Requires separate native macOS visual acceptance.' } });
   main.setBounds(originalBounds);
+  // Native bounds change before Chromium receives its resized viewport.
+  await waitFor(size => innerWidth === size.width && innerHeight === size.height, originalViewport);
   await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.removeProperty('--font-ui'); });
   await click(empty ? '开始设置' : 'Set up Wuu');
   await waitFor(() => document.querySelector('.onboarding-stage-plugins button:not(:disabled)'));
@@ -195,6 +208,10 @@ async function run() {
     main.setSize(920, 720);
     await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--conversation-message-font-size', '15px'); });
     await click(empty ? '稍后设置' : 'Set up later');
+    if (await evaluate(() => Boolean(window.wuu.listBrowserProfiles && window.wuu.importBrowserCookies))) {
+      await waitFor(() => document.querySelector('.onboarding-stage-browser'));
+      await click(empty ? '暂不导入' : 'Skip for now');
+    }
   }
   if (empty) {
     await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === '重新查找' || button.getAttribute('aria-label') === '重新查找') && !button.disabled));
@@ -219,11 +236,14 @@ async function run() {
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
   await screenshot('keyboard-focus');
-  for (let i = 0; i < 3; i++) {
+  // Toolbar placement can change the tab order; reach a selected row using real keys.
+  const selectedWorkspaceFocused = () => document.activeElement?.matches('.onboarding-workspace-row input[type="checkbox"]:checked');
+  for (let i = 0; i < 50 && !(await evaluate(selectedWorkspaceFocused)); i++) {
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+    await settleOnboarding();
   }
-  await waitFor(() => document.activeElement?.matches('.onboarding-workspace-row input[type="checkbox"]'));
+  await waitFor(selectedWorkspaceFocused);
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
   await waitFor(() => document.querySelectorAll('.onboarding-workspace-row input:checked').length === 1);

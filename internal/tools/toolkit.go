@@ -25,6 +25,7 @@ import (
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
@@ -57,6 +58,7 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // registry lookup.
 type Toolkit struct {
 	env                     *Env
+	sessionStore            *session.Store
 	registry                *Registry
 	disabledTools           map[string]struct{}
 	toolPolicy              func(string) bool
@@ -120,6 +122,20 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 			return err
 		}
 	}
+	// The selected provider makes the policy decision before local enforcement
+	// or contextual review. Neither can turn its denial into an allowed action.
+	if t.authorizer != nil {
+		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
+			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
+			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
+		})
+		if err != nil {
+			return authorizationDenied(info.Name, "authorization provider unavailable")
+		}
+		if strings.TrimSpace(decision.Outcome) != "allow" {
+			return authorizationDenied(info.Name, decision.Reason)
+		}
+	}
 	if err := t.boundary.Check(info, call); err != nil {
 		return err
 	}
@@ -130,19 +146,6 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	}
 	if err := t.reviewToolCall(ctx, info, call); err != nil {
 		return err
-	}
-	if t.authorizer == nil {
-		return nil
-	}
-	decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
-		SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
-		PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
-	})
-	if err != nil {
-		return authorizationDenied(info.Name, "authorization provider unavailable")
-	}
-	if strings.TrimSpace(decision.Outcome) != "allow" {
-		return authorizationDenied(info.Name, decision.Reason)
 	}
 	return nil
 }
@@ -229,6 +232,7 @@ func New(rootDir string) (*Toolkit, error) {
 	env := &Env{
 		RootDir:            abs,
 		StateDir:           stateDir,
+		RuntimeHome:        wuuHome,
 		AllowMutations:     true,
 		boundaryConfigured: true,
 		ToolSearchEnabled:  true,
@@ -276,14 +280,15 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		RootDir:                     abs,
 		WorkspaceID:                 t.env.WorkspaceID,
 		StateDir:                    t.env.StateDir,
+		RuntimeHome:                 t.env.RuntimeHome,
 		Unconfined:                  t.env.Unconfined,
 		PermissionMode:              t.env.PermissionMode,
 		AllowMutations:              t.env.AllowMutations,
 		boundaryConfigured:          t.env.boundaryConfigured,
+		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
-		SessionsDir:                 t.env.SessionsDir,
 		AgentID:                     t.env.AgentID,
 		AgentPath:                   t.env.AgentPath,
 		ToolSearchEnabled:           t.env.ToolSearchEnabled,
@@ -321,14 +326,16 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	env.skillCatalog.Store(catalog)
 
 	clone := &Toolkit{
-		env:                 &env,
-		boundary:            t.boundary,
-		authorizer:          t.authorizer,
-		reviewer:            t.reviewer,
-		approveForMe:        t.approveForMe,
-		mcpManager:          t.mcpManager,
-		activityRegistry:    t.activityRegistry,
-		mcpActivityBindings: cloneMCPActivityBindings(t.mcpActivityBindings),
+		sessionStore:          t.sessionStore,
+		env:                   &env,
+		boundary:              t.boundary,
+		permissionRequestHook: t.permissionRequestHook,
+		authorizer:            t.authorizer,
+		reviewer:              t.reviewer,
+		approveForMe:          t.approveForMe,
+		mcpManager:            t.mcpManager,
+		activityRegistry:      t.activityRegistry,
+		mcpActivityBindings:   cloneMCPActivityBindings(t.mcpActivityBindings),
 	}
 	t.exposureMu.RLock()
 	clone.toolSearchEnabled = t.toolSearchEnabled
@@ -390,12 +397,12 @@ func (t *Toolkit) rebuildRegistry() {
 		// Session/thread lookup (used after right-click "copy ID" on the
 		// desktop session tree — agents receive a thread ID and resolve it
 		// back to the full conversation via this tool).
-		NewThreadGetTool(e),
+		NewThreadGetTool(t.sessionStore),
 		NewSetSessionWorkspaceTool(e),
 		NewNewContextTool(e),
 		NewNotesTool(e),
-		NewHistoryReadTool(e),
-		NewHistorySearchTool(e),
+		NewHistoryReadTool(e, t.sessionStore),
+		NewHistorySearchTool(e, t.sessionStore),
 		// Recurring agent profiles
 		NewListAgentProfilesTool(e),
 		NewCreateAgentProfileTool(e),
@@ -545,6 +552,11 @@ func (t *Toolkit) SetStateDir(dir string) {
 	t.env.StateDir = strings.TrimSpace(dir)
 }
 
+// SetRuntimeHome excludes the resolved runtime state root from workspace digests.
+func (t *Toolkit) SetRuntimeHome(dir string) {
+	t.env.RuntimeHome = strings.TrimSpace(dir)
+}
+
 // SetSkills publishes discovered skills while retaining the bound generation's
 // availability gate. Worker rediscovery must not revive revoked plugin skills.
 func (t *Toolkit) SetSkills(s []skills.Skill) {
@@ -605,12 +617,11 @@ func (t *Toolkit) SetSessionDir(dir string) {
 	t.env.SessionDir = dir
 }
 
-// SetSessionsDir binds session-history tools to a specific SQLite store.
-func (t *Toolkit) SetSessionsDir(dir string) {
-	if t == nil || t.env == nil {
-		return
-	}
-	t.env.SessionsDir = strings.TrimSpace(dir)
+// SetSessionStore binds tools to the owning runtime's captured provider. Call
+// before admitting execution; existing clones retain their original binding.
+func (t *Toolkit) SetSessionStore(store *session.Store) {
+	t.sessionStore = store
+	t.rebuildRegistry()
 }
 
 // SetWorkingNotesHome binds native notes and legacy imports to this runtime.
@@ -635,7 +646,7 @@ func (t *Toolkit) SetAgentIdentity(id, path string) {
 
 // SetOnFileChanged sets the callback fired after write_file/edit_file
 // successfully modifies a file. Used to dispatch FileChanged hooks.
-func (t *Toolkit) SetOnFileChanged(fn func(absPath string)) {
+func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string)) {
 	t.env.OnFileChanged = fn
 }
 
@@ -821,7 +832,8 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 
 func (t *Toolkit) IsToolDisabled(name string) bool {
 	_, ok := t.disabledTools[name]
-	return ok || t.toolPolicy != nil && !t.toolPolicy(name)
+	return ok || t.toolPolicy != nil && !t.toolPolicy(name) ||
+		t.env != nil && t.env.externalCapabilitiesOnly && !t.externalCapabilityAllowed(name)
 }
 
 // ── ToolExecutor interface ─────────────────────────────────────────
@@ -842,6 +854,9 @@ func (t *Toolkit) IsToolDisabled(name string) bool {
 // callers that have not migrated yet (replay, debugging, internal
 // admin tools) keep working.
 func (t *Toolkit) Definitions() []providers.ToolDefinition {
+	if t.env != nil && t.env.externalCapabilitiesOnly {
+		return t.ExternalCapabilityDefinitions()
+	}
 	if t.CodeModeOnly() {
 		return t.codeModeEntryDefinitions()
 	}

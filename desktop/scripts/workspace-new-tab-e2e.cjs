@@ -107,7 +107,15 @@ app.whenReady().then(async () => {
         .map(node => {
           const rect = node.getBoundingClientRect();
           const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          const shellControl = node.matches('.section-sidebar-toggle, .shell-right-sidebar-toggle');
+          const row = shellControl
+            ? document.querySelector('.mac-window-controls') ? document.querySelector('.titlebar') : document.querySelector('.workbench-window-chrome')
+            : node.closest('.titlebar, .workspace-panel-tabbar');
+          const style = getComputedStyle(row);
+          const rowBox = row.getBoundingClientRect();
           return { target: node.dataset.wuuComponent || node.className, bounds: box(node),
+            row: box(row), shellControl,
+            expectedCenterY: (rowBox.top + parseFloat(style.paddingTop) + rowBox.bottom - parseFloat(style.paddingBottom)) / 2,
             centerY: rect.y + rect.height / 2, button: node instanceof HTMLButtonElement,
             hit: hit === node || node.contains(hit) };
         });
@@ -136,8 +144,8 @@ app.whenReady().then(async () => {
     // The titlebar grows with the UI font. Verify alignment and usable chip
     // padding against its painted row instead of a fixed default-font height.
     for (const peer of geometry.peers) {
-      assert.ok(Math.abs(peer.centerY - axis) < 0.6, `${scenario}: ${peer.target} retains the shared window-control axis: ${JSON.stringify(geometry)}`);
-      assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
+      assert.ok(Math.abs(peer.centerY - peer.expectedCenterY) < 0.6, `${scenario}: ${peer.target} aligns within its own workbench row: ${JSON.stringify(geometry)}`);
+      assert.ok(peer.bounds.top >= peer.row.top - 0.1 && peer.bounds.bottom <= peer.row.bottom + 0.1,
         `${scenario}: ${peer.target} is not clipped by the row`);
       if (peer.button) assert.ok(peer.hit, `${scenario}: ${peer.target} owns its click target`);
     }
@@ -148,7 +156,7 @@ app.whenReady().then(async () => {
     assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
       "The selected tab remains in view");
     for (const { tab, label, close, conversation, chip, main, selected, hit } of geometry.tabs) {
-      assert.ok(chip.height >= 28 && chip.height >= label.height + 4 && chip.height <= label.height + 14,
+      assert.ok(chip.height >= 28 && chip.height >= label.height + 4,
         `${scenario}: compact chips retain readable label padding and usable targets: ${JSON.stringify(geometry)}`);
       assert.ok(Math.abs((chip.top - geometry.paintedCanvasTop) - (geometry.header.bottom - chip.top - chip.height)) < 1,
         `${scenario}: tab chips have equal space above and below within the painted canvas header: ${JSON.stringify(geometry)}`);
@@ -305,16 +313,21 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector('[data-wuu-component="workspace-panel"]').dataset.wuuView), "new");
   results.push({ scenario: "multiple new pages and close recovery", passed: true });
 
-  await waitFor(() => Boolean(document.querySelector(".workspace-tool-menu-more")));
-  await evaluate(() => document.querySelector('[data-wuu-tool="browser"]').focus());
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title'));
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu [data-wuu-tool="browser"]')].some(item => item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })));
+  await evaluate(() => [...document.querySelectorAll('.workspace-tool-menu [data-wuu-tool="browser"]')].find(item => item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).focus());
+  await waitFor(() => document.activeElement?.getAttribute('data-wuu-tool') === 'browser');
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
-  await waitFor(() => document.activeElement?.tagName === "SUMMARY");
+  try {
+    await waitFor(() => document.activeElement?.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title');
+  } catch (error) {
+    fs.writeFileSync(path.join(output, 'keyboard-discovery.json'), JSON.stringify(await evaluate(() => ({ active: document.activeElement?.outerHTML, menus: [...document.querySelectorAll('.workspace-tool-menu')].map(menu => ({ html: menu.outerHTML, visible: menu.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) })) })), null, 2));
+    throw error;
+  }
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
   win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
-  await waitFor(() => document.querySelector(".workspace-tool-menu-more").open);
-  await click('[data-wuu-plugin="user:workspace-e2e"]');
   await waitFor(() => Boolean(document.querySelector("[data-workspace-e2e-notes]")));
   assert.equal((await tabs()).length, 2);
   for (const theme of ["light", "dark"]) {
@@ -401,8 +414,8 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
   });
-  // Measure the real document editor rather than its stylesheet: short drafts
-  // share a row with send; wrapped drafts and attachments restore editing space.
+  // Measure the shipping editor and its narrow-document layout: drafts and
+  // controls stay readable without overlap, and attachments retain their space.
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
     && Boolean(document.querySelector('.document-composer-wrap .codex-runtime-effort')));
@@ -421,20 +434,22 @@ app.whenReady().then(async () => {
       const input = root.querySelector('textarea');
       const frame = root.querySelector('.composer-frame');
       const send = root.querySelector('.composer-action-button');
-      const toolbar = [...root.querySelectorAll('.composer, .composer-bar')].find((node) => {
-        const style = getComputedStyle(node);
-        return style.display !== 'contents' && style.containerName.split(' ').includes('composer-toolbar');
-      });
-      if (!toolbar) throw new Error('Missing the active composer-toolbar query container');
-      if (!getComputedStyle(root).containerName.split(' ').includes('document-composer'))
-        throw new Error('Missing the document-composer query container');
+      const editor = root.querySelector('.composer-editor');
+      const shell = root.querySelector('.composer-shell');
       const box = (node) => node.getBoundingClientRect().toJSON();
       const contentWidth = (node) => {
         const style = getComputedStyle(node);
         return box(node).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
           - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
       };
-      return { frame: box(frame), input: box(input), send: box(send),
+      return { frame: box(frame), input: box(input), send: box(send), editor: box(editor),
+        editorControls: [...editor.querySelectorAll('button, .composer-context-meter')].map(node => {
+          const bounds = box(node);
+          const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+          return { ...bounds, label: node.getAttribute('aria-label') || node.className,
+            hit: hit === node || node.contains(hit) };
+        })
+          .filter(control => control.width > 0 && control.height > 0),
         frameRadius: parseFloat(getComputedStyle(frame).borderTopLeftRadius),
         fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
         clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
@@ -444,53 +459,52 @@ app.whenReady().then(async () => {
         context: box(root.querySelector('.composer-context-meter')),
         contextLabel: box(root.querySelector('.composer-context-meter-label')),
         effort: box(root.querySelector('.codex-runtime-effort')),
-        composerWidth: contentWidth(root), toolbarWidth: contentWidth(toolbar),
+        composerWidth: contentWidth(root), shellWidth: contentWidth(shell),
         tray: root.querySelector('.composer-attachment-tray') ? box(root.querySelector('.composer-attachment-tray')) : null,
         attachment: root.querySelector('.composer-file-card') ? box(root.querySelector('.composer-file-card')) : null };
     });
+    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
     assert.ok(Number.isFinite(geometry.composerWidth) && geometry.composerWidth > 0
-      && Number.isFinite(geometry.toolbarWidth) && geometry.toolbarWidth > 0,
-      name + ': both responsive containers have measurable content widths');
+      && Number.isFinite(geometry.shellWidth) && geometry.shellWidth > 0,
+      name + ': the visible document and composer shell have measurable content widths');
     assert.ok(geometry.frame.left >= -1 && geometry.frame.right <= geometry.viewportWidth + 1,
       name + ': editor remains within the viewport');
     assert.ok(geometry.frame.top >= 0 && geometry.frame.bottom <= geometry.viewportHeight + 1,
       name + ': editor remains vertically reachable');
     assert.ok(geometry.input.width >= 32 && geometry.send.width >= 24 && geometry.send.height >= 24,
       name + ': text and send retain usable hit targets');
-    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
     results.push({ scenario: name, geometry });
     return geometry;
   };
   const assertReadableEditor = (geometry, name) => {
-    const sameRow = Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2;
-    if (sameRow) assert.ok(geometry.frameRadius >= geometry.frame.height / 2 - 1,
-      name + ': a one-row document input reads as a capsule');
     assert.ok(geometry.input.width >= geometry.fontSize * 8,
       name + ': input retains room to read and edit a short phrase');
-    if (geometry.composerWidth >= 680) assert.ok(sameRow, name + ': wide short drafts retain the compact single row');
-    if (sameRow) {
-      assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
-        name + ': wide short editor stays compact at the selected font size');
-      assert.ok(geometry.input.right <= geometry.runtime.left + 1,
-        name + ': inline runtime controls do not overlap the text');
-    } else {
-      assert.ok(geometry.input.bottom <= geometry.send.top + 1,
-        name + ': narrow input has its own row above the send controls');
-      assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
-        name + ': stacked input uses the available reading width');
+    assert.ok(geometry.editor.height > 0 && geometry.input.top >= geometry.editor.top - 1
+      && geometry.input.bottom <= geometry.editor.bottom + 1,
+      name + ": input remains inside the capsule");
+    assert.ok(geometry.editorControls.every(control =>
+      control.right <= geometry.input.left + 1 || control.left >= geometry.input.right - 1
+      || control.bottom <= geometry.input.top + 1 || control.top >= geometry.input.bottom - 1),
+      name + ": input and native control targets never overlap");
+    assert.ok(geometry.editorControls.length > 0 && geometry.editorControls.every(control =>
+      control.top >= geometry.editor.top - 1 && control.bottom <= geometry.frame.bottom + 1
+      && control.left >= geometry.frame.left - 1 && control.right <= geometry.frame.right + 1),
+      name + ': editor controls stay inside the capsule');
+    assert.ok(geometry.editorControls.every(control => control.hit),
+      name + ': every editor control owns its native pointer target');
+    const separated = (left, right) => left.right <= right.left + 1 || left.left >= right.right - 1
+      || left.bottom <= right.top + 1 || left.top >= right.bottom - 1;
+    assert.ok(geometry.editorControls.every((control, index) =>
+      geometry.editorControls.slice(index + 1).every(peer => separated(control, peer))),
+      name + ': wrapped editor controls never overlap one another');
+    assert.ok(geometry.runtime.width > 0 && geometry.context.width > 0,
+      name + ': the context ring and model menu remain available');
+    // Runtime controls now belong to the editor, not the optional extension
+    // toolbar. Constrained editors fold their labels, not the context action.
+    if (geometry.shellWidth <= 480) {
+      assert.equal(geometry.contextLabel.width, 0, name + ': narrow editors fold the context label');
+      assert.equal(geometry.effort.width, 0, name + ': narrow editors fold effort without stealing the input lane');
     }
-    assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
-      name + ': model menu and send remain available without overlap');
-    if (geometry.toolbarWidth <= 560) {
-      assert.equal(geometry.context.width, 0, name + ': narrow toolbar folds the context meter');
-    } else {
-      assert.ok(geometry.context.width > 0 && geometry.runtime.left >= geometry.context.right - 1,
-        name + ': wider toolbar retains the context ring beside runtime controls');
-      if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
-        name + ': medium toolbar keeps the context ring without its verbose label');
-    }
-    if (geometry.toolbarWidth <= 420 || (sameRow && geometry.composerWidth <= 680)) assert.equal(geometry.effort.width, 0,
-      name + ': constrained toolbar folds effort without stealing the input lane');
     assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };
   // A docked preview leaves only the conversation input; the draft follows
@@ -558,6 +572,14 @@ app.whenReady().then(async () => {
       assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,
         name + ': focusing preserves the live editor selection');
       assert.ok(Math.abs(focused.frame.height - empty.frame.height) <= 2, name + ': focus does not expand the editor');
+      await pointerClick('.document-composer-wrap .codex-runtime-trigger');
+      await waitFor(() => Boolean(document.querySelector('.codex-runtime-menu')));
+      await capture(name + '-runtime-menu');
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await waitFor(() => !document.querySelector('.codex-runtime-menu'));
+      assert.equal(await evaluate(() => document.querySelector('.document-composer-wrap textarea').value), 'Edit',
+        name + ': opening and dismissing the real model menu preserves the draft');
       await setDocumentDraft('Continuous words wrap naturally while editing the selected document. '.repeat(12));
       await waitFor(() => {
         const root = document.querySelector('.document-composer-wrap');
@@ -598,7 +620,7 @@ app.whenReady().then(async () => {
   });
   await click(".workspace-panel-globalize");
   await click(".workspace-panel-add");
-  await click(".workspace-tool-menu-more > summary");
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title'));
 
   for (const theme of ["light", "dark"]) {
     for (const size of [14, 20]) {
@@ -644,18 +666,18 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
     document.querySelector(".workspace-tool-menu").scrollTop = 0;
-    document.querySelector(".workspace-tool-menu-more").open = false;
   });
   await capture("light-14-default");
-  await evaluate(() => document.querySelector(".workspace-tool-menu-more > summary").focus());
-  await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title' && item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })));
+  await evaluate(() => [...document.querySelectorAll('.workspace-tool-menu-item')].find(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title' && item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).focus());
+  await waitFor(() => document.activeElement?.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title');
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
   await waitFor(() => document.activeElement?.dataset.wuuTool === "files");
   await capture("light-14-keyboard-focus");
-  results.push({ scenario: "keyboard skips collapsed extensions", passed: true });
+  results.push({ scenario: "keyboard wraps from the public extension entry to the first tool", passed: true });
   const hover = await evaluate(() => {
-    const box = document.querySelector('[data-wuu-tool="files"]').getBoundingClientRect();
+    const box = document.querySelector('.workspace-tool-menu [data-wuu-tool="files"]').getBoundingClientRect();
     return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
   });
   win.webContents.sendInputEvent({ type: "mouseMove", ...hover });

@@ -64,11 +64,11 @@ func NewKeyringStore(service string, backend keyringBackend) *KeyringStore {
 }
 
 // NewDesktopStore deliberately has no secure-file fallback. A desktop build
-// must surface Keychain/keyring failures to the user instead of silently
+// must surface Keychain/Secret Service failures to the user instead of silently
 // writing OAuth credentials to disk.
 func NewDesktopStore() (Store, error) {
-	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("desktop credential store requires macOS Keychain on %s", runtime.GOOS)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return nil, fmt.Errorf("desktop credential store requires macOS Keychain or Linux Secret Service on %s", runtime.GOOS)
 	}
 	return NewKeyringStore("wuu", nil), nil
 }
@@ -86,6 +86,11 @@ func (s *KeyringStore) get(namespace, key, revisionPath string) ([]byte, error) 
 	revision, err := readKeyringRevision(revisionPath)
 	if err != nil {
 		return nil, err
+	}
+	// Linux has no pre-revision desktop credentials to migrate. Avoid requiring
+	// Secret Service just to connect to a server that has never used OAuth.
+	if revision == nil && runtime.GOOS == "linux" {
+		return nil, ErrNotFound
 	}
 	if revision != nil && !revision.Committed {
 		return nil, ErrNotFound
@@ -246,7 +251,7 @@ func writeKeyringRevision(path string, revision keyringRevision) error {
 }
 
 func (s *KeyringStore) lock(ctx context.Context, namespace, key string) (*os.File, error) {
-	// Keychain is shared across projects and WUU_HOME overrides. Rendezvous in
+	// System keyrings are shared across projects and WUU_HOME overrides. Rendezvous in
 	// the OS user's home, rather than a project-specific application directory.
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -75,6 +75,51 @@ func TestToolFlowPostContextSurvivesLaterHooks(t *testing.T) {
 	}
 }
 
+type contextualToolExecutor struct {
+	stubExecutor
+	contexts map[string]string
+}
+
+func (e *contextualToolExecutor) Execute(_ context.Context, call providers.ToolCall) (string, error) {
+	e.contexts[call.ID] = "provider context for " + call.ID
+	return "result", nil
+}
+
+func (e *contextualToolExecutor) TakeAdditionalContext(call providers.ToolCall) string {
+	value := e.contexts[call.ID]
+	delete(e.contexts, call.ID)
+	return value
+}
+
+// Decorating a selected provider must retain both sources of request context,
+// preserve call ownership when results are consumed out of order, and drain it.
+func TestToolFlowPreservesSelectedProviderContextThroughHooks(t *testing.T) {
+	inner := &contextualToolExecutor{contexts: make(map[string]string)}
+	d := NewDispatcher(NewRegistry(map[Event][]HookConfig{
+		PostToolUse: {{Command: `printf '%s' '{"additional_context":"hook context"}'`}},
+	}))
+	executor := NewHookedExecutor(inner, d, "session", t.TempDir())
+	calls := []providers.ToolCall{{ID: "a", Name: "echo", Arguments: `{}`}, {ID: "b", Name: "echo", Arguments: `{}`}}
+	for _, call := range calls {
+		if _, err := executor.Execute(context.Background(), call); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := len(calls) - 1; i >= 0; i-- {
+		call := calls[i]
+		want := "provider context for " + call.ID + "\n\nhook context"
+		if got := executor.TakeAdditionalContext(call); got != want {
+			t.Fatalf("call %s context = %q, want %q", call.ID, got, want)
+		}
+		if got := executor.TakeAdditionalContext(call); got != "" {
+			t.Fatalf("call %s context consumed twice: %q", call.ID, got)
+		}
+	}
+	if len(inner.contexts) != 0 {
+		t.Fatal("selected provider retained consumed results")
+	}
+}
+
 func TestToolFlowRichErrorUsesFailureHook(t *testing.T) {
 	for _, toolErr := range []error{nil, errors.New("transport unavailable")} {
 		t.Run(fmt.Sprint(toolErr), func(t *testing.T) {

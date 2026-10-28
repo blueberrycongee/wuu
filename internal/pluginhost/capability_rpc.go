@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,16 +29,16 @@ import (
 //
 // ## Protocol version
 //
-// Protocol version 2 adds capability negotiation and is the only production
-// Host-to-plugin extension seam. Protocol version 3 adds service
+// Protocol version 1 retains tool calls; version 2 adds capability negotiation.
+// Protocol version 3 adds service
 // provide/consume declarations routed through the generation-scoped service
 // registry.
 const (
 	CapabilityProtocolVersion = 3
 	CapabilityProtocolName    = "wuu-plugin-v2"
-	// RuntimeLifecycleVersion identifies the side-effect-free prepare phase
-	// followed by explicit post-commit activation.
-	RuntimeLifecycleVersion = 1
+	// RuntimeLifecycleVersion separates declarations (initialize), dependency-
+	// ordered state validation (prepare), and post-commit effects (activate).
+	RuntimeLifecycleVersion = 2
 
 	// CapabilityAgentRequestTransform lets a plugin transform the complete,
 	// provider-neutral request immediately before provider validation and send.
@@ -45,6 +46,9 @@ const (
 	// CapabilityAgentPreStep lets a plugin append sourced, durable context at
 	// the model-step boundary. Plugins own emission and cache policy.
 	CapabilityAgentPreStep = "agent.pre_step"
+	// CapabilityAgentStepPolicy decides whether the default loop admits another
+	// model round after durable input. Higher priority runs first; stop bails.
+	CapabilityAgentStepPolicy = "agent.step.policy"
 	// CapabilityAgentSystemPromptSection contributes a generation-stable section
 	// evaluated before that plugin generation can become active.
 	CapabilityAgentSystemPromptSection = "agent.system_prompt.section"
@@ -108,8 +112,8 @@ var HostOnlyCapabilities = map[string]struct{}{
 }
 
 // CapabilityNegotiationError marks an initialize response that cannot be
-// activated safely. Runtime generation builders treat this as a hard rejection
-// even when ordinary plugin startup failures are allowed in inventory.
+// activated safely. The process is rejected; generation builders can quarantine
+// an optional runtime while preserving required selection failures.
 type CapabilityNegotiationError struct{ Err error }
 
 func (e *CapabilityNegotiationError) Error() string { return e.Err.Error() }
@@ -179,8 +183,9 @@ const (
 	HostServiceStorageCompareExchange HostServiceMethod = "host.storage.compare_exchange"
 
 	// Settings
-	HostServiceSettingsGet  HostServiceMethod = "host.settings.get"
-	HostServiceSettingsList HostServiceMethod = "host.settings.list"
+	HostServiceSettingsGet        HostServiceMethod = "host.settings.get"
+	HostServiceSettingsList       HostServiceMethod = "host.settings.list"
+	HostServiceCredentialsRequest HostServiceMethod = "host.credentials.request"
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
@@ -389,6 +394,9 @@ type SessionInspectParams struct {
 	RequestID string `json:"request_id,omitempty"`
 	Wait      string `json:"wait,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	// Requires an explicit request ID. Progress is an optional display snapshot,
+	// not a delivery receipt, event stream or durable execution result.
+	IncludeProgress bool `json:"include_progress,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
@@ -411,6 +419,29 @@ type SessionInspectResult struct {
 	Turn      *SessionTurnInspection   `json:"turn,omitempty"`
 	Workspace *SessionWorkspaceSummary `json:"workspace,omitempty"`
 	TimedOut  bool                     `json:"timed_out,omitempty"`
+	Progress  *SessionProgressSnapshot `json:"progress,omitempty"`
+}
+
+// SessionProgressSnapshot projects only an exclusively correlated turn in a
+// session owned by the caller. Unavailable snapshots never contain items.
+type SessionProgressSnapshot struct {
+	Version   int                   `json:"version"`
+	Available bool                  `json:"available"`
+	Reason    string                `json:"reason,omitempty"`
+	SessionID string                `json:"session_id,omitempty"`
+	RequestID string                `json:"request_id,omitempty"`
+	TurnID    string                `json:"turn_id,omitempty"`
+	Items     []SessionProgressItem `json:"items"`
+	Truncated bool                  `json:"truncated"`
+}
+
+type SessionProgressItem struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	Text      string `json:"text,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type SessionTurnInspection struct {
@@ -555,6 +586,7 @@ type SessionContextBlock struct {
 }
 
 // AgentTurnCompletedInput is a product-neutral settled-turn observation.
+// Succeeded includes required durable settlement, not task-level acceptance.
 type AgentTurnCompletedInput struct {
 	ThreadID     string    `json:"thread_id"`
 	TurnID       string    `json:"turn_id"`
@@ -646,9 +678,18 @@ type SettingsGetResult struct {
 	Value json.RawMessage `json:"value"`
 }
 
-// SettingsListResult is the output of host.settings.list.
+// SettingsListParams optionally narrows a snapshot to one independently committed scope.
+type SettingsListParams struct {
+	Scope string `json:"scope,omitempty"`
+}
+
+// SettingsListResult is the output of host.settings.list. Revision is an opaque
+// content token, not a sequence number. Existing entries-only readers remain valid.
 type SettingsListResult struct {
-	Entries map[string]json.RawMessage `json:"entries"`
+	Entries         map[string]json.RawMessage `json:"entries"`
+	Revision        string                     `json:"revision"`
+	ScopeRevisions  map[string]string          `json:"scope_revisions"`
+	RestartRequired []string                   `json:"restart_required"`
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +701,10 @@ type SettingsListResult struct {
 // provide and which host services they require.
 type CapabilityInitializeResult struct {
 	InitializeResult
+
+	// RequiredHostFeatures names exact host semantics required by this provider.
+	// Providers must also check the initialize offer: older hosts ignore this field.
+	RequiredHostFeatures []string `json:"required_host_features,omitempty"`
 
 	// Capabilities lists the capabilities this plugin provides.
 	Capabilities []CapabilityDescriptor `json:"capabilities,omitempty"`
@@ -680,11 +725,11 @@ type CapabilityInitializeResult struct {
 	// diagnostic; there is no dependency solver.
 	RequiredServices []ServiceRequirement `json:"required_services,omitempty"`
 
-	// ProtocolVersion is the capability protocol version the plugin
-	// requests. The host may downgrade to v1 if v2 is unsupported.
+	// ProtocolVersion is the capability protocol version the plugin requests.
+	// Omission means v1; unsupported explicit versions fail, never downgrade.
 	ProtocolVersion int `json:"protocol_version,omitempty"`
 
-	// LifecycleVersion opts the runtime into prepare/activate semantics.
+	// LifecycleVersion opts the runtime into initialize/prepare/activate semantics.
 	LifecycleVersion int `json:"lifecycle_version,omitempty"`
 }
 
@@ -692,6 +737,10 @@ type CapabilityInitializeResult struct {
 // capability RPC support declaration.
 type CapabilityInitializeParams struct {
 	InitializeParams
+
+	// SupportedHostFeatures advertises versioned semantics, not service bindings.
+	// Absence means no features; unknown names grant no implied compatibility.
+	SupportedHostFeatures []string `json:"supported_host_features,omitempty"`
 
 	// CapabilityProtocolVersion offers the capability layer independently of
 	// the v1 transport version. Legacy plugins keep seeing protocol_version=1
@@ -702,7 +751,7 @@ type CapabilityInitializeParams struct {
 	// Plugins can use this to decide whether to enable optional features.
 	SupportedHostServices []HostServiceMethod `json:"supported_host_services,omitempty"`
 
-	// LifecycleVersion advertises the host's prepare/activate lifecycle.
+	// LifecycleVersion advertises the host's initialize/prepare/activate lifecycle.
 	LifecycleVersion int `json:"lifecycle_version,omitempty"`
 }
 
@@ -905,9 +954,9 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamTransform
 	case CapabilityAgentSystemPromptSection:
 		requiredKind = SeamTransform
-	case CapabilityAgentCompaction:
+	case CapabilityAgentCompaction, CapabilityAgentStepPolicy:
 		requiredKind = SeamDecision
-	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve:
+	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve, CapabilityModelRequestMetrics:
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnLifecycle:
 		requiredKind = SeamObserve
@@ -943,7 +992,7 @@ func EffectiveErrorPolicy(c CapabilityDescriptor) ErrorPolicy {
 	if c.ErrorPolicy != "" {
 		return c.ErrorPolicy
 	}
-	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted || c.ID == CapabilityModelRequestObserve {
+	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted || c.ID == CapabilityModelRequestObserve || c.ID == CapabilityModelRequestMetrics {
 		return ErrorPolicyIsolate
 	}
 	return ErrorPolicyPropagate
@@ -984,15 +1033,47 @@ func validateCapabilityRelations(c CapabilityDescriptor) error {
 	return nil
 }
 
+// HostFeatureDocumentAuthority recognizes the selected state.documents authority
+// method, including provider-owned durability without a host business journal.
+const HostFeatureDocumentAuthority = "state.documents.authority.v1"
+
+const HostFeatureSessionProgress = "session.progress.v1"
+
+// HostFeatureServiceContinuation recognizes single-use selected invocation forwarding.
+const HostFeatureServiceContinuation = "service.continuation.v1"
+
+// SupportedHostFeatures returns only semantics actually implemented by this host.
+func SupportedHostFeatures() []string {
+	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation}
+}
+
+func hostFeaturesForServices(supported []HostServiceMethod) []string {
+	features := SupportedHostFeatures()
+	if !slices.Contains(supported, ServiceContinueMethod) {
+		features = slices.DeleteFunc(features, func(feature string) bool { return feature == HostFeatureServiceContinuation })
+	}
+	return features
+}
+
 // ValidateCapabilityNegotiation validates one initialize response against the
 // services actually implemented by the host process.
 func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported []HostServiceMethod) error {
+	seenFeatures := map[string]bool{}
+	for _, feature := range result.RequiredHostFeatures {
+		if seenFeatures[feature] {
+			return fmt.Errorf("duplicate required host feature %q", feature)
+		}
+		seenFeatures[feature] = true
+		if !slices.Contains(hostFeaturesForServices(supported), feature) {
+			return fmt.Errorf("required host feature %q is unavailable", feature)
+		}
+	}
 	version := result.ProtocolVersion
 	if version == 0 {
 		version = ProtocolVersion
 	}
 	if version < ProtocolVersion || version > CapabilityProtocolVersion {
-		return fmt.Errorf("unsupported negotiated protocol version %d", version)
+		return fmt.Errorf("unsupported negotiated protocol version %d (supported: %d-%d)", version, ProtocolVersion, CapabilityProtocolVersion)
 	}
 	if err := ValidateServiceNegotiation(result); err != nil {
 		return err
@@ -1010,7 +1091,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelRequestMetrics, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}
@@ -1058,7 +1139,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 // ValidateHostServiceMethod checks that a host service method is recognized.
 func ValidateHostServiceMethod(m HostServiceMethod) error {
 	switch m {
-	case ServiceCallMethod:
+	case ServiceCallMethod, ServiceContinueMethod:
 		return nil
 	default:
 		return fmt.Errorf("unknown host service method %q", m)

@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useProjectWork } from "./ProjectWork";
 import { useId, useState } from "react";
 import type { Thread, ThreadItem } from "../shared/protocol";
@@ -30,16 +31,15 @@ export function ProjectStatusCapsule({ project, sessions }: { project: Thread; s
     t(sessions.length === 1 ? "projects.status.sessionsOne" : "projects.status.sessions", { count: formatNumber(sessions.length) }),
   ].filter(Boolean);
   return (
-    <button
+    <Tooltip asChild content={parts.join(" · ")}><button
       type="button"
       className="conversation-status-capsule project-status-capsule"
-      title={parts.join(" · ")}
       aria-label={parts.join(" · ")}
       onClick={() => actions.openProjectPanel(project)}
     >
       {running ? <span className="project-status-count" aria-hidden="true"><LoaderCircle className="project-status-spinner" />{formatNumber(running)}</span> : null}
       <span className="project-status-count"><MessagesSquare aria-hidden="true" />{works.length ? parts[0] : formatNumber(sessions.length)}</span>
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -95,10 +95,10 @@ function EventSessionName({ item, session }: { item: ThreadItem; session: Projec
   const name = session ? baseThreadTitle(session) : item.name?.trim() || t("projects.event.aSession");
   if (!session || !actions) return <span className="project-event-name"><span>{name}</span></span>;
   return (
-    <button type="button" className="project-event-name" title={t("projects.openSession")} onClick={() => actions.openThread(session.id)}>
+    <Tooltip asChild content={t("projects.openSession")}><button aria-description={t("projects.openSession")} type="button" className="project-event-name" onClick={() => actions.openThread(session.id)}>
       <MessagesSquare aria-hidden="true" />
       <span>{name}</span>
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -106,10 +106,10 @@ function EventToggle({ expanded, controls, onToggle }: { expanded: boolean; cont
   const { t } = useI18n();
   const label = t(expanded ? "projects.event.hideDetails" : "projects.event.details");
   return (
-    <button type="button" className="icon-button project-event-action project-event-toggle"
-      title={label} aria-label={label} aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
+    <Tooltip asChild content={label}><button type="button" className="icon-button project-event-action project-event-toggle"
+      aria-label={label} aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
       {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-    </button>
+    </button></Tooltip>
   );
 }
 

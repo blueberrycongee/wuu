@@ -557,16 +557,16 @@ func grepContentResultMap(pattern string, total, offset, shown, omitted int, mat
 // ---------------------------------------------------------------------------
 
 // searchWorkspaceRevision returns the revision of the root search executes
-// in. The toolkit computes the workspace revision once per tool call and
-// stashes it in the context; search tools reuse that value when the stash was
-// computed for the same root, which is always true except for threads bound
-// to an isolated worktree checkout (those compute their own).
+// in. A supplied revision can be reused only when it was computed for that
+// root. Otherwise the search leaf computes its own freshness evidence,
+// including when the toolkit omits optional read-only telemetry snapshots or
+// the thread is bound to a different worktree checkout.
 func searchWorkspaceRevision(ctx context.Context, env *Env) string {
 	root := env.RevisionRoot(ctx)
 	if stashedRoot, revision, ok := toolctx.WorkspaceRevision(ctx); ok && stashedRoot == root {
 		return revision
 	}
-	return workspaceRevision(ctx, root)
+	return workspaceRevision(ctx, root, env.RuntimeHome)
 }
 
 func searchResultCapacity(limit int) int {

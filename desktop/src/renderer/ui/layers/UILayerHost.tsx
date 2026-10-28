@@ -10,6 +10,11 @@ import { startFocusModality } from "../../FocusModality";
 
 const UILayerHostContext = createContext<HTMLElement | null>(null);
 
+/** Keep React context and handlers when shell chrome uses a native surface. */
+export function UILayerTarget({ target, children }: { target: HTMLElement; children: ReactNode }): ReactNode {
+  return <UILayerHostContext.Provider value={target}>{children}</UILayerHostContext.Provider>;
+}
+
 export interface WuuUIRootProps {
   children: ReactNode;
 }

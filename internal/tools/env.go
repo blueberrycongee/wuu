@@ -128,6 +128,7 @@ type Env struct {
 	RootDir              string
 	WorkspaceID          string
 	StateDir             string
+	RuntimeHome          string
 	// Unconfined is the explicit escape hatch for lifting path confinement.
 	// Default false means file tools stay inside FileScopeRoots/RootDir.
 	Unconfined     bool
@@ -143,6 +144,9 @@ type Env struct {
 	// boundary from a lightweight Env literal used by internal callers and
 	// tests. The historical zero-value Env behaves as the standard boundary.
 	boundaryConfigured bool
+	// External engines use a direct browser/CUA surface and receive screenshot
+	// pixels without needing access to the workspace's file tools.
+	externalCapabilitiesOnly bool
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.
@@ -150,10 +154,6 @@ type Env struct {
 	SessionDir string // absolute session artifact path for result budgeting
 	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
 	CodeModeStateOwner string
-	// SessionsDir overrides the user-level SQLite session store location for
-	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
-	// lookup used by ordinary runtimes.
-	SessionsDir string
 	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.
 	WorkingNotesHome string
 	// ToolResultProjectionMode selects stable tool-result projection behavior
@@ -228,7 +228,7 @@ type Env struct {
 	// OnFileChanged is called after write_file/edit_file successfully
 	// modifies a file. Enables FileChanged hook dispatch without
 	// coupling the tools package to the hooks package.
-	OnFileChanged func(absPath string)
+	OnFileChanged func(context.Context, string)
 	// OnSessionWorkspaceChanged persists and broadcasts an explicit main-agent
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error
@@ -319,10 +319,14 @@ type BrowserBridge interface {
 // BrowserLiveTab is one view the desktop host currently has open for this
 // workspace. URL and Title are empty when the host only reports ids.
 type BrowserLiveTab struct {
-	ID     string
-	URL    string
-	Title  string
-	Status string
+	Attachable  bool
+	WorkspaceID string
+	Active      bool
+	Source      string
+	ID          string
+	URL         string
+	Title       string
+	Status      string
 }
 
 // BrowserTabRecord is the durable per-tab state the tool persists between turns
@@ -339,9 +343,9 @@ type BrowserTabRecord struct {
 }
 
 // BrowserTabStore is the minimal CRUD contract the browser tool needs over the
-// thread's tab records. The concrete atomic-file store lands in a later layer;
-// this interface freezes the shape the tool codes against. A nil store means
-// tab persistence is unavailable and the tool degrades to in-memory addressing.
+// thread's tab records. Runtime sessions bind the selected document provider;
+// an unavailable selected provider returns errors rather than falling back to
+// files or memory. A nil store is only for standalone ephemeral tool callers.
 type BrowserTabStore interface {
 	List() ([]BrowserTabRecord, error)
 	Get(tabID string) (BrowserTabRecord, bool, error)

@@ -1,21 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
-	"github.com/blueberrycongee/wuu/internal/securefs"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 func runLogin(args []string) error {
@@ -35,6 +34,15 @@ func runLogin(args []string) error {
 
 	ctx, cancel := signalContext()
 	defer cancel()
+	binding, err := openCommandState(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		return err
+	}
 	device, err := xaisub.RequestDeviceCode(ctx, nil)
 	if err != nil {
 		return err
@@ -55,52 +63,43 @@ func runLogin(args []string) error {
 	if err != nil {
 		return err
 	}
-	home := os.Getenv("HOME")
-	if err := xaisub.PersistTokens(home, tokens, xaisub.DefaultBaseURL); err != nil {
+	if err := xaisub.SaveTokens(ctx, services.Credentials, tokens, xaisub.DefaultBaseURL); err != nil {
 		return err
 	}
-	if err := ensureXAISubscriptionProvider(home); err != nil {
+	if err := ensureXAISubscriptionProvider(ctx, services.Config); err != nil {
 		return err
 	}
 	fmt.Println("Signed in. Use provider xai-subscription, or set it as default_provider.")
 	return nil
 }
 
-func ensureXAISubscriptionProvider(home string) error {
-	configPath, err := statepath.ConfigPath(home)
+func ensureXAISubscriptionProvider(ctx context.Context, selected *config.Client) error {
+	view, err := selected.Read(ctx)
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+	source := view.Source
+	if len(source) == 0 {
+		source, err = json.Marshal(view.Config)
+		if err != nil {
+			return err
 		}
+	}
+	next, err := config.AddProviderIfMissingSource(source, xaisub.AuthProviderID, config.ProviderConfig{Type: "xai-subscription", BaseURL: xaisub.DefaultBaseURL, WireAPI: "responses", Model: xaisub.DefaultModel})
+	if err != nil {
 		return err
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	providers, _ := raw["providers"].(map[string]any)
-	if providers == nil {
-		providers = map[string]any{}
-		raw["providers"] = providers
-	}
-	if _, exists := providers["xai-subscription"]; exists {
+	if bytes.Equal(source, next) {
 		return nil
 	}
-	providers["xai-subscription"] = map[string]any{
-		"type":     "xai-subscription",
-		"base_url": xaisub.DefaultBaseURL,
-		"wire_api": "responses",
-		"model":    xaisub.DefaultModel,
-	}
-	out, err := json.MarshalIndent(raw, "", "  ")
+	committed, err := selected.CompareExchange(ctx, view.Revision, next)
 	if err != nil {
 		return err
 	}
-	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+	if committed.ActivationError != "" {
+		return errors.New("signed in and saved the provider, but configuration activation failed")
+	}
+	return nil
 }
 
 func openBrowser(rawURL string) error {

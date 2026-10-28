@@ -103,55 +103,74 @@ func TestLoadManifestRequiresID(t *testing.T) {
 	}
 }
 
-func TestDiscoverWithOptionsIncludesOfficialBundledCUAMacWhenEnabled(t *testing.T) {
-	helper := filepath.Join(t.TempDir(), "wuu-cua-mac")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS: "darwin",
-		LookupEnv: func(key string) (string, bool) {
-			switch key {
-			case EnableCUAMacEnv:
-				return "1", true
-			case "WUU_CUA_MAC_HELPER":
-				return helper, true
+func TestDiscoverWithOptionsIncludesOfficialBundledCUAWhenEnabled(t *testing.T) {
+	for _, target := range []struct{ platform, pluginID, enableEnv, helperEnv string }{
+		{"darwin", "cua-mac", "WUU_ENABLE_CUA_MAC", "WUU_CUA_MAC_HELPER"},
+		{"linux", "cua-linux", "WUU_ENABLE_CUA_LINUX", "WUU_CUA_LINUX_HELPER"},
+	} {
+		t.Run(target.pluginID, func(t *testing.T) {
+			helper := filepath.Join(t.TempDir(), "wuu-"+target.pluginID)
+			if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
 			}
-			return "", false
-		},
-	})
 
-	var cua *Plugin
-	for index := range plugins {
-		if plugins[index].ID == "cua-mac" {
-			cua = &plugins[index]
-			break
-		}
-	}
-	if cua == nil {
-		t.Fatalf("bundled cua-mac plugin missing: %+v", plugins)
-	}
-	if !cua.Official || cua.Source != "bundled" {
-		t.Fatalf("cua-mac provenance = official:%v source:%q", cua.Official, cua.Source)
-	}
-	if got := cua.MCPServers["computer"].Command; got != helper {
-		t.Fatalf("cua-mac helper command = %q, want %q", got, helper)
-	}
-	if len(cua.SkillDirs()) != 1 {
-		t.Fatalf("cua-mac skill dirs = %+v", cua.SkillDirs())
+			plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
+				GOOS: target.platform,
+				LookupEnv: func(key string) (string, bool) {
+					switch key {
+					case target.enableEnv:
+						return "1", true
+					case target.helperEnv:
+						return helper, true
+					}
+					return "", false
+				},
+			})
+
+			var cua *Plugin
+			for index := range plugins {
+				if plugins[index].ID == target.pluginID {
+					cua = &plugins[index]
+					break
+				}
+			}
+			if cua == nil {
+				t.Fatalf("bundled %s plugin missing: %+v", target.pluginID, plugins)
+			}
+			if !cua.Official || cua.Source != "bundled" {
+				t.Fatalf("%s provenance = official:%v source:%q", target.pluginID, cua.Official, cua.Source)
+			}
+			if got := cua.MCPServers["computer"].Command; got != helper {
+				t.Fatalf("%s helper command = %q, want %q", target.pluginID, got, helper)
+			}
+			if len(cua.SkillDirs()) != 1 {
+				t.Fatalf("%s skill dirs = %+v", target.pluginID, cua.SkillDirs())
+			}
+		})
 	}
 }
 
-func TestDiscoverWithOptionsHidesBundledCUAMacByDefault(t *testing.T) {
-	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      "darwin",
-		LookupEnv: func(string) (string, bool) { return "", false },
-	})
-	for _, item := range plugins {
-		if item.ID == "cua-mac" {
-			t.Fatalf("cua-mac must stay hidden until %s=1: %+v", EnableCUAMacEnv, item)
-		}
+func TestDiscoverWithOptionsHidesBundledCUAByDefault(t *testing.T) {
+	for _, target := range []struct {
+		platform string
+		enabled  bool
+	}{
+		{"darwin", false}, {"linux", false}, {"windows", true},
+	} {
+		t.Run(target.platform, func(t *testing.T) {
+			plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
+				GOOS:     target.platform,
+				LookPath: func(command string) (string, error) { return command, nil },
+				LookupEnv: func(key string) (string, bool) {
+					return "1", target.enabled && (key == "WUU_ENABLE_CUA_MAC" || key == "WUU_ENABLE_CUA_LINUX")
+				},
+			})
+			for _, item := range plugins {
+				if item.ID == "cua-mac" || item.ID == "cua-linux" {
+					t.Fatalf("%s must stay hidden without opt-in on a supported platform: %+v", item.ID, item)
+				}
+			}
+		})
 	}
 }
 

@@ -49,7 +49,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -216,7 +216,7 @@ describe("sidebar attention view", () => {
   it("survives a trip through settings", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -228,16 +228,19 @@ describe("sidebar attention view", () => {
     const accountTrigger = container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
     expect(accountTrigger?.disabled).toBe(false);
     act(() => accountTrigger!.click());
-    const settingsItem = container.querySelector<HTMLButtonElement>(
+    const settingsItem = document.querySelector<HTMLButtonElement>(
       '[role="menuitem"][data-settings-page="providers"]',
     );
     expect(settingsItem).not.toBeNull();
     // The settings page is a lazy import behind Suspense, so let it resolve.
     await act(async () => settingsItem!.click());
     await flushAsync();
-    // Settings replaces the workbench: the sidebar is gone while it is open.
+    // Settings overlays the workbench; the conversation stays mounted but inert.
     expect(settingsView()).not.toBeNull();
-    expect(container.querySelector(".app-shell")).toBeNull();
+    expect(container.querySelector(".app-shell")).not.toBeNull();
+    expect(container.querySelector(".settings-workbench-layer")).not.toBeNull();
+    expect(container.querySelector('[data-wuu-component="conversation-pane"]')?.hasAttribute("inert")).toBe(true);
+    expect(container.querySelector(".sidebar-content")?.getAttribute("aria-hidden")).toBe("true");
 
     act(() => {
       window.dispatchEvent(new Event("wuu:workbench-back"));
@@ -254,7 +257,7 @@ describe("sidebar attention view", () => {
     ]);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -292,7 +295,7 @@ describe("sidebar attention view", () => {
     ]);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

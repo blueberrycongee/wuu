@@ -8,6 +8,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -29,13 +31,14 @@ func TestWorkerWakeRefreshesApproveForMe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executor := newPluginAwareToolExecutor(worker, pluginhost.New(), hooks.NewDispatcher(nil), "thread", "thread", worker.RootDir())
 	ConfigureToolkitPermissions(parent, config.ResolvedPermissions{Mode: "standard"})
 	parent.SetApproveForMe(true)
 	call := providers.ToolCall{Name: "probe", Arguments: `{}`}
 	metadata := agent.ToolMetadata{Risk: "high", Destructive: true}
 	for _, reason := range []string{"first turn reviewer", "next turn reviewer"} {
 		parent.SetReviewer(wakeTestReviewer{reason: reason})
-		workerWakeAuthority(parent)(worker)
+		workerWakeAuthority(parent)(executor)
 		if !worker.ApproveForMe() {
 			t.Fatal("worker approval stayed disabled")
 		}
@@ -46,7 +49,7 @@ func TestWorkerWakeRefreshesApproveForMe(t *testing.T) {
 	}
 	parent.SetApproveForMe(false)
 	parent.SetReviewer(nil)
-	workerWakeAuthority(parent)(worker)
+	workerWakeAuthority(parent)(executor)
 	if worker.ApproveForMe() {
 		t.Fatal("worker approval stayed enabled")
 	}

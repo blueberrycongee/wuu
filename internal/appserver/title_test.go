@@ -2,14 +2,251 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
+
+// The logical result can precede a producer's final receipt or cleanup error.
+// This source controls that boundary; documents and generation ownership are real.
+type nonturnReceiptClient struct {
+	started       chan providers.ChatRequest
+	release       chan struct{}
+	finished      chan struct{}
+	completionErr error
+}
+
+func (c *nonturnReceiptClient) start(ctx context.Context, req providers.ChatRequest) error {
+	_, complete, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return err
+	}
+	lease := &providers.ProviderLease{}
+	if _, err := lease.RecordSubmission(req.Attempt, providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "controlled", Transport: "memory", Mode: "stream"}); err != nil {
+		complete(nil)
+		return err
+	}
+	c.started <- req
+	go func() {
+		defer close(c.finished)
+		defer complete(c.completionErr)
+		<-c.release
+		lease.SucceedWithUsage(&providers.TokenUsage{InputTokens: 13, OutputTokens: 5})
+	}()
+	if c.completionErr != nil {
+		<-c.finished
+	}
+	return nil
+}
+
+func (c *nonturnReceiptClient) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	if err := c.start(ctx, req); err != nil {
+		return providers.ChatResponse{}, err
+	}
+	return providers.ChatResponse{Content: "Captured result"}, nil
+}
+
+func (c *nonturnReceiptClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	if err := c.start(ctx, req); err != nil {
+		return nil, err
+	}
+	events := make(chan providers.StreamEvent, 2)
+	events <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "Captured result"}
+	events <- providers.StreamEvent{Type: providers.EventDone}
+	close(events)
+	return events, nil
+}
+
+type nonturnReceiptDocuments struct {
+	*persistence.Service
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (d *nonturnReceiptDocuments) Close(ctx context.Context) error {
+	err := d.Service.Close(ctx)
+	d.once.Do(func() { close(d.closed) })
+	return err
+}
+
+func newNonturnReceiptRuntime(t *testing.T, client providers.StreamClient) (*runtime.Session, string, <-chan struct{}) {
+	t.Helper()
+	root, home, documentsDir := t.TempDir(), t.TempDir(), t.TempDir()
+	const documentsID = "fixture.nonturn-documents"
+	documents := &nonturnReceiptDocuments{Service: persistence.NewService(documentsID, documentsDir, "jsonl"), closed: make(chan struct{})}
+	modules := []string{loopdriver.NativePolicyModule, "wuu.session-state", documentsID, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.title.default"}
+	cfg := config.Default()
+	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
+	cfg.DefaultProvider = "fixture"
+	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "fixture-model"}}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.json")
+	if err := os.WriteFile(configPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: home, ConfigPath: configPath, Config: cfg, NoTools: true,
+		NativeProviders: []runtime.NativeProviderFactory{{ID: documentsID, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return documents, nil
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	rt.StreamRunner.Client, rt.TitleClient = client, client
+	return rt, documentsDir, documents.closed
+}
+
+func TestNonturnReceiptFailurePreventsDelivery(t *testing.T) {
+	for _, entry := range []string{"title", "commit-message", "text-polish"} {
+		t.Run(entry, func(t *testing.T) {
+			completionErr := errors.New("receipt cleanup failed")
+			client := &nonturnReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), finished: make(chan struct{}), completionErr: completionErr}
+			close(client.release)
+			rt, _, _ := newNonturnReceiptRuntime(t, client)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			defer srv.Close()
+			if entry == "title" {
+				binding := testRuntimeState(t, rt)
+				const threadID = "receipt-failure-title"
+				if _, err := binding.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
+					t.Fatal(err)
+				}
+				result, err := srv.generateThreadTitleCore(binding, threadID, []providers.ChatMessage{{Role: "user", Content: "Generate a title"}}, true, true, true, nil)
+				if !errors.Is(err, completionErr) || result.Persisted || result.Notified {
+					t.Fatalf("receipt failure was delivered as title success: result=%+v err=%v", result, err)
+				}
+				metadata, found, err := binding.Sessions.Find(threadID)
+				if err != nil || !found || metadata.Title != "" {
+					t.Fatalf("failed completion persisted a title: %+v, %v", metadata, err)
+				}
+				return
+			}
+			request := Request{ID: mustJSON(entry)}
+			var err error
+			if entry == "commit-message" {
+				request.Params = mustJSON(GitCommitMessageParams{Diff: "+change"})
+				err = srv.handleGitCommitMessage(request)
+			} else {
+				request.Params = mustJSON(TextPolishParams{Text: "Polish this"})
+				err = srv.handleTextPolish(request)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), entry)
+			if response["error"] == nil || !strings.Contains(toString(response["error"]), completionErr.Error()) || response["result"] != nil {
+				t.Fatalf("receipt failure was delivered as RPC success: %+v", response)
+			}
+		})
+	}
+}
+
+func TestTitleReceiptTimeoutRetainsSelectedDocuments(t *testing.T) {
+	client := &nonturnReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), finished: make(chan struct{})}
+	var release sync.Once
+	rt, documentsDir, documentsClosed := newNonturnReceiptRuntime(t, client)
+	t.Cleanup(func() { release.Do(func() { close(client.release) }) })
+	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
+	binding, err := rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	const threadID = "receipt-timeout-title"
+	if _, err := binding.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := srv.generateThreadTitleCore(binding, threadID, []providers.ChatMessage{{Role: "user", Content: "Keep the original receipt"}}, true, false, true, nil)
+		done <- err
+	}()
+	var request providers.ChatRequest
+	select {
+	case request = <-client.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("title did not start its model request")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("held receipt did not report incomplete completion: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("title completion did not honor the existing receipt budget")
+	}
+	metadata, _, err := binding.Sessions.Find(threadID)
+	if err != nil || metadata.Title != "" {
+		t.Errorf("incomplete receipt published a title: %+v, %v", metadata, err)
+	}
+	documents := binding.Documents
+	if err := binding.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Release every external authority holder while the producer is still held.
+	srv.Close()
+	_, _ = rt.Cleanup()
+	if _, err := documents.Read(context.Background(), persistence.Query{Namespace: "wuu.inference_submissions.v1"}); err != nil {
+		t.Errorf("timed-out completion released the selected documents before its producer: %v", err)
+	}
+	release.Do(func() { close(client.release) })
+	select {
+	case <-client.finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("receipt producer did not finish")
+	}
+	// Cleanup after timeout runs asynchronously; observing the closed provider
+	// establishes that its journal's final drain has completed before inspection.
+	select {
+	case <-documentsClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("finished receipt retained its selected documents")
+	}
+	_, snapshot, err := persistence.Inspect(context.Background(), documentsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submissionID := request.Execution.Snapshot().Submissions[0].ID
+	count := 0
+	for _, document := range snapshot.Documents {
+		if document.Namespace != "wuu.inference_submissions.v1" {
+			continue
+		}
+		count++
+		var receipt providers.InferenceSubmissionJournalRecord
+		if err := json.Unmarshal(document.Value, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.ID != submissionID || receipt.Outcome != providers.InferenceSubmissionSucceeded || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 13 || receipt.ReportedUsage.OutputTokens != 5 {
+			t.Errorf("late usage did not remain on the original receipt: %+v", receipt)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("physical receipts = %d, want exactly one", count)
+	}
+}
 
 func TestRecommendedTitleTemperature_AlignsWithOpenCode(t *testing.T) {
 	t.Parallel()

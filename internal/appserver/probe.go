@@ -12,7 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // loadProbeConfig mirrors the app-server config resolution order: try the
@@ -76,9 +75,15 @@ func ProbeTitle(ctx context.Context, opts ProbeTitleOptions) (TitleGenerationRes
 	}
 	defer func() { _, _ = rt.Cleanup() }()
 
+	binding, err := rt.RetainState()
+	if err != nil {
+		return TitleGenerationResult{}, err
+	}
+	defer binding.Close()
 	srv := New(rt, io.Discard)
+	defer srv.Close()
 
-	threadID, history, synthetic, err := resolveProbeThread(rt, opts)
+	threadID, history, synthetic, err := resolveProbeThread(binding, rt, opts)
 	if err != nil {
 		return TitleGenerationResult{}, err
 	}
@@ -88,7 +93,7 @@ func ProbeTitle(ctx context.Context, opts ProbeTitleOptions) (TitleGenerationRes
 		printProbeHeader(os.Stdout, opts, threadID, synthetic, dryRun, rt)
 	}
 
-	result, err := srv.generateThreadTitleCore(threadID, history, !dryRun, false, true, nil)
+	result, err := srv.generateThreadTitleCore(binding, threadID, history, !dryRun, false, true, nil)
 	if err != nil {
 		if !opts.JSON {
 			fmt.Fprintf(os.Stdout, "\nFAILED: %v\n", err)
@@ -115,7 +120,7 @@ func ProbeTitle(ctx context.Context, opts ProbeTitleOptions) (TitleGenerationRes
 // threadID ("probe-synthetic") plus synthetic=true. Otherwise ThreadID is
 // resolved (defaults to the most recent thread in the workspace) and the
 // history is loaded from the SQLite-backed session store.
-func resolveProbeThread(rt *runtime.Session, opts ProbeTitleOptions) (string, []providers.ChatMessage, bool, error) {
+func resolveProbeThread(binding *runtime.State, rt *runtime.Session, opts ProbeTitleOptions) (string, []providers.ChatMessage, bool, error) {
 	if strings.TrimSpace(opts.UserPrompt) != "" {
 		history := []providers.ChatMessage{
 			{Role: "user", Content: opts.UserPrompt},
@@ -125,7 +130,7 @@ func resolveProbeThread(rt *runtime.Session, opts ProbeTitleOptions) (string, []
 	}
 	target := strings.TrimSpace(opts.ThreadID)
 	if target == "" {
-		sessions, err := session.List(rt.SessionDir, 1)
+		sessions, err := binding.Sessions.List(1)
 		if err != nil {
 			return "", nil, false, fmt.Errorf("list sessions to resolve default thread: %w", err)
 		}
@@ -134,7 +139,7 @@ func resolveProbeThread(rt *runtime.Session, opts ProbeTitleOptions) (string, []
 		}
 		target = sessions[0].ID
 	}
-	history, err := loadChatMessages(rt.SessionDir, target)
+	history, err := loadChatMessages(binding.Sessions, target)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("load history for thread %q: %w", target, err)
 	}

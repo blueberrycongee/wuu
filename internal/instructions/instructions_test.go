@@ -116,7 +116,11 @@ func TestDiscover_NoMarkerOnlyCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files := Discover(cwd, "", testOpts(nil))
+	opts := testOpts(nil)
+	// The test controls marker discovery: the temporary root may itself live
+	// inside a repository or a managed workspace with an ancestor .git.
+	opts.ProjectRootMarkers = []string{}
+	files := Discover(cwd, "", opts)
 	if len(files) != 1 {
 		t.Fatalf("expected 1 file, got %d: %+v", len(files), files)
 	}

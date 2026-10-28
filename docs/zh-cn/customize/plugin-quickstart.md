@@ -12,6 +12,7 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 export default {
   initialize() {
     return {
+      protocol_version: 3,
       tools: [{
         id: "greet",
         description: "Return a friendly greeting",
@@ -32,7 +33,7 @@ export default {
 wuu plugin dev ./hello.ts
 ```
 
-此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不调用 `initialize`，再发布独立快照的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束后，会话在下一次空闲轮次边界接入更新。实际宿主随后提供读取阶段服务并初始化候选。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
+此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不调用 `initialize`，再发布独立快照的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束且宿主完成准备与激活后，会话才能在空闲轮次边界接入更新。实际宿主随后通过 `initialize` 收集候选的声明，再调用 `prepare`，通过所选服务验证状态。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
 
 请使用普通 `.ts` 文件，不支持符号链接。单文件路径仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。其他本地文件、npm 依赖、JSX 或自定义 `tsconfig` 转换需要下方的插件包流程。直接执行 TypeScript 不进行类型检查。stdout 保留给协议，诊断信息使用 `console.error`。导入模块会执行顶层代码，验证期间也一样。开发授权表示信任这个来源，不会沙箱化代码，也不代表已批准分发包。
 
@@ -45,9 +46,18 @@ wuu plugin dev ./hello.ts
 1. 用 `write_file` 将 `hello.ts` 保存到会话工作区。
 2. 发现 `plugin_manager` 后，调用 `{"action":"apply","path":"./hello.ts"}`，也可以传入插件目录。Apply 与 `wuu plugin dev --watch=false` 一样只发布一次，不启动监听器。
 3. 检查结果，然后结束当前轮次。该轮次的工具定义仍绑定旧 generation。
-4. 在下一次空闲轮次中发现并调用新的问候工具。用 `{"action":"status"}` 或带准确 `id` 的 status 比较已发布状态与当前会话的 generation。确认实际工具结果后，才能判断它可用。
+4. 宿主激活已发布的 generation 后，在空闲轮次中发现并调用新的问候工具。用 `{"action":"status"}` 或带准确 `id` 的 status 比较已发布状态与当前会话的 generation。确认实际工具结果后，才能判断它可用。
 
-当前会话接入更新前，未完成的会话工作者和受管进程必须先结束。不要让当前轮次持有持续运行的 `wuu plugin dev` 监听器；请使用上面的一次性 apply 流程。
+通过本地 `bash` 工具（Windows 使用 Git Bash）编写插件时，使用
+`"$WUU_CLI_EXECUTABLE" plugin create <name>` 或
+`"$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory>`。
+Wuu 提供正在运行的 CLI 的绝对路径，避免 `PATH` 中的旧版 `wuu` 或另一份已安装应用
+悄悄选中错误的 SDK。`describe` 检查新建的 CLI 组合，不是当前会话绑定的 generation。
+这个提示不修改 `PATH`，也不增加权限。它由执行宿主设置，不是用户配置项：远程 Wuu CLI
+工作者提供自身的可执行程序；没有编写插件 CLI 的嵌入式宿主不提供此变量，不会转发
+仅在原宿主有效的路径。
+
+新增可选插件可能仍在准备，其他轮次则继续运行。发布本身不代表工具已可用；app-server 客户端可按照 [generation 契约](plugin-system.md#运行时-generation)，等待同一服务器已提交清单中的准确指纹。当前会话接入更新前，未完成的会话工作者和受管进程必须先结束。不要让当前轮次持有持续运行的 `wuu plugin dev` 监听器；请使用上面的一次性 apply 流程。
 
 Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证或导入之前，必须使用 `unconfined` 会话，或在 `standard` 模式下由已启用并配置的权限审核器返回允许决定。只读模式拒绝变更。工作区写入权限本身不授权宿主代码执行。可执行程序和插件存储由宿主选择；该工具不授予对 `$WUU_HOME` 的通用文件系统访问权限。不支持远程执行环境中的源码路径。
 
@@ -55,25 +65,20 @@ Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证�
 
 ## 扩展为插件包
 
-需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用与 CLI 匹配的 Wuu 源码目录获取 SDK。
+需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用 CLI 内嵌的匹配版本 SDK。
 
 ## 准备 SDK 和插件包
 
-使用源码目录中的 SDK，不依赖 npm registry 是否已发布对应版本。将第一行改成源码目录的绝对路径，然后在准备存放插件项目的目录中执行：
+在准备存放插件项目的目录中执行以下命令。无需 Wuu 源码目录，也不依赖 npm registry 发布 `@wuu/plugin-sdk`：
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create hello-plugin
 cd hello-plugin
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
-npm install --save-dev esbuild
-npm pkg set 'scripts.build=tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js'
+npm run build
 ```
 
-生成器会创建 `plugin.json`、`package.json`、`tsconfig.json` 和 `src/index.ts`。manifest 使用 `wuu-plugin-v1` 运行时传输协议启动 `node dist/index.js`。上面的构建命令会把 SDK 打进同一个文件：Wuu 准备安装包时会排除 `node_modules`，仅做 TypeScript 编译会让安装后的包缺少运行时依赖。
+生成器会创建 `plugin.json`、`package.json`、`tsconfig.json`、`src/index.ts` 和本地 `sdk/` 源码包。`@wuu/plugin-sdk` 指向该快照，npm 只需安装常规 TypeScript、类型定义和打包工具依赖。manifest 使用 `wuu-plugin-v1` 运行时传输协议启动 `node dist/index.js`。生成的构建命令会检查源代码类型，并将 SDK 打进运行时文件：Wuu 准备安装包时会排除 `node_modules`，安装后的插件不依赖开发目录。`--type desktop` 和 `--type full` 还会生成面向浏览器的桌面 bundle。
 
 ## 添加工具
 
@@ -176,7 +181,7 @@ WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
 第一条命令通过 JSONL 驱动实际分发的插件可执行文件，使用一次性宿主服务，
 覆盖工具、持久状态、后台任务、取消和关闭。协议记录、运行时哈希和结果保存到
 `.tmp/e2e/bundled-plugins/`。第二条通过本地合成模型端点驱动真实 Go app-server，
-验证运行中轮次内发布、下一轮采用、保留最后可用版本，以及禁用清理，无需模型
+验证运行中轮次内发布、同一服务器就绪后采用、保留最后可用版本，以及禁用清理，无需模型
 账号。两条命令都不检查桌面贡献的实际渲染。
 
 ## 分发插件包
@@ -184,10 +189,9 @@ WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
 ```bash
 wuu plugin pack .
 wuu plugin install ./hello-plugin-0.1.0.zip
-wuu plugin approve hello-plugin
 ```
 
-当前 CLI 会先暂存本地包，再由批准操作启用代码执行。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
+安装本地包即确认信任并启用代码执行。同一已记录来源的更新继承信任；来源改变需要确认。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
 
 持久状态、服务和生命周期回调见[编写插件](plugin-authoring.md)。如果要添加界面而非模型工具，请使用[桌面插件快速上手](desktop-plugin-quickstart.md)。
 

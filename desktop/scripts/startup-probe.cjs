@@ -103,7 +103,7 @@ module.exports = function createStartupProbe(entryNs) {
         'Nonzero display/viewport is a startup rig precondition, not a latency sample');
       mark('viewport-verified', { viewport });
     },
-    async finish({ win, evaluate, output, fixture, projects, selectedIndex, turns, sidebarThreads, safeMode, mainBundle, harness, timings, startup }) {
+    async finish({ win, evaluate, output, fixture, projects, selectedIndex, turns, sidebarThreads, safeMode, mainBundle, harness, timings, startup, fixtureSeed }) {
       mark('typed-composer-ready');
       assert.equal(win.webContents.getURL(), pathToFileURL(path.resolve(path.dirname(mainBundle), '../renderer/index.html')).href,
         'Loaded renderer must match the selected application artifact');
@@ -126,7 +126,7 @@ module.exports = function createStartupProbe(entryNs) {
         preloadSha256: hash(path.resolve(path.dirname(mainBundle), '../preload/index.cjs')),
         rendererAssets: Object.fromEntries(fs.readdirSync(assets).sort().map(name => [name, hash(path.join(assets, name))])),
         helpers: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.endsWith('_PLUGIN_HELPER')).map(([key, file]) => [key, { file, sha256: hash(file) }])),
-        selectedIndex, turns, sidebarThreads, safeMode, fixture, inputProof, startup, stages, ipc: timings, syncIPC, initialization,
+        selectedIndex, turns, sidebarThreads, safeMode, fixture, fixtureSeed, inputProof, startup, stages, ipc: timings, syncIPC, initialization,
         displays: screen.getAllDisplays().map(({ bounds, workArea, scaleFactor }) => ({ bounds, workArea, scaleFactor })),
         gpuFeatureStatus: app.getGPUFeatureStatus(), windowVisible: win.isVisible(), windowSize: win.getSize(), zoomFactor: win.webContents.getZoomFactor(),
         renderer, rendererMetrics, coreProcesses,

@@ -45,6 +45,7 @@ type ExecutionCancelParams struct {
 type ExecutionSnapshot struct {
 	ID        string          `json:"id"`
 	PluginID  string          `json:"plugin_id"`
+	Kind      string          `json:"kind"`
 	SessionID string          `json:"session_id,omitempty"`
 	ThreadID  string          `json:"thread_id,omitempty"`
 	TurnID    string          `json:"turn_id,omitempty"`
@@ -59,7 +60,9 @@ type ExecutionSnapshot struct {
 
 type ExecutionScope struct {
 	ExecutionSnapshot
-	Context context.Context
+	// Context is the native representation of the wire scope lifetime. Process
+	// providers receive execution.cancel for this scope when its owner ends.
+	Context context.Context `json:"-"`
 }
 
 type ToolExecutionScope = ExecutionScope
@@ -68,7 +71,6 @@ type executionRecord struct {
 	snapshot *ExecutionSnapshot
 	ctx      context.Context
 	cancel   context.CancelCauseFunc
-	tool     bool
 }
 
 // ExecutionTracker owns the live execution table for one Host. IDs are
@@ -102,14 +104,22 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx = context.Background()
 	}
 	id := fmt.Sprintf("exec-%d", t.seq.Add(1))
+	if continuation, ok := ctx.Value(serviceContinuationKey{}).(*serviceContinuation); ok && continuation.owner == pluginID && continuation.executionID == "" {
+		// Bind before publishing the scope; inherited records are already bound.
+		continuation.executionID = id
+	}
 	executionCtx, cancel := context.WithCancelCause(bindModelEventExecution(ctx, pluginID, id))
+	kind := "callback"
+	if tool {
+		kind = "tool"
+	}
 	t.mu.Lock()
 	t.live[id] = &executionRecord{
 		snapshot: &ExecutionSnapshot{
-			ID: id, PluginID: pluginID, SessionID: input.SessionID, ThreadID: input.ThreadID,
+			ID: id, PluginID: pluginID, Kind: kind, SessionID: input.SessionID, ThreadID: input.ThreadID,
 			TurnID: input.TurnID, ActorID: input.ActorID, CallID: input.CallID, Tool: input.Tool, CWD: input.CWD,
 		},
-		ctx: executionCtx, cancel: cancel, tool: tool,
+		ctx: executionCtx, cancel: cancel,
 	}
 	t.mu.Unlock()
 	return id, executionCtx
@@ -214,7 +224,7 @@ func (t *ExecutionTracker) resolve(callerPluginID, executionID string, requireTo
 	if record.snapshot.PluginID != callerPluginID {
 		return ToolExecutionScope{}, &HostServiceError{Code: "service_not_authorized", Message: fmt.Sprintf("execution %s belongs to plugin %q", id, record.snapshot.PluginID)}
 	}
-	if requireTool && (!record.tool || strings.TrimSpace(record.snapshot.ThreadID) == "" || strings.TrimSpace(record.snapshot.TurnID) == "" || strings.TrimSpace(record.snapshot.CallID) == "") {
+	if requireTool && (record.snapshot.Kind != "tool" || strings.TrimSpace(record.snapshot.ThreadID) == "" || strings.TrimSpace(record.snapshot.TurnID) == "" || strings.TrimSpace(record.snapshot.CallID) == "") {
 		return ToolExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires a live scoped tool execution"}
 	}
 	return ToolExecutionScope{ExecutionSnapshot: *record.snapshot, Context: record.ctx}, nil

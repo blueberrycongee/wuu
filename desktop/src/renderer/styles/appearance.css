@@ -1,18 +1,28 @@
+@font-face {
+  font-family: "vivo Sans SC";
+  src: url("../assets/fonts/vivo-sans/vivoSansSCVF.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 /* Saved font sizes stay in CSS pixels, independent of the desktop page scale. */
 :root {
+  --appearance-ui-font: "vivo Sans SC", system-ui, sans-serif;
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   /* Preserve the font's natural spacing in both navigation and prose.
    * Their reading rhythm comes from line and block spacing, not tracking. */
   --tracking-ui: normal;
   --tracking-prose: normal;
   letter-spacing: var(--tracking-ui);
+  --wuu-font-size-ui: var(--conversation-message-font-size);
   --font-ui: var(--conversation-message-font-size);
   /* Derived roles snap to whole pixels: the saved UI size may be a half step,
    * and fractional derived sizes put every line box and 1px edge between
    * device pixels. Icons snap to even sizes so they center in even boxes. */
   --font-xs: max(12px, round(nearest, calc(var(--font-ui) * 12 / 14), 1px));
   --font-sm: round(nearest, calc(var(--font-ui) * 13 / 14), 1px);
-  --font-menu: var(--font-sm);
+  --font-menu: var(--font-ui);
   --font-body: var(--font-ui);
   --font-content: var(--font-ui);
   --font-title: round(nearest, calc(var(--font-ui) * 16 / 14), 1px);
@@ -30,10 +40,8 @@
   --icon-size-lg: round(nearest, clamp(18px, calc(var(--font-ui) * 18 / 14), 22px), 2px);
   --icon-size-xl: round(nearest, clamp(20px, calc(var(--font-ui) * 20 / 14), 24px), 2px);
 }
-/* Click-open overlay cards sit one step below reading text: short labels
- * in a small panel, not body copy. Composer chips use the same step, so
- * a closed trigger and its open card match. Question cards above the
- * composer stay on --font-ui; they are reading surfaces. */
+/* Menus keep the same reading size as their triggers. Secondary hierarchy
+ * comes from color and spacing, without making frequent actions smaller. */
 [data-wuu-layer="menu"],
 .project-add-menu,
 .environment-side-menu,
@@ -42,30 +50,23 @@
 .composer-project-menu,
 .composer-textarea-context-menu,
 .thread-row-context-menu,
-.workspace-tree-context-menu,
 .select-menu-panel,
 .codex-runtime-menu {
   font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 [data-wuu-layer="menu"] :where(button, [role="menuitem"]) > :is(svg.lucide, svg[data-icon]) {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
 }
 .sidebar, .settings-sidebar, .sidebar-content {
-  --sidebar-primary-icon-size: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
-  --sidebar-nav-icon-col: round(nearest, calc(var(--font-ui) * 18 / 14), 2px);
-  --sidebar-tree-icon-col: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
+  /* Navigation and toolbar actions share the same font-relative glyph size. */
+  --sidebar-primary-icon-size: var(--icon-size);
+  --sidebar-nav-icon-col: var(--sidebar-primary-icon-size);
+  --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
   /* Row accessories stay inside the row with a visible inset. */
   --sidebar-row-action-size: max(24px, round(nearest, calc(var(--font-ui) * 1.4 + 4px), 2px));
   font-size: var(--font-ui);
-}
-/* Reading labels and chrome share the UI size.
- * Limit icon growth so large reading text does not turn the rail into a toolbar. */
-.sidebar-content {
-  --sidebar-primary-icon-size: round(nearest, clamp(16px, calc(var(--sidebar-label-size) + 2px), 20px), 2px);
-  --sidebar-nav-icon-col: var(--sidebar-primary-icon-size);
-  --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
 }
 .sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar :is(.nav-item, .settings-nav-item) {
   min-height: var(--sidebar-row-height, 2.5em);
@@ -89,6 +90,7 @@
  * Keep composite labels here once, rather than shifting their children too. */
 :where(
   .nav-item > span:not([aria-hidden], .plugin-icon-themed, .plugin-icon-asset),
+  .sidebar-section-label,
   .settings-nav-label,
   .sidebar-functional-heading-label,
   .project-row-name,

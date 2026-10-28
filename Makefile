@@ -1,6 +1,6 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check docs-policy-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
 	build-plugins check-plugins test-plugins test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
-	build-clients build-docs build-macos ci install vet clean release-check \
+	build-clients build-docs build-macos build-linux ci install vet clean release-check \
 	print-version tag-release version-check version-sync release-prepare
 
 VERSION_FILE := VERSION
@@ -104,6 +104,10 @@ test-native:
 
 build: build-go build-desktop build-clients
 
+.PHONY: test-plugin-compatibility
+test-plugin-compatibility:
+	node scripts/plugin-compatibility-e2e.mjs
+
 test-plugins: build-plugins
 	npm --prefix plugins test
 	node scripts/bundled-plugins-e2e.mjs
@@ -115,6 +119,7 @@ build-plugins:
 check-plugins:
 	npm --prefix plugins run typecheck
 	npm --prefix plugins run build:check
+	go test -count=1 -run '^TestPluginPackageMutationKeepsRunningConversationReadable/disable_deleted_source$$' ./internal/appserver
 
 build-go: build-plugins
 	go build -ldflags "$(LDFLAGS)" -o bin/wuu ./cmd/wuu
@@ -128,6 +133,9 @@ build-clients:
 
 build-docs:
 	npm --prefix docs-site run build
+
+build-linux:
+	npm --prefix desktop run pack:linux
 
 build-macos:
 	npm --prefix desktop run pack:mac
@@ -143,7 +151,7 @@ vet:
 clean:
 	rm -rf bin/ dist/
 
-release-check: version-check check-go check-plugins test-go-uncached test-plugins test-desktop test-native
+release-check: version-check check-go check-plugins test-go-uncached test-plugins test-plugin-compatibility test-desktop test-native
 
 version-check:
 	node --test scripts/release-version.test.mjs

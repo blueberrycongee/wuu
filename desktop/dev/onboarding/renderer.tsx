@@ -1,3 +1,7 @@
+import { ApplicationOnboarding } from "../../src/renderer/plugins/ApplicationOnboarding";
+import { initialState } from "../../src/renderer/AppState";
+import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
+import { SettingsControlsProvider } from "../../src/renderer/SettingsControlsContext";
 import { createRoot } from "react-dom/client";
 import { FirstRunOnboarding } from "../../src/renderer/FirstRunOnboarding";
 import { WuuMascotRuntimeProvider } from "../../src/renderer/WuuMascot";
@@ -46,20 +50,27 @@ window.wuu = {
   }),
 } as unknown as WuuDesktopApi;
 
+const controls = createApplicationSettingsControls();
+const onboarding = new ApplicationOnboarding({ getState: () => initialState, updateState: () => {}, selectImportedWorkspace: rejectPersistence,
+  operations: { plugins: rejectPersistence, runtime: rejectPersistence, provider: rejectPersistence, browser: rejectPersistence } });
+
 applyPlatformStamp();
 startFocusModality();
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
-    <WuuMascotRuntimeProvider>
+    <SettingsControlsProvider controls={controls}><WuuMascotRuntimeProvider>
       <FirstRunOnboarding
+        onboarding={onboarding}
+        onImportBrowser={rejectPersistence}
         preview
         engines={engines}
+        catalogProviders={catalogProviders}
         onDismissPreview={() => window.close()}
         onUpdateExtensionPackage={rejectPersistence}
         onSaveProvider={rejectPersistence}
         onUpdateEngines={rejectPersistence}
         onComplete={rejectPersistence}
       />
-    </WuuMascotRuntimeProvider>
+    </WuuMascotRuntimeProvider></SettingsControlsProvider>
   </I18nProvider>,
 );

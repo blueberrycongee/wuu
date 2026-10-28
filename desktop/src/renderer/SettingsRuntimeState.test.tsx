@@ -1,3 +1,5 @@
+import { createScopedTestApplication } from "./test-support/ScopedApplication";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,17 +13,56 @@ import {
   type SettingsRuntimeState,
 } from "./SettingsRuntimeState";
 import { translateCurrent } from "./i18n";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { DefaultSettingsSurface } from "./modules/DefaultSettingsSurface";
+import { SettingsShellRenderer } from "./ConversationShellRenderers";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
+
+vi.mock("./ConversationShellRenderers", () => ({ SettingsShellRenderer: vi.fn(() => null) }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+async function renewableRuntime(application: Pick<ApplicationServiceV1, "invoke">) {
+  let latest!: SettingsRuntimeState;
+  function Probe({ application }: { application: Pick<ApplicationServiceV1, "invoke"> }) {
+    latest = useSettingsRuntimeState({ application, settingsOpen: false });
+    return null;
+  }
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  const render = (application: Pick<ApplicationServiceV1, "invoke">) => act(async () => root.render(<Probe application={application} />));
+  await render(application);
+  return { render, get current() { return latest; } };
+}
 
 let mountedRoots: Root[] = [];
+const generationCleanups: Array<() => void> = [];
 
 afterEach(() => {
   act(() => {
     for (const root of mountedRoots) root.unmount();
   });
   mountedRoots = [];
+  generationCleanups.splice(0).forEach(dispose => dispose());
   document.body.innerHTML = "";
   delete (window as unknown as { wuu?: unknown }).wuu;
 });
+
+function settingsLayout(onNoticeVisibilityChange: (visible: boolean) => void): ApplicationSettingsLayoutV1 {
+  return {
+    embedded: true, onNoticeVisibilityChange, browserSettingsAllowed: true, embeddedDrawerPhase: "open",
+    onSidebarPointerEnter: () => {}, onSidebarPointerLeave: () => {}, sidebarWidth: 320, resizingSidebar: false,
+    shellRef: { current: null }, sidebarCollapsed: false, sidebarAnimating: false, onToggleSidebar: () => {},
+    onSidebarResizeStart: () => {}, onSidebarResizerPointer: () => {}, onSidebarSeparatorKey: () => {},
+  };
+}
 
 function snapshot(enabled: boolean): CodexPetsSnapshot {
   return {
@@ -83,9 +124,12 @@ async function renderSettingsRuntimeState(settingsOpen: boolean): Promise<{
   rerender: (nextSettingsOpen: boolean) => Promise<void>;
 }> {
   let latest: SettingsRuntimeState | undefined;
+  const scoped = await createScopedTestApplication(new ApplicationController());
+  const application = scoped.application;
+  generationCleanups.push(scoped.dispose);
 
   function Probe({ open }: { open: boolean }) {
-    latest = useSettingsRuntimeState({ settingsOpen: open });
+    latest = useSettingsRuntimeState({ settingsOpen: open, application });
     return null;
   }
 
@@ -115,6 +159,48 @@ async function renderSettingsRuntimeState(settingsOpen: boolean): Promise<{
 }
 
 describe("useSettingsRuntimeState", () => {
+  it.each(["refresh", "update"] as const)("retires old pets %s outcomes without replacing successor data or clearing its pending operation", async action => {
+    const oldResult = deferred<CodexPetsSnapshot>();
+    const nextResult = deferred<CodexPetsSnapshot>();
+    const oldInvoke = vi.fn().mockResolvedValueOnce(snapshot(false)).mockReturnValue(oldResult.promise);
+    const nextInvoke = vi.fn().mockResolvedValueOnce(snapshot(true)).mockReturnValue(nextResult.promise);
+    const previous = { invoke: oldInvoke as ApplicationServiceV1["invoke"] };
+    const next = { invoke: nextInvoke as ApplicationServiceV1["invoke"] };
+    const hook = await renewableRuntime(previous);
+    let oldWork!: Promise<unknown>; let nextWork!: Promise<unknown>;
+    const start = () => action === "refresh" ? hook.current.refreshCodexPets() : hook.current.updateCodexPets({ enabled: true });
+    await act(async () => { oldWork = start().catch(error => error); });
+    await hook.render(next);
+    await act(async () => { nextWork = start(); });
+    await act(async () => { oldResult.resolve(snapshot(false)); await oldWork; });
+    expect(hook.current.codexPets).toEqual(snapshot(true));
+    expect(hook.current.codexPetsLoading).toBe(true);
+    expect(hook.current.codexPetsError).toBe("");
+    await act(async () => { nextResult.resolve(snapshot(true)); await nextWork; });
+    expect(hook.current.codexPetsLoading).toBe(false);
+  });
+
+  it("ignores late old pets rejection while a successor update remains pending", async () => {
+    const oldResult = deferred<CodexPetsSnapshot>(); const nextResult = deferred<CodexPetsSnapshot>();
+    const hook = await renewableRuntime({ invoke: vi.fn().mockResolvedValueOnce(snapshot(false)).mockReturnValue(oldResult.promise) as ApplicationServiceV1["invoke"] });
+    let oldWork!: Promise<unknown>; let nextWork!: Promise<unknown>;
+    await act(async () => { oldWork = hook.current.updateCodexPets({ enabled: true }).catch(error => error); });
+    await hook.render({ invoke: vi.fn().mockResolvedValueOnce(snapshot(true)).mockReturnValue(nextResult.promise) as ApplicationServiceV1["invoke"] });
+    await act(async () => { nextWork = hook.current.updateCodexPets({ enabled: true }); });
+    await act(async () => { oldResult.reject(new Error("retired write failed")); await oldWork; });
+    expect(hook.current.codexPetsLoading).toBe(true);
+    expect(hook.current.codexPetsError).toBe("");
+    await act(async () => { nextResult.resolve(snapshot(true)); await nextWork; });
+  });
+
+  it.each([true, false])("keeps pets scope cancellation quiet while reporting genuine failures (retired: %s)", async retired => {
+    const cause = retired ? new PluginLifecycleCancellationError() : new Error("pets read failed");
+    const invoke = vi.fn().mockResolvedValueOnce(snapshot(false)).mockRejectedValue(cause);
+    const hook = await renewableRuntime({ invoke: invoke as ApplicationServiceV1["invoke"] });
+    await act(async () => { await expect(hook.current.refreshCodexPets()).rejects.toBe(cause); });
+    expect(hook.current.codexPetsError).toBe(retired ? "" : cause.message);
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
   it("loads Codex Pets on mount and stores updated settings snapshots", async () => {
     const initialSnapshot = snapshot(false);
     const updatedSnapshot = snapshot(true);
@@ -194,4 +280,50 @@ describe("useSettingsRuntimeState", () => {
     expect(refreshError).toBeInstanceOf(Error);
     expect((refreshError as Error).message).toBe(translateCurrent("settings.pets.unsupported"));
   });
+});
+
+it.each(["success", "failure", "retired"] as const)("does not publish an old model catalog %s notice after settings authority renewal", async outcome => {
+  const oldResult = deferred<{ modelCount: number }>(); const nextResult = deferred<{ modelCount: number }>();
+  const state = { settings: { open: true, engineInventoryError: "", runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false } };
+  const make = (catalog: Promise<{ modelCount: number }>) => ({
+    subscribe: () => () => {}, getSnapshot: () => state,
+    invoke: vi.fn((action: string) => action === "settings.refresh-model-catalog" ? catalog : Promise.resolve(action === "settings.read-pets" ? snapshot(false) : action === "settings.read-usage" ? usage() : undefined)),
+  } as unknown as ApplicationServiceV1);
+  const previous = make(oldResult.promise); const next = make(nextResult.promise);
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  const visibility = vi.fn();
+  const layout = settingsLayout(visibility);
+  const render = (application: ApplicationServiceV1) => act(async () => root.render(<WuuUIRoot><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
+  const current = () => vi.mocked(SettingsShellRenderer).mock.calls.at(-1)![0];
+  await render(previous);
+  let oldWork!: Promise<void>; let nextWork!: Promise<void>;
+  await act(async () => { oldWork = current().onRefreshModelCatalog(); });
+  await render(next);
+  await act(async () => { nextWork = current().onRefreshModelCatalog(); });
+  visibility.mockClear();
+  await act(async () => {
+    if (outcome === "success") oldResult.resolve({ modelCount: 10 });
+    else oldResult.reject(outcome === "retired" ? new PluginLifecycleCancellationError() : new Error("old catalog failed"));
+    await oldWork;
+  });
+  expect(visibility).not.toHaveBeenCalledWith(true);
+  await act(async () => { nextResult.resolve({ modelCount: 20 }); await nextWork; });
+  expect(visibility).toHaveBeenCalledWith(true);
+});
+
+it.each([true, false])("keeps catalog retirement quiet without hiding genuine errors before successor props (retired: %s)", async retired => {
+  const cause = retired ? new PluginLifecycleCancellationError() : new Error("catalog failed");
+  const state = { settings: { open: true, engineInventoryError: "", runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false } };
+  const application = { subscribe: () => () => {}, getSnapshot: () => state,
+    invoke: vi.fn((action: string) => action === "settings.refresh-model-catalog" ? Promise.reject(cause) : Promise.resolve(action === "settings.read-pets" ? snapshot(false) : action === "settings.read-usage" ? usage() : undefined)),
+  } as unknown as ApplicationServiceV1;
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  const visibility = vi.fn();
+  const layout = settingsLayout(visibility);
+  await act(async () => root.render(<WuuUIRoot><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
+  visibility.mockClear();
+  await act(async () => { await vi.mocked(SettingsShellRenderer).mock.calls.at(-1)![0].onRefreshModelCatalog(); });
+  expect(visibility.mock.calls.some(([visible]) => visible)).toBe(!retired);
 });

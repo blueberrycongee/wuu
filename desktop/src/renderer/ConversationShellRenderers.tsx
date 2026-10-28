@@ -2,7 +2,6 @@ import {
   lazy,
   Suspense,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -24,21 +23,16 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
-  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
   UserQuestionRequest,
 } from "../shared/protocol";
 import {
-  emptyComposerDraft,
+  activeTurnForThread,
   isThreadPresentationRunning,
-  queryTextsForThread,
-  resolveThreadRuntimeContext,
-  requestedHandoffIntentForThread,
   turnStreamStatusForThread,
   type AppState,
-  type ComposerDraftState,
   type ConversationPaneID,
 } from "./AppState";
 import {
@@ -54,18 +48,15 @@ import {
 } from "./ComposerView";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
-import type { ThreadPendingComposerMessages } from "./ComposerPendingMessages";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { Tooltip } from "./Tooltip";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
 import { useProjectActions } from "./ProjectActions";
-import { HeaderPresentation, immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import type { PluginHost } from "./plugins/PluginHost";
-import { PluginSlot } from "./plugins/PluginSlot";
-import type { WorkbenchController } from "./plugins/Workbench";
+import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import { conversationHeadingTitle } from "./ThreadTitles";
+import { showErrorToast } from "./Toast";
 
 const SettingsView = lazy(() => import("./SettingsView").then((module) => ({
   default: module.SettingsView,
@@ -78,31 +69,12 @@ export type ConversationSplitPaneRendererProps = {
   state: AppState;
   thread: Thread;
   pane: ConversationPaneID;
-  splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
+  composerOwnerTabIds: Partial<Record<ConversationPaneID, string>>;
   splitPaneRefs: MutableRefObject<Record<ConversationPaneID, HTMLElement | null>>;
-  viewSwitchPending: boolean;
-  pendingComposerMessagesForThread?: (threadID: string) => ThreadPendingComposerMessages;
-  stopRequests?: Record<string, "pending" | "retry">;
-  submittingThreadIDs?: ReadonlySet<string>;
   historyMessageEdit?: HistoryMessageEditState;
   onActivatePane: (pane: ConversationPaneID) => void;
   onClosePane: (pane: ConversationPaneID) => void;
   onConversationScroll: (node: HTMLElement) => void;
-  onSetPrompt: (pane: ConversationPaneID, value: string) => void;
-  onPasteAttachmentFiles: (
-    pane: ConversationPaneID,
-    files: File[],
-  ) => void;
-  onRemoveFile: (pane: ConversationPaneID, id: string) => void;
-  onRemoveImage: (pane: ConversationPaneID, id: string) => void;
-  onChangeSelection?: (pane: ConversationPaneID, selection: ResponseSelection) => void;
-  onRemoveSelection?: (pane: ConversationPaneID, id: string) => void;
-  onSend: (
-    pane: ConversationPaneID,
-    promptOverride?: string,
-    contentParts?: MessageContentPart[],
-  ) => boolean | void;
-  onInterrupt: (pane: ConversationPaneID) => void;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
   onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
@@ -136,24 +108,12 @@ export function ConversationSplitPaneRenderer({
   state,
   thread,
   pane,
-  splitComposerDrafts,
+  composerOwnerTabIds,
   splitPaneRefs,
-  viewSwitchPending,
-  pendingComposerMessagesForThread,
-  stopRequests,
-  submittingThreadIDs,
   historyMessageEdit,
   onActivatePane,
   onClosePane,
   onConversationScroll,
-  onSetPrompt,
-  onPasteAttachmentFiles,
-  onRemoveFile,
-  onRemoveImage,
-  onChangeSelection,
-  onRemoveSelection,
-  onSend,
-  onInterrupt,
   onForkMessage,
   onOpenFile,
   onOpenURL,
@@ -168,26 +128,14 @@ export function ConversationSplitPaneRenderer({
   onAnswerUserQuestion,
   onCancelUserQuestion,
 }: ConversationSplitPaneRendererProps): JSX.Element {
-  const queryHistory = useMemo(() => queryTextsForThread(thread), [thread]);
-  const pending = pendingComposerMessagesForThread?.(thread.id);
-  const completionWorkspace = resolveThreadRuntimeContext(thread, state.projects);
   return (
     <ConversationSplitPane
       pane={pane}
       thread={thread}
       active={state.activePane === pane}
       activeContextCwd={state.activeContext?.cwd}
-      workspaceId={completionWorkspace.kind === "project" ? completionWorkspace.project_id : undefined}
-      workspaceRoot={completionWorkspace.cwd}
       streamStatus={turnStreamStatusForThread(state, thread)}
-      draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
-      viewSwitchPending={viewSwitchPending}
-      queuedCount={pending?.queued.length}
-      pendingCount={pending?.guides.length}
-      submitting={submittingThreadIDs?.has(thread.id)}
-      stopState={stopRequests?.[thread.id]}
-      queryHistory={queryHistory}
-      requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
+      ownerTabId={composerOwnerTabIds[pane]}
       editingMessage={
         historyMessageEdit?.threadID === thread.id
           ? historyMessageEdit
@@ -199,14 +147,6 @@ export function ConversationSplitPaneRenderer({
         splitPaneRefs.current[pane] = node;
       }}
       onScroll={onConversationScroll}
-      onSetPrompt={(value) => onSetPrompt(pane, value)}
-      onPasteAttachmentFiles={(files) => onPasteAttachmentFiles(pane, files)}
-      onRemoveFile={(id) => onRemoveFile(pane, id)}
-      onRemoveImage={(id) => onRemoveImage(pane, id)}
-      onChangeSelection={(selection) => onChangeSelection?.(pane, selection)}
-      onRemoveSelection={(id) => onRemoveSelection?.(pane, id)}
-      onSend={(promptOverride, contentParts) => onSend(pane, promptOverride, contentParts)}
-      onInterrupt={() => onInterrupt(pane)}
       onForkMessage={(turnID, itemID) => onForkMessage(thread, turnID, itemID)}
       onOpenFile={(path) => onOpenFile?.(thread, path)}
       onOpenURL={onOpenURL}
@@ -288,15 +228,9 @@ export function ConversationSplitLayoutRenderer({
 }
 
 export type ConversationTitleContentProps = {
-  state: AppState;
-  runningThreadIDs?: ReadonlySet<string>;
-  pendingSwitchThreadID?: string;
-  activeTitle: string;
-  onStartNewThread: () => void;
-  onRenameTitle?: (title: string) => void;
-  titleEditKey?: string;
-  pluginHost?: PluginHost;
-  workbenchController?: WorkbenchController;
+  application: ApplicationServiceV1;
+  slots: UICompositionV1;
+  slotOwner: string;
 };
 
 function ConversationTitleText({
@@ -374,11 +308,10 @@ function ConversationTitleText({
           onKeyDown={handleKeyDown}
         />
       ) : editable ? (
-        <button
+        <Tooltip asChild content={t("threadSidebar.rename")}><button
           type="button"
           className="conversation-title-rename"
           aria-label={t("thread.rename.editNamed", { title })}
-          title={t("threadSidebar.rename")}
           onClick={(event) => {
             // Keyboard activation has detail 0; pointer clicks wait for a double click.
             if (event.detail !== 0) return;
@@ -391,50 +324,24 @@ function ConversationTitleText({
           }}
         >
           {title}
-        </button>
+        </button></Tooltip>
       ) : title}
     </h1>
   );
 }
 
-export function ConversationTitleContent({
-  state,
-  runningThreadIDs,
-  pendingSwitchThreadID,
-  activeTitle,
-  onStartNewThread,
-  onRenameTitle,
-  titleEditKey,
-  pluginHost,
-  workbenchController,
-}: ConversationTitleContentProps): JSX.Element {
+export function ConversationTitleContent({ application, slots, slotOwner }: ConversationTitleContentProps): JSX.Element {
   const { t } = useI18n();
-  const host = pluginHost ?? desktopPluginHost;
-  const controller = workbenchController ?? desktopWorkbenchController;
-  const workbenchSnapshot = useSyncExternalStore(
-    controller.subscribe,
-    controller.getSnapshot,
-    controller.getSnapshot,
-  );
-  const navigationEntries = useSyncExternalStore(
-    (listener) => host.subscribe(listener),
-    () => host.getNavigationEntries(),
-    () => host.getNavigationEntries(),
-  );
-  const activePrimaryView = workbenchSnapshot.views.find(
-    (view) => view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
-  );
-  // A declared destination keeps its sidebar row after it closes, so closing
-  // its only page would just repeat Back. Close is offered only where it
-  // removes a row: API-opened pages and extra instances.
-  const closable = activePrimaryView !== undefined && (
-    !navigationEntries.some((entry) =>
-      entry.pluginId === activePrimaryView.pluginId && entry.view === activePrimaryView.viewTypeId)
-    || workbenchSnapshot.views.filter((view) =>
-      view.region === "primary"
-      && view.pluginId === activePrimaryView.pluginId
-      && view.viewTypeId === activePrimaryView.viewTypeId).length > 1
-  );
+  const view = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+  const activePrimaryView = view.navigationWorkspace.activePluginView;
+  const tab = view.tabs.items.find(tab => tab.id === view.tabs.activeTabId);
+  const workspace = view.conversationWorkspace;
+  const threadId = workspace.activePane === "secondary" ? workspace.secondaryThreadId : workspace.primaryThreadId;
+  const thread = workspace.threads.find(thread => thread.id === threadId);
+  const catalog = tab?.kind === "skills";
+  const nativeTitle = catalog ? t("skills.title") : conversationHeadingTitle(thread, tab?.kind === "draft" ? tab.title : undefined, t("tabs.newConversation"));
+  const title = activePrimaryView?.title ?? nativeTitle;
+  const editable = !activePrimaryView && !catalog && Boolean(thread ? !thread.read_only && !thread.ephemeral : tab?.kind === "draft");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const restoreFocus = useRef(false);
   useLayoutEffect(() => {
@@ -442,96 +349,54 @@ export function ConversationTitleContent({
     restoreFocus.current = false;
     headingRef.current?.focus();
   }, [activePrimaryView?.id]);
-  const title = activePrimaryView
-    ? workbenchSnapshot.viewTypes.find((definition) =>
-      definition.pluginId === activePrimaryView.pluginId
-      && definition.id === activePrimaryView.viewTypeId)?.title ?? activePrimaryView.viewTypeId
-    : activeTitle;
+  const runNavigation = (request: Promise<unknown>) => {
+    void request.catch(error => { restoreFocus.current = false; showErrorToast(error); });
+  };
   const navigateBack = activePrimaryView ? () => {
     restoreFocus.current = true;
-    controller.deactivateRegion("primary");
+    runNavigation(application.invoke("navigation.show-native", {}));
   } : undefined;
-  const fallback = (
-    <div className="conversation-title-heading">
-      {navigateBack ? <button
-        className="icon-button"
-        data-wuu-component="primary-view-back"
-        type="button"
-        aria-label={t("common.back")}
-        title={t("common.back")}
-        onClick={navigateBack}
-      >
-        <ArrowLeft aria-hidden="true" />
-      </button> : (
-      <Tooltip content={t("tabs.newConversation")} side="bottom">
-        <button
-          className="icon-button session-tab-new"
-          type="button"
-          aria-label={t("tabs.newConversation")}
-          disabled={!state.activeContext}
-          onClick={onStartNewThread}
-        >
-          <SquarePen aria-hidden="true" />
-        </button>
-      </Tooltip>)}
-      <ConversationTitleText
-        title={title}
-        editable={Boolean(onRenameTitle) && !navigateBack}
-        editKey={titleEditKey}
-        headingRef={headingRef}
-        onRenameTitle={onRenameTitle}
-      />
-    </div>
-  );
-  const showingPrimaryWorkbench = activePrimaryView !== undefined;
-  // Session records still own drafts and recovery; they are not visible navigation.
-  const snapshot = immutableHeaderSnapshot({
-    scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-    title,
-    canNavigateBack: navigateBack ? true : undefined,
-    busy: !showingPrimaryWorkbench && (
-      isThreadPresentationRunning(state.thread, state.thread ? runningThreadIDs?.has(state.thread.id) : false)
-      || pendingSwitchThreadID !== undefined
-    ) || undefined,
-  });
-  return (
-    <>
-      <PluginSlot
-        host={host}
-        id={showingPrimaryWorkbench ? "workspace.header" : "conversation.header"}
-        context={Object.freeze({
-          scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-          hasSessionTabs: false,
-          tabCount: 0,
-          busy: snapshot.busy ?? false,
-        })}
-      />
-      <HeaderPresentation
-        snapshot={snapshot}
-        fallback={fallback}
-        onNavigateBack={navigateBack}
-        host={pluginHost}
-        controller={controller}
-      />
-      {activePrimaryView && closable ? <button
-        className="icon-button"
-        data-wuu-component="primary-view-close"
-        type="button"
-        aria-label={t("workspace.closeTab", { label: title })}
-        title={t("workspace.closeTab", { label: title })}
-        onClick={() => {
-          restoreFocus.current = true;
-          void controller.closeView(activePrimaryView.id);
-        }}
-      >
-        <X aria-hidden="true" />
-      </button> : null}
-    </>
-  );
+  const rename = (title: string) => {
+    if (thread) void application.invoke("thread.rename", { threadId: thread.id, title }).catch(showErrorToast);
+    else if (tab?.kind === "draft") void application.invoke("draft.rename", { tabId: tab.id, title }).catch(showErrorToast);
+  };
+  const scope = activePrimaryView ? "workspace" : "conversation";
+  const activeTurn = activeTurnForThread(thread);
+  const presentation = thread && { status: thread.status, child_agents: thread.child_agents,
+    turns: activeTurn ? [{ status: activeTurn.status, answer_ready_at: activeTurn.answer_ready_at,
+      items: activeTurn.items.map(({ id, type, status, terminal }) => ({ id, type, status, terminal })) }] : [] };
+  const busy = !activePrimaryView && (Boolean(view.tabs.pending) || isThreadPresentationRunning(presentation, view.navigationWorkspace.threads.some(row => row.id === threadId && row.status === "in_progress")));
+  const snapshot = Object.freeze({ contractVersion: 1 as const, scope, title, canNavigateBack: navigateBack ? true : undefined, busy: busy || undefined });
+  const context = Object.freeze({ snapshot, scope, threadId, ownerTabId: tab?.id, viewId: activePrimaryView?.id, hasSessionTabs: false, tabCount: 0, busy });
+  const fallback = <div className="conversation-title-heading">
+    {navigateBack ? <Tooltip asChild content={t("common.back")}><button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} onClick={navigateBack}>
+      <ArrowLeft aria-hidden="true" />
+    </button></Tooltip> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
+      onClick={event => {
+        const document = event.currentTarget.ownerDocument;
+        let focusRequested = true;
+        // A later focus choice takes precedence over this asynchronous creation.
+        const cancelFocus = () => { focusRequested = false; };
+        document.addEventListener("focusin", cancelFocus);
+        void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId })
+          .then(({ activated, tabId }) => {
+            if (activated && tabId && focusRequested) return application.invoke("navigation.focus-composer", { tabId });
+          })
+          .catch(showErrorToast)
+          .finally(() => document.removeEventListener("focusin", cancelFocus));
+      }}><SquarePen aria-hidden="true" /></button></Tooltip>}
+    <ConversationTitleText title={title} editable={editable} editKey={activePrimaryView?.id ?? thread?.id ?? tab?.id} headingRef={headingRef} onRenameTitle={rename} />
+  </div>;
+  return <>
+    <slots.Slot name={`${slotOwner}/${scope}.header`} context={context} />
+    <slots.Slot name={`${slotOwner}/header.${scope}`} context={context} fallback={fallback} />
+    {activePrimaryView?.closable ? <Tooltip asChild content={t("workspace.closeTab", { label: title })}><button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })}
+      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button></Tooltip> : null}
+  </>;
 }
 
 export type ConversationTitleActionsProps = {
-  state: AppState;
+  thread?: Thread;
   /** A primary plugin page covers the conversation and its environment panel. */
   pluginPageVisible?: boolean;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
@@ -543,7 +408,7 @@ export type ConversationTitleActionsProps = {
 };
 
 export function ConversationTitleActions({
-  state,
+  thread,
   pluginPageVisible,
   environmentToggleRef,
   environmentPanelVisible,
@@ -554,7 +419,6 @@ export function ConversationTitleActions({
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
-  const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
   // Controls for the covered conversation leave with it; new conversations
   // and the right panel stay available on every page.
   const control = pluginPageVisible ? undefined : thread?.session_control;
@@ -563,14 +427,14 @@ export function ConversationTitleActions({
   // expose ownership state here.
   const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
   const management = projectSession ? <>
-    <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
+    <Tooltip asChild content={t("projects.openCoordinator")}><button aria-description={t("projects.openCoordinator")} type="button" className="session-control-project"
       onClick={() => projectActions.openThread(control.manager_id)}>
       <Project aria-hidden="true" />
       <span>{control.manager_name}</span>
-    </button>
-  </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
+    </button></Tooltip>
+  </> : control ? <Tooltip asChild content={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}><span className="session-control-label">
     {control.manager_name} · {controlLabel}
-  </span> : null;
+  </span></Tooltip> : null;
   const environmentLabel = environmentPanelVisible
     ? t("shell.hideEnvironmentInfo")
     : t("shell.showEnvironmentInfo");
@@ -608,7 +472,10 @@ export function ConversationTitleActions({
 }
 
 export type ConversationSidePanelsProps = {
-  state: AppState;
+  application: EnvironmentSideStackProps["application"];
+  slots: EnvironmentSideStackProps["slots"];
+  slotOwner: string;
+  environment: EnvironmentSideStackProps["environment"];
   environmentPanelVisible: boolean;
   environmentPanelMounted: boolean;
   environmentPanelRef: EnvironmentSideStackProps["panelRef"];
@@ -620,18 +487,18 @@ export type ConversationSidePanelsProps = {
   pullRequestDisabledReason: string;
   onSetEnvironmentPanelMenu: EnvironmentSideStackProps["onSetActiveMenu"];
   onCloseEnvironmentPanel: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: EnvironmentSideStackProps["onCreateBranch"];
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
   rightPanelFilePath?: string;
   onCloseFilePreview: () => void;
-  switchLoadingVisible: boolean;
 };
 
 export function ConversationSidePanels({
-  state,
+  application,
+  slots,
+  slotOwner,
+  environment,
   environmentPanelVisible,
   environmentPanelMounted,
   environmentPanelRef,
@@ -643,21 +510,21 @@ export function ConversationSidePanels({
   pullRequestDisabledReason,
   onSetEnvironmentPanelMenu,
   onCloseEnvironmentPanel,
-  onSelectBranch,
-  onCreateBranch,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
   rightPanelFilePath,
   onCloseFilePreview,
-  switchLoadingVisible,
 }: ConversationSidePanelsProps): JSX.Element {
   return (
     <>
       <EnvironmentSideStack
         visible={environmentPanelVisible}
         mounted={environmentPanelMounted}
-        state={state}
+        application={application}
+        slots={slots}
+        slotOwner={slotOwner}
+        environment={environment}
         panelRef={environmentPanelRef}
         closing={environmentPanelClosing}
         motionState={environmentPanelMotionState}
@@ -667,8 +534,6 @@ export function ConversationSidePanels({
         pullRequestDisabledReason={pullRequestDisabledReason}
         onSetActiveMenu={onSetEnvironmentPanelMenu}
         onClose={onCloseEnvironmentPanel}
-        onSelectBranch={onSelectBranch}
-        onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}
         onOpenPullRequest={onOpenPullRequest}
@@ -676,7 +541,6 @@ export function ConversationSidePanels({
         onCloseFilePreview={onCloseFilePreview}
       />
 
-      {switchLoadingVisible ? <ViewSwitchLoading placement="conversation" /> : null}
     </>
   );
 }
@@ -690,7 +554,7 @@ export function SettingsShellRenderer(
   props: SettingsShellRendererProps,
 ): JSX.Element {
   return (
-    <Suspense fallback={<ViewSwitchLoading />}>
+    <Suspense fallback={<ViewSwitchLoading placement="inline" />}>
       <SettingsView
         {...props}
         sidebarMinWidth={SIDEBAR_MIN_WIDTH}

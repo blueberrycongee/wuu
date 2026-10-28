@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "shell-skins-example",
+  "name": "Shell Skins",
+  "version": "1.0.0",
+  "description": "Two independent window skins with paired light and dark artwork. No runtime or desktop code.",
+  "contributes": {
+    "skins": [
+      {
+        "id": "tide",
+        "name": "Tide · 潮汐",
+        "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "tide.svg", "hover": "#ffffff18", "active": "#ffffff2e" },
+        "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "tide.svg", "overlay": "#06172555", "hover": "#ffffff18", "active": "#ffffff2e" }
+      },
+      {
+        "id": "clay",
+        "name": "Clay · 陶土",
+        "light": { "background": "#733e30", "foreground": "#fff5ed", "image": "clay.svg", "hover": "#ffffff18", "active": "#ffffff30" },
+        "dark": { "background": "#42241e", "foreground": "#f7e8de", "image": "clay.svg", "overlay": "#24120e66", "hover": "#ffffff18", "active": "#ffffff30" }
+      }
+    ]
+  }
+}

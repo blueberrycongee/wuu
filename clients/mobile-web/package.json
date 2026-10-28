@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "node test/workbench.e2e.mjs",
+    "test:headless": "node test/headless-workspace.e2e.mjs",
     "test:history": "node test/conversation-cache.e2e.mjs",
     "test:phone": "node test/phone-interactions.e2e.mjs"
   },
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^29.1.1",
+    "pele": "^1.6.0",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^7.0.0",

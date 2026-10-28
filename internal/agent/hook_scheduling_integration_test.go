@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -40,7 +41,7 @@ func TestToolHooksDoNotSpeculativelyExecuteRewrittenCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			dir := t.TempDir()
-			ledger, err := toolledger.New(dir, "hook-scheduling")
+			ledger, err := toolledger.New(agentTestDocuments(t, dir), "hook-scheduling")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,5 +76,37 @@ func TestToolHooksDoNotSpeculativelyExecuteRewrittenCalls(t *testing.T) {
 				t.Fatalf("final rewritten execution: messages=%+v err=%v", messages, err)
 			}
 		})
+	}
+}
+
+type legacyHookContextTools struct {
+	rewriteAwareTools
+	reads atomic.Int32
+}
+
+func (e *legacyHookContextTools) LastAdditionalContext() string {
+	e.reads.Add(1)
+	return "unattributed inner context"
+}
+
+func TestToolHooksDoNotAttributeLegacySharedContextToCalls(t *testing.T) {
+	inner := &legacyHookContextTools{}
+	executor := hooks.NewHookedExecutor(inner, hooks.NewDispatcher(hooks.NewRegistry(nil)), "session", t.TempDir())
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor})
+	defer runtime.Close()
+	_, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{
+		{ID: "first", Name: "bash", Arguments: `{}`},
+		{ID: "second", Name: "bash", Arguments: `{}`},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inner.reads.Load() != 0 || len(runtime.TakeRequestContextSegments()) != 0 {
+		t.Fatal("per-call hook decoration consumed an inner shared context slot")
+	}
+	// Direct legacy serial consumers retain their explicit API; the per-call
+	// adapter cannot infer which invocation owns an inner last-result value.
+	if got := executor.LastAdditionalContext(); got != "unattributed inner context" || inner.reads.Load() != 1 {
+		t.Fatalf("legacy serial access changed: context=%q reads=%d", got, inner.reads.Load())
 	}
 }

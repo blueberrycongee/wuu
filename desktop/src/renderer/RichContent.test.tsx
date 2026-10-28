@@ -3,34 +3,37 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceFileReferenceResolveResult } from "../shared/protocol";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { MarkdownContent, RichContent } from "./RichContent";
+import { BrowserControlsProvider } from "./BrowserControlsContext";
+import { PreviewContentProvider } from "./PreviewContentContext";
+import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 
-const { mermaidInitialize, mermaidRender } = vi.hoisted(() => ({
-  mermaidInitialize: vi.fn(),
-  mermaidRender: vi.fn(async (id: string, _code: string) => ({
-    svg: `<svg data-diagram-id="${id}"></svg>`,
+const { mermaidRender } = vi.hoisted(() => ({
+  mermaidRender: vi.fn(async (_code: string, options: { idPrefix: string }) => ({
+    svg: `<svg data-diagram-id="${options.idPrefix}"></svg>`,
   })),
 }));
 
-vi.mock("mermaid", () => ({
-  default: {
-    initialize: mermaidInitialize,
-    render: mermaidRender,
-  },
-}));
+vi.mock("pele", () => ({ render: mermaidRender }));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
 let writeTextMock: ReturnType<typeof vi.fn>;
 let resolveWorkspaceFileReferenceMock: ReturnType<typeof vi.fn>;
 let openExternalMock: ReturnType<typeof vi.fn>;
+let openBrowserMock: ReturnType<typeof vi.fn>;
+let browser: ApplicationBrowser;
+let fileService: ApplicationPreviewContent;
+let openFileMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   document.documentElement.dataset.theme = "light";
-  mermaidInitialize.mockClear();
   mermaidRender.mockReset();
-  mermaidRender.mockImplementation(async (id: string) => ({ svg: `<svg data-diagram-id="${id}"></svg>` }));
+  mermaidRender.mockImplementation(async (_code, options) => ({ svg: `<svg data-diagram-id="${options.idPrefix}"></svg>` }));
   writeTextMock = vi.fn().mockResolvedValue(undefined);
   // jsdom does not implement the clipboard API; inject a mock for the
   // success-path tests.
@@ -51,6 +54,12 @@ beforeEach(() => {
       resolveWorkspaceFileReference: resolveWorkspaceFileReferenceMock,
     },
   });
+  openBrowserMock = vi.fn();
+  browser = new ApplicationBrowser({ api: window.wuu, onActivityChanged: vi.fn(), workspaceNavigation: {
+    enabled: true, getFocusState: () => ({ rightPanelOpen: false, browserForegroundOccupied: false }), openBrowser: openBrowserMock,
+  } });
+  openFileMock = vi.fn();
+  fileService = new ApplicationPreviewContent(window.wuu, { openFile: openFileMock });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -60,22 +69,25 @@ afterEach(() => {
     root?.unmount();
   });
   root = null;
+  browser.dispose();
   container.remove();
   delete (window as { wuu?: unknown }).wuu;
   delete document.documentElement.dataset.theme;
 });
 
-function render(element: JSX.Element): void {
+function render(element: JSX.Element, fileCapability = true): void {
   act(() => {
     if (!root) {
       root = createRoot(container);
     }
-    root.render(element);
+    root.render(<BrowserControlsProvider service={browser}>{fileCapability ? <PreviewContentProvider service={fileService}>{element}</PreviewContentProvider> : element}</BrowserControlsProvider>);
   });
 }
 
 function renderWithImagePreview(element: JSX.Element): void {
-  render(<ImagePreviewProvider>{element}</ImagePreviewProvider>);
+  render(<ArtifactsProvider application={{ artifacts: new ApplicationArtifacts(window.wuu, fileService) }}>
+    <ImagePreviewProvider>{element}</ImagePreviewProvider>
+  </ArtifactsProvider>);
 }
 
 async function settleFileReferenceResolution(): Promise<void> {
@@ -113,7 +125,8 @@ describe("RichContent code block", () => {
     const fileLinks = container.querySelectorAll<HTMLButtonElement>(".rich-file-link");
     expect(fileLinks).toHaveLength(1);
     act(() => fileLinks[0].click());
-    expect(openFile).toHaveBeenCalledWith("src/main.ts#L12");
+    expect(openFileMock).toHaveBeenCalledWith({ root: "/repo/wuu", path: "src/main.ts#L12" });
+    expect(openFile).not.toHaveBeenCalled();
     expect(Array.from(container.querySelectorAll("a"), (link) => link.getAttribute("href"))).toEqual([
       "https://example.com/docs", "http://www.example.org/", "mailto:reader@example.com",
     ]);
@@ -130,7 +143,7 @@ describe("RichContent code block", () => {
       const props = { streamKey: `mermaid-${opener}-${isLive}`, initialText: source, isLive, phase: "final_answer" as const };
       renderWithImagePreview(<StreamingMarkdown {...props} />);
       await act(async () => { await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(1)); });
-      expect(mermaidRender.mock.calls[0][1]).toBe(code);
+      expect(mermaidRender.mock.calls[0][0]).toBe(code);
       expect(container.querySelector(".rich-mermaid svg")).not.toBeNull();
       expect(container.querySelector(".rich-code-block")).toBeNull();
       const shell = container.querySelector(".rich-mermaid");
@@ -160,41 +173,19 @@ describe("RichContent code block", () => {
     expect(shell?.textContent).toContain("Invalid diagram");
   });
 
-  it("rerenders Mermaid diagrams when the applied theme changes", async () => {
+  it("keeps the rendered diagram mounted when the applied theme changes", async () => {
     renderWithImagePreview(<RichContent text={"```mermaid\ngraph TD\nA --> B\n```"} />);
-
     await act(async () => {
-      await vi.waitFor(() => {
-        expect(mermaidRender).toHaveBeenCalledTimes(1);
-      });
+      await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(1));
     });
-    expect(mermaidInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        themeVariables: expect.objectContaining({
-          background: "#ffffff",
-          primaryTextColor: "#202427",
-        }),
-      }),
-    );
-    expect(container.querySelector(".rich-mermaid svg")).not.toBeNull();
-
+    const svg = container.querySelector(".rich-mermaid svg");
+    expect(svg).not.toBeNull();
     await act(async () => {
       document.documentElement.dataset.theme = "dark";
       await Promise.resolve();
     });
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(mermaidRender).toHaveBeenCalledTimes(2);
-      });
-    });
-    expect(mermaidInitialize).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        themeVariables: expect.objectContaining({
-          background: "#1d2024",
-          primaryTextColor: "#e4e6e8",
-        }),
-      }),
-    );
+    expect(container.querySelector(".rich-mermaid svg")).toBe(svg);
+    expect(mermaidRender).toHaveBeenCalledTimes(1);
   });
 
   it("opens a rendered Mermaid diagram in the shared image preview", async () => {
@@ -235,7 +226,8 @@ describe("RichContent code block", () => {
       link?.click();
     });
 
-    expect(openFile).toHaveBeenCalledWith("README_zh.md");
+    expect(openFileMock).toHaveBeenCalledWith({ root: "/repo/wuu", path: "README_zh.md" });
+    expect(openFile).not.toHaveBeenCalled();
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
   });
 
@@ -244,7 +236,7 @@ describe("RichContent code block", () => {
       <RichContent
         text={"See [README_zh.md (line 19)](README_zh.md) before editing."}
         cwd="/repo/wuu"
-      />,
+      />, false,
     );
 
     expect(container.querySelector(".rich-file-link")).toBeNull();
@@ -265,7 +257,8 @@ describe("RichContent code block", () => {
     const link = container.querySelector<HTMLButtonElement>(".rich-file-link");
     expect(link?.textContent).toContain("the parser");
     act(() => link?.click());
-    expect(openFile).toHaveBeenCalledWith("src/parser.ts#L12,4-L18,9");
+    expect(openFileMock).toHaveBeenCalledWith({ root: "/repo/wuu", path: "src/parser.ts#L12,4-L18,9" });
+    expect(openFile).not.toHaveBeenCalled();
   });
 
   it("keeps same-document anchors inside the rendered Markdown", () => {
@@ -353,10 +346,10 @@ describe("RichContent code block", () => {
     expect(link?.hasAttribute("target")).toBe(false);
 
     act(() => link?.click());
-    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/blueberrycongee/wuu");
+    expect(openBrowserMock).toHaveBeenCalledWith(true);
   });
 
-  it("hands a web link to onOpenURL when the workspace browser is available", () => {
+  it("opens a web link through the public browser service instead of the legacy callback", () => {
     const onOpenURL = vi.fn();
     render(
       <RichContent
@@ -367,7 +360,8 @@ describe("RichContent code block", () => {
 
     const link = container.querySelector("a.rich-web-link") as HTMLAnchorElement | null;
     act(() => link?.click());
-    expect(onOpenURL).toHaveBeenCalledWith("https://github.com/blueberrycongee/wuu");
+    expect(onOpenURL).not.toHaveBeenCalled();
+    expect(openBrowserMock).toHaveBeenCalledWith(true);
     expect(openExternalMock).not.toHaveBeenCalled();
   });
 
@@ -388,7 +382,8 @@ describe("RichContent code block", () => {
     expect(items).toHaveLength(2);
     expect(items.every((item) => !item.textContent?.includes(href))).toBe(true);
     act(() => items[0]?.click());
-    expect(onOpenURL).toHaveBeenCalledWith(href);
+    expect(onOpenURL).not.toHaveBeenCalled();
+    expect(openBrowserMock).toHaveBeenCalledWith(true);
     expect(openExternalMock).not.toHaveBeenCalled();
 
     const external = openMenu()[1];
@@ -562,7 +557,7 @@ describe("RichContent raw HTML and heading levels", () => {
       render(<RichContent text={"链接 https://example.com/a。"} />);
 
       act(() => singleWebLink().click());
-      expect(openExternalMock).toHaveBeenCalledWith("https://example.com/a");
+      expect(openBrowserMock).toHaveBeenCalledWith(true);
     });
 
     it("applies the same boundary in the streaming markdown path", () => {
@@ -595,4 +590,23 @@ describe("RichContent raw HTML and heading levels", () => {
       expect(paragraph?.textContent).not.toContain("**");
     });
   });
+});
+
+it("uses public file navigation and host media URLs without legacy callbacks", () => {
+  const openFile = vi.fn(); const legacy = vi.fn();
+  const service = new ApplicationPreviewContent(window.wuu, { openFile, encodedFileURL: encoded => `https://remote.example/file/${encoded}` });
+  renderWithImagePreview(<PreviewContentProvider service={service}><RichContent cwd="/repo" onOpenFile={legacy}
+    text="[source](src/a.ts#L2) ![image](./image.png)" /></PreviewContentProvider>);
+  act(() => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+  expect(openFile).toHaveBeenCalledExactlyOnceWith({ root: "/repo", path: "src/a.ts#L2" });
+  expect(legacy).not.toHaveBeenCalled();
+  expect(container.querySelector("img.rich-image")?.getAttribute("src")).toMatch(/^https:\/\/remote.example\/file\//);
+});
+
+it("reports a missing browser capability without consulting preload", async () => {
+  root = createRoot(container);
+  act(() => root!.render(<RichContent text="[link](https://example.com)" />));
+  await act(async () => container.querySelector<HTMLAnchorElement>(".rich-web-link")!.click());
+  expect(openExternalMock).not.toHaveBeenCalled();
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
 });

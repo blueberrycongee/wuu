@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -228,6 +229,8 @@ func TestPendingNestedCompletionRehydratesParentAfterRestart(t *testing.T) {
 	newControl := func(client providers.StreamClient) *AgentControl {
 		t.Helper()
 		control, err := New(Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+
 			Client:       client,
 			DefaultModel: "nested-replay-test",
 			ParentRepo:   dir,

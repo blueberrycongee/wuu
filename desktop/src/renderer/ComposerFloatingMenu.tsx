@@ -168,6 +168,7 @@ export function FloatingMenuPortal({
   // explicit placement.
   flip = false,
   mobileSheet,
+  onDismiss,
   children
 }: {
   anchorRef: RefObject<HTMLElement | null>;
@@ -184,6 +185,8 @@ export function FloatingMenuPortal({
   boundarySelector?: string;
   flip?: boolean;
   mobileSheet?: { label: string; onClose: () => void };
+  /** Dismiss on an outside press or window blur without moving focus. */
+  onDismiss?: () => void;
   children: ReactNode;
 }): JSX.Element | null {
   const [resolvedPlacement, setResolvedPlacement] =
@@ -201,6 +204,29 @@ export function FloatingMenuPortal({
   >(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const useSheet = Boolean(mobileSheet && isTouchWebShell());
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  const dismissible = Boolean(onDismiss);
+
+  useEffect(() => {
+    // The modal sheet owns its backdrop and native dialog dismissal.
+    if (!dismissible || useSheet) return;
+    const outside = (event: PointerEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && !anchorRef.current?.contains(target) && !layerRef.current?.contains(target)) {
+        dismissRef.current?.();
+      }
+    };
+    const blur = (): void => { dismissRef.current?.(); };
+    // Other portals and drag handles stop bubbling; dismissal must see the
+    // press before that, while preserving clicks inside this menu and trigger.
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("blur", blur);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("blur", blur);
+    };
+  }, [anchorRef, dismissible, useSheet]);
 
   useLayoutEffect(() => {
     if (useSheet) return;

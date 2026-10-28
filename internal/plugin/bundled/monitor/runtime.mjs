@@ -21,6 +21,10 @@ async function stopProcess(host, process_id) {
   return await host.call("host.service.call", { service: "host.process", method: "stop", params: { process_id } });
 }
 
+// packages/plugin-sdk/src/persistence.ts
+var DOCUMENT_STORE_SERVICE = "state.documents";
+var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
 // packages/plugin-sdk/src/theme-contract.generated.ts
 var PUBLIC_THEME_TOKEN_NAMES = [
   "--wuu-paper",
@@ -171,6 +175,271 @@ async function startBackground(host, input) {
   return await host.call("host.service.call", { service: BACKGROUND_SERVICE, method: "start", params: input });
 }
 
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
+  version: "1.2.0"
+};
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
+// packages/plugin-sdk/src/tool-service.ts
+var TOOL_SERVICE = "agent.tools";
+var TOOL_SERVICE_DESCRIPTOR = {
+  name: TOOL_SERVICE,
+  version: "1.0.0",
+  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+    name,
+    input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
+    output_schema: `${TOOL_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/tool-batch.ts
+var TOOL_BATCH_SERVICE = "agent.tool.batch";
+var TOOL_BATCH_SERVICE_DESCRIPTOR = {
+  name: TOOL_BATCH_SERVICE,
+  version: "1.0.0",
+  methods: [{ name: "execute", input_schema: `${TOOL_BATCH_SERVICE}.execute.input.v1`, output_schema: `${TOOL_BATCH_SERVICE}.execute.output.v1` }]
+};
+var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
+  ...TOOL_BATCH_SERVICE_DESCRIPTOR,
+  methods: [...TOOL_BATCH_SERVICE_DESCRIPTOR.methods, {
+    name: "stream_admit",
+    input_schema: `${TOOL_BATCH_SERVICE}.stream.admit.input.v1`,
+    output_schema: `${TOOL_BATCH_SERVICE}.stream.admit.output.v1`
+  }]
+};
+
+// packages/plugin-sdk/src/session-service.ts
+var sessionDomainArity = {
+  "AcceptHeldUserWork": [2, 1],
+  "AdmitThreadExecution": [4, 1],
+  "AppendAcceptedUserHistoryRecord": [3, 1],
+  "AppendContinuationHistoryRecord": [4, 1],
+  "AppendControlledHistoryRecord": [3, 1],
+  "AppendHistoryRecord": [2, 0],
+  "AppendHistoryRecordReturningSeq": [2, 1],
+  "AppendHistoryRecords": [2, 0],
+  "AppendHistoryRecordsReturningRange": [2, 2],
+  "BindDriver": [2, 0],
+  "BindWorktree": [2, 1],
+  "CancelHeldUserWork": [3, 1],
+  "ChangeControl": [4, 1],
+  "ClaimHeldUserWork": [2, 0],
+  "CompareAndSwapCompactionNote": [3, 1],
+  "CompleteParticipantRun": [4, 0],
+  "CountParticipantsByKind": [1, 1],
+  "Create": [1, 1],
+  "CreateFolder": [1, 1],
+  "CreateForkWithMetadata": [3, 1],
+  "CreateInitialized": [2, 1],
+  "CreateInitializedWithInbox": [5, 1],
+  "CreateInitializedWithLaunch": [4, 1],
+  "CreateManagedForkWithMetadata": [4, 1],
+  "CreateManagedWithMetadata": [3, 1],
+  "CreateManagedWithWorktree": [5, 1],
+  "CreateWithMetadata": [2, 1],
+  "CreateWithWorktree": [4, 1],
+  "Delete": [1, 1],
+  "DeleteArchived": [1, 1],
+  "DeleteFolder": [1, 0],
+  "DeleteHeldUserWork": [2, 1],
+  "DeletePluginTurnLifecycleOutbox": [2, 0],
+  "DeletePluginTurnLifecycleOutboxForPlugin": [1, 0],
+  "EnqueueInbox": [1, 0],
+  "Find": [1, 2],
+  "FindManagedByRequest": [2, 2],
+  "FindPinnedArchived": [1, 1],
+  "FindPluginTurnLifecycle": [4, 2],
+  "FindRetiredParticipantByName": [2, 2],
+  "GetParticipant": [1, 1],
+  "HasHeldUserWorkReceipt": [2, 1],
+  "InboxHas": [1, 1],
+  "InboxTargets": [0, 1],
+  "Journal.Close": [1, 0],
+  "Journal.CompleteAttempt": [3, 0],
+  "Journal.CompleteOperation": [3, 0],
+  "Journal.CompleteWorkflow": [3, 0],
+  "Journal.MarkAttemptFirstEvent": [6, 0],
+  "Journal.PrepareAttempt": [3, 0],
+  "Journal.PrepareOperation": [3, 0],
+  "Journal.PrepareRecoveryAttempt": [3, 0],
+  "Journal.Prune": [2, 1],
+  "Journal.ReconcileOrphans": [2, 1],
+  "Journal.UpsertSubmission": [3, 0],
+  "LatestHistoryCheckpoint": [1, 2],
+  "LatestSubscriptionActivity": [1, 1],
+  "List": [1, 1],
+  "ListControls": [0, 1],
+  "ListForCWD": [3, 1],
+  "ListOrganization": [0, 1],
+  "ListPage": [1, 1],
+  "ListParticipantRuns": [2, 1],
+  "ListParticipants": [1, 1],
+  "ListPluginTurnLifecycleOutbox": [0, 1],
+  "ListProjectWork": [1, 1],
+  "ListTokenUsage": [0, 1],
+  "LoadActiveHistoryRecords": [2, 1],
+  "LoadCompactionNote": [2, 2],
+  "LoadContextSeed": [1, 2],
+  "LoadDriverBinding": [1, 2],
+  "LoadDriverCheckpoint": [1, 2],
+  "LoadHeldUserWork": [1, 1],
+  "LoadHistoryRecords": [2, 1],
+  "LoadModelInputReceipts": [1, 1],
+  "LoadProviderHistorySnapshot": [1, 1],
+  "LoadRequestContextCheckpoint": [1, 1],
+  "LoadSessionLaunch": [1, 2],
+  "MaintainModelInputReceipts": [1, 1],
+  "MaintainRedundantStorage": [0, 1],
+  "MostRecent": [0, 1],
+  "MostRecentForCWD": [2, 1],
+  "NewInferenceJournalRuntime": [1, 1],
+  "PendingInbox": [1, 1],
+  "PendingProjectWork": [1, 1],
+  "ProjectWorkOperation": [1, 2],
+  "PutContextSeed": [1, 1],
+  "PutPluginTurnLifecycleOutbox": [3, 0],
+  "PutSessionLaunch": [1, 1],
+  "ReadControl": [1, 2],
+  "ReadHistoryPage": [3, 1],
+  "ReadHistoryQuery": [1, 1],
+  "ReadPluginGenerationSnapshot": [1, 2],
+  "ReadProjectWork": [1, 1],
+  "RebuildSessionIndexes": [0, 0],
+  "ReconcileProjectWork": [2, 0],
+  "ReleaseHeldUserWork": [2, 0],
+  "RenameFolder": [2, 1],
+  "ReorderFolders": [1, 0],
+  "ReplaceHeldUserWork": [2, 0],
+  "RequestThreadExecutionResetRecord": [1, 0],
+  "RetireParticipant": [1, 0],
+  "RewriteHistoryRecords": [2, 0],
+  "RewriteHistoryRecordsAtBaseline": [3, 0],
+  "RewriteHistoryRecordsForEdit": [4, 0],
+  "RewriteHistoryRecordsForEngineEdit": [6, 0],
+  "SaveDriverCheckpoint": [2, 0],
+  "SaveModelInputReceipt": [2, 0],
+  "SaveProjectWork": [3, 1],
+  "SaveRequestContextCheckpoint": [2, 0],
+  "SearchHistoryPage": [4, 1],
+  "SearchHistoryQuery": [1, 1],
+  "SetEngine": [2, 1],
+  "SetEngineRef": [2, 1],
+  "SetHistoryEngineTurnID": [5, 0],
+  "SetModelSelection": [4, 1],
+  "SetProjectMembership": [4, 1],
+  "SetNextStepModelSelection": [2, 1],
+  "SetRuntimeSelection": [2, 1],
+  "SetSource": [2, 1],
+  "SetWorkspaceID": [2, 1],
+  "SettleInbox": [2, 0],
+  "StoreCompactionNote": [1, 0],
+  "StoreContextWindow": [4, 1],
+  "StoreHistoryCheckpointAtBaseline": [4, 1],
+  "ThreadExecutionResetRequested": [2, 1],
+  "UpdateArchived": [2, 1],
+  "UpdateGeneratedTitle": [2, 1],
+  "UpdateHeldUserWork": [3, 1],
+  "UpdateIndex": [3, 0],
+  "UpdateOrganization": [2, 1],
+  "UpdatePinned": [2, 1],
+  "UpdateTitle": [2, 1],
+  "UpdateWorkspaceBinding": [5, 1],
+  "UpsertParticipant": [1, 0],
+  "UpsertParticipantRun": [1, 0],
+  "ValidateContinuationControl": [1, 0],
+  "ValidateControl": [1, 0],
+  "ValidateInboxControls": [1, 0],
+  "WorktreeInfoForSession": [1, 2],
+  "WritePluginGenerationSnapshot": [2, 0]
+};
+var SESSION_DOMAIN_METHODS = Object.freeze(Object.keys(sessionDomainArity));
+
+// packages/plugin-sdk/src/compaction-service.ts
+var COMPACTION_SERVICE = "agent.compaction";
+var COMPACTION_SERVICE_DESCRIPTOR = {
+  name: COMPACTION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover", "note-attempt"].map((name) => ({
+    name,
+    input_schema: `agent.compaction.${name}.input.v1`,
+    output_schema: `agent.compaction.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/title-service.ts
+var TITLE_SERVICE = "session.title";
+var TITLE_SERVICE_DESCRIPTOR = {
+  name: TITLE_SERVICE,
+  version: "1.0.0",
+  methods: ["plan", "resolve"].map((name) => ({
+    name,
+    input_schema: `${TITLE_SERVICE}.${name}.input.v1`,
+    output_schema: `${TITLE_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/session-sharing.ts
+var SESSION_SHARING_SERVICE = "session.sharing";
+var SESSION_SHARING_DESCRIPTOR = {
+  name: SESSION_SHARING_SERVICE,
+  version: "1.0.0",
+  methods: ["preview", "create", "resolve", "read", "attachment", "revoke", "authorize"].map((name) => ({
+    name,
+    input_schema: `session.sharing.${name}.input.v1`,
+    output_schema: `session.sharing.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -182,7 +451,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.storage.compare_exchange": "host.storage.compare-exchange",
   "host.settings.get": "host.settings.get",
   "host.settings.list": "host.settings.list",
+  "host.credentials.request": "host.credentials.request",
   "host.session.create": "host.session.create",
+  "host.session.route": "host.session.route",
   "host.session.send": "host.session.send",
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
@@ -218,12 +489,36 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
     switch (request.method) {
       case "initialize": {
         const result2 = await plugin.initialize(request.params, host, lifecycle);
+        const protocolVersion = result2.required_services?.length || result2.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result2.protocol_version;
+        if ((protocolVersion ?? 1) === 1 && (result2.capabilities?.length || result2.model_adapters?.length)) {
+          throw Object.assign(new Error("initialize() must return protocol_version: 2 or 3 when declaring capabilities or model_adapters; omission selects legacy v1"), { code: "invalid_capability_protocol" });
+        }
+        const offered = request.params.supported_host_features;
+        const required = result2.required_host_features;
+        for (const features of [offered, required]) {
+          if (features !== void 0 && (!Array.isArray(features) || features.some((feature) => typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
+            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
+          }
+        }
+        const requirements = new Set(required);
+        if (result2.provided_services?.some((service) => service.name === DOCUMENT_STORE_SERVICE && service.methods?.some((method) => method.name === "authority"))) {
+          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
+        }
+        for (const feature of requirements) {
+          if (!offered?.includes(feature)) {
+            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
+          }
+        }
         return { id: request.id, result: {
           ...result2,
-          protocol_version: result2.required_services?.length || result2.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result2.protocol_version,
-          lifecycle_version: 1
+          ...requirements.size ? { required_host_features: [...requirements] } : {},
+          protocol_version: protocolVersion,
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -247,18 +542,30 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
   }
 }
 function scopedRuntimeHost(host, execution) {
   return {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
-      const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
-        ...execution.executionId ? { execution_id: execution.executionId } : {}
+        ...options?.cleanup ? { execution_id: void 0, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}
       }, { signal });
     }
   };
@@ -286,6 +593,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -294,6 +602,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -317,7 +628,10 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method, params } : kernelServiceCall(id, method, params);
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
+        frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
+      }
       void this.send(frame).catch(fail);
     });
   }
@@ -361,6 +675,11 @@ async function runJSONLRuntime(plugin, streams) {
   const host = new JSONLRuntimeHost(send);
   const lifetime = new AbortController();
   const executions = /* @__PURE__ */ new Map();
+  const callerScopes = /* @__PURE__ */ new Map();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
   const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
@@ -412,6 +731,8 @@ async function runJSONLRuntime(plugin, streams) {
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
       for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
       return;
     }
     if (!isRuntimeRequest(parsed)) {
@@ -422,7 +743,7 @@ async function runJSONLRuntime(plugin, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -433,7 +754,14 @@ async function runJSONLRuntime(plugin, streams) {
     let controllers = executions.get(executionId);
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
-    const execution = { executionId, signal: controller.signal };
+    let caller;
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller };
     const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
     const run = async () => {
       await ready;
@@ -502,7 +830,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request = value;
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 
@@ -810,18 +1138,10 @@ ${args.command}`,
   return {
     concurrentServices: [watchService],
     concurrentCapabilities: ["plugin.client.request"],
-    async initialize(_params, initialHost) {
+    initialize(_params, initialHost) {
       host = initialHost;
-      const saved = await host.call("host.storage.get", { scope: "workspace", key: stateKey });
-      const ids = saved.value ? JSON.parse(saved.value) : [];
-      tasks = await Promise.all(ids.map(async (id) => {
-        const record = await host.call("host.storage.get", { scope: "workspace", key: `${stateKey}.${id}` });
-        if (!record.value) throw new Error(`Missing monitor record: ${id}`);
-        persisted.set(id, record.value);
-        return JSON.parse(record.value);
-      }));
       return {
-        lifecycle_version: 1,
+        lifecycle_version: 2,
         required_services: [requireBackgroundService(), requireProcessService(), ...["host.storage.get", "host.storage.set", "host.storage.delete"].map(requireKernelService)],
         provided_services: [{ name: watchService, version: "1.0.0", methods: [{ name: "run", input_schema: "monitor.watch.input.v1", output_schema: "monitor.watch.output.v1" }] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
@@ -842,6 +1162,16 @@ ${args.command}`,
           }
         ]
       };
+    },
+    async prepare() {
+      const saved = await host.call("host.storage.get", { scope: "workspace", key: stateKey });
+      const ids = saved.value ? JSON.parse(saved.value) : [];
+      tasks = await Promise.all(ids.map(async (id) => {
+        const record = await host.call("host.storage.get", { scope: "workspace", key: `${stateKey}.${id}` });
+        if (!record.value) throw new Error(`Missing monitor record: ${id}`);
+        persisted.set(id, record.value);
+        return JSON.parse(record.value);
+      }));
     },
     async activate(activeHost) {
       host = activeHost;

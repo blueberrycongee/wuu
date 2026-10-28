@@ -8,25 +8,33 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
-import type { ComposerInlineCompletionContext, ComposerInlineCompletionInteraction, ComposerSubmissionModeV1 } from "../shared/workbench";
-import type { PluginHost, RegisteredComposerInlineCompletionProvider } from "./plugins/PluginHost";
+import type { ComposerInlineCompletionContext, ComposerInlineCompletionInteraction, ComposerSubmissionModeV1, ComposerInlineCompletionProviderRegistration, ComposerInlineCompletionRefresh } from "../../../packages/plugin-sdk/src/index";
+
+/** Stable, lifecycle-bound public provider adapters; no host registration internals. */
+export interface ComposerInlineProvider extends Pick<ComposerInlineCompletionProviderRegistration, "provideCompletion" | "onDidInteract"> {
+  subscribeRefresh(listener: (scope?: ComposerInlineCompletionRefresh) => void): () => void;
+}
+export interface ComposerInlineSource {
+  subscribeComposerInlineCompletionProviders(listener: () => void): () => void;
+  getComposerInlineCompletionProviders(): readonly ComposerInlineProvider[];
+}
 import { parseComposerSlashDraft } from "./ComposerSlashCommands";
 
 export interface ComposerInlineCompletionActions {
   accept(): boolean;
   dismiss(): boolean;
-  dispatched(text: string, mode: ComposerSubmissionModeV1): void;
+  prepareDispatch(text: string, mode: ComposerSubmissionModeV1): () => void;
 }
 
 type Observation = {
   key: string;
-  providers: readonly RegisteredComposerInlineCompletionProvider[];
+  providers: readonly ComposerInlineProvider[];
   context: ComposerInlineCompletionContext;
   eligible: boolean;
 };
 type Suggestion = {
   observation: Observation;
-  provider: RegisteredComposerInlineCompletionProvider;
+  provider: ComposerInlineProvider;
   text: string;
   id?: string;
   interactionId: string;
@@ -38,7 +46,7 @@ type Suggestion = {
 export function useComposerInlineCompletion({
   host, inputRef, value, enabled, kind, contextKey, revisionKey, resetKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive, onInsert,
 }: {
-  host: PluginHost;
+  host: ComposerInlineSource;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
   enabled: boolean;
@@ -220,13 +228,14 @@ export function useComposerInlineCompletion({
       setSuggestion(null);
       return true;
     },
-    dispatched(text, mode) {
-      // This is called only after the composer's synchronous dispatch callback
-      // accepts. A later transport failure cannot be inferred from that boundary.
-      observe();
-      const pending = accepted.current;
-      accepted.current = [];
-      for (const item of pending) notify(item.suggestion, { type: "dispatched", mode, edited: text !== item.draftText });
+    prepareDispatch(text, mode) {
+      // Admission can clear the draft or bind a new thread before its promise
+      // resolves. Keep attribution for this submission across that transition.
+      const pending = [...accepted.current];
+      return () => {
+        accepted.current = accepted.current.filter(item => !pending.includes(item));
+        for (const item of pending) notify(item.suggestion, { type: "dispatched", mode, edited: text !== item.draftText });
+      };
     },
   };
   const visible = suggestion && suggestion.observation === observation && observation.eligible

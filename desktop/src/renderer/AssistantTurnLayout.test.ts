@@ -32,6 +32,37 @@ it("splits grouped activity at image results without hiding later work or changi
   expect([...processItems, ...activity.flatMap((entry) => entry.items ?? [entry.item])]).toEqual(items);
 });
 
+it("folds trailing reasoning into the process region after the turn settles", () => {
+  const image: ThreadItem = {
+    id: "image",
+    type: "tool_call",
+    name: "present_artifact",
+    status: "completed",
+    result_detail: {
+      content: [{ type: "image", mime_type: "image/png", data: "image", artifact: { placement: "inline" } }],
+    },
+  };
+  const reasoning: ThreadItem = {
+    id: "reasoning",
+    type: "reasoning",
+    text: "Checking the result",
+    status: "completed",
+  };
+  const answer: ThreadItem = {
+    id: "answer",
+    type: "agent_message",
+    text: "Done",
+    status: "completed",
+    terminal: true,
+  };
+  const turn: Turn = { id: "turn", items: [image, reasoning, answer], status: "completed", items_view: "full" };
+  const layout = layoutAssistantTurn(turn, buildAssistantTurnDisplay(turn, undefined)!, collectTurnArtifacts(turn));
+  const processItems = layout.processEntries.flatMap((entry) => entry.items ?? [entry.item]);
+  expect(processItems.at(-1)?.id).toBe("reasoning");
+  expect(layout.output.flatMap((output) => output.artifacts?.map((artifact) => artifact.itemId) ?? [])).toEqual(["image"]);
+  expect(layout.output.flatMap((output) => output.entry?.item.id ?? [])).toEqual(["answer"]);
+  expect(layout.output.some((output) => output.entry?.item.type === "reasoning")).toBe(false);
+});
 
 // Gallery boundaries must follow the conversation, not individual tool calls.
 it.each(["in_progress", "completed"] as const)("groups consecutive published images without crossing text or other work (%s)", (status) => {

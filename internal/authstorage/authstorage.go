@@ -1,6 +1,7 @@
 package authstorage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,18 +26,19 @@ var ErrNotFound = errors.New("authstorage: not found")
 const SourceSaved = "saved"
 
 type Credentials struct {
-	Type         string    `json:"type,omitempty"`
-	APIKey       string    `json:"api_key,omitempty"`
-	AuthToken    string    `json:"auth_token,omitempty"`
-	AccessToken  string    `json:"access_token,omitempty"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	IDToken      string    `json:"id_token,omitempty"`
-	AccountID    string    `json:"account_id,omitempty"`
-	AuthMode     string    `json:"auth_mode,omitempty"`
-	Source       string    `json:"source,omitempty"`
-	BaseURL      string    `json:"base_url,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at,omitempty"`
-	LastRefresh  string    `json:"last_refresh,omitempty"`
+	SubscriptionType string    `json:"subscription_type,omitempty"`
+	Type             string    `json:"type,omitempty"`
+	APIKey           string    `json:"api_key,omitempty"`
+	AuthToken        string    `json:"auth_token,omitempty"`
+	AccessToken      string    `json:"access_token,omitempty"`
+	RefreshToken     string    `json:"refresh_token,omitempty"`
+	IDToken          string    `json:"id_token,omitempty"`
+	AccountID        string    `json:"account_id,omitempty"`
+	AuthMode         string    `json:"auth_mode,omitempty"`
+	Source           string    `json:"source,omitempty"`
+	BaseURL          string    `json:"base_url,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at,omitempty"`
+	LastRefresh      string    `json:"last_refresh,omitempty"`
 }
 
 type File struct {
@@ -45,8 +47,11 @@ type File struct {
 }
 
 type Store struct {
-	path string
-	mu   *sync.Mutex
+	bound    bool
+	ctx      context.Context
+	selected credentialstore.Store
+	path     string
+	mu       *sync.Mutex
 }
 
 var pathLocks sync.Map
@@ -81,6 +86,9 @@ func emptyFile() File {
 }
 
 func (s *Store) Load() (File, error) {
+	if s.bound {
+		return s.loadBound()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadLocked()
@@ -129,12 +137,15 @@ func (s *Store) Get(providerID string) (Credentials, error) {
 	}
 	credentials, ok := file.Providers[providerID]
 	if !ok {
-		return Credentials{}, fmt.Errorf("authstorage: no credentials for provider %q", providerID)
+		return Credentials{}, fmt.Errorf("%w: no credentials for provider %q", ErrNotFound, providerID)
 	}
 	return credentials, nil
 }
 
 func (s *Store) Set(providerID string, credentials Credentials) error {
+	if s.bound {
+		return s.updateBound(func(file *File) { file.Providers[providerID] = credentials })
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	release, err := lockFile(s.path + ".lock")
@@ -153,6 +164,13 @@ func (s *Store) Set(providerID string, credentials Credentials) error {
 }
 
 func (s *Store) Update(providerID string, update func(*Credentials)) error {
+	if s.bound {
+		return s.updateBound(func(file *File) {
+			credentials := file.Providers[providerID]
+			update(&credentials)
+			file.Providers[providerID] = credentials
+		})
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	release, err := lockFile(s.path + ".lock")
@@ -173,6 +191,9 @@ func (s *Store) Update(providerID string, update func(*Credentials)) error {
 }
 
 func (s *Store) DeleteProvider(providerID string) error {
+	if s.bound {
+		return s.updateBound(func(file *File) { delete(file.Providers, providerID) })
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	release, err := lockFile(s.path + ".lock")

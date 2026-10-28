@@ -1,0 +1,307 @@
+/* Keep the conversation laid out underneath this destination, preserving its
+   draft, scroll position and both saved sidebar widths. */
+.web-workspace-stage,
+.app-shell[data-web-workspace-open] > .conversation-pane[data-primary-plugin-web-page] {
+  position: absolute;
+  inset: var(--workbench-top, var(--window-titlebar-height)) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
+  z-index: 127;
+  overflow: hidden;
+  border-radius: var(--conversation-canvas-radius);
+  background: var(--workbench-canvas-bg, var(--paper));
+}
+
+/* Plugin WebPage views use the same canvas without moving their mounted page.
+   Their destinations remain in the ribbon; ordinary plugin views keep their
+   contextual navigation and titlebar. */
+.app-shell[data-web-workspace-open] > .conversation-pane[data-primary-plugin-web-page] {
+  grid-area: auto;
+  /* Retained conversation children still share row 2 with the plugin view. */
+  grid-template-rows: 0 minmax(0, 1fr);
+  margin: 0;
+  pointer-events: auto;
+}
+
+.conversation-pane[data-primary-plugin-web-page] > .titlebar {
+  display: none;
+}
+
+.web-workspace-stage[hidden] {
+  display: none;
+}
+
+/* The saved sidebar footprint sits behind the browser. Only its ribbon keeps
+   pointer events when that overlay's stacking context is raised. */
+.app-shell[data-web-workspace-open] > .sidebar {
+  pointer-events: none;
+}
+
+.app-shell[data-web-workspace-open] > :is(
+  .conversation-pane:not([data-primary-plugin-web-page]),
+  .workspace-right-panel,
+  .workspace-right-panel-resizer,
+  .sidebar-resizer,
+  .sidebar-hover-zone,
+  .section-sidebar-toggle,
+  .shell-right-sidebar-toggle
+),
+.app-shell[data-web-workspace-open] .sidebar-content,
+.app-shell[data-web-workspace-open] .plugin-workbench-view-navigation {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.web-workspace-panel {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--workbench-canvas-bg, var(--paper));
+  color: var(--ink);
+}
+
+/* The workspace-preview toolbar has two columns. Keep this three-part browser
+   row independent of stylesheet import order. */
+.workspace-browser-toolbar.web-workspace-toolbar {
+  flex: none;
+  min-height: var(--web-workspace-toolbar-height);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  -webkit-app-region: no-drag;
+}
+
+/* Narrow pages keep one toolbar row. Secondary actions move into More;
+   reserve actual input space instead of shrinking text or action hitboxes. */
+.workspace-browser-toolbar.web-workspace-toolbar[data-compact] {
+  grid-template-columns: auto minmax(calc(80px + var(--space-2) * 2), 1fr) auto;
+  column-gap: var(--space-1);
+  padding-inline: var(--space-1);
+}
+
+/* Primary website views share window chrome. Auxiliary embedded pages retain
+   ordinary pointer behavior. Controls below carve out the drag region. */
+:is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) .workspace-browser-toolbar.web-workspace-toolbar {
+  -webkit-app-region: drag;
+}
+
+.workspace-browser-url-form.web-workspace-address {
+  justify-self: stretch;
+  width: 100%;
+  height: auto;
+  min-height: var(--web-workspace-address-height);
+  padding-inline: var(--space-3);
+  background: var(--field-bg);
+  box-shadow: var(--shadow-soft);
+}
+
+.web-workspace-address-error {
+  grid-column: 1 / -1;
+  margin: var(--space-1) 0 0;
+  color: var(--danger);
+  font-size: var(--font-ui);
+}
+
+.web-workspace-address-suggestions {
+  width: 100%;
+  max-height: min(calc(var(--font-ui) * 26), var(--floating-menu-available-height, 60vh));
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  -webkit-app-region: no-drag;
+}
+
+.web-workspace-address-suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.web-workspace-address-suggestion:hover,
+.web-workspace-address-suggestion[aria-selected="true"] {
+  background: var(--menu-hover);
+}
+
+.web-workspace-address-suggestion[aria-selected="true"] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.web-workspace-address-suggestion > .icon {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-soft);
+}
+
+.web-workspace-address-suggestion-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  line-height: 1.4;
+}
+
+.web-workspace-address-suggestion-text > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-workspace-address-suggestion-url {
+  color: var(--ink-soft);
+}
+
+.web-workspace-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.web-workspace-host {
+  position: absolute;
+  inset: 0;
+}
+
+/* Native views cannot inherit the stage's DOM clip. Report this resolved
+   radius to Electron and use the same contour for an occlusion backdrop. */
+:is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) :is(.web-workspace-host, .web-workspace-backdrop) {
+  border-radius: var(--conversation-canvas-radius);
+}
+
+.web-workspace-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.web-workspace-message p {
+  max-width: 56ch;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui);
+}
+
+.web-workspace-error-detail {
+  color: var(--ink-tertiary);
+}
+
+.web-workspace-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.web-workspace-toolbar :is(button, input, .web-workspace-address) {
+  -webkit-app-region: no-drag;
+}
+
+.web-workspace-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 1px;
+}
+
+.web-workspace-actions > button,
+.web-workspace-toolbar .workspace-browser-nav-cluster > button {
+  flex: none;
+}
+
+.web-workspace-zoom-badge {
+  flex: none;
+  min-height: var(--control-size-toolbar);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.web-workspace-zoom-badge:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.web-workspace-findbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) var(--control-toolbar-inset);
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.web-workspace-findbar > .icon {
+  flex: none;
+  margin-right: var(--space-1);
+  color: var(--ink-tertiary);
+}
+
+.web-workspace-findbar > input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-size-toolbar);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-ui);
+}
+
+.web-workspace-findbar > button {
+  flex: none;
+}
+
+.web-workspace-find-count {
+  flex: none;
+  padding: 0 var(--space-1);
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.web-workspace-new-page > .icon {
+  width: 40px;
+  height: 40px;
+  color: var(--ink-tertiary);
+}
+
+.web-workspace-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+}

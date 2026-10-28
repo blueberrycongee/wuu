@@ -1,9 +1,13 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { submittedMessageScrollTop, useConversationScrollState } from "./ConversationScrollState";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
+import { ApplicationComposerPresentation } from "./plugins/ApplicationComposerPresentation";
+import { initialState, type AppState } from "./AppState";
+import type { Thread } from "../shared/protocol";
 import { PluginHost } from "./plugins/PluginHost";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { TurnView } from "./TurnView";
@@ -60,6 +64,20 @@ function LayoutSignal() {
 function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow, navigation }: Props) {
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false });
+  const statusThread: Thread = { id: id ?? "a", preview: "", cwd: "/preview", model_provider: "fixture", model: "fixture", status: "idle", created_at: "", updated_at: "",
+    turns: [{ id: "status-turn", status: "in_progress", items_view: "full", items: [{ id: "todo", type: "tool_call", display: { capability: "todo" }, arguments: JSON.stringify({ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }) }] }] };
+  const statusState = React.useRef<AppState>({ ...initialState, thread: statusThread, threads: [statusThread] });
+  statusState.current = { ...initialState, thread: statusThread, threads: [statusThread] };
+  const presentation = React.useMemo(() => pluginHost ? new ApplicationComposerPresentation({
+    getState: () => statusState.current, subscribeState: () => () => {}, getPluginHost: () => pluginHost,
+    updateState: update => { statusState.current = update(statusState.current); },
+  }) : undefined, [pluginHost]);
+  const composerPresentation = React.useMemo(() => presentation?.createScope(new AbortController().signal), [presentation]);
+  React.useEffect(() => () => presentation?.dispose(), [presentation]);
+  const application = composerPresentation ? { composerPresentation, invoke: vi.fn(async (action: string, input: { threadId: string }) => {
+    if (action !== "conversation.open-split") throw new Error(`Unexpected action: ${action}`);
+    onOpenSession(input.threadId);
+  }) } : undefined;
   return <main ref={api.conversationPaneRef}>
     <div data-viewport ref={node => {
       api.conversationScrollRef.current = node;
@@ -71,22 +89,20 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
       });
     }} onScroll={() => api.handleConversationScroll()}>
       <div ref={api.scrollContentRef} className="scroll-region-content" data-content>
-        {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
+        {messageID ? item ? <ConversationControlsTestProvider><ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider></ConversationControlsTestProvider>
           : <>
             <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div>
             {processRow ? <div className="assistant-turn-shell" data-process-row /> : null}
           </> : null}
         <div aria-hidden="true"><div data-user-message-id="hidden" /></div>
-        {processItems ? <ProcessSurface processItems={processItems} streaming={running} /> : null}
+        {processItems ? <ConversationControlsTestProvider><ProcessSurface processItems={processItems} streaming={running} /></ConversationControlsTestProvider> : null}
         {signalLayout ? <LayoutSignal /> : null}
       </div>
     </div>
     {composer ? <div data-dock ref={api.dockComposerRef} /> : null}
-    {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id ?? undefined}
+    {application ? <ConversationStatusCluster application={application} visible threadId={id ?? undefined}
       clusterRef={api.statusClusterRef}
       navigation={navigation ? <button>Jump</button> : undefined}
-      onOpenSession={onOpenSession}
-      todoUpdate={{ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }}
     /> : null}
   </main>;
 }
@@ -1194,6 +1210,21 @@ it("paints the placement over its final layout without main-thread frames", () =
   land();
   expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(false);
   expect(scrollTop()).toBe(placed);
+});
+
+it("starts a mounted first bubble's placement and entrance before the next paint", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null, messageID: "submitted" });
+  expect(animations).toHaveLength(0);
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  // The real App registers the submission in its own layout effect after this
+  // hook's layout pass. It must not paint once before the entrance is installed.
+  expect(placements).toHaveLength(1);
+  expect(animations).toHaveLength(1);
+  render({ id: null, messageID: "submitted" });
+  expect(placements).toHaveLength(1);
+  expect(animations).toHaveLength(1);
 });
 
 it("hands off optimistic motion and positioning without restarting at acknowledgement", () => {

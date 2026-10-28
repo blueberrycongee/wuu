@@ -25,6 +25,12 @@ Responses carry the same `id` and either `result` or `error`. Notifications have
 `method` and `params` without an `id`. Check initialization's `status` and `issues`:
 a successful protocol response can still report `needs_setup`.
 
+Initialization also includes `catalog_providers`, the local connectable service
+directory, so clients can display service choices immediately. A successful
+`config/model-catalog/refresh` returns the updated directory in the same field;
+keep the existing choices visible while refreshing. Older hosts may omit this
+field; use `config/model-catalog/providers` in that case.
+
 ## Run a task
 
 Create a session, then use the returned `result.thread.id`:
@@ -50,6 +56,13 @@ and request `shutdown` before closing a client-owned server.
 session in the workspace. `thread/fork` takes `thread_id` and creates a separate
 conversation. `thread/start` with `ephemeral: true` creates an in-memory session
 that cannot be resumed after the server exits.
+
+Thread snapshots carry an optional `title_revision`, a monotonically increasing
+version saved with each title change. Treat an omitted revision as zero. When
+merging lists, resumes, or `thread/updated` notifications, preserve the title from
+the higher revision; `updated_at` tracks conversation activity and cannot order
+title changes. Automatic generation fills only an empty title and may retry after
+a later successful turn. It never replaces a saved manual title.
 
 A conversation keeps its own model and permission selection. Change it through
 `config/model/update` with `thread_id` while the conversation is idle. This does
@@ -178,6 +191,19 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
+
+## Select an engine
+
+`thread/start` uses `engines.default_engine` when `engine` is omitted. An empty
+default selects `wuu`. A disabled, removed or unavailable engine rejects creation
+before a session is persisted; it never substitutes another implementation.
+`engine/update` retains the configured default when disabling that engine. Restore
+it or explicitly set `default_engine` to an available engine, such as `wuu`, to
+resume creating conversations. Existing conversations retain their saved engine
+and history; changing the default does not migrate them.
+
+This replaces the former automatic Wuu fallback. Clients must handle an
+unavailable default and offer an explicit selection instead of rewriting it.
 
 ## Answer native engine questions
 

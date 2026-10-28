@@ -20,6 +20,7 @@ await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(tmpdir(), "wuu-skill-admission-"));
 const home = join(scratch, "state"), project = join(scratch, "project");
 await mkdir(home); await mkdir(project);
+await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
 const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
 const messages = [], providerCalls = [], events = new EventEmitter();
 const result = { status: "failed", scratch, checks: [], limitations: ["Synthetic model, real app-server and plugin transport; no visual acceptance or real-model reasoning claim."] };
@@ -222,10 +223,16 @@ try {
   assert(lastToolResult(laterFallback).includes("PINNED_PACKAGE_ORIGINAL"));
   result.checks.push("package content stays generation-pinned; deleting an admitted local override never switches its in-flight load to a same-name package");
   await writeSkill("restricted-manual", "disable-model-invocation: true\nuser-invocable: true", "RESTRICTED_MANUAL_BODY");
-  const { thread: restricted } = await rpc("thread/start", { provider: "fixture", model: "fixture" });
+  const restrictedID = "restricted-skill-fixture";
   // Seed isolated host-owned metadata before constructing the thread runtime.
-  const seededPolicy = spawnSync("python3", ["-c", "import sys,sqlite3; c=sqlite3.connect(sys.argv[1]); c.execute('update sessions set tool_policy_json=? where id=?',(sys.argv[3],sys.argv[2])); c.commit()", join(home, "sessions", "sessions.sqlite3"), restricted.id, JSON.stringify({ allow: ["load_skill"] })], { encoding: "utf8" });
+  const fixtureBinary = process.env.WUU_E2E_SESSION_FIXTURE;
+  const seededPolicy = spawnSync(fixtureBinary || "go", fixtureBinary ? [] : ["run", "./scripts/session-fixture"], {
+    cwd: root, encoding: "utf8", input: JSON.stringify({ op: "seed", home, workdir: project,
+      sessions: [{ session: { id: restrictedID, cwd: project, provider: "fixture", model: "fixture",
+        engine_id: "wuu", permission_mode: "standard", tool_policy_json: JSON.stringify({ allow: ["load_skill"] }) }, history: [] }] }),
+  });
   assert.equal(seededPolicy.status, 0, seededPolicy.stderr);
+  const { thread: restricted } = await rpc("thread/resume", { session_id: restrictedID });
   const restrictedCatalog = (await rpc("skill/list", { thread_id: restricted.id })).skills;
   assert(!restrictedCatalog.some(skill => skill.name === "plugin-guide"));
   const restrictedLoad = await turn(restricted, "skill-e2e:load:plugin-guide");

@@ -1,10 +1,12 @@
 import * as composerMessages from "./ComposerMessages";
+import * as React from "react";
 import { act, useEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   DesktopProject,
   EngineListResult,
+  ExtensionInventoryRecord,
   InitializeResult,
   RuntimeContext,
   ServerEvent,
@@ -12,6 +14,8 @@ import type {
   Turn,
   WuuDesktopApi,
 } from "../shared/protocol";
+
+const composerFixture = vi.hoisted(() => ({ real: false }));
 
 vi.mock("./ComposerView", async (importOriginal) => {
   const original = await importOriginal<typeof import("./ComposerView")>();
@@ -28,6 +32,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         () => setLocalPrompt(props.prompt),
         [props.prompt, props.promptRevision],
       );
+      if (composerFixture.real) return <original.Composer {...props} />;
       const label = props.mainConversation
         ? `main composer ${variant}`
         : "side composer";
@@ -35,12 +40,14 @@ vi.mock("./ComposerView", async (importOriginal) => {
         <div
           data-can-select-workspace={props.canSelectWorkspace}
           data-queued={props.queuedMessages.map((message) => message.text).join("|")}
-          data-send-disabled={props.sendDisabled}
+          data-send-disabled={Boolean(props.sendDisabled || props.draftPending)}
           data-running={props.running}
+          data-draft-pending={props.draftPending}
           data-main-conversation-composer={
             props.mainConversation ? variant : undefined
           }
         >
+          {props.continuation && <button aria-label="continue-probe" onClick={() => props.continuation?.continue()}>continue</button>}
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           <button aria-label="select-wuu-engine-probe" onClick={() => props.onSelectEngine?.("wuu")}>Wuu</button>
           {props.queuedMessages.map((message) => (
@@ -64,7 +71,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
                 props.onStartNewThread();
               } else if (prompt.trim() === "/side") {
                 props.onOpenSideThread?.();
-              } else {
+              } else if (!props.sendDisabled && !props.draftPending) {
                 props.onSend(prompt);
               }
             }}
@@ -94,8 +101,14 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div />,
 }));
 
-import { App } from "./App";
+import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
+import { permissionModeOption } from "./ComposerRuntimeMenus";
+import * as applicationState from "./plugins/ApplicationController.test-support";
+import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
+import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
+import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
+import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
 
 const scratchCwd = "/tmp/wuu-composer-focus/scratch";
 const workspaceCwd = "/tmp/wuu-composer-focus/project";
@@ -205,11 +218,11 @@ function installWindowStubs(): void {
       matches: false,
       media: query,
       onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => {},
     })),
   });
   Object.defineProperty(window, "requestAnimationFrame", {
@@ -275,6 +288,7 @@ function installWuuApi(
       }),
     ),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     resumeThread: vi.fn().mockResolvedValue({ thread }),
     startThread: vi.fn().mockImplementation(async () => {
       if (options.deferThreadStart) {
@@ -321,6 +335,7 @@ function installWuuApi(
       };
     }),
     onWindowResizeState: vi.fn(() => () => {}),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     onTerminalEvent: vi.fn(() => () => {}),
     respondToServerRequest: vi.fn().mockResolvedValue(undefined),
     rejectServerRequest: vi.fn().mockResolvedValue(undefined),
@@ -351,9 +366,16 @@ async function renderApp(
   installWuuApi({ withThread, ...options });
   await act(async () => {
     root = createRoot(container);
-    root.render(<App />);
+    root.render(await createDefaultApplicationTestView());
   });
   await flushAsync();
+  if (withThread) {
+    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find(button => button.textContent?.trim() === "focus continuity");
+    expect(source).toBeDefined();
+    await act(async () => { source!.click(); });
+    await flushAsync();
+  }
 }
 
 function mainComposer(variant: "dock"): HTMLTextAreaElement {
@@ -406,10 +428,56 @@ async function enterCommand(
   await flushAsync();
 }
 
+async function holdShellReplacement(stage: "bridge" | "register") {
+  const controller = new applicationState.ApplicationController();
+  vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+  const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+  let replacing = false;
+  let release!: () => void, started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  window.wuu.loadPluginDesktopModule = vi.fn(async ({ id, fingerprint }) => {
+    if (replacing && stage === "bridge") { started(); await gate; }
+    return { id, fingerprint, digest: "a".repeat(64), url: "runtime-picker-fixture" };
+  });
+  const runtime = new DesktopPluginRuntime(host, async () => ({ async activate(api: PluginGenerationApi) {
+    activateDefaultShell(api);
+    if (replacing && stage === "register") { started(); await gate; }
+  } }));
+  const shell: ExtensionInventoryRecord = {
+    id: "user:shell", name: "shell", kind: "plugin",
+    provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "shell" },
+    state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    fingerprint: "same-source", graph_generation: "first", desktop: { entry: "desktop.js" },
+  };
+  let pending: Promise<unknown> | undefined;
+  await runtime.sync([shell]);
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
+  });
+  await flushAsync();
+  replacing = true;
+  act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second" }]); });
+  await ready;
+  return {
+    controller,
+    commit: async () => { await act(async () => { release(); await pending; }); await flushAsync(); },
+    dispose: async () => {
+      release();
+      await pending;
+      act(() => { root?.unmount(); root = null; });
+      await runtime.sync([]);
+    },
+  };
+}
+
 describe("main composer focus continuity", () => {
   const originalWindowWidth = window.innerWidth;
 
   beforeEach(() => {
+    composerFixture.real = false;
     installWindowStubs();
     serverEventHandlers = [];
     resizeCallbacks = new Set();
@@ -431,11 +499,215 @@ describe("main composer focus continuity", () => {
     vi.restoreAllMocks();
   });
 
+  it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    onTestFinished(() => {
+      for (const pluginId of ["rebind-shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(pluginId);
+    });
+    const lifetime = new AbortController();
+    const writes = vi.fn();
+    const first = { refresh: vi.fn(() => { lifetime.signal.throwIfAborted(); writes("first"); }), invoke: vi.fn(async () => ({})), resize: vi.fn(() => vi.fn()) };
+    const second = { refresh: vi.fn(), invoke: vi.fn(async () => ({})), resize: vi.fn(() => vi.fn()) };
+    type Service = import("../../../packages/plugin-sdk/src/ui").ApplicationServiceV1;
+    let rebind!: () => void;
+    await host.activateGeneration({ pluginId: "rebind-shell", generation: "fixture", register: api => {
+      activateDefaultShell({ ...api, registerApplicationShell(definition) {
+        const Render = definition.render;
+        function Rebindable(props: import("../../../packages/plugin-sdk/src/ui").ApplicationShellRenderProps) {
+          const facade = (scope: typeof first): Service => new Proxy({} as Service, { get(_source, key) {
+            const source = props.application;
+            if (key === "environment") return new Proxy({}, { get(_target, field) {
+              return field === "scheduleStatusRefresh" ? scope.refresh : Reflect.get(source.environment, field);
+            } });
+            if (key === "desktop") return new Proxy({}, { get(_target, field) {
+              return field === "onResizeState" ? scope.resize : Reflect.get(source.desktop, field);
+            } });
+            if (key === "invoke") return scope.invoke;
+            return Reflect.get(source, key);
+          } });
+          const [application, setApplication] = useState(() => facade(first));
+          rebind = () => setApplication(facade(second));
+          return <Render {...props} application={application} />;
+        }
+        return api.registerApplicationShell({ ...definition, render: Rebindable });
+      } });
+    } });
+    await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+      surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "rebind-shell", generation: "fixture", id: "ui.shell" }} />); });
+    await flushAsync();
+    const shell = container.querySelector(".app-shell");
+    first.refresh.mockClear(); first.invoke.mockClear(); writes.mockClear();
+    const { PluginLifecycleCancellationError } = await import("../shared/PluginLifecycle");
+    lifetime.abort(new PluginLifecycleCancellationError());
+    // A native window focus can arrive before React receives successor props.
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(first.refresh).toHaveBeenCalledTimes(1);
+    expect(writes).not.toHaveBeenCalled();
+    expect(second.refresh).not.toHaveBeenCalled();
+    await act(async () => rebind());
+    first.refresh.mockClear(); second.refresh.mockClear();
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(first.refresh).not.toHaveBeenCalled();
+    expect(second.refresh).toHaveBeenCalledWith(0);
+    expect(first.resize).toHaveBeenCalledTimes(1);
+    expect(first.resize.mock.results[0].value).toHaveBeenCalledTimes(1);
+    expect(second.resize).toHaveBeenCalledTimes(1);
+    const { OPEN_SETTINGS_EVENT } = await import("./TurnNotice");
+    await act(async () => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } })));
+    expect(first.invoke).not.toHaveBeenCalledWith("settings.open", expect.anything());
+    expect(second.invoke).toHaveBeenCalledWith("settings.open", { pageId: "providers" });
+    expect(container.querySelector(".app-shell")).toBe(shell);
+  });
+
+  it.each(["bridge", "register"] as const)("keeps an opened runtime picker usable through a held %s shell replacement", async (stage) => {
+    composerFixture.real = true;
+    installWuuApi();
+    await window.wuu.selectProject(project.id);
+    window.wuu.initialize = vi.fn(async () => ({
+      ...initialized(workspaceCwd), provider: "codex", model: "gpt-fixture",
+      providers: [{ name: "codex", type: "openai-codex", model: "gpt-fixture", api_key_configured: true }],
+    }));
+    window.wuu.loadCodexModels = vi.fn(async () => ({
+      provider: "codex", model: "gpt-fixture", models: [{ slug: "gpt-fixture", display_name: "Loaded fixture model", supported_in_api: true }],
+      providers: [{ name: "codex", type: "openai-codex", model: "gpt-fixture", api_key_configured: true,
+        models: [{ id: "gpt-fixture", display_name: "Loaded fixture model" }, { id: "gpt-alternative", display_name: "Alternative fixture model" }] }],
+    }));
+    const gitStatus = { is_repo: true, branch: "main", branches: ["main", "feature"], dirty_count: 0, files: [] };
+    vi.mocked(window.wuu.gitStatus).mockResolvedValue(gitStatus);
+    let finishCheckout!: () => void;
+    window.wuu.checkoutGitBranch = vi.fn<WuuDesktopApi["checkoutGitBranch"]>(() => new Promise(resolve => {
+      finishCheckout = () => resolve({ ...gitStatus, branch: "feature" });
+    }));
+    const replacement = await holdShellReplacement(stage);
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector)!;
+      expect(button).not.toBeNull();
+      expect(button.disabled).toBe(false);
+      expect(button.closest("[inert]")).toBeNull();
+      await act(async () => button.click());
+      await flushAsync();
+    };
+    try {
+      const { controller } = replacement;
+      // An old checkout may finish after the replacement; its menu cleanup
+      // must not dismiss a picker opened in the replacement shell.
+      await click('.composer-git-controls button[aria-haspopup="menu"]');
+      await click('.composer-branch-menu button[aria-label="feature"]');
+      expect(window.wuu.checkoutGitBranch).toHaveBeenCalledWith("feature", workspaceCwd);
+      const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
+      await click(".codex-runtime-trigger");
+      expect(oldTrigger.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await replacement.commit();
+      expect(oldTrigger.isConnected).toBe(false);
+      expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await act(async () => finishCheckout());
+      await flushAsync();
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await click(".runtime-panel-model");
+      const alternative = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
+        .find(button => button.textContent?.includes("Alternative fixture model"));
+      expect(alternative).toBeDefined();
+      await act(async () => alternative!.click());
+      const runtime = controller.getSnapshot().composerRuntime;
+      expect(runtime.owners.find(owner => owner.ownerTabId === runtime.activeOwnerTabId)?.selection.model).toBe("gpt-alternative");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Alternative fixture model");
+      await click(".codex-runtime-trigger");
+      expect(document.querySelector(".runtime-panel")).toBeNull();
+      await click(".codex-runtime-trigger");
+      await click('.composer-project-control button[aria-haspopup="menu"]');
+      expect(document.querySelector(".runtime-panel")).toBeNull();
+    } finally {
+      await act(async () => finishCheckout?.());
+      await replacement.dispose();
+    }
+  });
+
+  it.each([
+    { stage: "bridge", mode: "read_only" },
+    { stage: "register", mode: "standard" },
+  ] as const)("submits the chosen $mode permission after a held $stage shell replacement", async ({ stage, mode }) => {
+    composerFixture.real = true;
+    installWuuApi();
+    window.wuu.listEngines = vi.fn(async () => ({ settings: { default_engine: "wuu" }, engines: [
+      { id: "wuu", enabled: true, binary_ok: true },
+      { id: "codex", enabled: true, binary_ok: true, models: [{ id: "engine-model", display_name: "Engine fixture model", supported_efforts: ["medium", "high"] }] },
+    ] }));
+    let storedThread: Thread | undefined;
+    vi.mocked(window.wuu.startThread).mockImplementation(async (params) => {
+      storedThread = { ...newThread(), engine_id: params?.engine, model: params?.model ?? "", permission_mode: params?.permission_mode };
+      return { thread: storedThread };
+    });
+    vi.mocked(window.wuu.listThreads).mockImplementation(async () => ({ threads: storedThread ? [storedThread] : [] }));
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async () => ({ thread: storedThread! }));
+    vi.mocked(window.wuu.startTurn).mockImplementation(async () => {
+      const turn: Turn = { id: "accepted", status: "completed", items_view: "full", items: [] };
+      storedThread = { ...storedThread!, turns: [turn] };
+      return { turn };
+    });
+    const replacement = await holdShellReplacement(stage);
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector)!;
+      expect(button).not.toBeNull();
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      await flushAsync();
+    };
+    const selectEngine = async (name: string) => {
+      await click(".codex-runtime-trigger");
+      await click(".runtime-panel-context button:has(.engine-icon)");
+      const option = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-engine-option"))
+        .find(button => button.querySelector(".runtime-engine-option-name")?.textContent === name)!;
+      await act(async () => option.click());
+      await flushAsync();
+    };
+    const selectPermission = async () => {
+      await click(".permission-menu-anchor button");
+      const option = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'))
+        .find(button => button.textContent?.includes(permissionModeOption(mode).label))!;
+      await act(async () => option.click());
+      await flushAsync();
+    };
+    try {
+      await selectEngine("Codex");
+      await click(".runtime-panel-model");
+      const model = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
+        .find(button => button.textContent?.includes("Engine fixture model"))!;
+      await act(async () => model.click());
+      await selectPermission();
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption(mode).label);
+      const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
+      await replacement.commit();
+      expect(oldTrigger.isConnected).toBe(false);
+      expect.soft(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption(mode).label);
+      await enterCommand(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer] textarea')!, "preserve this permission");
+      expect.soft(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
+        engine: "codex", model: "engine-model", permission_mode: mode,
+      }), { kind: "no_project", cwd: scratchCwd });
+      expect.soft(vi.mocked(window.wuu.startTurn).mock.calls[0]?.[4]).toBe(mode);
+      // Entering a new draft after a real thread still uses the existing default.
+      await click("button.session-tab-new");
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption("unconfined").label);
+      await selectPermission();
+      await selectEngine("Wuu");
+      await click(".codex-runtime-trigger");
+      await selectEngine("Codex");
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption("unconfined").label);
+    } finally {
+      await replacement.dispose();
+    }
+  });
+
   it.each(["composer", "history edit"])("places a %s submission through the real App send and acknowledgement flow", async (entry) => {
     await renderApp(true);
     vi.mocked(window.matchMedia).mockImplementation(query => ({
       matches: query.includes("prefers-reduced-motion"),
-      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addEventListener: () => {}, removeEventListener: () => {},
     } as unknown as MediaQueryList));
     const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
@@ -457,8 +729,19 @@ describe("main composer focus continuity", () => {
     });
     let accept!: (result: { turn: Turn }) => void;
     vi.mocked(window.wuu.startTurn).mockImplementation(() => new Promise(resolve => { accept = resolve; }));
-    window.wuu.editThreadMessage = vi.fn().mockResolvedValue({ thread: { ...persistedThread(), turns: [] } });
+    let storedThread = persistedThread();
+    // Background reconciliation must read the same history the write mocks acknowledge.
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async () => ({ thread: storedThread }));
+    vi.mocked(window.wuu.listThreads).mockImplementation(async () => ({ threads: [storedThread] }));
+    window.wuu.editThreadMessage = vi.fn().mockImplementation(async () => {
+      storedThread = { ...storedThread, turns: [] };
+      return { thread: storedThread };
+    });
 
+    await act(async () => {
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
     if (entry === "history edit") {
       await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
       const editor = container.querySelector<HTMLTextAreaElement>("[data-user-message-id] textarea")!;
@@ -469,17 +752,29 @@ describe("main composer focus continuity", () => {
       await enterCommand(mainComposer("dock"), "replacement query");
     }
     expect(window.wuu.startTurn).toHaveBeenCalled();
-    expect(tail()).toBeGreaterThan(0);
-    const placedTop = viewport.scrollTop;
-    expect(placedTop).toBeCloseTo(1650);
-    await act(async () => accept({ turn: {
+    if (entry === "composer") {
+      expect(tail()).toBe(0);
+      expect(viewport.scrollTop).toBe(500);
+      expect(mainComposer("dock").value).toBe("replacement query");
+    } else {
+      expect(tail()).toBeGreaterThan(0);
+      expect(viewport.scrollTop).toBeCloseTo(1650);
+    }
+    const acceptedTurn: Turn = {
       id: "accepted", status: "in_progress", items_view: "full",
-      items: [{ id: "accepted-user", type: "user_message", text: "replacement query" }],
-    } }));
+      items: [{ id: "accepted-user", type: "user_message", text: "replacement query", source_id: vi.mocked(window.wuu.startTurn).mock.calls[0][8] }],
+    };
+    await act(async () => {
+      storedThread = { ...storedThread, status: "in_progress", turns: [...storedThread.turns, acceptedTurn] };
+      accept({ turn: acceptedTurn });
+    });
     await flushAsync();
     await act(async () => {
       await vi.waitFor(() => expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull());
     });
+    expect(tail()).toBeGreaterThan(0);
+    const placedTop = viewport.scrollTop;
+    expect(placedTop).toBeCloseTo(1650);
     natural += 100;
     act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
     expect(viewport.scrollTop).toBe(placedTop);
@@ -614,7 +909,7 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
-      speed: undefined,
+      speed: "",
     }, workspace);
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
@@ -644,7 +939,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
@@ -657,6 +952,16 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
       engine: "wuu", provider: "fake", model: "fake-model",
     }), { kind: "no_project", cwd: scratchCwd });
+  });
+
+  it("honors a public composer focus request for the current draft", async () => {
+    await renderApp(false);
+    const trigger = document.createElement("button");
+    container.append(trigger);
+    trigger.focus();
+    const application = applicationState.getDesktopApplication();
+    await act(async () => application.invoke("navigation.focus-composer", { tabId: application.getSnapshot().tabs.activeTabId }));
+    await waitForMainComposerFocus("dock");
   });
 
   it("keeps the new workspace sendable when an older engine settings save finishes", async () => {
@@ -681,22 +986,21 @@ describe("main composer focus continuity", () => {
     }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
     await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     });
-    const agentsPage = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-nav button"))
-      .find((button) => button.textContent === translateCurrent("settings.agents"));
-    await act(async () => agentsPage!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!.click());
     expect(window.wuu.updateEngines).toHaveBeenCalledWith({ codex: { enabled: false } });
-    await act(async () => container.querySelector<HTMLButtonElement>(".settings-back-button")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 Focus Project 中新建对话"]')!.click());
     await flushAsync();
     expect(finishInventory).toBeTypeOf("function");
@@ -860,22 +1164,23 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
+      speed: "",
       permission_mode: "standard",
+      approve_for_me: false,
     }, { kind: "no_project", cwd: scratchCwd });
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
 
-  it("shows the first query while thread creation is still pending", async () => {
+  it("retains the waiting draft without displaying a sent message before admission", async () => {
     await renderApp(false, { deferThreadStart: true });
     const dock = mainComposer("dock");
 
     await enterCommand(dock, "first query before thread start");
 
-    expect(container.textContent).toContain("first query before thread start");
-    expect(container.querySelector(".turn-process-title")?.textContent).toBe(
-      "正在处理",
-    );
-    expect(mainComposer("dock")).not.toBeNull();
+    expect(mainComposer("dock")).toBe(dock);
+    expect(dock.value).toBe("first query before thread start");
+    expect(container.querySelector("[data-user-message-id]")).toBeNull();
+    expect(container.querySelector(".turn-process-title")).toBeNull();
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
 
     if (!releaseThreadStart) {
@@ -885,40 +1190,49 @@ describe("main composer focus continuity", () => {
     await flushAsync();
   });
 
-  it("accepts follow-ups during creation and sends them in order after the first admission", async () => {
+  it("retains one pending submission and permits the next draft after confirmation", async () => {
     await renderApp(false, { deferThreadStart: true });
     let accept!: (value: { turn: Turn }) => void;
     window.wuu.startTurn = vi.fn(() => new Promise<{ turn: Turn }>((resolve) => { accept = resolve; }));
     let acceptQueue!: (value: { queued: { id: string; thread_id: string } }) => void;
-    window.wuu.queueTurn = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { acceptQueue = resolve; }))
-      .mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } }));
+    window.wuu.queueTurn = vi.fn(() => new Promise((resolve) => { acceptQueue = resolve; })) as WuuDesktopApi["queueTurn"];
     await enterCommand(mainComposer("dock"), "first");
+    await enterCommand(mainComposer("dock"), "first");
+    expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
+    expect(mainComposer("dock").value).toBe("first");
     await enterCommand(mainComposer("dock"), "second");
-    await enterCommand(mainComposer("dock"), "third");
-    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("second|third");
+    expect(mainComposer("dock").value).toBe("second");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("true");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
-    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => { accept({ turn: { id: "accepted-first", status: "in_progress", items_view: "full", items: [] } }); });
+    expect(mainComposer("dock").value).toBe("second");
+    await enterCommand(mainComposer("dock"), "second");
     expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][1]).toBe("second");
+    const secondID = vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
+    await act(async () => { acceptQueue({ queued: { id: secondID, thread_id: newThread().id } }); });
+    expect(mainComposer("dock").value).toBe("");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("second");
+    await enterCommand(mainComposer("dock"), "third");
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(2);
     await act(async () => {
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
-        message: { method: "turn/completed", params: { thread_id: newThread().id,
-          turn: { id: "accepted-first", status: "completed", items_view: "full", items: [] } } } });
+        message: { method: "turn/started", params: { thread_id: newThread().id,
+          turn: { id: "accepted-second", status: "in_progress", items_view: "full", items: [
+            { id: "second-user", type: "user_message", source_id: secondID, text: "second" },
+          ] } } } });
     });
-    await enterCommand(mainComposer("dock"), "fourth after completion");
-    expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
-    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
-    await act(async () => { acceptQueue({ queued: { id: "second", thread_id: newThread().id } }); });
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls.map((call) => call[1])).toEqual([
-      "second", "third", "fourth after completion",
-    ]);
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls.every((call) => call[0] === newThread().id)).toBe(true);
+    expect(mainComposer("dock").value).toBe("third");
+    await enterCommand(mainComposer("dock"), "third");
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.map(call => call[1])).toEqual(["second", "third"]);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.every(call => call[0] === newThread().id)).toBe(true);
+    await act(async () => { acceptQueue({ queued: { id: vi.mocked(window.wuu.queueTurn).mock.calls[1][3]!, thread_id: newThread().id } }); });
   });
 
-  it("holds buffered follow-ups at Stop while later sends resume in order", async () => {
+  it("holds a preparing follow-up at Stop and permits a later send after hold confirmation", async () => {
     await renderApp(false, { deferThreadStart: true });
     let finishEncoding!: (images: []) => void;
     vi.spyOn(composerMessages, "awaitComposerImages")
@@ -930,11 +1244,11 @@ describe("main composer focus continuity", () => {
     window.wuu.interruptTurn = vi.fn().mockResolvedValue({ ok: true });
     window.wuu.queueTurn = vi.fn().mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } }));
     await enterCommand(mainComposer("dock"), "first");
-    await enterCommand(mainComposer("dock"), "second");
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
-    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
     await act(async () => { accept({ turn: { id: "late-first", status: "in_progress", items_view: "full", items: [] } }); });
+    await enterCommand(mainComposer("dock"), "second");
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
     expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(1);
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => {
@@ -947,8 +1261,19 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => { finishEncoding([]); });
     expect(vi.mocked(window.wuu.queueTurn).mock.calls.map((call) => [call[1], call[9]])).toEqual([
-      ["second", true], ["third after stop", false],
+      ["second", true],
     ]);
+    expect(mainComposer("dock").value).toBe("third after stop");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+        message: { method: "turn/held", params: { thread_id: newThread().id,
+          messages: [{ id: vi.mocked(window.wuu.queueTurn).mock.calls[0][3], origin: "queue", prompt: "second" }] } } });
+    });
+    await enterCommand(mainComposer("dock"), "third after stop");
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(window.wuu.startTurn).mock.calls[1][1]).toBe("third after stop");
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    await act(async () => { accept({ turn: { id: "after-stop", status: "in_progress", items_view: "full", items: [] } }); });
   });
 
   it("cancels attachment preparation without waiting for encoding or starting execution", async () => {
@@ -960,31 +1285,70 @@ describe("main composer focus continuity", () => {
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    expect(mainComposer("dock").value).toBe("cancel before admission");
+    expect(container.querySelector('[data-user-message-id^="optimistic-turn-"]')).toBeNull();
+    expect(container.querySelector('[aria-label="continue-probe"]')).toBeNull();
     expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
     await act(async () => { finishEncoding([]); });
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("recovers only retained inputs when creation fails (removed=%s)", async (removed) => {
+  it.each([false, true])("preserves newer edits and recovers the original when creation fails (cleared=%s)", async (cleared) => {
     await renderApp(false, { deferThreadStart: true, rejectThreadStart: true });
     await enterCommand(mainComposer("dock"), "first retained");
     await enterCommand(mainComposer("dock"), "second retained");
-    if (removed) {
-      await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="remove second retained"]')!.click(); });
-      expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
-    }
+    if (cleared) await enterCommand(mainComposer("dock"), "");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
-    expect(mainComposer("dock").value).toBe("first retained");
-    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
-    if (removed) {
-      expect(recovery).toBeNull();
+    expect(mainComposer("dock").value).toBe(cleared ? "first retained" : "second retained");
+    const notices = document.querySelectorAll('[role="alert"][data-wuu-component="notice"]');
+    expect(notices).toHaveLength(1);
+    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(".archive-tip-action")];
+    expect(actions).toHaveLength(1);
+    const recovery = actions.find(button => button.textContent?.trim() === translateCurrent("composer.openFailedDraft"));
+    const retry = actions.find(button => button.textContent?.trim() === translateCurrent("appState.retryAction"));
+    // An empty editor restores the original in place; a newer draft needs a
+    // separate recovery tab. These are different actions, not duplicate notices.
+    if (cleared) {
+      expect(recovery).toBeUndefined();
+      expect(retry).toBeDefined();
     } else {
-      expect(recovery).not.toBeNull();
+      expect(recovery).toBeDefined();
+      expect(retry).toBeUndefined();
       await act(async () => { recovery!.click(); });
-      expect(mainComposer("dock").value).toBe("second retained");
+      expect(mainComposer("dock").value).toBe("first retained");
+      expect(document.querySelector('[role="alert"][data-wuu-component="notice"]')).toBeNull();
     }
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("retries an unadmitted history-edit failure without editing a fabricated turn", async () => {
+    await renderApp(true);
+    let rejectSend!: (error: Error) => void;
+    vi.mocked(window.wuu.startTurn).mockImplementationOnce(() => new Promise((_, reject) => { rejectSend = reject; }));
+    window.wuu.editThreadMessage = vi.fn().mockResolvedValue({ thread: { ...persistedThread(), turns: [] } });
+    await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
+    await enterCommand(container.querySelector<HTMLTextAreaElement>("[data-user-message-id] textarea")!, "replacement retained");
+    const dock = mainComposer("dock");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(dock, "newer draft");
+      dock.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => rejectSend(new Error("send unavailable")));
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe("newer draft");
+    expect(container.querySelector('[aria-label="continue-probe"]')).toBeNull();
+    const retry = container.querySelector<HTMLButtonElement>('[data-recovery-state] .turn-failure-action');
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await flushAsync();
+    expect(window.wuu.editThreadMessage).toHaveBeenCalledTimes(1);
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(window.wuu.startTurn).mock.calls;
+    expect(calls[1][1]).toBe("replacement retained");
+    expect(calls[1][8]).toBe(calls[0][8]);
+    expect(calls[1][9]).toBeUndefined();
   });
 
   it.each(["", "newer draft"])("recovers failed thread creation without replacing newer input (%s)", async (newerDraft) => {
@@ -1020,22 +1384,30 @@ describe("main composer focus continuity", () => {
     window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
     await enterCommand(mainComposer("dock"), "Retain the failed Skills send");
     expect(window.wuu.startTurn).toHaveBeenCalled();
-    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
-      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"));
-    expect(skills).toBeDefined();
+    const skills = container.querySelector<HTMLButtonElement>('[data-ribbon-id="catalog"]');
+    expect(skills).not.toBeNull();
     await act(async () => { skills!.click(); });
     await flushAsync();
-    expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
+    const skillsSection = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar-section-item"))
+      .find(button => button.textContent?.trim() === translateCurrent("skills.tabSkills"));
+    expect(skillsSection).toBeDefined();
+    await act(async () => { skillsSection!.click(); });
+    await flushAsync();
+    expect(container.querySelector('[data-main-conversation-composer]')).toBeNull();
+    expect(container.querySelector(".catalog-section-pane")?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(true);
     await act(async () => { rejectSend(new Error("deferred send failed")); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click(); });
     await flushAsync();
     const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find(button => button.textContent?.trim() === "focus continuity");
     expect(source).toBeDefined();
     await act(async () => { source!.click(); });
     await flushAsync();
-    expect(mainComposer("dock").value).toBe("");
+    expect(mainComposer("dock").value).toBe("Retain the failed Skills send");
     expect(Array.from(container.querySelectorAll("[data-user-message-id]"))
-      .some(item => item.textContent?.includes("Retain the failed Skills send"))).toBe(true);
+      .some(item => item.textContent?.includes("Retain the failed Skills send"))).toBe(false);
   });
 
   it("restores a removed queue message to its saved tab when Skills opens before dequeue acknowledgement", async () => {
@@ -1051,12 +1423,20 @@ describe("main composer focus continuity", () => {
     });
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="edit Recover queue after Skills"]')!.click(); });
     expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("thread-focus", "held-skills");
-    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
-      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"))!;
+    const skills = container.querySelector<HTMLButtonElement>('[data-ribbon-id="catalog"]')!;
     await act(async () => { skills.click(); });
     await flushAsync();
-    expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
+    const skillsSection = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar-section-item"))
+      .find(button => button.textContent?.trim() === translateCurrent("skills.tabSkills"));
+    expect(skillsSection).toBeDefined();
+    await act(async () => { skillsSection!.click(); });
+    await flushAsync();
+    expect(container.querySelector('[data-main-conversation-composer]')).toBeNull();
+    expect(container.querySelector(".catalog-section-pane")?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(true);
     await act(async () => { acknowledge({ ok: true }); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click(); });
     await flushAsync();
     const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find(button => button.textContent?.trim() === "focus continuity")!;

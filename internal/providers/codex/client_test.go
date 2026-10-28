@@ -23,7 +23,7 @@ type codexJournal struct{}
 
 func (codexJournal) PrepareOperation(providers.InferenceOperationJournalRecord) error { return nil }
 func (codexJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error     { return nil }
-func (codexJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (codexJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (codexJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error { return nil }
@@ -36,7 +36,9 @@ func (codexJournal) PrepareRecoveryAttempt(context.Context, providers.InferenceR
 func (codexJournal) CompleteOperation(providers.InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (codexJournal) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error { return nil }
+func (codexJournal) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
+	return nil
+}
 
 func TestClientDoesNotUseCodexCLIAuthUnlessEnabled(t *testing.T) {
 	home := t.TempDir()
@@ -53,7 +55,7 @@ func TestClientDoesNotUseCodexCLIAuthUnlessEnabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client()})
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -135,7 +137,7 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true, StreamTransport: providers.StreamTransportSSE})
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client(), ReuseCodexCredentials: true, StreamTransport: providers.StreamTransportSSE})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -175,10 +177,7 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 	if err != nil || resp.Content != "ok" {
 		t.Fatalf("journaled text request: content=%q err=%v", resp.Content, err)
 	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if _, err := store.Get("openai-codex"); err == nil {
 		t.Fatal("Codex CLI read-only fallback should not write wuu auth state")
 	}
@@ -266,7 +265,7 @@ func TestLocalOAuthStatusUsesCodexCLIAuth(t *testing.T) {
 	token := fakeJWT(t, time.Now().Add(time.Hour), "acct_status")
 	writeCodexCLIAuth(t, codexHome, token, "refresh-token")
 
-	source, err := LocalOAuthStatus(home, true)
+	source, err := OAuthStatus(context.Background(), testSelectedCredentials(t, home), true)
 	if err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
@@ -278,15 +277,12 @@ func TestLocalOAuthStatusUsesCodexCLIAuth(t *testing.T) {
 func TestLocalOAuthStatusUsesRefreshableWuuAuth(t *testing.T) {
 	home := t.TempDir()
 	stale := fakeJWT(t, time.Now().Add(-time.Hour), "acct_status_wuu")
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set("openai-codex", authstorage.Credentials{Type: "oauth", AccessToken: stale, RefreshToken: "refresh-token"}); err != nil {
 		t.Fatalf("SaveCodexOAuth: %v", err)
 	}
 
-	source, err := LocalOAuthStatus(home, false)
+	source, err := OAuthStatus(context.Background(), testSelectedCredentials(t, home), false)
 	if err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
@@ -299,7 +295,7 @@ func TestLocalOAuthStatusReportsMissingCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex-missing"))
 
-	_, err := LocalOAuthStatus(home, true)
+	_, err := OAuthStatus(context.Background(), testSelectedCredentials(t, home), true)
 	if err == nil {
 		t.Fatal("expected missing credentials error")
 	}
@@ -309,10 +305,7 @@ func TestClientRefreshesStoredWuuCodexOAuth(t *testing.T) {
 	home := t.TempDir()
 	stale := fakeJWT(t, time.Now().Add(-time.Hour), "acct_old")
 	fresh := fakeJWT(t, time.Now().Add(time.Hour), "acct_new")
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set("openai-codex", authstorage.Credentials{Type: "oauth", AccessToken: stale, RefreshToken: "refresh-old", AuthMode: "chatgpt", Source: "test"}); err != nil {
 		t.Fatalf("SaveCodexOAuth: %v", err)
 	}
@@ -354,7 +347,7 @@ func TestClientRefreshesStoredWuuCodexOAuth(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
-	client, err := New(ClientConfig{BaseURL: apiServer.URL, Home: home, HTTPClient: apiServer.Client()})
+	client, err := New(ClientConfig{BaseURL: apiServer.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: apiServer.Client()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -381,10 +374,7 @@ func TestClientRecordsAuthRefreshReplayAsSecondSubmission(t *testing.T) {
 	home := t.TempDir()
 	stale := fakeJWT(t, time.Now().Add(time.Hour), "acct_old")
 	fresh := fakeJWT(t, time.Now().Add(2*time.Hour), "acct_new")
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set("openai-codex", authstorage.Credentials{
 		Type: "oauth", AccessToken: stale, RefreshToken: "refresh-old", AuthMode: "chatgpt", Source: "test",
 	}); err != nil {
@@ -423,7 +413,7 @@ func TestClientRecordsAuthRefreshReplayAsSecondSubmission(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
-	client, err := New(ClientConfig{BaseURL: apiServer.URL, Home: home, HTTPClient: apiServer.Client()})
+	client, err := New(ClientConfig{BaseURL: apiServer.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: apiServer.Client()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -483,7 +473,7 @@ func TestClientModelsUsesCodexOAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client(), ReuseCodexCredentials: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -550,7 +540,7 @@ func TestCompactWithCodexClientUsesNormalResponsesEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client(), ReuseCodexCredentials: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -768,14 +758,11 @@ func TestCodexReuseIgnoresSavedLoginAndReloadsRotatedCredentials(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, ".wuu"))
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set("openai-codex", authstorage.Credentials{AccessToken: "invalid-saved-token"}); err != nil {
 		t.Fatal(err)
 	}
-	source := NewOAuthSource(OAuthConfig{Home: home, ReuseCodexCredentials: true})
+	source := NewOAuthSource(OAuthConfig{Credentials: testSelectedCredentials(t, home), ReuseCodexCredentials: true})
 	for _, account := range []string{"first", "rotated"} {
 		token := fakeJWT(t, time.Now().Add(time.Hour), account)
 		writeCodexCLIAuth(t, codexHome, token, "refresh-token")
@@ -796,5 +783,22 @@ func TestCodexReuseIgnoresSavedLoginAndReloadsRotatedCredentials(t *testing.T) {
 	saved, err := store.Get("openai-codex")
 	if err != nil || saved.AccessToken != "invalid-saved-token" {
 		t.Fatal("source selection must preserve saved credentials")
+	}
+}
+
+func TestClientRejectsEmptySelectedCodexTokenBeforeRequest(t *testing.T) {
+	home, codexHome := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	writeCodexCLIAuth(t, codexHome, "", "refresh-private")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusUnauthorized) }))
+	defer server.Close()
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Chat(context.Background(), providers.ChatRequest{Model: "gpt-5-codex", Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}})
+	if err == nil || !strings.Contains(err.Error(), "missing access_token") || strings.Contains(err.Error(), "refresh-private") || calls.Load() != 0 {
+		t.Fatalf("invalid selected credentials reached network or lost safe diagnosis: calls=%d err=%v", calls.Load(), err)
 	}
 }

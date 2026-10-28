@@ -78,7 +78,7 @@ func startUIComputer(root string, store *host.Store, server string, login accoun
 		WuuHome:    filepath.Join(root, ".wuu"),
 		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
 		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
-		StreamRunner: &agent.StreamRunner{Client: uiProvider{}, Model: "native-ui", SystemPrompt: "test"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: uiProvider{}, Model: "native-ui", SystemPrompt: "test"},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

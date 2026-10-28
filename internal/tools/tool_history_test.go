@@ -28,21 +28,21 @@ func TestHistorySearchFindsPersistedToolTextLiterals(t *testing.T) {
 		}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := session.CreateWithMetadata(dir, "literal-search", t.TempDir()); err != nil {
+			store := newToolSessionStore(t, "jsonl")
+			if _, err := store.CreateInitialized(session.Session{ID: "literal-search", CWD: t.TempDir()}, nil); err != nil {
 				t.Fatal(err)
 			}
 			payload, err := json.Marshal(tc.result)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := session.AppendHistoryRecord(dir, "literal-search", session.HistoryRecord{
+			if err := store.AppendHistoryRecord("literal-search", session.HistoryRecord{
 				Role: "tool", Content: text, ToolResult: payload,
 			}); err != nil {
 				t.Fatal(err)
 			}
-			env := &Env{SessionsDir: dir, SessionID: "literal-search"}
-			read, err := NewHistoryReadTool(env).Execute(context.Background(), `{"start_seq":1}`)
+			env := &Env{SessionID: "literal-search"}
+			read, err := NewHistoryReadTool(env, store).Execute(context.Background(), `{"start_seq":1}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +64,7 @@ func TestHistorySearchFindsPersistedToolTextLiterals(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					search, err := NewHistorySearchTool(env).Execute(context.Background(), string(args))
+					search, err := NewHistorySearchTool(env, store).Execute(context.Background(), string(args))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -90,8 +90,8 @@ func TestHistorySearchFindsPersistedToolTextLiterals(t *testing.T) {
 }
 
 func TestHistorySearchToolTextKeepsSnapshotPaginationAndBudget(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := session.CreateWithMetadata(dir, "paged-search", t.TempDir()); err != nil {
+	store := newToolSessionStore(t, "jsonl")
+	if _, err := store.CreateInitialized(session.Session{ID: "paged-search", CWD: t.TempDir()}, nil); err != nil {
 		t.Fatal(err)
 	}
 	const query = `value < "bound"`
@@ -100,7 +100,7 @@ func TestHistorySearchToolTextKeepsSnapshotPaginationAndBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := session.HistoryRecord{Role: "tool", Content: query, ToolResult: payload}
-	if err := session.AppendHistoryRecords(dir, "paged-search", []session.HistoryRecord{
+	if err := store.AppendHistoryRecords("paged-search", []session.HistoryRecord{
 		record, {Role: "user", Content: "unrelated"}, record, {Role: "meta", Content: query},
 	}); err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestHistorySearchToolTextKeepsSnapshotPaginationAndBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		output, err := NewHistorySearchTool(&Env{SessionsDir: dir, SessionID: "paged-search"}).Execute(context.Background(), string(raw))
+		output, err := NewHistorySearchTool(&Env{SessionID: "paged-search"}, store).Execute(context.Background(), string(raw))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +137,7 @@ func TestHistorySearchToolTextKeepsSnapshotPaginationAndBudget(t *testing.T) {
 	if first.SnapshotSeq != 4 || first.BudgetExhausted || len(first.Matches) != 1 || first.Matches[0].Seq != 3 || first.Next == nil {
 		t.Fatalf("first page = %+v", first)
 	}
-	if err := session.AppendHistoryRecord(dir, "paged-search", record); err != nil {
+	if err := store.AppendHistoryRecord("paged-search", record); err != nil {
 		t.Fatal(err)
 	}
 	continued := search(map[string]any{"cursor": first.Next.Cursor, "limit": 1})
@@ -163,24 +163,24 @@ func TestHistorySearchToolTextKeepsSnapshotPaginationAndBudget(t *testing.T) {
 }
 
 func TestHistoryToolsAreBoundToCurrentSession(t *testing.T) {
-	dir := t.TempDir()
+	store := newToolSessionStore(t, "jsonl")
 	for _, id := range []string{"current", "other"} {
-		if _, err := session.CreateWithMetadata(dir, id, t.TempDir()); err != nil {
+		if _, err := store.CreateInitialized(session.Session{ID: id, CWD: t.TempDir()}, nil); err != nil {
 			t.Fatalf("create %s: %v", id, err)
 		}
 	}
-	if err := session.AppendHistoryRecords(dir, "current", []session.HistoryRecord{
+	if err := store.AppendHistoryRecords("current", []session.HistoryRecord{
 		{Role: "user", Content: "find the regression"},
 		{Role: "assistant", Content: "fixed current session"},
 	}); err != nil {
 		t.Fatalf("append current: %v", err)
 	}
-	if err := session.AppendHistoryRecord(dir, "other", session.HistoryRecord{Role: "user", Content: "private other session"}); err != nil {
+	if err := store.AppendHistoryRecord("other", session.HistoryRecord{Role: "user", Content: "private other session"}); err != nil {
 		t.Fatalf("append other: %v", err)
 	}
-	env := &Env{SessionsDir: dir, SessionID: "current"}
+	env := &Env{SessionID: "current"}
 
-	read, err := NewHistoryReadTool(env).Execute(context.Background(), `{"start_seq":1}`)
+	read, err := NewHistoryReadTool(env, store).Execute(context.Background(), `{"start_seq":1}`)
 	if err != nil {
 		t.Fatalf("history_read: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestHistoryToolsAreBoundToCurrentSession(t *testing.T) {
 		t.Fatalf("read result = %+v", readResult)
 	}
 
-	search, err := NewHistorySearchTool(env).Execute(context.Background(), `{"query":"fixed current"}`)
+	search, err := NewHistorySearchTool(env, store).Execute(context.Background(), `{"query":"fixed current"}`)
 	if err != nil {
 		t.Fatalf("history_search: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestHistoryToolsAreBoundToCurrentSession(t *testing.T) {
 		t.Fatalf("search result = %+v", searchResult)
 	}
 
-	search, err = NewHistorySearchTool(env).Execute(context.Background(), `{"query":"private other session"}`)
+	search, err = NewHistorySearchTool(env, store).Execute(context.Background(), `{"query":"private other session"}`)
 	if err != nil {
 		t.Fatalf("cross-session search: %v", err)
 	}
@@ -224,17 +224,17 @@ func TestHistoryToolsAreBoundToCurrentSession(t *testing.T) {
 }
 
 func TestHistoryReadReportsPayloadTruncationAndContinuation(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := session.CreateWithMetadata(dir, "current", t.TempDir()); err != nil {
+	store := newToolSessionStore(t, "jsonl")
+	if _, err := store.CreateInitialized(session.Session{ID: "current", CWD: t.TempDir()}, nil); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecords(dir, "current", []session.HistoryRecord{
+	if err := store.AppendHistoryRecords("current", []session.HistoryRecord{
 		{Role: "user", Content: "1234567890"},
 		{Role: "assistant", Content: "later"},
 	}); err != nil {
 		t.Fatalf("append history: %v", err)
 	}
-	tool := NewHistoryReadTool(&Env{SessionsDir: dir, SessionID: "current"})
+	tool := NewHistoryReadTool(&Env{SessionID: "current"}, store)
 	result, err := tool.Execute(context.Background(), `{"start_seq":1,"max_chars":5}`)
 	if err != nil {
 		t.Fatalf("history_read: %v", err)
@@ -264,16 +264,16 @@ func TestHistoryReadReportsPayloadTruncationAndContinuation(t *testing.T) {
 }
 
 func TestHistoryReadCanTargetAnotherSession(t *testing.T) {
-	dir := t.TempDir()
+	store := newToolSessionStore(t, "jsonl")
 	for _, id := range []string{"current", "source"} {
-		if _, err := session.CreateWithMetadata(dir, id, t.TempDir()); err != nil {
+		if _, err := store.CreateInitialized(session.Session{ID: id, CWD: t.TempDir()}, nil); err != nil {
 			t.Fatalf("create %s: %v", id, err)
 		}
 	}
-	if err := session.AppendHistoryRecord(dir, "source", session.HistoryRecord{Role: "user", Content: "source fact"}); err != nil {
+	if err := store.AppendHistoryRecord("source", session.HistoryRecord{Role: "user", Content: "source fact"}); err != nil {
 		t.Fatalf("append source: %v", err)
 	}
-	result, err := NewHistoryReadTool(&Env{SessionsDir: dir, SessionID: "current"}).Execute(context.Background(), `{"session_id":"source","start_seq":1}`)
+	result, err := NewHistoryReadTool(&Env{SessionID: "current"}, store).Execute(context.Background(), `{"session_id":"source","start_seq":1}`)
 	if err != nil {
 		t.Fatalf("history_read: %v", err)
 	}

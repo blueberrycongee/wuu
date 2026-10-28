@@ -1,18 +1,20 @@
-import type { RefObject } from "react";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
+import { useSyncExternalStore, type RefObject } from "react";
+import type { ApplicationServiceV1, UICompositionV1, ApplicationSnapshotV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { TodoUpdate } from "../shared/protocol";
 import type { InspectorSnapshotV1 } from "../shared/workbench";
-import type { AppState } from "./AppState";
 import {
   EnvironmentPanel,
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
 } from "./EnvironmentPanel";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import { PluginInspectorSections } from "./plugins/PluginInspector";
 export function EnvironmentSideStack({
   visible,
   mounted,
-  state,
+  application,
+  slots,
+  slotOwner,
+  environment,
   panelRef,
   closing,
   motionState,
@@ -24,15 +26,16 @@ export function EnvironmentSideStack({
   onCloseFilePreview,
   onSetActiveMenu,
   onClose,
-  onSelectBranch,
-  onCreateBranch,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
 }: {
   visible: boolean;
   mounted: boolean;
-  state: AppState;
+  application: ApplicationServiceV1;
+  slots: UICompositionV1;
+  slotOwner: string;
+  environment: ApplicationEnvironmentV1;
   panelRef: RefObject<HTMLDivElement | null>;
   closing: boolean;
   motionState: EnvironmentPanelMotionState;
@@ -49,19 +52,20 @@ export function EnvironmentSideStack({
   onCloseFilePreview?: () => void;
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: (branch: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
 }): JSX.Element | null {
-  const shouldRender = (visible || mounted) && Boolean(state.initialized);
+  const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const git = useSyncExternalStore(environment.subscribe, environment.getSnapshot).status;
+  const primaryThread = snapshot.conversationWorkspace.threads.find(thread => thread.id === snapshot.conversationWorkspace.primaryThreadId);
+  const shouldRender = (visible || mounted) && snapshot.navigationWorkspace.initialized;
 
-  if (!shouldRender || !state.initialized) {
+  if (!shouldRender) {
     return null;
   }
 
-  const inspectorSnapshot = buildInspectorSnapshot(state, todoUpdate);
+  const inspectorSnapshot = buildInspectorSnapshot(snapshot, git, todoUpdate);
 
   return (
     <div
@@ -69,11 +73,11 @@ export function EnvironmentSideStack({
       data-pip-obstacle="environment"
     >
       <EnvironmentPanel
+        onOpenWorktree={async path => { await application.invoke("workspace.open-worktree", { path }); onSetActiveMenu(null); }}
         panelRef={panelRef}
         motionState={closing ? "closing" : motionState}
-        initialized={state.initialized}
-        thread={state.thread}
-        gitStatus={state.gitStatus}
+        thread={primaryThread}
+        environment={environment}
         activeMenu={activeMenu}
         running={running}
         pullRequestDisabledReason={pullRequestDisabledReason}
@@ -81,45 +85,38 @@ export function EnvironmentSideStack({
         onCloseFilePreview={onCloseFilePreview}
         onSetActiveMenu={onSetActiveMenu}
         onClose={onClose}
-        onSelectBranch={onSelectBranch}
-        onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}
         onOpenPullRequest={onOpenPullRequest}
         pluginSections={
-          <PluginInspectorSections
-            host={desktopPluginHost}
-            controller={desktopWorkbenchController}
-            snapshot={inspectorSnapshot}
-          />
+          <div className="plugin-inspector-sections" data-wuu-component="plugin-inspector-sections">
+            <slots.Slot name={`${slotOwner}/inspector.sections`} context={{ snapshot: inspectorSnapshot }} />
+          </div>
         }
       />
     </div>
   );
 }
 
-function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): InspectorSnapshotV1 {
-  const latestTurn = state.thread?.turns.at(-1);
-  const activeContext = state.activeContext;
+function buildInspectorSnapshot(snapshot: ApplicationSnapshotV1, git: ReturnType<ApplicationEnvironmentV1["getSnapshot"]>["status"], todoUpdate?: TodoUpdate): InspectorSnapshotV1 {
+  const thread = snapshot.conversationWorkspace.threads.find(thread => thread.id === snapshot.conversationWorkspace.primaryThreadId);
+  const latestTurn = thread?.turns.at(-1);
+  const activeRoot = snapshot.workspaces.activeRoot;
+  const activeWorkspace = snapshot.workspaces.workspaces.find(workspace => workspace.id === snapshot.workspaces.activeWorkspaceId);
   const session = Object.freeze({
-    id: state.thread?.id || state.activeSessionTabID || undefined,
-    status: state.running || state.thread?.status === "in_progress" ? "running" as const : "idle" as const,
+    id: thread?.id || snapshot.tabs.activeTabId || undefined,
+    status: thread?.status === "in_progress" ? "running" as const : "idle" as const,
     turnId: latestTurn?.id,
     turnStatus: latestTurn?.status,
   });
-  const activeWorkspace = activeContext?.kind === "project"
-    ? state.projects.find((project) => project.id === activeContext.project_id)
-    : undefined;
-  const workspace = activeContext === undefined
-    ? undefined
-    : Object.freeze({
-        kind: activeContext.kind,
-        cwd: activeContext.cwd,
-        projectId: activeContext.kind === "project" ? activeContext.project_id : undefined,
-        projectName: activeWorkspace?.name,
-        branch: state.gitStatus?.branch,
-        dirtyFileCount: state.gitStatus?.dirty_count,
-      });
+  const workspace = activeRoot === undefined ? undefined : Object.freeze({
+    kind: snapshot.workspaces.activeWorkspaceId ? "project" as const : "no_project" as const,
+    cwd: activeRoot,
+    projectId: snapshot.workspaces.activeWorkspaceId,
+    projectName: activeWorkspace?.name,
+    branch: git?.branch,
+    dirtyFileCount: git?.dirty_count,
+  });
   const todo = todoUpdate === undefined
     ? undefined
     : Object.freeze({

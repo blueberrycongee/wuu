@@ -72,6 +72,10 @@ type Descriptor struct {
 	ID           EngineID
 	Version      string
 	Capabilities []string
+	// RequiresHostModel declares client readiness and model-source metadata,
+	// not backend authorization. Nil preserves the legacy client contract;
+	// explicit false lets an independent engine own model access and auth.
+	RequiresHostModel *bool
 }
 
 // OpenRequest carries what a Factory needs to start a new engine-bound thread.
@@ -213,6 +217,8 @@ type Factory interface {
 // Registry maps engine ids to factories. The runtime registers the built-in
 // wuu engine at startup; external engines register as they are added.
 type Registry struct {
+	resolve   func(EngineID) (Factory, bool)
+	describe  func() []Descriptor
 	mu        sync.RWMutex
 	factories map[EngineID]Factory
 }
@@ -298,6 +304,13 @@ func (f *failedSession) Close(context.Context) error {
 }
 
 // NewRegistry returns an empty engine registry.
+// NewResolvedRegistry projects a captured public service graph. It cannot be mutated
+// through Register or Unregister; provider selection belongs to that graph.
+func NewResolvedRegistry(resolve func(EngineID) (Factory, bool), describe func() []Descriptor) *Registry {
+	return &Registry{resolve: resolve, describe: describe}
+}
+func (r *Registry) IsResolved() bool { return r != nil && r.resolve != nil }
+
 func NewRegistry() *Registry {
 	return &Registry{factories: make(map[EngineID]Factory)}
 }
@@ -305,6 +318,9 @@ func NewRegistry() *Registry {
 // Register installs a factory under its own id. It replaces a previous
 // factory with the same id.
 func (r *Registry) Register(f Factory) error {
+	if r != nil && r.resolve != nil {
+		return errors.New("engine registry is owned by the service graph")
+	}
 	if r == nil || f == nil {
 		return errors.New("engine factory is required")
 	}
@@ -327,6 +343,9 @@ func (r *Registry) Lookup(id EngineID) (Factory, bool) {
 	if r == nil {
 		return nil, false
 	}
+	if r.resolve != nil {
+		return r.resolve(NormalizeEngineID(string(id)))
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	f, ok := r.factories[NormalizeEngineID(string(id))]
@@ -337,7 +356,7 @@ func (r *Registry) Lookup(id EngineID) (Factory, bool) {
 // this to take an engine out of rotation; threads already bound to it keep
 // their history readable but fail turns with an explicit error.
 func (r *Registry) Unregister(id EngineID) {
-	if r == nil {
+	if r == nil || r.resolve != nil {
 		return
 	}
 	r.mu.Lock()
@@ -349,6 +368,9 @@ func (r *Registry) Unregister(id EngineID) {
 func (r *Registry) Descriptors() []Descriptor {
 	if r == nil {
 		return nil
+	}
+	if r.describe != nil {
+		return r.describe()
 	}
 	// Factories may call back into the registry while describing themselves.
 	// Snapshot their identities without holding the lock across that call.

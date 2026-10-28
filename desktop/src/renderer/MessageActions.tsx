@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { VideoAttachment } from "./VideoAttachment";
 import {
   AlertCircle,
@@ -10,12 +11,24 @@ import {
   Split,
   X,
 } from "./WuuIcons";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";
+import { useConversationRenderActive, useConversationRevealSnap } from "./ConversationRenderActivity";
 import { useImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
+
+// The default slot wrapper adds command actions beside composed content. Its
+// empty fallback must account for those actions without removing the content.
+export const MessageActionsPresenceContext = createContext(false);
+
+/** Presence is presentation state; the slot remains mounted when its row is hidden. */
+export function EmptyMessageActions({ onEmpty }: { onEmpty: (empty: boolean) => void }): null {
+  const present = useContext(MessageActionsPresenceContext);
+  useLayoutEffect(() => { onEmpty(!present); return () => onEmpty(false); }, [onEmpty, present]);
+  return null;
+}
 
 export function AgentMessageActions({
   getText,
@@ -25,6 +38,8 @@ export function AgentMessageActions({
   trailingAction,
   showFork = true,
   showCopy = true,
+  hidden = false,
+  reserved = false,
   children,
 }: {
   getText: () => string;
@@ -34,14 +49,28 @@ export function AgentMessageActions({
   trailingAction?: ReactNode;
   showFork?: boolean;
   showCopy?: boolean;
+  hidden?: boolean;
+  reserved?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
   const [revealFinished, setRevealFinished] = useState(false);
+  const renderActive = useConversationRenderActive();
+  const revealSnap = useConversationRevealSnap();
+  useLayoutEffect(() => {
+    // Background completion and pane restoration must consume the entrance.
+    // A temporary CSS override would restart it when the reveal snap ends.
+    // Keep an unfinished answer eligible for its later live completion.
+    if (!reserved && !hidden && (!renderActive || revealSnap)) {
+      setRevealFinished(true);
+    }
+  }, [hidden, renderActive, reserved, revealSnap]);
 
   return (
     <div
       className="message-actions agent-message-actions"
+      style={hidden ? { display: "none" } : undefined}
+      aria-hidden={reserved || hidden || undefined}
       data-wuu-component="message-actions"
       data-wuu-placement={placement}
       data-reveal-finished={revealFinished || undefined}
@@ -69,29 +98,27 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
   if (!timestamp) return null;
 
   return (
-    <time
+    <Tooltip asChild content={formatDate(timestamp, { dateStyle: "full", timeStyle: "long" })}><time
       className={`message-time ${className}`}
       dateTime={timestamp}
-      title={formatDate(timestamp, { dateStyle: "full", timeStyle: "long" })}
     >
       {formatDate(timestamp, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-    </time>
+    </time></Tooltip>
   );
 }
 
 export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Element {
   const { t } = useI18n();
   return (
-    <button
+    <Tooltip asChild content={t("message.fork")}><button
       className="message-action-button"
       type="button"
       aria-label={t("message.fork")}
-      title={t("message.fork")}
       disabled={!onFork}
       onClick={onFork}
     >
       <Split size={15} />
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -156,11 +183,10 @@ export function MessageCopyButton({
   }
 
   return (
-    <button
+    <Tooltip asChild content={label}><button
       className={`message-copy-button ${className} ${copyState}`}
       type="button"
       aria-label={label}
-      title={label}
       onClick={() => void handleCopy()}
     >
       {copyState === "copied" ? (
@@ -170,7 +196,7 @@ export function MessageCopyButton({
       ) : (
         <Copy size={iconSize} />
       )}
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -185,15 +211,14 @@ export function MessageEditButton({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <button
+    <Tooltip asChild content={t("message.editAndRetry")}><button
       className={`message-edit-button ${className}`}
       type="button"
       aria-label={t("message.editAndRetry")}
-      title={t("message.editAndRetry")}
       onClick={onEdit}
     >
       <PencilLine size={iconSize} />
-    </button>
+    </button></Tooltip>
   );
 }
 
@@ -242,18 +267,17 @@ export function MessageImageGrid({
               </button>
             ) : null}
             {onRemove ? (
-              <button
+              <Tooltip asChild content={t("common.remove")}><button
                 type="button"
                 className="message-image-remove"
                 aria-label={t("composer.removeImage", { number: index + 1 })}
-                title={t("common.remove")}
                 onClick={(event) => {
                   event.stopPropagation();
                   onRemove(index);
                 }}
               >
                 <X size={12} aria-hidden="true" />
-              </button>
+              </button></Tooltip>
             ) : null}
           </div>
         );
@@ -305,7 +329,7 @@ export function MessageFileList({
         const kind = extension ? extension.slice(1).toUpperCase() : file.media_type.split("/").pop()?.toUpperCase();
         return (
           <div className="message-file-frame" key={`${file.media_type}-${file.filename ?? index}-${index}`}>
-            {file.media_type.startsWith("video/") ? <VideoAttachment file={file} /> : <div className="message-file" title={filename}>
+            {file.media_type.startsWith("video/") ? <VideoAttachment file={file} /> : <div className="message-file">
               <FileText className="icon" aria-hidden="true" />
               <span className="message-file-details">
                 <span className="message-file-name">
@@ -316,15 +340,14 @@ export function MessageFileList({
               </span>
             </div>}
             {onRemove ? (
-              <button
+              <Tooltip asChild content={t("common.remove")}><button
                 type="button"
                 className="message-file-remove"
                 aria-label={t("message.removeFileNamed", { name: filename })}
-                title={t("common.remove")}
                 onClick={() => onRemove(index)}
               >
                 <X size={12} aria-hidden="true" />
-              </button>
+              </button></Tooltip>
             ) : null}
           </div>
         );

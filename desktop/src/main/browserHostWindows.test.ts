@@ -382,6 +382,24 @@ describe("BrowserHostCoordinator CDP routing", () => {
     });
   });
 
+  it.each([["a", "a"], ["Enter", "\r"]])("dispatches %s text exactly once", async (key, text) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "key", params: { keys: [key] } },
+        "key-1",
+      ),
+    );
+
+    const keyEvents = view.sentCommands.filter((command) => command.method === "Input.dispatchKeyEvent");
+    expect(keyEvents.map((command) => command.params?.type)).toEqual(["keyDown", "keyUp"]);
+    expect(keyEvents[0]?.params).toMatchObject({ key, text });
+  });
+
   it("assigns node_ids on observe and resolves click(node_id) through the map", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
@@ -427,6 +445,59 @@ describe("BrowserHostCoordinator CDP routing", () => {
     expect(mouseCommands[0]?.params).toMatchObject({ type: "mousePressed", x: 20, y: 30, button: "left" });
     expect(mouseCommands[1]?.params).toMatchObject({ type: "mouseReleased", x: 20, y: 30 });
     expect(harness.reply.respond).toHaveBeenLastCalledWith("click-1", { result: { ok: true } });
+  });
+
+  it.each([false, true])("only interrupts observation for main-frame in-page navigation (main=%s)", async (isMainFrame) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const navigated = vi.fn();
+    harness.coordinator.addNavigateListener(navigated);
+    const url = "https://example.com/#next";
+    view.responders.set("DOMSnapshot.captureSnapshot", () => {
+      for (const listener of view.listeners.get("did-navigate-in-page") ?? []) {
+        listener({}, url, isMainFrame, 1, 2);
+      }
+      return twoNodeSnapshot();
+    });
+
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false },
+    }, "observe-navigation"));
+
+    if (isMainFrame) {
+      expect(harness.reply.reject).toHaveBeenCalledWith("observe-navigation", expect.stringContaining("page changed"));
+      expect(navigated).toHaveBeenCalledWith("/repo", "t1", url);
+    } else {
+      expect(harness.reply.reject).not.toHaveBeenCalled();
+      expect(harness.reply.respond).toHaveBeenLastCalledWith("observe-navigation", {
+        result: expect.objectContaining({ nodes: expect.arrayContaining([expect.objectContaining({ node_id: 1 })]) }),
+      });
+      expect(navigated).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps observed node targets usable after an iframe changes its fragment", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.responders.set("DOMSnapshot.captureSnapshot", () => twoNodeSnapshot());
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false },
+    }, "observe-before-fragment"));
+    for (const listener of view.listeners.get("did-navigate-in-page") ?? []) {
+      listener({}, "https://widget.test/#next", false, 1, 2);
+    }
+    const boxModel = vi.fn(() => ({ model: { content: [10, 20, 30, 20, 30, 40, 10, 40] } }));
+    view.responders.set("DOM.getBoxModel", boxModel);
+
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { node_id: 2 },
+    }, "click-after-fragment"));
+
+    expect(harness.reply.reject).not.toHaveBeenCalled();
+    expect(boxModel).toHaveBeenCalledWith({ backendNodeId: 200 });
+    expect(harness.reply.respond).toHaveBeenLastCalledWith("click-after-fragment", { result: { ok: true } });
   });
 
   it("continues readable content from content_offset", async () => {
@@ -822,12 +893,13 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(response.overrideBrowserWindowOptions?.webPreferences).toMatchObject({
       sandbox: true, contextIsolation: true, nodeIntegration: false,
     });
-    // Native-window dispositions ask the host to create their contents here.
+    // Chromium owns the initial navigation; the host only adopts the child.
     const popupContents = response.createWindow?.({});
+    harness.views[1].url = "https://example.com/next";
     expect(popupContents).toBe(harness.views[1].webContents);
     await vi.waitFor(() => expect(adopted).toHaveLength(1));
     expect(harness.views).toHaveLength(2);
-    expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
+    expect(harness.views[1].loadedURLs).toEqual([]);
     expect(adopted[0].startsWith("popup-t1-")).toBe(true);
 
     await harness.coordinator.handleServerRequest(

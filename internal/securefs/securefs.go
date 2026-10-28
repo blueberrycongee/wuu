@@ -39,6 +39,18 @@ const DirMode os.FileMode = 0o700
 // never leaves a half-written credential file behind. Existing
 // destination files are replaced; existing parents are created at DirMode.
 func WriteFileAtomic(path string, data []byte) error {
+	return WriteFileAtomicFunc(path, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+// WriteFileAtomicFunc streams a replacement into a private sibling temporary
+// file. It publishes the replacement only after write, file sync and close
+// succeed. The callback must propagate write errors and must not retain w.
+// Like WriteFileAtomic, callers requiring directory durability must sync the
+// parent directory after success.
+func WriteFileAtomicFunc(path string, write func(w io.Writer) error) error {
 	if err := Mkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -54,7 +66,7 @@ func WriteFileAtomic(path string, data []byte) error {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := tmp.Write(data); err != nil {
+	if err := write(tmp); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("securefs: write temp: %w", err)
 	}

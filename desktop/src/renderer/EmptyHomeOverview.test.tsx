@@ -1,7 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { UsageOverviewResponse, WuuDesktopApi } from "../shared/protocol";
+import type { UsageOverviewResponse } from "../shared/protocol";
+import { createConversationTestApplication } from "./ConversationControlsTestProvider";
 import { EmptyHomeOverview } from "./EmptyHomeOverview";
 
 let root: Root | undefined;
@@ -32,10 +33,9 @@ afterEach(() => {
   delete (window as unknown as { wuu?: unknown }).wuu;
 });
 
-function installWuuStub(overrides: Partial<WuuDesktopApi>): void {
-  (window as unknown as { wuu: WuuDesktopApi }).wuu = {
-    ...overrides,
-  } as WuuDesktopApi;
+let application = createConversationTestApplication();
+function installWuuStub(overrides: { getUsageOverview?: (input: { timezone: string }) => Promise<UsageOverviewResponse> }): void {
+  application = { ...createConversationTestApplication(), invoke: vi.fn((_action, input) => overrides.getUsageOverview!(input)) as typeof application.invoke };
 }
 
 async function renderOverview(): Promise<HTMLDivElement> {
@@ -43,7 +43,7 @@ async function renderOverview(): Promise<HTMLDivElement> {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(<EmptyHomeOverview />);
+    root?.render(<EmptyHomeOverview application={application} />);
     await Promise.resolve();
     await Promise.resolve();
   });

@@ -33,7 +33,7 @@ func (s *Session) configureExecutionEnvironment(kit *tools.Toolkit, id, artifact
 	}
 	kit.SetExecutionEnvironment(nil)
 	if environment != nil {
-		kit.SetExecutionEnvironment(&environmentToolExecutor{environment: environment, publish: newArtifactPublisher(s.WuuHome), session: id, stateDir: s.StateDir, artifactDir: artifactDir})
+		kit.SetExecutionEnvironment(&environmentToolExecutor{environment: environment, publish: NewArtifactPublisher(s.artifactClient), session: id, stateDir: s.StateDir, artifactDir: artifactDir})
 	}
 	return nil
 }

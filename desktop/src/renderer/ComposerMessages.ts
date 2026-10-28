@@ -97,6 +97,8 @@ export type ComposerImage = InputImage & {
    * URL built from `media_type` + `data` in that case.
    */
   previewSrc?: string;
+  /** SDK resource previews are released by their application owner. */
+  applicationOwnedPreview?: true;
   /**
    * Encode completion promise for an optimistic placeholder. Resolves to the
    * final `ComposerImage` (same `id`, real `media_type` + `data`, no
@@ -339,7 +341,7 @@ function optimisticInputImagesFromComposer(images: ComposerImage[]): InputImage[
  * is safe to call from `removeComposerImage` for every deletion.
  */
 export function revokeComposerImagePreview(image: ComposerImage | undefined): void {
-  if (image?.previewSrc) {
+  if (image?.previewSrc && !image.applicationOwnedPreview) {
     URL.revokeObjectURL(image.previewSrc);
   }
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -21,31 +23,6 @@ import (
 // Bound provider-requested tool-free continuations even when MaxSteps is unset.
 // A broken compatible endpoint must not create an unlimited billing loop.
 const maxConsecutiveContinuations = 8
-
-// EmptyAnswerError is returned when the model completes a turn without
-// producing any text content or tool calls. StopReason carries the
-// provider's finish signal (e.g. "stop", "end_turn") when one was
-// received, or "" when the stream ended without a normal stop — the
-// latter usually indicates a proxy/compatibility issue rather than
-// intentional model behaviour.
-type EmptyAnswerError struct {
-	StopReason string
-}
-
-func (e *EmptyAnswerError) Error() string {
-	if e.StopReason != "" {
-		return fmt.Sprintf("model returned empty answer (stop_reason=%s)", e.StopReason)
-	}
-	return "model returned empty answer"
-}
-
-// IsEmptyAnswer reports whether err (or any error in its chain) is an
-// EmptyAnswerError. Callers use this to distinguish empty-content
-// failures from other fatal errors.
-func IsEmptyAnswer(err error) bool {
-	var target *EmptyAnswerError
-	return errors.As(err, &target)
-}
 
 // ToolSurfaceFreezer is implemented by tool executors whose provider-facing
 // definitions can change asynchronously (e.g. MCP catalog updates). RunToolLoop
@@ -118,8 +95,12 @@ func RunToolLoop(
 	// that reports ErrCompactionUnavailable defers to cfg.Compact, so
 	// experimental strategies can fall back to the default summarizer
 	// when they have no strategy for the current transcript.
+	freshContextEnabled := cfg.FreshContext != nil && cfg.ArchiveHistory != nil
+	if cfg.ReadModelStep != nil && cfg.FreshContextTokens <= 0 {
+		freshContextEnabled = false
+	}
 	effectiveCompact := resolveEffectiveCompaction(cfg)
-	if cfg.FreshContext != nil && cfg.ArchiveHistory != nil {
+	if freshContextEnabled {
 		effectiveCompact = nil
 	}
 	ctx, workflow, ownsWorkflow := providers.EnsureInferenceWorkflow(ctx, cfg.InferenceWorkloadProfile)
@@ -139,6 +120,7 @@ func RunToolLoop(
 	}
 
 	turnRouting := &providers.TurnRouting{}
+	resumeSampling := cfg.ResumeSampling
 	messages := make([]providers.ChatMessage, len(history))
 	copy(messages, history)
 	// Transient context is request-only across runs, but append-only inside
@@ -284,16 +266,27 @@ func RunToolLoop(
 		usage.SetAdjustment(UsageAdjustmentCompactionRewriteEstimate)
 		usage.RecordPendingMessages(messages)
 	}
+	acceptTranscript := func(rewritten []providers.ChatMessage) error {
+		if cfg.AcceptContext != nil {
+			committed, err := cfg.AcceptContext(ctx, providers.CloneChatMessages(rewritten))
+			if err != nil {
+				return err
+			}
+			rewritten = committed
+		}
+		resetTranscript(rewritten)
+		return nil
+	}
 	// runCompactPass executes one compact attempt. Non-forced passes are
 	// gated on the proactive fill-rate threshold and suppress further
 	// proactive attempts on failure/no-op; forced passes (user-requested
 	// /compact) bypass the gate and never suppress the proactive path.
-	runCompactPass := func(reason CompactReason, force bool) {
+	runCompactPass := func(reason CompactReason, force bool) error {
 		if effectiveCompact == nil {
-			return
+			return nil
 		}
 		if !force && (proactiveSuppressed || threshold <= 0 || usage.EstimateCurrent() < threshold || !canProactivelyCompact(messages, cfg)) {
-			return
+			return nil
 		}
 		usageBefore := usage.Breakdown()
 		before := usageBefore.Total()
@@ -310,7 +303,7 @@ func RunToolLoop(
 					Reason: reason, Status: CompactAttemptFailed, TokensBefore: before,
 					MessagesBefore: msgsBefore, Error: hookErr.Error(),
 				}, usageBefore))
-				return
+				return nil
 			}
 		}
 		compactCtx, lineage := providers.BeginInferenceOperationLineage(ctx, lastAgentOperationID)
@@ -343,7 +336,9 @@ func RunToolLoop(
 			if compactOperationID := lineage.LastOperationID(); compactOperationID != "" && compactOperationID != lastAgentOperationID {
 				nextOperationParentID = compactOperationID
 			}
-			resetTranscript(compacted)
+			if err := acceptTranscript(compacted); err != nil {
+				return err
+			}
 			emitCompactAttempt(cfg, compactAttemptWithUsage(CompactAttemptInfo{
 				Reason:         reason,
 				Status:         CompactAttemptSucceeded,
@@ -373,8 +368,9 @@ func RunToolLoop(
 				MessagesAfter:  len(compacted),
 			}, usageBefore))
 		}
+		return nil
 	}
-	tryProactiveCompact := func() { runCompactPass(CompactReasonProactive, false) }
+	tryProactiveCompact := func() error { return runCompactPass(CompactReasonProactive, false) }
 	appendMessage := func(msg providers.ChatMessage) {
 		messages = append(messages, msg)
 		providerMessages = append(providerMessages, providers.CloneChatMessage(msg))
@@ -390,11 +386,12 @@ func RunToolLoop(
 		cfg.OnHistoryAdvanced(providers.CloneChatMessages(messages))
 	}
 
-	freshContextEnabled := cfg.FreshContext != nil && cfg.ArchiveHistory != nil
 	if cfg.ForceInitialCompact && freshContextEnabled {
 		newContextRequested = true
 	} else if cfg.ForceInitialCompact {
-		runCompactPass(CompactReasonManual, true)
+		if err := runCompactPass(CompactReasonManual, true); err != nil {
+			return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+		}
 	}
 	if cfg.CompactOnly && !newContextRequested {
 		return LoopResult{
@@ -404,6 +401,9 @@ func RunToolLoop(
 	}
 
 	consecutiveContinuations := 0
+	policyRetryAttempt := 0
+	policyAttemptLimit := 0
+	checkpointContinuations := 0
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
 			injected := cfg.BeforeStep()
@@ -434,6 +434,52 @@ func RunToolLoop(
 			}
 			usage.RecordPendingMessages(injected)
 		}
+		if cfg.ReadModelStep != nil {
+			current, settings, err := cfg.ReadModelStep(ctx)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			if current.ModelSelectionRevision != 0 && current.ModelSelectionRevision != cfg.ModelSelectionRevision {
+				cfg.ModelSelectionRevision = current.ModelSelectionRevision
+				cfg.ProviderName, cfg.Model = current.Provider, current.Model
+				cfg.MediaInput, cfg.Effort, cfg.ProviderOptions = current.MediaInput, current.Effort, current.ProviderOptions
+				cfg.NativeDeferredToolDiscovery = current.NativeDeferredToolDiscovery
+				cfg.ProviderObservationKey, cfg.ModelVariant = settings.ProviderObservationKey, settings.ModelVariant
+				cfg.MaxContextTokens, cfg.MaxInputTokens = settings.ContextTokens, settings.InputTokens
+				cfg.OutputReserveTokens, cfg.CompactThresholdTokens = settings.OutputReserveTokens, settings.CompactThresholdTokens
+				cfg.FreshContextTokens = settings.FreshContextTokens
+				freshContextEnabled = cfg.FreshContext != nil && cfg.ArchiveHistory != nil && settings.FreshContextTokens > 0
+				effectiveCompact = resolveEffectiveCompaction(cfg)
+				if freshContextEnabled {
+					effectiveCompact = nil
+				}
+				if settings.DisableAutoCompact {
+					cfg.MaxContextTokens, cfg.CompactThresholdTokens = 0, 0
+				}
+				cfg.SystemPromptSections = nil
+				for _, section := range settings.SystemSections {
+					cfg.SystemPromptSections = append(cfg.SystemPromptSections, SystemPromptSectionInfo{Key: section.Key, Static: section.Static, Bytes: section.Bytes, Hash: section.Hash})
+				}
+				if len(current.Messages) > 0 && current.Messages[0].Role == "system" {
+					if len(messages) > 0 && messages[0].Role == "system" {
+						messages[0] = current.Messages[0]
+					} else {
+						messages = append([]providers.ChatMessage{current.Messages[0]}, messages...)
+					}
+				}
+				// Native continuation state and usage baselines cannot cross a
+				// model selection. Keep durable facts, rebuild request context.
+				providerMessages = providers.CloneChatMessages(messages)
+				sentRequestContext, retainedContext, pendingRetainedContext = nil, nil, nil
+				turnRouting = &providers.TurnRouting{}
+				usage.Reset()
+				usage.setMediaInputPolicy(cfg.MediaInput)
+				usage.SetAdjustment(UsageAdjustmentInitialHistoryEstimate)
+				usage.RecordPendingMessages(messages)
+				threshold = proactiveCompactThreshold(cfg)
+				overflowCompacted, overflowTrimmed, proactiveSuppressed = false, false, false
+			}
+		}
 		// Acknowledged human steering must reach history before a request can
 		// act on it. Archive the full unpersisted suffix to retain tool/message
 		// order, and settle the accepted-input receipt in that transaction.
@@ -447,15 +493,12 @@ func RunToolLoop(
 					// The checkpoint is atomic: none of these human steers reached
 					// history or the provider. Leave them recoverable, and keep
 					// the valid assistant/tool suffix without inventing sent input.
-					undispatched := func(message providers.ChatMessage) bool {
-						return message.Seq == 0 && message.Role == "user" && message.Steered && message.ClientID != "" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user")
-					}
 					if historyRewritten {
-						messages = slices.DeleteFunc(messages, undispatched)
+						messages = slices.DeleteFunc(messages, isUndispatchedSteeringMessage)
 					} else {
-						messages = append(messages[:startLen], slices.DeleteFunc(messages[startLen:], undispatched)...)
+						messages = append(messages[:startLen], slices.DeleteFunc(messages[startLen:], isUndispatchedSteeringMessage)...)
 					}
-					durableNewMessages = slices.DeleteFunc(durableNewMessages, undispatched)
+					durableNewMessages = slices.DeleteFunc(durableNewMessages, isUndispatchedSteeringMessage)
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist steering before dispatch: %w", err)
 				}
 				messages = applyArchivedHistorySeqs(messages, durableNewMessages, archive.Seqs)
@@ -463,6 +506,17 @@ func RunToolLoop(
 				durableNewMessages = nil
 				historyArchiveHeadSeq = max(historyArchiveHeadSeq, archive.HeadSeq)
 				break
+			}
+		}
+		if cfg.DecideStep != nil {
+			decision, err := cfg.DecideStep(ctx)
+			if err = errors.Join(err, ctx.Err()); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			if decision.Stop {
+				result := loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead)
+				result.Content, result.StopReason, result.FinishReason = decision.Content, decision.Reason, providers.FinishReasonStop
+				return result, nil
 			}
 		}
 		// No provider baseline means earlier assistant and tool-call tokens may
@@ -474,7 +528,9 @@ func RunToolLoop(
 		hardContextRollover := freshContextEnabled && threshold > 0 && usage.EstimateCurrent() >= threshold
 		attemptFreshContext := newContextRequested || hardContextRollover
 		if !attemptFreshContext {
-			tryProactiveCompact()
+			if err := tryProactiveCompact(); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
 		}
 		if repaired, changed, nerr := repairLiveToolCallHistory(messages); nerr != nil {
 			return LoopResult{
@@ -486,7 +542,9 @@ func RunToolLoop(
 				CacheReadTokens:     totalCacheRead,
 			}, nerr
 		} else if changed {
-			resetTranscript(repaired)
+			if err := acceptTranscript(repaired); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
 		}
 		currentSegments := requestContextSegments(cfg.BeforeRequestContext)
 		if cfg.ContextWindowStatus != nil {
@@ -512,7 +570,11 @@ func RunToolLoop(
 			fixedMessages := assembleModelRequest(nil, fixedSegments).Messages
 			fixedRequest := providers.ChatRequest{Messages: fixedMessages, MediaInput: cfg.MediaInput}
 			if cfg.Tools != nil {
-				fixedRequest.Tools = cfg.Tools.Definitions()
+				definitions, err := toolDefinitions(ctx, cfg.Tools)
+				if err != nil {
+					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+				}
+				fixedRequest.Tools = definitions
 			}
 			fixedTokens := estimateOutboundRequestTokens(fixedRequest)
 			beforeTokens := fixedTokens + estimateFreshContextMessages(messages, cfg.MediaInput)
@@ -667,6 +729,8 @@ func RunToolLoop(
 		operation.ParentOperationID = nextOperationParentID
 		nextOperationParentID = ""
 		req := providers.ChatRequest{
+			ModelSelectionRevision:      cfg.ModelSelectionRevision,
+			ResumeSampling:              resumeSampling,
 			TurnRouting:                 turnRouting,
 			Provider:                    cfg.ProviderName,
 			Model:                       cfg.Model,
@@ -681,7 +745,11 @@ func RunToolLoop(
 			NativeDeferredToolDiscovery: cfg.NativeDeferredToolDiscovery,
 		}
 		if cfg.Tools != nil {
-			req.Tools = cfg.Tools.Definitions()
+			definitions, err := toolDefinitions(ctx, cfg.Tools)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			req.Tools = definitions
 		}
 		// Providers only emit a forced tool_choice when the request carries
 		// tools, so the intent passes through unconditionally here.
@@ -693,12 +761,10 @@ func RunToolLoop(
 			// in-place edits stay request-scoped. Nothing a transform does
 			// reaches providerMessages or live history.
 			req.Messages = providers.CloneChatMessages(req.Messages)
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := cfg.BeforeRequest(ctx, &req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("transform model request: %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
@@ -707,12 +773,10 @@ func RunToolLoop(
 		// legacy BeforeRequest so existing callers are unaffected.
 		if cfg.RequestTransforms != nil && cfg.RequestTransforms.Count() > 0 {
 			req.Messages = providers.CloneChatMessages(req.Messages)
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := cfg.RequestTransforms.Apply(ctx, &req, nil); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("transform model request (chain): %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
@@ -816,28 +880,9 @@ func RunToolLoop(
 			}
 		}
 		if cfg.ModelInputReceiptStore != nil {
-			receipt := ModelInputReceipt{
-				ContractVersion:  ModelInputReceiptContractVersion,
-				OperationID:      req.Operation.ID,
-				SessionID:        cfg.SessionID,
-				ExecutionID:      cfg.ExecutionID,
-				DriverID:         cfg.DriverID,
-				DriverVersion:    cfg.DriverVersion,
-				Provider:         cfg.ProviderName,
-				Model:            req.Model,
-				StepIndex:        stepIdx,
-				InputFactSeqs:    durableInputFactSeqs(req.Messages),
-				Messages:         providers.CloneChatMessages(req.Messages),
-				Tools:            modelInputTools(req.Tools),
-				ToolSurfaceHash:  requestInfo.ToolSurfaceHash,
-				SystemSections:   modelInputSystemSections(cfg.SystemPromptSections),
-				PromptCacheKey:   requestInfo.PromptCacheKey,
-				ForceToolName:    req.ForceToolName,
-				Temperature:      req.Temperature,
-				Effort:           req.Effort,
-				HistoryRewritten: historyRewritten,
-				CreatedAt:        time.Now().UTC(),
-			}
+			receipt := modelInputReceipt(req,
+				loopdriver.ExecutionContext{SessionID: cfg.SessionID, ExecutionID: cfg.ExecutionID},
+				loopdriver.Descriptor{ID: cfg.DriverID, Version: cfg.DriverVersion}, cfg.SystemPromptSections, historyRewritten)
 			if err := cfg.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist model input receipt: %w", err)
 			}
@@ -846,6 +891,61 @@ func RunToolLoop(
 		result, err := step.Execute(ctx, req)
 		lastAgentOperationID = req.Operation.ID
 		if err != nil {
+			if result.Usage != nil {
+				totalIn += result.Usage.InputTokens
+				totalOut += result.Usage.OutputTokens
+				totalCacheCreation += result.Usage.CacheCreationTokens
+				totalCacheRead += result.Usage.CacheReadTokens
+				if cfg.OnUsage != nil {
+					cfg.OnUsage(result.Usage.InputTokens, result.Usage.OutputTokens)
+				}
+				if cfg.OnTokenUsage != nil {
+					cfg.OnTokenUsage(*result.Usage)
+				}
+			}
+			allowRecovery := true
+			checkpointRecovery := resumableStreamCheckpoint(result, err)
+			allowCheckpointResume := cfg.EvaluatePolicy == nil
+			if cfg.EvaluatePolicy != nil {
+				input := pluginprotocol.AgentPolicyInput{Phase: "retry", StepIndex: stepIdx, Attempt: policyRetryAttempt, Failure: loopdriver.FailureToWire(err), PartialOutput: !stepResultHasNoPartialOutput(result), ToolWorkStarted: result.ToolRuntime != nil && result.ToolRuntime.HasAcceptedCalls()}
+				if checkpointRecovery != nil {
+					input.Phase = "checkpoint_resume"
+					input.Attempt = checkpointContinuations
+					input.MaxAttempts = checkpointRecovery.MaxAttempts
+					input.CompletedMessages = len(result.CompletedMessages)
+				}
+				decision, policyErr := cfg.EvaluatePolicy(ctx, input)
+				if policyErr == nil {
+					policyErr = loopdriver.ValidatePolicyDecision(input, decision)
+				}
+				if policyErr == nil && decision.Action == "retry" {
+					if policyAttemptLimit == 0 {
+						policyAttemptLimit = decision.MaxAttempts
+					}
+					if policyRetryAttempt+1 >= policyAttemptLimit {
+						policyErr = errors.New("agent policy retry budget exhausted")
+					}
+				}
+				if policyErr != nil {
+					err = errors.Join(err, policyErr)
+					allowRecovery = false
+				} else {
+					allowRecovery = decision.Action == "recover"
+					allowCheckpointResume = decision.Action == "resume"
+					if decision.Action == "retry" {
+						timer := time.NewTimer(time.Duration(decision.DelayMS) * time.Millisecond)
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), ctx.Err()
+						case <-timer.C:
+						}
+						policyRetryAttempt++
+						postToolContextSegments = consumedPostToolSegments
+						continue
+					}
+				}
+			}
 			// Context window exceeded — try a one-shot compaction of
 			// older history and re-issue. Provider-agnostic; the
 			// CompactFn carries whatever client/model knowledge it
@@ -856,7 +956,7 @@ func RunToolLoop(
 			// duplicate what the user already saw). Preserve it through the normal
 			// error path below; reactive compaction is safe only before output.
 			// A ledger-allocated runtime with no tool starts is not output.
-			if freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			if allowRecovery && freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true
 				cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
 					usage.LastSuccessfulRequestTokensForContract(requestUsageContract), estimateOutboundRequestTokens(req))
@@ -864,7 +964,7 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
-			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+			if allowRecovery && freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
 				if _, ok := forceTrimOverflowHistory(messages); ok {
 					// Use the normal window transaction so archival, request
 					// validation, checkpoint commit, and rollback still apply.
@@ -877,7 +977,7 @@ func RunToolLoop(
 				// Fresh-context already consumed the one overflow retry.
 				// If trim cannot shrink the request, surface the overflow
 				// instead of sending the same overflowing payload again.
-			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			} else if allowRecovery && effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()
@@ -922,7 +1022,9 @@ func RunToolLoop(
 						if compactOperationID := lineage.LastOperationID(); compactOperationID != "" && compactOperationID != req.Operation.ID {
 							nextOperationParentID = compactOperationID
 						}
-						resetTranscript(compacted)
+						if err := acceptTranscript(compacted); err != nil {
+							return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+						}
 						// The failed request consumed this round's post-tool
 						// context; re-queue it so the retried request still
 						// carries tool-produced notices.
@@ -967,22 +1069,45 @@ func RunToolLoop(
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), hookErr
 				}
 				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
-					resetTranscript(trimmed)
+					if err := acceptTranscript(trimmed); err != nil {
+						return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+					}
 					postToolContextSegments = consumedPostToolSegments
 					continue
+				}
+			}
+			fragment := result.Content
+			for _, completed := range result.CompletedMessages {
+				appendMessage(providers.CloneChatMessage(completed))
+				if completed.Content != "" {
+					fragment = strings.TrimPrefix(fragment, completed.Content)
 				}
 			}
 			// A streaming step can fail after content deltas were already shown to
 			// the user. Keep that visible text in durable history, but deliberately
 			// drop provider-native identity, reasoning, and tool calls because the
 			// failed stream may have left those structures incomplete.
-			if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
+			if strings.TrimSpace(fragment) != "" || len(result.Images) > 0 {
 				appendMessage(providers.ChatMessage{
 					Role:    "assistant",
-					Content: result.Content,
+					Cause:   providers.IncompleteStreamFragment,
+					Content: fragment,
 					Images:  result.Images,
 					Phase:   result.Phase,
 				})
+			}
+			if recovery := checkpointRecovery; allowCheckpointResume && recovery != nil && ctx.Err() == nil && checkpointContinuations < recovery.MaxAttempts-1 {
+				// Complete items have entered history above; incomplete fragments
+				// remain display-only. Resume with a fresh operation and the saved
+				// prefix, never the payload that produced the interrupted stream.
+				// Bound consecutive new sampling operations as well as the retries
+				// inside each stream. The shared workflow budget still caps all
+				// physical requests, including transport fallbacks.
+				checkpointContinuations++
+				resumeSampling = true
+				nextOperationParentID = recovery.OperationID
+				usage.RecordPendingMessages(result.CompletedMessages)
+				continue
 			}
 			return LoopResult{
 				NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
@@ -994,6 +1119,10 @@ func RunToolLoop(
 			}, err
 		}
 
+		policyRetryAttempt = 0
+		policyAttemptLimit = 0
+		checkpointContinuations = 0
+		resumeSampling = false
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
 			overflowCompacted = false
@@ -1028,27 +1157,8 @@ func RunToolLoop(
 			}, fmt.Errorf("provider returned invalid tool_calls: %w", err)
 		}
 
-		finishReason := result.FinishReason
-		if finishReason == "" {
-			finishReason = providers.NormalizeFinishReason(result.StopReason, result.Truncated, len(result.ToolCalls) > 0)
-		}
-
-		assistant := providers.ChatMessage{
-			ProviderItems:        result.ProviderItems,
-			Role:                 "assistant",
-			Images:               result.Images,
-			Content:              result.Content,
-			Phase:                result.Phase,
-			ProviderItemID:       result.ProviderItemID,
-			ProviderItemProvider: result.ProviderItemProvider,
-			ProviderItemModel:    result.ProviderItemModel,
-			ReasoningContent:     result.ReasoningContent,
-			ReasoningBlocks:      cloneReasoningBlocks(result.ReasoningBlocks),
-			ToolCalls:            result.ToolCalls,
-			FinishReason:         finishReason,
-			StopReason:           result.StopReason,
-			Truncated:            result.Truncated,
-		}
+		assistant := assistantMessageFromStep(result)
+		finishReason := assistant.FinishReason
 		if shouldPersistAssistantMessage(assistant) {
 			appendMessage(assistant)
 			// Provider usage already includes this assistant message. Without
@@ -1059,9 +1169,24 @@ func RunToolLoop(
 			}
 		}
 
+		continueRound := finishReason == providers.FinishReasonContinue && !result.Truncated
+		if len(result.ToolCalls) == 0 && cfg.EvaluatePolicy != nil {
+			input := pluginprotocol.AgentPolicyInput{Phase: "continue", StepIndex: stepIdx, Attempt: consecutiveContinuations, FinishReason: string(finishReason), Truncated: result.Truncated}
+			decision, policyErr := cfg.EvaluatePolicy(ctx, input)
+			if policyErr == nil {
+				policyErr = loopdriver.ValidatePolicyDecision(input, decision)
+			}
+			if policyErr != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), policyErr
+			}
+			continueRound = decision.Action == "continue"
+			if !continueRound && finishReason == providers.FinishReasonContinue {
+				finishReason = providers.FinishReasonStop
+			}
+		}
 		// Only an explicit, normalized continuation signal admits another
 		// tool-free round. Empty text and commentary are not such signals.
-		if len(result.ToolCalls) == 0 && finishReason == providers.FinishReasonContinue && !result.Truncated {
+		if len(result.ToolCalls) == 0 && continueRound {
 			if consecutiveContinuations >= maxConsecutiveContinuations {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead),
 					fmt.Errorf("provider continuation limit exceeded (%d consecutive tool-free continuations)", maxConsecutiveContinuations)
@@ -1099,7 +1224,7 @@ func RunToolLoop(
 					OutputTokens:        totalOut,
 					CacheCreationTokens: totalCacheCreation,
 					CacheReadTokens:     totalCacheRead,
-				}, &EmptyAnswerError{StopReason: result.StopReason}
+				}, &loopdriver.EmptyAnswerError{StopReason: result.StopReason}
 			}
 			return LoopResult{
 				Content:             finalContent,
@@ -1140,9 +1265,12 @@ func RunToolLoop(
 		if toolRuntime == nil {
 			toolRuntime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: cfg.Tools, StepIndex: stepIdx})
 		}
-		toolRuntime.SetStepIndex(stepIdx)
-		toolRuntime.SetResultCallback(cfg.OnToolResultDetail)
-		orderedToolMessages, toolErr := toolRuntime.ExecuteFinalCalls(toolCtx, result.ToolCalls, cfg.OnToolResult, cfg.OnToolBatchRejected)
+		orderedToolMessages, toolErr := toolRuntime.Join(toolCtx, result.ToolCalls, stepIdx, cfg.OnToolResultDetail, cfg.OnToolResult, cfg.OnToolBatchRejected)
+		// Local batches own physical child executions; service-backed batches
+		// drain through Join without closing the remote turn or session.
+		if closer, ok := toolRuntime.(interface{ Close() }); ok {
+			closer.Close()
+		}
 		if toolErr != nil {
 			return LoopResult{
 				NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
@@ -1183,6 +1311,10 @@ func RunToolLoop(
 	}, fmt.Errorf("max steps exceeded (%d)", cfg.MaxSteps)
 }
 
+func isUndispatchedSteeringMessage(message providers.ChatMessage) bool {
+	return message.Seq == 0 && message.Role == "user" && message.Steered && message.ClientID != "" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user")
+}
+
 func applyArchivedHistorySeqs(messages, archived []providers.ChatMessage, seqs []int) []providers.ChatMessage {
 	if len(messages) == 0 || len(archived) == 0 || len(seqs) == 0 {
 		return messages
@@ -1208,7 +1340,7 @@ func applyArchivedHistorySeqs(messages, archived []providers.ChatMessage, seqs [
 	return out
 }
 
-func validateTransformedRequest(req providers.ChatRequest, forceBefore string, forceAvailableBefore bool) error {
+func validateTransformedRequest(req providers.ChatRequest) error {
 	if strings.TrimSpace(req.Model) == "" {
 		return errors.New("transformed model request has empty model")
 	}
@@ -1223,12 +1355,6 @@ func validateTransformedRequest(req providers.ChatRequest, forceBefore string, f
 		return nil
 	}
 	if requestHasTool(req.Tools, forced) {
-		return nil
-	}
-	// Preserve a pre-existing request shape that the runtime already allowed.
-	// The plugin validator owns regressions introduced by the transform, not
-	// unrelated legacy policy decisions made before this extension point.
-	if forced == forceBefore && !forceAvailableBefore {
 		return nil
 	}
 	return fmt.Errorf("transformed model request forces unavailable tool %q", forced)
@@ -1428,8 +1554,25 @@ func resolveEffectiveCompaction(cfg LoopConfig) CompactFn {
 	}
 }
 
+// A replay fence with completed items can be crossed only by a new sampling
+// request, and only when this round has no tool declarations or accepted work.
+// Recovery evidence survives the driver service boundary; error text does not
+// authorize continuation. Other failures retain explicit/manual recovery.
+func resumableStreamCheckpoint(result StepResult, err error) *providers.StreamRecoveryInfo {
+	if len(result.CompletedMessages) == 0 || len(result.ToolCalls) != 0 ||
+		(result.ToolRuntime != nil && result.ToolRuntime.HasAcceptedCalls()) {
+		return nil
+	}
+	var recovery *providers.StreamRecoveryError
+	if !errors.As(err, &recovery) || recovery.Recovery.StopReason != "replay_unsafe" ||
+		providers.NormalizeFailure(err).Category != providers.FailureReplayUnsafe {
+		return nil
+	}
+	return &recovery.Recovery
+}
+
 func stepResultHasNoPartialOutput(result StepResult) bool {
-	return strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
+	return len(result.CompletedMessages) == 0 && strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
 		strings.TrimSpace(result.ReasoningContent) == "" &&
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
@@ -1437,13 +1580,8 @@ func stepResultHasNoPartialOutput(result StepResult) bool {
 		!toolRuntimeHasStartedWork(result.ToolRuntime)
 }
 
-func toolRuntimeHasStartedWork(runtime *TurnToolRuntime) bool {
-	if runtime == nil {
-		return false
-	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	return len(runtime.runs) > 0
+func toolRuntimeHasStartedWork(runtime ToolBatchRuntime) bool {
+	return runtime != nil && runtime.HasAcceptedCalls()
 }
 
 func compactChanged(before, after []providers.ChatMessage) bool {
@@ -1695,7 +1833,7 @@ func HistoryFromContext(ctx context.Context) []providers.ChatMessage {
 // getting maximum throughput for common patterns like multiple
 // concurrent reads.
 
-const maxToolConcurrency = 10
+const maxToolConcurrency = loopdriver.DefaultToolConcurrency
 
 // toolBatch groups consecutive tool calls that share a concurrency
 // mode. concurrent=true means every call in the batch can run in

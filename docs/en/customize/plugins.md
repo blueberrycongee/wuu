@@ -1,31 +1,33 @@
 # Wuu plugins
 
+Manage standalone [MCP services](mcp.md) in the Plugins catalog. MCP services supplied by a plugin appear on its detail page, with their connection and login controls.
+
 A Wuu plugin packages agent behavior, desktop UI, or other extension contributions. A package can include tools, skills, hooks, MCP servers, themes, and settings. Enable only code you trust: plugins run with your user authority and are not sandboxed by Wuu.
 
 ## Install a local package
 
-Open **Skills & Plugins**, choose a local directory or zip package, and open its details. In the current package flow, **Approve and enable** confirms trust and activates the package in one action. There is no central marketplace, and the installer does not fetch npm packages or Git repositories directly.
+Open **Skills & Plugins** and install a local directory or zip package. Installing confirms trust in that source and enables the plugin. There is no central marketplace, and the installer does not fetch npm packages or Git repositories directly.
 
-The CLI exposes the same local-package operations separately:
+The CLI uses the same trust rule:
 
 ```bash
 wuu plugin install ./my-plugin
-wuu plugin approve my-plugin
 wuu plugin list
 ```
 
-Use the ID declared by the package. Installation copies files under `plugins/` in Wuu's home directory, normally `~/.wuu/plugins/`; `WUU_HOME` changes that location. The CLI's install operation stages the package but does not approve code execution by itself.
+Use the ID declared by the package. Installation copies files under `plugins/` in Wuu's home directory, normally `~/.wuu/plugins/`; `WUU_HOME` changes that location. Installation records the source and the exact package fingerprint in the selected configuration service. Activation still checks compatibility and dependencies; inspect diagnostics if the plugin cannot start.
 
 ## Update, disable, and remove
 
 Install a replacement package from its directory or zip, or use:
 
 ```bash
-wuu plugin update my-plugin ./my-plugin-next.zip
-wuu plugin approve my-plugin
+wuu plugin update my-plugin ./my-plugin
 ```
 
-The current local updater stages a replacement fingerprint and leaves the installed generation in place until it is accepted. Check the pending update in the detail page. A package whose content changed can require a refreshed trust decision; do not assume that copying new files has activated them.
+Updates from the same recorded source retain trust and the enabled or disabled choice. A different source, or an older grant without a recorded source, leaves the update pending and the installed generation active. Confirm that source change in the detail page or with `wuu plugin approve my-plugin`. A changed version or content fingerprint alone does not require another approval. Copying files directly into the installed directory is not the update workflow.
+
+For local packages, the source is the canonical directory or zip path, including symlink resolution. Replacing a zip at that same path is a same-source update; moving to a different path requires confirmation.
 
 A committed disable stops the plugin across retained runtime generations without removing its files: native executions are canceled, owned MCP servers cannot reconnect, and future legacy hooks and transforms are removed. Already-running legacy hooks retain their caller lifetime; completed effects and conversation history remain. This differs from a same-ID update, which lets active work finish on its original generation. Remove the package when it is no longer needed:
 
@@ -38,6 +40,8 @@ wuu plugin remove my-plugin
 Settings and plugin storage are preserved by default. Removal does not erase all data the plugin created or undo completed operations.
 
 ## Recovery and troubleshooting
+
+An optional add-on that fails initialization, preparation, or activation does not block CLI disable/remove operations in the default composition. Failed runtimes remain unavailable and appear in `wuu plugin describe` diagnostics. `wuu plugin list --json` lists discovered packages without starting their runtimes; it is not a live activation-status report. Explicit composition modules and selected service bindings remain required, and invalid configuration is never replaced with defaults to perform a recovery write.
 
 If an operation reports that the change was committed but runtime activation failed, the settings or package change has already taken effect. Read the new inventory's failure diagnostics before retrying; the old runtime is not automatically restored. See the [generation lifecycle](plugin-system.md#runtime-generations).
 

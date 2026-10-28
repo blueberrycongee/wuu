@@ -21,6 +21,7 @@ const (
 	authAPIKey          authMode = "api_key"
 	authAnthropicToken  authMode = "anthropic_token"
 	authCodexOAuth      authMode = "codex_oauth"
+	authChatGPT         authMode = "chatgpt"
 	authXAISubscription authMode = "xai_subscription"
 	authGrokBuild       authMode = "grok_build"
 )
@@ -44,6 +45,11 @@ func resolveProviderProfile(provider config.ProviderConfig) (providerProfile, er
 			Wire:     wire,
 			Auth:     authAPIKey,
 		}, nil
+	case "chatgpt":
+		if wire := strings.ToLower(strings.TrimSpace(provider.WireAPI)); wire != "" && wire != "responses" {
+			return providerProfile{}, fmt.Errorf("provider type %q supports only responses wire_api", provider.Type)
+		}
+		return providerProfile{TypeName: typeName, Wire: wireOpenAIResponses, Auth: authChatGPT}, nil
 	case "openai-codex", "codex-subscription", "chatgpt-codex":
 		if wire := strings.ToLower(strings.TrimSpace(provider.WireAPI)); wire != "" && wire != "responses" {
 			return providerProfile{}, fmt.Errorf("provider type %q supports only responses wire_api", provider.Type)

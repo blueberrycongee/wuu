@@ -92,6 +92,36 @@ func TestKnownContextWindowFor_MiniMaxM3(t *testing.T) {
 	}
 }
 
+func TestKnownContextWindowFor_MiniMaxM31(t *testing.T) {
+	for _, model := range []string{"MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash:free"} {
+		got, ok := KnownContextWindowFor(model)
+		if !ok || got != 1_000_000 {
+			t.Fatalf("KnownContextWindowFor(%q) = %d, %v; want 1000000, true", model, got, ok)
+		}
+	}
+}
+
+func TestKnownContextWindowFor_Gemini4(t *testing.T) {
+	got, ok := KnownContextWindowFor("gemini-4-argon")
+	if !ok || got != 1_048_576 {
+		t.Fatalf("KnownContextWindowFor(gemini-4-argon) = %d, %v; want 1048576, true", got, ok)
+	}
+}
+
+func TestMaxOutputTokensFor_NewModels(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  int
+	}{
+		{"MiniMax-M3.1-Flash", 131_072},
+		{"gemini-4-argon", 65_536},
+	} {
+		if got := MaxOutputTokensFor(tc.model); got != tc.want {
+			t.Fatalf("MaxOutputTokensFor(%q) = %d, want %d", tc.model, got, tc.want)
+		}
+	}
+}
+
 func TestKnownContextWindowFor_MiniMaxM2(t *testing.T) {
 	got, ok := KnownContextWindowFor("MiniMax-M2.7")
 	if !ok || got != 204_800 {

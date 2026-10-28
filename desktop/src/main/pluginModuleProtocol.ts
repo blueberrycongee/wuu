@@ -59,14 +59,7 @@ export function cachePluginIcon(icon: PluginIconReadResult): PluginIconLoadResul
   if (digest !== icon.digest || !/^[a-f0-9]{64}$/.test(digest)) {
     throw new Error("Plugin icon digest mismatch");
   }
-  assets.delete(digest);
-  const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-  assets.set(digest, { data: body, mediaType: icon.media_type });
-  while (assets.size > MAX_CACHED_MODULES * 4) {
-    const oldest = assets.keys().next().value;
-    if (typeof oldest !== "string") break;
-    assets.delete(oldest);
-  }
+  cacheImageAsset(data, icon.media_type);
   return {
     id: icon.id,
     fingerprint: icon.fingerprint,
@@ -74,6 +67,22 @@ export function cachePluginIcon(icon: PluginIconReadResult): PluginIconLoadResul
     digest,
     url: `${PLUGIN_MODULE_SCHEME}://asset/${digest}`,
   };
+}
+
+// Both imported shell artwork and declared plugin images use content-addressed URLs.
+export function cacheImageAsset(data: Uint8Array, mediaType: string): string {
+  if (data.byteLength === 0 || data.byteLength > 20 * 1024 * 1024) throw new Error("Image exceeds the shell asset limit");
+  const digest = createHash("sha256").update(data).digest("hex");
+  assets.delete(digest);
+  assets.set(digest, { data: new Uint8Array(data).buffer, mediaType });
+  let cachedBytes = [...assets.values()].reduce((total, asset) => total + asset.data.byteLength, 0);
+  while (assets.size > MAX_CACHED_MODULES * 4 || cachedBytes > 64 * 1024 * 1024) {
+    const oldest = assets.keys().next().value;
+    if (typeof oldest !== "string") break;
+    cachedBytes -= assets.get(oldest)!.data.byteLength;
+    assets.delete(oldest);
+  }
+  return `${PLUGIN_MODULE_SCHEME}://asset/${digest}`;
 }
 
 export function cachePluginDesktopModule(

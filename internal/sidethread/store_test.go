@@ -1,23 +1,22 @@
 package sidethread
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func newTempStore(t *testing.T) *Store {
 	t.Helper()
-	dir := t.TempDir()
-	return NewStore(filepath.Join(dir, "sidethreads"))
+	return NewStore(context.Background(), selectedDocuments(t, "sqlite"))
 }
 
 func sampleSideThread(mainID string) *SideThread {
@@ -243,7 +242,7 @@ func TestStoreConcurrentSaves(t *testing.T) {
 	}
 }
 
-func TestStoreWritesPrivateFilesAtomically(t *testing.T) {
+func TestStoreWritesDocumentsAtomically(t *testing.T) {
 	s := newTempStore(t)
 	initial := sampleSideThread("main_atomic")
 	initial.Messages[0].Text = strings.Repeat("a", 64*1024)
@@ -251,8 +250,8 @@ func TestStoreWritesPrivateFilesAtomically(t *testing.T) {
 		t.Fatalf("Save initial: %v", err)
 	}
 
-	writer := NewStore(s.Dir())
-	reader := NewStore(s.Dir())
+	writer := NewStore(context.Background(), s.documents)
+	reader := NewStore(context.Background(), s.documents)
 	done := make(chan struct{})
 	writeErr := make(chan error, 1)
 	go func() {
@@ -287,23 +286,6 @@ readLoop:
 		}
 	}
 
-	if runtime.GOOS == "windows" {
-		return
-	}
-	dirInfo, err := os.Stat(s.Dir())
-	if err != nil {
-		t.Fatalf("stat store directory: %v", err)
-	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("store directory mode = %o, want 700", got)
-	}
-	fileInfo, err := os.Stat(filepath.Join(s.Dir(), "main_atomic.json"))
-	if err != nil {
-		t.Fatalf("stat side thread file: %v", err)
-	}
-	if got := fileInfo.Mode().Perm(); got != 0o600 {
-		t.Fatalf("side thread file mode = %o, want 600", got)
-	}
 }
 
 func TestNewSideThreadID(t *testing.T) {
@@ -325,8 +307,18 @@ func TestNewSideThreadID(t *testing.T) {
 
 func TestStoreTerminalOrderingAcrossInstances(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sidethreads")
-	owner := NewStore(dir)
-	peer := NewStore(dir)
+	ownerDocs, err := persistence.Open(context.Background(), dir, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ownerDocs.Close() })
+	peerDocs, err := persistence.Open(context.Background(), dir, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = peerDocs.Close() })
+	owner := NewStore(context.Background(), ownerDocs)
+	peer := NewStore(context.Background(), peerDocs)
 
 	t.Run("interrupt before finish wins and rejects late final text", func(t *testing.T) {
 		started, err := owner.BeginTurn("main_interrupt_first", "status?", "user-1", "assistant-1")
@@ -371,8 +363,8 @@ func TestStoreTerminalOrderingAcrossInstances(t *testing.T) {
 
 func TestStoreConcurrentMutationsAcrossInstancesDoNotLoseUpdates(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sidethreads")
-	first := NewStore(dir)
-	second := NewStore(dir)
+	first := openSideStore(t, dir)
+	second := openSideStore(t, dir)
 	if err := first.Save(sampleSideThread("main_cross_instance")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -406,8 +398,8 @@ func TestStoreConcurrentMutationsAcrossInstancesDoNotLoseUpdates(t *testing.T) {
 
 func TestStoreDeletePreventsLateFinishFromRecreatingRecord(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sidethreads")
-	owner := NewStore(dir)
-	deleter := NewStore(dir)
+	owner := openSideStore(t, dir)
+	deleter := openSideStore(t, dir)
 	if _, err := owner.BeginTurn("main_delete", "status?", "user", "assistant"); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -451,9 +443,6 @@ func TestStoreDeleteStageRemainsReadableAndRollsBack(t *testing.T) {
 	if err != nil || loaded.Messages[0].Text != "updated while staged" {
 		t.Fatalf("rolled-back record = %+v, %v", loaded, err)
 	}
-	if _, err := os.Stat(filepath.Join(store.Dir(), ".deleting", original.MainThreadID+".json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("staged record survived rollback: %v", err)
-	}
 }
 
 func TestStoreDeleteStageCanResumeAndCommitAfterCrash(t *testing.T) {
@@ -465,7 +454,7 @@ func TestStoreDeleteStageCanResumeAndCommitAfterCrash(t *testing.T) {
 	if _, err := store.BeginDelete(original.MainThreadID); err != nil {
 		t.Fatalf("BeginDelete: %v", err)
 	}
-	reopened := NewStore(store.Dir())
+	reopened := NewStore(context.Background(), store.documents)
 	stage, err := reopened.BeginDelete(original.MainThreadID)
 	if err != nil {
 		t.Fatalf("resume BeginDelete: %v", err)
@@ -489,7 +478,7 @@ func TestStoreRecoverRunningIncludesStagedDelete(t *testing.T) {
 	if _, err := store.BeginDelete("main_staged_recover"); err != nil {
 		t.Fatalf("BeginDelete: %v", err)
 	}
-	recovered, err := NewStore(store.Dir()).RecoverRunning()
+	recovered, err := NewStore(context.Background(), store.documents).RecoverRunning()
 	if err != nil || recovered != 1 {
 		t.Fatalf("RecoverRunning staged = %d, %v", recovered, err)
 	}
@@ -568,4 +557,14 @@ func TestStoreRollbackTurnRestoresPriorTerminalState(t *testing.T) {
 	if after.Revision <= before.Revision {
 		t.Fatalf("rollback did not advance revision: before=%d after=%d", before.Revision, after.Revision)
 	}
+}
+
+func openSideStore(t *testing.T, dir string) *Store {
+	t.Helper()
+	docs, err := persistence.Open(context.Background(), dir, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = docs.Close() })
+	return NewStore(context.Background(), docs)
 }

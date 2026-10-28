@@ -10,6 +10,285 @@ Release builds hide the phone access page until mobile release acceptance is com
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 
+## Select the desktop session connection
+
+The ordinary desktop session pool reads the optional `WUU_DESKTOP_SESSION_ROUTES`
+path. Without it, existing local stdio execution remains the default. A configured
+remote or disabled route never falls back to a local process, including when the
+configuration is invalid, a credential is missing, or the remote host is offline.
+
+```json
+{
+  "version": 1,
+  "default": { "kind": "local" },
+  "contexts": {
+    "/Users/example/remote-project-view": {
+      "kind": "remote",
+      "execution_host": "<paired host public key>",
+      "storage_host": "<storage host identifier>",
+      "display_host": "<this desktop identifier>",
+      "workdir": "/srv/project",
+      "connector": { "kind": "keychain", "service": "wuu.remote.my-host" }
+    }
+  }
+}
+```
+
+Start the desktop with `WUU_DESKTOP_SESSION_ROUTES=/absolute/routes.json` in its
+launch environment. Context keys identify existing local display workspaces.
+Use separate display workspaces for simultaneous hosts, even when their remote
+paths or session IDs match. The remote `workdir` is passed to the app-server
+without resolving it against the desktop filesystem. A top-level `cwd` parameter
+that equals the display workspace is mapped to that remote workdir.
+`storage_host` and `display_host` describe placement; they do not move data or
+establish authority. The selected host and its storage provider remain authoritative.
+This selects session RPC, not a replacement for every local file, terminal, or
+computer-control feature. The receiving host must expose the selected desktop UI
+providers (for example `composition: {version: 3, profile: "desktop"}`); a headless
+composition does not acquire a local GUI provider fallback.
+
+The pool populates `Thread.session_locator` on list/start/resume results and thread
+notifications, and `ServerEvent.session_locator` on routed events. Both use
+`SessionLocatorV1` (`version`, `execution_host`, `session_id?`, `storage_host?`,
+`display_host?`). Callers pass the thread locator as `RuntimeContext.session_locator`
+when binding attachment streams. A mismatched host, storage host or session ID is
+rejected before dispatch; locator metadata is not an authorization credential.
+
+The macOS connector reads an **existing** generic-password Keychain item by service.
+Its value is the paired RemoteClient credentials JSON (`v`, `device_seed`,
+`host_pub`, `relay_url`). Provision it through a trusted pairing/credential manager;
+do not put that JSON or a device seed in the route file. The connector verifies
+that `execution_host` equals the credential's pinned `host_pub` and reuses the
+existing encrypted RemoteClient transport. A relay URL is not authorization.
+Full-control user pairing must not be supplied to an agent that only has restricted
+`session/federation` delegation. Resource authorization and delegation limits belong
+to the receiving authenticated gateway, independently of desktop route selection.
+
+A trusted connector can instead use
+`"connector": { "kind": "module", "path": "/absolute/connector.mjs" }`.
+That file runs as trusted main-process code and exports
+`connectDesktopSession({ version: 1, route, hooks })`, returning a connection or a
+promise. It must authenticate the selected execution host and apply the intended
+user or delegated authority. Installing a connector is not a sandbox boundary.
+Import `ConnectDesktopSessionV1` and `DesktopSessionConnectionV1` from
+`@wuu/plugin-sdk`; the built-in RemoteClient adapter uses that same structural
+contract. The SDK also exports `DesktopSessionConnectionHooksV1`,
+`DesktopSessionRPCV1`, `DesktopSessionRouteConfigV1`, and
+`DesktopSessionContextV1` (the desktop context plus an optional public
+`SessionLocatorV1`). No private client, protocol, or desktop imports or copied
+interface definitions are needed. `isDesktopSessionConnectionV1` is only a shallow
+loading check, not authentication or a conformance check. This is the full
+app-server connection boundary, not the narrower `session.transport` federation
+dispatch service.
+
+- Connection: `start(): void`, `stop(): Promise<void>`,
+  `waitAttached(timeoutMs?): Promise<void>`, `rpc(): DesktopSessionRPCV1 | null`.
+- RPC: `call(method, params?, timeoutMs?, workdir?, onResult?): Promise<unknown>`
+  and `isClosed(): boolean`. Call `onResult` synchronously before delivering later
+  notifications and resolving the promise; a callback error rejects the call.
+  Explicit server refusals use `DesktopSessionResponseErrorV1`, carrying
+  `kind: "app-server-response"` and a string `message`; other post-admission
+  failures have an uncertain outcome.
+- Hooks: `onNotification(method, params, workdir?)`,
+  `onServerRequest({id, method, params?})` returning `{result? , error?}`,
+  `onAttach({session, resumed})`, `onDetach()`, and `onState({running})`.
+  State entries may carry `thread_id` and `workdir`.
+
+For a small local augmentation, wrap your existing trusted connector rather than
+replacing the entire GUI or provider stack. For example, this module adds a local
+running-count diagnostic and otherwise preserves the original hooks and connection:
+
+```ts
+import type { ConnectDesktopSessionV1 } from "@wuu/plugin-sdk";
+import { connectDesktopSession as connectBase } from "./existing-connector.js";
+
+export const connectDesktopSession: ConnectDesktopSessionV1 = options =>
+  connectBase({
+    ...options,
+    hooks: {
+      ...options.hooks,
+      onState(state) {
+        console.debug("Running remote sessions:", state.running.length);
+        options.hooks.onState(state);
+      },
+    },
+  });
+```
+
+`existing-connector.js` is your connector, not a private Wuu adapter. Point the
+existing module route at this wrapper. Local augmentation is optional; complete
+[provider replacement](../customize/replaceable-providers.md) remains a separate
+composition choice. The wrapper must preserve authentication, authority and
+lifecycle behavior; it does not create a new service or change data ownership.
+
+A connector returns an unstarted connection; the desktop calls `start`. Start and
+stop are idempotent. Honor the supplied attachment and RPC timeouts (currently
+10 seconds and 30 seconds); a timeout does not cancel remote work.
+A resumed attach retains the same RPC object and pending requests. A fresh attach
+replaces and closes that object, rejecting pending calls. `stop` only detaches the
+GUI; it must never send app-server `shutdown` or terminate remote tasks. The desktop
+blocks direct remote shutdown and automatically rejects remote browser, native
+computer control, and unknown reverse methods. Approval and user-input reverse
+requests reach the existing GUI response route; unsupported presentation requests
+remain explicit rejections.
+
+Run `node --test packages/plugin-sdk/test/desktop-session-package.test.mjs` from
+a checkout to compile a synthetic independent adapter against the packed public
+SDK, without private repository imports. This checks the author boundary, not a
+real network deployment or the trustworthiness of a connector.
+
+Configuration is reread when routing a request or event. Old responses and events
+cannot populate a newly selected route. Already sent calls are not replayed: a
+resumed connection can complete them, while a fresh connection, route change, or
+response timeout reports an unknown outcome. Inspect the session before retrying.
+`bindSessionRequest(context, sessionID)` captures the actual session owner's
+`bindRequest()` for attachment streams and related operations; it cannot silently
+migrate to another host or connection generation. Changes become active on the
+next routed operation; reinitialize the GUI after changing its selected host.
+
+For isolated Mac acceptance, build the core and desktop, bundle
+`desktop/scripts/fixtures/remoteSessionPeer.ts` with esbuild (Node/ESM) to
+`desktop/out/e2e/remote-session/connector.mjs`, then launch
+`desktop/scripts/remote-session-e2e.mjs` with Electron. It uses disposable profiles,
+synthetic identities, real sealed-channel crypto, the real Go app-server and a
+local synthetic model. Reports and screenshots live in
+`desktop/out/e2e/remote-session/`; it does not verify an Internet relay deployment,
+Keychain provisioning, or agent delegation authorization.
+
+## Connect an SSH workspace
+
+The experimental headless host runs Wuu, its installed agent engines, files, Git,
+and terminals on a remote macOS or Linux computer. Your local browser displays
+the shared Wuu workbench through an OpenSSH tunnel. Install and authenticate
+Codex, Claude Code, Pi, OpenCode, or other supported engines on the **remote**
+computer; engine discovery and conversation state belong to that computer.
+
+Build from the same Wuu checkout on the remote computer (Node 22+ and the Go
+version in `go.mod` are required):
+
+```bash
+make setup
+npm --prefix desktop run build:remote
+npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 --pair
+```
+
+Run the last command in tmux or a service manager so logout does not stop it.
+It binds only to `127.0.0.1` and prints a single-use browser pairing link.
+The build includes the matching Go core and web assets; `--core` and
+`--web-root` can select explicit paths. Do not run the desktop's remote host
+and this service against the same Wuu home simultaneously.
+
+The SSH service uses local device pairing and refuses to start if its Wuu home
+is signed in to a Wuu account. Existing account credentials are left unchanged.
+Use a separate home, for example
+`WUU_HOME="$HOME/.wuu-ssh" npm --prefix desktop run remote:serve -- --workdir /srv/my-project --pair`,
+or intentionally sign out of that Wuu account first. A separate home has its own
+Wuu configuration and conversation history; configure it before starting work.
+
+On your local computer, build/install the CLI from this revision and connect:
+
+```bash
+wuu remote ssh --port 8787 user@server
+```
+
+Open the pairing link printed by the remote service. Subsequent visits to
+`http://127.0.0.1:8787/` use the saved pairing. Keep the SSH command running;
+Ctrl-C closes the tunnel. SSH config aliases, keys, host-key verification and
+ProxyJump follow your normal OpenSSH configuration. Use `--ssh-port` or
+`--ssh-config` for explicit overrides. Wuu keeps this tunnel in the foreground
+and does not reuse or leave behind a control master for the destination
+connection, even if your SSH config normally enables connection sharing or
+backgrounding. Jump hosts still follow their own SSH configuration; existing or
+explicitly backgrounded jump-host masters remain user-managed.
+
+On Linux and macOS, running without a controlling terminal isolates SSH and its
+foreground proxy children in one process group, so cancellation also cleans up a
+jump host still connecting. In an interactive terminal Wuu preserves shell job
+control and OpenSSH prompts, including when stdin is redirected. Use Ctrl-C to
+signal that foreground job. Signalling only the Wuu PID in this interactive case does not
+guarantee cleanup of a proxy that is still authenticating; service automation
+should run without a controlling terminal or stop its whole process group.
+
+The CLI's connection message is not an application health check. Wait for the
+remote service to print `Wuu workspace ready` before opening the workbench; that
+message confirms the listener is running and the host has registered with it.
+Agent engines are discovered on the remote computer when the workspace opens.
+`ExitOnForwardFailure` catches forwarding setup failures, not an unavailable
+remote application. If SSH reports a connection failure, fix the reported cause
+and rerun the same command. There is no automatic SSH retry or repeated password
+prompt; the browser reconnects when its tunnel becomes available again.
+
+Use a distinct local port for each host so browser identities and drafts stay
+separate. If remote port 8787 maps to local port 8788, start the remote service
+with `--port 8787 --browser-port 8788 --pair`, then connect with
+`wuu remote ssh --port 8788 --remote-port 8787 user@server`. Pair again if the
+advertised browser port changes.
+
+Closing the browser or losing SSH leaves agent tasks running on the remote
+service. Reconnect the tunnel to restore the conversation and buffered output.
+If the startup workspace was removed or relocated, workspace discovery remains
+available through the shared scratch workspace; select the desired project again.
+Terminals also survive a resumed connection; after a fresh attachment the
+workbench asks you to reopen them. Stopping or restarting the remote service
+stops its tasks and terminals; saved conversation history remains on disk.
+Restart without `--pair` to accept existing devices without opening enrollment.
+A failed startup or SIGINT/SIGTERM/SIGHUP shuts down children created by that
+service; it never reports readiness after cancellation.
+
+### Run the host as a service
+
+For a Linux machine with systemd, first pair interactively using the command
+above, then stop that host before starting the service. Use an absolute Node path
+from `command -v node` and your actual checkout, workspace and Wuu home paths:
+
+```ini
+# ~/.config/systemd/user/wuu-workspace.service
+[Unit]
+Description=Wuu SSH workspace
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/wuu
+Environment=WUU_HOME=/home/YOUR_USER/.wuu-ssh
+ExecStart=/usr/bin/node /srv/wuu/desktop/out-remote/host.mjs --workdir /srv/my-project --port 8787
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wuu-workspace
+journalctl --user -u wuu-workspace -f
+# Intentionally stop the service and its tasks:
+systemctl --user stop wuu-workspace
+```
+
+A user service may stop at logout unless your administrator enables user
+lingering (`loginctl enable-linger YOUR_USER`). Follow the machine's policy;
+Wuu does not install or enable services itself. On macOS, use tmux or a launchd
+service with the same direct Node command. Service restart restores saved
+history, not a process checkpoint: running turns and terminals are stopped.
+Do not put `--pair` in an automatically restarting service; open enrollment only
+when you intend to pair a new browser, and keep pairing links out of shared logs.
+
+This lifecycle follows the preinstalled-server and loopback SSH forwarding model
+used by [code-server](https://coder.com/docs/code-server/guide#port-forwarding-via-ssh).
+OpenSSH's [forwarding](https://man.openbsd.org/ssh_config#ExitOnForwardFailure)
+and [connection sharing](https://man.openbsd.org/ssh_config#ControlMaster)
+remain transport concerns; Wuu's existing session continuity handles reconnects.
+
+This source-build preview uses the browser workbench. Native desktop windows,
+embedded browser/computer-use tools and automatic remote installation are not
+provided by the headless host. Engine login requiring a native browser must be
+completed on the remote computer before connecting. The local machine's SSH
+credentials and model configuration are not uploaded.
+
 ## Connect the iOS app
 
 1. Keep Wuu open on your computer. In Settings → Phone access, allow access and

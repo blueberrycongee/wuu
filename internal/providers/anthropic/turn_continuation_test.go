@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -83,8 +84,8 @@ func TestMessagesTurnContinuation(t *testing.T) {
 				if !streaming {
 					api = continuationChatOnly{client}
 				}
-				runner := &agent.Runner{Client: api, Model: "test", MaxSteps: 3}
-				result, err := runner.RunWithUsage(context.Background(), "hello", nil)
+				runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "test", MaxSteps: 3}
+				result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "hello"}}, nil)
 				wantRequests, wantContent := int32(1), tc.content
 				if tc.continueTurn {
 					wantRequests, wantContent = 2, "final answer"
@@ -94,5 +95,79 @@ func TestMessagesTurnContinuation(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestExplicitResumeDoesNotUseAssistantPrefill(t *testing.T) {
+	for _, thinking := range []bool{false, true} {
+		history := []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "completed progress"}, {Role: "assistant", Content: "unsafe partial", Cause: providers.IncompleteStreamFragment}}
+		options := map[string]any{}
+		if thinking {
+			options["thinking"] = map[string]any{"type": "enabled", "budget_tokens": 1024}
+		}
+		req := providers.ChatRequest{Model: "claude-test", Messages: history, ResumeSampling: true, ProviderOptions: options}
+		payload, err := buildAnthropicRequest(req, 4096, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Messages) != 3 || payload.Messages[1].Role != "assistant" || payload.Messages[2].Role != "user" {
+			t.Fatalf("resume used assistant prefill: %+v", payload.Messages)
+		}
+		encoded, _ := json.Marshal(payload)
+		if strings.Contains(string(encoded), "unsafe partial") {
+			t.Fatal("partial leaked to model")
+		}
+		if len(history) != 3 || history[2].Content != "unsafe partial" {
+			t.Fatal("adapter mutated durable input")
+		}
+	}
+}
+
+func TestExplicitResumeSurvivesContextOverflowWithThinking(t *testing.T) {
+	for _, thinking := range []bool{false, true} {
+		t.Run(fmt.Sprintf("thinking=%v", thinking), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				var body struct {
+					Messages []struct {
+						Role string `json:"role"`
+					} `json:"messages"`
+					Thinking json.RawMessage `json:"thinking"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if len(body.Messages) == 0 || body.Messages[len(body.Messages)-1].Role != "user" {
+					t.Error("explicit resume used assistant prefill")
+				}
+				if thinking && len(body.Thinking) == 0 {
+					t.Error("thinking mode lost")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if requests == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`)
+					return
+				}
+				fmt.Fprint(w, `{"content":[{"type":"text","text":"continued"}],"stop_reason":"end_turn"}`)
+			}))
+			defer server.Close()
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := agent.LoopConfig{Model: "claude-test", ResumeSampling: true, Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+				return messages[len(messages)-1:], nil
+			}}
+			if thinking {
+				cfg.ProviderOptions = map[string]any{"thinking": map[string]any{"type": "enabled", "budget_tokens": 1024}}
+			}
+			history := []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "completed progress"}}
+			res, err := agent.RunToolLoop(context.Background(), history, cfg, agent.NewStreamStep(continuationChatOnly{client}))
+			if err != nil || requests != 2 || res.Content != "continued" {
+				t.Fatalf("requests=%d result=%+v err=%v", requests, res, err)
+			}
+		})
 	}
 }

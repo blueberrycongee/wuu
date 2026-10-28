@@ -1,11 +1,14 @@
 package subagent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -41,6 +44,9 @@ type historyRecord struct {
 	ModelAlias         string                  `json:"model_alias,omitempty"`
 	ModelAliasFallback bool                    `json:"model_alias_fallback,omitempty"`
 	Runtime            *workerRuntimeRecord    `json:"runtime,omitempty"`
+	DriverExecutionID  string                  `json:"driver_execution_id,omitempty"`
+	DriverBinding      *loopdriver.Binding     `json:"driver_binding,omitempty"`
+	DriverCheckpoint   *loopdriver.Checkpoint  `json:"driver_checkpoint,omitempty"`
 	Prompt             string                  `json:"prompt"`
 	Result             string                  `json:"result,omitempty"`
 	Error              string                  `json:"error,omitempty"`
@@ -132,10 +138,16 @@ type PersistedRun struct {
 	ModelAlias         string
 	ModelAliasFallback bool
 	Runtime            *WorkerRuntime
+	DriverExecutionID  string
+	DriverBinding      *loopdriver.Binding
+	DriverCheckpoint   *loopdriver.Checkpoint
 	Prompt             string
 	Result             string
 	Error              string
 	Messages           []providers.ChatMessage
+	// Recovery holds a newer interrupted execution without replacing the last
+	// committed terminal result used by delivery and crash reconciliation.
+	Recovery *PersistedRun
 }
 
 // LoadPersistedRun reads and decodes a sub-agent snapshot from disk. Old
@@ -143,13 +155,46 @@ type PersistedRun struct {
 // the new fields at their zero values (Version 0).
 func LoadPersistedRun(path string) (PersistedRun, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return PersistedRun{}, err
+	}
+
+	pending, pendingErr := os.ReadFile(path + ".driver-state")
+	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
+		return PersistedRun{}, pendingErr
+	}
+	return decodePersistedRecords(data, pending)
+}
+
+func decodePersistedRecords(data, pending []byte) (PersistedRun, error) {
+	if len(data) == 0 && len(pending) == 0 {
+		return PersistedRun{}, os.ErrNotExist
 	}
 	var rec historyRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return PersistedRun{}, err
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return PersistedRun{}, err
+		}
 	}
+	run := persistedRunFromRecord(rec)
+	if len(pending) > 0 {
+		var active historyRecord
+		if err := json.Unmarshal(pending, &active); err != nil {
+			return PersistedRun{}, err
+		}
+		if active.DriverExecutionID != rec.DriverExecutionID {
+			recovery := persistedRunFromRecord(active)
+			recovery.Status = StatusInterrupted
+			if run.ID == "" {
+				return recovery, nil
+			}
+			run.Recovery = &recovery
+		}
+	}
+	return run, nil
+}
+
+func persistedRunFromRecord(rec historyRecord) PersistedRun {
 	return PersistedRun{
 		Version:            rec.Version,
 		ID:                 rec.ID,
@@ -169,11 +214,14 @@ func LoadPersistedRun(path string) (PersistedRun, error) {
 		ModelAlias:         rec.ModelAlias,
 		ModelAliasFallback: rec.ModelAliasFallback,
 		Runtime:            workerRuntimeFromRecord(rec.Runtime),
+		DriverExecutionID:  rec.DriverExecutionID,
+		DriverBinding:      rec.DriverBinding,
+		DriverCheckpoint:   rec.DriverCheckpoint,
 		Prompt:             rec.Prompt,
 		Result:             rec.Result,
 		Error:              rec.Error,
 		Messages:           rec.Messages,
-	}, nil
+	}
 }
 
 // MarkPersistedRunInterrupted rewrites an on-disk run snapshot whose status
@@ -223,10 +271,18 @@ func MarkPersistedRunInterrupted(path, reason string, now time.Time) (bool, erro
 // durable source used to resume a worker after restart. Replace it atomically
 // because result delivery can read it while a terminal transition writes it.
 func persistHistory(sa *SubAgent) error {
-	if sa.historyPath == "" {
+	if sa.historyPath == "" && sa.historyDocuments == nil {
 		return nil
 	}
 	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	if sa.historyDocuments != nil {
+		return writeDocumentWorkerRecord(sa.historyDocuments, sa.historyScope, sa.ID, sa.historyPath, "terminal", historyRecordLocked(sa))
+	}
+	return writeWorkerRecord(sa.historyPath, historyRecordLocked(sa))
+}
+
+func historyRecordLocked(sa *SubAgent) historyRecord {
 	rec := historyRecord{
 		Version:            ResumeSnapshotVersion,
 		ID:                 sa.ID,
@@ -246,6 +302,9 @@ func persistHistory(sa *SubAgent) error {
 		ModelAlias:         sa.modelAlias,
 		ModelAliasFallback: sa.modelAliasFallback,
 		Runtime:            workerRuntimeRecordFromRuntime(sa.runtime),
+		DriverExecutionID:  sa.driverExecutionID,
+		DriverBinding:      sa.driverBinding,
+		DriverCheckpoint:   sa.driverCheckpoint,
 		Prompt:             sa.prompt,
 		Result:             sa.Result,
 		Messages:           providers.CloneChatMessages(sa.history),
@@ -253,11 +312,61 @@ func persistHistory(sa *SubAgent) error {
 	if sa.Error != nil {
 		rec.Error = sa.Error.Error()
 	}
-	sa.mu.Unlock()
 
+	return rec
+}
+
+// Pending execution state must not publish a terminal result or overwrite the
+// prior delivery snapshot. The terminal write commits the same execution ID;
+// readers then ignore its pending state, even if the process stops immediately.
+func persistDriverStateLocked(sa *SubAgent) error {
+	if sa.historyPath == "" && sa.historyDocuments == nil {
+		return nil
+	}
+	if sa.historyDocuments != nil {
+		return writeDocumentWorkerRecord(sa.historyDocuments, sa.historyScope, sa.ID, sa.historyPath, "pending", historyRecordLocked(sa))
+	}
+	return writeWorkerRecord(sa.historyPath+".driver-state", historyRecordLocked(sa))
+}
+
+func writeWorkerRecord(path string, rec historyRecord) error {
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return err
 	}
-	return securefs.WriteFileAtomic(sa.historyPath, data)
+	return securefs.WriteFileAtomic(path, data)
+}
+
+// Worker checkpoint writes atomically retain the binding and execution input.
+// An uncommitted checkpoint is never visible to a follow-up turn.
+type workerCheckpointStore struct{ worker *SubAgent }
+
+func (store workerCheckpointStore) Load(ctx context.Context) (loopdriver.Checkpoint, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return loopdriver.Checkpoint{}, false, err
+	}
+	store.worker.mu.Lock()
+	defer store.worker.mu.Unlock()
+	if store.worker.driverCheckpoint == nil {
+		return loopdriver.Checkpoint{}, false, nil
+	}
+	checkpoint := *store.worker.driverCheckpoint
+	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
+	return checkpoint, true, nil
+}
+
+func (store workerCheckpointStore) Save(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store.worker.mu.Lock()
+	defer store.worker.mu.Unlock()
+	previous := store.worker.driverCheckpoint
+	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
+	store.worker.driverCheckpoint = &checkpoint
+	if err := persistDriverStateLocked(store.worker); err != nil {
+		store.worker.driverCheckpoint = previous
+		return err
+	}
+	return nil
 }

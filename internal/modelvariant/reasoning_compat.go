@@ -40,6 +40,23 @@ func compatExcludedReasoningModel(id string) bool {
 	return false
 }
 
+// isMiniMaxM31 recognizes the M3.1 family across the vendor's documented ID
+// and gateway aliases. M3.1 always thinks, so its effort tiers replace the
+// binary thinking switch used by M3.
+func isMiniMaxM31(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	return strings.Contains(id, "minimax-m3.1") || strings.Contains(id, "minimax-m3-1")
+}
+
+func isKimiK31(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if index := strings.LastIndex(id, "/"); index >= 0 {
+		id = id[index+1:]
+	}
+	id = strings.TrimPrefix(id, "kimi-")
+	return id == "k3.1-pro" || id == "k3.1-pro-highspeed"
+}
+
 func compatWidelySupportedEfforts() []string {
 	return []string{"low", "medium", "high"}
 }
@@ -132,7 +149,7 @@ func compatVersionedGPT6ReasoningEfforts(apiID string) ([]string, bool) {
 	if compatGPT6Version(apiID) == 0 {
 		return nil, false
 	}
-	if strings.Contains(apiID, "gpt-6-sol") || strings.Contains(apiID, "gpt-6-luna") {
+	if strings.Contains(apiID, "gpt-6-sol") || strings.Contains(apiID, "gpt-6-luna") || strings.Contains(apiID, "gpt-6.1-terra") {
 		return []string{"none", "low", "medium", "high", "xhigh", "max"}, true
 	}
 	return []string{"low", "medium", "high", "xhigh", "max"}, true

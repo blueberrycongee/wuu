@@ -76,7 +76,7 @@ type Item struct {
 	Error        string                     `json:"error,omitempty"`
 }
 
-// SideThread is the on-disk representation of one side thread. Files
+// SideThread is the durable representation of one side thread. Records
 // are keyed by MainThreadID; at most one SideThread exists per main
 // thread.
 type SideThread struct {

@@ -37,6 +37,9 @@ export class PluginAssets {
   async module(
     module: PluginDesktopModuleReadResult,
   ): Promise<PluginDesktopModuleLoadResult> {
+    if (module.entry.startsWith("wuu-builtin:")) {
+      return { id: module.id, fingerprint: module.fingerprint, digest: module.digest, url: module.entry };
+    }
     const url = await this.url(
       new TextEncoder().encode(module.source),
       module.digest,

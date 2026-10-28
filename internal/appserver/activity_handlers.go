@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func (s *Server) handleActivityList(req Request) error {
@@ -46,10 +45,7 @@ func (s *Server) handleActivityTakeover(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+	if err := s.interruptThreadForUser(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)
@@ -84,10 +80,7 @@ func (s *Server) handleActivityStop(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+	if err := s.interruptThreadForUser(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)

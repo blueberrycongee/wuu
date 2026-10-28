@@ -3,11 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // EnginesConfig configures external agent engines in the
@@ -17,6 +13,8 @@ import (
 type EnginesConfig struct {
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly. Empty means the built-in wuu engine.
+	// Unavailability or disable preserves this choice and rejects new threads;
+	// only an explicit default selection changes it.
 	DefaultEngine string              `json:"default_engine,omitempty"`
 	Codex         *EngineBinaryConfig `json:"codex,omitempty"`
 	Claude        *EngineBinaryConfig `json:"claude,omitempty"`
@@ -69,12 +67,20 @@ func (c *EnginesConfig) validate() error {
 	if id == "" || id == "wuu" {
 		return nil
 	}
-	if _, ok := enginecatalog.Lookup(id); !ok {
-		return fmt.Errorf("engines.default_engine %q is not supported", id)
+	// Availability belongs to the selected graph, not the native CLI catalog.
+	// Keep persisted IDs safe to embed in the engine.<id> service name.
+	for _, segment := range strings.Split(id, ".") {
+		if segment == "" {
+			return fmt.Errorf("engines.default_engine %q is not a valid service ID", id)
+		}
+		for index, c := range segment {
+			if c >= 'a' && c <= 'z' || index > 0 && (c >= '0' && c <= '9' || c == '-') {
+				continue
+			}
+			return fmt.Errorf("engines.default_engine %q is not a valid service ID", id)
+		}
 	}
-	if engineExplicitlyDisabled(c.Binary(id)) {
-		return fmt.Errorf("engines.default_engine cannot be %s while engines.%s is disabled", id, id)
-	}
+
 	return nil
 }
 
@@ -111,13 +117,15 @@ type EnginesSettingsUpdate struct {
 // UpdateEnginesSettings persists engine settings into the config JSON,
 // following the same raw-map merge pattern as UpdateGeneralSettings.
 func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
+	return updateConfigSourceFile(configPath, func(source []byte) ([]byte, error) { return UpdateEnginesSettingsSource(source, update) })
+}
+
+// UpdateEnginesSettingsSource validates an engine settings edit without choosing
+// or writing its persistence backend.
+func UpdateEnginesSettingsSource(data []byte, update EnginesSettingsUpdate) ([]byte, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+		return nil, err
 	}
 
 	engines, _ := raw["engines"].(map[string]any)
@@ -141,26 +149,23 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 			engines["default_engine"] = defaultEngine
 		}
 	}
-	for id, binaryUpdate := range updates {
-		resetDisabledDefaultEngine(engines, id, binaryUpdate)
-	}
 	if len(engines) == 0 {
 		delete(raw, "engines")
 	}
 
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return nil, fmt.Errorf("marshal config: %w", err)
 	}
 	var cfg Config
 	if err := json.Unmarshal(out, &cfg); err != nil {
-		return err
+		return nil, err
 	}
 	applyDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
-		return err
+		return nil, err
 	}
-	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+	return append(out, '\n'), nil
 }
 
 func applyEngineBinaryUpdate(engines map[string]any, name string, update *EngineBinaryUpdate) {
@@ -188,15 +193,6 @@ func applyEngineBinaryUpdate(engines map[string]any, name string, update *Engine
 	}
 	if len(entry) == 0 {
 		delete(engines, name)
-	}
-}
-
-func resetDisabledDefaultEngine(engines map[string]any, name string, update *EngineBinaryUpdate) {
-	if update == nil || update.Enabled == nil || *update.Enabled {
-		return
-	}
-	if current, _ := engines["default_engine"].(string); strings.TrimSpace(current) == name {
-		delete(engines, "default_engine")
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -54,6 +55,8 @@ var ErrHostAlreadyRunning = errors.New("remote host already running for this Wuu
 
 // PairingConfig opens a pairing window when the host starts.
 type PairingConfig struct {
+	// DelegatedOnly enrolls a key without ambient owner authority.
+	DelegatedOnly bool
 	// Timeout closes the window after this long. Zero means 10 minutes.
 	Timeout time.Duration
 	// Once closes the window after the first successful pairing.
@@ -69,13 +72,17 @@ type Options struct {
 	// AppServer connects an authenticated device to an existing execution host.
 	// When omitted, standalone hosts create their own app-server connection.
 	AppServer func(context.Context, io.Reader, io.Writer) error
-	Workdir   string
-	Runtime   *runtime.Session
-	Store     *Store
-	RelayURL  string // overrides the store's relay URL
-	HostName  string // overrides the store's host name
-	Pairing   *PairingConfig
-	Logf      func(format string, args ...any)
+	// AppServerOptions bind each standalone connection to the runtime composition.
+	AppServerOptions []appserver.ServerOption
+	Workdir          string
+	Runtime          *runtime.Session
+	Store            *Store
+	RelayURL         string // overrides the store's relay URL
+	HostName         string // overrides the store's host name
+	Pairing          *PairingConfig
+	Logf             func(format string, args ...any)
+	// OnConnected runs after the relay authenticates and registers this host.
+	OnConnected func()
 
 	// ReconnectMin/ReconnectMax bound the relay redial backoff. Zero values
 	// mean 1s/30s.
@@ -97,17 +104,19 @@ type pairingState struct {
 
 // Host runs the desktop side of remote control.
 type Host struct {
-	appServer       func(context.Context, io.Reader, io.Writer) error
-	workdir         string
-	rt              *runtime.Session
-	store           *Store
-	relayURL        string
-	hostName        string
-	logf            func(format string, args ...any)
-	reconnectMin    time.Duration
-	reconnectMax    time.Duration
-	pushMinInterval time.Duration
-	pusher          HostPusher
+	appServer        func(context.Context, io.Reader, io.Writer) error
+	appServerOptions []appserver.ServerOption
+	workdir          string
+	rt               *runtime.Session
+	store            *Store
+	relayURL         string
+	hostName         string
+	logf             func(format string, args ...any)
+	onConnected      func()
+	reconnectMin     time.Duration
+	reconnectMax     time.Duration
+	pushMinInterval  time.Duration
+	pusher           HostPusher
 
 	baseCtx context.Context
 
@@ -117,6 +126,7 @@ type Host struct {
 
 	sessMu   sync.Mutex
 	sessions map[string]*deviceSession
+	appWG    sync.WaitGroup
 
 	pairMu  sync.Mutex
 	pairing *pairingState
@@ -156,18 +166,20 @@ func New(opts Options) (*Host, error) {
 		pusher = NewExpoPusher()
 	}
 	h := &Host{
-		appServer:       opts.AppServer,
-		workdir:         opts.Workdir,
-		rt:              opts.Runtime,
-		store:           opts.Store,
-		relayURL:        relayURL,
-		hostName:        hostName,
-		logf:            logf,
-		reconnectMin:    opts.ReconnectMin,
-		reconnectMax:    opts.ReconnectMax,
-		pushMinInterval: opts.PushMinInterval,
-		pusher:          pusher,
-		sessions:        map[string]*deviceSession{},
+		appServer:        opts.AppServer,
+		appServerOptions: append([]appserver.ServerOption(nil), opts.AppServerOptions...),
+		workdir:          opts.Workdir,
+		rt:               opts.Runtime,
+		store:            opts.Store,
+		relayURL:         relayURL,
+		hostName:         hostName,
+		logf:             logf,
+		onConnected:      opts.OnConnected,
+		reconnectMin:     opts.ReconnectMin,
+		reconnectMax:     opts.ReconnectMax,
+		pushMinInterval:  opts.PushMinInterval,
+		pusher:           pusher,
+		sessions:         map[string]*deviceSession{},
 	}
 	if h.reconnectMin <= 0 {
 		h.reconnectMin = time.Second
@@ -285,6 +297,9 @@ func (h *Host) runOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	h.logf("remote host: connected to relay %s as %s", h.relayURL, secure.Fingerprint(h.store.Identity().Public()))
+	if h.onConnected != nil {
+		h.onConnected()
+	}
 
 	// Re-open the pairing window on every (re)connection while it lasts.
 	h.pairMu.Lock()
@@ -483,7 +498,7 @@ func (h *Host) handlePairOffer(msg wire.RelayMsg) {
 	if name == "" {
 		name = "phone-" + secure.Fingerprint(offer.DevicePub)
 	}
-	if err := h.store.AddDevice(offer.DevicePub, name, time.Now()); err != nil {
+	if err := h.store.addDevice(offer.DevicePub, name, time.Now(), st.cfg.DelegatedOnly); err != nil {
 		h.logf("remote host: persist device: %v", err)
 		_ = h.writeRelay(wire.RelayMsg{Type: wire.TypePairErr, PairingID: msg.PairingID, Code: wire.CodeBadRequest})
 		return
@@ -565,6 +580,10 @@ func (h *Host) shutdownSessions() {
 	for _, s := range sessions {
 		s.shutdown()
 	}
+	// Closing pipes requests shutdown; the app-server still owns runtime
+	// resources until its deferred cleanup returns. Include replaced connections
+	// as well as the currently attached ones, and wait outside session locks.
+	h.appWG.Wait()
 }
 
 // sendFrame ships an opaque payload to a device through the relay.

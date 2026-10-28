@@ -1,5 +1,4 @@
 import { isTouchWebShell } from "./ComposerFocus";
-import { hostSupports } from "./HostCapabilities";
 import type { FitAddon as XtermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XtermTerminal, ITerminalOptions, ITheme } from "@xterm/xterm";
 import { Square } from "./WuuIcons";
@@ -11,13 +10,11 @@ import {
   useState,
 } from "react";
 import type {
-  ManagedProcessSummary,
   RuntimeContext,
-  TerminalSessionEvent,
   Thread,
 } from "../shared/protocol";
-import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
-import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
+import type { TerminalManagedProcessV1 as ManagedProcessSummary, TerminalEventV1 as TerminalSessionEvent } from "../../../packages/plugin-sdk/src/ui-terminals";
+import { useTerminalControls, type TerminalAppearanceControls } from "./TerminalControlsContext";
 import {
   agentRunGroupsForThread,
   selectAgentRun,
@@ -34,6 +31,8 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
+
+type AppliedTheme = ReturnType<TerminalAppearanceControls["currentAppliedTheme"]>;
 
 const WORKSPACE_TERMINAL_PENDING_EVENT_IDS = 12;
 const WORKSPACE_TERMINAL_PENDING_EVENTS_PER_ID = 256;
@@ -153,10 +152,10 @@ function workspaceTerminalTheme(theme: AppliedTheme, host?: HTMLElement): ITheme
   const hues = WORKSPACE_TERMINAL_HUES;
   return resolveCssColors(
     {
-      background: "var(--paper)",
+      background: "var(--workspace-canvas-bg)",
       foreground: "var(--ink)",
       cursor: "var(--ink)",
-      cursorAccent: "var(--paper)",
+      cursorAccent: "var(--workspace-canvas-bg)",
       selectionBackground: "var(--selection-bg)",
       ...WORKSPACE_TERMINAL_NEUTRALS[theme],
       ...hues,
@@ -171,7 +170,16 @@ function workspaceTerminalTheme(theme: AppliedTheme, host?: HTMLElement): ITheme
   );
 }
 
-function workspaceTerminalOptions({
+function terminalTypography(appearance: TerminalAppearanceControls): { fontFamily: string; fontSize: number } {
+  const preferences = appearance.readAppearance();
+  const fallback = 'ui-monospace, "SFMono-Regular", Consolas, monospace';
+  return {
+    fontFamily: preferences.codeFont ? `${JSON.stringify(preferences.codeFont)}, ${fallback}` : fallback,
+    fontSize: preferences.codeSize,
+  };
+}
+
+function workspaceTerminalOptions(appearance: TerminalAppearanceControls, {
   interactive,
   readOnly = false,
   host,
@@ -180,7 +188,7 @@ function workspaceTerminalOptions({
   readOnly?: boolean;
   host?: HTMLElement;
 }): ITerminalOptions {
-  const typography = codeEditorTypography();
+  const typography = terminalTypography(appearance);
   return {
     allowTransparency: false,
     convertEol: !interactive,
@@ -193,13 +201,13 @@ function workspaceTerminalOptions({
     // anything below body-text contrast against its background.
     minimumContrastRatio: 4.5,
     scrollback: 10000,
-    theme: workspaceTerminalTheme(currentAppliedTheme(), host),
+    theme: workspaceTerminalTheme(appearance.currentAppliedTheme(), host),
   };
 }
 
-function observeTerminalAppearance(terminal: XtermTerminal, host: HTMLElement, resize: () => void): () => void {
-  return observeAppearance(() => {
-    const typography = codeEditorTypography();
+function observeTerminalAppearance(appearance: TerminalAppearanceControls, terminal: XtermTerminal, host: HTMLElement, resize: () => void): () => void {
+  return appearance.observeAppearance(() => {
+    const typography = terminalTypography(appearance);
     const family = workspaceTerminalStyle(host, "--wuu-workspace-terminal-font-family", typography.fontFamily);
     if (terminal.options.fontSize === typography.fontSize && terminal.options.fontFamily === family) return;
     terminal.options.fontSize = typography.fontSize;
@@ -279,6 +287,7 @@ export function WorkspaceTerminalPanel({
   requestedRun?: WorkspaceTerminalRunRequest;
 }): JSX.Element {
   const { t } = useI18n();
+  const { controls } = useTerminalControls();
   const groups = useMemo(
     () => (thread ? agentRunGroupsForThread(thread) : []),
     [thread],
@@ -332,13 +341,14 @@ export function WorkspaceTerminalPanel({
       return undefined;
     }
     let disposed = false;
+    const lifetime = new AbortController();
     let refreshTimer: number | undefined;
     const activeThreadID = threadID;
     setManagedInventoryReady(false);
 
     async function refresh(): Promise<void> {
       try {
-        const result = await window.wuu.listManagedProcesses(activeThreadID);
+        const result = await controls.listManaged(activeThreadID, { signal: lifetime.signal });
         if (disposed) {
           return;
         }
@@ -362,11 +372,12 @@ export function WorkspaceTerminalPanel({
     void refresh();
     return () => {
       disposed = true;
+      lifetime.abort();
       if (refreshTimer !== undefined) {
         window.clearTimeout(refreshTimer);
       }
     };
-  }, [thread?.id]);
+  }, [controls, thread?.id]);
 
   useEffect(() => {
     if (!requestedRun) {
@@ -389,14 +400,14 @@ export function WorkspaceTerminalPanel({
     if (autoStartedUserTerminalRef.current || requestedRun || userTerminal || runs.length > 0) {
       return;
     }
-    if (!managedInventoryReady || !activeContext?.cwd || !hostSupports("startTerminalSession")) {
+    if (!managedInventoryReady || !activeContext?.cwd || !controls.capabilities.createTerminal) {
       return;
     }
     autoStartedUserTerminalRef.current = true;
     const id = "user-terminal:1";
     setUserTerminal({ id, ordinal: 1, state: "starting" });
     setSelectedResourceID(id);
-  }, [activeContext?.cwd, managedInventoryReady, requestedRun, runs.length, userTerminal]);
+  }, [controls, activeContext?.cwd, managedInventoryReady, requestedRun, runs.length, userTerminal]);
 
   if (!activeContext?.cwd) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -481,6 +492,7 @@ function AgentTerminalPane({
   onProcessChange: (process: ManagedProcessSummary) => void;
 }): JSX.Element {
   const { locale, t } = useI18n();
+  const { controls, appearance } = useTerminalControls();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<() => void>(() => {});
@@ -522,6 +534,7 @@ function AgentTerminalPane({
     }
 
     let disposed = false;
+    const lifetime = new AbortController();
     let resizeFrame: number | undefined;
     let didInitialResize = false;
     let offset = 0;
@@ -543,7 +556,7 @@ function AgentTerminalPane({
       }
       const current = processRef.current;
       if (processID && current?.tty && isManagedProcessLive(current)) {
-        void window.wuu.resizeManagedProcess(run.threadID, processID, terminal.cols, terminal.rows).catch((error) => {
+        void controls.resizeManaged(run.threadID, processID, terminal.cols, terminal.rows, { signal: lifetime.signal }).catch((error) => {
           if (!disposed && isManagedProcessLive(processRef.current ?? current)) {
             setTerminalError(desktopApiErrorMessage(error, translateCurrent("workspace.terminal.resizeFailed")));
           }
@@ -556,7 +569,7 @@ function AgentTerminalPane({
     void (async () => {
       let opened: { terminal: XtermTerminal; fitAddon: XtermFitAddon };
       try {
-        opened = await openWorkspaceTerminal(container, workspaceTerminalOptions({
+        opened = await openWorkspaceTerminal(container, workspaceTerminalOptions(appearance, {
           interactive: run.execution === "managed" && run.tty,
           readOnly: true,
           host: container,
@@ -575,10 +588,10 @@ function AgentTerminalPane({
       fitAddon = opened.fitAddon;
       terminalRef.current = terminal;
       const openedTerminal = terminal;
-      stopObservingTheme = observeAppliedTheme((theme) => {
+      stopObservingTheme = appearance.observeAppliedTheme((theme) => {
         openedTerminal.options.theme = workspaceTerminalTheme(theme, container);
       });
-      stopObservingAppearance = observeTerminalAppearance(openedTerminal, container, fitAndResize);
+      stopObservingAppearance = observeTerminalAppearance(appearance, openedTerminal, container, fitAndResize);
 
       function updateProcess(next: ManagedProcessSummary): void {
         const preferred = preferManagedProcess(processRef.current, next);
@@ -595,7 +608,7 @@ function AgentTerminalPane({
         if (!processID || !current?.tty || !current.input_available || !isManagedProcessLive(current)) {
           return;
         }
-        void window.wuu.writeManagedProcess(run.threadID, processID, data).catch((error) => {
+        void controls.writeManaged(run.threadID, processID, data, { signal: lifetime.signal }).catch((error) => {
           if (!disposed) {
             setTerminalError(desktopApiErrorMessage(error, translateCurrent("workspace.terminal.writeFailed")));
           }
@@ -641,13 +654,13 @@ function AgentTerminalPane({
       const managedProcessID = processID;
       while (!disposed) {
         try {
-          const result = await window.wuu.readManagedProcess({
+          const result = await controls.readManaged({
             thread_id: run.threadID,
             process_id: managedProcessID,
             offset_bytes: offset,
             max_bytes: 512 * 1024,
             wait_ms: 10000,
-          });
+          }, { signal: lifetime.signal });
           if (disposed) {
             return;
           }
@@ -668,9 +681,8 @@ function AgentTerminalPane({
             return;
           }
         } catch (error) {
-          if (!disposed) {
-            setTerminalError(desktopApiErrorMessage(error, translateCurrent("workspace.terminal.readFailed")));
-          }
+          if (disposed) return;
+          setTerminalError(desktopApiErrorMessage(error, translateCurrent("workspace.terminal.readFailed")));
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
           const current = processRef.current;
           if (disposed || (current && !isManagedProcessLive(current))) {
@@ -682,6 +694,7 @@ function AgentTerminalPane({
 
     return () => {
       disposed = true;
+      lifetime.abort();
       fitRef.current = () => {};
       if (resizeFrame !== undefined) {
         window.cancelAnimationFrame(resizeFrame);
@@ -694,7 +707,7 @@ function AgentTerminalPane({
       terminal?.dispose();
       terminalRef.current = null;
     };
-  }, [locale, processID, run.execution, run.stderr, run.stdout, run.threadID, run.toolCallID, run.truncated, run.tty]);
+  }, [controls, appearance, locale, processID, run.execution, run.stderr, run.stdout, run.threadID, run.toolCallID, run.truncated, run.tty]);
 
   async function stopProcess(): Promise<void> {
     if (!processID || stopping) {
@@ -703,7 +716,7 @@ function AgentTerminalPane({
     setStopping(true);
     setTerminalError(undefined);
     try {
-      const result = await window.wuu.stopManagedProcess(run.threadID, processID);
+      const result = await controls.stopManaged(run.threadID, processID);
       processRef.current = result.process;
       setCurrentProcess(result.process);
       onProcessChange(result.process);
@@ -795,6 +808,7 @@ function UserTerminalPane({
   onStateChange: (id: string, state: WorkspaceTerminalState) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const { controls, appearance } = useTerminalControls();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const sessionIDRef = useRef<string | undefined>(undefined);
@@ -844,6 +858,7 @@ function UserTerminalPane({
     }
 
     let disposed = false;
+    const lifetime = new AbortController();
     let resizeFrame: number | undefined;
     let terminal: XtermTerminal | undefined;
     let fitAddon: XtermFitAddon | undefined;
@@ -865,7 +880,7 @@ function UserTerminalPane({
       }
       const id = sessionIDRef.current;
       if (id) {
-        void window.wuu.resizeTerminalSession(id, terminal.cols, terminal.rows);
+        void controls.resize(id, terminal.cols, terminal.rows, { signal: lifetime.signal }).catch(() => { if (!disposed) setTerminalState("error"); });
       }
     }
 
@@ -891,7 +906,7 @@ function UserTerminalPane({
       try {
         opened = await openWorkspaceTerminal(
           container,
-          workspaceTerminalOptions({ interactive: true, host: container }),
+          workspaceTerminalOptions(appearance, { interactive: true, host: container }),
         );
       } catch {
         if (!disposed) {
@@ -910,10 +925,10 @@ function UserTerminalPane({
         openedTerminal.focus();
       }
       terminalRef.current = openedTerminal;
-      stopObservingTheme = observeAppliedTheme((theme) => {
+      stopObservingTheme = appearance.observeAppliedTheme((theme) => {
         openedTerminal.options.theme = workspaceTerminalTheme(theme, container);
       });
-      stopObservingAppearance = observeTerminalAppearance(openedTerminal, container, fitAndResize);
+      stopObservingAppearance = observeTerminalAppearance(appearance, openedTerminal, container, fitAndResize);
 
       // An ended session takes no more input, so it stops showing a cursor.
       function endTerminalInput(): void {
@@ -955,7 +970,7 @@ function UserTerminalPane({
       dataDisposable = openedTerminal.onData((data) => {
         const id = sessionIDRef.current;
         if (id) {
-          void window.wuu.writeTerminalSession(id, data);
+          void controls.write(id, data, { signal: lifetime.signal }).catch(() => { if (!disposed) setTerminalState("error"); });
         }
       });
       settleResize = createWindowResizeSettleScheduler(() => {
@@ -976,7 +991,7 @@ function UserTerminalPane({
       });
       resizeObserver.observe(container);
       resizeFrame = window.requestAnimationFrame(fitAndResize);
-      unsubscribeTerminal = window.wuu.onTerminalEvent((event) => {
+      unsubscribeTerminal = controls.onEvent((event) => {
         const sessionID = sessionIDRef.current;
         if (!sessionID) {
           bufferTerminalEvent(event);
@@ -989,13 +1004,13 @@ function UserTerminalPane({
 
       try {
         fitAndResize();
-        const started = await window.wuu.startTerminalSession({
+        const started = await controls.start({
           cols: openedTerminal.cols,
           rows: openedTerminal.rows,
           cwd: workspaceRoot,
-        });
+        }, { signal: lifetime.signal });
         if (disposed) {
-          void window.wuu.stopTerminalSession(started.id);
+          void controls.stop(started.id).catch(error => console.error("Terminal cleanup failed", error));
           return;
         }
         sessionIDRef.current = started.id;
@@ -1018,6 +1033,7 @@ function UserTerminalPane({
 
     return () => {
       disposed = true;
+      lifetime.abort();
       fitRef.current = () => {};
       if (resizeFrame !== undefined) {
         window.cancelAnimationFrame(resizeFrame);
@@ -1025,7 +1041,7 @@ function UserTerminalPane({
       const sessionID = sessionIDRef.current;
       sessionIDRef.current = undefined;
       if (sessionID) {
-        void window.wuu.stopTerminalSession(sessionID);
+        void controls.stop(sessionID).catch(error => console.error("Terminal cleanup failed", error));
       }
       unsubscribeTerminal?.();
       stopObservingTheme?.();
@@ -1037,7 +1053,7 @@ function UserTerminalPane({
       terminal?.dispose();
       terminalRef.current = null;
     };
-  }, [onShellChange, resourceID, restartKey, workspaceRoot]);
+  }, [controls, appearance, onShellChange, resourceID, restartKey, workspaceRoot]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -1054,7 +1070,7 @@ function UserTerminalPane({
       </div>
       {showStartingRail ? <WorkspacePanelLoading /> : null}
       {isTouchWebShell() && terminalState === 'ready' && <div className="workspace-terminal-touch-keys" aria-label="Terminal keys">
-        {([['Esc','\x1b'],['Tab','\t'],['Ctrl-C','\x03'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']] as const).map(([label,data])=><button key={label} type="button" onPointerDown={event=>event.preventDefault()} onClick={()=>{const id=sessionIDRef.current;if(id)void window.wuu.writeTerminalSession(id,data).catch(()=>setTerminalState('error'));}}>{label}</button>)}
+        {([['Esc','\x1b'],['Tab','\t'],['Ctrl-C','\x03'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']] as const).map(([label,data])=><button key={label} type="button" onPointerDown={event=>event.preventDefault()} onClick={()=>{const id=sessionIDRef.current;if(id)void controls.write(id,data).catch(()=>setTerminalState('error'));}}>{label}</button>)}
       </div>}
       {terminalState === "exited" || terminalState === "error" ? (
         <button

@@ -1,3 +1,4 @@
+import type { SessionLocatorV1 } from "../shared/protocol";
 import { createContext } from "react";
 import type { TurnArtifact } from "./ArtifactOutputs";
 
@@ -11,6 +12,7 @@ export type ArtifactPreviewRequest = {
 };
 
 export const ArtifactPreviewContext = createContext<((request: ArtifactPreviewRequest) => void) | undefined>(undefined);
+export const ArtifactLocatorContext = createContext<SessionLocatorV1 | undefined>(undefined);
 export const ArtifactThreadContext = createContext<string | undefined>(undefined);
 
 export function restoreArtifactPreviewFocus(origin?: WeakRef<HTMLElement>): void {

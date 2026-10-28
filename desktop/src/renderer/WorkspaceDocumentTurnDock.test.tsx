@@ -298,6 +298,38 @@ describe("WorkspaceDocumentTurnDock", () => {
     portal.remove();
   });
 
+  it.each(["pointerup", "pointercancel", "blur"])("keeps document geometry stable through a selection gesture until %s", async (ending) => {
+    render([turn("selection")]);
+    const input = container.querySelector("textarea")!;
+    const header = container.querySelector(".workspace-document-turn-header")!;
+    const source = document.createElement("div");
+    source.dataset.selectable = "";
+    source.tabIndex = 0;
+    document.body.appendChild(source);
+    try {
+      act(() => input.focus());
+      act(() => {
+        source.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+        source.focus();
+      });
+      expect(header.getAttribute("aria-hidden")).toBe("false");
+      let headerDuringRelease: string | null = null;
+      const readSelection = () => { headerDuringRelease = header.getAttribute("aria-hidden"); };
+      document.addEventListener("pointerup", readSelection, { once: true });
+      await act(async () => {
+        if (ending === "blur") window.dispatchEvent(new Event("blur"));
+        else source.dispatchEvent(new MouseEvent(ending, { bubbles: true, button: 0 }));
+      });
+      document.removeEventListener("pointerup", readSelection);
+      if (ending === "pointerup") expect(headerDuringRelease).toBe("false");
+      expect(header.getAttribute("aria-hidden")).toBe("true");
+      // A completed/cancelled drag must not keep intercepting later keyboard focus.
+      act(() => input.focus());
+      act(() => source.focus());
+      expect(header.getAttribute("aria-hidden")).toBe("true");
+    } finally { source.remove(); }
+  });
+
   it("collapses the result on Escape without clearing or blurring the editor", () => {
     render([turn("escape")]);
     const input = container.querySelector("textarea")!;

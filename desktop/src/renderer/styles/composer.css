@@ -1,3 +1,7 @@
+:root {
+  --composer-control-size: 32px;
+}
+
 /* In the reading flow the card is framed like the other conversation cards;
  * covering the composer, the composer's frame is its frame. */
 .user-question-card {
@@ -375,9 +379,9 @@
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
-  --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
-  --composer-project-menu-icon: var(--wuu-color-text-muted, #6b7176);
+  --composer-surface-bg: var(--surface-raised);
+  --composer-textarea-disabled: var(--theme-override-color-text-muted, #6d7471);
+  --composer-project-menu-icon: var(--theme-override-color-text-muted, #6b7176);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }
 
@@ -389,9 +393,13 @@
   background: var(--paper);
 }
 
+:is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap) {
+  container: conversation-composer / inline-size;
+}
+
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
-    clamp(var(--space-1), calc(2dvh - var(--space-1)), var(--space-2)),
+    var(--space-4),
     env(safe-area-inset-bottom, 0px)
   );
   position: relative;
@@ -399,27 +407,14 @@
   grid-column: 1;
   grid-row: 2;
   align-self: end;
-  /* The pane supplies the outer inset; keep a compact inner gap so the input
-     rests near the window edge. The top space belongs to the latest-turn
-     clearance (conversation-shell.css). */
+  /* Leave room below the floating input and its shadow. The top space
+     belongs to the latest-turn clearance (conversation-shell.css). */
   padding-block: var(--conversation-dock-top-space) var(--composer-dock-bottom-space);
-  /* Mirror the scroll region's reserved gutter. That region keeps its stable
-     gutter on BOTH edges (see .scroll-region) so the message flow is centered
-     on the pane's own centerline; matching it with an equal inset on each side
-     keeps the dock composer on the same centerline instead of half a gutter to
-     the left of it. --scrollbar-width is stamped from a runtime measurement
-     (see ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
-     and the platform's real thin-scrollbar width where scrollbars are classic,
-     so this stays correct on every machine. */
+  /* Mirror the scroll region's symmetric scrollbar gutters while keeping the
+     dock centered in the pane. ScrollbarMetrics.ts measures their actual width. */
   padding-inline: var(--scrollbar-width);
   background: transparent;
   pointer-events: none;
-  transition: padding-inline var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
-  transition-delay: 0ms;
-}
-
-.conversation-pane.environment-panel-reserved .dock-composer-wrap {
-  transition-delay: var(--environment-flow-motion-delay);
 }
 
 .dock-composer-wrap::before {
@@ -434,8 +429,15 @@
   pointer-events: none;
 }
 
-/* The dock composer shares the message flow's content cap and fluid gutters
-   so the input box and the answer prose keep the same edges. */
+/* The main dock reaches the canvas edge. Round its own paint so promotion
+   to a composited layer cannot briefly cover the pane's rounded corners.
+   Split and document composers have their own surrounding surfaces. */
+.dock-composer-wrap[data-main-conversation-composer="dock"]::before {
+  border-radius: 0 0 var(--conversation-pane-right-radius) var(--conversation-pane-left-radius);
+}
+
+/* The dock composer uses the reading column's cap and fluid gutters,
+   centered in its available pane. */
 .dock-composer-wrap .composer-stack {
   position: relative;
   z-index: 1;
@@ -449,7 +451,7 @@
 }
 
 .composer-stack {
-  --composer-collapsed-min-height: 100px;
+  --session-composer-radius: max(22px, calc((var(--conversation-reading-line-height) + 20px) / 2));
   --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
   --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;
@@ -462,6 +464,18 @@
   min-width: 0;
   flex-direction: column;
   margin: 0 auto;
+}
+
+/* Give the draft at least the full message width, with a small overhang when
+ * space permits. Document composers retain their document-specific measure. */
+:where(.dock-composer-wrap:not(.document-composer-wrap)) .composer-stack {
+  width: min(
+    calc(var(--session-composer-width) + 2 * var(--session-composer-inline-outset)),
+    calc(
+      100% - var(--session-outer-padding-inline) - var(--session-outer-padding-inline) +
+        2 * var(--session-composer-inline-outset)
+    )
+  );
 }
 
 .composer-top-accessory {
@@ -525,6 +539,56 @@
   }
 }
 
+.composer-footer-shell {
+  height: var(--composer-footer-height, auto);
+  overflow: clip;
+  overflow-clip-margin: 4px;
+  transition: height var(--motion-base) var(--ease-out);
+}
+
+.dock-composer-wrap:has(.composer-footer-shell[data-layout-pending]),
+.composer-footer-shell[data-layout-pending] {
+  transition: none;
+}
+
+.composer-footer-shell[data-collapsed] {
+  height: 0;
+}
+
+.composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2) 0;
+}
+
+.composer-footer:not(:has(.composer-workspace-bar, .composer-footer-runtime)) {
+  display: none;
+}
+
+.composer-footer .composer-workspace-bar {
+  --composer-context-height: var(--control-size-toolbar);
+  flex: 1 1 320px;
+  max-width: 100%;
+  margin: 0;
+}
+
+.composer-footer-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+  max-width: 100%;
+}
+
+.composer-footer-runtime .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
 .composer-workspace-group {
   display: inline-flex;
   align-items: center;
@@ -536,14 +600,22 @@
   max-width: 100%;
 }
 
-.composer-workspace-bar .hero-project-pill,
-.composer-worktree-toggle {
+.composer-workspace-bar .hero-project-pill {
   height: var(--composer-context-height);
   gap: 6px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-size: var(--font-sm);
+}
+
+.composer-project-control .hero-project-pill:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.composer-project-control .hero-project-pill:disabled::before {
+  background: transparent;
 }
 
 .composer-workspace-bar .hero-project-pill:hover:not(:disabled),
@@ -563,40 +635,6 @@
   content: "/" / "";
 }
 
-.composer-worktree-toggle {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: var(--font-sm);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.composer-worktree-toggle:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.composer-worktree-toggle[aria-pressed="false"]:hover:not(:disabled) {
-  color: var(--ink);
-}
-
-/* Keep worktree selection distinct from the composer's neutral controls. */
-.composer-worktree-toggle[aria-pressed="true"],
-.composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
-  color: var(--info);
-}
-
-.composer-worktree-toggle:disabled {
-  cursor: default;
-}
-
 .composer-workspace-bar .hero-project-pill::before {
   inset: 0;
 }
@@ -613,14 +651,28 @@
 .composer-frame {
   position: relative;
   width: 100%;
+}
+
+.composer-editor,
+.composer-cover-accessory {
+  position: relative;
   border-radius: var(--session-composer-radius, var(--radius-md));
   background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
-  contain: layout paint;
+}
+
+.composer-editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: end;
+  gap: var(--space-1);
+  padding: max(4px, var(--space-1)) var(--space-2);
   overflow: hidden;
 }
 
-.composer-frame::after {
+.composer-editor::after,
+.composer-cover-accessory::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -630,133 +682,36 @@
   pointer-events: none;
 }
 
-.composer-frame.composer-frame-drop-active::after {
+.composer-frame-drop-active .composer-editor::after {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
-/* The frame clips its contents, so the draft's keyboard ring would show only
- * as a line under the text. The frame's edge, drawn above the input, becomes
- * the ring instead; it stays inside the frame, clear of trays tucked behind. */
-html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > textarea:focus-visible)::after {
+/* Draw the draft's keyboard ring inside the editor's clipped edge. */
+html[data-focus-modality="keyboard"] .composer-editor:has(> textarea:focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
   outline: none;
 }
 
-.hero-composer-wrap .composer-frame {
-  border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--composer-surface-bg);
-  box-shadow: var(--composer-frame-shadow);
-}
-
-/* The welcome grid already applies the shared cap and gutters. Fill its
-   content column without subtracting the gutters a second time. */
+/* The welcome grid already applies the reading cap and gutters. Extend the
+   draft equally on both sides without subtracting those gutters twice. */
 .hero-composer-wrap .composer-stack {
-  --composer-collapsed-min-height: 118px;
-  width: 100%;
-}
-
-.composer-expand-button {
-  position: absolute;
-  /* Centered on the first text line, never closer to the corner than the
-   * send circle; the text's own leading sets the axis at every size. */
-  top: max(
-    var(--composer-corner-inset),
-    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) / 2 - 14px)
-  );
-  right: var(--composer-corner-inset);
-  width: 28px;
-  height: 28px;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  /*
-   * Quiet icon button, unified with the queued-message row actions
-   * (.composer-input-header-action): transparent by default, revealing an
-   * --ink-overlay-8 hover fill, 28x28 with a 14px glyph. Right-aligned to
-   * the header rows' inline padding (right:8px) and matched in size so the
-   * expand affordance stacks into the same right-edge control column as the
-   * row actions above it — instead of floating as its own smaller,
-   * always-filled corner tab. The textarea reserves a 44px right gutter
-   * (52px in hero) so the transparent glyph never overlaps input text.
-   */
-  color: var(--ink-muted);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  opacity: 0;
-  transition:
-    color var(--motion-fast) var(--ease-out),
-    background-color var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
-}
-
-.composer-expand-button::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-}
-
-.composer-frame:hover .composer-expand-button,
-.composer-expand-button:hover,
-.composer-expand-button:focus-visible,
-.composer-expand-button[aria-pressed="true"] {
-  opacity: 1;
-  color: var(--ink-muted);
-}
-
-.composer-expand-button:hover:not(:disabled),
-.composer-expand-button[aria-pressed="true"] {
-  background-color: var(--ink-overlay-8);
-}
-
-.composer-expand-button:active:not(:disabled) {
-  color: var(--ink);
-  transform: scale(0.96);
-}
-
-.composer-expand-button:disabled {
-  cursor: not-allowed;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.composer-expand-button svg {
-  display: block;
-  width: 14px;
-  height: 14px;
-  pointer-events: none;
-}
-
-@container style(--motion-reduced: 1) {
-  .composer-expand-button {
-    transition: none;
-  }
-
+  width: calc(100% + 2 * var(--session-composer-inline-outset));
+  margin-inline: calc(-1 * var(--session-composer-inline-outset));
 }
 
 .composer {
-  /* Text and toolbar glyphs share the card inset used by code blocks and
-   * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
-  --composer-text-start: var(--card-padding);
-  /* The draft keeps the query bubble's framed-text inset, so typed and sent
-   * text sit the same distance from their frames. */
-  --composer-text-padding-top: var(--conversation-framed-text-inset-block);
-  --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
-  /* Filled corner controls keep their visible edge this far from the frame
-   * on both sides, so the send circle and the expand button share an axis. */
-  --composer-corner-inset: var(--space-2);
+  --composer-input-min-height: max(36px, calc(var(--conversation-reading-line-height) + 3 * var(--space-1)));
+  --composer-text-padding-block: calc((var(--composer-input-min-height) - var(--conversation-reading-line-height)) / 2);
   position: relative;
+  display: flex;
   width: 100%;
-  min-height: var(--composer-collapsed-min-height);
-  border-radius: 0;
-  background: var(--composer-surface-bg);
-  overflow: visible;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .composer-stack .composer-frame-shell {
@@ -774,12 +729,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 .composer-stack .composer-above-input,
 .composer-stack .composer-pending-drawer {
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
-}
-
-.hero-composer-wrap .composer {
-  --composer-text-start: var(--card-padding);
-  --composer-text-padding-top: var(--card-padding);
-  min-height: var(--composer-collapsed-min-height);
 }
 
 /* Pending attachments above the composer input. */
@@ -895,13 +844,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 
 .composer-queue-row + .composer-queue-row {
   border-top: 1px solid var(--hairline-soft);
-}
-
-/* A queue acknowledges receipt locally; it never launches the conversation. */
-.composer-pending-arrival,
-.composer-queue-row {
-  --enter-opacity: 0.75;
-  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
 .composer-queue-row:hover .composer-queue-preview,
@@ -1106,39 +1048,38 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer textarea {
+  /* Keep hints at the same quiet level as aggregated tool-call summaries. */
   --placeholder-ink: var(--ink-quiet);
   display: block;
   width: 100%;
-  height: 60px;
-  min-height: 60px;
+  /* Reserve one readable line; useComposerHeight grows longer drafts. */
+  height: var(--composer-input-min-height);
+  min-height: var(--composer-input-min-height);
   max-height: calc(var(--composer-expanded-min-height) - var(--composer-chrome-height, 40px));
   overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
-  padding: var(--composer-text-padding-top) calc(32px + var(--space-3)) var(--space-2) var(--composer-text-start);
+  min-width: 0;
+  padding: var(--composer-text-padding-block) var(--space-2);
   color: var(--ink);
   font-size: var(--font-body);
+  text-align: start;
   /* Drafts read at the message rhythm: typed text keeps its leading once
    * it is sent. */
   line-height: var(--conversation-reading-line-height);
 }
 
-/* The hero keeps a roomier top inset than the dock composer; its expand
-   control follows the first line through --composer-text-padding-top. */
-.hero-composer-wrap .composer textarea {
-  height: 78px;
-  min-height: 78px;
-  padding-right: 52px;
+/* Keep an empty editor's hint on one line in narrow panes. */
+.composer textarea::placeholder {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .document-composer-wrap {
   container: document-composer / inline-size;
-}
-
-.document-composer-wrap .composer-stack {
-  --composer-collapsed-min-height: 80px;
 }
 
 .document-composer-wrap .composer-frame-shell {
@@ -1169,131 +1110,23 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   box-shadow: var(--shadow-tray);
 }
 
-/* One line of text plus the dock's top inset, so the first row keeps the
-   dock's axis and a single line never scrolls at large text sizes. */
-.document-composer-wrap .composer-stack .composer textarea {
-  --composer-document-input-height: max(
-    44px,
-    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) + 4px)
-  );
-  height: var(--composer-document-input-height);
-  min-height: var(--composer-document-input-height);
-  padding-bottom: 4px;
-}
-
-.document-composer-wrap .composer-bar {
-  height: 36px;
-  padding-bottom: 2px;
-}
-
-/* Short document drafts share one row with the existing controls. Focus only
-   reveals the document title; attachments, wrapping, or explicit expansion
-   restore the full editor without replacing its DOM or input state. */
-/* Keep a full-width input row when runtime controls would crowd the draft. */
-@container document-composer (min-width: 560px) {
-  .document-composer-wrap .composer-stack:not(.is-expanded):not([data-multiline]):not([data-has-attachments]) {
-    --composer-collapsed-min-height: 44px;
-
-    .composer:not([hidden]) {
-      /* The toolbar has no box in this layout, so its responsive controls use
-         the full editor's real inline size instead. */
-      container: composer-toolbar / inline-size;
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto auto;
-      align-items: center;
-      gap: 4px;
-      padding: 6px;
-    }
-
-    /* One row reads as a capsule while reading beside it: the plus and send
-       circles at its ends sit concentric with the round caps. Wrapping,
-       attachments or explicit expansion return to the panel radius. */
-    .composer-frame {
-      border-radius: var(--radius-pill);
-    }
-
-    .composer textarea {
-      grid-column: 2;
-      grid-row: 1;
-      min-width: 0;
-      --composer-document-input-height: max(32px, var(--conversation-reading-line-height));
-      padding: max(0px, calc((32px - var(--conversation-reading-line-height)) / 2)) 0;
-    }
-
-    .composer-bar {
-      container: normal;
-      display: contents;
-    }
-
-    .composer-bar-left {
-      grid-column: 1;
-      grid-row: 1;
-      gap: 2px;
-    }
-
-    .composer-bar-right {
-      grid-column: 4;
-      grid-row: 1;
-      gap: 4px;
-    }
-
-    .composer-expand-button {
-      position: relative;
-      inset: auto;
-      grid-column: 3;
-      grid-row: 1;
-      opacity: 1;
-    }
-
-    .permission-chip {
-      width: 32px;
-      padding-inline: 8px;
-    }
-
-    .permission-chip > span,
-    .permission-chip > svg:last-child {
-      display: none;
-    }
-
-    .codex-runtime-label {
-      max-width: 8em;
-    }
-
-    /* On one row the draft sits beside the usage readout; the readout is
-       status, not a control, so it recedes to secondary ink. */
-    .composer-context-meter {
-      color: var(--ink-soft);
-    }
-
-    @container document-composer (max-width: 680px) {
-      .codex-runtime-effort { display: none; }
-      .codex-runtime-label { max-width: 6em; }
-    }
-  }
-}
-
 .composer textarea:disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
 }
 
-/* Align the first toolbar icon with the textarea text x-origin. The controls
-   keep 8px of internal icon padding, so the hover chrome begins 8px earlier. */
+/* Extension actions can occupy a separate row above the editor. */
 .composer-bar {
   display: flex;
   min-width: 0;
-  height: 40px;
   align-items: center;
   gap: var(--space-2);
-  overflow: hidden;
-  /* The leading glyph aligns with the text; the trailing send circle, drawn
-   * 2px inside its button, aligns with the corner instead. */
-  padding: 0 calc(var(--composer-corner-inset) - 2px) var(--space-1)
-    calc(var(--composer-text-start) - var(--composer-control-icon-inset));
+  padding: var(--space-1) var(--space-2);
   container: composer-toolbar / inline-size;
 }
 
 .composer-bar-left,
+.composer-input-actions,
 .composer-bar-right {
   display: flex;
   min-width: 0;
@@ -1305,8 +1138,63 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   overflow-clip-margin: 4px;
 }
 
-.composer-bar-left {
-  flex: 1 1 auto;
+.composer-bar-left,
+.composer-input-actions {
+  margin-block: calc((var(--composer-input-min-height) - var(--composer-control-size)) / 2);
+}
+
+.composer-input-actions {
+  max-width: 50cqi;
+}
+
+.workspace-composer-controls,
+.composer-workspace-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.composer-workspace-rail .composer-git-controls {
+  max-width: none;
+}
+
+.composer-workspace-rail .composer-git-controls::before {
+  content: none;
+}
+
+.workspace-composer-controls .codex-runtime-trigger.is-compact,
+.composer-footer-runtime .codex-runtime-trigger.is-compact {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.workspace-composer-controls .codex-runtime-trigger .engine-icon,
+.composer-footer-runtime .codex-runtime-trigger .engine-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.workspace-composer-controls:empty {
+  display: none;
+}
+
+.workspace-composer-controls .permission-rail-button.tone-danger,
+.composer-footer-runtime .permission-rail-button.tone-danger {
+  color: var(--danger);
+}
+
+.composer-bar:has(> .composer-bar-right:empty) {
+  display: none;
+}
+
+/* Plugin controls can wrap within the toolbar without narrowing the editor. */
+.composer-bar-right:has(.composer-plugin-toolbar) {
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .composer-plugin-toolbar {
@@ -1335,9 +1223,9 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-plugin-tools-item {
   display: grid;
   min-height: 38px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
   border-radius: var(--radius-xs);
   padding: 4px 7px 4px 10px;
 }
@@ -1346,26 +1234,29 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   background: var(--surface-2);
 }
 
+.composer-plugin-tools-item > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .composer-plugin-tools-label {
-  overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .composer-bar-right {
-  flex: 0 1 auto;
+  width: 100%;
+  align-items: flex-end;
   justify-content: flex-end;
-  margin-left: auto;
 }
 
 .composer-tool-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-sm);
@@ -1373,6 +1264,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   color: var(--ink-muted);
 }
 
+.composer-editor svg,
 .composer-bar svg {
   width: var(--icon-size);
   height: var(--icon-size);
@@ -1496,10 +1388,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   flex: 1 1 8px;
 }
 
+/* Send and stop share the utility-button footprint so the primary action
+ * stays clear without overpowering the composer or shifting between states. */
 .composer-action-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
@@ -1508,14 +1402,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
     color var(--motion-base) var(--ease-out),
     opacity var(--motion-base) var(--ease-out),
     box-shadow var(--motion-base) var(--ease-out);
-}
-
-/* Send and stop share the utility-button footprint so the primary action
- * stays clear without overpowering the composer or shifting between states. */
-.composer-send-button,
-.composer-stop-button {
-  width: 32px;
-  height: 32px;
 }
 
 .composer-send-button {
@@ -1635,7 +1521,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-send-button,
 .composer-stop-button {
   position: relative;
-  height: 32px;
+  height: var(--composer-control-size);
   background: transparent;
   isolation: isolate;
 }
@@ -1656,15 +1542,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   transition: background-color var(--motion-base) var(--ease-out);
 }
 
-.composer-plus-button::before {
-  inset: 4px;
-  border-radius: var(--radius-pill);
-}
-
+.composer-plus-button::before,
 .composer-send-button::before,
 .composer-stop-button::before {
-  /* Reduce visual weight without shrinking the button's hit target. */
-  inset: 2px;
+  /* Match the compact discs while preserving the full hit targets. */
+  inset: 4px;
+  border-radius: var(--radius-pill);
 }
 
 /* The keyboard ring follows the surface drawn on ::before, not the taller hit
@@ -1796,6 +1679,7 @@ html[data-focus-modality="keyboard"] :is(
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
   transform-origin: bottom left;
@@ -1816,6 +1700,7 @@ html[data-focus-modality="keyboard"] :is(
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
   transform-origin: bottom left;
@@ -1944,7 +1829,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   color: var(--ink-soft);
-  stroke-width: 1.75;
+  stroke-width: var(--icon-stroke);
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
@@ -2046,6 +1931,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   white-space: nowrap;
 }
 
+.branch-worktree-action {
+  display: block;
+  color: var(--ink-soft);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-regular);
+}
+
 .composer-project-menu button svg {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
@@ -2117,6 +2009,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2386,22 +2279,81 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   max-width: 100%;
 }
 
+/* Keep toolbar menus accessible in narrow panes. */
 @container composer-shell (max-width: 480px) {
-  /* Reserve a readable branch prefix as well as the fixed Git controls.
-     Both names may truncate when large text cannot fit on one row. Document
-     composers have their own stacked layout at this breakpoint. */
+  :is(.composer-bar, .composer-input-actions) .permission-menu-anchor,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-anchor {
+    width: var(--composer-control-size);
+    min-width: var(--composer-control-size);
+    max-width: var(--composer-control-size);
+    flex: 0 0 var(--composer-control-size);
+  }
+
+  :is(.composer-bar, .composer-input-actions) .permission-chip,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-trigger {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .composer-input-actions .composer-context-meter-label,
+  :is(.composer-bar, .composer-input-actions) .permission-chip > span,
+  :is(.composer-bar, .composer-input-actions) .permission-chip > svg:last-child,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-label,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-effort,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-trigger > svg:last-child {
+    display: none;
+  }
+
+  .composer-bar-left,
+  .composer-bar-right {
+    gap: var(--space-1);
+  }
+}
+
+/* A document can remain beside an open sidebar at very narrow widths. Keep
+ * the draft readable instead of shrinking it between four native hit targets. */
+@container document-composer (max-width: 320px) {
+  .composer-editor {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .composer-editor > textarea {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .composer-editor > .composer-bar-left {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .composer-editor > .composer-input-actions {
+    grid-column: 2;
+    grid-row: 2;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    max-width: none;
+  }
+}
+
+@container composer-shell (max-width: 480px) {
+  /* Size the controls to their content so short branches stay beside the
+     project name. The Git column keeps a readable branch prefix when
+     both names truncate. Document composers use their own stacked layout. */
+  .composer-stack:not([data-document-composer]) .composer-workspace-bar {
+    display: grid;
+    flex-basis: auto;
+    grid-template-columns: minmax(0, max-content) minmax(min-content, 1fr);
+  }
+
   .composer-stack:not([data-document-composer]) .composer-git-controls {
-    flex: 1 0 auto;
     max-width: 100%;
   }
 
-  .composer-stack:not([data-document-composer]) .composer-branch-control {
-    flex-grow: 1;
-  }
-
-  .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill-text {
-    width: 4ch;
-    min-width: 4ch;
+  .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill {
+    display: grid;
+    grid-template-columns: auto minmax(4ch, 1fr);
   }
 }
 

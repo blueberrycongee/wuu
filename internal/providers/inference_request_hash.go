@@ -13,6 +13,7 @@ import (
 func InferenceRequestHash(req ChatRequest) (string, error) {
 	payload := struct {
 		Adapter                     string `json:",omitempty"`
+		ResumeSampling              bool   `json:",omitempty"`
 		Model                       string
 		Messages                    []ChatMessage
 		Tools                       []ToolDefinition
@@ -25,6 +26,7 @@ func InferenceRequestHash(req ChatRequest) (string, error) {
 		ForceToolName               string
 	}{
 		Adapter:                     req.Adapter,
+		ResumeSampling:              req.ResumeSampling,
 		Model:                       req.Model,
 		Messages:                    req.Messages,
 		Tools:                       req.Tools,

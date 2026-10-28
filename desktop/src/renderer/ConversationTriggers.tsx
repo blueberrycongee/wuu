@@ -1,3 +1,5 @@
+import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { useEffect, useId, useRef, useState } from "react";
 import type { ManagedProcessSummary } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -63,8 +65,8 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
     const dismiss = (event: PointerEvent): void => {
       if (event.target instanceof Node && !anchor.current?.contains(event.target) && !panel.current?.contains(event.target)) setOpen(false);
     };
-    document.addEventListener("pointerdown", dismiss);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", dismiss); };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", dismiss, true); };
   }, [open]);
 
   const waiting = (processes ?? []).filter((process) => process.trigger?.status === "waiting" || process.trigger?.status === "received");
@@ -92,12 +94,12 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
   };
 
   return <>
-    <button ref={anchor} type="button" className="message-action-button conversation-trigger-button"
+    <Tooltip asChild content={label}><button ref={anchor} type="button" className="message-action-button conversation-trigger-button"
       aria-label={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelID : undefined}
-      title={label} onClick={() => setOpen((value) => !value)}
+      onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); } }}>
       {loadError ? <AlertCircle size={15} aria-hidden="true" /> : <Bell size={15} aria-hidden="true" />}
-    </button>
+    </button></Tooltip>
     {open ? <FloatingMenuPortal anchorRef={anchor} owner="conversation-triggers" placement="above" align="left" width={360} flip
       mobileSheet={{ label: t("triggers.title"), onClose: close }}>
       <div ref={panel} id={panelID} role="dialog" tabIndex={-1} aria-label={t("triggers.title")}
@@ -154,17 +156,17 @@ function ProcessTriggerRow({ threadID, process, busy, cancelling, onCancel }: {
 
   return <section className="conversation-trigger-row">
     <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-      <summary title={t("triggers.source")}>
+      <summary>
         <ChevronRight className="conversation-trigger-chevron" size={14} aria-hidden="true" />
-        <span className="conversation-trigger-command" title={process.command}>{process.command}</span>
+        <TruncatedText as="span" className="conversation-trigger-command" text={process.command} />
         <span className="conversation-trigger-meta">
           {metadata.map((text) => <span key={text}>{text}</span>)}
         </span>
       </summary>
       <pre>{failed ? t("triggers.outputFailed") : output === undefined ? t("common.loadingEllipsis") : output || t("triggers.noOutput")}</pre>
     </details>
-    {pending ? <button type="button" className="settings-button settings-button-ghost conversation-trigger-cancel"
+    {pending ? <Tooltip asChild content={t("triggers.cancelHint")}><button type="button" className="settings-button settings-button-ghost conversation-trigger-cancel"
       disabled={busy} aria-busy={cancelling} aria-label={cancelling ? t("triggers.cancelling") : t("triggers.cancel")}
-      onClick={onCancel} title={t("triggers.cancelHint")}>{t("common.cancel")}</button> : null}
+      onClick={onCancel}>{t("common.cancel")}</button></Tooltip> : null}
   </section>;
 }

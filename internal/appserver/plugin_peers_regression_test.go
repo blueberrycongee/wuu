@@ -7,44 +7,43 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
-	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// stuckPeersLifecycleClient simulates a peers helper whose single ordered
-// worker is blocked: lifecycle observations enter InvokeCapability and stay
-// there until released. Any synchronous re-entry from the turn drain into
-// this helper deadlocks, so the drain must never make that call inline.
-type stuckPeersLifecycleClient struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+// blockedPeersRegressionClient holds a capability until released or revoked,
+// making publication overlap an accepted callback without scheduling sleeps.
+type blockedPeersRegressionClient struct {
+	id         string
+	capability pluginhost.CapabilityDescriptor
+	entered    chan struct{}
+	release    chan struct{}
+	once       sync.Once
 }
 
-func (c *stuckPeersLifecycleClient) ID() string { return "peers" }
-func (c *stuckPeersLifecycleClient) Status() pluginhost.Status {
+func (c *blockedPeersRegressionClient) ID() string { return c.id }
+func (c *blockedPeersRegressionClient) Status() pluginhost.Status {
 	return pluginhost.Status{ID: c.ID(), State: pluginhost.StateActive}
 }
-func (c *stuckPeersLifecycleClient) Close(context.Context) error { return nil }
-func (c *stuckPeersLifecycleClient) ProtocolVersion() int {
+func (c *blockedPeersRegressionClient) Close(context.Context) error { return nil }
+func (c *blockedPeersRegressionClient) ProtocolVersion() int {
 	return pluginhost.CapabilityProtocolVersion
 }
-func (c *stuckPeersLifecycleClient) Capabilities() []pluginhost.CapabilityDescriptor {
-	return []pluginhost.CapabilityDescriptor{{ID: pluginhost.CapabilityAgentTurnLifecycle, Kind: pluginhost.SeamObserve, Version: 1}}
+func (c *blockedPeersRegressionClient) Capabilities() []pluginhost.CapabilityDescriptor {
+	return []pluginhost.CapabilityDescriptor{c.capability}
 }
-func (c *stuckPeersLifecycleClient) InvokeCapability(ctx context.Context, _ pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+func (c *blockedPeersRegressionClient) InvokeCapability(ctx context.Context, _ pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
 	c.once.Do(func() { close(c.entered) })
 	select {
 	case <-c.release:
-		return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 	case <-ctx.Done():
-		return pluginhost.CapabilityInvokeResult{}, ctx.Err()
 	}
+	if err := ctx.Err(); err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 }
 
 // TestDisablingPeersCannotBlockOrdinaryMessageSends is the end-to-end
@@ -56,19 +55,50 @@ func (c *stuckPeersLifecycleClient) InvokeCapability(ctx context.Context, _ plug
 func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{providersResponse("peer-done"), providersResponse("user-done")}}
 	rt := newTestRuntime(t, client)
-	kit, err := tools.New(rt.RootDir)
+	rt = newReloadBehaviorRuntime(t, rt, client)
+	cfg, _, err := rt.LoadEffectiveConfig()
 	if err != nil {
-		t.Fatalf("tools.New: %v", err)
+		t.Fatal(err)
 	}
-	rt.Toolkit = kit
-	peers := &stuckPeersLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
-	rt.PluginHost = pluginhost.New(peers)
-	rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: peers.ID()}, SubjectID: "plugin:peers", Official: true}}
-	rt.ActivePlugins = rt.Plugins
+	peers := &blockedPeersRegressionClient{
+		id: "peers", capability: pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityAgentTurnLifecycle, Kind: pluginhost.SeamObserve, Version: 1},
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	preStep := &blockedPeersRegressionClient{
+		id: "goal", capability: pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityAgentPreStep, Kind: pluginhost.SeamTransform, Version: 1},
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	// Keep a foreground callback in flight across publication. A truncated
+	// catalog would incorrectly revoke this unrelated provider along with peers.
+	if outcome, found := rt.PluginHost.RetirePlugin(context.Background(), preStep.ID(), nil); outcome.Err != nil || !found {
+		t.Fatalf("replace foreground pre-step provider: found=%t err=%v", found, outcome.Err)
+	}
+	rt.PluginHost.Add(preStep)
+	releasePreStep := sync.OnceFunc(func() { close(preStep.release) })
+	t.Cleanup(releasePreStep)
+	// Replace the bundled observer so the queued turn reaches this blocked fixture.
+	if outcome, _ := rt.PluginHost.RetirePlugin(context.Background(), peers.ID(), nil); outcome.Err != nil {
+		t.Fatal(outcome.Err)
+	}
+	rt.PluginHost.Add(peers)
+	// Preserve the complete discovered catalog and its real policy identity.
+	// Publication must disable only peers, not remove unrelated providers.
+	peersSubject := ""
+	for _, item := range rt.Plugins {
+		if item.ID == peers.ID() {
+			peersSubject = item.SubjectID
+			break
+		}
+	}
+	if peersSubject == "" {
+		t.Fatal("peers package is missing from the discovered catalog")
+	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	binding := testRuntimeState(t, rt)
 	t.Cleanup(func() {
 		close(peers.release)
+		releasePreStep()
 		srv.Close()
 	})
 
@@ -91,7 +121,7 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 
 	drained := make(chan struct{})
 	go func() {
-		srv.drainQueuedTurns(threadID)
+		srv.drainQueuedTurns(binding, threadID)
 		close(drained)
 	}()
 
@@ -108,11 +138,21 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 		t.Fatal("turn drain synchronously re-entered the blocked peers helper")
 	}
 
+	select {
+	case <-preStep.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground pre-step callback was never invoked")
+	}
+
 	// Disable peers through the real publication boundary while its turn is
 	// active. Retained callback leases must not delay explicit revocation.
-	settings := &extensions.Settings{}
-	settings.SetEnabled("plugin:peers", false)
-	candidate, err := rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	settings := cfg.Extensions
+	if settings == nil {
+		settings = &extensions.Settings{}
+	}
+	settings.SetEnabled(peersSubject, false)
+	cfg.Extensions = settings
+	candidate, err := rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,10 +160,18 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, found := binding.Host.Capability(preStep.ID(), pluginhost.CapabilityAgentPreStep); !found {
+		t.Fatal("disabling peers retired an unrelated foreground pre-step provider")
+	}
+	if _, found := binding.Host.Capability(peers.ID(), pluginhost.CapabilityAgentTurnLifecycle); found {
+		t.Fatal("disabled peers retained its lifecycle callback")
+	}
+	releasePreStep()
+
 	// The peers-owned turn itself still completes; its terminal lifecycle
 	// event is undeliverable and must be dropped instead of replayed forever.
 	waitForTurnCompletionContent(t, out, threadID, "peer-done")
-	waitForEmptyLifecycleOutbox(t, rt.SessionDir)
+	waitForEmptyLifecycleOutbox(t, binding.Sessions)
 
 	// Ordinary send on the existing session must complete.
 	raw, err := json.Marshal(map[string]any{
@@ -158,13 +206,13 @@ func waitForTurnCompletionContent(t *testing.T, out *lockedBuffer, threadID, con
 	t.Fatalf("timed out waiting for turn completion %q on thread %q; output:\n%s", content, threadID, out.String())
 }
 
-func waitForEmptyLifecycleOutbox(t *testing.T, sessionDir string) {
+func waitForEmptyLifecycleOutbox(t *testing.T, store *session.Store) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	var entries []session.PluginTurnLifecycleOutboxEntry
 	for time.Now().Before(deadline) {
 		var err error
-		entries, err = session.ListPluginTurnLifecycleOutbox(sessionDir)
+		entries, err = store.ListPluginTurnLifecycleOutbox()
 		if err != nil {
 			t.Fatalf("list plugin turn lifecycle outbox: %v", err)
 		}

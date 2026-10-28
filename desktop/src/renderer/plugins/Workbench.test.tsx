@@ -1,3 +1,4 @@
+import { ApplicationWorkbenchProvider } from "./ApplicationWorkbenchContext";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -17,6 +18,7 @@ import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 describe("WorkbenchController", () => {
   beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
     window.localStorage.clear();
     document.documentElement.dataset.theme = "dark";
   });
@@ -27,7 +29,20 @@ describe("WorkbenchController", () => {
     document.documentElement.removeAttribute("data-theme");
   });
 
-  it.each(["view", "renderer", "inspector", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
+  it("does not republish identical availability during application reconciliation", () => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const listener = vi.fn(() => controller.setAvailablePluginIds(new Set(["owner"])));
+    const off = controller.subscribe(listener);
+    try {
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally { off(); controller.dispose(); }
+  });
+
+  it.each(["view", "renderer", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
     const host = new PluginHost({ react: React });
     const command = vi.fn();
     const dispatch = vi.fn();
@@ -43,7 +58,6 @@ describe("WorkbenchController", () => {
       const view = controller.getSnapshot().views.find((item) => item.id === id)!;
       const api = kind === "view" ? controller.createViewHostAPI(view)
         : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
-        : kind === "inspector" ? controller.createInspectorHostAPI("owner", "same")
         : controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
       await api.executeCommand("run", "before");
       expect(command).toHaveBeenCalledWith("before");
@@ -52,7 +66,7 @@ describe("WorkbenchController", () => {
       await expect(api.executeCommand("run", "stale")).rejects.toThrow("no longer active");
       await expect(api.openView("panel")).rejects.toThrow("no longer active");
       if (kind === "presenter") await expect((api as PresentationHost).invoke("act", "stale")).rejects.toThrow("no longer active");
-      if (kind !== "inspector") await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
+      await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
       expect(command).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
       expect(getStorage).not.toHaveBeenCalled();
@@ -79,6 +93,41 @@ describe("WorkbenchController", () => {
     expect(listener).not.toHaveBeenCalled();
     unsubscribe();
     controller.dispose();
+  });
+
+  it.each(["view", "renderer", "presenter"] as const)("retires captured %s actions with their business controller, not just their plugin", async kind => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: () => null });
+    } });
+    let resolveRead!: (value: string) => void;
+    const getStorage = vi.fn(() => new Promise<string>(resolve => { resolveRead = resolve; }));
+    const setStorage = vi.fn(async () => {}), dispatch = vi.fn(async () => {});
+    const controller = new WorkbenchController(host, { getStorage, setStorage });
+    const id = await controller.openView("panel");
+    const view = controller.getSnapshot().views.find(item => item.id === id)!;
+    const api = kind === "view" ? controller.createViewHostAPI(view)
+      : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
+      : controller.createPresentationHostAPI("owner", "same", ["save"], dispatch);
+    const pending = api.getStorage("draft");
+    void pending.catch(() => {});
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    const delayed = gate.then(() => api.setStorage("draft", "late"));
+    void delayed.catch(() => {});
+    try {
+      controller.dispose();
+      const saved = window.localStorage.getItem("wuu.plugin-workbench.layout.v1");
+      resolveRead("retired result"); resume();
+      await expect(pending).rejects.toThrow("no longer active");
+      await expect(delayed).rejects.toThrow("no longer active");
+      await expect(controller.closeView(id)).rejects.toThrow("no longer active");
+      expect(() => controller.activateView(id)).toThrow("no longer active");
+      expect(() => controller.updateServices({ setStorage })).toThrow("no longer active");
+      if (kind === "presenter") await expect((api as PresentationHost).invoke("save")).rejects.toThrow("no longer active");
+      expect(window.localStorage.getItem("wuu.plugin-workbench.layout.v1")).toBe(saved);
+      expect(setStorage).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+    } finally { resolveRead("released"); resume(); controller.dispose(); }
   });
 
   it("maps views to every semantic region and persists only durable state", async () => {
@@ -123,6 +172,38 @@ describe("WorkbenchController", () => {
     );
     controller.dispose();
     restored.dispose();
+  });
+
+  it.each(["session", "durable"] as const)("preserves an instance's %s override across host changes and restart", async (persistence) => {
+    const host = new PluginHost({ react: React });
+    const register = (api: PluginGenerationApi): void => {
+      api.registerViewType({
+        id: "panel",
+        title: "Panel",
+        persistence: persistence === "durable" ? "session" : "durable",
+        render: () => null,
+      });
+    };
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register });
+    const controller = new WorkbenchController(host);
+    let restored: WorkbenchController | undefined;
+    try {
+      const id = await controller.openPluginView("owner", "panel", { persistence });
+      await host.activateGeneration({ pluginId: "unrelated", generation: "one", register(api) {
+        api.registerViewType({ id: "other", title: "Other", render: () => null });
+      } });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)?.persistence).toBe(persistence);
+      await host.activateGeneration({ pluginId: "owner", generation: "two", register });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)).toMatchObject({
+        generation: "two", persistence,
+      });
+      controller.dispose();
+      restored = new WorkbenchController(host);
+      expect(restored.getSnapshot().views.map((view) => view.id)).toEqual(persistence === "durable" ? [id] : []);
+    } finally {
+      controller.dispose();
+      restored?.dispose();
+    }
   });
 
   it("asks the shell to reveal the placement region when opening a view", async () => {
@@ -418,6 +499,49 @@ describe("DesktopWorkbench product path", () => {
     document.querySelectorAll(".plugin-workbench-status").forEach((item) => item.remove());
   });
 
+  it("rebinds supplied business controllers without redirecting old callbacks or remounting view DOM", async () => {
+    const host = new PluginHost({ react: React });
+    let current!: ViewHostAPI;
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: ({ host: actions }) => {
+        current = actions;
+        return <textarea defaultValue="unsent" />;
+      } });
+      api.registerViewPlacement({ id: "panel", view: "panel", region: "navigation" });
+    } });
+    const oldServices = { setStorage: vi.fn(async () => {}) };
+    const nextServices = { setStorage: vi.fn(async () => {}) };
+    const previous = new WorkbenchController(host, oldServices);
+    let next: WorkbenchController | undefined;
+    const updateOld = vi.spyOn(previous, "updateServices");
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    try {
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={previous} services={oldServices} />));
+      const textarea = container.querySelector("textarea")!;
+      textarea.focus(); textarea.setSelectionRange(2, 4);
+      const captured = current;
+      const delayed = gate.then(() => captured.setStorage("draft", "late"));
+      void delayed.catch(() => {});
+      const checkpoint = previous.getSnapshot();
+      previous.dispose(); updateOld.mockClear();
+      next = new WorkbenchController(host, nextServices, window.localStorage, checkpoint);
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={next} services={nextServices} />));
+      expect(updateOld).not.toHaveBeenCalled();
+      expect(previous.services).toBe(oldServices);
+      expect(current).not.toBe(captured);
+      expect(container.querySelector("textarea")).toBe(textarea);
+      expect(textarea.value).toBe("unsent"); expect(textarea.selectionStart).toBe(2); expect(textarea.selectionEnd).toBe(4);
+      expect(document.activeElement).toBe(textarea);
+      resume(); await expect(delayed).rejects.toThrow("no longer active");
+      await current.setStorage("draft", "current");
+      expect(oldServices.setStorage).not.toHaveBeenCalled();
+      expect(nextServices.setStorage).toHaveBeenCalledExactlyOnceWith("owner", "same", "draft", "current", "workspace");
+      await act(async () => next!.closeView(checkpoint.views[0].id));
+      expect(container.querySelector("textarea")).toBeNull();
+    } finally { resume(); updateOld.mockRestore(); act(() => root.render(null)); previous.dispose(); next?.dispose(); }
+  });
+
   it.each(["settings", "auxiliary"] as const)("mounts embedded %s view actions without an empty toolbar", async (region) => {
     const host = new PluginHost({ react: React });
     const controller = new WorkbenchController(host);
@@ -506,6 +630,22 @@ describe("DesktopWorkbench product path", () => {
     await act(async () => host.unload("user:product"));
     expect(container.querySelector(".conversation-pane")?.textContent).not.toContain("Plugin product view");
     expect(document.body.textContent).not.toContain("Plugin ready");
+  });
+
+  it("drains mounted view effects before generation cleanup on unload", async () => {
+    const host = new PluginHost({ react: React });
+    const events: string[] = [];
+    function View() { React.useEffect(() => () => { events.push("view"); }, []); return <span>Owned view</span>; }
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register(api) {
+      api.registerCleanup(() => events.push("generation"));
+      api.registerViewType({ id: "page", title: "Page", render: View });
+      api.registerViewPlacement({ id: "page", view: "page", region: "primary" });
+    } });
+    await act(async () => root.render(<DesktopWorkbench host={host} />));
+    expect(container.textContent).toContain("Owned view");
+    await act(async () => { host.unload("owner"); });
+    expect(events).toEqual(["view", "generation"]);
+    expect(container.textContent).not.toContain("Owned view");
   });
 
   it("passes the active locale and registered plugin translations to Views", async () => {
@@ -625,7 +765,7 @@ describe("DesktopWorkbench product path", () => {
     expect(nativeRoot?.textContent).toBe("Wuu idlecheckWuu ready");
     const readyButton = [...(nativeRoot?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
       .find((button) => button.textContent === "checkWuu ready");
-    expect(readyButton?.title).toBe("Ready");
+    expect(readyButton?.getAttribute("aria-description")).toBe("Ready");
     act(() => readyButton?.click());
     expect(execute).toHaveBeenCalledOnce();
 
@@ -714,7 +854,7 @@ describe("DesktopWorkbench product path", () => {
   });
 
   it("uses registered message renderers and releases them with their generation", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "user:renderer",
       generation: "one",
       register(api) {
@@ -727,12 +867,14 @@ describe("DesktopWorkbench product path", () => {
       },
     });
 
-    await act(async () => root.render(<RichContent text="hello" />));
+    const controller = new WorkbenchController(desktopPluginHost);
+    await act(async () => root.render(<ApplicationWorkbenchProvider value={controller}><RichContent text="hello" /></ApplicationWorkbenchProvider>));
     expect(container.textContent).toContain("Plugin markdown: hello");
 
     await act(async () => desktopPluginHost.unload("user:renderer"));
     expect(container.textContent).not.toContain("Plugin markdown");
     expect(container.textContent).toContain("hello");
+    controller.dispose();
   });
 });
 

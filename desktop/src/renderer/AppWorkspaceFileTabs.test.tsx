@@ -41,7 +41,7 @@ vi.mock("./JumpToLatestPill", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import * as artifactComposer from "./ArtifactComposerFile";
@@ -56,7 +56,9 @@ vi.mock("./FileSelectionSurface", () => ({
     return <div>{children({})}</div>;
   },
 }));
+import { fileSelectionRevision } from "./FileSelectionMapping";
 import { rightPanelMotionMs } from "./AppLayoutState";
+import { motionDurationMs } from "./motion";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -147,11 +149,11 @@ function installWindowStubs(): void {
       matches: false,
       media: query,
       onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => {},
     })),
   });
 }
@@ -182,7 +184,7 @@ function installWuuApi(): void {
     resumeThread: vi.fn().mockResolvedValue({ thread }),
     startThread: vi.fn().mockResolvedValue({ thread: { ...thread, id: "thread-selection-new", turns: [] } }),
     startTurn: startTurnMock,
-    queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued-selection" } }),
+    queueTurn: vi.fn().mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } })),
     steerTurn: vi.fn().mockResolvedValue({}),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({
@@ -196,6 +198,8 @@ function installWuuApi(): void {
       entries: [{ kind: "file", name: "README.md", path: "README.md" }],
       truncated: false,
     }),
+    acquireArtifactSource: vi.fn(async ({requestId}:{requestId:string}) => ({url:"wuu-artifact://lease/fixture",leaseId:requestId})),
+    releaseArtifactSource: vi.fn().mockResolvedValue(undefined),
     readWorkspaceFile: vi.fn().mockResolvedValue({
       root: workspace,
       path: "README.md",
@@ -217,6 +221,8 @@ function installWuuApi(): void {
     onBrowserSurface: vi.fn(() => () => {}),
     onBrowserUserInput: vi.fn(() => () => {}),
     onBrowserTabAdopted: vi.fn(() => () => {}),
+    onBrowserDock: vi.fn(() => () => {}),
+    onBrowserInvalidate: vi.fn(() => () => {}),
     writeWorkspaceFile: vi.fn(),
     revealWorkspaceItem: vi.fn().mockResolvedValue(undefined),
     onServerEvent: vi.fn((handler: (event: ServerEvent) => void) => {
@@ -262,9 +268,9 @@ describe("workspace file tabs", () => {
     window.sessionStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     setInnerWidth(originalInnerWidth);
-    act(() => {
+    await act(async () => {
       root?.unmount();
     });
     root = null;
@@ -289,7 +295,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const select = async (title: string) => {
@@ -318,10 +324,20 @@ describe("workspace file tabs", () => {
     await flushAsync();
     await select("Project Beta");
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await select("artifact conversation");
     expect(container.querySelector(".project-panel")).toBeNull();
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    // The removed overview retains only an inaccessible closing ghost while
+    // its neighbours slide over; it must not remain an actionable project tab.
+    const closingProject = container.querySelector('.workspace-tool-tab.closing');
+    expect(closingProject?.textContent).toBe("Project Beta");
+    expect(closingProject?.getAttribute("aria-hidden")).toBe("true");
+    expect(closingProject?.querySelector("button, [tabindex]")).toBeNull();
+    expect(container.querySelector('[data-wuu-tab-kind="project"]')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(motionDurationMs("--motion-fast", 120)); });
     expect(container.querySelector(".workspace-right-panel")?.textContent).not.toContain("Project Beta");
+    expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
   });
 
   it("returns focus after closing the browser without scrolling back to its historical link", async () => {
@@ -331,7 +347,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com/history"]')!;
@@ -342,7 +358,7 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
     expect(container.querySelector(".workspace-browser-panel")).not.toBeNull();
-    const viewport = container.querySelector<HTMLElement>(".conversation-pane > .scroll-region")!;
+    const viewport = container.querySelector<HTMLElement>(".conversation-pane .scroll-region")!;
     await act(async () => {
       container.querySelector<HTMLInputElement>(".workspace-browser-panel input")!.focus();
       viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 900, bubbles: true }));
@@ -370,7 +386,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const composer = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
@@ -399,7 +415,7 @@ describe("workspace file tabs", () => {
   async function openSelectionDocument(): Promise<void> {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")?.click());
@@ -409,7 +425,7 @@ describe("workspace file tabs", () => {
 
   const selectionSource: FileSelectionSource = {
     workspace, path: "README.md", start_line: 1, start_column: 1,
-    end_line: 1, end_column: 11, quote: "# Artifact", revision: "selection-version",
+    end_line: 1, end_column: 11, quote: "# Artifact", revision: fileSelectionRevision("# Artifact\n"),
   };
 
   async function typePrompt(textarea: HTMLTextAreaElement, value: string): Promise<void> {
@@ -507,7 +523,7 @@ describe("workspace file tabs", () => {
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
     await typeMainPrompt("Next question");
     act(() => selectionActions!.addComment(selectionSource, "Next comment"));
-    const next = selectionActions!.comments[0];
+    const next = selectionActions!.comments.at(-1)!;
     if (failure === "thread") {
       await act(async () => threadStart.reject(new Error("offline")));
     } else {
@@ -519,7 +535,7 @@ describe("workspace file tabs", () => {
     await flushAsync();
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
       .toBe("Next question");
-    expect(selectionActions!.comments).toEqual([next]);
+    expect(selectionActions!.comments).toEqual([original, next]);
     if (failure === "thread") {
       const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
       expect(recovery).not.toBeNull();
@@ -650,7 +666,7 @@ describe("workspace file tabs", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
-    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), restart: vi.fn() } });
+    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), result: attachment, restart: vi.fn() } });
     try {
       const input = openComposerAttachmentPicker(container.querySelector("[data-main-conversation-composer]")!);
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
@@ -717,7 +733,7 @@ describe("workspace file tabs", () => {
       { id: "retry-file-2", filename: "资料.txt", media_type: "text/plain", data: "Y29udGV4dA==" },
     ];
     const imageEncode = vi.spyOn(composerMessages, "composerImagePlaceholder")
-      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), restart: vi.fn() } });
+      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), result: image, restart: vi.fn() } });
     const fileRead = deferred<void>();
     const encodings: Promise<composerMessages.ComposerFile>[] = [];
     const prepareFile = composerMessages.composerFilePlaceholder;
@@ -776,7 +792,23 @@ describe("workspace file tabs", () => {
       expect(call[action === "steer" ? 3 : 2]).toEqual([{ media_type: image.media_type, data: image.data }]);
       expect(call[action === "start" ? 3 : action === "queue" ? 4 : 5]).toEqual(files.map(({ filename, media_type, data }) => ({ filename, media_type, data })));
     }
+    if (action !== "start") {
+      // Successful admission transfers input to pending ownership even before
+      // the running turn reaches the boundary that materializes the message.
+      expect(composer.querySelector("textarea")!.value).toBe("");
+      expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(0);
+      await act(async () => {
+        for (const handler of serverEventHandlers) handler({
+          kind: "notification", workdir: workspace,
+          message: { method: "item/completed", params: {
+            thread_id: target.id, turn_id: target.turns.at(-1)!.id,
+            item: { id: "accepted-attachments", source_id: submit.mock.calls[1][action === "queue" ? 3 : 4], type: "user_message", status: "completed", text: prompt.trim() },
+          } },
+        } as ServerEvent);
+      });
+    }
     expect(composer.querySelector("textarea")!.value).toBe("");
+    expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(0);
     if (otherComposer) expect(otherComposer.querySelector("textarea")!.value).toBe("Keep the primary draft");
   });
 
@@ -804,9 +836,9 @@ describe("workspace file tabs", () => {
     expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][7]).toEqual([original, { type: "text", text: "Queued question" }]);
     await typeMainPrompt("New question");
     act(() => selectionActions!.addComment(selectionSource, "New comment"));
-    const next = selectionActions!.comments[0];
+    const next = selectionActions!.comments.at(-1)!;
     await act(async () => queued.reject(new Error("offline")));
-    expect(selectionActions!.comments).toEqual([next]);
+    expect(selectionActions!.comments).toEqual([original, next]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
       .toBe("New question");
   });
@@ -867,13 +899,13 @@ describe("workspace file tabs", () => {
       id: "present-pdf", type: "tool_call", name: "present_artifact", status: "completed",
       result_detail: { content: [{ type: "file", mime_type: "application/pdf", name: "report.pdf",
         uri: "wuu-artifact://workspace/thread-artifact-tabs/digest/report.pdf",
-        artifact: { placement: "turn_end", sha256: "digest" } }] },
+        artifact: { placement: "turn_end", sha256: "a".repeat(64) } }] },
     });
     vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     const snapshotFile = { id: "pdf-context", filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" };
     const attach = vi.spyOn(artifactComposer, "createArtifactComposerFile").mockReturnValue(snapshotFile);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(completedThread().id)); });
     await flushAsync();
     const card = Array.from(container.querySelectorAll<HTMLButtonElement>(".turn-edit-summary-overview"))
       .find(button => button.textContent?.includes("report.pdf"));
@@ -895,7 +927,7 @@ describe("workspace file tabs", () => {
       ...snapshotFile, data: "", encodePromise: Promise.reject(new Error("Preview unavailable")),
     }));
     await submitMainPrompt();
-    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ threadID: thread.id }), thread.id);
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ threadID: thread.id }), thread.id, expect.anything());
     if (failure === "success" || failure === "send") {
       expect(startTurnMock.mock.calls[0][3]).toEqual([{ filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" }]);
       expect(startTurnMock.mock.calls[0][5]).toBeUndefined();
@@ -936,7 +968,7 @@ describe("workspace file tabs", () => {
   it("hands the live draft to the right preview and back without tagging a hidden file", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     await typeMainPrompt("Keep this unfinished request");
@@ -970,7 +1002,7 @@ describe("workspace file tabs", () => {
   it("opens a document beside the active conversation instead of replacing it", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1109,7 +1141,7 @@ describe("workspace file tabs", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1149,7 +1181,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(674);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1176,7 +1208,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(1000);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 

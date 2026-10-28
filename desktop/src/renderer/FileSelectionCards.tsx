@@ -53,7 +53,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
 
   async function openFile(part: FileSelectionPart): Promise<void> {
     if (part.source.pdf?.artifact_uri) {
-      const opened = openPdf?.(part.source) ?? false;
+      const opened = await openPdf?.(part.source) ?? false;
       setLocationNotices(current => ({ ...current, [part.id]: opened ? undefined : "original" }));
       return;
     }

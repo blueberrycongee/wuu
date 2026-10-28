@@ -18,12 +18,9 @@ export function validPdfSelectionReference(value: unknown): value is PdfSelectio
   if (pdf.artifact_uri === undefined && pdf.artifact_sha256 === undefined && pdf.artifact_thread_id === undefined) return true;
   if (typeof pdf.artifact_uri !== "string" || typeof pdf.artifact_sha256 !== "string"
     || !/^[a-f0-9]{64}$/i.test(pdf.artifact_sha256) || typeof pdf.artifact_thread_id !== "string" || !pdf.artifact_thread_id) return false;
-  try {
-    const uri = new URL(pdf.artifact_uri);
-    const segments = uri.pathname.slice(1).split("/").map(decodeURIComponent);
-    return uri.protocol === "wuu-artifact:" && segments.length === 3
-      && segments[0] === pdf.artifact_thread_id && uri.searchParams.get("sha256") === pdf.artifact_sha256;
-  } catch { return false; }
+  // This validates provenance shape only. Reading always requires the selected
+  // provider and an authorized source conversation; URI syntax grants nothing.
+  return pdf.artifact_uri.length > 0 && !/[\x00-\x1f]/.test(pdf.artifact_uri);
 }
 
 export function fileSelectionLocation(source: FileSelectionSource): string {

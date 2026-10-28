@@ -482,6 +482,9 @@ async function run() {
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+  await until(() => [...document.querySelectorAll('.thread-row-main')].some(row => row.textContent.includes('Selection main')),
+    "selection fixture in sidebar");
+  await evaluate(() => [...document.querySelectorAll('.thread-row-main')].find(row => row.textContent.includes('Selection main')).click());
   await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
@@ -603,7 +606,8 @@ else app.whenReady().then(run).catch(async error => {
 function servePreview() {
   const http = require("node:http");
   const root = path.join(desktop, "out/renderer");
-  const preload = fs.readFileSync(path.join(__dirname, "response-selection-e2e-preload.cjs"), "utf8").replace('const { contextBridge, ipcRenderer } = require("electron");', "");
+  const preload = fs.readFileSync(path.join(__dirname, "response-selection-e2e-preload.cjs"), "utf8").replace('const { contextBridge, ipcRenderer } = require("electron");', "")
+    .replace('const withDefaultShell = require("./default-shell-e2e.cjs");', `const withDefaultShell = ${require('./default-shell-e2e.cjs')};`);
   const shim = `const process={env:{WUU_SELECTION_E2E_CWD:${JSON.stringify(path.dirname(desktop))}}};
     window.selectionCalls=[];
     const contextBridge={exposeInMainWorld:(name,api)=>window[name]=api};

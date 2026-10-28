@@ -83,6 +83,7 @@ type Result struct {
 	Validation           *ValidationReplaySummary `json:"validation,omitempty"`
 	Error                string                   `json:"error,omitempty"`
 	Workdir              string                   `json:"workdir,omitempty"`
+	RetainedStateDir     string                   `json:"retained_state_dir,omitempty"`
 	Observability        *Observability           `json:"observability,omitempty"`
 }
 

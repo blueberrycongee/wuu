@@ -3,7 +3,6 @@ import type {
   AppServerNotification,
   ConfigChangedNotification,
   DesktopProject,
-  ExtensionInventoryRecord,
   GitStatusResult,
   InitializeResult,
   TodoUpdate,
@@ -13,6 +12,7 @@ import type {
   ServerEvent,
   Thread,
   ThreadItem,
+  ThreadSearchResultItem,
   Turn,
 } from "../shared/protocol";
 import {
@@ -22,9 +22,12 @@ import {
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { userMessageBodyText } from "./ThreadItemText";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
+import type { FirstRunOnboardingState } from "./FirstRunOnboarding";
+import type { CodexRuntimeMenu, PermissionMode } from "./ComposerTypes";
 import { sortChildAgents } from "./ThreadAgents";
 import {
   hasAuthoritativeTurnItems,
@@ -132,6 +135,22 @@ type SessionTab =
 type AppState = {
   configError?: string;
   initialized?: InitializeResult;
+  runtimeConnectionGeneration?: number;
+  // Page selection outlives shell activations, including catalog refreshes.
+  nativeSection?: "conversations" | "catalog";
+  catalogSection?: "plugins" | "skills";
+  catalogPluginID?: string;
+  // Composer choices survive graph-only shell replacement within this session.
+  codexRuntimeMenu?: CodexRuntimeMenu;
+  draftWorktree?: { cwd: string; startBranch: string };
+  draftPermissionMode?: PermissionMode | "";
+  onboarding?: FirstRunOnboardingState;
+  onboardingComplete?: boolean;
+  // Pending search addresses survive shell replacement during workspace activation.
+  conversationSearchTarget?: {
+    id: string; result: ThreadSearchResultItem; query: string; ready: boolean;
+    isReadingIntentCurrent?: () => boolean;
+  };
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;
@@ -189,8 +208,8 @@ export type ThreadSummary = Omit<
 
 type ThreadRunningCandidate = {
   status: Thread["status"];
-  turns?: TurnAnswerReadyCandidate[];
-  child_agents?: Array<Pick<Agent, "status" | "nested_running_count">>;
+  turns?: readonly TurnAnswerReadyCandidate[];
+  child_agents?: ReadonlyArray<Pick<Agent, "status" | "nested_running_count">>;
 };
 
 type TurnAnswerReadyCandidate = Pick<Turn, "status"> &
@@ -697,6 +716,7 @@ function reduceNotification(
         initialized: {
           ...state.initialized,
           extension_inventory: params.extension_inventory,
+          ...("application_shell" in params ? { application_shell: params.application_shell } : {}),
         },
       };
     }
@@ -783,7 +803,11 @@ function reduceNotification(
         updateThreadByID(state, thread.id, (current) => {
           const turns = mergeThreadUpdatedTurns(thread.turns, current.turns);
           return {
-            ...thread,
+            ...reconcileThreadTitle(current, thread),
+            // Lifecycle snapshots can predate a confirmed archive. They may
+            // refresh history, but only an explicit unarchive or list refresh
+            // can bring that conversation back to the active catalog.
+            archived: current.archived === true ? true : thread.archived,
             status: reconciledThreadStatus(thread, current, turns),
             turns,
             child_agents: thread.child_agents ?? current.child_agents,
@@ -1307,7 +1331,10 @@ function updateThreadByID(
       ...patch,
       thread: primaryActive ? thread : state.thread,
       secondaryThread: secondaryActive ? thread : state.secondaryThread,
-      threads: upsertThread(state.threads, thread),
+      // Explicit updates, including title rollback, must reach every projection.
+      // Incoming snapshots reconcile their titles before entering this callback.
+      threads: replaceThreadPreservingOrder(state.threads, thread)
+        ?? sortThreads([...state.threads.filter((item) => item.id !== thread.id), thread]),
       sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, thread),
     };
   }
@@ -1368,6 +1395,7 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
+  if (local) resumed = reconcileThreadTitle(local, resumed);
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (localTurns) {
     const turns = preserveTurnCompletions(resumed.turns, localTurns);
@@ -1511,6 +1539,9 @@ function replaceThreadPreservingOrder(threads: Thread[], thread: Thread): Thread
 
 function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   if (thread && isThread(thread)) {
+    const threadID = thread.id;
+    const existing = threads.find((item) => item.id === threadID);
+    if (existing) thread = reconcileThreadTitle(existing, thread);
     const preserved = replaceThreadPreservingOrder(threads, thread);
     if (preserved) {
       return preserved;
@@ -1608,6 +1639,7 @@ function summarizeThreadForSidebar(
     agent_path: thread.agent_path,
     preview: thread.preview,
     title: thread.title,
+    title_revision: thread.title_revision,
     source: thread.source,
     project_id: thread.project_id,
     project_exists: thread.project_exists,
@@ -1678,7 +1710,10 @@ function summarizeWorkspaceThreadsForSidebar(
   const next: Record<string, ThreadSummary[]> = {};
   for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
     next[workspaceID] = summarizeThreadsForSidebar(
-      threads.map((thread) => liveByID.get(thread.id) ?? thread),
+      threads.map((thread) => {
+        const live = liveByID.get(thread.id);
+        return live ? reconcileThreadTitle(thread, live) : thread;
+      }),
       runningThreadIDs,
     );
   }
@@ -1777,7 +1812,25 @@ function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
   );
 }
 
+// A later turn timestamp does not make its captured title newer. Title
+// revisions are committed with the title and survive reconnects and restarts.
+export function reconcileThreadTitle(existing: Thread, incoming: Thread): Thread {
+  if (existing.title?.trim() && (
+    !incoming.title?.trim() ||
+    (existing.title_revision ?? 0) > (incoming.title_revision ?? 0)
+  )) {
+    return {
+      ...incoming,
+      title: existing.title,
+      title_revision: existing.title_revision,
+      preview: existing.preview,
+    };
+  }
+  return incoming;
+}
+
 function mergeListedThread(existing: Thread, listed: Thread): Thread {
+  listed = reconcileThreadTitle(existing, listed);
   const turns = mergeListedThreadTurns(existing.turns, listed.turns);
   return {
     ...listed,
@@ -1871,7 +1924,11 @@ function reconcileListedThreadState(state: AppState, listed: Thread[]): AppState
   releaseNewlySettledTurnStreams(state.thread, thread);
   releaseNewlySettledTurnStreams(state.secondaryThread, secondaryThread);
 
-  const reconciled = { ...state, threads, thread, secondaryThread };
+  const sessionTabs = threads.reduce(
+    (tabs, listedThread) => syncThreadSessionTabTitle(tabs, listedThread),
+    state.sessionTabs,
+  );
+  const reconciled = { ...state, threads, thread, secondaryThread, sessionTabs };
   const wasRunning = state.running || isThreadRunning(activeThreadForState(state));
   const running = isThreadRunning(activeThreadForState(reconciled));
   return {
@@ -2507,7 +2564,9 @@ function bindActiveSessionTabToThread(
   thread: Thread,
   context: RuntimeContext,
 ): SessionTab[] {
-  const threadTab = createThreadSessionTab(thread, context);
+  // Binding the server identity keeps input entered while creation was pending.
+  const sourceTab = tabs.find((tab) => tab.id === activeTabID);
+  const threadTab = createThreadSessionTab(thread, context, sourceTab ? cloneSessionTabDraft(sourceTab) : undefined);
   const existingThreadTab = tabs.find((tab) => tab.id === threadTab.id);
   if (existingThreadTab) {
     return tabs
@@ -2799,23 +2858,6 @@ function sameRuntimeContext(
   return left.cwd === right.cwd;
 }
 
-function withExtensionInventoryForContext(
-  state: AppState,
-  sourceContext: RuntimeContext | undefined,
-  extensionInventory: ExtensionInventoryRecord[],
-): AppState {
-  if (!state.initialized || !sameRuntimeContext(state.activeContext, sourceContext)) {
-    return state;
-  }
-  return {
-    ...state,
-    initialized: {
-      ...state.initialized,
-      extension_inventory: extensionInventory,
-    },
-  };
-}
-
 function threadMatchesActiveContext(
   thread: Thread,
   context: RuntimeContext | undefined,
@@ -2866,7 +2908,7 @@ export function agentRunning(
 }
 
 function activeTurnForThread<T extends Pick<Turn, "status">>(
-  thread: { turns?: T[] } | undefined,
+  thread: { turns?: readonly T[] } | undefined,
 ): T | undefined {
   const turns = thread?.turns;
   if (!turns) {
@@ -2898,7 +2940,7 @@ function turnIsAnswerReady(
 }
 
 function activeTurnIsAnswerReady(
-  thread: { turns?: TurnAnswerReadyCandidate[] } | undefined,
+  thread: { turns?: readonly TurnAnswerReadyCandidate[] } | undefined,
 ): boolean {
   return turnIsAnswerReady(activeTurnForThread(thread));
 }
@@ -3071,7 +3113,7 @@ function turnPreview(turn: Turn): string {
   if (!userItem) {
     return "";
   }
-  const text = userItem.text?.trim();
+  const text = userMessageBodyText(userItem.text ?? "", userItem.content_parts).trim();
   if (text) {
     return text;
   }
@@ -3761,6 +3803,7 @@ export {
   skillsSessionTabID,
   sortThreads,
   summarizeWorkspaceThreadsForSidebar,
+  summarizeThreadForSidebar,
   summarizeThreadsForSidebar,
   threadItemFromRecord,
   threadForPane,
@@ -3779,7 +3822,6 @@ export {
   upsertThreadChildAgent,
   upsertTurn,
   upsertTurnItem,
-  withExtensionInventoryForContext,
   withLoadedRuntimeSessionTab,
 };
 

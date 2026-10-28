@@ -42,8 +42,11 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 	if desc.ID != agentengine.EngineID("claude") {
 		t.Fatalf("descriptor id = %q, want claude", desc.ID)
 	}
-	if !strings.Contains(desc.Version, "2.1.226") {
-		t.Fatalf("descriptor version = %q, want fake 2.1.226", desc.Version)
+	if desc.Version != "1" {
+		t.Fatalf("descriptor adapter version = %q, want 1", desc.Version)
+	}
+	if version := Version(binary); version != "2.1.226" {
+		t.Fatalf("CLI version = %q, want 2.1.226", version)
 	}
 	t.Run("unresponsive version probe", func(t *testing.T) {
 		directory := t.TempDir()

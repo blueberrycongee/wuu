@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"database/sql"
 	"errors"
 	"os"
 	"sort"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -35,6 +35,12 @@ type threadSearchCandidate struct {
 }
 
 func (s *Server) handleThreadSearch(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadSearchParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -48,7 +54,7 @@ func (s *Server) handleThreadSearch(req Request) error {
 		limit = maxThreadSearchLimit
 	}
 
-	sources, err := s.threadSearchSources()
+	sources, err := s.threadSearchSources(binding)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -73,12 +79,6 @@ func (s *Server) handleThreadSearch(req Request) error {
 			}
 		}
 	}
-	var searchDB *sql.DB
-	defer func() {
-		if searchDB != nil {
-			searchDB.Close()
-		}
-	}()
 	strongMatches := len(results)
 	for _, source := range sources {
 		if query == "" && source.entry.thread.Archived {
@@ -103,13 +103,7 @@ func (s *Server) handleThreadSearch(req Request) error {
 			snippet = threadSearchDefaultSnippet(candidates)
 		}
 		if query != "" || snippet == "" {
-			if source.live == nil && searchDB == nil {
-				searchDB, err = session.OpenStore(s.rt.SessionDir)
-				if err != nil {
-					return s.writeResponse(req.ID, nil, err)
-				}
-			}
-			history, err := s.threadSearchHistory(source, searchDB)
+			history, err := s.threadSearchHistory(source, binding.Sessions)
 			if err != nil {
 				return s.writeResponse(req.ID, nil, err)
 			}
@@ -144,23 +138,28 @@ func (s *Server) handleThreadSearch(req Request) error {
 	return s.writeResponse(req.ID, ThreadSearchResult{Results: out}, nil)
 }
 
-func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
-	sessions, err := session.List(s.rt.SessionDir, 0)
+func (s *Server) threadSearchSources(binding *runtime.State) ([]threadSearchSource, error) {
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return nil, err
 	}
+	entryForSession, cancelDescriptors := s.threadEntryBuilder(binding)
+	defer cancelDescriptors()
 	sourcesByID := make(map[string]threadSearchSource, len(sessions))
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
-		entry := threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
+		entry := entryForSession(sess)
 		sourcesByID[sess.ID] = threadSearchSource{entry: entry}
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, th := range s.threads {
+		if th.state == nil || th.state.Sessions != binding.Sessions {
+			continue
+		}
 		th.mu.Lock()
 		thread := th.listSnapshotLocked(true)
 		visibility := th.Visibility
@@ -194,13 +193,13 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 
 // Live history takes precedence over disk, including unpersisted turns. Clone
 // only the conversation being searched, outside the server-wide lock.
-func (s *Server) threadSearchHistory(source threadSearchSource, db *sql.DB) ([]providers.ChatMessage, error) {
+func (s *Server) threadSearchHistory(source threadSearchSource, store *session.Store) ([]providers.ChatMessage, error) {
 	if source.live != nil {
 		source.live.mu.Lock()
 		defer source.live.mu.Unlock()
 		return cloneHistory(source.live.History), nil
 	}
-	snapshot, err := session.LoadProviderHistorySnapshotFromStore(db, source.entry.thread.ID)
+	snapshot, err := store.LoadProviderHistorySnapshot(source.entry.thread.ID)
 	var history []providers.ChatMessage
 	if err == nil {
 		records, convertErr := persistedMessagesFromProviderSnapshot(snapshot, false)

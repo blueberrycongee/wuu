@@ -218,6 +218,55 @@ func TestResolveCodexSubscriptionImageInput(t *testing.T) {
 	}
 }
 
+func TestResolveChatGPTPlanRouteCapabilities(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		providerName string
+		model        string
+		modalities   *config.ProviderModelModalitiesConfig
+	}{
+		{name: "unknown account model", providerName: "personal", model: "account-only-model"},
+		{name: "provider label cannot change route", providerName: "anthropic-plan", model: "account-only-model"},
+		{name: "known model does not import catalog media", providerName: "personal", model: "gpt-6-astra"},
+		{name: "video is unavailable on route", providerName: "personal", model: "account-only-model", modalities: &config.ProviderModelModalitiesConfig{Input: []string{"text", "video"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Config{
+				DefaultProvider: tt.providerName,
+				Providers: map[string]config.ProviderConfig{
+					tt.providerName: {
+						Type:             "chatgpt",
+						ChatGPTAccountID: "oaiapp_fixture",
+						Model:            tt.model,
+						Models: map[string]config.ProviderModelConfig{
+							tt.model: {Modalities: tt.modalities},
+						},
+					},
+				},
+			}
+			roles, err := Resolve(cfg, ResolveOptions{})
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			for _, selection := range roles.List() {
+				caps := selection.Capabilities
+				if caps.ProtocolFamily != "openai_responses" || !caps.Responses {
+					t.Errorf("%s must describe the Responses route: %+v", selection.Role, caps)
+				}
+				if caps.SystemRole || !caps.DeveloperRole {
+					t.Errorf("%s must advertise developer rather than system input: %+v", selection.Role, caps)
+				}
+				if caps.VideoInput || !caps.VideoInputKnown {
+					t.Errorf("%s must explicitly disallow video on this route: %+v", selection.Role, caps)
+				}
+				if tt.modalities == nil && (caps.ImageInputKnown || caps.FileInputKnown) {
+					t.Errorf("%s must preserve unknown account-model media capabilities: %+v", selection.Role, caps)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveCodexSubscriptionClampsCatalogInputLimit(t *testing.T) {
 	cfg := config.Config{
 		DefaultProvider: "openai-codex",

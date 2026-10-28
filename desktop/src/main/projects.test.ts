@@ -8,22 +8,19 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
 
-const electronMock = vi.hoisted(() => ({
-  userDataPath: "",
-}));
-
-vi.mock("electron", () => ({
-  app: {
-    getPath: vi.fn(() => electronMock.userDataPath),
-  },
-}));
-
 import { ProjectManager } from "./projects";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, stat: vi.fn(actual.stat) };
+});
 
 let home: string;
 let legacyUserData: string;
@@ -32,12 +29,12 @@ let originalWuuHome: string | undefined;
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "wuu-projects-home-"));
   legacyUserData = await mkdtemp(join(tmpdir(), "wuu-projects-legacy-"));
-  electronMock.userDataPath = legacyUserData;
   originalWuuHome = process.env.WUU_HOME;
   process.env.WUU_HOME = home;
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalWuuHome === undefined) {
     delete process.env.WUU_HOME;
   } else {
@@ -112,7 +109,7 @@ async function expectRejectedCanonicalStore(
 
   let loadError: unknown;
   try {
-    new ProjectManager().load();
+    new ProjectManager(join(legacyUserData, "projects.json")).load();
   } catch (error) {
     loadError = error;
   }
@@ -125,13 +122,72 @@ async function expectRejectedCanonicalStore(
   expect(await legacyArchiveNames()).toEqual([]);
 }
 
+describe("ProjectManager nonblocking runtime reads", () => {
+  it("does not initialize scratch while rejecting a captured submission after reload", async () => {
+    await writeStore(canonicalStorePath(), [], { kind: "project", project_id: "removed", cwd: join(home, "removed") });
+    const before = await readFile(canonicalStorePath(), "utf8");
+    const manager = new ProjectManager();
+    expect(() => manager.resolveSubmissionContext({ kind: "project", project_id: "removed", cwd: join(home, "removed") })).toThrow("no longer registered");
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(before);
+    expect(await pathExists(join(home, "scratch"))).toBe(false);
+  });
+
+  it("rejects reads before initialization without creating workspace state", async () => {
+    await expect(new ProjectManager().readRuntimeContext()).rejects.toThrow("not initialized");
+    expect(await readdir(home)).toEqual([]);
+  });
+
+  it.each(["resolve", "reject"])("captures the selected workspace before asynchronous availability checks %s", async (outcome) => {
+    const firstPath = await createProjectDir("first");
+    const secondPath = await createProjectDir("second");
+    const first = project("first", "first", firstPath);
+    const second = project("second", "second", secondPath);
+    await writeStore(canonicalStorePath(), [first, second], { kind: "project", project_id: first.id, cwd: firstPath });
+    const manager = new ProjectManager();
+    manager.load();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const actualStat = fsPromises.stat;
+    const check = vi.spyOn(fsPromises, "stat").mockImplementationOnce(async () => {
+      await blocked;
+      if (outcome === "reject") throw new Error("volume unavailable");
+      return actualStat(firstPath);
+    });
+    const pending = manager.readRuntimeContext();
+    let completed = false;
+    void pending.then(() => { completed = true; }, () => { completed = true; });
+    try {
+      expect(check).toHaveBeenCalledWith(firstPath);
+      await setImmediate();
+      expect(completed).toBe(false);
+      manager.select(second.id);
+      await expect(manager.readRuntimeContext()).resolves.toEqual({ kind: "project", project_id: second.id, cwd: secondPath });
+      expect(completed).toBe(false);
+    } finally {
+      release();
+    }
+    if (outcome === "reject") await expect(pending).rejects.toThrow(firstPath);
+    else await expect(pending).resolves.toEqual({ kind: "project", project_id: first.id, cwd: firstPath });
+    expect(manager.activeWorkdir()).toBe(secondPath);
+  });
+
+  it.each(["empty", "dangling"])("initializes %s selection during load, not during read-only requests", async (selection) => {
+    if (selection === "dangling") await writeStore(canonicalStorePath(), [], { kind: "project", project_id: "removed", cwd: join(home, "missing") });
+    const manager = new ProjectManager();
+    manager.load();
+    const before = await readFile(canonicalStorePath(), "utf8");
+    await expect(manager.readRuntimeContext()).resolves.toEqual({ kind: "no_project", cwd: join(home, "scratch", "default") });
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(before);
+  });
+});
+
 describe("ProjectManager project store migration", () => {
   it("imports and archives the legacy project store when the canonical store is missing", async () => {
     const legacyPath = await createProjectDir("legacy");
     const legacyProject = project("legacy", "legacy", legacyPath);
     await writeStore(legacyStorePath(), [legacyProject]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     manager.load();
 
     expect(manager.list().projects.map((item) => item.id)).toEqual(["legacy"]);
@@ -147,12 +203,12 @@ describe("ProjectManager project store migration", () => {
     const legacyProject = project("legacy", "legacy", legacyPath);
     await writeStore(legacyStorePath(), [legacyProject]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     manager.load();
     expect(manager.list().projects.map((item) => item.id)).toEqual(["legacy"]);
 
     await rm(canonicalStorePath(), { force: true });
-    const resetManager = new ProjectManager();
+    const resetManager = new ProjectManager(join(legacyUserData, "projects.json"));
     resetManager.load();
 
     expect(resetManager.list().projects.map((item) => item.id)).toEqual([]);
@@ -172,7 +228,7 @@ describe("ProjectManager project store migration", () => {
       project("legacy-only", "legacy-only", legacyOnlyPath),
     ]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const result = manager.remove("removed");
 
     expect(result.projects.map((item) => item.id)).toEqual(["keep"]);
@@ -223,7 +279,7 @@ describe("ProjectManager project store migration", () => {
 
     let loadError: unknown;
     try {
-      new ProjectManager().load();
+      new ProjectManager(join(legacyUserData, "projects.json")).load();
     } catch (error) {
       loadError = error;
     } finally {
@@ -251,7 +307,7 @@ describe("ProjectManager runtime context availability", () => {
       project("active", "active", activePath),
       project("target", "target", targetPath),
     ], active);
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     expect(manager.resolveSubmissionContext(target)).toEqual(target);
     expect(manager.list().active_context).toEqual(active);
     expect(() => manager.resolveSubmissionContext({ ...target, cwd: activePath })).toThrow();
@@ -274,7 +330,7 @@ describe("ProjectManager runtime context availability", () => {
     };
     await writeStore(canonicalStorePath(), [activeProject], activeContext);
 
-    const listed = new ProjectManager().add(addedPath);
+    const listed = new ProjectManager(join(legacyUserData, "projects.json")).add(addedPath);
 
     expect(listed.projects).toHaveLength(2);
     expect(listed.projects.some((item) => item.path === addedPath)).toBe(true);
@@ -294,7 +350,7 @@ describe("ProjectManager runtime context availability", () => {
     await rm(projectPath, { recursive: true });
     const persistedBefore = await readFile(canonicalStorePath(), "utf8");
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const listed = manager.list();
 
     expect(listed.active_context).toEqual(activeContext);
@@ -309,6 +365,7 @@ describe("ProjectManager runtime context availability", () => {
     expect(() => manager.ensureRuntimeContext()).toThrow(
       "工作区目录当前不可用",
     );
+    await expect(manager.readRuntimeContext()).rejects.toThrow("工作区目录当前不可用");
     expect(await readFile(canonicalStorePath(), "utf8")).toBe(persistedBefore);
     expect(await pathExists(join(home, "scratch", "default"))).toBe(false);
 
@@ -329,7 +386,7 @@ describe("ProjectManager runtime context availability", () => {
     };
     await writeStore(canonicalStorePath(), [activeProject], activeContext);
 
-    const listed = new ProjectManager().remove(activeProject.id);
+    const listed = new ProjectManager(join(legacyUserData, "projects.json")).remove(activeProject.id);
 
     expect(listed.projects).toEqual([]);
     expect(listed.active_context?.kind).toBe("no_project");
@@ -345,20 +402,41 @@ describe("ProjectManager runtime context availability", () => {
   const first = await createProjectDir("first");
   const second = await createProjectDir("second");
   const third = await createProjectDir("third");
-  const manager = new ProjectManager();
+  const manager = new ProjectManager(join(legacyUserData, "projects.json"));
   const id = manager.add(first).projects[0].id;
   manager.relocate(id, second);
-  new ProjectManager().add(second);
-  new ProjectManager().relocate(id, third);
+  new ProjectManager(join(legacyUserData, "projects.json")).add(second);
+  new ProjectManager(join(legacyUserData, "projects.json")).relocate(id, third);
   const saved = JSON.parse(await readFile(canonicalStorePath(), "utf8"));
   expect(saved.projects[0]).toMatchObject({id, path: third, previous_paths: [first, second]});
+});
+
+describe("workspace relocation", () => {
+  it("rejects another registered workspace's path without changing either identity or the active context", async () => {
+    const first = await createProjectDir("first");
+    const second = await createProjectDir("second");
+    const manager = new ProjectManager();
+    const firstID = manager.add(first).projects[0].id;
+    manager.add(second);
+    const before = manager.select(firstID);
+    const saved = await readFile(canonicalStorePath(), "utf8");
+
+    expect(() => manager.relocate(firstID, join(second, "."))).toThrow("already registered");
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(saved);
+    expect(new ProjectManager().list()).toEqual(before);
+
+    const unchanged = manager.relocate(firstID, first);
+    expect(unchanged.projects.map(({ id, path }) => ({ id, path })))
+      .toEqual(before.projects.map(({ id, path }) => ({ id, path })));
+    expect(unchanged.active_context).toEqual(before.active_context);
+  });
 });
 
 describe("workspace batch import", () => {
   it("validates the entire selection before persisting and preserves identities on retries", async () => {
     const first = await createProjectDir("first");
     const second = await createProjectDir("second");
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const before = manager.add(first);
     const originalID = before.projects[0].id;
     const saved = await readFile(canonicalStorePath(), "utf8");

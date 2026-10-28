@@ -14,12 +14,6 @@
   padding-right: var(--environment-panel-content-inset);
 }
 
-.conversation-pane.environment-panel-reserved .dock-composer-wrap {
-  padding-right: calc(
-    var(--environment-panel-content-inset) + var(--scrollbar-width)
-  );
-}
-
 @media (max-width: 1060px) {
   .environment-side-stack,
   .environment-panel {
@@ -436,14 +430,24 @@
 }
 
 @media (pointer: coarse) {
-  /* Keep the desktop lockup: wordmark, then the bell. */
+  /* Keep each brand action touch-sized without moving the wordmark. */
   .sidebar-brand {
     grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .sidebar-brand:has(.conversation-search-trigger) {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+  }
+
+  .sidebar-brand .conversation-search-trigger {
+    width: 44px;
+    height: 44px;
+    margin-right: 0;
   }
 
   .sidebar-notifications-button {
     width: 44px;
     height: 44px;
-    margin-right: -8px;
+    margin-right: 0;
   }
 }

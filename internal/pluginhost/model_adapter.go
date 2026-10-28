@@ -53,8 +53,8 @@ func validateModelAdapterNegotiation(result CapabilityInitializeResult) error {
 		if descriptor.ID != strings.TrimSpace(descriptor.ID) || !validModelAdapterID(descriptor.ID) {
 			return fmt.Errorf("model adapter id %q must be a dotted identifier", descriptor.ID)
 		}
-		if descriptor.Mode != "" && descriptor.Mode != "direct" && descriptor.Mode != "delegate" {
-			return fmt.Errorf("model adapter %q mode must be direct or delegate", descriptor.ID)
+		if descriptor.Mode != "" && descriptor.Mode != "direct" && descriptor.Mode != "delegate" && descriptor.Mode != "receipt" {
+			return fmt.Errorf("model adapter %q mode must be direct, delegate or receipt", descriptor.ID)
 		}
 		if descriptor.Version != 1 {
 			return fmt.Errorf("model adapter %q requires version 1", descriptor.ID)

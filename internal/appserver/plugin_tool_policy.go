@@ -11,15 +11,17 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *runtime.ThreadRuntime) error {
+func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID string, threadRuntime *runtime.ThreadRuntime) error {
 	if s == nil || s.rt == nil || threadRuntime == nil {
 		return nil
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, sessionID)
+	if threadRuntime.Sessions == nil {
+		return errors.New("session tool policy has no captured state")
+	}
+	metadata, ok, err := threadRuntime.Sessions.Find(sessionID)
 	if err != nil || !ok {
 		return err
 	}
@@ -37,8 +39,12 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		return errors.New("the selected agent engine cannot enforce session tool_policy")
 	}
 	guarded := newSessionToolPolicyExecutor(threadRuntime.StreamRunner.Tools, policy)
-	if metadata.Source == projectSource {
-		guarded = newSessionToolPolicyExecutor(guarded, pluginhost.SessionToolPolicy{Allow: []string{"session", "notes"}})
+	if metadata.Source == projectSource || metadata.Source == projectSessionSource {
+		projectPolicy, err := ProjectToolConfiguration(s.projectServiceContext(context.Background(), binding), threadRuntime.PluginHost, metadata)
+		if err != nil {
+			return err
+		}
+		guarded = newSessionToolPolicyExecutor(guarded, projectPolicy)
 	}
 	if metadata.Source == projectSessionSource {
 		guard, ok := guarded.(*sessionToolPolicyExecutor)
@@ -47,7 +53,7 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 			guarded = guard
 		}
 		guard.acquire = func(call providers.ToolCall) (func(), error) {
-			return s.acquireProjectWorkTool(metadata, call, guard.base)
+			return s.acquireProjectWorkToolForBinding(binding, metadata, call, guard.base)
 		}
 	}
 	threadRuntime.StreamRunner.Tools = guarded
@@ -153,17 +159,29 @@ func (e *sessionToolPolicyExecutor) ExecuteResult(ctx context.Context, call prov
 }
 
 func (e *sessionToolPolicyExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
-	if !e.allowed("read_file") {
+	return e.FinalizeToolOutcome(call, result).Result
+}
+
+func (e *sessionToolPolicyExecutor) FinalizeToolOutcome(call providers.ToolCall, result toolresult.Result) agent.ToolFinalization {
+	settled := agent.ToolFinalization{Result: result}
+	canRecover := e.allowed("read_file")
+	if finalizer, ok := e.base.(agent.ToolOutcomeFinalizer); ok {
+		// Rich finalization owns provider lifecycle and per-call additions, not
+		// just archive projection. A recovery restriction must not skip it.
+		settled = finalizer.FinalizeToolOutcome(call, result)
+	} else if canRecover {
+		if finalizer, ok := e.base.(agent.ToolResultFinalizer); ok {
+			settled.Result = finalizer.FinalizeToolResult(call, result)
+		}
+	}
+	if !canRecover {
 		// A restricted session cannot follow archive cursors. Preserve its full
 		// evidence instead of advertising recovery that the policy forbids.
-		result = result.Clone()
-		result.ModelText = nil
-		return result
+		settled.Result = settled.Result.Clone()
+		settled.Result.ModelText = nil
 	}
-	if finalizer, ok := e.base.(agent.ToolResultFinalizer); ok {
-		return finalizer.FinalizeToolResult(call, result)
-	}
-	return result
+	settled.DiscoveredTools = e.filterDiscoveredTools(settled.DiscoveredTools)
+	return settled
 }
 
 func (e *sessionToolPolicyExecutor) SupportsTool(name string) bool {
@@ -224,7 +242,10 @@ func (e *sessionToolPolicyExecutor) DiscoveredTools(call providers.ToolCall) []p
 	if provider == nil {
 		return nil
 	}
-	definitions := provider.DiscoveredTools(call)
+	return e.filterDiscoveredTools(provider.DiscoveredTools(call))
+}
+
+func (e *sessionToolPolicyExecutor) filterDiscoveredTools(definitions []providers.LoadableToolDefinition) []providers.LoadableToolDefinition {
 	out := make([]providers.LoadableToolDefinition, 0, len(definitions))
 	for _, definition := range definitions {
 		if e.allowed(definition.Name) {

@@ -72,7 +72,7 @@ func (s *Session) DeriveThreadModel(cfg config.Config, selected ThreadModelSelec
 	if err != nil {
 		return ThreadModelDerivation{}, err
 	}
-	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider)
+	workerClient, err := selectedRouteClient(s.PluginHost, roles.Worker.RuleProviderConfig, roles.Worker.Provider, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return ThreadModelDerivation{}, err
 	}

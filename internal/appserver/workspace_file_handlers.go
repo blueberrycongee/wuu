@@ -16,7 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
@@ -75,13 +76,16 @@ type workspaceReferenceResult struct {
 	Matches      []string `json:"matches,omitempty"`
 }
 
-func (s *Server) handleWorkspaceView(req Request) error {
+func (s *Server) handleWorkspaceView(binding *runtime.State, req Request) error {
 	var params workspaceViewParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	rootPath, err := s.workspaceViewRoot(params.Root)
+	rootPath, err := s.workspaceViewRoot(binding, params.Root)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.requireRequestAccess(req, req.Method, nil, access.Resource{Kind: "workspace", ID: rootPath}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	root, err := os.OpenRoot(rootPath)
@@ -170,7 +174,7 @@ func readWorkspaceChunk(root *os.Root, params workspaceViewParams) (workspaceChu
 
 // A browser may navigate a registered workspace or a session's worktree. It
 // cannot turn a caller-supplied root into a machine-wide file server.
-func (s *Server) workspaceViewRoot(requested string) (string, error) {
+func (s *Server) workspaceViewRoot(binding *runtime.State, requested string) (string, error) {
 	if requested == "" {
 		requested = s.rt.RootDir
 	}
@@ -201,7 +205,7 @@ func (s *Server) workspaceViewRoot(requested string) (string, error) {
 			return target, nil
 		}
 	}
-	sessions, err := session.List(s.rt.SessionDir, 0)
+	sessions, err := binding.Sessions.List(0)
 	if err != nil {
 		return "", err
 	}
@@ -321,7 +325,9 @@ func readWorkspacePreview(root *os.Root, path string) (workspaceFileResult, erro
 	result.Path = filepath.ToSlash(path)
 	result.AbsolutePath = filepath.Join(root.Name(), path)
 	result.SizeBytes = info.Size()
-	result.MtimeMS = float64(info.ModTime().UnixNano()) / 1e6
+	// Match Node Stats.mtimeMs: converting epoch nanoseconds to float first
+	// loses precision and can make an unchanged file fail the save precondition.
+	result.MtimeMS = float64(info.ModTime().Unix())*1e3 + float64(info.ModTime().Nanosecond())/1e6
 	result.Truncated = len(data) > workspacePreviewBytes
 	preview := data
 	if len(preview) > workspacePreviewBytes {

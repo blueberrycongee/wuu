@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "notion-workspace",
+  "name": "Notion",
+  "description": "Optional Notion website and official document API tools. Browser login and API access are configured separately.",
+  "icon": {
+    "light": "icons/notion-light.svg",
+    "dark": "icons/notion-dark.svg"
+  },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 60
+  },
+  "desktop": {
+    "entry": "desktop.js"
+  },
+  "contributes": {
+    "navigation": [
+      {
+        "id": "notion",
+        "title": "Notion",
+        "view": "website",
+        "icon": {
+          "light": "icons/notion-light.svg",
+          "dark": "icons/notion-dark.svg"
+        },
+        "order": 61
+      }
+    ],
+    "settings": {
+      "website-url": {
+        "type": "string",
+        "title": "Notion website",
+        "description": "HTTPS Notion workspace or page URL. Reopen the Notion view after changing it. Browser login is independent of API access.",
+        "default": "https://www.notion.so/",
+        "scope": "user",
+        "apply": "live"
+      },
+      "integration-token": {
+        "type": "secret",
+        "title": "Notion internal integration token",
+        "description": "Save in the host credential store. Connect the integration to the pages you want it to access in Notion. Never paste this token into chat or a normal setting.",
+        "default": "",
+        "scope": "user",
+        "apply": "live",
+        "credential_origins": [
+          "https://api.notion.com"
+        ]
+      }
+    }
+  },
+  "interface": {
+    "displayName": "Notion",
+    "shortDescription": "Notion website and bounded page tools through the official API.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

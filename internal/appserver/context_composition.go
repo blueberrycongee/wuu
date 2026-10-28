@@ -1,19 +1,25 @@
 package appserver
 
 import (
+	"context"
 	"errors"
 	"math"
-	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 const contextCompositionModeLatestRequest = "latest_request"
 
 func (s *Server) handleThreadContextComposition(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadContextCompositionParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -22,47 +28,41 @@ func (s *Server) handleThreadContextComposition(req Request) error {
 	if threadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	if err := s.ensureContextCompositionThreadExists(threadID); err != nil {
+	if err := s.ensureContextCompositionThreadExists(binding, threadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
-	tracePath, err := s.threadContextTracePath(threadID)
+	services, err := binding.Services()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if strings.TrimSpace(tracePath) == "" {
-		return s.writeResponse(req.ID, ThreadContextCompositionResult{
-			ThreadID:  threadID,
-			Available: false,
-			Reason:    "no_trace_path",
-			Mode:      contextCompositionModeLatestRequest,
-		}, nil)
-	}
-	summary, err := sessiontrace.ReplayTrace(tracePath)
+	indexed, err := services.Index.LatestContext(context.Background(), threadID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return s.writeResponse(req.ID, ThreadContextCompositionResult{
-				ThreadID:  threadID,
-				Available: false,
-				Reason:    "no_request_yet",
-				Mode:      contextCompositionModeLatestRequest,
-				TracePath: tracePath,
-			}, nil)
-		}
 		return s.writeResponse(req.ID, nil, err)
 	}
-	result := s.contextCompositionFromTrace(threadID, tracePath, summary)
+	if len(indexed.Events) == 0 {
+		return s.writeResponse(req.ID, ThreadContextCompositionResult{ThreadID: threadID, Available: false, Reason: "no_request_yet", Mode: contextCompositionModeLatestRequest, TracePath: indexed.DiagnosticPath}, nil)
+	}
+	events := make([]sessiontrace.RawEvent, len(indexed.Events))
+	for i, event := range indexed.Events {
+		events[i] = sessiontrace.RawEvent(event)
+	}
+	summary, err := sessiontrace.ReplayEvents(events)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	result := s.contextCompositionFromTrace(binding, threadID, indexed.DiagnosticPath, summary)
 	return s.writeResponse(req.ID, result, nil)
 }
 
-func (s *Server) ensureContextCompositionThreadExists(threadID string) error {
-	if s.thread(threadID) != nil {
+func (s *Server) ensureContextCompositionThreadExists(binding *runtime.State, threadID string) error {
+	if s.threadForState(binding, threadID) != nil {
 		return nil
 	}
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
-	if _, ok, err := session.Find(s.rt.SessionDir, threadID); err != nil {
+	if _, ok, err := binding.Sessions.Find(threadID); err != nil {
 		return err
 	} else if ok {
 		return nil
@@ -70,28 +70,7 @@ func (s *Server) ensureContextCompositionThreadExists(threadID string) error {
 	return session.ErrSessionNotFound
 }
 
-func (s *Server) threadContextTracePath(threadID string) (string, error) {
-	if th := s.thread(threadID); th != nil {
-		th.mu.Lock()
-		threadRuntime := th.execRuntime
-		th.mu.Unlock()
-		if threadRuntime != nil && threadRuntime.Toolkit != nil {
-			if path := sessiontrace.Path(threadRuntime.Toolkit.SessionDir()); strings.TrimSpace(path) != "" {
-				return path, nil
-			}
-		}
-	}
-	if s == nil || s.rt == nil {
-		return "", errors.New("runtime session is required")
-	}
-	stateDir, err := s.workspaceStateDir()
-	if err != nil {
-		return "", err
-	}
-	return sessiontrace.Path(statepath.SessionArtifactDir(stateDir, threadID)), nil
-}
-
-func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary sessiontrace.ReplaySummary) ThreadContextCompositionResult {
+func (s *Server) contextCompositionFromTrace(binding *runtime.State, threadID, tracePath string, summary sessiontrace.ReplaySummary) ThreadContextCompositionResult {
 	result := ThreadContextCompositionResult{
 		ThreadID:  threadID,
 		Available: false,
@@ -113,6 +92,7 @@ func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary
 	usableInputTokens := 0
 	compactThresholdTokens := 0
 	turnID := ""
+	selectedStepBudget := false
 	if step != nil {
 		turnID = strings.TrimSpace(step.TurnID)
 		provider = strings.TrimSpace(step.Provider)
@@ -129,8 +109,23 @@ func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary
 			usableInputTokens = turn.ModelProfile.UsableInputTokens
 			compactThresholdTokens = turn.ModelProfile.CompactThresholdTokens
 		}
+		for index := len(turn.ModelSteps) - 1; index >= 0; index-- {
+			selected := turn.ModelSteps[index]
+			if selected.StepIndex != request.StepIndex {
+				continue
+			}
+			provider, model = selected.Provider, firstNonEmpty(selected.APIModel, selected.Model)
+			if selected.Revision != 0 {
+				// The receipt's effective ceiling belongs to this step. Do not
+				// substitute the initial turn profile or a newly edited catalog.
+				contextWindowTokens = selected.ContextWindowTokens
+				inputLimitTokens, usableInputTokens, compactThresholdTokens = 0, 0, 0
+				selectedStepBudget = true
+			}
+			break
+		}
 	}
-	if inputLimitTokens <= 0 {
+	if inputLimitTokens <= 0 && !selectedStepBudget {
 		inputLimitTokens = s.contextCompositionRuntimeInputLimit(provider, model)
 	}
 	contextCeilingTokens := effectiveContextCeilingTokens(contextWindowTokens, inputLimitTokens)
@@ -156,7 +151,7 @@ func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary
 	result.CompactThresholdTokens = compactThresholdTokens
 	result.PromptTokens = promptTokens
 	result.TotalContextTokens = totalContextTokens
-	result.RetainedTokens = s.latestRetainedContextTokens(threadID)
+	result.RetainedTokens = s.latestRetainedContextTokens(binding, threadID)
 	result.InputTokens = request.InputTokens
 	result.OutputTokens = request.OutputTokens
 	result.CacheCreationTokens = request.CacheCreationTokens
@@ -362,8 +357,8 @@ func providerReportedTokenUsage(input, output, cacheCreation, cacheRead int) boo
 // size that came from provider-reported usage. A context_tokens marker with
 // no input, output, or cache counts is a local estimate. Seeding that value
 // treats a partial total as ground truth and blocks the pre-send reconcile.
-func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
-	if th := s.thread(threadID); th != nil {
+func (s *Server) latestProviderRetainedContextTokens(binding *runtime.State, threadID string) int {
+	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
 		for i := len(th.Turns) - 1; i >= 0; i-- {
@@ -380,7 +375,7 @@ func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
 	if s == nil || s.rt == nil {
 		return 0
 	}
-	metas, err := loadMetaMessages(s.rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(binding.Sessions, threadID)
 	if err != nil {
 		return 0
 	}
@@ -397,8 +392,8 @@ func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
 	return 0
 }
 
-func (s *Server) latestRetainedContextTokens(threadID string) int {
-	if th := s.thread(threadID); th != nil {
+func (s *Server) latestRetainedContextTokens(binding *runtime.State, threadID string) int {
+	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
 		for i := len(th.Turns) - 1; i >= 0; i-- {
@@ -410,7 +405,7 @@ func (s *Server) latestRetainedContextTokens(threadID string) int {
 	if s == nil || s.rt == nil {
 		return 0
 	}
-	metas, err := loadMetaMessages(s.rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(binding.Sessions, threadID)
 	if err != nil {
 		return 0
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -39,8 +38,8 @@ func TestProtocolEngineSettingsMergeAndDisableDefault(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.Engines.DefaultEngine != "" || cfg.Engines.Binary(id).BinaryPath != "custom-agent" || cfg.Engines.Claude.BinaryPath != "preserved" {
-				t.Fatalf("disable lost settings or retained unavailable default: %+v", cfg.Engines)
+			if cfg.Engines.DefaultEngine != id || cfg.Engines.Binary(id).BinaryPath != "custom-agent" || cfg.Engines.Claude.BinaryPath != "preserved" {
+				t.Fatalf("disable changed the selected engine or unrelated settings: %+v", cfg.Engines)
 			}
 			before, err := os.ReadFile(path)
 			if err != nil {
@@ -49,12 +48,12 @@ func TestProtocolEngineSettingsMergeAndDisableDefault(t *testing.T) {
 			if cfg.DefaultProvider != "home" || cfg.Providers["home"].Model != "m" {
 				t.Fatal("unrelated settings lost")
 			}
-			if err := UpdateEnginesSettings(path, EnginesSettingsUpdate{DefaultEngine: &id}); err == nil {
-				t.Fatal("disabled default accepted")
+			if err := UpdateEnginesSettings(path, EnginesSettingsUpdate{DefaultEngine: &id}); err != nil {
+				t.Fatalf("retaining a disabled selection: %v", err)
 			}
 			after, _ := os.ReadFile(path)
 			if string(after) != string(before) {
-				t.Fatal("rejected update changed persisted settings")
+				t.Fatal("reapplying the selection changed persisted settings")
 			}
 		})
 	}
@@ -88,8 +87,8 @@ func TestUpdateEnginesSettingsRoundTrip(t *testing.T) {
 	if cfg.Engines == nil {
 		t.Fatal("engines section missing after update")
 	}
-	if cfg.Engines.DefaultEngine != "" {
-		t.Fatalf("disabled default engine = %q, want wuu fallback", cfg.Engines.DefaultEngine)
+	if cfg.Engines.DefaultEngine != defaultEngine {
+		t.Fatalf("disabled default engine = %q, want retained selection %q", cfg.Engines.DefaultEngine, defaultEngine)
 	}
 	if cfg.Engines.Codex == nil {
 		t.Fatal("codex section missing")
@@ -136,18 +135,24 @@ func TestUpdateEnginesSettingsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEnginesConfigRejectsUnknownOrDisabledDefault(t *testing.T) {
+func TestEnginesConfigAcceptsExternalAndRetainsDisabledDefault(t *testing.T) {
 	base := Default()
 	base.Engines = &EnginesConfig{DefaultEngine: "other"}
-	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("Validate unknown default = %v", err)
+	if err := base.Validate(); err != nil {
+		t.Fatalf("external default rejected: %v", err)
+	}
+	for _, id := range []string{"../other", "two engines", "a/b", "Other", ".", "a\nb", "1engine", "engine_foo", "a..b", "a."} {
+		base.Engines.DefaultEngine = id
+		if err := base.Validate(); err == nil {
+			t.Fatalf("invalid external ID %q accepted", id)
+		}
 	}
 	disabled := false
 	base.Engines = &EnginesConfig{
 		DefaultEngine: "claude",
 		Claude:        &EngineBinaryConfig{Enabled: &disabled},
 	}
-	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if err := base.Validate(); err != nil {
 		t.Fatalf("Validate disabled default = %v", err)
 	}
 }

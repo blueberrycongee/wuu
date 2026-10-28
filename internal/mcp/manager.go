@@ -443,9 +443,17 @@ func (m *Manager) clientConnectionFailed(name string, generation uint64, client 
 }
 
 func (m *Manager) StartOAuth(ctx context.Context, name string) (OAuthStartResult, error) {
+	return m.StartOAuthWithRedirect(ctx, name, "")
+}
+
+// StartOAuthWithRedirect lets a local client supply its callback listener.
+func (m *Manager) StartOAuthWithRedirect(ctx context.Context, name, redirectURI string) (OAuthStartResult, error) {
 	cfg, oauth, err := m.oauthConfig(name)
 	if err != nil {
 		return OAuthStartResult{}, err
+	}
+	if redirectURI != "" {
+		cfg.OAuth.RedirectURI = redirectURI
 	}
 	result, err := oauth.Start(ctx, OAuthStartOptions{
 		ServerID:     cfg.Name,
@@ -482,6 +490,14 @@ func (m *Manager) FinishOAuth(ctx context.Context, name, state, code string) (Se
 	status := ServerStatus{Name: cfg.Name, State: MCPServerStateStopped, AuthStatus: MCPAuthStatusOAuth}
 	m.recordStatus(status)
 	return status, nil
+}
+
+func (m *Manager) CancelOAuth(ctx context.Context, name, state string) error {
+	cfg, oauth, err := m.oauthConfig(name)
+	if err != nil {
+		return err
+	}
+	return oauth.Cancel(ctx, cfg.Name, state)
 }
 
 func (m *Manager) RemoveOAuth(ctx context.Context, name string) error {

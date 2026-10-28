@@ -34,7 +34,10 @@ func (k *backgroundInvoker) InvokeService(ctx context.Context, params pluginhost
 		// Retain the initiating operation's attribution, not its foreground
 		// cancellation, journal or workflow budget. Timers have no parent scope.
 		provenance := context.Background()
-		if scope, err := host.ResolveExecution(params.Caller, params.ExecutionID); err == nil {
+		if scope, err := params.CallerExecution(false); err == nil {
+			if pluginhost.IsModelMetricsObservation(scope.Context) {
+				provenance = pluginhost.WithModelMetricsObservation(provenance)
+			}
 			origin, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1)
 			if !ok {
 				origin = pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: params.Caller}

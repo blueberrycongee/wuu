@@ -218,6 +218,7 @@ function extractSpecificDisplay(
       return {};
     }
     case "internal":
+      return isModelReceiptFailure(lower) ? { title: t("error.sessionStateTitle") } : {};
     default:
       return {};
   }
@@ -262,7 +263,9 @@ export function userFacingErrorForMessage(
   // A wire value we do not recognize (a newer Go core added a category
   // before this renderer learned it) degrades to the internal-error
   // rendering instead of producing a blank, tone-less display.
-  const wireCategory = structured?.category;
+  const wireCategory = structured?.category === "cancelled" && isModelReceiptFailure(message.toLowerCase())
+    ? "internal"
+    : structured?.category;
   const category: UserFacingErrorCategory =
     wireCategory !== undefined
       ? isUserFacingErrorCategory(wireCategory)
@@ -393,6 +396,9 @@ function specificDetailForMessage(
   category: UserFacingErrorCategory,
 ): string | undefined {
   const normalized = message.toLowerCase();
+  if (category === "internal" && isModelReceiptFailure(normalized)) {
+    return t("error.sessionStateDetail");
+  }
   if (category === "provider" && (normalized.includes("empty response") || normalized.includes("empty answer"))) {
     return t("error.modelEmptyDetail");
   }
@@ -407,6 +413,9 @@ function specificDetailForMessage(
 
 export function classifyUserFacingError(message: string, context: UserFacingErrorContext): UserFacingErrorCategory {
   const normalized = message.toLowerCase();
+  if (isModelReceiptFailure(normalized)) {
+    return "internal";
+  }
   if (isCancellationMessage(normalized)) {
     return "cancelled";
   }
@@ -428,7 +437,12 @@ export function classifyUserFacingError(message: string, context: UserFacingErro
   return context === "tool" ? "tool" : "internal";
 }
 
+function isModelReceiptFailure(message: string): boolean {
+  return message.includes("model receipt lifecycle failed") || message === "model_receipt_lifecycle";
+}
+
 export function isCancellationMessage(message: string): boolean {
+  if (isModelReceiptFailure(message)) return false;
   return (
     message.includes("context canceled") ||
     message.includes("context cancelled") ||

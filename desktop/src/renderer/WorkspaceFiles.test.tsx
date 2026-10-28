@@ -11,6 +11,8 @@ import type {
   WorkspaceFileReadResult,
 } from "../shared/protocol";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
+import { PreviewContentProvider } from "./PreviewContentContext";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
 import { WorkspaceFilePreview, WorkspaceFileTree } from "./WorkspaceFiles";
 import { workspaceFileViewTab, type WorkspaceFileViewTab } from "./WorkspaceViewTabs";
 
@@ -59,6 +61,7 @@ vi.mock("./WorkspacePdfPreview", () => ({
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let previewContent: ApplicationPreviewContent;
 let listWorkspaceDirectory: ReturnType<typeof vi.fn>;
 let readWorkspaceFile: ReturnType<typeof vi.fn>;
 let writeWorkspaceFile: ReturnType<typeof vi.fn>;
@@ -122,6 +125,7 @@ beforeEach(() => {
       showWorkspaceItemMenu: vi.fn().mockResolvedValue({ action: "none" }),
     },
   });
+  previewContent = new ApplicationPreviewContent(window.wuu);
   Object.defineProperty(globalThis.navigator, "clipboard", {
     configurable: true,
     value: { writeText: writeClipboard },
@@ -147,7 +151,7 @@ afterEach(() => {
 
 async function render(element: JSX.Element): Promise<void> {
   await act(async () => {
-    root?.render(element);
+    root?.render(<PreviewContentProvider service={previewContent}>{element}</PreviewContentProvider>);
     await Promise.resolve();
   });
 }
@@ -180,7 +184,7 @@ function rowButtonByTitle(title: string): HTMLButtonElement {
 }
 
 function contextMenu(): HTMLElement | null {
-  return document.body.querySelector(".workspace-tree-context-menu");
+  return document.body.querySelector('[role="menu"]');
 }
 
 async function dispatchContextMenu(
@@ -319,32 +323,32 @@ describe("WorkspaceFileTree", () => {
     expect(container.textContent).toContain("button code");
   });
 
-  it.each(["resolve", "reject"])("ignores a stale child directory %s after switching roots", async (outcome) => {
+  it.each([["", "resolve"], ["", "reject"], ["src", "resolve"], ["src", "reject"]])("ignores a stale directory %j %s after switching roots", async (pendingPath, outcome) => {
     let completeOld: (result: WorkspaceDirectoryListResult) => void = () => {};
     let rejectOld: (error: Error) => void = () => {};
     listWorkspaceDirectory.mockImplementation((path = "", cwd = "/repo") => {
-      if (path === "src" && cwd === "/repo") {
+      if (path === pendingPath && cwd === "/repo") {
         return new Promise((resolve, reject) => { completeOld = resolve; rejectOld = reject; });
       }
       return Promise.resolve({ ...directoryResults[path], root: cwd });
     });
     await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
     await settleDirectoryLoads();
-    await act(async () => rowButtonByTitle("src/").click());
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
     const nextContext: RuntimeContext = { kind: "no_project", cwd: "/other" };
     await render(<WorkspaceFileTree activeContext={nextContext} open onOpenFile={() => {}} />);
     await settleDirectoryLoads();
-    await act(async () => rowButtonByTitle("src/").click());
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
     await settleDirectoryLoads();
-    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/other");
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith(pendingPath, "/other");
     await act(async () => {
       if (outcome === "reject") rejectOld(new Error("Old root disappeared"));
-      else completeOld({ root: "/repo", path: "src", entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
+      else completeOld({ root: "/repo", path: pendingPath, entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
       await Promise.resolve();
     });
     await settleDirectoryLoads();
     expect(treeShadowRoot().querySelector('[data-item-path="src/stale.ts"]')).toBeNull();
-    expect(rowButtonByTitle("src/index.ts")).toBeTruthy();
+    expect(rowButtonByTitle(pendingPath ? "src/index.ts" : "README.md")).toBeTruthy();
     expect(container.textContent).not.toContain("Old root disappeared");
   });
 
@@ -566,6 +570,7 @@ describe("WorkspaceFileTree", () => {
   it("exports the complete selected file and reports native save failures", async () => {
     const exporter = vi.fn().mockRejectedValue(new Error("Share destination unavailable"));
     window.wuu.exportWorkspaceFile = exporter;
+    previewContent = new ApplicationPreviewContent(window.wuu);
     await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/components/Button.tsx" />);
     await settleDirectoryLoads();
     const button = container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button");
@@ -815,6 +820,26 @@ describe("WorkspaceFileTree", () => {
     expect(writeWorkspaceFile).not.toHaveBeenCalled();
   });
 
+  it("opens Markdown links relative to the loaded document through the public service", async () => {
+    const openFile = vi.fn();
+    previewContent = new ApplicationPreviewContent(window.wuu, { openFile });
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "docs/guide.md",
+      absolute_path: "/repo/docs/guide.md",
+      text: "[source](../src/App.tsx#L12) [section](./details.md#usage) [absolute](/repo/LICENSE)",
+    }));
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="/repo/docs/guide.md" />);
+    await settleDirectoryLoads();
+    const links = container.querySelectorAll<HTMLButtonElement>(".rich-file-link");
+    expect(links).toHaveLength(3);
+    await act(async () => { for (const link of links) link.click(); });
+    expect(openFile.mock.calls).toEqual([
+      [{ root: "/repo", path: "src/App.tsx#L12" }],
+      [{ root: "/repo", path: "docs/details.md#usage" }],
+      [{ root: "/repo", path: "/repo/LICENSE" }],
+    ]);
+  });
+
   it("opens a line-targeted Markdown file in Monaco at the requested position", async () => {
     readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
       path: "README.md",
@@ -868,6 +893,7 @@ describe("WorkspaceFileTree", () => {
   it("uses the macOS native menu", async () => {
     const showWorkspaceItemMenu = vi.fn().mockResolvedValue({ action: "none" });
     Object.assign(window.wuu, { platform: "darwin", showWorkspaceItemMenu });
+    previewContent = new ApplicationPreviewContent(window.wuu);
 
     await render(
       <WorkspaceFileTree
@@ -1006,4 +1032,29 @@ describe("WorkspaceFileTree", () => {
 
     expect(contextMenu()).toBeNull();
   });
+});
+
+ it("ignores a file result from the previous workspace", async () => {
+    let finish!: (value: WorkspaceFileReadResult) => void;
+    readWorkspaceFile.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/index.ts" />);
+    await render(<WorkspaceFilePreview activeContext={{ kind: "no_project", cwd: "/other" }} selectedFilePath="src/index.ts" />);
+    await settleDirectoryLoads();
+    await act(async () => { finish(workspaceFile({ text: "STALE CONTENT" })); });
+    expect(container.textContent).not.toContain("STALE CONTENT");
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/index.ts", "/other");
+  });
+
+it("does not show an old file export failure in a newly selected file", async () => {
+  let fail!: (error: Error) => void;
+  window.wuu.exportWorkspaceFile = vi.fn(() => new Promise<void>((_, reject) => { fail = reject; }));
+  previewContent = new ApplicationPreviewContent(window.wuu);
+  await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="one.txt" />);
+  await settleDirectoryLoads();
+  await act(async () => { container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button")!.click(); });
+  await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="two.txt" />);
+  await settleDirectoryLoads();
+  await act(async () => { fail(new Error("OLD EXPORT ERROR")); });
+  expect(container.textContent).not.toContain("OLD EXPORT ERROR");
+  expect(container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button")?.disabled).toBe(false);
 });

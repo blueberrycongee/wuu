@@ -1,0 +1,253 @@
+.browser-library-bookmark[aria-pressed="true"] {
+  color: var(--info);
+}
+
+.browser-library-bookmark[aria-pressed="true"] .icon {
+  fill: currentColor;
+}
+
+.browser-library-panel {
+  position: fixed;
+  z-index: 400;
+  display: flex;
+  width: min(calc(var(--font-ui) * 31), calc(100vw - 24px));
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  -webkit-app-region: no-drag;
+}
+
+.browser-library-heading,
+.browser-library-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.browser-library-heading > span {
+  font-weight: var(--weight-medium);
+}
+
+.browser-library-sections {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.browser-library-sections button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-size-toolbar);
+  flex: 1;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.browser-library-sections button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.browser-library-search {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+}
+
+.browser-library-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.browser-library-search:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.browser-library-results {
+  min-height: 0;
+  max-height: calc(var(--font-ui) * 28);
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-2);
+}
+
+.browser-library-results ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.browser-library-results li {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.browser-library-results li:hover,
+.browser-library-sections button:hover {
+  background: var(--menu-hover);
+}
+
+.browser-library-open {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.browser-library-entry-title,
+.browser-library-entry-url {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-library-entry-url,
+.browser-library-open time,
+.browser-library-footer,
+.browser-library-empty {
+  color: var(--ink-soft);
+}
+
+.browser-library-remove {
+  flex: none;
+  margin-right: var(--space-2);
+}
+
+.browser-library-empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+}
+
+.browser-library-more {
+  display: block;
+  margin: var(--space-2) auto;
+}
+
+.browser-library-footer {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--menu-border);
+}
+
+.browser-library-footer p {
+  flex: 1 1 18ch;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.browser-library-footer button {
+  flex: none;
+}
+
+.browser-library-error,
+.browser-library-confirm {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.browser-library-error {
+  color: var(--danger);
+}
+
+.browser-library-confirm {
+  overflow-y: auto;
+}
+
+.browser-library-confirm p {
+  margin: 0 0 var(--space-3);
+  line-height: 1.5;
+}
+
+.browser-library-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.browser-library-panel button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.browser-library-edit {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.browser-library-edit label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.browser-library-edit input {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+}
+
+.browser-library-edit input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.browser-library-edit > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

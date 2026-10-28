@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -42,31 +43,33 @@ type RawEvent struct {
 }
 
 type TurnRecord struct {
-	ThreadID            string              `json:"thread_id"`
-	TurnID              string              `json:"turn_id"`
-	Status              string              `json:"status"`
-	ProviderName        string              `json:"provider_name,omitempty"`
-	Model               string              `json:"model,omitempty"`
-	APIModel            string              `json:"api_model,omitempty"`
-	ModelProfile        *ModelProfileRecord `json:"model_profile,omitempty"`
-	PermissionMode      string              `json:"permission_mode,omitempty"`
-	StartedAt           *time.Time          `json:"started_at,omitempty"`
-	CompletedAt         *time.Time          `json:"completed_at,omitempty"`
-	DurationMS          *int64              `json:"duration_ms,omitempty"`
-	InputTokens         int                 `json:"input_tokens,omitempty"`
-	OutputTokens        int                 `json:"output_tokens,omitempty"`
-	CacheCreationTokens int                 `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens     int                 `json:"cache_read_tokens,omitempty"`
-	FinishReason        string              `json:"finish_reason,omitempty"`
-	StopReason          string              `json:"stop_reason,omitempty"`
-	Truncated           bool                `json:"truncated,omitempty"`
-	HistoryRewritten    bool                `json:"history_rewritten,omitempty"`
-	DriverID            string              `json:"driver_id,omitempty"`
-	DriverVersion       string              `json:"driver_version,omitempty"`
-	DriverContract      int                 `json:"driver_contract,omitempty"`
-	DriverStatus        string              `json:"driver_status,omitempty"`
-	DriverCheckpoint    json.RawMessage     `json:"driver_checkpoint,omitempty"`
-	Error               string              `json:"error,omitempty"`
+	ModelSteps          []pluginprotocol.ModelStepUsageV1 `json:"model_steps,omitempty"`
+	ThreadID            string                            `json:"thread_id"`
+	TurnID              string                            `json:"turn_id"`
+	Status              string                            `json:"status"`
+	ProviderName        string                            `json:"provider_name,omitempty"`
+	Model               string                            `json:"model,omitempty"`
+	APIModel            string                            `json:"api_model,omitempty"`
+	ModelProfile        *ModelProfileRecord               `json:"model_profile,omitempty"`
+	PermissionMode      string                            `json:"permission_mode,omitempty"`
+	StartedAt           *time.Time                        `json:"started_at,omitempty"`
+	CompletedAt         *time.Time                        `json:"completed_at,omitempty"`
+	DurationMS          *int64                            `json:"duration_ms,omitempty"`
+	InputTokens         int                               `json:"input_tokens,omitempty"`
+	OutputTokens        int                               `json:"output_tokens,omitempty"`
+	CacheCreationTokens int                               `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int                               `json:"cache_read_tokens,omitempty"`
+	FinishReason        string                            `json:"finish_reason,omitempty"`
+	StopReason          string                            `json:"stop_reason,omitempty"`
+	Truncated           bool                              `json:"truncated,omitempty"`
+	HistoryRewritten    bool                              `json:"history_rewritten,omitempty"`
+	DriverID            string                            `json:"driver_id,omitempty"`
+	DriverVersion       string                            `json:"driver_version,omitempty"`
+	DriverContract      int                               `json:"driver_contract,omitempty"`
+	DriverStatus        string                            `json:"driver_status,omitempty"`
+	DriverCheckpoint    json.RawMessage                   `json:"driver_checkpoint,omitempty"`
+	ReceiptDiagnostic   string                            `json:"model_receipt_diagnostic,omitempty"`
+	Error               string                            `json:"error,omitempty"`
 }
 
 type ModelProfileRecord struct {
@@ -371,42 +374,29 @@ func ReadEvents(path string) ([]RawEvent, error) {
 	return out, nil
 }
 
+// ReplayTrace is the explicit offline-file adapter for replay tooling.
 func ReplayTrace(path string) (ReplaySummary, error) {
-	file, err := os.Open(path)
+	events, err := ReadEvents(path)
 	if err != nil {
 		return ReplaySummary{}, err
 	}
-	defer file.Close()
+	summary, err := ReplayEvents(events)
+	summary.Path = path
+	return summary, err
+}
 
-	summary := ReplaySummary{
-		Path:       path,
-		Mode:       "session_trace_replay",
-		EventTypes: make(map[string]int),
-	}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	line := 0
-	for scanner.Scan() {
-		line++
-		var event struct {
-			Type   string          `json:"type"`
-			TurnID string          `json:"turn_id,omitempty"`
-			Data   json.RawMessage `json:"data,omitempty"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return ReplaySummary{}, fmt.Errorf("decode trace line %d: %w", line, err)
-		}
+// ReplayEvents folds selected-provider facts without consulting local storage.
+func ReplayEvents(events []RawEvent) (ReplaySummary, error) {
+	summary := ReplaySummary{Mode: "session_trace_replay", EventTypes: make(map[string]int)}
+	for index, event := range events {
 		summary.EventCount++
 		summary.EventTypes[event.Type]++
 		if err := replayEvent(&summary, event.Type, event.TurnID, event.Data); err != nil {
-			return ReplaySummary{}, fmt.Errorf("replay trace line %d type %q: %w", line, event.Type, err)
+			return ReplaySummary{}, fmt.Errorf("replay event %d type %q: %w", index+1, event.Type, err)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return ReplaySummary{}, err
-	}
 	if len(summary.Turns) == 0 {
-		return ReplaySummary{}, fmt.Errorf("trace %s has no turn event", path)
+		return ReplaySummary{}, fmt.Errorf("trace has no turn event")
 	}
 	if summary.Final == nil {
 		summary.Warnings = append(summary.Warnings, "trace has no final event")
@@ -717,10 +707,15 @@ func (summary *ReplaySummary) finalizeToolSummary() {
 	summary.ToolSummary.argumentCounts = nil
 }
 
+// AppendTurn writes an explicitly requested offline JSONL trace.
 func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []tools.ToolInfo, records []tools.ToolExecutionRecord, contextRequests []RequestContextRecord, providerStates []ProviderStateRecord, compactAttempts []CompactRecord, barrierRejectionsArg ...[]BarrierToolBatchRejectionRecord) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
+	}
+	events, err := TurnEvents(turn, final, inventory, records, contextRequests, providerStates, compactAttempts, barrierRejectionsArg...)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return err
@@ -730,9 +725,25 @@ func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []too
 		return err
 	}
 	defer file.Close()
-
-	createdAt := time.Now().UTC()
 	encoder := json.NewEncoder(file)
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TurnEvents builds the sanitized event batch without performing storage IO.
+func TurnEvents(turn TurnRecord, final FinalRecord, inventory []tools.ToolInfo, records []tools.ToolExecutionRecord, contextRequests []RequestContextRecord, providerStates []ProviderStateRecord, compactAttempts []CompactRecord, barrierRejectionsArg ...[]BarrierToolBatchRejectionRecord) ([]RawEvent, error) {
+	// Stable completion time makes an unchanged batch idempotent across recovery.
+	var createdAt time.Time
+	if turn.CompletedAt != nil {
+		createdAt = *turn.CompletedAt
+	} else if turn.StartedAt != nil {
+		createdAt = *turn.StartedAt
+	}
+	turn.ReceiptDiagnostic = redactAndTruncate(turn.ReceiptDiagnostic)
 	events := []Event{{
 		Type:      "turn",
 		ThreadID:  turn.ThreadID,
@@ -807,12 +818,16 @@ func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []too
 		CreatedAt: createdAt,
 		Data:      final,
 	})
+
+	raw := make([]RawEvent, 0, len(events))
 	for _, event := range events {
-		if err := encoder.Encode(event); err != nil {
-			return err
+		data, err := json.Marshal(event.Data)
+		if err != nil {
+			return nil, err
 		}
+		raw = append(raw, RawEvent{Type: event.Type, ThreadID: event.ThreadID, TurnID: event.TurnID, CreatedAt: event.CreatedAt, Data: data})
 	}
-	return nil
+	return raw, nil
 }
 
 func cloneBarrierToolBatchRejectionRecords(records []BarrierToolBatchRejectionRecord) []BarrierToolBatchRejectionRecord {
@@ -844,9 +859,15 @@ func redactAndTruncate(value string) string {
 	if value == "" {
 		return ""
 	}
-	value = secretLikeRE.ReplaceAllString(value, "$1=[REDACTED]")
-	if len(value) <= finalAnswerPreviewBytes {
-		return value
+	// Only inspect the preview window: scanning a multi-megabyte answer here
+	// can exhaust shutdown's drain deadline before the Run is settled. Redact
+	// the bounded prefix before adding a suffix so a cut secret stays hidden.
+	prefix := stringutil.Truncate(value, finalAnswerPreviewBytes, "")
+	preview := secretLikeRE.ReplaceAllString(prefix, "$1=[REDACTED]")
+	truncated := len(prefix) < len(value) || len(preview) > finalAnswerPreviewBytes
+	preview = stringutil.Truncate(preview, finalAnswerPreviewBytes, "")
+	if truncated {
+		preview += "...[truncated]"
 	}
-	return stringutil.Truncate(value, finalAnswerPreviewBytes, "...[truncated]")
+	return preview
 }

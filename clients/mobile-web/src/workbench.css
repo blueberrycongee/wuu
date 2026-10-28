@@ -74,7 +74,6 @@
 @media (pointer: coarse) and (max-height: 300px) {
   .account-workbench .dock-composer-wrap { padding-block: 4px; }
   .account-workbench .composer {
-    --composer-collapsed-min-height: 88px;
     --composer-expanded-min-height: 88px;
   }
   .account-workbench .composer textarea {
@@ -83,7 +82,9 @@
     max-height: max(40px, calc(var(--web-viewport-height) - 80px));
     padding-block: 8px;
   }
+  .account-workbench .composer-editor,
   .account-workbench .composer-bar { min-height: 48px; }
+  .account-workbench .composer-editor button,
   .account-workbench .composer-bar button { min-height: 44px; min-width: 44px; }
 }
 

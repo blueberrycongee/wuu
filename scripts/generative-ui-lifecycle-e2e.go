@@ -133,13 +133,14 @@ func runLifecycle(runtimePath, outputPath string) error {
 		return errors.New("bundled generative-ui plugin must be disabled by default")
 	}
 	report.Plugin, report.PackageFingerprint = target.ID, target.Fingerprint
-	rt := &runtime.Session{
-		RootDir: dir, HomeDir: dir, WuuHome: home,
-		StateDir: filepath.Join(dir, "state"), SessionDir: filepath.Join(dir, "sessions"),
-		ProviderName: "synthetic", Model: "no-inference",
+	cfg := config.Config{Extensions: settings, DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{
+		"synthetic": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "gpt-test"},
+	}}
+	rt, err := runtime.NewSession(runtime.Options{RootDir: dir, HomeDir: dir, WuuHome: home, Config: cfg})
+	if err != nil {
+		return fmt.Errorf("initialize isolated runtime: %w", err)
 	}
 	defer rt.Cleanup()
-	cfg := config.Config{Extensions: settings}
 	var toolName string
 	var retainedHost *pluginhost.Host
 	arguments := json.RawMessage(`{"spec":{"version":1,"title":"Lifecycle check","fallback":"Hello","blocks":[{"id":"hello","type":"text","text":"Hello"}]}}`)
@@ -295,7 +296,13 @@ func checkRuntimeReplacement(rt *runtime.Session, cfg config.Config, target plug
 	if replacement.SubjectID != target.SubjectID || replacement.Fingerprint == target.Fingerprint {
 		return errors.New("runtime replacement did not preserve its subject and advance its fingerprint")
 	}
-	candidate, err := rt.PreflightDiscoveredExtensions(cfg, []plugin.Plugin{replacement})
+	discovered := plugin.Discover(rt.RootDir, rt.WuuHome)
+	for i := range discovered {
+		if discovered[i].SubjectID == target.SubjectID {
+			discovered[i] = replacement
+		}
+	}
+	candidate, err := rt.PreflightDiscoveredExtensions(cfg, discovered, target.ID)
 	if err != nil {
 		return fmt.Errorf("replacement preflight: %w", err)
 	}
@@ -334,7 +341,12 @@ func checkRuntimeReplacement(rt *runtime.Session, cfg config.Config, target plug
 	if err != nil {
 		return err
 	}
-	if _, err := rt.PreflightDiscoveredExtensions(cfg, []plugin.Plugin{broken}); err == nil {
+	for i := range discovered {
+		if discovered[i].SubjectID == target.SubjectID {
+			discovered[i] = broken
+		}
+	}
+	if _, err := rt.PreflightDiscoveredExtensions(cfg, discovered, target.ID); err == nil {
 		return errors.New("invalid runtime replacement unexpectedly passed preflight")
 	}
 	if rt.PluginHost != currentHost {

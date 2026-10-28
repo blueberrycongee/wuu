@@ -1,6 +1,8 @@
 package modelcatalog
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -63,11 +65,8 @@ func TestMatchProviderTreatsTerminalV1AsOptional(t *testing.T) {
 		t.Fatalf("rule provider name = %q", ruleName)
 	}
 	model := enriched.Models["MiniMax-M3"]
-	// 1M live-verified 2026-07-06 (648k-token request accepted, ~2M rejected);
-	// the launch-era 512k snapshot value systematically halved the compact
-	// threshold.
-	if model.Limit == nil || model.Limit.Context != 1_048_576 {
-		t.Fatalf("model limit context = %+v, want 1048576", model.Limit)
+	if model.Limit == nil || model.Limit.Context != 1_000_000 || model.Limit.Output != 524_288 {
+		t.Fatalf("model limits = %+v, want 1000000/524288", model.Limit)
 	}
 	if enriched.ContextWindow != 0 {
 		t.Fatalf("provider ContextWindow = %d, want 0 without explicit provider override", enriched.ContextWindow)
@@ -86,6 +85,155 @@ func TestMatchProviderTreatsTerminalV1AsOptional(t *testing.T) {
 	}, "MiniMax-M3")
 	if got := overridden.Models["MiniMax-M3"].Options["anthropic_default_betas"]; got != true {
 		t.Fatalf("explicit MiniMax anthropic_default_betas = %#v, want true", got)
+	}
+}
+
+func TestMiniMaxM31CatalogCorrection(t *testing.T) {
+	provider, ok := ProviderByID("minimax")
+	if !ok {
+		t.Fatal("expected MiniMax provider")
+	}
+	model, ok := modelByID(provider, "MiniMax-M3.1-Flash")
+	if !ok {
+		t.Fatal("MiniMax-M3.1-Flash missing from catalog")
+	}
+	if model.ReleaseDate != "2026-10-19" || model.Family != "minimax" {
+		t.Fatalf("unexpected model identity: %+v", model)
+	}
+	if model.Limit == nil || model.Limit.Context != 1_000_000 || model.Limit.Output != 524_288 {
+		t.Fatalf("unexpected model limits: %+v", model.Limit)
+	}
+	if got := strings.Join(model.SupportedEfforts, ","); got != "low,medium,high,xhigh,max" {
+		t.Fatalf("supported efforts = %q", got)
+	}
+	if model.DefaultVariant != "max" {
+		t.Fatalf("default variant = %q, want max", model.DefaultVariant)
+	}
+	if model.Modalities == nil || strings.Join(model.Modalities.Input, ",") != "text,image,video" {
+		t.Fatalf("unexpected modalities: %+v", model.Modalities)
+	}
+	if inputCost, _ := model.Cost["input"].(float64); inputCost != 0.15 {
+		t.Fatalf("input cost = %#v, want 0.15", model.Cost["input"])
+	}
+
+	codingPlan, ok := ProviderByID("minimax-coding-plan")
+	if !ok {
+		t.Fatal("expected MiniMax coding plan provider")
+	}
+	codingModel, ok := modelByID(codingPlan, "MiniMax-M3.1-Flash")
+	if !ok || codingModel.Cost["input"] != float64(0) {
+		t.Fatalf("coding plan model = %+v, ok=%v", codingModel, ok)
+	}
+}
+
+func TestGemini4CatalogCorrection(t *testing.T) {
+	for _, tc := range []struct {
+		providerID string
+		modelID    string
+		output     int
+	}{
+		{providerID: "google", modelID: "gemini-4-argon", output: 65_536},
+		{providerID: "openrouter", modelID: "google/gemini-4-argon", output: 943_718},
+	} {
+		t.Run(tc.providerID, func(t *testing.T) {
+			provider, ok := ProviderByID(tc.providerID)
+			if !ok {
+				t.Fatalf("expected %s provider", tc.providerID)
+			}
+			model, ok := modelByID(provider, tc.modelID)
+			if !ok {
+				t.Fatalf("%s missing from %s catalog", tc.modelID, tc.providerID)
+			}
+			if model.Limit == nil || model.Limit.Context != 1_048_576 || model.Limit.Output != tc.output {
+				t.Fatalf("unexpected model limits: %+v", model.Limit)
+			}
+			if got := strings.Join(model.SupportedEfforts, ","); got != "low,medium,high" {
+				t.Fatalf("supported efforts = %q", got)
+			}
+			if model.DefaultVariant != "medium" {
+				t.Fatalf("default variant = %q, want medium", model.DefaultVariant)
+			}
+		})
+	}
+
+	openRouter, ok := ProviderByID("openrouter")
+	if !ok {
+		t.Fatal("expected OpenRouter provider")
+	}
+	if _, ok := modelByID(openRouter, "minimax/minimax-m3.1-flash:free"); !ok {
+		t.Fatal("MiniMax M3.1 free gateway model missing from OpenRouter catalog")
+	}
+}
+
+func TestSuggestedModelSkipsFreeTierWhenPaidModelsExist(t *testing.T) {
+	models := []Model{
+		{ID: "free-model:free", Family: "alpha", ReleaseDate: "2026-10-19", ToolCall: officialBool(true)},
+		{ID: "paid-model", Family: "beta", ReleaseDate: "2026-10-13", ToolCall: officialBool(true)},
+	}
+	if got := suggestedModel(models); got != "paid-model" {
+		t.Fatalf("suggested model = %q, want paid-model", got)
+	}
+
+	if got := suggestedModel(models[:1]); got != "free-model:free" {
+		t.Fatalf("free-only suggested model = %q", got)
+	}
+}
+
+func TestMiniMaxCatalogIncludesM31Flash(t *testing.T) {
+	for _, providerID := range []string{"minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan"} {
+		t.Run(providerID, func(t *testing.T) {
+			provider, ok := ProviderByID(providerID)
+			if !ok {
+				t.Fatalf("expected %s provider", providerID)
+			}
+			modelIDs := make([]string, 0, len(provider.Models))
+			for _, candidate := range provider.Models {
+				modelIDs = append(modelIDs, candidate.ID)
+			}
+			if !slices.Equal(modelIDs, []string{"MiniMax-M3", "MiniMax-M3.1-Flash"}) {
+				t.Fatalf("current model IDs = %v", modelIDs)
+			}
+
+			connectable, ok := ConnectableProvider(providerID)
+			if !ok {
+				t.Fatalf("expected connectable %s provider", providerID)
+			}
+			if connectable.DefaultModel != "MiniMax-M3.1-Flash" {
+				t.Fatalf("default model = %q, want MiniMax-M3.1-Flash", connectable.DefaultModel)
+			}
+		})
+	}
+}
+
+func TestMiniMaxSavedModelRetainsMetadata(t *testing.T) {
+	for _, id := range []string{"minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan"} {
+		t.Run(id, func(t *testing.T) {
+			for _, requested := range []bool{false, true} {
+				provider := config.ProviderConfig{Type: "anthropic", Model: "MiniMax-M2.7"}
+				var models []string
+				if requested {
+					models = []string{provider.Model}
+				}
+				_, enriched := EnrichProvider(id, provider, models...)
+				model := enriched.Models[provider.Model]
+				if model.Limit == nil || model.Limit.Context != 204_800 || model.Reasoning == nil || !*model.Reasoning || len(model.Cost) == 0 {
+					t.Fatalf("requested=%v: saved model lost metadata: %+v", requested, model)
+				}
+				if model.Options["anthropic_default_betas"] != false {
+					t.Fatalf("saved model lost transport defaults: %+v", model.Options)
+				}
+			}
+			_, enriched := EnrichProvider(id, config.ProviderConfig{
+				Type: "anthropic", Model: "MiniMax-M3.1-Flash",
+				Models: map[string]config.ProviderModelConfig{
+					"MiniMax-M2.7": {Limit: &config.ProviderModelLimitConfig{Context: 100_000}, Options: map[string]any{"anthropic_default_betas": true}},
+				},
+			})
+			old := enriched.Models["MiniMax-M2.7"]
+			if old.Limit.Context != 100_000 || old.Options["anthropic_default_betas"] != true || len(old.Cost) == 0 {
+				t.Fatalf("configured model overrides or metadata lost: %+v", old)
+			}
+		})
 	}
 }
 
@@ -509,5 +657,31 @@ func TestGPT6SolLunaPreserveExplicitTransport(t *testing.T) {
 		if provider.WireAPI != "" {
 			t.Fatalf("custom endpoint transport changed: %s", provider.WireAPI)
 		}
+	}
+}
+
+func TestChatGPTAccountCatalogCannotInheritAPIKeyCatalog(t *testing.T) {
+	provider := config.ProviderConfig{Type: "chatgpt", BaseURL: "https://api.openai.com/v1", ChatGPTAccountID: "oaiapp_fixture", Model: "account-model"}
+	if _, ok := MatchProvider("openai", provider); ok {
+		t.Fatal("account catalog matched API-key catalog")
+	}
+	_, enriched := EnrichProvider("openai", provider, "account-model")
+	if len(enriched.Models) != 0 {
+		t.Fatal("static catalog added unavailable account models")
+	}
+}
+
+func TestMiniMaxCNEndpointAlias(t *testing.T) {
+	for _, id := range []string{"minimax-cn", "minimax-cn-coding-plan"} {
+		for _, suffix := range []string{"/anthropic", "/anthropic/v1"} {
+			endpoint := "https://api.minimax.cn" + suffix
+			name, p := EnrichProvider(id, config.ProviderConfig{Type: "anthropic", BaseURL: endpoint, Model: "MiniMax-M3.1-Flash"}, "MiniMax-M3.1-Flash")
+			if name != id || p.BaseURL != endpoint || p.Models[p.Model].DefaultVariant != "max" {
+				t.Fatalf("alias lost identity, endpoint or metadata: %s %+v", name, p)
+			}
+		}
+	}
+	if _, ok := MatchProvider("minimax-cn", config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.minimax.cn.example.org/anthropic/v1"}); ok {
+		t.Fatal("matched unrelated host")
 	}
 }

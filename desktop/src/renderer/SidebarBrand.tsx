@@ -1,5 +1,6 @@
 import { Bell } from "./WuuIcons";
 import {
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -18,7 +19,9 @@ export function SidebarBrand({
   hasUnread = false,
   onToggleUnreadView,
   onClearUnread,
+  children,
 }: {
+  children?: ReactNode;
   readOnly?: boolean;
   unreadViewOpen?: boolean;
   /** Running and unread sessions, both listed by the attention view. */
@@ -130,6 +133,7 @@ export function SidebarBrand({
           </button>
         </Tooltip>
       ) : null}
+      {children}
     </div>
   );
 }

@@ -31,6 +31,10 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 		t.Skip("node is required")
 	}
 	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(root, "state")
 	if err := os.MkdirAll(home, 0700); err != nil {
 		t.Fatal(err)
@@ -61,14 +65,14 @@ export default {
   { id: "agent.request.transform", kind: "transform", version: 1 }
  ] }; },
  invokeCapability(call) {
-  appendFileSync(lifecycle, JSON.stringify({event:"capability",version,capability:call.capability}) + "\n");
+  appendFileSync(lifecycle, JSON.stringify({event:"capability",pid:process.pid,version,capability:call.capability}) + "\n");
   if (call.capability === "agent.system_prompt.section") return { output: { text: "GENERATION_PROMPT_" + version } };
   if (call.capability === "agent.request.transform") return { output: { prepend_system_messages: ["GENERATION_INTERCEPTOR_" + version] } };
   throw new Error("unexpected capability");
  },
- shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",version}) + "\n"); },
+ shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",pid:process.pid,version}) + "\n"); },
  executeTool() {
-  appendFileSync(lifecycle, JSON.stringify({event:"tool",version}) + "\n");
+  appendFileSync(lifecycle, JSON.stringify({event:"tool",pid:process.pid,version}) + "\n");
   const disk = readFileSync(new URL(import.meta.url), "utf8").match(/const version = "([^"]+)"/)[1];
   return { result: { content: [{ type: "text", text: "memory:" + version + ";disk:" + disk }] } };
  }
@@ -89,25 +93,31 @@ export default {
 		}
 		return write + "text(await tools.bash(" + encode(map[string]string{"command": publish}) + "));"
 	}
-	// Await the real watcher-driven retirement before the disabling tool returns,
-	// so the next model step must exercise its retained transform chain.
+	// Preparation can close another process running the same source version.
+	// Await the process that actually handled this turn's last transform.
 	waitForRetirement := "node -e " + shellQuote(`const fs = require("node:fs");
 const path = process.argv[1];
+function events() {
+  return fs.readFileSync(path, "utf8").split("\n").flatMap(line => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
+const active = events().findLast(value => value.event === "capability" && value.capability === "agent.request.transform" && value.version === "v2");
+if (!active) throw new Error("active v2 transform process was not observed");
 const watcher = fs.watch(path, check);
 const timeout = setTimeout(() => { watcher.close(); process.exit(1); }, 10000);
 function check() {
-  const retired = fs.readFileSync(path, "utf8").split("\n").some(line => {
-    try { const value = JSON.parse(line); return value.event === "shutdown" && value.version === "v2"; }
-    catch { return false; }
-  });
+  const retired = events().some(value => value.event === "shutdown" && value.pid === active.pid);
   if (retired) { clearTimeout(timeout); watcher.close(); console.log("runtime retired"); }
 }
 check();`) + " " + shellQuote(lifecyclePath)
 	var mu sync.Mutex
 	calls := map[string]int{}
+	published := map[string]string{}
 	var problems []string
 	var providerTranscript bytes.Buffer
 	toolPattern := regexp.MustCompile(`plugin_local_[a-z0-9_]+_read_[a-f0-9]{16}`)
+	publicationPattern := regexp.MustCompile(`published generation ([a-f0-9]{64}) at epoch`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var request struct {
@@ -155,7 +165,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 		fmt.Fprintf(&providerTranscript, "stage=%s call=%d request=%s\n", stage, call, body)
 		fail := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 		name := toolPattern.FindString(surface)
-		if stage == "install" || stage == "disabled" || stage == "discover-manager" {
+		if stage == "install" || stage == "disabled" || stage == "discover-manager" || strings.HasPrefix(stage, "bundled-") {
 			if name != "" {
 				fail("%s advertised plugin tool %s", stage, name)
 			}
@@ -169,7 +179,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 		// generation as tools, including later model calls in an updating turn.
 		expectedVersion := "v2"
 		switch stage {
-		case "discover-manager", "install", "disabled":
+		case "discover-manager", "install", "disabled", "bundled-disable", "bundled-status", "bundled-enable":
 			expectedVersion = ""
 		case "read-v1", "update":
 			expectedVersion = "v1"
@@ -197,6 +207,8 @@ check();`) + " " + shellQuote(lifecyclePath)
 				} else {
 					code = `text(await tools.plugin_manager({action:"status"}));`
 				}
+			case "bundled-disable", "bundled-status", "bundled-enable":
+				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": strings.TrimPrefix(stage, "bundled-"), "id": "peers"}) + "); text(\"BUNDLED_RECEIPT:\" + receipt.model_text);"
 			case "disable-manager":
 				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);" + " text(await tools.bash(" + encode(map[string]string{"command": waitForRetirement}) + "));"
 			case "install":
@@ -253,12 +265,38 @@ check();`) + " " + shellQuote(lifecyclePath)
 					}
 				}
 			}
+			if strings.HasPrefix(stage, "bundled-") {
+				var receipt struct {
+					Action  string `json:"action"`
+					Plugins []struct {
+						ID      string `json:"id"`
+						Enabled bool   `json:"desired_enabled"`
+						Trusted bool   `json:"trusted"`
+						State   string `json:"current_conversation_runtime_state"`
+						Current string `json:"current_conversation_fingerprint"`
+					} `json:"plugins"`
+				}
+				for _, line := range strings.Split(result, "\n") {
+					if strings.HasPrefix(line, "BUNDLED_RECEIPT:") {
+						if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "BUNDLED_RECEIPT:")), &receipt); err != nil {
+							fail("invalid bundled receipt: %v", err)
+						}
+					}
+				}
+				if len(receipt.Plugins) != 1 || receipt.Plugins[0].ID != "peers" || !receipt.Plugins[0].Trusted || receipt.Plugins[0].Enabled != (stage == "bundled-enable") {
+					fail("%s policy receipt: %s", stage, result)
+				} else if stage == "bundled-status" && (receipt.Plugins[0].State != "inactive" || receipt.Plugins[0].Current != "") {
+					fail("disabled bundled plugin silently reactivated: %s", result)
+				}
+			}
 			if stage == "discover-manager" && !strings.Contains(result, "plugin_manager") && !strings.Contains(result, `"action":"status"`) {
 				fail("manager discovery failed: %s", result)
 			}
 			switch stage {
 			case "install", "update":
-				if !strings.Contains(result, "published generation") {
+				if match := publicationPattern.FindStringSubmatch(result); len(match) == 2 {
+					published[stage] = match[1]
+				} else {
 					fail("%s publication failed inside active turn: %s", stage, result)
 				}
 			}
@@ -380,6 +418,23 @@ check();`) + " " + shellQuote(lifecyclePath)
 			t.Logf("Evidence: %s", dir)
 		}
 	}()
+	// Keep committed inventory notifications even when they arrive before
+	// the publication turn completes. CLI publication is not host activation.
+	observedInventory := map[string]map[string]any{}
+	observeInventory := func(message map[string]any) {
+		if message["method"] != "plugin/inventory/changed" {
+			return
+		}
+		payload, _ := message["params"].(map[string]any)
+		records, _ := payload["extension_inventory"].([]any)
+		for _, value := range records {
+			record, _ := value.(map[string]any)
+			if record["id"] == "plugin:dev:"+singleFilePluginID(source) {
+				fingerprint, _ := record["fingerprint"].(string)
+				observedInventory[fingerprint] = record
+			}
+		}
+	}
 	wait := func(match func(map[string]any) bool) map[string]any {
 		for {
 			select {
@@ -387,11 +442,12 @@ check();`) + " " + shellQuote(lifecyclePath)
 				if !ok {
 					t.Fatal("app-server closed before expected protocol event")
 				}
+				observeInventory(message)
 				if match(message) {
 					return message
 				}
 			case <-ctx.Done():
-				t.Fatalf("waiting for protocol event: %v", ctx.Err())
+				t.Fatalf("waiting for protocol event: %v; observed plugin inventory: %v", ctx.Err(), observedInventory)
 			}
 		}
 	}
@@ -416,6 +472,35 @@ check();`) + " " + shellQuote(lifecyclePath)
 				t.Fatalf("generation never became ready for %s: %v", id, ctx.Err())
 			}
 		}
+	}
+	awaitPublication := func(stage string) {
+		mu.Lock()
+		fingerprint := published[stage]
+		mu.Unlock()
+		if fingerprint == "" {
+			t.Fatalf("%s did not return a published fingerprint", stage)
+		}
+		// CLI publication does not mean this app-server finished preparation.
+		// Wait on this server's committed inventory event, not a model retry or
+		// an unrelated CLI process that would activate a different runtime.
+		ready := func(map[string]any) bool {
+			record := observedInventory[fingerprint]
+			if record == nil {
+				return false
+			}
+			if diagnostic, _ := record["last_error"].(string); diagnostic != "" || record["runtime_state"] != "active" || record["enabled"] != true {
+				t.Fatalf("%s generation %s failed activation: %v", stage, fingerprint, record)
+			}
+			generation, _ := record["graph_generation"].(string)
+			if generation == "" {
+				t.Fatalf("%s generation %s lacks a committed graph: %v", stage, fingerprint, record)
+			}
+			return true
+		}
+		if !ready(nil) {
+			wait(ready)
+		}
+		t.Logf("PASS published stage=%s fingerprint=%s inventory=%v", stage, fingerprint, observedInventory[fingerprint])
 	}
 	request("initialize", "initialize", map[string]any{"protocol_version": "wuu-app-server/v0.1", "client": map[string]string{"name": "self-extension-acceptance"}})
 	created := request("thread", "thread/start", map[string]any{})
@@ -451,6 +536,9 @@ check();`) + " " + shellQuote(lifecyclePath)
 	}
 	for _, stage := range []string{"install", "read-v1", "update", "read-v2", "invalid", "after-invalid"} {
 		runTurn(stage)
+		if stage == "install" || stage == "update" {
+			awaitPublication(stage)
+		}
 	}
 	if useManager {
 		runTurn("disable-manager")
@@ -462,6 +550,11 @@ check();`) + " " + shellQuote(lifecyclePath)
 		}
 	}
 	runTurn("disabled")
+	if useManager {
+		for _, stage := range []string{"bundled-disable", "bundled-status", "bundled-enable"} {
+			runTurn(stage)
+		}
+	}
 	// Disable must retire the active runtime, not merely hide its tool. The
 	// observable lifecycle journal also protects the old generation's lease:
 	// its update-turn call must finish before its shutdown is recorded.

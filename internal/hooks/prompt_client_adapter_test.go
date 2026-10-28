@@ -21,7 +21,7 @@ func (j *adapterJournal) PrepareOperation(record providers.InferenceOperationJou
 	return nil
 }
 func (*adapterJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error { return nil }
-func (*adapterJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (*adapterJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (*adapterJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error { return nil }
@@ -34,7 +34,9 @@ func (*adapterJournal) PrepareRecoveryAttempt(context.Context, providers.Inferen
 func (*adapterJournal) CompleteOperation(providers.InferenceOperationTerminalRecord) error {
 	return nil
 }
-func (*adapterJournal) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error { return nil }
+func (*adapterJournal) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
+	return nil
+}
 
 func (j *adapterJournal) snapshot() []providers.InferenceOperation {
 	j.mu.Lock()

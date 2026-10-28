@@ -262,11 +262,11 @@ app.whenReady().then(async () => {
             outer().scrollTop = 0;
             return { initial, batch, expanded, collapsed, growing, readRetained, oldestVisible, footerOutside, selectedVisible, menuOutside };
           });
-          assert.equal(history.initial.count, 16, "five recent, five unread, four running, and two creating rows are candidates");
-          assert.equal(history.batch.count, 21, "one expansion adds five hidden rows");
+          assert.equal(history.initial.count, 14, "two creating rows share the five recent slots; five unread and four running rows remain visible");
+          assert.equal(history.batch.count, 19, "one expansion adds five hidden rows");
           assert.equal(history.expanded.count, 32, "repeated expansion includes every historical and creating row");
-          assert.equal(history.collapsed.count, 16, "collapsing restores the recent range plus retained states");
-          assert.equal(history.growing.count, 36, "running candidates remain reachable in the outer sidebar");
+          assert.equal(history.collapsed.count, 14, "collapsing restores the recent range plus retained states");
+          assert.equal(history.growing.count, 34, "running candidates remain reachable in the outer sidebar");
           for (const state of ["initial", "batch", "expanded", "collapsed", "growing"]) {
             assert.ok(Math.abs(history[state].height - history[state].content) < 1, `${state}: all candidate rows occupy their full height`);
             assert.equal(history[state].horizontalOverflow, false, `${state}: long titles fit without horizontal scrolling`);

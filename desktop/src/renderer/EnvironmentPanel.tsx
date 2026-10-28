@@ -1,4 +1,7 @@
-import { hostSupports } from "./HostCapabilities";
+import { usePreviewContent } from "./PreviewContentContext";
+import type { ApplicationConversationThreadV1 } from "../../../packages/plugin-sdk/src/ui-conversation";
+import type { PreviewFileV1 } from "../../../packages/plugin-sdk/src/ui-preview-content";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   AlertCircle,
   Check,
@@ -11,16 +14,15 @@ import {
   Search,
   X
 } from "./WuuIcons";
-import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState } from "react";
+import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
 import type {
   GitStatusResult,
-  InitializeResult,
-  Thread,
-  WorkspaceFileReadResult
+  Thread
 } from "../shared/protocol";
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { WorktreeNotice } from "./WorktreeNotice";
 
@@ -30,14 +32,13 @@ export type EnvironmentPanelMotionState = "open" | "closing";
 export function EnvironmentPanel({
   panelRef,
   motionState,
-  gitStatus,
+  environment,
   activeMenu,
   running,
   pullRequestDisabledReason,
   onSetActiveMenu,
   onClose,
-  onSelectBranch,
-  onCreateBranch,
+  onOpenWorktree,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
@@ -48,15 +49,13 @@ export function EnvironmentPanel({
 }: {
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
-  initialized: InitializeResult;
-  gitStatus?: GitStatusResult;
+  environment: ApplicationEnvironmentV1;
   activeMenu: EnvironmentPanelMenu;
   running: boolean;
   pullRequestDisabledReason: string;
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: (branch: string) => Promise<void>;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
@@ -64,7 +63,7 @@ export function EnvironmentPanel({
    * Absolute path to a workspace file the right panel should preview. When
    * present together with `activeMenu === "file"`, the panel swaps its
    * default environment body for a file viewer that reads the file via
-   * `window.wuu.readWorkspaceFile`.
+   * the selected public preview-content service.
    */
   rightPanelFilePath?: string;
   /**
@@ -75,13 +74,34 @@ export function EnvironmentPanel({
   onCloseFilePreview?: () => void;
   /** Host-mounted plugin summaries. Each contribution owns its own error boundary. */
   pluginSections?: ReactNode;
-  thread?: Thread;
+  thread?: ApplicationConversationThreadV1;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
+  const snapshot = useSyncExternalStore(
+    listener => environment.subscribe(listener),
+    () => environment.getSnapshot(),
+    () => environment.getSnapshot(),
+  );
+  const gitStatus = snapshot.status;
+
+  async function selectBranch(branch: string): Promise<void> {
+    try {
+      await environment.checkoutBranch(branch);
+      onSetActiveMenu(null);
+    } catch (error) {
+      showErrorToast(error, t("git.checkoutFailed"));
+    }
+  }
+
+  async function createBranch(branch: string): Promise<void> {
+    await environment.createAndCheckoutBranch(branch);
+    onSetActiveMenu(null);
+  }
   if (activeMenu === "file" && rightPanelFilePath) {
     return (
       <EnvironmentFilePreview
         filePath={rightPanelFilePath}
+        workspaceRoot={snapshot.root}
         onClose={onCloseFilePreview ?? onClose}
         panelRef={panelRef}
         motionState={motionState}
@@ -152,7 +172,7 @@ export function EnvironmentPanel({
           />
           <EnvironmentActionRow
             className={activeMenu === "branch" ? "active" : undefined}
-            disabled={!gitStatus?.is_repo || running}
+            disabled={!gitStatus?.is_repo}
             onClick={() => toggleMenu("branch")}
             icon={<GitBranch className="icon-lg" aria-hidden="true" />}
             label={branchLabel}
@@ -165,7 +185,7 @@ export function EnvironmentPanel({
           <button
             className="environment-text-action"
             type="button"
-            disabled={!hasChanges || running || !hostSupports("commitGitChanges")}
+            disabled={!hasChanges || running || !snapshot.capabilities.commit}
             onClick={onOpenCommit}
           >
             {t("environment.commit")}
@@ -174,7 +194,7 @@ export function EnvironmentPanel({
             <button
               className="environment-text-action"
               type="button"
-              disabled={prDisabled || running || (!gitStatus?.pr_url && !hostSupports("createPullRequest"))}
+              disabled={prDisabled || running || (!gitStatus?.pr_url && !snapshot.capabilities.pullRequest)}
               onClick={onOpenPullRequest}
             >
               {t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}
@@ -187,8 +207,11 @@ export function EnvironmentPanel({
       {activeMenu === "branch" && gitStatus?.is_repo ? (
         <EnvironmentBranchMenu
           gitStatus={gitStatus}
-          onSelectBranch={onSelectBranch}
-          onCreateBranch={onCreateBranch}
+          canCheckout={snapshot.capabilities.checkout}
+          canCreateBranch={snapshot.capabilities.createBranch}
+          onSelectBranch={selectBranch}
+          onOpenWorktree={onOpenWorktree}
+          onCreateBranch={createBranch}
         />
       ) : null}
     </aside>
@@ -229,11 +252,17 @@ function EnvironmentActionRow({
 
 function EnvironmentBranchMenu({
   gitStatus,
+  canCheckout,
+  canCreateBranch,
   onSelectBranch,
+  onOpenWorktree,
   onCreateBranch
 }: {
   gitStatus: GitStatusResult;
+  canCheckout: boolean;
+  canCreateBranch: boolean;
   onSelectBranch: (branch: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onCreateBranch: (branch: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
@@ -275,18 +304,34 @@ function EnvironmentBranchMenu({
         {branches.length === 0 ? <div className="environment-empty">{t("environment.noMatchingBranches")}</div> : null}
         {branches.map((branch) => {
           const selected = branch === gitStatus.branch;
+          const worktreePath = selected ? undefined : gitStatus.branch_worktrees?.find((worktree) => worktree.branch === branch)?.path;
           return (
-            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined} disabled={selected || !hostSupports("checkoutGitBranch")} onClick={() => onSelectBranch(branch)}>
+            <Tooltip asChild content={worktreePath} key={branch}><button aria-label={worktreePath ? `${branch}\n${worktreePath}` : branch} role="menuitem" type="button" aria-current={selected || undefined}
+              disabled={selected || submitting || (worktreePath ? !onOpenWorktree : !canCheckout)}
+              onClick={async () => {
+                setSubmitting(true);
+                try {
+                  if (worktreePath) await onOpenWorktree?.(worktreePath);
+                  else await onSelectBranch(branch);
+                } catch (error) {
+                  showErrorToast(error, t("git.checkoutFailed"));
+                } finally {
+                  setSubmitting(false);
+                }
+              }}>
               <GitBranch className="icon" />
-              <span>{branch}</span>
+              <span className="environment-branch-name">
+                <TruncatedText text={branch} />
+                {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
+              </span>
               {selected ? <Check className="icon" /> : null}
-            </button>
+            </button></Tooltip>
           );
         })}
       </div>
       <form className="environment-create-branch" onSubmit={(event) => void submitNewBranch(event)}>
         <input value={newBranch} placeholder={t("environment.newBranchName")} onChange={(event) => setNewBranch(event.target.value)} />
-        <button type="submit" disabled={!newBranch.trim() || submitting || !hostSupports("createCheckoutGitBranch")}>
+        <button type="submit" disabled={!newBranch.trim() || submitting || !canCreateBranch}>
           <Plus className="icon" />
         </button>
       </form>
@@ -297,23 +342,26 @@ function EnvironmentBranchMenu({
 /**
  * Right-panel body that replaces the default environment panel when
  * `activeMenu === "file"` and a `rightPanelFilePath` is supplied. Reads the
- * file via `window.wuu.readWorkspaceFile` and renders loading / error /
+ * file via the selected public preview-content service and renders loading / error /
  * binary / text-file states. The header close button falls back to
  * `onClose` when the caller does not provide a file-specific closer.
  */
 function EnvironmentFilePreview({
   filePath,
+  workspaceRoot,
   onClose,
   panelRef,
   motionState
 }: {
   filePath: string;
+  workspaceRoot?: string;
   onClose: () => void;
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
 }): JSX.Element {
   const { locale, t } = useI18n();
-  const [file, setFile] = useState<WorkspaceFileReadResult | undefined>(undefined);
+  const { service } = usePreviewContent();
+  const [file, setFile] = useState<PreviewFileV1 | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -322,8 +370,13 @@ function EnvironmentFilePreview({
     setLoading(true);
     setError(undefined);
     setFile(undefined);
-    void window.wuu
-      .readWorkspaceFile(filePath)
+    if (!workspaceRoot) {
+      setError("session working directory is unavailable");
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    void service.readFile({ path: filePath, root: workspaceRoot }, { signal: controller.signal })
       .then((result) => {
         if (!cancelled) {
           setFile(result);
@@ -341,8 +394,9 @@ function EnvironmentFilePreview({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [filePath, locale]);
+  }, [filePath, workspaceRoot, locale, service]);
 
   let body: JSX.Element;
   if (loading) {
@@ -397,15 +451,14 @@ function EnvironmentFilePreview({
               {file.truncated ? t("environment.truncated512") : ""}
             </span>
           </div>
-          <button
+          <Tooltip asChild content={t("common.back")}><button
             type="button"
             className="icon-button"
             onClick={onClose}
             aria-label={t("environment.backToInfo")}
-            title={t("common.back")}
           >
             <ChevronRight aria-hidden="true" className="icon" />
-          </button>
+          </button></Tooltip>
         </header>
         <div className="workspace-file-code-scroll">
           <pre className="workspace-file-code">
@@ -428,15 +481,14 @@ function EnvironmentFilePreview({
       <div className="environment-panel-header">
         <h2>{t("environment.file")}</h2>
         <div className="environment-panel-actions">
-          <button
+          <Tooltip asChild content={t("common.back")}><button
             className="icon-button"
             type="button"
             aria-label={t("environment.backToInfo")}
-            title={t("common.back")}
             onClick={onClose}
           >
             <X aria-hidden="true" className="icon" />
-          </button>
+          </button></Tooltip>
         </div>
       </div>
       {body}

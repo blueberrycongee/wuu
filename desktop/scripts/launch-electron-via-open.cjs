@@ -48,6 +48,7 @@ function launchEnvironment(
     WUU_CUA_MAC_PIP_HELPER: pipHelperPath,
     WUU_DEV_LAUNCH_TOKEN: token,
     WUU_DESKTOP_CORE: desktopCore,
+    WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP,
     WUU_DESKTOP_USE_GO_RUN: desktopCore ? undefined : "1",
     WUU_SOURCE_ROOT: root,
     WUU_HOME: devHome(env, root),
@@ -57,9 +58,10 @@ function launchEnvironment(
     WUU_WEB_TLS_CERT: env.WUU_WEB_TLS_CERT,
     WUU_WEB_TLS_KEY: env.WUU_WEB_TLS_KEY,
   };
-  // LaunchServices does not inherit the invoking terminal's toolchain or
-  // explicit engine overrides. Preserve them for source development launches.
+  // LaunchServices does not inherit the invoking terminal's toolchain, engine
+  // overrides, or Go runtime settings. Preserve explicit values for development.
   for (const name of ["PATH", "SHELL", "NVM_DIR", "NVM_BIN", "MISE_DATA_DIR", "XDG_DATA_HOME",
+    "GOMEMLIMIT", "GOGC", "GOMAXPROCS",
     ...Object.keys(env).filter(name => /^WUU_[A-Z0-9_]+_BINARY$/.test(name))]) {
     if (env[name] !== undefined) values[name] = env[name];
   }

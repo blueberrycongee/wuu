@@ -1,5 +1,5 @@
 import type { SetStateAction } from "react";
-import type { Agent, RuntimeContext, Thread } from "../shared/protocol";
+import type { Agent, RuntimeContext, Thread, ThreadResumeResult } from "../shared/protocol";
 import {
   conversationPaneThreadsByID,
   createThreadSessionTab,
@@ -35,6 +35,7 @@ type SetAppState = (update: SetStateAction<AppState>) => void;
 type SidebarWorkspaceThreads = Record<string, Thread[] | undefined>;
 
 export type ThreadActivationActionsDeps = {
+  onError?: (error: Error) => never;
   getAppState: () => AppState;
   setAppState: SetAppState;
   getActiveThreadID: () => string | undefined;
@@ -50,11 +51,16 @@ export type ThreadActivationActionsDeps = {
     kind: "thread" | "workspace" | "runtime",
     targetID: string,
     contextSwitching?: boolean,
+    targetContext?: RuntimeContext,
   ) => number;
   prepareThreadReveal: (requestID: number) => boolean;
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
+  // Generation-owned applications must validate the selected configuration
+  // before a history read can enter a different runtime graph.
+  acceptRuntimeConfiguration?: (loaded: Partial<AppState>) => boolean;
+  onThreadResumed?: (resumed: ThreadResumeResult) => void;
   loadRuntimeConfiguration?: typeof defaultLoadRuntimeConfiguration;
   loadRuntimeThreadList?: typeof defaultLoadRuntimeThreadList;
   selectRuntimeContext?: typeof defaultSelectRuntimeContext;
@@ -65,7 +71,7 @@ export type ThreadActivationActions = {
   selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
   selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
-  selectChildAgent: (agent: Agent) => Promise<void>;
+  selectChildAgent: (agent: Pick<Agent, "id">) => Promise<void>;
 };
 
 export function createThreadActivationActions(
@@ -78,6 +84,7 @@ export function createThreadActivationActions(
     deps.selectRuntimeContext ?? defaultSelectRuntimeContext;
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 
@@ -130,10 +137,8 @@ export function createThreadActivationActions(
     const sourceContext = currentState.activeContext;
     const requestID = deps.beginViewSwitch("thread", threadID);
     try {
-      const thread = requireThread(
-        await window.wuu.resumeThread(threadID),
-        translateCurrent("thread.resumeMissing"),
-      );
+      const resumed = await window.wuu.resumeThread(threadID);
+      const thread = requireThread(resumed, translateCurrent("thread.resumeMissing"));
       if (
         !deps.prepareThreadReveal(requestID) ||
         !sameRuntimeContext(deps.getAppState().activeContext, sourceContext)
@@ -166,6 +171,7 @@ export function createThreadActivationActions(
           status: "ready",
         };
       });
+      deps.onThreadResumed?.(resumed);
     } catch (error) {
       if (
         !deps.finishViewSwitch(requestID) ||
@@ -184,16 +190,22 @@ export function createThreadActivationActions(
     const currentState = deps.getAppState();
     let outgoingDraft = deps.getComposerDraftSnapshot();
     let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
-    const requestID = deps.beginViewSwitch("thread", threadID, true);
+    const requestID = deps.beginViewSwitch("thread", threadID, true, targetContext);
     try {
       const workspaceState = await selectRuntimeContext(targetContext);
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
-      const [loadedState, resumed] = await Promise.all([
-        loadRuntimeConfiguration(workspaceState),
-        window.wuu.resumeThread(threadID),
-      ]);
+      const configuration = loadRuntimeConfiguration(workspaceState);
+      let loadedState: Partial<AppState>;
+      let resumed: ThreadResumeResult;
+      if (deps.acceptRuntimeConfiguration) {
+        loadedState = await configuration;
+        if (!deps.isCurrentViewSwitchRequest(requestID) || !deps.acceptRuntimeConfiguration(loadedState)) return;
+        resumed = await window.wuu.resumeThread(threadID);
+      } else {
+        [loadedState, resumed] = await Promise.all([configuration, window.wuu.resumeThread(threadID)]);
+      }
       const thread = requireThread(
         resumed,
         translateCurrent("thread.resumeMissing"),
@@ -238,10 +250,11 @@ export function createThreadActivationActions(
           status: "ready",
         };
       });
+      deps.onThreadResumed?.(resumed);
       // Catalogs are not needed to display or send to the resumed conversation.
       // Start them after activation so large archives cannot delay its first paint.
       if (loadedState.activeContext) {
-        void refreshThreadCatalog(loadedState.activeContext);
+        void refreshThreadCatalog(loadedState.activeContext, requestID);
       }
     } catch (error) {
       if (!deps.isCurrentViewSwitchRequest(requestID)) return;
@@ -287,7 +300,7 @@ export function createThreadActivationActions(
     }
   }
 
-  async function refreshThreadCatalog(context: RuntimeContext): Promise<void> {
+  async function refreshThreadCatalog(context: RuntimeContext, requestID: number): Promise<void> {
     const before = new Map(deps.getAppState().threads.map((thread) => [thread.id, thread]));
     try {
       const threads = await loadRuntimeThreadList(context.cwd);
@@ -312,8 +325,10 @@ export function createThreadActivationActions(
         };
       });
     } catch (error) {
-      if (deps.getAppState().activeContext === context) {
-        setStatus(error instanceof Error ? error.message : translateCurrent("thread.loadFailed"));
+      if (deps.isCurrentViewSwitchRequest(requestID) && deps.getAppState().activeContext === context) {
+        // Keep the accepted conversation and prior catalog. This background
+        // refresh is not a failed foreground navigation or a user action.
+        console.warn("Background thread catalog refresh failed", error);
       }
     }
   }
@@ -417,7 +432,7 @@ export function createThreadActivationActions(
     await selectThread(threadID);
   }
 
-  async function selectChildAgent(agent: Agent): Promise<void> {
+  async function selectChildAgent(agent: Pick<Agent, "id">): Promise<void> {
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
       return;

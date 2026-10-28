@@ -3,24 +3,29 @@ package host_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
-	"github.com/blueberrycongee/wuu/internal/hooks"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/remote/phone"
 	"github.com/blueberrycongee/wuu/internal/remote/relay"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/titleservice"
 )
 
 // gatedClient is a deterministic provider: each Chat call waits for one
@@ -62,26 +67,61 @@ func (p *recordingPusher) hints() []string {
 
 func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Session {
 	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
-	kit, err := tools.New(root)
-	if err != nil {
-		t.Fatalf("tools.New: %v", err)
-	}
-	return &runtime.Session{
-		ProviderName:   "fake-provider",
-		Model:          "fake-model",
-		RootDir:        root,
-		ConfigPath:     filepath.Join(root, ".wuu.json"),
-		SessionDir:     filepath.Join(root, ".wuu-state", "sessions"),
-		HookDispatcher: hooks.NewDispatcher(nil),
-		Toolkit:        kit,
-		StreamRunner: &agent.StreamRunner{
-			Client:       providers.AdaptStreamClient(client),
-			Model:        "fake-model",
-			SystemPrompt: "system prompt",
+	root, home, wuuHome := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WUU_HOME", wuuHome)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if r.URL.Path != "/v1/chat/completions" || json.NewDecoder(r.Body).Decode(&request) != nil || !request.Stream {
+			http.Error(w, "unexpected model request", http.StatusBadRequest)
+			return
+		}
+		response, err := client.Chat(r.Context(), providers.ChatRequest{})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", response.Content)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(model.Close)
+	disabled := false
+	external := &config.EngineBinaryConfig{Enabled: &disabled}
+	cfg := config.Config{
+		DefaultProvider: "fake-provider",
+		Providers: map[string]config.ProviderConfig{"fake-provider": {
+			Type: "openai-compatible", BaseURL: model.URL + "/v1", APIKey: "fixture", Model: "fake-model",
+		}},
+		Engines: &config.EnginesConfig{
+			DefaultEngine: "wuu", Codex: external, Claude: external, Cursor: external,
+			Devin: external, DSH: external, Grok: external, Hermes: external,
+			Pi: external, OpenCode: external, Antigravity: external,
 		},
+		Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{
+			credentialstore.OSModule: false, credentialstore.FileModule: true,
+			// Only the two explicitly gated turns should invoke the model.
+			titleservice.NativeModule: false,
+		}}}},
 	}
+	// Select the complete engine/model/state graph before publication. Registering
+	// a legacy engine alone does not provide captured service-call authority.
+	plugins := []pluginpkg.Plugin{}
+	rt, err := runtime.NewSession(runtime.Options{
+		RootDir: root, HomeDir: home, WuuHome: wuuHome, Config: cfg,
+		DiscoveredPlugins: &plugins, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("runtime.NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	return rt
 }
 
 // TestRemoteControlEndToEnd drives the full main chain with real components
@@ -93,7 +133,9 @@ func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Sessio
 //  3. drop the phone mid-turn; the turn finishes while detached, the host
 //     spools the events and asks the relay for a content-free push
 //  4. reconnect: the session resumes and replays exactly the missed lines
-func TestRemoteControlEndToEnd(t *testing.T) {
+func TestRemoteControlEndToEnd(t *testing.T)              { testRemoteControlReplay(t, false) }
+func TestRemoteControlRevokesBufferedFrames(t *testing.T) { testRemoteControlReplay(t, true) }
+func testRemoteControlReplay(t *testing.T, revokeBeforeReplay bool) {
 	testCtx, cancelTest := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancelTest()
 
@@ -124,10 +166,25 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		t.Fatalf("SetRelayURL: %v", err)
 	}
 	uriCh := make(chan string, 1)
+	var revoked atomic.Bool
+	var options []appserver.ServerOption
+	if revokeBeforeReplay {
+		options = []appserver.ServerOption{appserver.WithAccessPolicy(access.PolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+			if revoked.Load() {
+				for _, resource := range request.Resources {
+					if resource.Kind == "session" {
+						return access.Decision{}, nil
+					}
+				}
+			}
+			return access.Decision{Allow: request.Owner}, nil
+		}))}
+	}
 	h, err := host.New(host.Options{
-		Runtime: rt,
-		Store:   store,
-		Logf:    t.Logf,
+		Runtime:          rt,
+		AppServerOptions: options,
+		Store:            store,
+		Logf:             t.Logf,
 		Pairing: &host.PairingConfig{
 			Once:  true,
 			OnURI: func(uri string) { uriCh <- uri },
@@ -139,11 +196,14 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		t.Fatalf("host.New: %v", err)
 	}
 	hostCtx, cancelHost := context.WithCancel(testCtx)
-	defer cancelHost()
 	hostDone := make(chan struct{})
 	go func() {
 		defer close(hostDone)
 		_ = h.Run(hostCtx)
+	}()
+	defer func() {
+		cancelHost()
+		<-hostDone
 	}()
 	uri := <-uriCh
 
@@ -215,7 +275,7 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 
 	// The turn is persisted in the shared session store: the desktop would
 	// see exactly this thread.
-	records, err := session.LoadHistoryRecords(rt.SessionDir, tid, false)
+	records, err := rt.Sessions.LoadHistoryRecords(tid, false)
 	if err != nil {
 		t.Fatalf("LoadHistoryRecords: %v", err)
 	}
@@ -256,6 +316,9 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	if revokeBeforeReplay {
+		revoked.Store(true)
+	}
 	// Reconnect with the same client state: the host resumes the session
 	// and replays the missed lines, including turn 2's completion.
 	phase2Ctx, cancelPhase2 := context.WithCancel(testCtx)
@@ -282,7 +345,34 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 	if client.Protocol() != proto {
 		t.Fatalf("resumed attach must keep the protocol client")
 	}
-	waitTurnCompleted(t, testCtx, proto.Notifications(), tid, "turn 2 (replayed)")
+	if !revokeBeforeReplay {
+		waitTurnCompleted(t, testCtx, proto.Notifications(), tid, "turn 2 (replayed)")
+		return
+	}
+	// A response after attach is a deterministic barrier behind spool replay.
+	if err := proto.Call(callCtx, appserver.MethodInitialize, nil, &init); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case note := <-proto.Notifications():
+			if note.Method == appserver.NotificationTurnCompleted {
+				var done appserver.TurnCompletedNotification
+				_ = json.Unmarshal(note.Params, &done)
+				if done.Turn.ID == turn2.Turn.ID {
+					t.Fatal("revoked completion leaked from replay spool")
+				}
+			}
+		default:
+			goto drained
+		}
+	}
+drained:
+	var resumed appserver.ThreadResumeResult
+	if err := proto.Call(callCtx, appserver.MethodThreadResume, appserver.ThreadResumeParams{SessionID: tid}, &resumed); err == nil {
+		t.Fatal("revoked session remained readable after reconnect")
+	}
+	t.Log("buffered completion and subsequent read denied by current policy without ending the accepted turn")
 }
 
 func waitTurnCompleted(t *testing.T, ctx context.Context, notes <-chan wuuexec.Notification, threadID, label string) {

@@ -7,6 +7,7 @@ import {
   parseJSONRecord,
   stringValue,
   readableToolActivityName,
+  mcpToolActivityTitle,
 } from "./ToolActivityHelpers";
 import { ChevronDown } from "./WuuIcons";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
@@ -116,9 +117,10 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
-function ToolSourceRecord({ item, code, label, language, children, detailsOnly }: {
+function ToolSourceRecord({ item, code, label, language, children, detailsOnly, kind = "command" }: {
   item: ThreadItem;
   code: string;
+  kind?: "command" | "unknown";
   label: string;
   language: string;
   children?: ReactNode;
@@ -126,7 +128,7 @@ function ToolSourceRecord({ item, code, label, language, children, detailsOnly }
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const details = (
-    <div className="program-tool-details">
+    <div className="program-tool-details" data-tool={item.name}>
       <RichCodeBlock code={code} displayedCode={code} language={language} />
       {children}
       {item.error ? <p>{item.error}</p> : null}
@@ -141,7 +143,7 @@ function ToolSourceRecord({ item, code, label, language, children, detailsOnly }
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="activity-row activity-summary">
-        <ToolActivityMarker kind="command" running={item.status === "in_progress"} />
+        <ToolActivityMarker kind={kind} running={item.status === "in_progress"} />
         <span className="activity-copy program-tool-label">
           <span className="activity-summary-text">{label}</span>
         </span>
@@ -161,7 +163,7 @@ function ToolSourceRecord({ item, code, label, language, children, detailsOnly }
 // into the conversation: users care about the agent's eventual outcome, not
 // whether every intermediate attempt completed. Workspace switches expose their
 // destination and failure inside a disclosure because they change later tool roots.
-// PTC programs and Codex commands disclose their source on demand.
+// PTC programs, Codex commands, and titled MCP calls disclose their source on demand.
 export function ToolActivityRow({
   items,
   streaming = false,
@@ -211,6 +213,29 @@ export function ToolActivityRow({
     );
   }
 
+  const mcpTitle = items.length === 1 ? mcpToolActivityTitle(items[0]) : undefined;
+  if (mcpTitle) {
+    const item = items[0];
+    const output = item.result || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n");
+    return (
+      <ToolSourceRecord
+        key={item.id}
+        item={item}
+        code={JSON.stringify(parseJSONRecord(item.arguments), null, 2)}
+        label={mcpTitle}
+        kind="unknown"
+        language="json"
+        detailsOnly={detailsOnly}
+      >
+        <code>{item.name}</code>
+        {!item.remote_content_ref && output ? <RichCodeBlock code={output} displayedCode={output} language="text" /> : null}
+        {item.remote_content_ref ? (
+          <RemoteItemContent item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
+        ) : null}
+      </ToolSourceRecord>
+    );
+  }
+
   if (items.length === 1 && (items[0].name === "run_code" || items[0].name === "exec")) {
     const item = items[0];
     const args = parseJSONRecord(item.arguments);
@@ -219,6 +244,7 @@ export function ToolActivityRow({
     // Keep source verbatim; stringValue trims meaningful indentation and newlines.
     if (typeof code === "string" && code.trim()) {
       const cwd = isCommand ? stringValue(args, "cwd") : undefined;
+      const output = item.result || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n");
       return (
         <ToolSourceRecord
           key={item.id}
@@ -229,14 +255,14 @@ export function ToolActivityRow({
           detailsOnly={detailsOnly}
         >
           {cwd ? <p>{t("toolActivity.workingDirectory")}: <code>{cwd}</code></p> : null}
-          {isCommand && item.result ? (
+          {!item.remote_content_ref && output ? (
             <div className="command-tool-output">
               <p>{t("toolActivity.commandOutput")}</p>
-              <RichCodeBlock code={item.result} displayedCode={item.result} language="text" />
+              <RichCodeBlock code={output} displayedCode={output} language="text" />
             </div>
           ) : null}
-          {isCommand && item.remote_content_ref ? (
-            <RemoteItemContent item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
+          {item.remote_content_ref ? (
+            <RemoteItemContent key={item.remote_content_ref} item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
           ) : null}
         </ToolSourceRecord>
       );

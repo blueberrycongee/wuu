@@ -22,10 +22,7 @@ func TestClientChatUsesStoredAccessToken(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".wuu"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testSelectedAuth(t, home)
 	if err := store.Set(AuthProviderID, authstorage.Credentials{
 		Type:         "oauth",
 		AccessToken:  "supergrok-token",
@@ -52,7 +49,7 @@ func TestClientChatUsesStoredAccessToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client()})
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

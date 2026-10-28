@@ -47,6 +47,7 @@ app.whenReady().then(async () => {
         focused: document.hasFocus(),
         scrollTop: node.scrollTop, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
         mask: style.maskImage,
+        motion: { preference: document.documentElement.dataset.appearanceMotion, reduced: style.getPropertyValue("--motion-reduced"), parentReduced: getComputedStyle(node.parentElement).getPropertyValue("--motion-reduced") },
         bounds: node.getBoundingClientRect().toJSON(),
         animations: node.getAnimations().map(animation => ({
           name: animation.animationName, playState: animation.playState,
@@ -92,7 +93,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(desktop, "out-dev/onboarding/renderer/dev/onboarding/index.html"), { query: { lang: "en" } });
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
       await click(".onboarding-actions .settings-button-primary");
-      await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 9);
+      await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 10);
       await evaluate(async () => {
         await document.fonts.ready;
         await Promise.all(document.querySelector(".onboarding-heading").getAnimations().map(animation => animation.finished));
@@ -188,7 +189,7 @@ app.whenReady().then(async () => {
       const preset = async (index) => {
         await evaluate(() => { document.querySelector('.onboarding-body').scrollTop = 0; });
         await click(`.onboarding-presets button:nth-child(${index})`);
-        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["side", "automation"] : pluginIDs);
+        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["side", "automation", "automation-client"] : pluginIDs);
       };
       const pluginIDs = await evaluate(() => [...document.querySelectorAll('.onboarding-plugin')].map(node => node.dataset.plugin));
       win.setContentSize(920, 720);
@@ -277,7 +278,8 @@ app.whenReady().then(async () => {
           await new Promise(requestAnimationFrame);
           await new Promise(requestAnimationFrame);
           await Promise.all(document.getAnimations()
-            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === "running"
+              && animation.effect?.getComputedTiming().iterations !== Infinity)
             .map(animation => animation.finished.catch(() => {})));
           const row = document.querySelector(".thread-row.active");
           return { row: row.getBoundingClientRect().toJSON(), title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON() };
@@ -354,21 +356,45 @@ app.whenReady().then(async () => {
         const label = `${theme}-${size}`;
         win.setContentSize(size === 14 ? 1100 : 940, 820);
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-        await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
+        await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="workspace"] .thread-list-more'))
+          && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
+        // Recent includes the workspace sessions and the current unsent draft.
+        // Fold it through its control to establish a fitting list.
+        await evaluate(() => {
+          const toggle = document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle');
+          if (toggle.getAttribute("aria-expanded") === "true") toggle.click();
+        });
+        await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] > .thread-list-collapse[data-state="closed"]')));
         const fitting = await sample(`${label}-initial-fitting-list`);
         assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "an initially fitting list has no faded edges");
         await evaluate(async () => {
-          while (document.querySelector(".thread-list-more")) {
-            document.querySelector(".thread-list-more").click();
+          while (document.querySelector('[data-functional-group-id="workspace"] .thread-list-more')) {
+            document.querySelector('[data-functional-group-id="workspace"] .thread-list-more').click();
             await new Promise(requestAnimationFrame);
           }
         });
-        await waitFor(() => document.querySelectorAll(".thread-row").length === 48);
-        await evaluate(() => document.querySelector(".thread-row-main").click());
+        await evaluate(() => document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle').click());
+        await waitFor(() => document.querySelectorAll('[data-functional-group-id="workspace"] .project-thread-list .thread-row').length === 48
+          && document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 48);
+        const membership = await evaluate(() => ({
+          workspace: [...document.querySelectorAll('[data-functional-group-id="workspace"] .project-thread-list .thread-row-title')].map(node => node.textContent),
+          recent: [...document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id]) .thread-row-title')].map(node => node.textContent),
+          drafts: [...document.querySelectorAll('[data-sidebar-recents] [data-draft-id]')].map(node => ({
+            id: node.dataset.draftId, active: node.querySelector('.thread-row-main')?.getAttribute('aria-current') === 'page',
+          })),
+        }));
+        const seededTitles = Array.from({ length: 48 }, (_, index) =>
+          `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`);
+        assert.deepEqual(membership.workspace, seededTitles, 'paging exposes each seeded workspace session exactly once');
+        assert.deepEqual(membership.recent, seededTitles, 'Recent independently exposes the same session membership');
+        assert.equal(membership.drafts.length, 1, 'Recent also keeps the unsent startup draft');
+        assert.ok(membership.drafts[0].id && membership.drafts[0].active, 'the startup draft remains selected before opening a session');
+        results.push({ label: `${label}-sidebar-membership`, ...membership });
+        await evaluate(() => document.querySelector(".project-thread-list .thread-row-main").click());
         // Active content appears before the reveal finishes. Wait for the
         // pending row to clear before choosing an independent reading position.
-        await waitFor(() => Boolean(document.querySelector(".thread-row.active"))
-          && !document.querySelector(".thread-row.pending-switch"));
+        await waitFor(() => Boolean(document.querySelector(".project-thread-list .thread-row.active"))
+          && !document.querySelector(".project-thread-list .thread-row.pending-switch"));
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
@@ -380,9 +406,11 @@ app.whenReady().then(async () => {
           await new Promise(requestAnimationFrame);
           await new Promise(requestAnimationFrame);
           // Font-relative row spacing must settle before focus is the only
-          // change under measurement. Scroll-timeline fades remain active.
+          // change under measurement. Scroll-timeline fades remain active;
+          // paused mascot poses have no time-based completion to await.
           await Promise.all(document.getAnimations()
-            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === "running"
+              && animation.effect?.getComputedTiming().iterations !== Infinity)
             .map(animation => animation.finished.catch(() => {})));
         }, { theme, size });
         assert.ok(await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().right > 200), "sidebar remains visible at the tested width");
@@ -458,10 +486,10 @@ app.whenReady().then(async () => {
         // both switch targets visible so this checks stream-state isolation.
         await evaluate(() => { document.querySelector(".sidebar-main").scrollTop = 0; });
         const switchBaseline = await sample(`${label}-before-switch`);
-        await evaluate(() => document.querySelectorAll(".sidebar-main .thread-row-main")[1].click());
+        await evaluate(() => document.querySelectorAll(".project-thread-list .thread-row-main")[1].click());
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
         unchanged(switchBaseline, await sample(`${label}-switch-idle`), "switch to idle conversation");
-        await evaluate(() => document.querySelector(".sidebar-main .thread-row-main").click());
+        await evaluate(() => document.querySelector(".project-thread-list .thread-row-main").click());
         await waitFor(() => document.documentElement.hasAttribute("data-stream-following"));
         unchanged(switchBaseline, await sample(`${label}-switch-running`), "switch to running conversation");
 
@@ -506,12 +534,23 @@ app.whenReady().then(async () => {
       assert.equal((await sample(name)).mask, "none", `${name} remains unmasked`);
     }
     await media();
-    await evaluate(() => { document.documentElement.dataset.appearanceMotion = "reduce"; });
+    await evaluate(() => {
+      const preferences = JSON.parse(localStorage.getItem("wuu.appearance.v1") || "{}");
+      localStorage.setItem("wuu.appearance.v1", JSON.stringify({ ...preferences, motion: "reduce" }));
+      window.dispatchEvent(new Event("wuu-appearance-change"));
+    });
+    await waitFor(() => document.documentElement.dataset.appearanceMotion === "reduce");
     assert.equal((await sample("app-reduced-motion")).mask, "none");
     console.log("PASS: sidebar fades track scroll bounds across stream, control/window focus, light/dark, 14/20px, wide/narrow, and accessibility states.");
     }
   } catch (error) {
-    await capture("failure");
+    // A failed diagnostic screenshot must not replace the original failure.
+    fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack || error));
+    try {
+      await capture("failure");
+    } catch (captureError) {
+      console.error("Could not capture failure state", captureError);
+    }
     throw error;
   } finally {
     fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ versions: process.versions, results }, null, 2));

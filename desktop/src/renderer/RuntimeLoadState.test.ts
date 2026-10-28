@@ -11,6 +11,7 @@ import {
   loadRuntime,
   loadRuntimeRestore,
   loadThreadListRefresh,
+  resumeThreadForRefresh,
   applyRuntimeRestore,
 } from "./RuntimeLoadState";
 
@@ -58,6 +59,22 @@ function workspaceList(activeContext?: RuntimeContext): ProjectListResult {
 }
 
 describe("runtime load helpers", () => {
+  it("opens a usable draft when a historical conversation cannot be restored", async () => {
+    const context: RuntimeContext = { kind: "no_project", cwd: "/tmp/wuu" };
+    const failure = new Error("unsupported legacy checkpoint");
+    installWuuStub({
+      initialize: vi.fn().mockResolvedValue({ status: "ready", provider: "fixture", model: "fixture", providers: [] }),
+      listThreads: vi.fn().mockResolvedValue({ threads: [thread("old")] }),
+      listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+      resumeThread: vi.fn().mockRejectedValue(failure),
+    });
+    const state = await loadRuntime(workspaceList(context));
+    expect(state.initialized?.status).toBe("ready");
+    expect(state.thread).toBeUndefined();
+    expect(state.allowThreadAutoActivation).toBe(false);
+    expect(state.threads?.map(item => item.id)).toEqual(["old"]);
+    expect(state.status).toContain(failure.message);
+  });
   it("starts runtime initialization and conversation loading together", async () => {
     const activeContext: RuntimeContext = {
       kind: "project",
@@ -505,5 +522,26 @@ describe("runtime restoration", () => {
     expect(restored.threads.map((item) => item.id)).not.toContain("removed");
     expect(restored.threads.find((item) => item.id === "archived")?.archived).toBe(false);
     expect(restored.sessionTabs).toHaveLength(1);
+  });
+});
+
+
+describe("authoritative completed resume streams", () => {
+  it.each([false, true])("replaces settled buffered text only without a newer delta (newer=%s)", async newer => {
+    const previous = thread("resume-stream", { turns: [{ id: "resume-stream-turn", status: "in_progress", items_view: "full", items: [] }] });
+    const key = streamTextKey(previous.turns[0].id, "answer", "text");
+    streamTextStore.set(key, "earlier streamed answer");
+    let finish!: (value: { thread: Thread }) => void;
+    const response = new Promise<{ thread: Thread }>(resolve => { finish = resolve; });
+    installWuuStub({ resumeThread: vi.fn(() => response) });
+    const pending = resumeThreadForRefresh(previous);
+    if (newer) streamTextStore.append(key, " with a newer delta");
+    const completed = thread(previous.id, { turns: [{ ...previous.turns[0], status: "completed",
+      items: [{ id: "answer", type: "agent_message", status: "completed", terminal: true, text: "Corrected answer" }] }] });
+    finish({ thread: completed });
+    expect(await pending).toEqual(completed);
+    expect(streamTextStore.has(key)).toBe(newer);
+    if (newer) expect(streamTextStore.get(key)).toBe("earlier streamed answer with a newer delta");
+    streamTextStore.clearTurn(previous.turns[0].id);
   });
 });

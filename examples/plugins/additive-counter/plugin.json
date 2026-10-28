@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "additive-counter",
+  "name": "Cooperative counter example",
+  "version": "1.0.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"] },
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [{ "name": "example.counter", "major_version": 1, "required": true }]
+  }
+}

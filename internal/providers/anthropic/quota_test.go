@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -64,7 +66,11 @@ func TestReadLocalQuotaReadsCredentialFileAndMissingIsSignIn(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"five_hour":{"utilization":42}}`)), Request: r}, nil
 	})}
-	q, err := readLocalQuota(context.Background(), home, client)
+	selected, err := authstorage.NewNativeStore(credentialstore.NewFileStore(filepath.Join(home, "selected.json")), filepath.Join(home, ".wuu"), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := readSelectedQuota(context.Background(), selected, client)
 	if err != nil || q.Account == nil || q.Plan != "max" || len(q.Windows) != 1 || *q.Windows[0].UsedPercent != 42 {
 		t.Fatalf("local credential quota: %+v %v", q, err)
 	}
@@ -77,7 +83,7 @@ func TestReadLocalQuotaReadsCredentialFileAndMissingIsSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", home)
-	q, err = readLocalQuota(context.Background(), home, client)
+	q, err = readSelectedQuota(context.Background(), selected, client)
 	if err == nil || providers.QuotaErrorCode(err) != providers.QuotaErrorSignIn || q.Account == nil {
 		t.Fatalf("missing credential result: %+v %v", q, err)
 	}
@@ -85,7 +91,11 @@ func TestReadLocalQuotaReadsCredentialFileAndMissingIsSignIn(t *testing.T) {
 		t.Fatal("custom credential directory accessed the default keychain")
 	}
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	if _, err := readLocalQuota(context.Background(), home, client); providers.QuotaErrorCode(err) != providers.QuotaErrorSignIn {
+	selected, err = authstorage.NewNativeStore(credentialstore.NewFileStore(filepath.Join(home, "other.json")), filepath.Join(home, ".wuu"), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSelectedQuota(context.Background(), selected, client); providers.QuotaErrorCode(err) != providers.QuotaErrorSignIn {
 		t.Fatalf("isolated home borrowed a login: %v", err)
 	}
 }

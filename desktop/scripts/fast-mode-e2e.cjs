@@ -24,7 +24,7 @@ process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_FAST_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 const requests = [];
 const server = http.createServer((req, res) => {
@@ -156,7 +156,7 @@ async function run() {
   }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Fast mode fixture', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"wuu","provider":"fixture","model":"fixture","effort":"high","speed":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"wuu","provider":"fixture","model":"fixture","effort":"high","speed":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
   assert.equal(boot.status, 0, boot.stderr);
   const response = boot.stdout.split('\n').filter(Boolean).map(line => JSON.parse(line)).find(item => item.id === 1);
   assert.ok(response?.result?.thread, boot.stdout);
@@ -177,7 +177,10 @@ async function run() {
   await waitFor(main, () => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Provider effort fixture')));
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Provider effort fixture')).querySelector('.thread-row-main').click());
   await waitFor(main, () => document.querySelector('.thread-row[aria-current="page"]')?.textContent.includes('Provider effort fixture'));
-  await waitFor(main, () => document.querySelector('.codex-runtime-trigger'));
+  await waitFor(main, () => {
+    const input = document.querySelector('.composer textarea');
+    return input && !input.disabled && !input.readOnly && document.querySelector('.codex-runtime-trigger:not(:disabled)');
+  });
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]'));
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'false');
@@ -246,7 +249,25 @@ async function run() {
   }
   await turn('fast-mode-fast', 'priority');
   async function openPanel(fastSupported = true) {
-    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) {
+      // Retiring provider chrome can remain visible with an enabled button
+      // inside an inert owner. Only the live destination can receive a click.
+      await waitFor(main, () => {
+        const trigger = document.querySelector('.codex-runtime-trigger:not(:disabled)');
+        return trigger && !trigger.closest('[inert]');
+      });
+      const target = await evaluate(main, () => {
+        const trigger = document.querySelector('.codex-runtime-trigger:not(:disabled)');
+        const rect = trigger.getBoundingClientRect();
+        const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+        return { x, y, reachable: !trigger.closest('[inert]') && trigger.contains(document.elementFromPoint(x, y)) };
+      });
+      assert(target.reachable, 'The live runtime trigger must receive the pointer, not retiring chrome.');
+      const position = { x: Math.round(target.x * main.webContents.getZoomFactor()), y: Math.round(target.y * main.webContents.getZoomFactor()) };
+      main.webContents.sendInputEvent({ type: 'mouseMove', ...position });
+      main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...position });
+      main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position });
+    }
     await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
     if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
     // Opening schedules model autofocus; finish that frame before choosing a
@@ -333,7 +354,29 @@ async function run() {
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) group.querySelector('button[aria-expanded="false"]')?.click(); });
   await waitFor(main, () => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Codex speed fixture')));
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Codex speed fixture')).querySelector('.thread-row-main').click());
-  await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.textContent.includes('GPT-6 Astra'));
+  await waitFor(main, () => {
+    const input = document.querySelector('.composer textarea');
+    // The tool rail uses an icon-only trigger; the full selection remains in
+    // its accessible name even when there is no visible model text.
+    return input && !input.disabled && !input.readOnly
+      && document.querySelector('.codex-runtime-trigger:not(:disabled)')?.getAttribute('aria-label')?.includes('GPT-6 Astra');
+  });
+  const nativeRuntime = await evaluate(main, async id => {
+    const { thread } = await window.wuu.resumeThread(id);
+    const trigger = document.querySelector('.codex-runtime-trigger');
+    const rect = trigger.getBoundingClientRect();
+    const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+    return { engine: thread.engine_id, model: thread.model, accessibleName: trigger.getAttribute('aria-label'),
+      disabled: trigger.disabled, reachable: rect.width > 0 && rect.height > 0 && trigger.contains(document.elementFromPoint(x, y)), x, y };
+  }, native);
+  assert.equal(nativeRuntime.engine, 'codex');
+  assert.equal(nativeRuntime.model, 'gpt-6-astra');
+  assert.equal(nativeRuntime.disabled, false);
+  assert.equal(nativeRuntime.reachable, true, 'The native Codex runtime trigger remains a visible pointer target.');
+  const nativePoint = { x: Math.round(nativeRuntime.x * main.webContents.getZoomFactor()), y: Math.round(nativeRuntime.y * main.webContents.getZoomFactor()) };
+  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...nativePoint });
+  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...nativePoint });
+  await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-expanded') === 'true');
   await openPanel();
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
@@ -342,7 +385,8 @@ async function run() {
     await openPanel();
     await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
     await key(main, 'End');
-    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high', native);
+    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high'
+      && document.querySelector('.codex-effort-slider input')?.getAttribute('aria-busy') !== 'true', native);
     if (effort === 'low') await key(main, 'Left');
     await waitFor(main, async ({ id, effort }) => (await window.wuu.resumeThread(id)).thread.model_effort === effort, { id: native, effort });
     if (slash) {
@@ -398,8 +442,12 @@ async function run() {
   main.setContentSize(1380, 860);
   await waitFor(main, () => document.querySelector('.project-row-new-thread'));
   await evaluate(main, () => document.querySelector('.project-row-new-thread').click());
-  await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  // The conversation and draft share the runtime trigger. Wait for the draft
+  // commit that closes the old menu before opening the new one.
+  await waitFor(main, () => document.querySelector('.empty-scroll-region')
+    && document.querySelector('.codex-runtime-trigger[aria-expanded="false"]:not(:disabled)')
+    && !document.querySelector('.runtime-panel'));
+  await openPanel(false);
   await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
   for (const engine of ['Wuu', 'Codex']) {
     await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
@@ -421,7 +469,7 @@ async function run() {
     })), selection, 'Reopening the current engine preserves its model and effort.');
     await capturePanel(main, `current-engine-${engine.toLowerCase()}`, engine === 'Codex');
   }
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, requests, persisted, layoutEvidence }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, nativeRuntime, requests, persisted, layoutEvidence }, null, 2));
   console.log('PASS: fast / standard speed reached the provider and native Codex; inherited native speed displayed; model and effort preserved. Artifacts:', output);
   clearTimeout(timeout); server.close(); app.quit();
 }

@@ -393,7 +393,7 @@ func (t *Toolkit) ToolResultSummaryContextBlock() (wuucontext.Block, bool) {
 	if len(records) > maxRenderedRecords {
 		start = len(records) - maxRenderedRecords
 	}
-	currentRevision := workspaceRevision(context.Background(), t.env.RootDir)
+	currentRevision := workspaceRevision(context.Background(), t.env.RootDir, t.env.RuntimeHome)
 	if wuucontext.DynamicContextProjectionEnabled() {
 		return wuucontext.Block{
 			Kind:        wuucontext.BlockToolResultSummary,

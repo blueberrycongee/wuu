@@ -1,18 +1,13 @@
 import type { ExtensionInventoryRecord } from "../shared/protocol";
-import { ONBOARDING_PLUGIN_ORDER, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
-
-// Only presentation metadata is used; preview never loads an extension runtime.
-const manifests = Object.values(import.meta.glob<{ id: string; name: string; icon?: string }>(
-  "../../../internal/plugin/bundled/*/plugin.json",
-  { eager: true, import: "default" },
-));
+import { ONBOARDING_PLUGIN_MANIFESTS, ONBOARDING_PLUGIN_ORDER, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 
 export const PREVIEW_PLUGINS: ExtensionInventoryRecord[] = ONBOARDING_PLUGIN_ORDER.flatMap((id) => {
-  const manifest = manifests.find((item) => item.id === id);
+  const manifest = ONBOARDING_PLUGIN_MANIFESTS[id];
   if (!manifest) return [];
   return [{
     id: `preview:${id}`,
     name: manifest.name,
+    description: manifest.description,
     icon: manifest.icon ? { name: manifest.icon } : undefined,
     kind: "plugin",
     state: "active",
@@ -22,6 +17,11 @@ export const PREVIEW_PLUGINS: ExtensionInventoryRecord[] = ONBOARDING_PLUGIN_ORD
     provenance: { kind: "plugin", source: "bundled", scope: "bundled", official: true, plugin_id: id },
   }];
 });
+
+export const PREVIEW_BROWSER_PROFILES: import("../shared/protocol").BrowserProfile[] = [
+  { browserId: "chrome", appName: "Google Chrome", profileDirectoryName: "Default", profileName: "Personal", profilePath: "/preview/chrome/Default", hasCookies: true, hasPasswords: false, lastUsedAt: Date.now() - 3600000 },
+  { browserId: "edge", appName: "Microsoft Edge", profileDirectoryName: "Profile 1", profileName: "Work", profilePath: "/preview/edge/Profile 1", hasCookies: true, hasPasswords: false, lastUsedAt: Date.now() - 86400000 },
+];
 
 export const PREVIEW_WORKSPACES: import("../shared/protocol").RecentWorkspace[] = [
   { name: "website", path: "/Users/example/Projects/website", sources: ["codex", "claude"], sessionCount: 8, isRepository: true, lastUsedAt: new Date(Date.now() - 3600000).toISOString() },

@@ -26,39 +26,48 @@ const (
 )
 
 type toolRun struct {
-	call            providers.ToolCall
-	order           int
-	finalized       bool
-	concurrencySafe bool
-	streamSafe      bool
-	streamStarted   bool
-	invocationID    string
-	parent          *toolRun
-	depth           int
+	call                   providers.ToolCall
+	order                  int
+	finalized              bool
+	concurrencySafe        bool
+	streamSafe             bool
+	streamStarted          bool
+	streamAdmissionChecked bool
+	streamAdmitted         bool
+	invocationID           string
+	parent                 *toolRun
+	depth                  int
 
-	mu             sync.Mutex
-	state          toolRunState
-	done           chan struct{}
-	cancel         context.CancelFunc
-	result         toolresult.Result
-	err            error
-	requestContext *ContextSegment
+	mu              sync.Mutex
+	state           toolRunState
+	done            chan struct{}
+	cancel          context.CancelFunc
+	result          toolresult.Result
+	err             error
+	requestContext  *ContextSegment
+	discoveredTools []providers.LoadableToolDefinition
 }
 
 // TurnToolRuntime owns tool executions for one model turn. Streaming can
 // enqueue read-only tools early, and the loop later waits for those same runs
 // while executing any remaining final tool calls.
 type TurnToolRuntime struct {
-	executor    ToolExecutor
-	ledger      *toolledger.Ledger
-	operationID string
-	runContext  context.Context
-	gate        *ToolExecutionGate
+	streamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	serial          bool
+	executor        ToolExecutor
+	ledger          *toolledger.Ledger
+	operationID     string
+	runContext      context.Context
+	gate            *ToolExecutionGate
 
-	mu       sync.Mutex
-	runs     []*toolRun
-	byID     map[string]*toolRun
-	canceled bool
+	mu                  sync.Mutex
+	runs                []*toolRun
+	byID                map[string]*toolRun
+	canceled            bool
+	started             bool
+	legacyContextUnsafe bool
+	workers             sync.WaitGroup
+	running             map[*toolRun]context.CancelFunc
 
 	requestContext []ContextSegment
 	stepIndex      *int
@@ -68,6 +77,8 @@ type TurnToolRuntime struct {
 }
 
 type ToolRuntimeConfig struct {
+	StreamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	Serial          bool
 	// Gate must be shared when multiple runtimes can have live nested work.
 	Gate        *ToolExecutionGate
 	Executor    ToolExecutor
@@ -94,15 +105,22 @@ func (r *TurnToolRuntime) SetResultCallback(callback func(providers.ToolCall, to
 
 func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 	runtime := &TurnToolRuntime{
-		executor:    config.Executor,
-		ledger:      config.Ledger,
-		operationID: strings.TrimSpace(config.OperationID),
-		runContext:  config.RunContext,
-		gate:        config.Gate,
-		byID:        map[string]*toolRun{},
+		streamAdmission: config.StreamAdmission,
+		serial:          config.Serial,
+		executor:        config.Executor,
+		ledger:          config.Ledger,
+		operationID:     strings.TrimSpace(config.OperationID),
+		runContext:      config.RunContext,
+		gate:            config.Gate,
+		byID:            map[string]*toolRun{},
+		running:         map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
-		runtime.gate = NewToolExecutionGate(maxToolConcurrency)
+		capacity := maxToolConcurrency
+		if config.Serial {
+			capacity = 1
+		}
+		runtime.gate = NewToolExecutionGate(capacity)
 	}
 	runtime.SetStepIndex(config.StepIndex)
 	return runtime
@@ -151,26 +169,61 @@ func (r *TurnToolRuntime) Cancel() {
 	}
 	r.mu.Lock()
 	r.canceled = true
-	runs := append([]*toolRun(nil), r.runs...)
-	r.mu.Unlock()
-
-	for _, run := range runs {
-		run.mu.Lock()
-		cancel := run.cancel
-		run.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
+	for _, cancel := range r.running {
+		cancel()
 	}
+	r.mu.Unlock()
+}
+
+// Close waits for physical completion, including orphaned and nested calls.
+// Cancel closes admission before Wait, so no new worker can race the drain.
+func (r *TurnToolRuntime) Close() {
+	if r == nil {
+		return
+	}
+	r.Cancel()
+	r.workers.Wait()
+}
+
+func (r *TurnToolRuntime) HasAcceptedCalls() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs) > 0
+}
+
+func (r *TurnToolRuntime) Join(ctx context.Context, calls []providers.ToolCall, stepIndex int, onDetail func(providers.ToolCall, toolresult.Result), onResult func(providers.ToolCall, string), onRejected func(ToolBatchRejectionInfo)) ([]providers.ChatMessage, error) {
+	r.SetStepIndex(stepIndex)
+	r.SetResultCallback(onDetail)
+	return r.ExecuteFinalCalls(ctx, calls, onResult, onRejected)
+}
+
+func (r *TurnToolRuntime) HasStartedWork() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.started
 }
 
 func (r *TurnToolRuntime) ReplayDecision(ctx context.Context) (toolledger.ReplayDecision, error) {
-	if r == nil || r.ledger == nil {
+	if r == nil {
 		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
 	}
 	r.mu.Lock()
-	batchID := r.batchID
+	batchID, started := r.batchID, r.started
 	r.mu.Unlock()
+	if r.ledger == nil {
+		if started {
+			// A missing ledger cannot prove that an accepted effect is safe to
+			// repeat. Even a retry with new model call IDs must stop here.
+			return toolledger.ReplayDecision{Action: toolledger.ReplayBlock, Reason: toolledger.ReplayReasonInvocationUnknown}, nil
+		}
+		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
+	}
 	return r.ledger.DecideReplay(ctx, batchID)
 }
 
@@ -271,6 +324,20 @@ func (r *TurnToolRuntime) startReadyStreamPrefixLocked(ctx context.Context) {
 		if !run.streamSafe {
 			return
 		}
+		if r.streamAdmission != nil {
+			if !run.streamAdmissionChecked {
+				admitted, err := r.streamAdmission(ctx, providers.CloneToolCall(run.call))
+				run.streamAdmissionChecked = true
+				if err != nil {
+					r.ledgerErr = err
+					return
+				}
+				run.streamAdmitted = admitted
+			}
+			if !run.streamAdmitted {
+				return
+			}
+		}
 		r.startRunLocked(ctx, run, true)
 	}
 }
@@ -279,6 +346,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	run.mu.Lock()
 	if run.state != toolRunQueued {
 		run.mu.Unlock()
+		return
+	}
+	if r.canceled {
+		run.mu.Unlock()
+		run.complete(toolresult.Result{}, context.Canceled)
 		return
 	}
 	run.streamStarted = run.streamStarted || streamStarted
@@ -311,27 +383,26 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	// Final-call registration can refresh metadata while this streamed run is
 	// already starting. Use the scheduling decision made under the runtime lock.
 	concurrencySafe := run.concurrencySafe
+	orchestrator := toolIsOrchestrator(r.executor, call)
 	run.mu.Unlock()
+	r.started = true
+	r.legacyContextUnsafe = r.legacyContextUnsafe || streamStarted || orchestrator
+	r.running[run] = cancel
+	r.workers.Add(1)
 
 	go func() {
+		defer r.workers.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.running, run)
+			r.mu.Unlock()
+		}()
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
-			if run.parent != nil {
-				if provider, ok := r.executor.(ToolCallContextProvider); ok {
-					if extra := provider.TakeAdditionalContext(call); extra != "" {
-						segment := postToolAdditionalContextSegment(call.Name, extra)
-						run.mu.Lock()
-						run.requestContext = &segment
-						run.mu.Unlock()
-					}
-				}
-			}
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
-			if finalizer, ok := r.executor.(ToolResultFinalizer); ok {
-				result = finalizer.FinalizeToolResult(call, result)
-			}
+			result = run.finalize(r.executor, call, result)
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
@@ -349,7 +420,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		if run.parent != nil {
 			runCtx = toolctx.WithNestedCall(runCtx)
 		}
-		if toolIsOrchestrator(r.executor, call) {
+		if orchestrator {
 			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
 		} else {
 			runCtx = toolctx.WithNestedExecutor(runCtx, nil)
@@ -429,6 +500,37 @@ func (run *toolRun) complete(result toolresult.Result, err error) {
 	close(run.done)
 }
 
+// finalize captures provider additions before the result becomes observable.
+// Per-run ownership prevents later calls or nested completion from consuming it.
+func (run *toolRun) finalize(executor ToolExecutor, call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	settled := FinalizeToolOutcome(executor, call, result)
+	run.mu.Lock()
+	run.discoveredTools = settled.DiscoveredTools
+	if settled.AdditionalContext != "" {
+		segment := postToolAdditionalContextSegment(call.Name, settled.AdditionalContext)
+		run.requestContext = &segment
+	}
+	run.mu.Unlock()
+	return settled.Result
+}
+
+func (run *toolRun) message(result toolresult.Result) providers.ChatMessage {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	return toolResultMessage(run.call, run.invocationID, result, run.discoveredTools)
+}
+
+func (run *toolRun) takeRequestContext() []ContextSegment {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if run.requestContext == nil {
+		return nil
+	}
+	segment := *run.requestContext
+	run.requestContext = nil
+	return []ContextSegment{segment}
+}
+
 func (run *toolRun) wait(ctx context.Context) (toolresult.Result, error) {
 	select {
 	case <-ctx.Done():
@@ -504,7 +606,7 @@ func (r *TurnToolRuntime) rejectBarrierToolBatch(
 	for _, call := range calls {
 		result := toolresult.FromErrorText(barrierToolBatchRejectionResult(call, barrierName))
 		r.notifyResult(call, result, onResult)
-		msgs = append(msgs, toolResultMessage(call, "", result, nil, false))
+		msgs = append(msgs, toolResultMessage(call, "", result, nil))
 	}
 	return msgs, true
 }
@@ -573,12 +675,7 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 	// Nested hooks finish concurrently. Project their context in registration
 	// order, never completion order or through the program's output filtering.
 	for _, run := range r.runs {
-		run.mu.Lock()
-		if run.requestContext != nil {
-			out = append(out, *run.requestContext)
-			run.requestContext = nil
-		}
-		run.mu.Unlock()
+		out = append(out, run.takeRequestContext()...)
 	}
 	out = append(out, r.requestContext...)
 	r.requestContext = nil
@@ -596,19 +693,22 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 			finalIDs[call.ID] = true
 		}
 	}
-	var orphanCancels []context.CancelFunc
 	for id, run := range r.byID {
-		if finalIDs[id] {
+		if finalIDs[id] || run.parent != nil {
 			continue
 		}
 		delete(r.byID, id)
 		run.mu.Lock()
-		if run.streamStarted && run.cancel != nil {
-			orphanCancels = append(orphanCancels, run.cancel)
-		}
+		cancel, streamed := run.cancel, run.streamStarted
 		run.mu.Unlock()
+		if streamed && cancel != nil {
+			// Close nested admission before releasing the runtime lock. A late
+			// child must not enter an orphan scope while cancellation is pending.
+			cancel()
+		}
 	}
 	ordered := make([]*toolRun, 0, len(calls))
+	retainedRoots := make(map[*toolRun]bool, len(calls))
 	seen := map[string]bool{}
 	for i, call := range calls {
 		var run *toolRun
@@ -626,23 +726,35 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 		run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
 		if err := r.prepareRunLocked(ctx, run); err != nil {
 			r.mu.Unlock()
-			for _, cancel := range orphanCancels {
-				cancel()
-			}
 			return err
 		}
 		ordered = append(ordered, run)
+		retainedRoots[run] = true
 		if call.ID != "" {
 			r.byID[call.ID] = run
+		}
+	}
+	// Children can settle before the model finishes streaming. Keep descendants
+	// of admitted roots in registration order so their request context is drained
+	// once; orphaned roots and their children remain excluded from projection.
+	for _, run := range r.runs {
+		if run.parent == nil {
+			continue
+		}
+		root := run.parent
+		for root.parent != nil {
+			root = root.parent
+		}
+		if retainedRoots[root] {
+			ordered = append(ordered, run)
+		} else {
+			delete(r.byID, run.call.ID)
 		}
 	}
 	r.runs = ordered
 	batchID := r.batchID
 	r.mu.Unlock()
 
-	for _, cancel := range orphanCancels {
-		cancel()
-	}
 	if r.ledger != nil && batchID != "" {
 		if err := r.ledger.FinalizeBatch(ctx, batchID); err != nil {
 			return err
@@ -656,26 +768,31 @@ func (r *TurnToolRuntime) executeBatch(
 	batch toolBatch,
 	onResult func(providers.ToolCall, string),
 ) toolBatchResult {
-	ctxProvider, hasCtxProvider := r.executor.(ToolContextProvider)
-	callCtxProvider, hasCallCtxProvider := r.executor.(ToolCallContextProvider)
-	discoveryProvider, hasDiscoveryProvider := r.executor.(ToolDiscoveryProvider)
-
-	if !batch.concurrent || len(batch.calls) == 1 {
+	if r.serial || !batch.concurrent || len(batch.calls) == 1 {
 		msgs := make([]providers.ChatMessage, 0, len(batch.calls))
 		requestContext := make([]ContextSegment, 0, len(batch.calls))
 		for _, call := range batch.calls {
-			result, err := r.executeOrAwaitRun(ctx, call)
+			r.mu.Lock()
+			run := r.runForCallLocked(call)
+			r.startRunLocked(ctx, run, false)
+			legacyContextSafe := !r.legacyContextUnsafe
+			r.mu.Unlock()
+			result, err := r.awaitRunResult(ctx, run)
 			if err != nil {
 				return toolBatchResult{err: err}
 			}
 			r.notifyResult(call, result, onResult)
-			msgs = append(msgs, toolResultMessage(call, r.invocationIDForCall(call), result, discoveryProvider, hasDiscoveryProvider))
-			if extra := takeToolAdditionalContext(call, callCtxProvider, hasCallCtxProvider, ctxProvider, hasCtxProvider); extra != "" {
-				segment := postToolAdditionalContextSegment(call.Name, extra)
-				if len(segment.Messages) > 0 {
-					requestContext = append(requestContext, segment)
+			msgs = append(msgs, run.message(result))
+			// Serial projection cannot establish ownership after streaming or
+			// orchestration: an orphan or child may own the shared last-result slot.
+			if _, perCall := r.executor.(ToolCallContextProvider); !perCall && legacyContextSafe {
+				if legacy, ok := r.executor.(ToolContextProvider); ok {
+					if extra := legacy.LastAdditionalContext(); extra != "" {
+						requestContext = append(requestContext, postToolAdditionalContextSegment(call.Name, extra))
+					}
 				}
 			}
+			requestContext = append(requestContext, run.takeRequestContext()...)
 		}
 		return toolBatchResult{messages: msgs, requestContext: requestContext}
 	}
@@ -697,33 +814,10 @@ func (r *TurnToolRuntime) executeBatch(
 			return toolBatchResult{err: err}
 		}
 		r.notifyResult(call, result, onResult)
-		msgs[i] = toolResultMessage(call, runs[i].invocationID, result, discoveryProvider, hasDiscoveryProvider)
-		if hasCallCtxProvider {
-			if extra := callCtxProvider.TakeAdditionalContext(call); extra != "" {
-				segment := postToolAdditionalContextSegment(call.Name, extra)
-				if len(segment.Messages) > 0 {
-					requestContext = append(requestContext, segment)
-				}
-			}
-		}
+		msgs[i] = runs[i].message(result)
+		requestContext = append(requestContext, runs[i].takeRequestContext()...)
 	}
 	return toolBatchResult{messages: msgs, requestContext: requestContext}
-}
-
-func takeToolAdditionalContext(
-	call providers.ToolCall,
-	callProvider ToolCallContextProvider,
-	hasCallProvider bool,
-	legacyProvider ToolContextProvider,
-	hasLegacyProvider bool,
-) string {
-	if hasCallProvider {
-		return callProvider.TakeAdditionalContext(call)
-	}
-	if hasLegacyProvider {
-		return legacyProvider.LastAdditionalContext()
-	}
-	return ""
 }
 
 type toolBatchResult struct {
@@ -736,8 +830,7 @@ func toolResultMessage(
 	call providers.ToolCall,
 	invocationID string,
 	result toolresult.Result,
-	provider ToolDiscoveryProvider,
-	ok bool,
+	discovered []providers.LoadableToolDefinition,
 ) providers.ChatMessage {
 	return providers.ChatMessage{
 		Role:                 "tool",
@@ -749,24 +842,8 @@ func toolResultMessage(
 		ToolResultKind:       call.Kind,
 		Content:              result.TextProjection(),
 		ToolResult:           resultPointer(result),
-		DiscoveredTools:      discoveredToolsForCall(provider, ok, call),
+		DiscoveredTools:      providers.CloneLoadableToolDefinitions(discovered),
 	}
-}
-
-func (r *TurnToolRuntime) invocationIDForCall(call providers.ToolCall) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if run := r.byID[call.ID]; run != nil {
-		return run.invocationID
-	}
-	return ""
-}
-
-func discoveredToolsForCall(provider ToolDiscoveryProvider, ok bool, call providers.ToolCall) []providers.LoadableToolDefinition {
-	if !ok || provider == nil {
-		return nil
-	}
-	return providers.CloneLoadableToolDefinitions(provider.DiscoveredTools(call))
 }
 
 func postToolAdditionalContextSegment(toolName, content string) ContextSegment {
@@ -784,14 +861,6 @@ func postToolAdditionalContextSegment(toolName, content string) ContextSegment {
 		Source:  "hooks.post_tool_use",
 		Content: content,
 	}})
-}
-
-func (r *TurnToolRuntime) executeOrAwaitRun(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	r.mu.Lock()
-	run := r.runForCallLocked(call)
-	r.startRunLocked(ctx, run, false)
-	r.mu.Unlock()
-	return r.awaitRunResult(ctx, run)
 }
 
 func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
@@ -830,12 +899,8 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 	if executor == nil {
 		return toolresult.Result{}, context.Canceled
 	}
-	arguments := strings.TrimSpace(call.Arguments)
-	if arguments != "" && !json.Valid([]byte(arguments)) {
-		return toolresult.Result{}, toolerrors.New(
-			toolerrors.InvalidArguments,
-			fmt.Sprintf("tool %q arguments are invalid JSON", call.Name),
-		)
+	if err := validateRuntimeToolArguments(call); err != nil {
+		return toolresult.Result{}, err
 	}
 	// A panic in a tool executor must not crash the whole process: convert it
 	// into an error result so the turn survives and the model sees the failure.
@@ -859,6 +924,16 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 		return toolresult.FromErrorText(errorJSON(validationErr)), validationErr
 	}
 	return result, err
+}
+
+func validateRuntimeToolArguments(call providers.ToolCall) error {
+	arguments := strings.TrimSpace(call.Arguments)
+	// Custom transport input is normalized to JSON {"input": ...} before
+	// reaching execution. Every canonical call retains the same JSON contract.
+	if arguments != "" && !json.Valid([]byte(arguments)) {
+		return toolerrors.New(toolerrors.InvalidArguments, fmt.Sprintf("tool %q arguments are invalid JSON", call.Name))
+	}
+	return nil
 }
 
 func (r *TurnToolRuntime) notifyResult(call providers.ToolCall, result toolresult.Result, legacy func(providers.ToolCall, string)) {

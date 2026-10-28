@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
@@ -70,14 +72,12 @@ func TestSSEClientsReuseConnections(t *testing.T) {
 					// Use a disposable credential store, never the developer's login.
 					t.Setenv("WUU_HOME", "")
 					home := t.TempDir()
-					store, storeErr := authstorage.ForHome(home)
-					if storeErr != nil {
+					selected := credentialstore.NewFileStore(filepath.Join(home, "credentials.json"))
+					store := authstorage.NewBound(context.Background(), selected)
+					if storeErr := store.Set(xaisub.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "test", ExpiresAt: time.Now().Add(time.Hour)}); storeErr != nil {
 						t.Fatal(storeErr)
 					}
-					if storeErr = store.Set(xaisub.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "test", ExpiresAt: time.Now().Add(time.Hour)}); storeErr != nil {
-						t.Fatal(storeErr)
-					}
-					client, err = xaisub.New(xaisub.ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE})
+					client, err = xaisub.New(xaisub.ClientConfig{BaseURL: server.URL, Credentials: selected, HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE})
 				default:
 					client, err = openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client(), WireAPI: protocol, ResponsesTransport: providers.StreamTransportSSE})
 				}

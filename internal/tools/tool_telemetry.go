@@ -31,6 +31,9 @@ const (
 
 // ToolExecutionRecord captures benchmark-oriented facts about one tool
 // execution. It deliberately excludes arguments and output content.
+// Workspace snapshots are optional mutation evidence. Read-only tools and
+// orchestrators retain their leaf-owned result revisions without acquiring
+// extra snapshots for telemetry or whole-workspace freshness hints.
 type ToolExecutionRecord struct {
 	Name                       string                 `json:"name"`
 	StepIndex                  *int                   `json:"step_index,omitempty"`
@@ -110,14 +113,8 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	startedAt := time.Now()
-	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
+	remoteWorkspace := t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name)
 	revisionBefore := ""
-	if !remoteWorkspace {
-		revisionBefore = workspaceRevision(ctx, t.env.RootDir)
-	}
-	// Hand the freshly computed revision to the tool so read-only tools can
-	// reuse it instead of re-running git for the same root.
-	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
 	decision := ToolPolicyDecision{Action: ToolPolicyAllow, Reason: "workspace boundary"}
 
 	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
@@ -137,6 +134,23 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 		return toolresult.Result{}, err
 	}
+
+	// Only local mutating leaves own workspace mutation evidence. Read-only
+	// tools compute any result-specific revisions they need; orchestrators'
+	// children own their effects and evidence, including failed mutations.
+	trackWorkspaceRevision := !info.ReadOnly && !remoteWorkspace
+	if marker, ok := tool.(OrchestratorTool); ok && marker.IsOrchestrator(call.Arguments) {
+		trackWorkspaceRevision = false
+	}
+	revisionRoot := ""
+	if trackWorkspaceRevision {
+		revisionRoot = t.env.RootDir
+		revisionBefore = workspaceRevision(ctx, revisionRoot, t.env.RuntimeHome)
+	}
+	// Do not pass an inherited snapshot to another invocation. An empty root
+	// means no cached revision; an empty revision for the same root instead
+	// means a failed computation and would suppress leaf freshness checks.
+	ctx = toolctx.WithWorkspaceRevision(ctx, revisionRoot, revisionBefore)
 
 	var result toolresult.Result
 	var err error
@@ -178,12 +192,9 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	}
 
 	revisionAfter := revisionBefore
-	if !info.ReadOnly && !remoteWorkspace {
-		// A mutating tool may have changed the workspace; recompute so the
-		// telemetry record shows the post-execution state. Read-only tools
-		// cannot mutate, so their before/after revisions are identical and
-		// the second git round-trip is pure overhead.
-		revisionAfter = workspaceRevision(ctx, t.env.RootDir)
+	if trackWorkspaceRevision {
+		// Failed executions can still have changed the workspace.
+		revisionAfter = workspaceRevision(ctx, t.env.RootDir, t.env.RuntimeHome)
 	}
 	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, err, projectionDiag)
 	return returned, err
@@ -459,7 +470,7 @@ func toolArtifactRefKey(key string) bool {
 	}
 }
 
-func workspaceRevision(ctx context.Context, rootDir string) string {
+func workspaceRevision(ctx context.Context, rootDir, runtimeHome string) string {
 	if rootDir == "" {
 		return ""
 	}
@@ -475,7 +486,7 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 	statusCmd.Dir = rootDir
 	statusOut, err := statusCmd.Output()
 	if err != nil {
-		return filesystemRevisionFallback(revCtx, rootDir)
+		return filesystemRevisionFallback(revCtx, rootDir, runtimeHome)
 	}
 
 	head := ""
@@ -500,7 +511,7 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 
 	head = trimRevisionToken(head)
 	if head == "" {
-		return filesystemRevisionFallback(revCtx, rootDir)
+		return filesystemRevisionFallback(revCtx, rootDir, runtimeHome)
 	}
 	if len(head) >= 12 {
 		head = head[:12]
@@ -509,21 +520,25 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 	return "git:" + head + ":worktree:" + hex.EncodeToString(sum[:])[:16]
 }
 
-func filesystemRevisionFallback(ctx context.Context, rootDir string) string {
-	digest, ok := filesystemWorkspaceRevision(ctx, rootDir)
+func filesystemRevisionFallback(ctx context.Context, rootDir, runtimeHome string) string {
+	digest, ok := filesystemWorkspaceRevision(ctx, rootDir, runtimeHome)
 	if !ok {
 		return ""
 	}
 	return "fs:worktree:" + digest[:16]
 }
 
-func filesystemWorkspaceRevision(ctx context.Context, rootDir string) (string, bool) {
+func filesystemWorkspaceRevision(ctx context.Context, rootDir, runtimeHome string) (string, bool) {
 	root, err := filepath.Abs(rootDir)
 	if err != nil {
 		return "", false
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	runtimeHomeInfo, _ := os.Stat(runtimeHome)
+	if runtimeHomeInfo != nil && os.SameFile(info, runtimeHomeInfo) {
 		return "", false
 	}
 
@@ -544,6 +559,14 @@ func filesystemWorkspaceRevision(ctx context.Context, rootDir string) (string, b
 		}
 		name := entry.Name()
 		if entry.IsDir() {
+			// Raw reads of live SQLite files release this process's POSIX locks
+			// when closed. Runtime state must never enter workspace digests, even
+			// with a custom home name or a symlink spelling of its directory.
+			if runtimeHomeInfo != nil {
+				if info, err := entry.Info(); err == nil && os.SameFile(info, runtimeHomeInfo) {
+					return filepath.SkipDir
+				}
+			}
 			if isWorkspaceRevisionSkippedDir(name) {
 				return filepath.SkipDir
 			}

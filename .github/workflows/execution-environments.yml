@@ -17,7 +17,9 @@ permissions:
 
 jobs:
   docker-tools:
-    runs-on: ubuntu-latest
+    # The pinned Apptainer deb needs libfuse3-3/libsubid4, absent on Ubuntu 26.04.
+    # Revisit the runner version when updating that runtime package.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

@@ -1,25 +1,31 @@
 import type { Turn } from "../shared/protocol";
 import type { TurnArtifact } from "./ArtifactOutputs";
 import type { AssistantTurnDisplay, TurnEntry } from "./AssistantTurnDisplay";
+import { streamFieldValue } from "./ThreadItemText";
 
 type Output = { key: string } & (
   | { entry: TurnEntry; artifacts?: never }
   | { artifacts: TurnArtifact[]; entry?: never }
 );
 
-/** Keep published output and everything after it in chronological reading order.
- * A message's terminal flag can change without moving it across an image or
- * remounting its streaming renderer. Process semantics remain on each entry.
+/** Keep published output and live work in chronological reading order until
+ * a visible final answer takes over. At that handoff, all process entries join
+ * the fold while artifacts and answer renderers keep their keys and order.
  */
 export function layoutAssistantTurn(
   turn: Turn,
   display: AssistantTurnDisplay,
   artifacts: readonly TurnArtifact[],
-): { processEntries: TurnEntry[]; output: Output[] } {
+): { processEntries: TurnEntry[]; output: Output[]; answerHandoffRequested: boolean } {
+  const answerHandoffRequested = display.entries.some((entry) =>
+    entry.position === "answer" && entry.item.type === "agent_message" &&
+    (streamFieldValue(turn.id, entry.item, "text").trim().length > 0 || (entry.item.images?.length ?? 0) > 0),
+  );
   const positions = new Map(turn.items.map((item, index) => [item.id, index * 2]));
   const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text" && !artifact.foldPreview);
   if (inline.length === 0) {
     return {
+      answerHandoffRequested,
       processEntries: display.entries.filter((entry) => entry.position === "process"),
       output: display.entries.filter((entry) => entry.position === "answer").map((entry) => ({ key: entry.key, entry })),
     };
@@ -71,11 +77,17 @@ export function layoutAssistantTurn(
   let published = false;
   for (const item of ordered) {
     if (item.artifacts) published = true;
-    if (!published && item.entry?.position === "process") {
+    // Publication does not turn later commentary or grouped tool/reasoning
+    // records into answers. Use the same handoff boundary as the fold itself,
+    // including while the final answer streams and provider cleanup continues.
+    if (
+      item.entry?.position === "process" &&
+      (!published || answerHandoffRequested)
+    ) {
       processEntries.push(item.entry);
     } else {
       output.push(item);
     }
   }
-  return { processEntries, output };
+  return { processEntries, output, answerHandoffRequested };
 }

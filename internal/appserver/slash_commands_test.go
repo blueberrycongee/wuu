@@ -123,6 +123,7 @@ func TestExplicitSkillCatalogHonorsThreadBoundaries(t *testing.T) {
 			rt.Toolkit = kit
 			out := &lockedBuffer{}
 			srv := New(rt, out)
+			t.Cleanup(srv.Close)
 			dispatchPayload(t, srv, "start", MethodThreadStart, ThreadStartParams{})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
 			th := srv.thread(threadID)
@@ -133,11 +134,17 @@ func TestExplicitSkillCatalogHonorsThreadBoundaries(t *testing.T) {
 				}
 				thread.Toolkit.ConfigureSurfaceForProviderModel("ollama", "llama-coder", true)
 			} else {
-				th.EngineID = "external-fixture"
+				var checkout string
 				if mode == "external-checkout" {
-					th.CWD = t.TempDir()
+					checkout = t.TempDir()
+				}
+				th.mu.Lock()
+				th.EngineID = "external-fixture"
+				if checkout != "" {
+					th.CWD = checkout
 					th.WorkspaceID = ""
 				}
+				th.mu.Unlock()
 			}
 			dispatchPayload(t, srv, "list", MethodSkillList, SkillListParams{ThreadID: threadID})
 			response := responseByID(t, parseOutput(t, out.String()), "list")
@@ -166,6 +173,7 @@ func TestExplicitSkillSteeringUsesLoadedInstructions(t *testing.T) {
 	rt.Skills = []skills.Skill{{Name: "compact", Source: "user", UserInvocable: true, Content: "selected steering instructions ${ARGUMENTS}"}}
 	blocking := newBlockingToolExecutor()
 	rt.StreamRunner.Tools = blocking
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	dispatchPayload(t, srv, "start", MethodThreadStart, ThreadStartParams{})
@@ -186,12 +194,25 @@ func TestExplicitSkillSteeringUsesLoadedInstructions(t *testing.T) {
 	if len(client.requests) != 2 {
 		t.Fatalf("requests = %d", len(client.requests))
 	}
+	delivered := false
 	for _, msg := range client.requests[1].Messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, "selected steering instructions notes") {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Fatal("steering did not deliver selected instructions")
+	}
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range persisted {
 		if msg.Steered && msg.DisplayContent == prompt && strings.Contains(msg.Content, "selected steering instructions notes") {
 			return
 		}
 	}
-	t.Fatal("steering did not deliver selected instructions")
+	t.Fatal("steering did not persist its display and model instructions")
 }
 
 func TestProjectSkillIdentityBoundaries(t *testing.T) {
@@ -320,7 +341,7 @@ func TestProjectSkillCatalogOwnership(t *testing.T) {
 	other.Path = outside
 	other.Dir = foreign
 	kit.SetSkills([]skills.Skill{other})
-	srv.threads["foreign"] = &threadState{ID: "foreign", CWD: foreign, EngineID: "wuu", running: true, execRuntime: &runtime.ThreadRuntime{Toolkit: kit}}
+	srv.threads["foreign"] = &threadState{ID: "foreign", state: testRuntimeState(t, rt), CWD: foreign, EngineID: "wuu", running: true, execRuntime: &runtime.ThreadRuntime{Toolkit: kit}}
 	catalog, root, err := srv.skillCatalog("foreign")
 	if err != nil || len(catalog) != 1 || root != "" {
 		t.Fatalf("foreign checkout inherited ownership: root=%q catalog=%+v error=%v", root, catalog, err)

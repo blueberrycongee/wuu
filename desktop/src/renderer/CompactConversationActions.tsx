@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Ellipsis, Info, SquarePen } from "./WuuIcons";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -40,10 +41,10 @@ export function CompactConversationActions({
         setOpen(false);
       }
     };
-    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("pointerdown", dismissOutside, true);
     document.addEventListener("focusin", dismissOutside);
     return () => {
-      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("pointerdown", dismissOutside, true);
       document.removeEventListener("focusin", dismissOutside);
     };
   }, [open, environmentToggleRef]);
@@ -53,19 +54,18 @@ export function CompactConversationActions({
   };
   return (
     <div className="title-actions compact-conversation-actions">
-      <button type="button" className="icon-button" aria-label={t("tabs.newConversation")} title={t("tabs.newConversation")}
+      <Tooltip asChild content={t("tabs.newConversation")}><button type="button" className="icon-button" aria-label={t("tabs.newConversation")}
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
-      </button>
+      </button></Tooltip>
       {/* Without the environment panel one action remains, which needs no menu. */}
-      {showPanelActions && !environmentAvailable && <button type="button" className="icon-button"
+      {showPanelActions && !environmentAvailable && <Tooltip asChild content={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}><button type="button" className="icon-button"
         aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
-        title={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
         aria-pressed={rightPanelOpen} onClick={onToggleRightPanel}>
         <SidePanelToggleIcon side="right" open={rightPanelOpen} size={18} />
-      </button>}
-      {showPanelActions && environmentAvailable && <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
-        title={t("shell.moreActions")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuID : undefined}
+      </button></Tooltip>}
+      {showPanelActions && environmentAvailable && <Tooltip asChild content={t("shell.moreActions")}><button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
+        aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuID : undefined}
         onClick={() => { initialFocus.current = 0; setOpen(!open); }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -75,7 +75,7 @@ export function CompactConversationActions({
           }
         }}>
         <Ellipsis size={18} aria-hidden="true" />
-      </button>}
+      </button></Tooltip>}
       {showPanelActions && environmentAvailable && open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
           onKeyDown={(event) => {

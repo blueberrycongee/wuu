@@ -310,19 +310,28 @@ async function submit(text, answer) {
 }
 const pluginSwitch = '[data-plugin="generative-ui"] [role="switch"]';
 async function catalog() {
-  await evaluate(() => {
-    const button = [...document.querySelectorAll('.primary-nav button')].find(node => node.querySelector('[data-icon="plugin-blocks"]'));
-    if (!button) throw new Error('Missing plugin catalog navigation');
-    button.click();
-  });
+  await wait(() => document.querySelector('[data-ribbon-id="catalog"]'));
+  await click('[data-ribbon-id="catalog"]');
   await wait(() => document.querySelector('[data-tab="plugins"]'));
   await click('[data-tab="plugins"]');
   await wait(selector => document.querySelector(selector), pluginSwitch);
 }
 async function conversation() {
-  await evaluate(() => document.querySelector('[data-section-id="genui-app"] button[aria-expanded="false"]')?.click());
-  await wait(() => document.querySelector('[data-section-id="genui-app"] .sidebar-session-row .thread-row-main'));
-  await click('[data-section-id="genui-app"] .sidebar-session-row .thread-row-main');
+  await until(async () => {
+    const state = await evaluate(() => {
+      const input = document.querySelector('.composer textarea');
+      const button = document.querySelector('[data-ribbon-id="conversations"]');
+      return { ready: Boolean(input && input.getClientRects().length), canNavigate: Boolean(button && button.getAttribute('aria-current') !== 'page') };
+    });
+    if (state.ready) return true;
+    if (state.canNavigate) await click('[data-ribbon-id="conversations"]');
+    return false;
+  }, 'return to the conversation after plugin graph updates');
+}
+async function reopenConversation() {
+  const row = '.sidebar-session-row:not([data-draft-id]) .thread-row-main';
+  await wait(selector => document.querySelector(selector), row);
+  await click(row);
   await wait(() => document.querySelector('.composer textarea'));
 }
 const hash = filename => createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
@@ -422,12 +431,13 @@ async function run() {
   const beforeReload = rpc.length;
   const loaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   main.reload(); await withDeadline(loaded, 'Reload production App history');
+  await reopenConversation();
   await wait(() => document.querySelector('[data-genui-block="draft"] input')?.value === 'Persisted via production storage');
   assert.equal(await evaluate(() => document.querySelector('[data-genui-block="teams"] input').value), 'Engineering');
   assert.ok(rpc.slice(beforeReload).some(entry => entry.channel === 'wuu:plugin-storage-get' && entry.completed && entry.result?.value?.includes('Persisted via production storage')));
   assert.ok(rpc.slice(beforeReload).some(entry => entry.channel === 'wuu:thread-resume' && entry.completed && JSON.stringify(entry.result).includes('application/vnd.wuu.ui+json')), 'Historical resource came from the real app-server thread resume');
   await capture('05-app-reloaded.png', '[data-genui-block="draft"]');
-  pass('full renderer reload restores native history and production plugin storage');
+  pass('reopening a conversation after renderer reload restores native history and production plugin storage');
   await beginTurn('GENUI_CANCEL');
   await wait(() => document.querySelector('[data-genui-node="canceled"]'));
   const writesBeforeCancel = rpc.filter(entry => entry.channel === 'wuu:plugin-storage-set').length;
@@ -517,6 +527,7 @@ async function run() {
   const beforeActionReload = rpc.filter(entry => entry.channel === 'wuu:turn-start').length;
   const actionReloaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   main.reload(); await withDeadline(actionReloaded, 'Reload action history');
+  await reopenConversation();
   await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Engineering follow-up');
   assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, beforeActionReload, 'Restoring action history must not replay submission');
   await capture('09-app-action-history.png', '[data-genui-node="send"]');

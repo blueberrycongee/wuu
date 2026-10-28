@@ -1,9 +1,18 @@
-/* One viewport-sized image keeps the artwork continuous across navigation and
- * content. Only the main canvases reveal it; controls and overlays retain their
- * theme surfaces so the picture cannot compromise their reading contrast. */
-html[data-app-background] body {
+/* Artwork belongs to the window frame. Reading canvases keep their own fill. */
+html[data-shell-skin] body {
   isolation: isolate;
-  background: var(--paper);
+}
+
+.app-background {
+  /* Resolve viewport geometry only on the painted surfaces. Updating inherited
+     root variables on every resize invalidates the conversation's styles too. */
+  --shell-image-width: max(var(--shell-viewport-width, 100vw), calc(var(--shell-viewport-height, 100vh) * var(--shell-image-ratio, 1)));
+  --shell-image-height: max(var(--shell-viewport-height, 100vh), calc(var(--shell-viewport-width, 100vw) / var(--shell-image-ratio, 1)));
+  background-color: var(--shell-background);
+  background-image: linear-gradient(var(--shell-overlay), var(--shell-overlay)), var(--shell-image, none);
+  background-size: 100% 100%, var(--shell-image-width) var(--shell-image-height);
+  background-position: 0 0, calc((var(--shell-viewport-width, 100vw) - var(--shell-image-width)) * var(--shell-image-align-x, 0.5) - var(--shell-offset-x, 0px)) calc((var(--shell-viewport-height, 100vh) - var(--shell-image-height)) * var(--shell-image-align-y, 0.5) - var(--shell-offset-y, 0px));
+  background-repeat: no-repeat;
 }
 
 .app-background {
@@ -11,42 +20,25 @@ html[data-app-background] body {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  animation: wuu-fade-in var(--motion-base) var(--ease-out);
 }
 
-html[data-app-background] :is(
-  .app-shell, .conversation-pane, .settings-main, .workspace-right-panel,
-  .workspace-panel-body, .side-thread-panel,
-  .account-screen, .plugin-workbench-view-primary,
-  .plugin-view-content, .empty-home, .project-empty-pane,
-  .skills-scroll-region, .conversation-split-pane
-) {
+html[data-shell-skin] :is(.app-shell, .settings-shell) {
   background: transparent;
 }
 
-/* The rule above punches through the primary plugin page so artwork can
-   continue under it. That also reveals the empty-session greeting and the
-   dock composer, which share the pane. Restore an opaque canvas here; the
-   later rule wins on equal specificity. */
-html[data-app-background] .plugin-workbench-view-primary {
-  background: var(--wuu-color-canvas, var(--paper));
-}
-
-/* Canvas and dock covers must reveal the same viewport-sized artwork. */
-html[data-app-background] :is(.conversation-pane, .dock-composer-wrap)::before {
-  background: transparent;
-}
-
-html[data-app-background] :is(.sidebar, .settings-sidebar) {
-  background: color-mix(in srgb, var(--sidebar-material-fill) 25%, transparent);
-}
-
-/* Drawers overlap readable content, rather than merely sitting beside it. */
-html[data-app-background] .sidebar-collapsed :is(.sidebar, .settings-sidebar) {
-  background: var(--sidebar-drawer-bg);
+html[data-shell-skin] .sidebar-ribbon {
+  --ink: var(--shell-foreground);
+  --ink-strong: var(--shell-foreground);
+  --control-icon-ink: var(--shell-foreground);
+  --ink-secondary: var(--shell-foreground);
+  --ink-soft: var(--shell-foreground);
+  --ink-tertiary: var(--ink-soft);
+  --focus-ring: var(--shell-foreground);
+  --wuu-nav-item-hover-background: var(--shell-hover, color-mix(in srgb, var(--shell-foreground) 12%, transparent));
+  --sidebar-row-selected-bg: var(--shell-active, color-mix(in srgb, var(--shell-foreground) 20%, transparent));
+  --sidebar-row-selected-shadow: none;
+  --ink-overlay-8: var(--wuu-nav-item-hover-background);
+  --sidebar-resizer-hover-bg: var(--shell-foreground);
 }
 
 .background-file-picker {
@@ -68,5 +60,51 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
 }
 
 .background-file-picker.disabled { opacity: 0.5; }
+
+.shell-skin-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
+  gap: var(--space-3);
+}
+
+.shell-skin-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  text-align: left;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+}
+
+.shell-skin-card[aria-checked="true"] { border-color: var(--ink); }
+.shell-skin-card:hover { background: var(--surface-1); }
+.shell-skin-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.shell-skin-card > small { color: var(--ink-soft); }
+.shell-skin-preview {
+  display: flex;
+  width: 100%;
+  height: 84px;
+  padding: 6px 6px 6px 0;
+  border-radius: var(--radius-sm);
+  background-size: cover;
+  overflow: hidden;
+}
+.shell-skin-preview-rail {
+  display: flex;
+  width: 28px;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding-top: 8px;
+}
+.shell-skin-preview-rail i { width: 9px; height: 9px; border: 1px solid currentColor; border-radius: 3px; }
+.shell-skin-preview-page { flex: 1; padding: 14px 10px; border-radius: 6px; background: var(--workbench-canvas-bg); }
+.shell-skin-preview-page i { display: block; height: 3px; margin-bottom: 8px; width: 80%; background: var(--hairline); }
+.shell-skin-preview-page i:last-child { width: 55%; }
 
 @media (forced-colors: active), print { .app-background { display: none; } }

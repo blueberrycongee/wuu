@@ -2,22 +2,36 @@ import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderMode
 import { translateCurrent as t } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
+export function isChatGPTProvider(provider: ProviderSummary): boolean {
+  return provider.type.trim().toLowerCase().replaceAll("_", "-") === "chatgpt";
+}
+
+export function chatGPTConnectionModels(provider: ProviderSummary): ProviderModelSummary[] {
+  return provider.auth_status === "connected" ? provider.models ?? [] : [];
+}
+
 export function hasAuthenticatedProvider(providers: readonly ProviderSummary[] | undefined): boolean {
   // Composer choices stay local until thread/start persists discovered providers.
-  return providers?.some((provider) => provider.api_key_configured === true) ?? false;
+  return providers?.some((provider) => isChatGPTProvider(provider) ? provider.auth_status === "connected" : provider.api_key_configured === true) ?? false;
+}
+
+/** Legacy v1 descriptors omitted the requirement. Remove this ID fallback when
+ * the next engine contract major makes requires_host_model mandatory. */
+export function engineRequiresHostModel(engineID: string | undefined, descriptor?: { readonly requires_host_model?: boolean }): boolean {
+  return descriptor?.requires_host_model ?? (!engineID || engineID === "wuu");
 }
 
 export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
   return speed || defaultSpeed;
 }
 
-export function providerIsCodex(initialized: InitializeResult, providerName: string): boolean {
+export function providerIsCodex(initialized: Pick<InitializeResult, "providers">, providerName: string): boolean {
   const summary = initialized.providers?.find((provider) => provider.name === providerName);
   const type = (summary?.type ?? providerName).trim().toLowerCase().replaceAll("_", "-");
   return type === "openai-codex" || type === "codex-subscription" || type === "chatgpt-codex";
 }
 
-export function isCodexProvider(initialized: InitializeResult): boolean {
+export function isCodexProvider(initialized: Pick<InitializeResult, "provider" | "providers">): boolean {
   return providerIsCodex(initialized, initialized.provider);
 }
 

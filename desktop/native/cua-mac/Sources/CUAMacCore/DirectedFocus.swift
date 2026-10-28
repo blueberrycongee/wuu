@@ -59,6 +59,14 @@ final class DirectedFocus: @unchecked Sendable {
         }
         try ComputerExecution.input()
         post(.applicationActivated, to: app.processIdentifier)
+        do {
+            // Activation is queued in the target process. Let it reach AppKit
+            // before the first directed key or pointer event.
+            try holdInput(for: 0.050)
+        } catch {
+            end()
+            throw error
+        }
     }
 
     func idle() {

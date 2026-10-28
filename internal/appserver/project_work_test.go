@@ -22,42 +22,42 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	root := startProject(t, client, "Responsive project")
 	act := func(actor, id string, r tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		v, err := srv.projectWork(context.Background(), actor, id, r)
+		v, err := srv.projectTestWork(context.Background(), actor, id, r)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return v.(projectWorkView)
 	}
 	w := act(root.ID, "new-work", tools.ProjectWorkRequest{Operation: "create", Title: "Pagination", Brief: "Keep the API compatible", Acceptance: "Existing callers work", Authority: "Local edits and tests only"})
-	leadCall := calls.next(t, "Keep the API compatible")
+	leadCall := calls.next(t, w.LeadID, "Keep the API compatible")
 	if _, err := srv.projectSessionHandler(root.ID)(context.Background(), "no-wait", tools.ProjectSessionRequest{Action: "wait", SessionID: w.LeadID}); err == nil {
 		t.Fatal("coordinator can block")
 	}
 	// Root remains independently usable while a technical model call is held.
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: root.ID, Prompt: "What is running?"}, &turn)
-	rootCall := calls.next(t, "What is running?")
+	rootCall := calls.next(t, root.ID, "What is running?")
 	if requestToolNames(rootCall.request)["bash"] || requestToolNames(rootCall.request)["write_file"] {
 		t.Fatal("coordinator exposes implementation tools")
 	}
 	rootCall.response <- providersResponse("Pagination is under investigation.")
 	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: 1, Brief: "Implement compatible pagination; preserve existing interfaces"})
-	executorCall := calls.next(t, "Implement compatible pagination")
+	executorCall := calls.next(t, w.ExecutorID, "Implement compatible pagination")
 	executorID := w.ExecutorID
-	lead, _, _ := session.Find(rt.SessionDir, w.LeadID)
-	executor, _, _ := session.Find(rt.SessionDir, executorID)
+	lead, _, _ := rt.Sessions.Find(w.LeadID)
+	executor, _, _ := rt.Sessions.Find(executorID)
 	if lead.CWD != executor.CWD || lead.CWD == rt.RootDir {
 		t.Fatalf("workstream is not isolated and shared: %s %s", lead.CWD, executor.CWD)
 	}
 	leadCall.response <- providersResponse("Execution dispatched.")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(executorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: 1, Summary: "Implemented pagination", Evidence: "go test ./... passed; artifact: test.log", CodeRef: "working-tree:pagination-v1"})
-	if _, err := srv.projectWork(context.Background(), executorID, "self-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Evidence: "self checked", CodeRef: w.CodeRef}); err == nil {
+	if _, err := srv.projectTestWork(context.Background(), executorID, "self-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Evidence: "self checked", CodeRef: w.CodeRef}); err == nil {
 		t.Fatal("executor accepted itself")
 	}
 	executorCall.response <- providersResponse("Ready for technical review.")
-	reviewCall := calls.next(t, "Ready for technical review")
-	if pending, err := session.PendingInbox(rt.SessionDir, root.ID); err != nil || len(pending) != 0 {
+	reviewCall := calls.next(t, w.LeadID, "Ready for technical review")
+	if pending, err := rt.Sessions.PendingInbox(root.ID); err != nil || len(pending) != 0 {
 		t.Fatalf("executor leaked to coordinator: %+v %v", pending, err)
 	}
 	w = act(w.LeadID, "accept", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Summary: "Compatibility inspected", Evidence: "Reviewed API call sites and test.log", CodeRef: "working-tree:pagination-v1"})
@@ -65,7 +65,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("acceptance = %+v", w)
 	}
 	reviewCall.response <- providersResponse("Technical review complete.")
-	resultCall := calls.next(t, "Compatibility inspected")
+	resultCall := calls.next(t, root.ID, "Compatibility inspected")
 	resultCall.response <- providersResponse("Reviewed changes are ready for local delivery.")
 	w = act(root.ID, "delivered", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "Local isolated worktree; no commit or push"})
 	if w.Phase != "delivered" {
@@ -76,12 +76,12 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	if w.Revision != 2 || w.Review != "" || w.Phase != "planning" {
 		t.Fatalf("correction retained acceptance: %+v", w)
 	}
-	if _, err := srv.projectWork(context.Background(), root.ID, "stale-delivery", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "local worktree"}); err == nil {
+	if _, err := srv.projectTestWork(context.Background(), root.ID, "stale-delivery", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "local worktree"}); err == nil {
 		t.Fatal("stale delivery accepted")
 	}
 	w = act(root.ID, "stop-work", tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: 2})
-	srv.recoverProjectInbox()
-	reopened, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	srv.projectTestRecoverInbox()
+	reopened, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || reopened.Phase != "stopped" {
 		t.Fatalf("stopped work revived: %+v %v", reopened, err)
 	}
@@ -93,13 +93,13 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Stop control")
-	value, err := srv.projectWork(context.Background(), root.ID, "new", tools.ProjectWorkRequest{Operation: "create", Brief: "Review stop behavior", Acceptance: "No resurrection", Authority: "Local only"})
+	value, err := srv.projectTestWork(context.Background(), root.ID, "new", tools.ProjectWorkRequest{Operation: "create", Brief: "Review stop behavior", Acceptance: "No resurrection", Authority: "Local only"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := value.(projectWorkView)
-	held := calls.next(t, "Review stop behavior")
-	member, _, _ := session.Find(rt.SessionDir, w.LeadID)
+	held := calls.next(t, w.LeadID, "Review stop behavior")
+	member, _, _ := rt.Sessions.Find(w.LeadID)
 	release, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit)
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +110,11 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	}
 	var result OKResult
 	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: w.LeadID}, &result)
-	current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	current, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Phase != "stopped" {
 		t.Fatalf("member stop did not stop work: %+v %v", current, err)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-write:"+w.ID)
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-write:"+w.ID)
 	if lease != nil {
 		defer lease.Release()
 	}
@@ -122,8 +122,8 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 		t.Fatalf("stop released live writer: %v %v", acquired, err)
 	}
 	held.response <- providersResponse("Late completion")
-	srv.recoverProjectInbox()
-	current, err = session.ReadProjectWork(rt.SessionDir, w.ID)
+	srv.projectTestRecoverInbox()
+	current, err = rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Phase != "stopped" {
 		t.Fatalf("late result revived work: %+v %v", current, err)
 	}
@@ -133,24 +133,24 @@ func TestProjectWorkRecoveryDoesNotInventSuccess(t *testing.T) {
 	srv, client, _, rt := newProjectFixture(t)
 	root := startProject(t, client, "Interrupted work")
 	leadID := session.NewID()
-	_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: leadID, Source: projectSessionSource, ParentID: root.ID, ProjectRole: "technical_lead", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
+	_, err := rt.Sessions.CreateInitialized(session.Session{ID: leadID, Source: projectSessionSource, ParentID: root.ID, ProjectRole: "technical_lead", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ChangeControl(rt.SessionDir, leadID, root.ID, session.ControlActive, 0); err != nil {
+	if _, err = rt.Sessions.ChangeControl(leadID, root.ID, session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err = session.SaveProjectWork(rt.SessionDir, session.ProjectWork{ID: "interrupted", ProjectID: root.ID, LeadID: leadID, Revision: 1, Phase: "planning", LeadInput: &session.ProjectWorkInput{ClientID: "crash-input", Revision: 1}}, 0, "prepare-crash")
+	_, err = rt.Sessions.SaveProjectWork(session.ProjectWork{ID: "interrupted", ProjectID: root.ID, LeadID: leadID, Revision: 1, Phase: "planning", LeadInput: &session.ProjectWorkInput{ClientID: "crash-input", Revision: 1}}, 0, "prepare-crash")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.AppendHistoryRecord(rt.SessionDir, leadID, session.HistoryRecord{Role: "user", ClientID: "crash-input", Content: "Accepted before crash"}); err != nil {
+	if err = rt.Sessions.AppendHistoryRecord(leadID, session.HistoryRecord{Role: "user", ClientID: "crash-input", Content: "Accepted before crash"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = srv.recoverProjectWork(root.ID); err != nil {
 		t.Fatal(err)
 	}
-	w, err := session.ReadProjectWork(rt.SessionDir, "interrupted")
+	w, err := rt.Sessions.ReadProjectWork("interrupted")
 	if err != nil || w.Phase != "blocked" || w.Review != "" || w.Delivery != "" {
 		t.Fatalf("recovered unfinished work: %+v %v", w, err)
 	}
@@ -159,12 +159,12 @@ func TestProjectWorkRecoveryDoesNotInventSuccess(t *testing.T) {
 func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Direct correction")
-	value, err := srv.projectWork(context.Background(), root.ID, "create-direct", tools.ProjectWorkRequest{Operation: "create", Brief: "Preserve API", Acceptance: "Callers still work", Authority: "Local only"})
+	value, err := srv.projectTestWork(context.Background(), root.ID, "create-direct", tools.ProjectWorkRequest{Operation: "create", Brief: "Preserve API", Acceptance: "Callers still work", Authority: "Local only"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := value.(projectWorkView)
-	calls.next(t, "Preserve API")
+	calls.next(t, w.LeadID, "Preserve API")
 	// Generated evidence, including older messages without Origin, cannot
 	// change requirements or revoke the assignment that produced it.
 	for _, message := range []providers.ChatMessage{
@@ -173,20 +173,20 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		{Role: "user", Name: wuucontext.AgentNotificationMessageName, Content: "Agent finished"},
 		{Role: "user", ReadOnly: true, Content: "Merged completion evidence"},
 	} {
-		srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
+		srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
 	}
-	unchanged, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	unchanged, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || unchanged.Version != w.Version || unchanged.Brief != w.Brief {
 		t.Fatalf("generated evidence changed the user contract: %+v %v", unchanged, err)
 	}
 	message := providers.ChatMessage{Role: "user", Origin: "user", ClientID: "direct-correction", Content: "Leave the database index alone"}
-	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
-	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
-	current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
+	srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
+	current, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Revision != 2 || current.Review != "" || current.LeadInput == nil {
 		t.Fatalf("direct intervention: %+v %v", current, err)
 	}
-	member, _, _ := session.Find(rt.SessionDir, w.LeadID)
+	member, _, _ := rt.Sessions.Find(w.LeadID)
 	if _, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit); err == nil {
 		t.Fatal("old turn can write before consuming the correction")
 	}
@@ -198,7 +198,7 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		if _, err := srv.recordWorkTurn(srv.thread(w.LeadID), Turn{ID: oldTurn, Status: status}); err != nil {
 			t.Fatal(err)
 		}
-		after, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+		after, err := rt.Sessions.ReadProjectWork(w.ID)
 		if err != nil || after.Version != current.Version || after.Phase != "planning" {
 			t.Fatalf("late %s changed the new assignment: %+v %v", status, after, err)
 		}
@@ -215,7 +215,7 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			root := startProject(t, client, "Background verification")
 			act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
 				t.Helper()
-				value, err := srv.projectWork(context.Background(), actor, id, request)
+				value, err := srv.projectTestWork(context.Background(), actor, id, request)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -223,13 +223,13 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			}
 			w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the artifact", Acceptance: "Background check passes", Authority: "Local only"})
 			memberID, phase := w.LeadID, "planning"
-			call := calls.next(t, "Verify the artifact")
+			call := calls.next(t, memberID, "Verify the artifact")
 			if role == "executor" {
 				w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Run the background check"})
 				call.response <- providersResponse("Dispatched")
 				waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 				memberID, phase = w.ExecutorID, "executing"
-				call = calls.next(t, "Run the background check")
+				call = calls.next(t, memberID, "Run the background check")
 			}
 			th := srv.thread(memberID)
 			th.mu.Lock()
@@ -248,19 +248,19 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			if _, err := srv.recordWorkTurn(th, idle.Turns[len(idle.Turns)-1]); err != nil {
 				t.Fatal(err)
 			}
-			waiting, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			waiting, err := rt.Sessions.ReadProjectWork(w.ID)
 			if err != nil || waiting.Phase != phase || waiting.Revision != w.Revision {
 				t.Fatalf("waiting process lost its assignment: %+v %v", waiting, err)
 			}
 			if _, err := manager.WriteStdin(job.ID, "finish\n"); err != nil {
 				t.Fatal(err)
 			}
-			continued := calls.next(t, "verification-complete")
-			current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			continued := calls.next(t, memberID, "verification-complete")
+			current, err := rt.Sessions.ReadProjectWork(w.ID)
 			if err != nil || current.Version != waiting.Version || current.Brief != w.Brief {
 				t.Fatalf("completion rewrote the contract: %+v %v", current, err)
 			}
-			member, _, err := session.Find(rt.SessionDir, memberID)
+			member, _, err := rt.Sessions.Find(memberID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,14 +279,14 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 					t.Fatalf("submission attributed to %s, want %s", w.SubmissionTurnID, continuedTurn)
 				}
 				continued.response <- providersResponse("Background verification submitted")
-				continued = calls.next(t, "Background verification submitted")
+				continued = calls.next(t, w.LeadID, "Background verification submitted")
 			}
 			w = act(w.LeadID, "review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Artifact accepted", Evidence: "Checked the process result", CodeRef: "artifact:v1"})
 			if role == "technical_lead" && w.ReviewTurnID != continuedTurn {
 				t.Fatalf("review attributed to %s, want %s", w.ReviewTurnID, continuedTurn)
 			}
 			continued.response <- providersResponse("Accepted")
-			calls.next(t, "Artifact accepted").response <- providersResponse("Ready for delivery")
+			calls.next(t, root.ID, "Artifact accepted").response <- providersResponse("Ready for delivery")
 		})
 	}
 }
@@ -296,21 +296,21 @@ func TestProjectWorkDelegatesAuthorizedDelivery(t *testing.T) {
 	root := startProject(t, client, "Deliver outcome")
 	act := func(actor, id string, r tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		v, err := srv.projectWork(context.Background(), actor, id, r)
+		v, err := srv.projectTestWork(context.Background(), actor, id, r)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return v.(projectWorkView)
 	}
 	w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Prepare a local artifact", Acceptance: "Artifact is readable", Authority: "Write the artifact in this worktree"})
-	lead := calls.next(t, "Prepare a local artifact")
+	lead := calls.next(t, w.LeadID, "Prepare a local artifact")
 	w = act(w.LeadID, "review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Summary: "Artifact verified", Evidence: "Read the generated artifact", CodeRef: "artifact:sha256-example"})
 	lead.response <- providersResponse("Reviewed.")
-	rootReport := calls.next(t, "Artifact verified")
+	rootReport := calls.next(t, root.ID, "Artifact verified")
 	rootReport.response <- providersResponse("Delivering the requested artifact.")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(root.ID, "deliver-request", tools.ProjectWorkRequest{Operation: "dispatch_delivery", WorkID: w.ID, Revision: 1, Brief: "Place the verified artifact at the requested local destination; no external publication"})
-	delivery := calls.next(t, "Place the verified artifact")
+	delivery := calls.next(t, w.LeadID, "Place the verified artifact")
 	if w.Phase != "delivering" || w.Review == "" {
 		t.Fatalf("delivery lost its acceptance: %+v", w)
 	}
@@ -324,21 +324,21 @@ func TestProjectWorkDelegatesAuthorizedDelivery(t *testing.T) {
 func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Recover outbox")
-	project, _ := srv.projectCoordinator(root.ID)
+	project, _ := srv.projectTestCoordinator(root.ID)
 	w := session.ProjectWork{ID: session.NewID(), ProjectID: root.ID, LeadID: session.NewID(), Revision: 1, Phase: "planning", Workspace: "worktree", Title: "Recovered work", Brief: "Replay-safe work", Acceptance: "One dispatch", Authority: "Local only", LeadModel: runtimeSelectionFromSession(project)}
 	w.LeadInput = srv.workInput(w, "recoverable-input", root.ID, workContract(w))
 	var err error
-	w, err = session.SaveProjectWork(rt.SessionDir, w, 0, "saved-before-creation")
+	w, err = rt.Sessions.SaveProjectWork(w, 0, "saved-before-creation")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-reconcile:"+w.ID)
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-reconcile:"+w.ID)
 	if err != nil || !acquired {
 		t.Fatalf("hold reconciliation: %v %v", acquired, err)
 	}
 	defer lease.Release()
 
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
 	results := make(chan error, 2)
 	for _, host := range []*Server{srv, observer} {
@@ -352,14 +352,14 @@ func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	srv.kickProjectInboxDrain(root.ID)
+	srv.projectTestKickInboxDrain(root.ID)
 
-	calls.next(t, "Replay-safe work")
+	calls.next(t, w.LeadID, "Replay-safe work")
 	members, err := srv.projectSessions(root.ID)
 	if err != nil || len(members) != 1 || members[0].ID != w.LeadID {
 		t.Fatalf("duplicate/replaced work member: %+v %v", members, err)
 	}
-	history, err := loadChatMessages(rt.SessionDir, w.LeadID)
+	history, err := loadChatMessages(rt.Sessions, w.LeadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,22 +379,22 @@ func TestProjectWorkOutboxStaysWithOwningWorkspace(t *testing.T) {
 	srv, client, _, rt := newProjectFixture(t)
 	root := startProject(t, client, "Owned workspace")
 	w := session.ProjectWork{ID: "owned-work", ProjectID: root.ID, LeadID: session.NewID(), Revision: 1, Phase: "planning", Workspace: "shared"}
-	if _, err := session.SaveProjectWork(rt.SessionDir, w, 0, "owned-create"); err != nil {
+	if _, err := rt.Sessions.SaveProjectWork(w, 0, "owned-create"); err != nil {
 		t.Fatal(err)
 	}
 	otherRuntime := *rt
 	otherRuntime.RootDir = t.TempDir()
 	otherRuntime.WorkspaceID = "other-workspace"
-	other := New(&otherRuntime, &lockedBuffer{})
+	other := newProjectProviderTestServer(t, &otherRuntime, &lockedBuffer{})
 	t.Cleanup(other.Close)
 	if other.drainProjectInboxPass(root.ID) {
 		t.Fatal("another workspace scheduled retries for this work")
 	}
-	pending, err := session.PendingProjectWork(rt.SessionDir, root.ID)
+	pending, err := rt.Sessions.PendingProjectWork(root.ID)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("another workspace settled the outbox: %+v %v", pending, err)
 	}
-	if _, found, err := session.Find(rt.SessionDir, w.LeadID); err != nil || found {
+	if _, found, err := rt.Sessions.Find(w.LeadID); err != nil || found {
 		t.Fatalf("another workspace created the member: %v %v", found, err)
 	}
 	_ = srv
@@ -407,49 +407,49 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 	root := startProject(t, client, "Failed submission")
 	act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		value, err := srv.projectWork(context.Background(), actor, id, request)
+		value, err := srv.projectTestWork(context.Background(), actor, id, request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value.(projectWorkView)
 	}
 	w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the change", Acceptance: "Checks pass", Authority: "Local only"})
-	lead := calls.next(t, "Verify the change")
+	lead := calls.next(t, w.LeadID, "Verify the change")
 	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Implement the change"})
-	executor := calls.next(t, "Implement the change")
+	executor := calls.next(t, w.ExecutorID, "Implement the change")
 	lead.response <- providersResponse("Dispatched")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(w.ExecutorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Change implemented", Evidence: "test.log", CodeRef: "artifact:v1"})
 	executor.failure <- errors.New("terminal provider failure after submission")
-	review := calls.next(t, "requires technical review")
+	review := calls.next(t, w.LeadID, "requires technical review")
 	turns, err := srv.loadDurableProjectTurns(w.ExecutorID)
 	if err != nil || turns[len(turns)-1].Status != TurnStatusFailed {
 		t.Fatalf("missing failed terminal evidence: %+v %v", turns, err)
 	}
 	for _, recover := range []bool{false, true} {
 		if recover {
-			srv.recoverProjectInbox()
+			srv.projectTestRecoverInbox()
 		}
-		_, err = srv.projectWork(context.Background(), w.LeadID, "reject-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Ready", Evidence: "Inspected test.log", CodeRef: w.CodeRef})
+		_, err = srv.projectTestWork(context.Background(), w.LeadID, "reject-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Ready", Evidence: "Inspected test.log", CodeRef: w.CodeRef})
 		if err == nil {
 			t.Fatalf("failed submission accepted (recovery=%v)", recover)
 		}
-		current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+		current, err := rt.Sessions.ReadProjectWork(w.ID)
 		if err != nil || current.Phase != "reviewing" || current.Review != "" {
 			t.Fatalf("failed review changed acceptance: %+v %v", current, err)
 		}
 	}
 	w = act(w.LeadID, "retry", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Retry verification"})
-	executor = calls.next(t, "Retry verification")
+	executor = calls.next(t, w.ExecutorID, "Retry verification")
 	review.response <- providersResponse("Retry dispatched")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(w.ExecutorID, "submit-retry", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Retry passed", Evidence: "retry.log", CodeRef: "artifact:v2"})
 	executor.response <- providersResponse("Verified retry complete")
-	review = calls.next(t, "Verified retry complete")
+	review = calls.next(t, w.LeadID, "Verified retry complete")
 	w = act(w.LeadID, "accept-retry", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Retry accepted", Evidence: "Reviewed retry.log", CodeRef: "artifact:v2"})
 	if w.Phase != "accepted" {
 		t.Fatalf("successful retry not accepted: %+v", w)
 	}
 	review.response <- providersResponse("Accepted")
-	calls.next(t, "Retry accepted").response <- providersResponse("Ready for delivery")
+	calls.next(t, root.ID, "Retry accepted").response <- providersResponse("Ready for delivery")
 }

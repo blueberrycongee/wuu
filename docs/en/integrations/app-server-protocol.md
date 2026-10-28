@@ -169,6 +169,13 @@ when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
 
+`turn/completed` and `turn/error` may include `index_error` when the selected
+index provider did not confirm the trace append. This diagnostic is separate
+from the model turn's status: the index write may already have committed, and
+clients must not rerun the turn or replay tools to repair it. An absent
+`trace_path` alone is not an error; external index providers need not export a
+local trace file.
+
 For persistent conversations, human queue/steer acceptance and pending-input edits
 or cancellation commit before a successful RPC response. Reuse a stable
 `client_id` when retrying an ambiguous response: a pending queue duplicate returns
@@ -264,6 +271,20 @@ The CLI sets up those controls before recording its manifest.
 Only one active execution can own a thread. Handle admission errors such as
 `thread_busy` without starting a duplicate task. `run/start` rejects manual compact
 commands; use the dedicated session compaction interface instead.
+
+### Explicit continuation without new input
+
+For an idle Wuu engine thread, use the latest turn ID returned by the server:
+
+```json
+{"id":"continue-1","method":"turn/start","params":{"thread_id":"thread-id","resume_after_turn_id":"thread-id-turn-0001"}}
+```
+
+Omit prompt and attachments. The core acquires the thread execution lease, refreshes durable history, then compares `resume_after_turn_id` with the latest turn. A stale ID, competing execution, read-only thread, missing history, non-Wuu engine or unknown at-most-once tool outcome rejects admission. A successful response contains a new empty turn; no user message is inserted. Repeating the source ID is rejected even after the new turn completes or the server restarts. After an uncertain response, refresh the thread instead of substituting its new latest ID and replaying the request automatically.
+
+The durable `meta/turn_continue` boundary belongs to display history and never enters provider input. Completed tool results are recovered from the ledger before sampling. Display-only messages with cause `incomplete_stream_fragment` do not enter executable history. A process crash after admission leaves a distinct interrupted turn which the user can explicitly continue.
+
+Responses and Chat Completions use normalized client history, including ordered tool calls/results and compatible reasoning. Failed response identity is not reused. Responses provider-native state keeps its existing provider/model/scope checks. For Anthropic Messages, an assistant-ending explicit continuation adds a request-only user instruction to start a fresh response rather than assistant prefill; tool-result-ending history already maps to the required user role. This compatibility instruction is not a durable user message. See [Anthropic prefill restrictions](https://platform.claude.com/docs/en/api/errors#prefill-not-supported) and [Responses conversation state](https://developers.openai.com/api/docs/guides/conversation-state).
 
 ### Attachments
 
@@ -368,6 +389,12 @@ service.
 {"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
 ```
 
+`initialize.catalog_providers` supplies the local connectable directory before
+clients open settings or onboarding. `config/model-catalog/refresh` returns the
+updated `catalog_providers` alongside configured `providers` and counts. Clients
+can keep the current directory visible until refresh succeeds. Older hosts may
+omit `catalog_providers`; request the directory separately in that case.
+
 `config/model-catalog/providers` lists catalog services that can be connected
 with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
 `model_count`, and a suggested `default_model`. Services that need an account
@@ -382,6 +409,8 @@ and role configuration. Process or call overrides do not mean that an unrelated
 workspace default should be read during execution.
 
 ## Engine inventory and authentication
+
+`cli_version` is the observed installed CLI version (currently Codex and Claude Code); it is omitted on probe failure or for unsupported commands. The legacy `version` is an engine descriptor value and must not be displayed as the installed CLI version. `update_url`, when present, is a vendor installation/update guide, not an executable update action. Wuu accepts user-managed binary paths and does not own their installation or upgrade source. `engine/update` only changes Wuu settings.
 
 `engine/list` returns `{ engines, settings }`, including missing and disabled
 engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
@@ -595,6 +624,8 @@ The basic browser client advertises six methods: `browser/cdp`, `browser/screens
 methods despite appearing beside other method constants in the source.
 
 Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+`browser/list_tabs` can additionally return `workspace_tabs`: live user-owned website/plugin candidates with `tab_id`, `url`, `title`, `workspace_id`, `source`, and `active`. These are discovery metadata, separate from the conversation's owned `tabs`; listing grants no page-content access. An explicit tool `attach` sends `browser/open_tab` with identical `tab_id` and `workspace_tab_id`, without `initial_url`, under the existing activity and execution lease. The host borrows the exact native view and rejects busy, closed, or foreign-window pages. It must never recreate a `workspace:` tab by navigation. `browser/close_tab` (tool `detach`), finalize, turn completion, takeover, stop, and owner teardown release the binding without closing the user's page. Released binding IDs are reported in `closed`, even though their native user pages remain open. Agent permission restrictions apply while borrowed; no capture or media permissions are expanded.
 
 A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
 

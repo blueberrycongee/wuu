@@ -1,3 +1,10 @@
+import * as React from "react";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { PluginHost } from "./plugins/PluginHost";
+import { WorkbenchController } from "./plugins/Workbench";
+import type { UIContributionRegistryV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
+import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,6 +19,7 @@ import type {
   EngineListResult,
   EngineUpdateParams,
   InitializeResult,
+  RemoteControlSnapshot,
   RuntimeAdvancedSettingsUpdate,
   CodexPetSettingsUpdate,
   RuntimeConnectionUpdate,
@@ -26,21 +34,29 @@ type GlobalWindow = typeof window & { wuu: WuuDesktopApi };
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let host: PluginHost;
+let registry: UIContributionRegistryV1;
+let workbench: WorkbenchController;
 
 function noopResizeStart(): void {}
 function noopResizeKey(): void {}
 
-beforeEach(() => {
+beforeEach(async () => {
+  host = new PluginHost({ react: React });
+  await host.activateGeneration({ pluginId: "settings-fixture", generation: "one", register: api => { registry = api.contributions; } });
+  workbench = new WorkbenchController(registry);
   container = document.createElement("div");
   document.body.appendChild(container);
 });
 
-afterEach(() => {
+afterEach(async () => {
   unhoverTooltip();
   act(() => {
     root?.unmount();
   });
   root = null;
+  workbench.dispose();
+  await host.unloadAndWait("settings-fixture");
   container.remove();
   // Drop the stub so each test installs its own.
   delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
@@ -52,6 +68,7 @@ afterEach(() => {
 
 function installBuildInfoStub(info: BuildInfoResult): void {
   const stub: Partial<WuuDesktopApi> = {
+    listEngines: vi.fn().mockResolvedValue({ engines: [] }),
     getBuildInfo: vi.fn().mockResolvedValue(info),
     listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     connectMCPServer: vi.fn(),
@@ -139,6 +156,7 @@ function readyEngineInventory(): EngineListResult {
 }
 
 function renderSettings(props: {
+  controls?: ReturnType<typeof createApplicationSettingsControls>;
   initialized: InitializeResult | undefined;
   running?: boolean;
   usage?: SettingsUsageResponse;
@@ -149,10 +167,14 @@ function renderSettings(props: {
   onRefreshEngineInventory?: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory?: (params: EngineUpdateParams) => Promise<EngineListResult>;
   initialPage?: SettingsPage;
+  page?: SettingsPage;
+  onPageChange?: (page: SettingsPage) => void;
+  browserSettingsAllowed?: boolean;
   runningProviderNames?: string[];
   codexPets?: CodexPetsSnapshot;
   codexPetsLoading?: boolean;
   codexPetsError?: string;
+  onCodexPetsRefresh?: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate?: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSave?: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider?: (provider: string) => Promise<void>;
@@ -173,9 +195,12 @@ function renderSettings(props: {
     window.wuu.initialSystemLocale = props.locale;
   }
   const view = (
-    <SettingsView
+    <SettingsView application={{settingsControls:props.controls ?? createApplicationSettingsControls({ host: registry, controller: workbench })}}
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
+        page={props.page}
+        onPageChange={props.onPageChange}
+        browserSettingsAllowed={props.browserSettingsAllowed}
         running={props.running ?? false}
         usage={props.usage}
         usageLoading={props.usageLoading}
@@ -188,7 +213,7 @@ function renderSettings(props: {
         codexPets={props.codexPets ?? emptyCodexPetsSnapshot()}
         codexPetsLoading={props.codexPetsLoading ?? false}
         codexPetsError={props.codexPetsError ?? ""}
-        onCodexPetsRefresh={async () => props.codexPets ?? emptyCodexPetsSnapshot()}
+        onCodexPetsRefresh={props.onCodexPetsRefresh ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         onCodexPetsUpdate={props.onCodexPetsUpdate ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         sidebarWidth={320}
         sidebarMinWidth={240}
@@ -224,6 +249,88 @@ function renderSettings(props: {
 }
 
 describe("SettingsView shell", () => {
+  it("refreshes retained build, MCP and remote reads on controls replacement and ignores late retired results", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let completeOld!: (value: RemoteControlSnapshot) => void;
+    let completeOldAction!: (value: RemoteControlSnapshot) => void;
+    const off = vi.fn();
+    const previous = { ...base, capabilities: { ...base.capabilities, remote: true },
+      getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })),
+      subscribeRemote: vi.fn(() => off),
+      setRemoteHostEnabled: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOldAction = resolve; })),
+      getRemoteControlSnapshot: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOld = resolve; })),
+    };
+    const next = { ...previous, getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })), subscribeRemote: vi.fn(() => vi.fn()),
+      getRemoteControlSnapshot: vi.fn(async () => ({ status: null, pair_uri: null, host_running: true, host_enabled: true })),
+    };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: previous }));
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-remote-page"] [role="switch"]');
+    await act(async () => toggle!.click());
+    expect(previous.setRemoteHostEnabled).toHaveBeenCalledOnce();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
+    expect(next.getBuildInfo).toHaveBeenCalledOnce();
+    expect(next.listMCPServers).toHaveBeenCalledOnce();
+    expect(off).toHaveBeenCalledOnce();
+    expect(next.subscribeRemote).toHaveBeenCalledOnce();
+    expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBe(toggle);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => {
+      completeOld({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+      completeOldAction({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+    });
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it.each(["agents", "subscriptions"] as const)("redirects legacy %s destinations into model connections for controlled navigation", (page) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const onPageChange = vi.fn();
+    renderSettings({ initialized: baseInitialized(), page: "providers", onPageChange });
+    expect(onPageChange).not.toHaveBeenCalled();
+    renderSettings({ initialized: baseInitialized(), page, onPageChange });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("providers");
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("providers");
+    expect(isSettingsPageAvailable(page)).toBe(false);
+    expect(isSettingsPageAvailable("providers")).toBe(true);
+  });
+
+  it("reports settings navigation once and restores a history page without recording it again", () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const onPageChange = vi.fn();
+    const props = { initialized: baseInitialized(), page: "general" as const, onPageChange };
+    renderSettings(props);
+    const appearance = container.querySelector<HTMLButtonElement>('[data-wuu-page="appearance"]');
+    expect(appearance).not.toBeNull();
+    act(() => { appearance?.click(); });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("appearance");
+    renderSettings({ ...props, page: "appearance" });
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("appearance");
+    act(() => { appearance?.click(); });
+    expect(onPageChange).toHaveBeenCalledTimes(1);
+
+    renderSettings({ ...props, page: "usage" });
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("usage");
+    expect(onPageChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes controlled browser navigation when the window disallows browser settings", () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    Object.assign(window.wuu, {
+      listBrowserProfiles: vi.fn(), importBrowserCookies: vi.fn(),
+      listBrowserExtensions: vi.fn(), addBrowserExtension: vi.fn(),
+      setBrowserExtensionEnabled: vi.fn(), removeBrowserExtension: vi.fn(),
+    });
+    const onPageChange = vi.fn();
+    renderSettings({ initialized: baseInitialized(), page: "browser", browserSettingsAllowed: false, onPageChange });
+    expect(onPageChange).toHaveBeenCalledExactlyOnceWith("providers");
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("providers");
+    expect(container.querySelector('.settings-nav [data-wuu-page="browser"]')).toBeNull();
+  });
+
+
   it("omits native settings and does not request desktop build info on a browser host", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01" } });
     window.wuu.unsupportedMethods = ["getBuildInfo", "listCodexPets", "getRemoteControlSnapshot"];
@@ -290,14 +397,15 @@ describe("SettingsView shell", () => {
 
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
-      value: vi.fn(() => toggle),
+      value: vi.fn(() => container.querySelector(".sidebar-hover-zone")),
     });
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      container.querySelector(".sidebar-hover-zone")?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
       vi.advanceTimersByTime(240);
     });
     expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
 
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => toggle) });
     act(() => {
       sidebar?.dispatchEvent(
         new MouseEvent("pointerout", {
@@ -330,10 +438,10 @@ describe("SettingsView shell", () => {
 
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
-      value: vi.fn(() => toggle),
+      value: vi.fn(() => container.querySelector(".sidebar-hover-zone")),
     });
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      container.querySelector(".sidebar-hover-zone")?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
       vi.advanceTimersByTime(240);
     });
     expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
@@ -436,7 +544,120 @@ function click(element: Element | null | undefined): void {
   });
 }
 
+async function openProviderCatalog(): Promise<void> {
+  click(document.querySelector('[data-testid="settings-connection-add"]'));
+  await flush();
+}
+
 describe("SettingsView model services", () => {
+  it.each([true, false])("offers one ChatGPT entry and switches methods without auth or mutation, existing local=%s", async (existingLocal) => {
+    await act(async () => { await import("./ChatGPTConnectionDialog"); await import("./ChatGPTAccountRows"); });
+    const api = installServicesStub();
+    api.listChatGPTAccounts = vi.fn().mockResolvedValue({ accounts: [] });
+    api.startChatGPTLogin = vi.fn();
+    api.useCodexCredentials = vi.fn();
+    const onSave = vi.fn();
+    const initialized = servicesInitialized();
+    Object.assign(initialized.providers![0], { reuse_codex_credentials: true, codex_credential_source: "codex-cli" });
+    if (!existingLocal) initialized.providers = initialized.providers?.filter(provider => provider.type !== "openai-codex");
+    const original = structuredClone(initialized);
+    renderSettings({ initialized, initialPage: "providers", onSave });
+    await flush();
+    await openProviderCatalog();
+    expect(document.querySelectorAll('[data-connection="chatgpt"]')).toHaveLength(1);
+    expect(document.querySelector('[data-subscription="openai-codex"]')).toBeNull();
+    click(document.querySelector('[data-connection="chatgpt"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="settings-auth-method-login"]')?.getAttribute("aria-pressed")).toBe("true");
+    click(document.querySelector('[data-testid="settings-auth-method-local"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="settings-auth-method-local"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(api.startChatGPTLogin).not.toHaveBeenCalled();
+    expect(api.useCodexCredentials).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    click(document.querySelector('[data-testid="settings-auth-method-login"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="chatgpt-login-start"]')).not.toBeNull();
+    expect(api.startChatGPTLogin).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(initialized).toEqual(original);
+  });
+
+  it("returns from an alternative account method form to its original bound connection without saving", async () => {
+    await act(async () => { await import("./ChatGPTConnectionDialog"); await import("./ChatGPTAccountRows"); });
+    const api = installServicesStub();
+    api.listChatGPTAccounts = vi.fn().mockResolvedValue({ accounts: [{ id: "official-account", status: "connected" }] });
+    api.listChatGPTModels = vi.fn().mockResolvedValue({ models: [{ id: "official-model", name: "Official model" }] });
+    api.startChatGPTLogin = vi.fn();
+    api.useCodexCredentials = vi.fn();
+    const initialized = servicesInitialized();
+    initialized.provider = "official";
+    initialized.model = "official-model";
+    initialized.providers = [{ name: "official", type: "chatgpt", model: "official-model", chatgpt_account_id: "official-account", auth_status: "connected", api_key_configured: true }];
+    const original = structuredClone(initialized);
+    const onSave = vi.fn();
+    renderSettings({ initialized, initialPage: "providers", onSave });
+    await flush();
+    click(document.querySelector('[data-provider="official"]'));
+    await flush();
+    click(document.querySelector('[data-testid="settings-auth-method-local"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="settings-auth-method-local"]')?.getAttribute("aria-pressed")).toBe("true");
+    click(document.querySelector('.model-connect-dialog [data-testid="settings-connection-back"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="settings-auth-method-login"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector('[data-testid="settings-provider-model"][data-model="official-model"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(api.startChatGPTLogin).not.toHaveBeenCalled();
+    expect(api.useCodexCredentials).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(initialized).toEqual(original);
+  });
+
+  it("locks account method navigation during explicit account login and unlocks after cancel", async () => {
+    await act(async () => { await import("./ChatGPTAccountRows"); });
+    const api = installServicesStub();
+    api.listChatGPTAccounts = vi.fn().mockResolvedValue({ accounts: [{ id: "official-account", status: "reauth_required" }] });
+    api.startChatGPTLogin = vi.fn().mockResolvedValue({ login_id: "method-login", interval_ms: 60000 });
+    api.cancelChatGPTLogin = vi.fn().mockResolvedValue(undefined);
+    const initialized = servicesInitialized();
+    initialized.providers!.push({ name: "official", type: "chatgpt", model: "official-model", chatgpt_account_id: "official-account", auth_status: "reauth_required" });
+    const onSave = vi.fn();
+    renderSettings({ initialized, initialPage: "providers", onSave });
+    await flush();
+    click(document.querySelector('[data-provider="official"]'));
+    await flush();
+    click(document.querySelector('[data-testid="chatgpt-login-start"]'));
+    await flush();
+    expect(api.startChatGPTLogin).toHaveBeenCalledExactlyOnceWith("official-account", false);
+    const local = document.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!;
+    expect(local.disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-back"]')!.disabled).toBe(true);
+    click(local);
+    expect(document.querySelector('[data-testid="chatgpt-login-cancel"]')).not.toBeNull();
+    click(document.querySelector('[data-testid="chatgpt-login-cancel"]'));
+    await flush();
+    expect(api.cancelChatGPTLogin).toHaveBeenCalledExactlyOnceWith("method-login");
+    expect(local.disabled).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-back"]')!.disabled).toBe(false);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("finds consolidated engine and subscription controls through settings search", async () => {
+    installServicesStub();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US" });
+    await flush();
+    const search = container.querySelector<HTMLInputElement>('.settings-search input')!;
+    for (const query of ["codex", "quota"]) {
+      act(() => setInputValue(search, query));
+      const connection = container.querySelector('.settings-nav [data-wuu-page="providers"]');
+      expect(connection).not.toBeNull();
+      expect(container.querySelector('.settings-nav [data-wuu-page="agents"], .settings-nav [data-wuu-page="subscriptions"]')).toBeNull();
+      click(connection);
+      expect(container.querySelector('.settings-page')?.getAttribute("data-wuu-page")).toBe("providers");
+    }
+  });
+
   it("keeps connection actions available while the catalog loads and reports failure", async () => {
     const api = installServicesStub();
     let rejectCatalog!: (reason: Error) => void;
@@ -444,39 +665,34 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
     await flush();
 
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
-    click(container.querySelector('[data-testid="settings-provider-custom"]'));
+    await openProviderCatalog();
+    click(document.querySelector('[data-testid="settings-provider-custom"]'));
     expect(document.querySelector('[data-testid="settings-provider-connect-base-url"]')).not.toBeNull();
 
     await act(async () => { rejectCatalog(new Error("catalog unavailable")); });
-    expect(container.querySelector('[role="status"]')).toBeNull();
-    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+    click(document.querySelector('.model-connect-dialog [data-testid="settings-connection-back"]'));
+    expect(document.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
-  it("gathers conversation defaults on General", async () => {
+  it("returns from connection configuration to the same catalog search without saving", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
-    renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
-
-    const group = container.querySelector('[data-testid="settings-new-conversations"]');
-    expect(group?.querySelector('[data-testid="settings-default-engine"]')).not.toBeNull();
-    expect(group?.querySelector('[data-testid="settings-default-model-select"]')?.textContent).toContain("GPT-6 Astra");
-    expect(group?.textContent).toContain("ChatGPT");
-    expect(group?.querySelector('[aria-label="Default for new conversations"]')).not.toBeNull();
+    await openProviderCatalog();
+    const search = document.querySelector<HTMLInputElement>('.model-browse-dialog input[type="search"]')!;
+    act(() => setInputValue(search, "deepseek"));
+    click(document.querySelector('[data-catalog="deepseek"]'));
+    await flush();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[data-testid="settings-provider-card"]')).toBeNull();
+    click(document.querySelector('.model-connect-dialog [data-testid="settings-connection-back"]'));
+    expect(document.querySelector<HTMLInputElement>('.model-browse-dialog input[type="search"]')?.value).toBe("deepseek");
+    expect(document.querySelector('[data-catalog="moonshotai-cn"]')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("sends General to Model providers when no service is connected", async () => {
-    installServicesStub();
-    renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "general" });
-    await flush();
-
-    click(container.querySelector('[data-testid="settings-providers-empty"]'));
-    await flush();
-    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
-  });
-
-  it("names connected services by vendor", async () => {
+  it("names connected services by provider identity", async () => {
     installServicesStub();
     const initialized = servicesInitialized();
     const beforeBrowsing = structuredClone(initialized);
@@ -484,30 +700,213 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers", locale: "en-US", onSave });
     await flush();
 
-    const cards = [...container.querySelectorAll('[data-testid="settings-provider-card"]')];
+    const cards = [...document.querySelectorAll('[data-testid="settings-provider-card"]')];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
-    expect(cards[0]?.textContent).toContain("Default");
+    expect(cards[0]?.textContent).toContain("Ready");
     expect(cards[2]?.textContent).toContain("API key missing");
+    expect(document.querySelector('[data-catalog="deepseek"]')).toBeNull();
+    await openProviderCatalog();
     // Connected vendors stay discoverable and can add a separate connection.
-    const connectedTile = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-tiles"] [data-catalog="deepseek"]');
+    const connectedTile = document.querySelector<HTMLButtonElement>('[data-catalog="deepseek"]');
     expect(connectedTile?.querySelector('[role="img"][data-ready]')?.getAttribute("aria-label")).toBeTruthy();
     expect(connectedTile?.disabled).toBe(false);
-    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
 
     click(connectedTile);
     await flush();
-    const dialog = document.querySelector('[role="dialog"]')!;
+    const dialog = document.querySelector('.model-connect-dialog')!;
     const name = dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-name"]')!.value;
     expect(name).not.toBe("");
     expect(initialized.providers?.map((provider) => provider.name)).not.toContain(name);
     expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("false");
     expect(onSave).not.toHaveBeenCalled();
     act(() => setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-key"]')!, "sk-another-connection"));
-    click(dialog.querySelector('.environment-dialog-footer button[type="button"]'));
+    click(document.querySelector('.model-connect-dialog [data-testid="settings-connection-back"]'));
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
     expect(initialized).toEqual(beforeBrowsing);
+  });
+
+  it("loads one allowance snapshot without replacing live connection configuration", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    const inventory = readyEngineInventory();
+    const observedAt = new Date().toISOString();
+    const quota = { status: "available" as const, checked_at: observedAt,
+      windows: [{ id: "short", window_minutes: 300, used_percent: 25 }] };
+    vi.mocked(api.listEngines).mockResolvedValue({
+      engines: [{ id: "codex", enabled: false, binary_ok: false, quota }],
+      subscription_providers: [{ ...initialized.providers![0], api_key_configured: false, model: "obsolete-model", quota }],
+    });
+    renderSettings({ initialized, engineInventory: inventory, initialPage: "providers", locale: "en-US" });
+    await flush();
+    expect(api.listEngines).toHaveBeenCalledTimes(1);
+    expect(api.listEngines).toHaveBeenCalledWith({ include_quota: true });
+    const provider = document.querySelector('[data-provider="openai-codex"]')!;
+    expect(provider.querySelector("meter")?.value).toBe(75);
+    const engine = document.querySelector('[data-testid="settings-engine-codex-status"]')!;
+    expect(engine.querySelector("meter")?.value).toBe(75);
+    for (const row of [provider, engine]) {
+      const quota = row.querySelector(".connection-usage-summary")!;
+      expect(quota.id).toBeTruthy();
+      expect(quota.hasAttribute("aria-label")).toBe(false);
+      expect(row.getAttribute("aria-describedby")?.split(" ")).toContain(quota.id);
+    }
+    click(engine);
+    await flush();
+    expect(document.querySelector('[data-testid="settings-engine-codex-enabled"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(initialized.providers![0].api_key_configured).toBe(true);
+    expect(initialized.providers![0].model).toBe("gpt-6-astra");
+    expect(inventory.engines.find(item => item.id === "codex")?.enabled).toBe(true);
+  });
+
+  it("keeps a plain API account balance available when opening its connection details", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    const provider = { name: "balance-api", type: "openai", model: "model", api_key_configured: true, base_url: "https://api.deepseek.com" };
+    initialized.providers = [provider];
+    vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{ ...provider,
+      quota: { status: "available", checked_at: new Date().toISOString(), balances: [{ currency: "USD", amount: "12.3400" }] },
+    }] });
+    renderSettings({ initialized, initialPage: "providers", locale: "en-US" });
+    await flush();
+    click(document.querySelector('[data-provider="balance-api"]'));
+    await flush();
+    expect(document.querySelector('[data-testid="settings-subscriptions"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="subscription-builtin-balance-api"]')?.textContent).toContain("12.3400");
+    expect(initialized.providers[0]).not.toHaveProperty("quota");
+  });
+
+  it("does not attach an allowance from a different configured engine executable", async () => {
+    const api = installServicesStub();
+    const inventory = readyEngineInventory();
+    inventory.settings = { default_engine: "wuu", codex: { binary_path: "/new/codex" } };
+    vi.mocked(api.listEngines).mockResolvedValue({
+      engines: [{ id: "codex", enabled: true, binary_ok: true,
+        quota: { status: "available", checked_at: new Date().toISOString(), windows: [{ id: "short", used_percent: 25 }] } }],
+      settings: { default_engine: "wuu", codex: { binary_path: "/old/codex" } },
+    });
+    renderSettings({ initialized: servicesInitialized(), engineInventory: inventory, initialPage: "providers" });
+    await flush();
+    expect(document.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="settings-engine-codex-status"] meter')).toBeNull();
+  });
+
+  it.each([
+    { type: "openai-compatible" },
+    { base_url: "https://different.example.test/v1" },
+    { chatgpt_account_id: "different-account" },
+  ])("does not attach another provider identity's allowance (%j)", async changedIdentity => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    vi.mocked(api.listEngines).mockResolvedValue({
+      engines: [], subscription_providers: [{ ...initialized.providers![0], ...changedIdentity,
+        quota: { status: "available", checked_at: new Date().toISOString(), windows: [{ id: "short", used_percent: 25 }] },
+      }],
+    });
+    renderSettings({ initialized, initialPage: "providers" });
+    await flush();
+    expect(document.querySelector('[data-provider="openai-codex"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider="openai-codex"] meter')).toBeNull();
+  });
+
+  it("does not show a previously available allowance for a disconnected account", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    const provider = { name: "disconnected", type: "chatgpt", model: "model", chatgpt_account_id: "account", auth_status: "reauth_required" as const };
+    initialized.providers = [provider];
+    vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{ ...provider,
+      quota: { status: "available", checked_at: new Date().toISOString(), windows: [{ id: "short", used_percent: 25 }] },
+    }] });
+    renderSettings({ initialized, initialPage: "providers" });
+    await flush();
+    const row = document.querySelector('[data-provider="disconnected"]')!;
+    expect(row.querySelector(".connection-summary-status")?.hasAttribute("data-attention")).toBe(true);
+    expect(row.querySelector(".connection-usage-summary")).toBeNull();
+  });
+
+  it("keeps unavailable quota out of the list without hiding connection status", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{
+      ...initialized.providers![0], quota: { status: "unsupported", checked_at: new Date().toISOString() },
+    }] });
+    renderSettings({ initialized, engineInventory: readyEngineInventory(), initialPage: "providers" });
+    await flush();
+    const row = document.querySelector('[data-provider="openai-codex"]')!;
+    expect(row.querySelector(".connection-usage-summary")).toBeNull();
+    expect(row.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
+    expect(document.querySelector('[data-testid="settings-model-catalog-refresh"]')).toBeNull();
+    expect(document.querySelector('[data-testid="settings-engine-refresh"]')).toBeNull();
+  });
+
+  it("shows one authentication warning instead of ready or default for a rejected quota login", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    vi.mocked(api.listEngines).mockResolvedValue({
+      engines: [], subscription_providers: [{ ...initialized.providers![0],
+        quota: { status: "sign_in", checked_at: new Date().toISOString() },
+      }],
+    });
+    renderSettings({ initialized, initialPage: "providers", locale: "en-US" });
+    await flush();
+    const row = document.querySelector('[data-provider="openai-codex"]')!;
+    const warnings = row.querySelectorAll('[data-attention]');
+    expect(warnings).toHaveLength(1);
+    const warning = warnings[0].textContent!;
+    expect(warning.length).toBeGreaterThan(0);
+    // The row has only its service name and one actionable authentication
+    // state, rather than a default/ready badge or duplicate usage warning.
+    expect(row.querySelector(".connection-summary-status")?.textContent).toBe(warning);
+    expect(row.querySelector(".connection-usage-summary")).toBeNull();
+    expect(row.querySelector("meter")).toBeNull();
+  });
+
+  it("keeps configured connections with broken authentication visible without opening the catalog", async () => {
+    installServicesStub();
+    const initialized = servicesInitialized();
+    initialized.providers!.push({ name: "chatgpt-expired", type: "chatgpt", model: "gpt-6-astra", chatgpt_account_id: "expired-account", auth_status: "reauth_required" });
+    renderSettings({ initialized, initialPage: "providers" });
+    await flush();
+    expect(document.querySelector('[data-provider="chatgpt-expired"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider="openrouter"]')).not.toBeNull();
+    expect(document.querySelector('[data-catalog]')).toBeNull();
+  });
+
+  it("replaces the overview with configuration and returns keyboard focus on Back", async () => {
+    installServicesStub();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
+    await flush();
+    const opener = document.querySelector<HTMLButtonElement>('[data-provider="deepseek"]')!;
+    opener.focus();
+    click(opener);
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider="openrouter"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    click(document.querySelector('[data-testid="settings-provider-back"]'));
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector('[data-provider="deepseek"]'));
+  });
+
+  it("dismisses a model removal confirmation without leaving its connection details", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(document.querySelector('[data-provider="deepseek"]'));
+    const modelActions = document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-flash"]')!;
+    expect(modelActions.getAttribute("aria-haspopup")).toBe("menu");
+    expect(modelActions.getAttribute("aria-label")?.trim()).toBeTruthy();
+    modelActions.focus();
+    click(modelActions);
+    expect(onSave).not.toHaveBeenCalled();
+    click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
+    expect(document.querySelector('.model-remove-dialog')).not.toBeNull();
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector('.model-remove-dialog')).toBeNull();
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("saves another service's key without changing the default", async () => {
@@ -516,13 +915,13 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
 
-    click(container.querySelector('[data-provider="deepseek"]'));
-    click(container.querySelector('[data-testid="settings-provider-key-edit"]'));
-    const input = container.querySelector<HTMLInputElement>('[data-testid="settings-provider-key-input"]')!;
+    click(document.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-testid="settings-provider-key-edit"]'));
+    const input = document.querySelector<HTMLInputElement>('[data-testid="settings-provider-key-input"]')!;
     expect(input.type).toBe("password");
     act(() => setInputValue(input, "sk-rotated"));
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-key-save"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-key-save"]')!.click();
     });
 
     expect(onSave).toHaveBeenCalledWith("deepseek", "deepseek-v4-pro", undefined, {
@@ -530,7 +929,30 @@ describe("SettingsView model services", () => {
       api_key: "sk-rotated",
       keep_selection: true,
     });
-    expect(container.querySelector('[data-testid="settings-provider-key-input"]')).toBeNull();
+    expect(document.querySelector('[data-testid="settings-provider-key-input"]')).toBeNull();
+  });
+
+  it("keeps a pending credential save open and retains a failed edit for retry", async () => {
+    installServicesStub();
+    let rejectSave!: (error: Error) => void;
+    const onSave = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(document.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-testid="settings-provider-key-edit"]'));
+    act(() => setInputValue(document.querySelector<HTMLInputElement>('[data-testid="settings-provider-key-input"]')!, "sk-retry"));
+    click(document.querySelector('[data-testid="settings-provider-key-save"]'));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-back"]')!.disabled).toBe(true);
+    click(document.querySelector('[data-testid="settings-provider-back"]'));
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
+    await act(async () => rejectSave(new Error("Credential storage unavailable")));
+    expect(document.querySelector('[data-testid="settings-providers"]')?.textContent).toContain("Credential storage unavailable");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="settings-provider-key-input"]')!.value).toBe("sk-retry");
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-key-save"]')!.disabled).toBe(false);
+    onSave.mockImplementationOnce(async () => {});
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-key-save"]')!.click());
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[data-testid="settings-provider-key-input"]')).toBeNull();
   });
 
   it("chooses a service model in place and makes the service default only on request", async () => {
@@ -538,15 +960,15 @@ describe("SettingsView model services", () => {
     const onSave = vi.fn(async () => {});
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
-    click(container.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-provider="deepseek"]'));
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-model="deepseek-v4-flash"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-model="deepseek-v4-flash"]')!.click();
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { keep_selection: true });
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')!.click();
     });
     // The default carries the model and a variant the model accepts.
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, undefined, "");
@@ -558,16 +980,23 @@ describe("SettingsView model services", () => {
     const initialized = servicesInitialized();
     renderSettings({ initialized, initialPage: "providers", onSave });
     await flush();
-    click(container.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-provider="deepseek"]'));
 
-    click(container.querySelector('[aria-label="删除 DeepSeek V4 Flash"]'));
+    const modelActions = document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-flash"]')!;
+    expect(modelActions.getAttribute("aria-haspopup")).toBe("menu");
+    expect(modelActions.getAttribute("aria-label")?.trim()).toBeTruthy();
+    modelActions.focus();
+    click(modelActions);
+    expect(onSave).not.toHaveBeenCalled();
+    click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(onSave).not.toHaveBeenCalled();
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true }, undefined);
 
-    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    click(document.querySelector('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-pro"]'));
+    click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
     click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
     click(document.querySelector('[data-value="deepseek-v4-flash"]'));
@@ -578,7 +1007,8 @@ describe("SettingsView model services", () => {
 
     // Removing the workspace default model atomically saves the chosen replacement.
     renderSettings({ initialized: { ...initialized, provider: "deepseek", model: "deepseek-v4-pro" }, initialPage: "providers", onSave });
-    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    click(document.querySelector('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-pro"]'));
+    click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
     click(document.querySelector('[data-value="deepseek-v4-flash"]'));
     onSave.mockRejectedValueOnce(new Error("Unable to save model choices"));
@@ -593,14 +1023,15 @@ describe("SettingsView model services", () => {
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { remove_model: "deepseek-v4-pro", keep_selection: false }, "");
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="恢复 deepseek-old"]')!.click();
+      document.querySelector<HTMLButtonElement>('[aria-label="恢复 deepseek-old"]')!.click();
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { add_model: "deepseek-old", keep_selection: true });
 
     // The last model cannot disappear while the provider still needs a selection.
     const sole = initialized.providers!.find((provider) => provider.name === "deepseek")!;
     renderSettings({ initialized: { ...initialized, provider: "deepseek", model: sole.model, providers: [{ ...sole, models: [{ id: sole.model }] }] }, initialPage: "providers", onSave });
-    click(container.querySelector('[data-testid="settings-provider-remove-model"]'));
+    click(document.querySelector('[data-testid="settings-provider-model-actions"]'));
+    click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')).toBeNull();
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
   });
@@ -611,9 +1042,10 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
 
-    click(container.querySelector('[data-catalog="moonshotai-cn"]'));
+    await openProviderCatalog();
+    click(document.querySelector('[data-catalog="moonshotai-cn"]'));
     await flush();
-    const dialog = document.querySelector('[role="dialog"]')!;
+    const dialog = document.querySelector('.model-connect-dialog')!;
     const connect = dialog.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!;
     expect(connect.disabled).toBe(true);
     // The current default works, so connecting another service keeps it.
@@ -639,8 +1071,9 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "providers", onSave });
     await flush();
 
-    click(container.querySelector('[data-testid="settings-provider-custom"]'));
-    const dialog = document.querySelector('[role="dialog"]')!;
+    await openProviderCatalog();
+    click(document.querySelector('[data-testid="settings-provider-custom"]'));
+    const dialog = document.querySelector('.model-connect-dialog')!;
     expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("true");
     act(() => {
       setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-base-url"]')!, "https://gateway.example.test/v1");
@@ -665,15 +1098,13 @@ describe("SettingsView model services", () => {
     const onRemoveProvider = vi.fn(async () => {});
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: ["deepseek"] });
     await flush();
-    click(container.querySelector('[data-provider="deepseek"]'));
-    click(container.querySelector('[aria-label="deepseek 的更多操作"], [aria-label="DeepSeek 的更多操作"]'));
-    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
-    expect(container.textContent).toContain("这个模型服务正在被运行中的对话使用");
+    click(document.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-testid="settings-provider-remove"]'));
+    expect(document.body.textContent).toContain("这个模型服务正在被运行中的对话使用");
     expect(onRemoveProvider).not.toHaveBeenCalled();
 
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: [] });
-    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
-    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    click(document.querySelector('[data-testid="settings-provider-remove"]'));
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
     });
@@ -681,9 +1112,8 @@ describe("SettingsView model services", () => {
 
     const initialized = { ...servicesInitialized(), provider: "deepseek", model: "deepseek-v4-pro" };
     renderSettings({ initialized, initialPage: "providers", onRemoveProvider });
-    click(container.querySelector('[data-provider="deepseek"]'));
-    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
-    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    click(document.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-testid="settings-provider-remove"]'));
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
     click(document.querySelector('[data-testid="settings-provider-removal-fallback"]'));
     click(document.querySelector('[data-value="openai-codex"]'));
@@ -698,25 +1128,27 @@ describe("SettingsView model services", () => {
     expect(onRemoveProvider).toHaveBeenLastCalledWith("deepseek", { fallbackProvider: "openai-codex", fallbackModel: "gpt-6-astra" });
 
     renderSettings({ initialized: { ...initialized, providers: initialized.providers!.filter((provider) => provider.name === "deepseek") }, initialPage: "providers", onRemoveProvider });
-    click(container.querySelector('[data-provider="deepseek"]'));
-    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
-    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    click(document.querySelector('[data-provider="deepseek"]'));
+    click(document.querySelector('[data-testid="settings-provider-remove"]'));
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
   });
 
-  it("refreshes the model catalog with a button-only loading state", async () => {
-    installServicesStub();
-    let finish: () => void = () => {};
-    const onRefreshModelCatalog = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRefreshModelCatalog });
+  it("allows repeated provider display names with observed subscription plans", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    initialized.providers = ["personal", "work"].map(name => ({ name, type: "openai-codex", api_key_configured: true, model: "gpt-6-astra" }));
+    vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{ ...initialized.providers[0],
+      quota: { status: "available", plan: "Plus", checked_at: new Date().toISOString(), windows: [{ id: "weekly", window_minutes: 10080, used_percent: 32 }] },
+    }] });
+    renderSettings({ initialized, initialPage: "providers", locale: "en-US" });
     await flush();
-    const refresh = container.querySelector<HTMLButtonElement>('[data-testid="settings-model-catalog-refresh"]')!;
-    click(refresh);
-    expect(refresh.disabled).toBe(true);
-    expect(refresh.getAttribute("aria-busy")).toBe("true");
-    await act(async () => finish());
-    expect(refresh.disabled).toBe(false);
-    expect(window.wuu.listCatalogProviders).toHaveBeenCalledTimes(2);
+    const row = document.querySelector('[data-provider="personal"]')!;
+    expect([...document.querySelectorAll('[data-testid="settings-provider-card"]')].map(card => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "ChatGPT"]);
+    expect(row.querySelector(".connection-summary-meta")?.textContent).toContain("Plus");
+    expect(row.querySelectorAll("meter")).toHaveLength(1);
+    click(row);
+    await flush();
+    expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
   });
 });
 
@@ -936,6 +1368,32 @@ describe("SettingsView general settings", () => {
         button.textContent?.includes("保存"),
       ),
     ).toBe(false);
+  });
+
+  it("keeps retained pet actions isolated from retired completions and scope cancellation", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const firstControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const nextControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let rejectOld!: (reason: Error) => void, finishNext!: (value: CodexPetsSnapshot) => void;
+    const oldRefresh = vi.fn(() => new Promise<CodexPetsSnapshot>((_, reject) => { rejectOld = reject; }));
+    const nextRefresh = vi.fn().mockImplementationOnce(() => new Promise<CodexPetsSnapshot>(resolve => { finishNext = resolve; }))
+      .mockRejectedValueOnce(new PluginLifecycleCancellationError()).mockRejectedValueOnce(new Error("pet folder unavailable"));
+    const props = { initialPage: "appearance" as const, initialized: baseInitialized(), codexPets: emptyCodexPetsSnapshot() };
+    await act(async () => renderSettings({ ...props, controls: firstControls, onCodexPetsRefresh: oldRefresh }));
+    const refresh = container.querySelector<HTMLButtonElement>('[data-testid="settings-pet"] button')!;
+    await act(async () => refresh.click());
+    await act(async () => renderSettings({ ...props, controls: nextControls, onCodexPetsRefresh: nextRefresh }));
+    expect(container.querySelector('[data-testid="settings-pet"] button')).toBe(refresh);
+    expect(refresh.disabled).toBe(false);
+    await act(async () => refresh.click());
+    await act(async () => rejectOld(new Error("retired pet read failed")));
+    expect(refresh.disabled).toBe(true);
+    expect(container.textContent).not.toContain("retired pet read failed");
+    await act(async () => finishNext(emptyCodexPetsSnapshot()));
+    await act(async () => refresh.click());
+    expect(container.textContent).not.toContain(new PluginLifecycleCancellationError().message);
+    await act(async () => refresh.click());
+    expect(container.textContent).toContain("pet folder unavailable");
   });
 
   it("renders Codex Pets controls and saves pet selection", async () => {
@@ -1170,6 +1628,165 @@ describe("SettingsView About section", () => {
       mark.getAttribute("aria-label"),
     ]);
     expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
+  });
+
+  it("keeps failed MCP authentication in one actionable row with opt-in diagnostics", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const diagnostic = 'mcp initialize: HTTP 401 Unauthorized (transport "http" explicitly configured; not falling back to SSE)';
+    const server = { name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: diagnostic };
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [server] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'wuu:mcp-connect': Error: ${diagnostic}`));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="settings-mcp-enabled-docs"]')!.closest('.settings-row')!;
+    expect(row.textContent).not.toContain(diagnostic);
+    await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.connectMCPServer).toHaveBeenCalledWith("docs");
+    expect(row.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    expect(row.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.textContent).not.toContain(diagnostic);
+    const disclosure = row.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure.click());
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    expect(row.querySelector('pre')?.textContent).toContain(diagnostic);
+    expect(row.querySelector('pre')?.id).toBe(disclosure.getAttribute('aria-controls'));
+    act(() => disclosure.click());
+    expect(container.textContent).not.toContain(diagnostic);
+  });
+
+  it("reads authoritative MCP auth state after a rejected connect instead of guessing from IPC text", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn()
+      .mockResolvedValueOnce({ servers: [{ name: "docs", state: "stopped", connected: false, tool_count: 0 }] })
+      .mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "server rejected authorization" }] });
+    api.connectMCPServer = vi.fn().mockRejectedValue(new Error("Request failed"));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('button[aria-label="Log in to docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')?.getAttribute('data-tone')).toBe('warning');
+  });
+
+  it("keeps MCP failure recoverable when status refresh fails and clears diagnostics on retry success", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const server = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    api.listMCPServers = vi.fn().mockResolvedValueOnce({ servers: [server] }).mockRejectedValue(new Error('status unavailable'));
+    let resolveRetry!: (result: { status: typeof server }) => void;
+    api.connectMCPServer = vi.fn().mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRetry = resolve; }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const connect = container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!;
+    await act(async () => connect.click());
+    expect(container.querySelector('.settings-row [role="status"]')).not.toBeNull();
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('connect ECONNREFUSED');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => connect.click());
+    expect(connect.disabled).toBe(true);
+    expect(container.querySelector('pre')).toBeNull();
+    await act(async () => resolveRetry({ status: { ...server, state: "ready", connected: true, tool_count: 2 } }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+    expect(container.textContent).not.toContain('ECONNREFUSED');
+  });
+
+  it("keeps MCP list failures distinct from an empty configuration and supports retry", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockRejectedValueOnce(new Error('list transport unavailable')).mockResolvedValue({ servers: [] });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const section = container.querySelector('[data-testid="settings-mcp"]')!;
+    expect(section.querySelector('[role="status"]')).not.toBeNull();
+    expect(section.textContent).not.toContain('list transport unavailable');
+    const retry = section.querySelector<HTMLButtonElement>('button[data-testid="mcp-list-retry"]')!;
+    expect(retry).not.toBeNull();
+    await act(async () => retry.click());
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(section.querySelector('[role="status"]')).toBeNull();
+    expect(section.querySelector('button[aria-expanded]')).toBeNull();
+  });
+
+  it("announces the failed MCP operation without claiming a live connection failed", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "ready", connected: true, tool_count: 2 }] });
+    api.disconnectMCPServer = vi.fn().mockRejectedValue(new Error('disconnect rejected'));
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect docs"]')!.click());
+    const status = container.querySelector('.settings-row [role="status"]')!;
+    expect(status.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(status.textContent);
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+  });
+
+  it("does not open a late MCP authorization URL after settings unmount", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0 }] });
+    let admitted!: (result: { authorization_url: string; state: string }) => void;
+    api.startMCPAuth = vi.fn().mockReturnValue(new Promise(resolve => { admitted = resolve; }));
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="登录 docs"]')!.click());
+    act(() => root!.render(null));
+    await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
+    expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("ignores a retired MCP failure refresh when settings controls change", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const stopped = { name: "docs", state: "stopped", connected: false, tool_count: 0 };
+    let completeOld!: (result: { servers: typeof stopped[] }) => void;
+    const previous = { ...base,
+      listMCPServers: vi.fn().mockResolvedValueOnce({ servers: [stopped] }).mockImplementationOnce(() => new Promise(resolve => { completeOld = resolve; })),
+      connectMCPServer: vi.fn().mockRejectedValue(new Error('old connection failed')),
+    };
+    const next = { ...base, listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...stopped, state: "ready", connected: true, tool_count: 4 }] }) };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: previous }));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Connect docs"]')!.click());
+    // A slow status read must not hide the already-rejected operation.
+    expect(container.querySelector('.settings-row button[aria-expanded="false"]')).not.toBeNull();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US", controls: next }));
+    await act(async () => completeOld({ servers: [{ ...stopped, state: "auth_required" }] }));
+    expect(container.querySelector('button[aria-label="Disconnect docs"]')).not.toBeNull();
+    expect(container.querySelector('.settings-row-attention')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
+  });
+
+  it("keeps a failed MCP login recoverable and removes stale diagnostics when code entry begins", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0, error: "initial auth failure" }] });
+    api.startMCPAuth = vi.fn().mockRejectedValueOnce(new Error('authorization service unavailable'))
+      .mockResolvedValueOnce({ authorization_url: "https://auth.example.test/authorize", state: "oauth-state" });
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp", locale: "en-US" });
+    await act(async () => { await Promise.resolve(); });
+    const login = container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')!;
+    await act(async () => login.click());
+    const disclosure = container.querySelector<HTMLButtonElement>('.settings-row button[aria-expanded="false"]')!;
+    act(() => disclosure.click());
+    expect(container.querySelector('pre')?.textContent).toContain('authorization service unavailable');
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+    await act(async () => login.click());
+    expect(api.openExternal).toHaveBeenCalledOnce();
+    expect(container.querySelector('input[aria-label="docs authorization code"]')).not.toBeNull();
+    expect(container.querySelector('pre')).toBeNull();
+    expect(container.querySelector('.settings-row button[aria-expanded]')).toBeNull();
   });
 
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {

@@ -1,13 +1,14 @@
-import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { mainTranslate } from "./i18n";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
 } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type {
@@ -28,17 +29,33 @@ type ProjectStore = {
 export class ProjectManager {
   private store: ProjectStore = { projects: [] };
 
+  constructor(private readonly legacyStorePath?: string) {}
+
+  private reload(): void {
+    this.store = loadProjectStore(this.legacyStorePath);
+  }
+
   load(): void {
-    this.store = loadProjectStore();
+    this.reload();
+    this.reconcileRuntimeContext();
   }
 
   list(): ProjectListResult {
     this.load();
     const context = this.reconcileRuntimeContext();
-    const projects = this.store.projects.map((project) => ({
-      ...project,
-      missing: !isDirectory(project.path),
-    }));
+    const projects = this.store.projects.map((project) => {
+      let canonicalPath: string | undefined;
+      try {
+        canonicalPath = realpathSync(project.path);
+      } catch {
+        // Missing folders and unavailable volumes still appear in the workspace list.
+      }
+      return {
+        ...project,
+        canonical_path: canonicalPath,
+        missing: !isDirectory(project.path),
+      };
+    });
     const activeProject =
       context.kind === "project"
         ? projects.find((project) => project.id === context.project_id)
@@ -64,6 +81,27 @@ export class ProjectManager {
       : undefined;
   }
 
+  async readRuntimeContext(): Promise<RuntimeContext> {
+    const active = this.store.active_context;
+    if (!active) throw new Error("project runtime context is not initialized");
+    // Reconciliation belongs to startup/selection, not a read-only request.
+    // Capture identity before checking a potentially slow or offline volume.
+    const context = { ...active };
+    if (context.kind === "project") {
+      const project = this.store.projects.find(candidate => candidate.id === context.project_id);
+      if (project) {
+        let available = false;
+        try {
+          available = (await stat(project.path)).isDirectory();
+        } catch {
+          // Preserve the same unavailable-project error as synchronous callers.
+        }
+        if (!available) throw new Error(activeProjectUnavailableIssue(project).message);
+      }
+    }
+    return context;
+  }
+
   ensureRuntimeContext(): RuntimeContext {
     const context = this.reconcileRuntimeContext();
     if (context.kind === "project") {
@@ -78,7 +116,7 @@ export class ProjectManager {
   }
 
   resolveSubmissionContext(context: RuntimeContext): RuntimeContext {
-    this.load();
+    this.reload();
     if (context.kind === "project") {
       const project = this.store.projects.find((candidate) => candidate.id === context.project_id);
       if (!project || resolve(project.path) !== resolve(context.cwd)) {
@@ -199,6 +237,11 @@ export class ProjectManager {
     if (index < 0) {
       throw new Error("workspace not found");
     }
+    if (this.store.projects.some((project) =>
+      project.id !== projectIDToRelocate && resolve(project.path) === resolvedPath,
+    )) {
+      throw new Error(`Workspace folder is already registered: ${resolvedPath}`);
+    }
     // Keep the stable id; only the path (and derived name) move. Because the
     // workspace state dir and its sessions are keyed by the id, everything
     // reconnects at the new location — this is the remedy for a moved folder.
@@ -249,10 +292,6 @@ function projectStorePath(): string {
   return join(wuuHomePath(), "projects.json");
 }
 
-function legacyProjectStorePath(): string {
-  return join(app.getPath("userData"), "projects.json");
-}
-
 export function wuuHomePath(): string {
   const override = process.env.WUU_HOME?.trim();
   if (override) {
@@ -261,7 +300,7 @@ export function wuuHomePath(): string {
   return join(homedir(), ".wuu");
 }
 
-function loadProjectStore(): ProjectStore {
+function loadProjectStore(legacyPath?: string): ProjectStore {
   const path = projectStorePath();
   const loaded = readProjectStoreFile(path);
   if (loaded) {
@@ -272,12 +311,11 @@ function loadProjectStore(): ProjectStore {
   // canonical ~/.wuu/projects.json exists, it must be the only source of
   // truth so explicitly removed workspaces cannot be resurrected by an old
   // Electron store file.
-  const legacyPath = legacyProjectStorePath();
-  const store = readProjectStoreFile(legacyPath) ?? {
+  const store = (legacyPath ? readProjectStoreFile(legacyPath) : undefined) ?? {
     projects: [],
   };
   writeProjectStoreFile(path, store);
-  archiveLegacyProjectStoreFile(legacyPath);
+  if (legacyPath) archiveLegacyProjectStoreFile(legacyPath);
   return store;
 }
 
@@ -464,7 +502,7 @@ function writeProjectStoreFile(path: string, store: ProjectStore): void {
   writeTextFileAtomicSync(path, `${JSON.stringify(store, null, 2)}\n`);
 }
 
-function createNoProjectContext(): RuntimeContext {
+export function createNoProjectContext(): RuntimeContext {
   return { kind: "no_project", cwd: allocateNoProjectCwd() };
 }
 

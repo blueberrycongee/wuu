@@ -22,8 +22,9 @@ type spool struct {
 }
 
 type spoolEntry struct {
-	seq  uint64
-	line []byte
+	seq   uint64
+	line  []byte
+	guard func() error
 }
 
 const (
@@ -37,11 +38,12 @@ func newSpool() *spool {
 
 // append retains one outbound line. seq values must be handed in strictly
 // increasing order.
-func (s *spool) append(seq uint64, line []byte) {
+func (s *spool) append(seq uint64, line []byte) { s.appendAuthorized(seq, line, nil) }
+func (s *spool) appendAuthorized(seq uint64, line []byte, guard func() error) {
 	if s.broken {
 		return
 	}
-	s.entries = append(s.entries, spoolEntry{seq: seq, line: line})
+	s.entries = append(s.entries, spoolEntry{seq: seq, line: line, guard: guard})
 	s.bytes += len(line)
 	if len(s.entries) > s.maxEntries || s.bytes > s.maxBytes {
 		s.broken = true

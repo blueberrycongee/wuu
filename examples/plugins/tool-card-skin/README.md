@@ -1,14 +1,11 @@
 # Tool Card Skin
 
-Tool Card Skin is the second appearance-composition prototype. It replaces the
-`command.bash` Tool Activity Presenter while using only the immutable public
-`ToolActivitySnapshot` and the host fallback.
+Tool Card Skin wraps command tool activity through `registerUIContribution` in
+both the default conversation and side-conversation preview. It reads the
+immutable public `ToolActivitySnapshot` from `context.snapshot` and returns
+`children` for calls outside `command.bash`.
 
-The plugin deliberately does not parse Tool arguments, inspect Agent steps, or
-read Goal, Subagent, Automation, Provider, or Loop state. The native fallback
-remains mounted inside the card, so host-owned output, actions, streaming, and
-error behavior stay available. Disable the plugin to remove the Presenter and
-its generation-scoped CSS together.
-
-Use it alongside Manga Studio to verify that a Theme/Token/snippet plugin and a
-Presenter plugin compose independently.
+The native content remains mounted inside the card, preserving output, actions,
+streaming, and errors. Disable the plugin to remove its contributions and CSS.
+It can compose with other wrappers targeting the same activity; `order` controls
+nesting. See the [desktop plugin contract](../../../docs/en/customize/desktop-plugins.md).

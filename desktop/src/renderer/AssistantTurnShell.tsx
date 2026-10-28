@@ -24,7 +24,6 @@ import { ThreadItemView } from "./ThreadItemView";
 import { layoutAssistantTurn } from "./AssistantTurnLayout";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import { useLiveTextWave } from "./LiveTextWave";
-import { streamFieldValue } from "./ThreadItemText";
 import { TurnEventNotice } from "./TurnNotice";
 import { turnEventForItem } from "./TurnEvents";
 import {
@@ -48,11 +47,11 @@ import {
   useConversationRevealSnap,
 } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import { useConversationControls } from "./ConversationControlsContext";
 import {
-  collectTurnArtifacts,
+  collectTurnArtifactsWithRenderers,
   TurnInlineArtifactOutputs,
 } from "./ArtifactOutputs";
-import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 
 const recoveredTurnStartedAt = new Map<string, number>();
 const MAX_RECOVERED_TURN_STARTS = 1_000;
@@ -126,9 +125,10 @@ export function AssistantTurnShell({
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
   );
-  const workbench = useSyncExternalStore(desktopWorkbenchController.subscribe, desktopWorkbenchController.getSnapshot);
-  const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn, workbench]);
-  const { processEntries, output } = layoutAssistantTurn(turn, display, artifacts);
+  const { application } = useConversationControls();
+  const workbench = useSyncExternalStore(application.workbench.subscribe, application.workbench.getSnapshot);
+  const artifacts = useMemo(() => collectTurnArtifactsWithRenderers(turn, workbench.renderers), [turn, workbench.renderers]);
+  const { processEntries, output, answerHandoffRequested } = layoutAssistantTurn(turn, display, artifacts);
   const activeGrayEntryKey = turn.status === "in_progress"
     ? latestActiveGrayProcessEntryKey([
       ...processEntries,
@@ -154,11 +154,6 @@ export function AssistantTurnShell({
     turn.status === "interrupted" ||
     turn.status === "failed" ||
     hasAnswer;
-  const answerHandoffRequested = answerEntries.some(
-    (entry) =>
-      entry.item.type === "agent_message" &&
-      (streamFieldValue(turn.id, entry.item, "text").trim().length > 0 || (entry.item.images?.length ?? 0) > 0),
-  );
   const processCollapseRequested = answerHandoffRequested;
   const className = [
     "assistant-turn-shell",

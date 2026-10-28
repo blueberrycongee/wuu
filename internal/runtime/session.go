@@ -21,9 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codemode"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
@@ -38,18 +36,22 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/prompt"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 	"github.com/blueberrycongee/wuu/internal/version"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
@@ -58,7 +60,13 @@ import (
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
-	RootDir string
+	// CapacityResources explicitly shares physical account limits across sessions.
+	CapacityResources *CapacityResources
+	NativeProviders   []NativeProviderFactory
+	productParent     *kernelHostServices
+	productRouter     *PluginSessionRouter
+	composition       productCompositionBinding
+	RootDir           string
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
 	Host Host
@@ -69,30 +77,31 @@ type Options struct {
 	// 对话 scratch dir, agent homes), which stay keyed by their path.
 	WorkspaceID string
 	HomeDir     string
-	ConfigPath  string
+	// WuuHome selects an explicit state namespace without changing process environment.
+	WuuHome string
+	// DiscoveredPlugins supplies a captured catalog. A non-nil empty slice disables discovery.
+	DiscoveredPlugins *[]pluginpkg.Plugin
+	ConfigPath        string
 	// ConfigLoadMode records the source model that produced Config so later
 	// app-server reloads use the same inputs. The zero value is normal user
 	// config plus restricted project overlays.
 	ConfigLoadMode ConfigLoadMode
 	Config         config.Config
+	// Overrides are applied after the selected configuration provider is read.
+	// They affect this process and are never written back to that provider.
+	Overrides ConfigOverrides
 	// DesktopExecutionDefaults ignores persisted step and temperature overrides
 	// for desktop conversations without changing CLI or explicit automation config.
 	DesktopExecutionDefaults bool
 	ProviderName             string
 	ModelOverride            string
-	// PermissionModeExplicit marks Config's permission mode as an explicit
-	// process-scoped execution override (a CLI --permission-mode flag). The
-	// override wins over per-thread pinned modes and persisted session
-	// metadata for every turn this process runs, and is never written back
-	// into sessions.
-	PermissionModeExplicit bool
-	NoTools                bool
+	NoTools                  bool
 	// NonInteractive disables human questions and interactive engine approvals
 	// for this runtime, including plugin generations loaded later.
 	NonInteractive bool
-	// DriverProfile selects the loop driver for new turns: empty keeps the
-	// in-process default; a profile name binds the plugin that provides the
-	// versioned "driver.<profile>" service. Unknown profiles fail closed.
+	// DriverProfile selects the versioned driver.<profile> service. Empty
+	// selects driver.default through the same composition binding. Missing
+	// providers fail closed, including when the default module is removed.
 	DriverProfile string
 	// SafeMode discovers plugin manifests for management but activates no
 	// runtime, tool, skill, hook, or desktop contribution from a plugin.
@@ -118,6 +127,14 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	capacityRootRelease      func()
+	Documents                persistence.Documents
+	Sessions                 *session.Store
+	nativeProviders          []NativeProviderFactory
+	credentials              credentialstore.Store
+	configClient             *config.Client
+	chatGPTManager           *siwc.Manager
+	artifactClient           *ArtifactClient
 	ProviderName             string
 	Model                    string
 	RootDir                  string
@@ -143,12 +160,12 @@ type Session struct {
 	// diagnostics; the driver itself lives on the stream runner template.
 	DriverProfile       string
 	PluginSessionRouter *PluginSessionRouter
+	productCompositions *productCompositionBindings
 	systemPrompts       *agent.SystemPromptAssembler
 	InstructionFiles    []instructions.File
 	instructionConfig   config.InstructionFilesConfig
 	skillsConfig        config.SkillsConfig
 	pluginSkills        pluginSkillSnapshot
-	AgentControl        *agentcontrol.AgentControl
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
@@ -174,7 +191,7 @@ type Session struct {
 	pluginEpoch uint64
 	Permissions config.ResolvedPermissions
 	// PermissionModeExplicit reports that Permissions carries an explicit
-	// process-scoped override (see Options.PermissionModeExplicit): it beats
+	// process-scoped override (see Options.Overrides): it beats
 	// thread pins and session metadata and is never persisted into sessions.
 	PermissionModeExplicit      bool
 	maxParallel                 int
@@ -197,6 +214,8 @@ type Session struct {
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	// Thread-model shadows release a reference without stopping the root host.
+	borrowedPluginGeneration bool
 	// mcpOAuth outlives individual connection managers, including retained turns.
 	mcpOAuth *mcp.OAuthManager
 	// Retired generations are tracked without an extra reference so policy
@@ -207,6 +226,7 @@ type Session struct {
 	threadProcesses            *threadProcessManagers
 	executionEnvironments      *executionenv.Manager
 	executionEnvironmentConfig executionenv.Config
+	configOverrides            ConfigOverrides
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -223,13 +243,21 @@ func (s *Session) MaxParallel() int {
 // generation reference after construction; a successful ThreadRuntime retains
 // its own reference. The retired-generation index belongs to the publishing
 // Session and is intentionally not shared with these independently locked shadows.
-func (s *Session) cloneForThreadModel() (*Session, error) {
+func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 	if s == nil {
 		return nil, errors.New("runtime session is required")
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
+	if len(expected) > 0 {
+		binding := expected[0]
+		if binding == nil || binding.Generation != s.pluginGeneration || binding.Sessions != s.Sessions {
+			return nil, ErrStateGenerationChanged
+		}
+	}
 	clone := &Session{
+		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
+		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
 		RootDir:                     s.RootDir,
@@ -239,6 +267,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 		ConfigPath:                  s.ConfigPath,
 		HomeDir:                     s.HomeDir,
 		ConfigLoadMode:              s.ConfigLoadMode,
+		configOverrides:             s.configOverrides,
 		DesktopExecutionDefaults:    s.DesktopExecutionDefaults,
 		SessionDir:                  s.SessionDir,
 		StreamRunner:                s.StreamRunner,
@@ -250,16 +279,17 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 		ExtensionSettings:           s.ExtensionSettings,
 		PluginHost:                  s.PluginHost,
 		pluginGeneration:            s.pluginGeneration,
+		borrowedPluginGeneration:    true,
 		mcpOAuth:                    s.mcpOAuth,
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
 		PluginSessionRouter:         s.PluginSessionRouter,
+		productCompositions:         s.productCompositions,
 		systemPrompts:               s.systemPrompts,
 		InstructionFiles:            s.InstructionFiles,
 		instructionConfig:           s.instructionConfig,
 		skillsConfig:                s.skillsConfig,
 		pluginSkills:                s.pluginSkills,
-		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
 		threadProcesses:             s.threadProcessManagerPool(),
 		executionEnvironments:       s.executionEnvironmentManager(),
@@ -319,7 +349,22 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
-	StreamRunner      *agent.StreamRunner
+	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
+	CompositionID        string
+	compositionBinding   productCompositionBinding
+	closeComposition     func() error
+	compositionCloseOnce sync.Once
+	compositionCloseErr  error
+	processScopeConfig   tools.ProcessScopeConfig
+	processHooks         *hooks.Dispatcher
+	SessionID            string
+	PluginHost           *pluginhost.Host
+	Documents            persistence.Documents
+	Sessions             *session.Store
+	StreamRunner         *agent.StreamRunner
+	// CapabilityTools exposes host capabilities to an external engine without
+	// creating an in-process model runner or worker runtime.
+	CapabilityTools   agent.ToolExecutor
 	Toolkit           *tools.Toolkit
 	AgentControl      *agentcontrol.AgentControl
 	ProcessManager    *process.Manager
@@ -384,10 +429,33 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
-
-	wuuHome, err := statepath.Home(opts.HomeDir)
+	configLoadMode := opts.ConfigLoadMode
+	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
+		configLoadMode = ConfigLoadFile
+	}
+	opts.NativeProviders = withCapacityProviders(opts.NativeProviders, opts.CapacityResources)
+	capacityRootRelease, err := retainCapacityRoot(opts.NativeProviders)
 	if err != nil {
-		return nil, fmt.Errorf("resolve wuu home: %w", err)
+		return nil, err
+	}
+	capacityTransferred := false
+	defer func() {
+		if !capacityTransferred {
+			capacityRootRelease()
+		}
+	}()
+	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
+	if err != nil {
+		return nil, err
+	}
+	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, rootDir, cfg, configLoadMode)
+
+	wuuHome := opts.WuuHome
+	if wuuHome == "" {
+		wuuHome, err = statepath.Home(opts.HomeDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve wuu home: %w", err)
+		}
 	}
 	startupPluginLease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(wuuHome)
 	if err != nil {
@@ -408,62 +476,6 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
 	}
 	sessionDir := statepath.SessionsDir(wuuHome)
-	journalRuntime, err := session.NewInferenceJournalRuntime(sessionDir, inferenceJournalWorkspaceScope(workspaceID, rootDir))
-	if err != nil {
-		return nil, fmt.Errorf("initialize inference journal: %w", err)
-	}
-	journalOwned := true
-	defer func() {
-		if journalOwned {
-			_ = journalRuntime.Close()
-		}
-	}()
-	workspaceJournal := journalRuntime.ForOwner("workspace-runtime")
-	permissions := config.ResolveAgentPermissions(cfg.Agent)
-
-	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.ModelOverride != "" {
-		providerCfg.Model = opts.ModelOverride
-	}
-	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-		ProviderName:   resolvedName,
-		ProviderConfig: providerCfg,
-		Model:          providerCfg.Model,
-		Effort:         cfg.Agent.Effort,
-		Variant:        cfg.Agent.Variant,
-	})
-	if err != nil {
-		return nil, err
-	}
-	mainRole := roleSelections.Main
-	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
-	toolModeModel := mainRole.APIModel
-
-	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName)
-	if client == nil {
-		return nil, clientErr
-	}
-	var readinessIssues []ReadinessIssue
-	if clientErr != nil {
-		readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: resolvedName, Message: clientErr.Error()})
-	}
-	titleClient := providers.Client(client)
-	if !roleSelections.Title.Inherited {
-		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
-		if roleClient == nil {
-			return nil, fmt.Errorf("build title client: %w", roleErr)
-		}
-		if roleErr != nil {
-			readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: roleSelections.Title.Provider, Message: roleErr.Error()})
-		}
-		titleClient = roleClient
-	}
-
-	providers.InitDebugLog(statepath.LogDir(wuuHome))
-	setupCatwalk(cfg)
 
 	catalogLease, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(wuuHome)
 	if err != nil {
@@ -473,11 +485,16 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, errors.New("plugin catalog is being published by another process")
 	}
 	defer catalogLease.Release()
-	discoveredPlugins := discoverPlugins(rootDir, wuuHome)
+	var discoveredPlugins []pluginpkg.Plugin
+	if opts.DiscoveredPlugins != nil {
+		discoveredPlugins = append([]pluginpkg.Plugin(nil), (*opts.DiscoveredPlugins)...)
+	} else {
+		discoveredPlugins = discoverPlugins(rootDir, wuuHome)
+	}
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
 	if !safeMode {
-		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins)
+		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, factories...)
 		if activationErr != nil {
 			return nil, activationErr
 		}
@@ -490,31 +507,147 @@ func NewSession(opts Options) (*Session, error) {
 	snapshotsOwned := true
 	defer func() {
 		if snapshotsOwned {
-			for _, root := range initialSnapshotRoots {
-				_ = os.RemoveAll(root)
-			}
+			releaseFailedSnapshots(err, initialSnapshotRoots)
 		}
 	}()
 	if err := catalogLease.Release(); err != nil {
 		return nil, err
 	}
-	// Root worker callbacks run only after this dormant control is bound. The
-	// pointer is assigned once before startup; each callback reads a current
-	// immutable generation snapshot rather than constructor-captured skills.
-	var runtimeSession *Session
-	var agentControl *agentcontrol.AgentControl
-	pluginTurnRouter := NewPluginSessionRouter()
+	pluginTurnRouter := opts.productRouter
+	if pluginTurnRouter == nil {
+		pluginTurnRouter = NewPluginSessionRouter()
+	}
 	var userQuestions *pluginhost.UserQuestionBroker
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	selection := productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activePlugins, factories)
+	pluginHost, pluginKernel, err := buildPluginHostWithSelection(context.Background(), activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, factories...)
+	if err != nil {
+		return nil, fmt.Errorf("prepare plugin composition: %w", err)
+	}
+
+	initialGeneration := &PluginGeneration{
+		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
+		ownedRoots: initialSnapshotRoots, settings: cfg, requiredPlugins: pluginKernel.requiredPlugins,
+		plugins: append([]pluginpkg.Plugin(nil), discoveredPlugins...),
+		active:  append([]pluginpkg.Plugin(nil), activePlugins...),
+	}
+	if services := pluginKernel.selectedServices; services != nil {
+		initialGeneration.credentials, initialGeneration.configClient = services.credentials, services.config
+		initialGeneration.chatGPTManager, initialGeneration.artifactClient, initialGeneration.mcpOAuth = services.chatGPT, services.artifacts, services.oauth
+	}
+	initialGeneration.retain()
+	pluginKernel.bindStateGeneration(initialGeneration, nil)
+	snapshotsOwned = false
+	graphOwned := true
+	defer func() {
+		if graphOwned {
+			initialGeneration.Release()
+		}
+	}()
+	activationErr := activatePluginHost(context.Background(), pluginHost)
+	// Cold startup cannot admit a generation that lost an explicit service
+	// choice, including a services-only binding with no required module list.
+	if bindingErr := pluginHost.ServiceRegistry().ValidateBindings(); bindingErr != nil {
+		return nil, fmt.Errorf("activate initial plugin generation: %w", errors.Join(activationErr, bindingErr))
+	}
+	if activationErr != nil {
+		providers.DebugLogf("activate initial plugin generation: %v", activationErr)
+	}
+	var documents persistence.Documents
+	var sessions *session.Store
+	var journalRuntime *session.InferenceJournalRuntime
+	if pluginKernel.state != nil {
+		documents, sessions, journalRuntime = pluginKernel.state.documents, pluginKernel.state.sessions, pluginKernel.state.journal
+	}
+	if !safeMode && journalRuntime == nil {
+		return nil, errors.Join(errors.New("selected composition has no active session state consumer"), activationErr)
+	}
+	var workspaceJournal providers.InferenceJournal
+	if journalRuntime != nil {
+		workspaceJournal = journalRuntime.ForOwner("workspace-runtime")
+	}
+	var credentials credentialstore.Store
+	var configClient *config.Client
+	var chatGPTManager *siwc.Manager
+	var artifacts *ArtifactClient
+	if pluginKernel.selectedServices != nil {
+		credentials = pluginKernel.selectedServices.credentials
+		configClient = pluginKernel.selectedServices.config
+		chatGPTManager = pluginKernel.selectedServices.chatGPT
+		artifacts = pluginKernel.selectedServices.artifacts
+	}
+	if !safeMode {
+		if configClient == nil {
+			return nil, errors.Join(errors.New("selected configuration provider is unavailable"), activationErr)
+		}
+		view, err := configClient.Read(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("load selected configuration: %w", err)
+		}
+		cfg = view.Config
+	}
+	if err := opts.Overrides.Apply(&cfg); err != nil {
+		return nil, err
+	}
+	cfg = withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults)
+	permissions := config.ResolveAgentPermissions(cfg.Agent)
+
+	var providerCfg config.ProviderConfig
+	var resolvedName string
+	var roleSelections modelroles.Set
+	if cfg.RequiresModelConfiguration() || len(cfg.Providers) > 0 || opts.ProviderName != "" || opts.ModelOverride != "" {
+		providerCfg, resolvedName, err = cfg.ResolveProvider(opts.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		if opts.ModelOverride != "" {
+			providerCfg.Model = opts.ModelOverride
+		}
+		roleSelections, err = modelroles.Resolve(cfg, modelroles.ResolveOptions{
+			ProviderName: resolvedName, ProviderConfig: providerCfg, Model: providerCfg.Model,
+			Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	mainRole := roleSelections.Main
+	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
+	toolModeModel := mainRole.APIModel
+
+	client, clientErr := selectedRouteClient(pluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
+	if client == nil {
+		return nil, clientErr
+	}
+	var readinessIssues []ReadinessIssue
+	if clientErr != nil {
+		readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: resolvedName, Message: clientErr.Error()})
+	}
+	titleClient := providers.Client(client)
+	if !roleSelections.Title.Inherited {
+		roleClient, roleErr := selectedRouteClient(pluginHost, roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
+		if roleClient == nil {
+			return nil, fmt.Errorf("build title client: %w", roleErr)
+		}
+		if roleErr != nil {
+			readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: roleSelections.Title.Provider, Message: roleErr.Error()})
+		}
+		titleClient = roleClient
+	}
+
+	providers.InitDebugLog(statepath.LogDir(wuuHome))
+	setupCatwalk(cfg)
+
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		closeErr := pluginHost.Close(ctx)
-		cancel()
+		graphOwned = false
+		var closeErr error
+		if initialGeneration.Release() {
+			closeErr = initialGeneration.closeErr
+		}
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
@@ -526,67 +659,58 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	mcpOAuth := opts.MCPOAuth
-	if mcpOAuth == nil {
-		store, err := credentialstore.NewDesktopStore()
-		if err != nil {
-			providers.DebugLogf("desktop credential store: %v", err)
-		} else {
-			mcpOAuth = mcp.NewOAuthManager(store, nil)
-		}
+	if mcpOAuth == nil && pluginKernel.selectedServices != nil {
+		mcpOAuth = pluginKernel.selectedServices.oauth
 	}
+
 	activityRegistry := activity.NewRegistry()
 	var toolExecutor agent.ToolExecutor
 	var toolkit *tools.Toolkit
 	toolLoadingPreference := cfg.Agent.ToolLoadingPreference()
 	toolLoadingMode, toolSearchEnabled, nativeDeferredDiscovery := resolveToolLoadingModeForProvider(toolLoadingPreference, ruleProviderCfg, toolModeModel, mainRole.ProviderOptions)
-	if !opts.NoTools {
-		kit, newErr := tools.New(rootDir)
-		if newErr != nil {
-			return nil, newErr
-		}
-		kit.SetStateDir(workspaceStateDir)
-		kit.SetWorkingNotesHome(wuuHome)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
-		kit.SetWorkspaceID(workspaceID)
-		kit.SetProcessManager(processMgr)
-		kit.SetSkills(discoveredSkills)
-		ConfigureToolkitPermissions(kit, permissions)
-		var securityRegistry *pluginhost.ServiceRegistry
-		if pluginKernel != nil {
-			securityRegistry = pluginKernel.registry
-		}
-		configureToolkitSecurityExtensions(kit, securityRegistry)
-		kit.ConfigureSurfaceForProviderModel(ruleProviderName, toolModeModel, true)
-		kit.SetBrowserEnabled(browserEnabledFromEnv())
-		kit.SetToolSearchEnabled(toolSearchEnabled)
-		kit.SetNativeDeferredToolDiscovery(nativeDeferredDiscovery)
-		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
-		kit.SetActivityRegistry(activityRegistry)
-		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, info tools.ToolInfo, call providers.ToolCall) error {
-			_, err := hookDispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
-				SessionID: active.SessionID(), CWD: active.RootDir(), ToolName: call.Name,
-				ToolInput: json.RawMessage(call.Arguments),
-			})
-			return err
-		})
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome))
-		kit.SetOnFileChanged(func(absPath string) {
-			_, _ = hookDispatcher.Dispatch(context.Background(), hooks.FileChanged, &hooks.Input{
-				CWD:      rootDir,
-				FilePath: absPath,
-			})
-		})
-		toolkit = kit
-		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, hookDispatcher, "", "", rootDir)
-		connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
-	}
-
-	// Interpreter processes start only when called. Thread clones share lifecycle
-	// ownership while state is isolated by conversation, actor and workspace.
 	var codeModeService *codemode.Service
-	if !opts.NoTools && toolkit != nil {
-		codeModeService = codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
-		toolkit.ConfigurePTC(codeModeService, cfg.PTC)
+	if !opts.NoTools && !safeMode && selectsRuntimeModule(pluginHost, toolExecutionConsumer) {
+		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			kit, newErr := tools.New(rootDir)
+			if newErr != nil {
+				return toolservice.Backend{}, newErr
+			}
+			kit.SetStateDir(workspaceStateDir)
+			kit.SetRuntimeHome(wuuHome)
+			kit.SetSessionStore(sessions)
+			kit.SetWorkingNotesHome(wuuHome)
+			kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
+			kit.SetWorkspaceID(workspaceID)
+			kit.SetProcessManager(processMgr)
+			kit.SetSkills(discoveredSkills)
+			ConfigureToolkitPermissions(kit, permissions)
+			configureToolkitSecurityExtensions(kit, pluginHost)
+			kit.ConfigureSurfaceForProviderModel(ruleProviderName, toolModeModel, true)
+			kit.SetBrowserEnabled(browserEnabledFromEnv())
+			kit.SetToolSearchEnabled(toolSearchEnabled)
+			kit.SetNativeDeferredToolDiscovery(nativeDeferredDiscovery)
+			kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
+			kit.SetActivityRegistry(activityRegistry)
+			bindToolkitHooks(kit, hookDispatcher)
+			kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome))
+			toolkit = kit
+			connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+
+			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
+			codeModeService = codeMode
+			kit.ConfigurePTC(codeMode, cfg.PTC)
+			return toolservice.Backend{Executor: newPluginToolExecutor(kit, pluginHost, "", rootDir), Toolkit: kit, Close: func(context.Context) error {
+				var closeErr error
+				if manager := kit.MCPManager(); manager != nil {
+					closeErr = manager.Close()
+				}
+				return errors.Join(closeErr, codeMode.Close())
+			}}, nil
+		})
+		toolExecutor = newSelectedToolExecutor(pluginHost, scope, selectedToolIdentity{cwd: rootDir})
+		if hookDispatcher != nil {
+			toolExecutor = hooks.NewHookedExecutor(toolExecutor, hookDispatcher, "", rootDir)
+		}
 	}
 
 	instructionFiles := discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
@@ -595,7 +719,10 @@ func NewSession(opts Options) (*Session, error) {
 	// frozen value so the cached system prefix does not drift when threads
 	// rebuild or the wall clock crosses midnight during a long session.
 	sessionDate := wuucontext.Snapshot(rootDir).Date
-	mainSurface := activeSurface(toolkit)
+	mainSurface, err := selectedToolSurface(context.Background(), toolExecutor)
+	if err != nil {
+		return nil, err
+	}
 	if toolkit != nil {
 		if err := toolkit.ValidateActiveToolSurfaceForProvider(providers.ToolSurfaceValidationTarget{
 			ProviderKind: ruleProviderCfg.Type,
@@ -605,14 +732,17 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, err
 		}
 	}
-	deferredToolCatalogPrompt, err := deferredToolCatalogPromptForToolkit(toolkit)
-	if err != nil {
-		return nil, err
-	}
+	deferredToolCatalogPrompt := mainSurface.DeferredToolCatalog
 	mainSurface.DeferredToolCatalog = deferredToolCatalogPrompt
-	baseSystemPromptResult := buildBaseSystemPromptResult(rootDir, sessionDate, config.DefaultSystemPrompt(), "", resolvedName, toolModeModel, mainSurface, instructionFiles, "", "", discoveredSkills)
-	baseSystemPrompt, pluginPromptSections := assemblePluginSystemPrompt(baseSystemPromptResult.Content, systemPrompts)
-	baseSystemPromptSections := append(agentPromptSections(baseSystemPromptResult.Sections), pluginPromptSections...)
+	var baseSystemPromptResult prompt.BuildResult
+	if !safeMode && selectsRuntimeModule(pluginHost, sessionExecutionConsumer) {
+		baseSystemPromptResult, err = assembleSelectedPrompt(context.Background(), pluginHost, promptservice.Request{Role: "main", CWD: rootDir, Date: sessionDate, Provider: resolvedName, Model: toolModeModel, Surface: mainSurface, Instructions: instructionFiles, Skills: discoveredSkills}, systemPrompts)
+		if err != nil {
+			return nil, err
+		}
+	}
+	baseSystemPrompt := baseSystemPromptResult.Content
+	baseSystemPromptSections := agentPromptSections(baseSystemPromptResult.Sections)
 
 	if toolkit != nil {
 		if err := agentcontrol.EnsureSharedDir(workspaceStateDir); err != nil {
@@ -627,16 +757,8 @@ func NewSession(opts Options) (*Session, error) {
 		cfg.Agent.MaxContextTokens,
 	)
 	if toolkit != nil {
-		workerToolProviderName := roleSelections.Worker.RuleProvider
-		workerToolModeModel := roleSelections.Worker.APIModel
-		_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingForProvider(cfg.Agent, roleSelections.Worker.RuleProviderConfig, workerToolModeModel, roleSelections.Worker.ProviderOptions)
-		workerToolSurface, catErr := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
-		if catErr != nil {
-			return nil, catErr
-		}
-		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
-		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
+		workerClient, werr = selectedRouteClient(pluginHost, roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if werr != nil {
 			if providerfactory.IsCredentialError(werr) {
 				workerClient = &providers.UnavailableClient{Reason: werr.Error()}
@@ -644,82 +766,6 @@ func NewSession(opts Options) (*Session, error) {
 			} else {
 				return nil, fmt.Errorf("build worker client: %w", werr)
 			}
-		}
-
-		c, cerr := agentcontrol.New(agentcontrol.Config{
-			UseCurrentTemperatureOnRestore: opts.DesktopExecutionDefaults,
-			Client:                         workerClient,
-			ProviderName:                   roleSelections.Worker.Provider,
-			DefaultModel:                   roleSelections.Worker.APIModel,
-			DefaultEffort:                  roleSelections.Worker.LegacyEffort,
-			DefaultOptions:                 modelvariant.CloneOptions(roleSelections.Worker.ProviderOptions),
-			DefaultContextWindow:           workerModelBudget.ContextWindowTokens,
-			DefaultMaxInputTokens:          workerModelBudget.InputLimitTokens,
-			DefaultOutputReserveTokens:     workerModelBudget.OutputReserveTokens,
-			DefaultCompactThresholdTokens:  workerModelBudget.CompactThresholdTokens,
-			DefaultTemperature:             cfg.Agent.Temperature,
-			DefaultCompactThresholdPct:     cfg.Agent.CompactThresholdPct,
-			DefaultCompactKeepRecentTokens: cfg.Agent.CompactKeepRecentTokens,
-			DefaultDisableAutoCompact:      cfg.Agent.DisableAutoCompact,
-			ParentRepo:                     rootDir,
-			WorktreeRoot:                   statepath.WorktreeRoot(workspaceStateDir),
-			SessionID:                      "session-pending",
-			HistoryDir:                     "",
-			WorkerSysPrompt:                workerBaseSystemPrompt,
-			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-				workerToolSurface, err := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
-				if err != nil {
-					return "", err
-				}
-				files, workerSkills := runtimeSession.guidanceForRoot(workerRoot, nil)
-				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
-			},
-			WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
-				wkit, werr := toolkit.CloneForRoot(workerRoot)
-				if werr != nil {
-					return nil, werr
-				}
-				// Reset the inherited file-scope whitelist to the standard
-				// workspace, registered-project, and temporary roots.
-				wkit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
-				workerStateDir := workspaceStateDir
-				if workerRoot != rootDir {
-					if dir, err := statepath.WorkspaceDir(wuuHome, workerRoot); err == nil {
-						workerStateDir = dir
-					}
-				}
-				wkit.SetStateDir(workerStateDir)
-				wkit.SetProcessManager(processMgr)
-				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
-				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
-				runtimeSession.bindLocalSkillRefresh(wkit, workerRoot, workerGeneration)
-				wkit.SetAgentControl(agentControl)
-				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
-				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
-				wkit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
-				wkit.SetAgentIdentity(meta.ID, meta.Path)
-				applyWorkerToolFilter(wkit, wt)
-				return wkit, nil
-			},
-			WorkerWakeAuthority: workerWakeAuthority(toolkit),
-			OnSubagentStart: func(ctx context.Context, agentID string) error {
-				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{CWD: rootDir, AgentID: agentID})
-				return err
-			},
-			OnSubagentStop: func(ctx context.Context, agentID string) error {
-				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{CWD: rootDir, AgentID: agentID})
-				return err
-			},
-			ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
-			MaxParallel:      cfg.Agent.MaxParallelValue(),
-			InferenceJournal: workspaceJournal,
-			ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
-				return toolledger.New(sessionDir, ownerID)
-			},
-		})
-		if cerr == nil {
-			agentControl = c
-			toolkit.SetAgentControl(agentControl)
 		}
 	}
 
@@ -738,6 +784,9 @@ func NewSession(opts Options) (*Session, error) {
 		SystemPrompt:                baseSystemPrompt,
 		SystemPromptSections:        baseSystemPromptSections,
 		CompactionRegistry:          compactions,
+		SelectedPolicy:              newSelectedLoopPolicyClient(pluginHost),
+		SelectedToolBatch:           newSelectedToolBatch(pluginHost),
+		SelectedCompaction:          newSelectedCompactionClient(pluginHost),
 		MaxSteps:                    cfg.Agent.MaxSteps,
 		Temperature:                 cfg.Agent.Temperature,
 		MediaInput:                  mediaInputPolicyFromCapabilities(mainRole.Capabilities),
@@ -752,26 +801,22 @@ func NewSession(opts Options) (*Session, error) {
 		CompactThresholdPct:         cfg.Agent.CompactThresholdPct,
 		CompactKeepRecentTokens:     cfg.Agent.CompactKeepRecentTokens,
 		DisableAutoCompact:          cfg.Agent.DisableAutoCompact,
-		BeforeRequestContext:        RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
+		BeforeRequestContext:        RuntimeContextInjector(nil, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
 		BeforeModelStep:             pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
+		StepPolicy:                  pluginStepPolicy(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
 		BeforeRequest:               pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
 		InferenceOperationKind:      providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile:    providers.InferenceProfileInteractive,
 		InferenceJournal:            workspaceJournal,
+		BeginModelReceipts:          initialGeneration.beginModelReceipts,
 		WrapModelClient:             pluginModelClientWrapper(pluginHost, ""),
 	}
 
 	bindPluginCompactionHooks(streamRunner, hookDispatcher, "", rootDir)
 
-	configLoadMode := opts.ConfigLoadMode
-	// Keep direct runtime callers that pass a non-user ConfigPath pinned to
-	// that file. Normal product paths set the mode explicitly when they trust
-	// a complete project config rather than one standalone file.
-	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
-		configLoadMode = ConfigLoadFile
-	}
-
-	runtimeSession = &Session{
+	runtimeSession := &Session{
+		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
+		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -783,6 +828,7 @@ func NewSession(opts Options) (*Session, error) {
 		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
+		configOverrides:             opts.Overrides,
 		DesktopExecutionDefaults:    opts.DesktopExecutionDefaults,
 		SessionDir:                  sessionDir,
 		StreamRunner:                streamRunner,
@@ -795,12 +841,12 @@ func NewSession(opts Options) (*Session, error) {
 		PluginHost:                  pluginHost,
 		UserQuestions:               userQuestions,
 		PluginSessionRouter:         pluginTurnRouter,
+		productCompositions:         &productCompositionBindings{scopes: make(map[string]productCompositionBinding)},
 		systemPrompts:               systemPrompts,
 		InstructionFiles:            instructionFiles,
 		instructionConfig:           cfg.Instructions,
 		skillsConfig:                cfg.Skills,
 		pluginSkills:                pluginSkills,
-		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
 		mcpOAuth:                    mcpOAuth,
@@ -818,7 +864,7 @@ func NewSession(opts Options) (*Session, error) {
 		SafeMode:                    safeMode,
 		pluginEpoch:                 initialPluginGenerationEpoch,
 		Permissions:                 permissions,
-		PermissionModeExplicit:      opts.PermissionModeExplicit,
+		PermissionModeExplicit:      strings.TrimSpace(opts.Overrides.PermissionMode) != "",
 		maxParallel:                 cfg.Agent.MaxParallelValue(),
 		ExperimentalCoordinatorMode: cfg.Agent.ExperimentalCoordinatorMode,
 		ToolLoadingPreference:       toolLoadingPreference,
@@ -829,108 +875,51 @@ func NewSession(opts Options) (*Session, error) {
 		ReadinessIssues:             readinessIssues,
 		InferenceJournalRuntime:     journalRuntime,
 	}
-	// The built-in wuu engine is the native StreamRunner loop. Registering it
-	// here makes the seam explicit: thread runtimes are always created by an
-	// engine factory, starting with this one.
-	runtimeSession.engines = agentengine.NewRegistry()
-	if err := runtimeSession.engines.Register(&WuuEngine{session: runtimeSession}); err != nil {
-		journalOwned = false
-		_ = journalRuntime.Close()
-		return nil, fmt.Errorf("register built-in agent engine: %w", err)
-	}
-	// The codex engine hosts the codex CLI app-server as an external agent.
-	// Settings can disable it or override the binary path; auto mode
-	// (unset) enables it when the CLI is found, and a missing binary fails
-	// with a clear error at first use.
-	codexBinary, codexResolveErr := codexengine.ResolveBinary()
-	codexEnabled := codexResolveErr == nil
-	if engineCfg := cfg.Engines; engineCfg != nil {
-		if strings.TrimSpace(engineCfg.DefaultEngine) != "" {
-			runtimeSession.defaultEngine = agentengine.NormalizeEngineID(engineCfg.DefaultEngine)
-		}
-		if codexCfg := engineCfg.Codex; codexCfg != nil {
-			enabled, explicit := codexCfg.EngineEnabled()
-			if explicit {
-				codexEnabled = enabled
-			}
-			if path := strings.TrimSpace(codexCfg.BinaryPath); path != "" {
-				codexBinary = path
-				if !explicit {
-					codexEnabled = true
-				}
-			}
-		}
-	}
-	if codexEnabled {
-		codexHost := codexengine.NewHost(codexBinary, rootDir)
-		_ = runtimeSession.engines.Register(codexengine.NewEngine(codexHost))
-	}
-	// The claude engine follows the same settings shape: auto when the CLI
-	// is found, explicit disable or binary override from settings.
-	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
-	claudeEnabled := claudeResolveErr == nil
-	if engineCfg := cfg.Engines; engineCfg != nil && engineCfg.Claude != nil {
-		enabled, explicit := engineCfg.Claude.EngineEnabled()
-		if explicit {
-			claudeEnabled = enabled
-		}
-		if path := strings.TrimSpace(engineCfg.Claude.BinaryPath); path != "" {
-			claudeBinary = path
-			if !explicit {
-				claudeEnabled = true
-			}
-		}
-	}
-	if claudeEnabled {
-		runtimeSession.engines.Register(claudeengine.NewEngine(claudeBinary, rootDir))
-	}
-	runtimeSession.RebuildProtocolEngines(cfg.Engines)
-	if runtimeSession.defaultEngine != "" && !runtimeSession.EngineAvailable(runtimeSession.defaultEngine) {
-		runtimeSession.defaultEngine = agentengine.EngineWuu
+	// Engine inventory is a projection of the selected provider graph.
+	runtimeSession.engines = newSelectedEngineRegistry(runtimeSession)
+	if cfg.Engines != nil {
+		runtimeSession.defaultEngine = agentengine.NormalizeEngineID(cfg.Engines.DefaultEngine)
 	}
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
-	generationID := newPluginGenerationID(wuuHome)
-	runtimeSession.pluginGeneration = &PluginGeneration{
-		id:            generationID,
-		ownedRoots:    initialSnapshotRoots,
-		settings:      cfg,
-		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
-		active:        append([]pluginpkg.Plugin(nil), activePlugins...),
-		host:          pluginHost,
-		hooks:         initialHooks,
-		skills:        append([]skills.Skill(nil), discoveredSkills...),
-		pluginSkills:  pluginSkills,
-		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins, generationID),
-		systemPrompts: systemPrompts,
-		compactions:   compactions,
-	}
+	initialGeneration.revokedMu.Lock()
+	initialGeneration.systemPrompt = baseSystemPrompt
+	initialGeneration.promptSections = baseSystemPromptResult.Sections
+	initialGeneration.models = captureGenerationModelBindings(runtimeSession)
+	initialGeneration.models.config = cfg
+	initialGeneration.settings = cfg
+	initialGeneration.active = append([]pluginpkg.Plugin(nil), activePlugins...)
+	initialGeneration.revokedMu.Unlock()
+	initialGeneration.tools, initialGeneration.toolkit, initialGeneration.codeMode = toolExecutor, toolkit, codeModeService
+	initialGeneration.hooks = initialHooks
+	initialGeneration.skills = append([]skills.Skill(nil), discoveredSkills...)
+	initialGeneration.pluginSkills = pluginSkills
+	initialGeneration.mcpOAuth = mcpOAuth
+	initialGeneration.mcpBinding = mcpActivityBindingsFromPlugins(activePlugins, initialGeneration.id)
+	initialGeneration.systemPrompts, initialGeneration.compactions = systemPrompts, compactions
+	runtimeSession.pluginGeneration = initialGeneration
 	if pluginKernel != nil {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
+		pluginKernel.bindStateGeneration(runtimeSession.pluginGeneration, runtimeSession)
+		runtimeSession.pluginGeneration.engineGateways = pluginKernel.engineGateways
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
-	// Bind the session-selected loop driver: an installed profile resolves to
-	// a remote driver behind the registry; a missing one fails closed.
-	if driver := resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable); driver != nil {
-		streamRunner.LoopDriver = driver
-		runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
-	}
+	// The default and external drivers share the selected service binding.
+	streamRunner.LoopDriver = resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable())
+	runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
 	runtimeSession.pluginGeneration.bindActivityOwnership(activityRegistry)
-	runtimeSession.pluginGeneration.retain()
 	if toolkit != nil {
 		toolkit.SetMCPActivityBindings(runtimeSession.pluginGeneration.mcpBinding)
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
-	snapshotsOwned = false
-	// The legacy/root control remains dormant until SetSessionID binds its real
-	// artifact directories. Per-thread controls created by NewThreadRuntime are
-	// likewise started only after app-server installs their terminal finalizer.
-	journalOwned = false
+	graphOwned = false
+	runtimeSession.capacityRootRelease = capacityRootRelease
+	capacityTransferred = true
 	return runtimeSession, nil
 }
 
@@ -967,6 +956,22 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	if s == nil {
 		return config.Config{}, "", errors.New("runtime session is nil")
 	}
+	s.pluginGenerationMu.Lock()
+	hasGraph := s.PluginHost != nil || s.pluginGeneration != nil
+	s.pluginGenerationMu.Unlock()
+	if !s.SafeMode && hasGraph {
+		services, release, err := s.RetainStateServices()
+		if err != nil {
+			return config.Config{}, s.ConfigPath, err
+		}
+		defer release()
+		view, err := services.Config.Read(context.Background())
+		if err != nil {
+			return config.Config{}, s.ConfigPath, err
+		}
+		cfg, err := s.applyRuntimeConfig(view.Config)
+		return cfg, s.ConfigPath, err
+	}
 	var cfg config.Config
 	var path string
 	var err error
@@ -980,7 +985,18 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	default:
 		return config.Config{}, "", fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
 	}
-	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), path, err
+	if err != nil {
+		return config.Config{}, path, err
+	}
+	cfg, err = s.applyRuntimeConfig(cfg)
+	return cfg, path, err
+}
+
+func (s *Session) applyRuntimeConfig(cfg config.Config) (config.Config, error) {
+	if err := s.configOverrides.Apply(&cfg); err != nil {
+		return config.Config{}, err
+	}
+	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), nil
 }
 
 func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
@@ -1103,10 +1119,8 @@ func (s *Session) PrewarmThreadProvider(ctx context.Context, sessionID string, e
 	return prewarmer.PrewarmSession(ctx, sessionID)
 }
 
-// NewThreadRuntime creates a per-conversation execution runtime from the
-// shared workspace runtime. It intentionally does not mutate Session.Toolkit or
-// Session.AgentControl; those remain the legacy single-session runtime used by
-// CLI and older call sites.
+// NewThreadRuntime captures per-conversation execution resources from the
+// workspace templates. Each conversation owns its toolkit and worker control.
 func (s *Session) NewThreadRuntime(sessionID string) (*ThreadRuntime, error) {
 	return s.NewThreadRuntimeForRoot(sessionID, s.RootDir)
 }
@@ -1178,7 +1192,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, err
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+	client, err := selectedRouteClient(s.PluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
 	}
@@ -1247,21 +1261,26 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		}
 		shadow.DeferredToolCatalogPrompt = catalog
 	}
-	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider)
+	if shadow.Toolkit == nil && shadow.PluginHost != nil && shadow.StreamRunner.Tools != nil {
+		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(nil, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
+	}
+	selectedSurface, surfaceErr := selectedToolSurface(context.Background(), shadow.StreamRunner.Tools)
+	if surfaceErr != nil {
+		return nil, surfaceErr
+	}
+	shadow.DeferredToolCatalogPrompt = selectedSurface.DeferredToolCatalog
+	workerClient, err := selectedRouteClient(s.PluginHost, roles.Worker.RuleProviderConfig, roles.Worker.Provider, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread worker client: %w", err)
 	}
 	shadow.WorkerClient = workerClient
 
-	promptResult := buildBaseSystemPromptResult(
-		threadRoot, shadow.SessionDate, config.DefaultSystemPrompt(), "",
-		resolvedName, apiModel, activeSurfaceWithDeferredToolCatalog(shadow.Toolkit, shadow.DeferredToolCatalogPrompt),
-		shadow.InstructionFiles, "", "", shadow.AvailableSkills(),
-	)
-	text, pluginSections := assemblePluginSystemPrompt(promptResult.Content, shadow.systemPrompts)
-	shadow.BaseSystemPrompt = text
-	shadow.BaseSystemPromptSections = promptResult.Sections
-	shadow.StreamRunner.UpdateSystemPromptWithSections(text, append(agentPromptSections(promptResult.Sections), pluginSections...))
+	promptResult, err := assembleSelectedPrompt(context.Background(), shadow.PluginHost, promptservice.Request{Role: "main", CWD: threadRoot, Date: shadow.SessionDate, Provider: resolvedName, Model: apiModel, Surface: selectedSurface, Instructions: shadow.InstructionFiles, Skills: shadow.AvailableSkills()}, shadow.systemPrompts)
+	if err != nil {
+		return nil, err
+	}
+	text := promptResult.Content
+	shadow.StreamRunner.UpdateSystemPromptWithSections(text, agentPromptSections(promptResult.Sections))
 	threadRuntime, err := shadow.newThreadRuntimeForRoot(sessionID, threadRoot)
 	if err != nil {
 		return nil, err
@@ -1296,6 +1315,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("stream runner is required")
 	}
 	generation := s.retainPluginGeneration()
+	beginModelReceipts := s.StreamRunner.BeginModelReceipts
+	if generation != nil {
+		beginModelReceipts = generation.beginModelReceipts
+	}
 	releasedGeneration := false
 	defer func() {
 		if !releasedGeneration {
@@ -1327,12 +1350,15 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 	artifactDir := statepath.SessionArtifactDir(stateDir, id)
-	// The embedded-browser tab registry is durable per-thread state, created with
-	// the thread runtime and reclaimed with the thread's artifact
-	// directory on delete. Recovery after a core restart is driven by the desktop
+	// The embedded-browser registry is scoped to the selected document provider.
+	// Historical artifact files are migration sources, not fallback authority.
+	// Recovery after a core restart is driven by the desktop
 	// host's tab_not_found signal (the tool rebuilds by URL), and by the tabs-list
 	// reconciliation against the live host set.
-	browserTabs := tools.NewBrowserTabStore(statepath.ThreadBrowserTabsPath(stateDir, id))
+	browserTabs, err := selectedBrowserTabStore(s.Documents, s.WuuHome, s.SessionDir, stateDir, id)
+	if err != nil {
+		return nil, err
+	}
 	wuuHome := strings.TrimSpace(s.WuuHome)
 	if wuuHome == "" {
 		if home, err := statepath.Home(""); err == nil {
@@ -1355,41 +1381,68 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// installs its model resolver and reliable terminal finalizer, then calls
 	// StartQueuedWork.
 	if s.Toolkit != nil {
-		var err error
-		kit, err = s.Toolkit.CloneForRoot(threadRoot)
-		if err != nil {
-			return nil, err
-		}
-		kit.SetStateDir(stateDir)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
-		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
-		kit.SetProcessManager(threadProcessManager)
-		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
-		s.bindLocalSkillRefresh(kit, threadRoot, generation)
-		ConfigureToolkitPermissions(kit, s.Permissions)
-		kit.SetApproveForMe(false)
-		kit.SetSessionID(id)
-		kit.SetSessionDir(artifactDir)
-		kit.SetSessionsDir(s.SessionDir)
-		kit.SetWorkingNotesHome(wuuHome)
-		kit.SetBrowserTabs(browserTabs)
-		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
-		kit.SetAgentIdentity(id, agentthread.RootPath)
-		fileScopeExtras := []string{artifactDir}
-		// Rebase the file-scope whitelist on the thread root (the clone
-		// inherited the parent session's roots): thread root + registered
-		// workspaces + temp + artifact extras.
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
-		if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
-			return nil, err
-		}
-		if remote, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
-			threadProcessManager = remote.ProcessManager()
+		initialize := func() error {
+			var err error
+			kit, err = s.Toolkit.CloneForRoot(threadRoot)
+			if err != nil {
+				return err
+			}
+			kit.SetStateDir(stateDir)
+			kit.SetRuntimeHome(wuuHome)
+			kit.SetArtifactPublisher(NewArtifactPublisher(s.artifactClient))
+			kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 			kit.SetProcessManager(threadProcessManager)
+			kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
+			s.bindLocalSkillRefresh(kit, threadRoot, generation)
+			ConfigureToolkitPermissions(kit, s.Permissions)
+			kit.SetApproveForMe(false)
+			kit.SetSessionID(id)
+			kit.SetSessionDir(artifactDir)
+			kit.SetSessionStore(s.Sessions)
+			kit.SetWorkingNotesHome(wuuHome)
+			kit.SetBrowserTabs(browserTabs)
+			kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
+			kit.SetAgentIdentity(id, agentthread.RootPath)
+			if generation != nil {
+				bindToolkitHooks(kit, generation.hooks)
+			}
+			fileScopeExtras := []string{artifactDir}
+			// Rebase the file-scope whitelist on the thread root (the clone
+			// inherited the parent session's roots): thread root + registered
+			// workspaces + temp + artifact extras.
+			kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
+			if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
+				return err
+			}
+			if remote, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+				threadProcessManager = remote.ProcessManager()
+				kit.SetProcessManager(threadProcessManager)
+			}
+
+			return nil
+		}
+		if s.PluginHost == nil {
+			if err := initialize(); err != nil {
+				return nil, err
+			}
+		} else {
+			scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+				if err := initialize(); err != nil {
+					return toolservice.Backend{}, err
+				}
+				return toolservice.Backend{Executor: newPluginToolExecutor(kit, s.PluginHost, id, threadRoot), Toolkit: kit}, nil
+			})
+			toolExecutor = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: threadRoot, actorID: id})
+			if s.HookDispatcher != nil {
+				toolExecutor = hooks.NewHookedExecutor(toolExecutor, s.HookDispatcher, "", threadRoot)
+			}
+			if _, err := selectedToolSurface(context.Background(), toolExecutor); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	toolLedger, err := toolledger.New(s.SessionDir, id)
+	toolLedger, err := toolledger.New(s.Documents, id)
 	if err != nil {
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
@@ -1417,17 +1470,22 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if catErr != nil {
 				return nil, catErr
 			}
-			workerBaseSystemPrompt := buildWorkerBasePrompt(
-				threadRoot,
-				s.SessionDate,
-				s.workerOrientation,
-				workerToolProviderName,
-				workerToolModeModel,
-				workerToolSurface,
-				threadInstructions,
-				threadSkills,
-			)
+			workerPromptResult, promptErr := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "worker", CWD: threadRoot, Date: s.SessionDate, UserPrompt: s.workerOrientation, Provider: workerToolProviderName, Model: workerToolModeModel, Surface: workerToolSurface, Instructions: threadInstructions, Skills: threadSkills}, s.systemPrompts)
+			if promptErr != nil {
+				return nil, promptErr
+			}
+			workerBaseSystemPrompt := workerPromptResult.Content
+			legacyStateDirs, err := statepath.SessionArtifactStateDirs(s.WuuHome, s.SessionDir, stateDir, id)
+			if err != nil {
+				return nil, err
+			}
+			legacyArtifactDirs := make([]string, 0, len(legacyStateDirs))
+			for _, legacyStateDir := range legacyStateDirs {
+				legacyArtifactDirs = append(legacyArtifactDirs, statepath.SessionArtifactDir(legacyStateDir, id))
+			}
 			control, controlErr := agentcontrol.New(agentcontrol.Config{
+				LegacyArtifactDirs:             legacyArtifactDirs,
+				Documents:                      s.Documents,
 				UseCurrentTemperatureOnRestore: s.DesktopExecutionDefaults,
 				Client:                         workerClient,
 				ProviderName:                   workerClientProvider,
@@ -1438,6 +1496,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				DefaultMaxInputTokens:          workerModelBudget.InputLimitTokens,
 				DefaultOutputReserveTokens:     workerModelBudget.OutputReserveTokens,
 				DefaultCompactThresholdTokens:  workerModelBudget.CompactThresholdTokens,
+				DefaultTemperature:             s.StreamRunner.Temperature,
 				DefaultCompactThresholdPct:     s.StreamRunner.CompactThresholdPct,
 				DefaultCompactKeepRecentTokens: s.StreamRunner.CompactKeepRecentTokens,
 				DefaultDisableAutoCompact:      s.StreamRunner.DisableAutoCompact,
@@ -1460,7 +1519,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						return "", err
 					}
 					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
+					result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "worker", CWD: workerRoot, Date: s.SessionDate, UserPrompt: s.workerOrientation, Provider: workerToolProviderName, Model: workerToolModeModel, Surface: workerToolSurface, Instructions: files, Skills: workerSkills, Worker: &promptservice.WorkerContext{Type: wt.Name, Role: wt.Role, Prompt: wt.SystemPrompt, ContextScope: wt.ContextScope, OutputSchema: wt.OutputSchema, SuccessCriteria: wt.SuccessCriteria, Isolation: string(isolation), AgentID: meta.ID, AgentPath: meta.Path, AgentProfile: meta.AgentProfile}}, s.systemPrompts)
+					return result.Content, err
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 					workerKit, err := kit.CloneForRoot(workerRoot)
@@ -1480,6 +1540,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 					}
 					workerKit.SetStateDir(workerStateDir)
+					workerKit.SetRuntimeHome(wuuHome)
 					workerKit.SetProcessManager(threadProcessManager)
 					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					workerKit.SetSkills(workerSkills)
@@ -1490,9 +1551,25 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					workerKit.SetToolSearchEnabled(workerToolSearchEnabled)
 					workerKit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
 					workerKit.SetAgentIdentity(meta.ID, meta.Path)
+					if generation != nil {
+						bindToolkitHooks(workerKit, generation.hooks)
+					}
 					applyWorkerToolFilter(workerKit, wt)
-					return workerKit, nil
+					return newPluginAwareToolExecutor(workerKit, s.PluginHost, s.HookDispatcher, id, id, workerRoot), nil
 				},
+				ConfigureWorkerRunner: func(runner *agent.StreamRunner, workerID, workerRoot string) {
+					host := s.PluginHost
+					if generation != nil {
+						host = generation.host
+					}
+					runner.SelectedPolicy = newSelectedLoopPolicyClient(host)
+					runner.SelectedToolBatch = newSelectedToolBatch(host)
+					runner.BeforeModelStep = pluginPreStepInjector(host, runner.ProviderName, runner.Model, workerID, workerRoot)
+					runner.StepPolicy = pluginStepPolicy(host, runner.ProviderName, runner.Model, workerID, workerRoot)
+					runner.BeforeRequest = pluginRequestInterceptor(host, runner.ProviderName, workerID, workerRoot)
+				},
+				AcquireLoopDriver:   s.driverResolver(generation),
+				SelectedCompaction:  s.StreamRunner.SelectedCompaction,
 				WorkerWakeAuthority: workerWakeAuthority(kit),
 				OnSubagentStart: func(ctx context.Context, agentID string) error {
 					dispatcher := s.HookDispatcher
@@ -1510,11 +1587,12 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
-				ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
-				MaxParallel:      s.MaxParallel(),
-				InferenceJournal: s.InferenceJournalForOwner(id),
+				ParticipantStore:   sessionParticipantStore{sessions: s.Sessions},
+				MaxParallel:        s.MaxParallel(),
+				InferenceJournal:   s.InferenceJournalForOwner(id),
+				BeginModelReceipts: beginModelReceipts,
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
-					return toolledger.New(s.SessionDir, ownerID)
+					return toolledger.New(s.Documents, ownerID)
 				},
 			})
 			if controlErr != nil {
@@ -1529,41 +1607,63 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			pluginHost = generation.host
 			pluginHooks = generation.hooks
 		}
-		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, pluginHooks, id, "", threadRoot)
+		if pluginHost == nil {
+			toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, pluginHooks, id, "", threadRoot)
+		}
+	}
+
+	if kit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
+		toolExecutor = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
-	if !sameRuntimeRoot(threadRoot, s.RootDir) {
+	var modelStepPrompt promptservice.Request
+	{
 		model := runner.APIModel
 		if model == "" {
 			model = runner.Model
 		}
-		result := buildBaseSystemPromptResult(threadRoot, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, model, activeSurfaceWithDeferredToolCatalog(kit, s.DeferredToolCatalogPrompt), threadInstructions, "", "", threadSkills)
+		surface, surfaceErr := selectedToolSurface(context.Background(), toolExecutor)
+		if surfaceErr != nil {
+			return nil, surfaceErr
+		}
+		input := promptservice.Request{Role: "main", CWD: threadRoot, Date: s.SessionDate, Provider: s.ProviderName, Model: model, Surface: surface, Instructions: threadInstructions, Skills: threadSkills}
+		if kit != nil {
+			if environment, ok := kit.ExecutionEnvironment().(interface {
+				Root() string
+				Backend() string
+			}); ok {
+				input.CWD = environment.Root()
+				input.Contributions = append(input.Contributions, promptservice.Contribution{Key: "execution_environment", Static: true, Content: "Workspace tools execute in the selected " + environment.Backend() + " environment. Paths refer to that environment. Read its AGENTS.md before editing. Host integration tools retain their own scope."})
+			}
+		}
+		modelStepPrompt = input
 		assembler := s.systemPrompts
 		if generation != nil {
 			assembler = generation.systemPrompts
 		}
-		text, pluginSections := assemblePluginSystemPrompt(result.Content, assembler)
-		runner.UpdateSystemPromptWithSections(text, append(agentPromptSections(result.Sections), pluginSections...))
+		result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, input, assembler)
+		if err != nil {
+			return nil, err
+		}
+		runner.UpdateSystemPromptWithSections(result.Content, agentPromptSections(result.Sections))
 	}
 	runner.ToolLedger = toolLedger
-	runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, threadRoot, s.SessionDate)
-	if kit != nil {
-		if environment, ok := kit.ExecutionEnvironment().(interface {
-			Root() string
-			Backend() string
-		}); ok {
-			runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, environment.Root(), s.SessionDate)
-			runner.SystemPrompt += "\n\nWorkspace tools execute in the selected " + environment.Backend() + " environment. Paths refer to that environment. Read its AGENTS.md before editing. Host integration tools retain their own scope."
-		}
-	}
+
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
-	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
-	runner.RequestContextStore = sessionRequestContextStore{sessDir: s.SessionDir, sessionID: id}
-	runner.CompactionNoteStore = sessionCompactionNoteStore{sessDir: s.SessionDir, sessionID: id}
+	runner.BeginModelReceipts = beginModelReceipts
+	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	runner.AcquireLoopDriver = s.driverResolver(generation)
+	runner.RequestContextStore = sessionRequestContextStore{sessions: s.Sessions, sessionID: id}
+	runner.CompactionNoteStore = sessionCompactionNoteStore{sessions: s.Sessions, sessionID: id}
 	if kit != nil {
-		kit.SetContextWindowToolsEnabled(runner.ContextWindowsAvailable())
+		available, err := runner.ContextWindowsAvailableContext(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		kit.SetContextWindowToolsEnabled(available)
 	}
 	// Exact model-input receipts have no production consumer and duplicate the
 	// cumulative conversation on every step. Keep the optional runner contract
@@ -1578,25 +1678,24 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
 		}
-		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			runner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
-				return generation.driverGateways
-			})
-		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
+	runner.StepPolicy = pluginStepPolicy(pluginHost, s.ProviderName, s.Model, id, threadRoot)
 	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
-	return &ThreadRuntime{
-		StreamRunner:      runner,
-		Toolkit:           kit,
-		AgentControl:      agentControl,
-		ProcessManager:    threadProcessManager,
-		ActivityRegistry:  s.ActivityRegistry,
-		ModelBudget:       s.ModelBudget,
-		WorkerModelBudget: s.WorkerModelBudget,
-		PluginGeneration:  generation,
+	result := &ThreadRuntime{SessionID: id,
+		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(threadRoot, wuuHome, artifactDir)},
+		processHooks:       s.HookDispatcher,
+		StreamRunner:       runner,
+		Toolkit:            kit,
+		AgentControl:       agentControl,
+		ProcessManager:     threadProcessManager,
+		ActivityRegistry:   s.ActivityRegistry,
+		ModelBudget:        s.ModelBudget,
+		WorkerModelBudget:  s.WorkerModelBudget,
+		PluginGeneration:   generation,
+		Documents:          s.Documents, Sessions: s.Sessions, PluginHost: s.PluginHost,
 		// Direct callers get the session's own identity as the stamp;
 		// NewThreadRuntimeForRootModel overwrites it with the thread's
 		// requested selection so reuse comparisons stay in thread terms.
@@ -1607,16 +1706,49 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			Effort:         strings.TrimSpace(runner.Effort),
 			PermissionMode: config.NormalizePermissionMode(s.Permissions.Mode),
 		},
-	}, nil
+	}
+	result.prepareStepModel = func(ctx context.Context, selected session.RuntimeSelection) (*agent.ModelStepBinding, error) {
+		var cfg config.Config
+		if generation != nil && len(generation.settings.Providers) != 0 {
+			// The model provider prepared against this generation's config.
+			// New connection/config generations are adopted only between turns.
+			cfg = generation.settings
+		} else {
+			var err error
+			cfg, _, err = s.LoadEffectiveConfig()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return s.prepareStepModelBinding(ctx, cfg, runner, pluginHost, id, threadRoot, &modelStepPrompt, selected)
+	}
+	runner.ResolveModelStep = func(ctx context.Context, revision uint64) (*agent.ModelStepBinding, error) {
+		metadata, found, err := result.Sessions.Find(id)
+		if err != nil {
+			return nil, err
+		}
+		if !found || metadata.ModelSelectionApplyAt != "next_step" || metadata.ModelSelectionRevision <= revision {
+			return nil, nil
+		}
+		selected := session.RuntimeSelection{Provider: metadata.Provider, Model: metadata.Model, Variant: metadata.Variant, Effort: metadata.Effort, Speed: metadata.Speed, PermissionMode: metadata.PermissionMode, ApproveForMe: metadata.ApproveForMe}
+		binding, err := result.prepareNextStepModelBinding(ctx, selected)
+		if err != nil {
+			return nil, err
+		}
+		binding.Revision = metadata.ModelSelectionRevision
+		return binding, nil
+	}
+	result.ConfigureExecutionPermissions(s.Permissions, false, nil)
+	return result, nil
 }
 
 type sessionDriverCheckpointStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
 type sessionCompactionNoteStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
@@ -1630,7 +1762,7 @@ func (store sessionCompactionNoteStore) RecordContextNoteMetric(ctx context.Cont
 	}
 	// Separate from token_usage: turn totals already include drained background
 	// usage. This audit record also survives a fork finishing after the last turn.
-	return session.AppendHistoryRecord(store.sessDir, store.sessionID, session.HistoryRecord{
+	return store.sessions.WithContext(ctx).AppendHistoryRecord(store.sessionID, session.HistoryRecord{
 		Role: "meta", Name: "context_note_attempt", Content: string(data),
 	})
 }
@@ -1639,7 +1771,7 @@ func (store sessionCompactionNoteStore) LoadCompactionNote(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return agent.CompactionNote{}, false, err
 	}
-	record, ok, err := session.LoadCompactionNote(store.sessDir, store.sessionID, providerKey)
+	record, ok, err := store.sessions.WithContext(ctx).LoadCompactionNote(store.sessionID, providerKey)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return agent.CompactionNote{}, false, nil
 	}
@@ -1655,7 +1787,7 @@ func (store sessionCompactionNoteStore) StoreCompactionNote(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := session.StoreCompactionNote(store.sessDir, session.CompactionNote{
+	err := store.sessions.WithContext(ctx).StoreCompactionNote(session.CompactionNote{
 		SessionID: store.sessionID, ProviderKey: providerKey, Markdown: note.Markdown,
 		CoveredMessages: note.CoveredMessages, CoveredHash: note.CoveredHash,
 	})
@@ -1669,7 +1801,7 @@ func (store sessionCompactionNoteStore) CompareAndSwapCompactionNote(ctx context
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	stored, err := session.CompareAndSwapCompactionNote(store.sessDir, session.CompactionNote{
+	stored, err := store.sessions.WithContext(ctx).CompareAndSwapCompactionNote(session.CompactionNote{
 		SessionID: store.sessionID, ProviderKey: providerKey, Markdown: expected.Markdown,
 		CoveredMessages: expected.CoveredMessages, CoveredHash: expected.CoveredHash,
 	}, expectedExists, session.CompactionNote{
@@ -1683,7 +1815,7 @@ func (store sessionCompactionNoteStore) CompareAndSwapCompactionNote(ctx context
 }
 
 type sessionModelInputReceiptStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
@@ -1698,7 +1830,7 @@ func (store sessionModelInputReceiptStore) SaveModelInputReceipt(ctx context.Con
 	if err != nil {
 		return fmt.Errorf("encode model input receipt: %w", err)
 	}
-	err = session.SaveModelInputReceipt(store.sessDir, store.sessionID, session.ModelInputReceiptRecord{
+	err = store.sessions.WithContext(ctx).SaveModelInputReceipt(store.sessionID, session.ModelInputReceiptRecord{
 		OperationID:     receipt.OperationID,
 		ContractVersion: receipt.ContractVersion,
 		DriverID:        receipt.DriverID,
@@ -1712,11 +1844,22 @@ func (store sessionModelInputReceiptStore) SaveModelInputReceipt(ctx context.Con
 	return err
 }
 
+func (store sessionDriverCheckpointStore) LoadBinding(ctx context.Context) (loopdriver.Binding, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return loopdriver.Binding{}, false, err
+	}
+	return store.sessions.WithContext(ctx).LoadDriverBinding(store.sessionID)
+}
+
+func (store sessionDriverCheckpointStore) Bind(ctx context.Context, binding loopdriver.Binding) error {
+	return store.sessions.WithContext(ctx).BindDriver(store.sessionID, binding)
+}
+
 func (store sessionDriverCheckpointStore) Load(ctx context.Context) (loopdriver.Checkpoint, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return loopdriver.Checkpoint{}, false, err
 	}
-	record, ok, err := session.LoadDriverCheckpoint(store.sessDir, store.sessionID)
+	record, ok, err := store.sessions.WithContext(ctx).LoadDriverCheckpoint(store.sessionID)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return loopdriver.Checkpoint{}, false, nil
 	}
@@ -1735,16 +1878,12 @@ func (store sessionDriverCheckpointStore) Save(ctx context.Context, checkpoint l
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := session.SaveDriverCheckpoint(store.sessDir, store.sessionID, session.DriverCheckpointRecord{
+	return store.sessions.WithContext(ctx).SaveDriverCheckpoint(store.sessionID, session.DriverCheckpointRecord{
 		ContractVersion: checkpoint.ContractVersion,
 		DriverID:        checkpoint.DriverID,
 		DriverVersion:   checkpoint.DriverVersion,
 		State:           append(json.RawMessage(nil), checkpoint.State...),
 	})
-	if errors.Is(err, session.ErrSessionNotFound) {
-		return nil
-	}
-	return err
 }
 
 func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.ToolExecutor) *agent.StreamRunner {
@@ -1779,6 +1918,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		StreamingToolExecution:      base.StreamingToolExecution,
 		BeforeStep:                  base.BeforeStep,
 		BeforeModelStep:             base.BeforeModelStep,
+		StepPolicy:                  base.StepPolicy,
 		BeforeRequestContext:        base.BeforeRequestContext,
 		BeforeRequest:               base.BeforeRequest,
 		WrapModelClient:             base.WrapModelClient,
@@ -1791,11 +1931,17 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		InferenceOperationKind:      base.InferenceOperationKind,
 		InferenceWorkloadProfile:    base.InferenceWorkloadProfile,
 		InferenceJournal:            base.InferenceJournal,
+		BeginModelReceipts:          base.BeginModelReceipts,
 		LoopDriver:                  base.LoopDriver,
+		AcquireLoopDriver:           base.AcquireLoopDriver,
+		DriverBindingStore:          base.DriverBindingStore,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
+		SelectedPolicy:              base.SelectedPolicy,
+		SelectedToolBatch:           base.SelectedToolBatch,
+		SelectedCompaction:          base.SelectedCompaction,
 		CompactionNoteStore:         base.CompactionNoteStore,
 		ArchiveHistory:              base.ArchiveHistory,
 	}
@@ -1856,11 +2002,11 @@ func (s *Session) threadProcessManagerPool() *threadProcessManagers {
 // agentcontrol.ParticipantStore so spawned workers get durable
 // participant identities.
 type sessionParticipantStore struct {
-	sessDir string
+	sessions *session.Store
 }
 
 func (s sessionParticipantStore) Upsert(p participant.Participant) error {
-	return session.UpsertParticipant(s.sessDir, p)
+	return s.sessions.UpsertParticipant(p)
 }
 
 func cleanRuntimeRoot(root string) string {
@@ -1886,55 +2032,6 @@ func cleanRuntimeRoot(root string) string {
 		ancestor = parent
 	}
 	return filepath.Clean(root)
-}
-
-func systemPromptForThreadRoot(promptText string, sections []agent.SystemPromptSectionInfo, rootDir, sessionDate string) (string, []agent.SystemPromptSectionInfo) {
-	envSection := environmentSystemPromptSection(rootDir, sessionDate)
-	if strings.TrimSpace(promptText) == "" || strings.TrimSpace(envSection) == "" {
-		return promptText, append([]agent.SystemPromptSectionInfo(nil), sections...)
-	}
-	const marker = "# Environment"
-	start := strings.Index(promptText, marker)
-	if start < 0 {
-		return promptText, append([]agent.SystemPromptSectionInfo(nil), sections...)
-	}
-	end := len(promptText)
-	if next := strings.Index(promptText[start+len(marker):], "\n\n# "); next >= 0 {
-		end = start + len(marker) + next
-	}
-	// Section metadata is authoritative when valid: an appended plugin section
-	// need not start with a Markdown heading and must not be swallowed here.
-	for _, section := range sections {
-		if section.Key != "environment" || section.Bytes <= 0 || section.Bytes > len(promptText)-start {
-			continue
-		}
-		boundary := start + section.Bytes
-		sum := sha256.Sum256([]byte(promptText[start:boundary]))
-		if section.Hash == hex.EncodeToString(sum[:16]) {
-			end = boundary
-			break
-		}
-	}
-	updated := promptText[:start] + envSection + promptText[end:]
-	return updated, updateEnvironmentSectionInfo(sections, envSection)
-}
-
-func updateEnvironmentSectionInfo(sections []agent.SystemPromptSectionInfo, envSection string) []agent.SystemPromptSectionInfo {
-	return updateSectionInfo(sections, "environment", envSection)
-}
-
-func updateSectionInfo(sections []agent.SystemPromptSectionInfo, key, content string) []agent.SystemPromptSectionInfo {
-	out := append([]agent.SystemPromptSectionInfo(nil), sections...)
-	sum := sha256.Sum256([]byte(content))
-	hash := hex.EncodeToString(sum[:16])
-	for i := range out {
-		if out[i].Key == key {
-			out[i].Bytes = len([]byte(content))
-			out[i].Hash = hash
-			return out
-		}
-	}
-	return out
 }
 
 // mediaInputPolicyFromCapabilities maps resolved model capabilities onto the
@@ -1972,8 +2069,8 @@ func applyWorkerToolFilter(kit *tools.Toolkit, wt agentcontrol.WorkerType) {
 	kit.DisableTools(disabled...)
 }
 
-// SetSessionID binds user-level runtime artifact paths after the UI has
-// created or resumed a session. Conversation logs live in SessionDir.
+// SetSessionID binds workspace artifact paths and dispatches SessionStart.
+// Conversation execution and workers belong to owned ThreadRuntime instances.
 func (s *Session) SetSessionID(id string) error {
 	if s == nil || strings.TrimSpace(id) == "" {
 		return nil
@@ -2004,27 +2101,42 @@ func (s *Session) SetSessionID(id string) error {
 		if environment, ok := s.Toolkit.ExecutionEnvironment().(*environmentToolExecutor); ok {
 			s.Toolkit.SetProcessManager(environment.ProcessManager())
 			if s.StreamRunner != nil {
-				s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections = systemPromptForThreadRoot(s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections, environment.Root(), s.SessionDate)
+				surface, err := selectedToolSurface(context.Background(), s.StreamRunner.Tools)
+				if err != nil {
+					return err
+				}
+				result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "main", CWD: environment.Root(), Date: s.SessionDate, Provider: s.ProviderName, Model: s.Model, Surface: surface, Instructions: s.InstructionFiles, Skills: s.AvailableSkills()}, s.systemPrompts)
+				if err != nil {
+					return err
+				}
+				s.StreamRunner.UpdateSystemPromptWithSections(result.Content, agentPromptSections(result.Sections))
 			}
 		}
 	}
-	if s.AgentControl != nil {
-		if err := s.AgentControl.SetSessionInfo(
-			id,
-			filepath.Join(artifactDir, "workers"),
-			filepath.Join(artifactDir, "threads"),
-		); err != nil {
-			return err
-		}
-		s.AgentControl.StartWorkerTerminalRecovery()
-		s.AgentControl.StartQueuedWork()
-	}
-	if s.HookDispatcher != nil {
-		if _, err := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionStart, &hooks.Input{SessionID: id, CWD: s.RootDir}); err != nil {
-			return fmt.Errorf("session start hook: %w", err)
-		}
+	if err := s.dispatchSessionLifecycleHook(hooks.SessionStart, id); err != nil {
+		return fmt.Errorf("session start hook: %w", err)
 	}
 	return nil
+}
+
+func (s *Session) dispatchSessionLifecycleHook(event hooks.Event, sessionID string) (hookErr error) {
+	s.pluginGenerationMu.Lock()
+	dispatcher := s.HookDispatcher
+	if s.pluginGeneration != nil {
+		dispatcher = s.pluginGeneration.hooks
+	}
+	hasHooks := dispatcher != nil && dispatcher.HasHooks(event)
+	s.pluginGenerationMu.Unlock()
+	if !hasHooks {
+		return nil
+	}
+	binding, err := s.RetainState()
+	if err != nil {
+		return err
+	}
+	defer func() { hookErr = errors.Join(hookErr, binding.Close()) }()
+	_, hookErr = binding.DispatchHook(context.Background(), event, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
+	return hookErr
 }
 
 // ownedWorkerExecutionDrainTimeout bounds how long session cleanup waits for
@@ -2039,12 +2151,11 @@ func shutdownAndCleanupAgentControl(control *agentcontrol.AgentControl) error {
 	control.BeginShutdown()
 	control.StopAll()
 	control.YieldWorkerTerminalFinalizations()
-	deadline := time.Now().Add(ownedWorkerExecutionDrainTimeout)
-	for control.HasOwnedWorkerExecutions() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if remaining := control.OwnedWorkerExecutionCount(); remaining > 0 {
-		providers.DebugLogf("session cleanup: %d worker execution lease(s) still owned after %s; proceeding with cleanup", remaining, ownedWorkerExecutionDrainTimeout)
+	drainCtx, cancel := context.WithTimeout(context.Background(), ownedWorkerExecutionDrainTimeout)
+	drainErr := control.WaitOwnedWorkerExecutions(drainCtx)
+	cancel()
+	if drainErr != nil {
+		providers.DebugLogf("session cleanup: %d worker execution lease(s) still owned after %s; proceeding with cleanup", control.OwnedWorkerExecutionCount(), ownedWorkerExecutionDrainTimeout)
 	}
 	pending, pendingErr := control.PendingWorkerTerminalFinalizations()
 	control.Close()
@@ -2064,21 +2175,17 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	s.pluginTransitionMu.Lock()
 	defer s.pluginTransitionMu.Unlock()
-	var cleanupErr error
-	if s.HookDispatcher != nil {
-		sessionID := ""
-		if s.Toolkit != nil {
-			sessionID = s.Toolkit.SessionID()
-		}
-		_, hookErr := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
-		cleanupErr = errors.Join(cleanupErr, hookErr)
+	if s.capacityRootRelease != nil {
+		defer s.capacityRootRelease()
 	}
-	if s.AgentControl != nil {
-		// Terminal intents are the durable recovery authority. Yield local retry
-		// loops, wait for physical execution leases to release, and only remove
-		// worktrees when no unacknowledged terminal record remains.
-		cleanupErr = errors.Join(cleanupErr, shutdownAndCleanupAgentControl(s.AgentControl))
-		s.AgentControl = nil
+	var cleanupErr error
+	sessionID := ""
+	if s.Toolkit != nil {
+		sessionID = s.Toolkit.SessionID()
+	}
+	cleanupErr = errors.Join(cleanupErr, s.dispatchSessionLifecycleHook(hooks.SessionEnd, sessionID))
+	if !s.borrowedPluginGeneration {
+		cleanupErr = errors.Join(cleanupErr, s.stopPluginModelInvocations())
 	}
 	s.pluginGenerationMu.Lock()
 	generation := s.pluginGeneration
@@ -2088,22 +2195,22 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	s.pluginGenerationMu.Unlock()
 	if generation != nil {
-		s.releasePluginGeneration(generation)
+		cleanupErr = errors.Join(cleanupErr, s.releasePluginGeneration(generation))
 	} else if s.Toolkit != nil {
 		if manager := s.Toolkit.MCPManager(); manager != nil {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())
 		}
 	}
-	if s.InferenceJournalRuntime != nil {
-		cleanupErr = errors.Join(cleanupErr, s.InferenceJournalRuntime.Close())
-		s.InferenceJournalRuntime = nil
-	}
+	s.InferenceJournalRuntime = nil
+	s.Sessions, s.Documents = nil, nil
 	if s.UserQuestions != nil {
 		s.UserQuestions.Close()
 		s.UserQuestions = nil
 	}
 	if s.CodeMode != nil {
-		cleanupErr = errors.Join(cleanupErr, s.CodeMode.Close())
+		if generation == nil || generation.tools == nil {
+			cleanupErr = errors.Join(cleanupErr, s.CodeMode.Close())
+		}
 		s.CodeMode = nil
 	}
 	if s.PluginHost != nil {
@@ -2188,22 +2295,28 @@ func toolkitContextBlockProvider(toolkit *tools.Toolkit) func() []wuucontext.Blo
 	return toolkit.ContextBlocks
 }
 
+var catwalkSetup sync.Once
+
 func setupCatwalk(cfg config.Config) {
-	catwalkCfg := providers.CatwalkSyncConfig{
-		CachePath: providers.DefaultCatwalkCachePath(),
-	}
-	if cfg.Agent.CatwalkAutoupdate {
-		catwalkCfg.Client = catwalk.NewWithURL(providers.DefaultCatwalkURL)
-	}
-	catwalkSync := providers.NewCatwalkSync(catwalkCfg)
-	providers.SetCatwalkSync(catwalkSync)
-	if cfg.Agent.CatwalkAutoupdate {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			_ = providers.RefreshCatwalkIndex(ctx)
-		}()
-	}
+	// The model catalog is process-wide. Child compositions must not replace
+	// its source or start refresh work owned by another session's configuration.
+	catwalkSetup.Do(func() {
+		catwalkCfg := providers.CatwalkSyncConfig{
+			CachePath: providers.DefaultCatwalkCachePath(),
+		}
+		if cfg.Agent.CatwalkAutoupdate {
+			catwalkCfg.Client = catwalk.NewWithURL(providers.DefaultCatwalkURL)
+		}
+		catwalkSync := providers.NewCatwalkSync(catwalkCfg)
+		providers.SetCatwalkSync(catwalkSync)
+		if cfg.Agent.CatwalkAutoupdate {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				_ = providers.RefreshCatwalkIndex(ctx)
+			}()
+		}
+	})
 }
 
 // bindPluginCompactionHooks keeps compaction on the same generation as the
@@ -2319,8 +2432,18 @@ func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []plugin
 
 // ResolvePluginActivationPlan applies package relationships after trust,
 // explicit disablement, and host compatibility have selected candidates.
-func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin) (pluginpkg.ActivationPlan, error) {
-	return pluginpkg.BuildActivationPlan(activatedPlugins(cfg, discovered))
+func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin, factories ...NativeProviderFactory) (pluginpkg.ActivationPlan, error) {
+	ids := make([]string, 0, len(factories))
+	for _, factory := range factories {
+		ids = append(ids, factory.ID)
+	}
+	candidates := activatedPlugins(cfg, discovered)
+	selection := productComposition(cfg.Composition, false, candidates, factories)
+	selected, _, err := selectCompositionPlugins(selection, candidates, ids...)
+	if err != nil {
+		return pluginpkg.ActivationPlan{}, err
+	}
+	return pluginpkg.BuildActivationPlan(selected)
 }
 
 func permissionSetContains(granted, required []string) bool {
@@ -2339,27 +2462,13 @@ func permissionSetContains(granted, required []string) bool {
 	return true
 }
 
-// SetExtensionSettings keeps the live policy and current-generation settings
-// snapshot aligned after a durable settings transaction.
-func (s *Session) SetExtensionSettings(settings *extensions.Settings) {
-	if s == nil {
-		return
-	}
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	s.ExtensionSettings = settings
-	if s.pluginGeneration != nil {
-		s.pluginGeneration.settings.Extensions = settings
-	}
-}
-
 // RefreshExtensions rediscovers package manifests before rebuilding the active
 // extension surfaces. It is used by the catalog's explicit Refresh action.
 func (s *Session) RefreshExtensions(cfg config.Config) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
 	}
-	s.RevokeFailedPluginDependencies()
+	s.RevokeFailedPluginDependencies(nil)
 	candidate, err := s.PreflightExtensions(cfg)
 	if err != nil {
 		return err
@@ -2372,22 +2481,6 @@ func (s *Session) RefreshExtensions(cfg config.Config) error {
 		return nil
 	}
 	return err
-}
-
-// RefreshPluginCatalog updates the installed-package inventory only. It never
-// rebuilds or swaps the active plugin generation, so installation and
-// validation can proceed while Sessions and Turns are running. Newly
-// installed packages become eligible for later compositions but add no
-// model-facing surfaces to the current one.
-func (s *Session) RefreshPluginCatalog() error {
-	if s == nil {
-		return errors.New("runtime is not initialized")
-	}
-	discovered := discoverPlugins(s.RootDir, s.WuuHome)
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	s.Plugins = discovered
-	return nil
 }
 
 type pluginSkillSnapshot struct{ project, user []skills.Skill }
@@ -2711,6 +2804,30 @@ func mcpOAuthConfig(in *config.MCPOAuthConfig) *mcp.OAuthConfig {
 	}
 }
 
+func bindToolkitHooks(kit *tools.Toolkit, dispatcher *hooks.Dispatcher) {
+	if dispatcher == nil {
+		kit.SetPermissionRequestHook(nil)
+		kit.SetOnFileChanged(nil)
+		return
+	}
+	kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
+		actorID, _ := active.ExecutionActor()
+		_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
+			SessionID: active.SessionID(), CWD: active.RootDir(), AgentID: actorID,
+			ToolName: call.Name, ToolInput: json.RawMessage(call.Arguments),
+		})
+		return err
+	})
+	kit.SetOnFileChanged(func(ctx context.Context, absPath string) {
+		actorID, _ := kit.ExecutionActor()
+		// The file is already written. Ordinary hook errors remain advisory;
+		// required model receipt errors propagate through the enclosing owner.
+		_, _ = dispatcher.Dispatch(ctx, hooks.FileChanged, &hooks.Input{
+			SessionID: kit.SessionID(), CWD: kit.RootDir(), AgentID: actorID, FilePath: absPath,
+		})
+	})
+}
+
 func ConfigureToolkitPermissions(kit *tools.Toolkit, permissions config.ResolvedPermissions) {
 	if kit == nil {
 		return
@@ -2728,11 +2845,25 @@ func ConfigureToolkitPermissions(kit *tools.Toolkit, permissions config.Resolved
 // ConfigureToolkitPermissions at turn starts and permission updates.
 func workerWakeAuthority(parent *tools.Toolkit) func(agent.ToolExecutor) {
 	return func(executor agent.ToolExecutor) {
-		workerKit, ok := executor.(*tools.Toolkit)
-		if !ok || workerKit == nil || parent == nil {
+		if parent == nil {
 			return
 		}
-		workerKit.RefreshAuthorityFrom(parent)
+		for {
+			wrapped, ok := executor.(*hooks.HookedExecutor)
+			if !ok {
+				break
+			}
+			executor = wrapped.Inner()
+		}
+		if selected, ok := executor.(*selectedToolExecutor); ok {
+			if selected.refreshAuthority != nil {
+				selected.refreshAuthority(parent)
+			}
+			return
+		}
+		if workerKit, ok := executor.(*tools.Toolkit); ok && workerKit != nil {
+			workerKit.RefreshAuthorityFrom(parent)
+		}
 	}
 }
 
@@ -2799,68 +2930,58 @@ func discoverInstructions(rootDir, homeDir string, cfg config.InstructionFilesCo
 	return instructions.Discover(rootDir, homeDir, instructionOptions)
 }
 
-// buildWorkerBasePrompt assembles a worker subagent's base system prompt.
-// Workers get the READ-ONLY user-notebook variant (memory-redesign §3:
-// 临时 worker 只读注入): the user index is injected as orientation — read
-// fresh here because worker/thread creation is a prompt-prefix creation
-// moment under the cache red lines — while the notebook directory stays
-// outside the worker's writable file scope.
-func buildWorkerBasePrompt(rootDir, sessionDate, userPrompt, providerName, model string, toolSurface capability.Surface, instructionFiles []instructions.File, discoveredSkills []skills.Skill) string {
-	return buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), userPrompt, providerName, model, toolSurface, instructionFiles, "", "", discoveredSkills)
-}
-
-func (s *Session) RefreshSystemPrompt(providerName, model string) string {
+func (s *Session) RefreshSystemPrompt(providerName, model string) (string, error) {
 	if s == nil {
-		return ""
+		return "", nil
 	}
-	return s.refreshSystemPromptWithSkills(providerName, model, s.AvailableSkills())
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	generation := s.pluginGeneration
+	prompt, err := s.refreshSystemPromptWithSkills(providerName, model, generation.filterSkills(s.Skills))
+	if err != nil {
+		return "", err
+	}
+	if generation != nil {
+		generation.revokedMu.Lock()
+		generation.systemPrompt = prompt
+		generation.revokedMu.Unlock()
+	}
+	return prompt, nil
 }
 
 // applyPluginGeneration already holds the session publication lock. Its caller
 // supplies the generation-filtered skills instead of recursively reading it.
-func (s *Session) refreshSystemPromptWithSkills(providerName, model string, discovered []skills.Skill) string {
-	baseSystemPromptResult := buildBaseSystemPromptResult(
-		s.RootDir,
-		s.SessionDate,
-		config.DefaultSystemPrompt(),
-		"",
-		providerName,
-		model,
-		activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt),
-		s.InstructionFiles,
-		"",
-		"",
-		discovered,
-	)
-	baseSystemPrompt, pluginSections := assemblePluginSystemPrompt(baseSystemPromptResult.Content, s.systemPrompts)
-	s.BaseSystemPrompt = baseSystemPrompt
-	s.BaseSystemPromptSections = baseSystemPromptResult.Sections
+func (s *Session) refreshSystemPromptWithSkills(providerName, model string, discovered []skills.Skill) (string, error) {
+	if s.SafeMode {
+		return "", nil
+	}
+	var executor agent.ToolExecutor
 	if s.StreamRunner != nil {
-		sections := append(agentPromptSections(baseSystemPromptResult.Sections), pluginSections...)
-		s.StreamRunner.UpdateSystemPromptWithSections(baseSystemPrompt, sections)
+		executor = s.StreamRunner.Tools
 	}
-	return baseSystemPrompt
-}
-
-func assemblePluginSystemPrompt(base string, assembler *agent.SystemPromptAssembler) (string, []agent.SystemPromptSectionInfo) {
-	if assembler == nil {
-		return base, nil
+	surface, err := selectedToolSurface(context.Background(), executor)
+	if err != nil {
+		return "", err
 	}
-	pluginText, sections := assembler.Assemble("")
-	if strings.TrimSpace(pluginText) == "" {
-		return base, sections
+	if s.PluginHost == nil {
+		surface = activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt)
 	}
-	if strings.TrimSpace(base) == "" {
-		return pluginText, sections
+	result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: providerName, Model: model, Surface: surface, Instructions: s.InstructionFiles, Skills: discovered}, s.systemPrompts)
+	if err != nil {
+		return "", err
 	}
-	return base + "\n\n" + pluginText, sections
+	s.BaseSystemPrompt, s.BaseSystemPromptSections = result.Content, result.Sections
+	if s.StreamRunner != nil {
+		s.StreamRunner.UpdateSystemPromptWithSections(result.Content, agentPromptSections(result.Sections))
+	}
+	return result.Content, nil
 }
 
 // ApplyGeneralConfig refreshes instruction and git-attribution settings on the
 // shared session runtime without changing provider or model selection.
-func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
+func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) (string, error) {
 	if s == nil {
-		return ""
+		return "", nil
 	}
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
@@ -2878,62 +2999,6 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 		apiModel = s.StreamRunner.APIModel
 	}
 	return s.RefreshSystemPrompt(s.ProviderName, apiModel)
-}
-
-// buildBaseSystemPrompt keeps the frozen-date-agnostic signature used by tests
-// and standalone callers; it passes an empty sessionDate so the environment
-// section falls back to the current date.
-func buildBaseSystemPrompt(rootDir, basePrompt, userPrompt, providerName, model string, toolSurface capability.Surface, instructionFiles []instructions.File, memdirTeaching, memdirIndex string, discoveredSkills []skills.Skill) string {
-	return buildBaseSystemPromptContent(rootDir, "", basePrompt, userPrompt, providerName, model, toolSurface, instructionFiles, memdirTeaching, memdirIndex, discoveredSkills)
-}
-
-func buildBaseSystemPromptContent(rootDir, sessionDate, basePrompt, userPrompt, providerName, model string, toolSurface capability.Surface, instructionFiles []instructions.File, memdirTeaching, memdirIndex string, discoveredSkills []skills.Skill) string {
-	return buildBaseSystemPromptResult(rootDir, sessionDate, basePrompt, userPrompt, providerName, model, toolSurface, instructionFiles, memdirTeaching, memdirIndex, discoveredSkills).Content
-}
-
-func buildBaseSystemPromptResult(rootDir, sessionDate, basePrompt, userPrompt, providerName, model string, toolSurface capability.Surface, instructionFiles []instructions.File, memdirTeaching, memdirIndex string, discoveredSkills []skills.Skill) prompt.BuildResult {
-	var pb prompt.Builder
-	pb.AddSection("base", basePrompt, true)
-	pb.AddSection("tool_surface", toolSurface.SystemFragment, true)
-	if _, ok := toolSurface.Tools["tool_search"]; ok {
-		pb.AddSection("deferred_tool_catalog", toolSurface.DeferredToolCatalog, true)
-	}
-	pb.AddSection("environment", environmentSystemPromptSection(rootDir, sessionDate), true)
-	if strings.TrimSpace(userPrompt) != "" {
-		pb.AddSection("user_custom_prompt", "# User Custom Instructions\n\nFollow these user-defined instructions unless they conflict with wuu's built-in behavior, safety, or tool-use discipline above.\n\n"+userPrompt, true)
-	}
-	pb.AddInstructions(instructionFiles)
-	if strings.TrimSpace(memdirTeaching) != "" {
-		pb.AddMemdir(memdirTeaching, memdirIndex)
-	}
-	if toolSurface.ProfileName != "" {
-		pb.AddSkills(tools.FilterSkillsForSurface(discoveredSkills, toolSurface))
-	}
-	return pb.BuildWithInfo()
-}
-
-// environmentSystemPromptSection renders the static "# Environment" system
-// section. The date is the session-start frozen value (sessionDate) so the
-// cached system prefix stays byte-stable across turns and thread rebuilds; a
-// long-lived session that crosses a day boundary keeps its start date instead
-// of busting the prompt cache. Real-time clock reads belong in the per-turn
-// message stream, not this cached prefix. When sessionDate is empty (callers
-// without a frozen session, e.g. standalone worker-prompt helpers) it falls
-// back to the current date.
-func environmentSystemPromptSection(rootDir, sessionDate string) string {
-	env := wuucontext.Snapshot(rootDir)
-	if frozen := strings.TrimSpace(sessionDate); frozen != "" {
-		env.Date = frozen
-	}
-	var b strings.Builder
-	b.WriteString("# Environment\n\n")
-	if cwd := strings.TrimSpace(env.CWD); cwd != "" {
-		fmt.Fprintf(&b, "- Current working directory: %s\n", cwd)
-	}
-	if date := strings.TrimSpace(env.Date); date != "" {
-		fmt.Fprintf(&b, "- Current date: %s\n", date)
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func agentPromptSections(sections []prompt.SectionInfo) []agent.SystemPromptSectionInfo {
@@ -2989,13 +3054,16 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	return surface, err
 }
 
-type sessionRequestContextStore struct{ sessDir, sessionID string }
+type sessionRequestContextStore struct {
+	sessions  *session.Store
+	sessionID string
+}
 
 func (store sessionRequestContextStore) Load(ctx context.Context) (agent.RequestContextCheckpoint, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.RequestContextCheckpoint{}, false, err
 	}
-	raw, err := session.LoadRequestContextCheckpoint(store.sessDir, store.sessionID)
+	raw, err := store.sessions.WithContext(ctx).LoadRequestContextCheckpoint(store.sessionID)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return agent.RequestContextCheckpoint{}, false, nil
 	}
@@ -3017,7 +3085,7 @@ func (store sessionRequestContextStore) Save(ctx context.Context, checkpoint age
 	if err != nil {
 		return fmt.Errorf("encode request context checkpoint: %w", err)
 	}
-	err = session.SaveRequestContextCheckpoint(store.sessDir, store.sessionID, payload)
+	err = store.sessions.WithContext(ctx).SaveRequestContextCheckpoint(store.sessionID, payload)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return nil
 	}

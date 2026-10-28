@@ -1,0 +1,6 @@
+{
+  "name": "conversation-metrics",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node --check desktop.js" }
+}

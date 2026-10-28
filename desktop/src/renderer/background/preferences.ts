@@ -1,11 +1,7 @@
-export const backgroundEffects = ["none", "dither", "halftone", "ascii", "scanlines"] as const;
-export type BackgroundEffect = typeof backgroundEffects[number];
 export interface BackgroundPreferences {
   image: Blob;
   imageID: string;
   name: string;
-  effect: BackgroundEffect;
-  opacity: number;
 }
 
 export function normalizeBackground(value: unknown): BackgroundPreferences | null {
@@ -16,9 +12,6 @@ export function normalizeBackground(value: unknown): BackgroundPreferences | nul
     image: record.image,
     imageID: record.imageID,
     name: typeof record.name === "string" ? record.name.slice(0, 240) : "",
-    effect: backgroundEffects.includes(record.effect as BackgroundEffect) ? record.effect! : "none",
-    opacity: typeof record.opacity === "number" && Number.isFinite(record.opacity)
-      ? Math.max(0.05, Math.min(0.3, record.opacity)) : 0.15,
   };
 }
 

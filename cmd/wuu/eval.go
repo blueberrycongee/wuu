@@ -16,15 +16,18 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/evalharness"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/securefs"
-	sessionid "github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -32,13 +35,14 @@ import (
 )
 
 type evalReport struct {
-	StartedAt  time.Time            `json:"started_at"`
-	DurationMS int64                `json:"duration_ms"`
-	Provider   string               `json:"provider,omitempty"`
-	Model      string               `json:"model,omitempty"`
-	Config     string               `json:"config,omitempty"`
-	Summary    evalSummary          `json:"summary"`
-	Results    []evalharness.Result `json:"results"`
+	Experiment *evalExperimentIdentity `json:"experiment,omitempty"`
+	StartedAt  time.Time               `json:"started_at"`
+	DurationMS int64                   `json:"duration_ms"`
+	Provider   string                  `json:"provider,omitempty"`
+	Model      string                  `json:"model,omitempty"`
+	Config     string                  `json:"config,omitempty"`
+	Summary    evalSummary             `json:"summary"`
+	Results    []evalharness.Result    `json:"results"`
 }
 
 type evalSummary struct {
@@ -68,10 +72,41 @@ func runEval(args []string) error {
 	keepWorkdirs := fs.Bool("keep-workdirs", false, "keep temporary task workdirs")
 	replayTrace := fs.String("replay-trace", "", "replay an eval trace JSONL file without calling a model or executing tools")
 	liveCodexOAuth := fs.Bool("live-codex-oauth", false, "run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials")
+	freeze := fs.String("freeze", "", "write a frozen experiment plan without running tasks")
+	plan := fs.String("plan", "", "run a frozen experiment plan without filtering its task list")
+	candidateHost := fs.String("candidate-host", "", "run a rebuilt host executable at a fresh-task checkpoint under this controller")
+	candidate := fs.String("candidate", "", "load a local TypeScript file or plugin package for this experiment")
+	artifacts := fs.String("artifacts", "", "new directory for durable experiment evidence")
+	controller := fs.String("experiment-controller", "", "JSON executable controller identity for tasks, setup, score and acceptance")
+	policy := fs.String("experiment-policy", "", "JSON experiment admission and acceptance policy, frozen before execution")
+	decisionOutput := fs.String("decision-output", "", "exclusive path for durable comparison decision")
+	compare := fs.String("compare", "", "compare baseline,candidate experiment report paths")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	if *compare != "" {
+		return compareEvalExperimentsTo(*compare, *decisionOutput)
+	}
+	if *decisionOutput != "" {
+		return errors.New("--decision-output requires --compare")
+	}
+	if (*controller != "" || *policy != "") && *freeze == "" {
+		return errors.New("--experiment-controller and --experiment-policy require --freeze; existing plans are immutable")
+	}
+
+	if *freeze != "" || *plan != "" || *candidateHost != "" {
+		opts := evalExperimentOptions{Freeze: *freeze, Plan: *plan, Candidate: *candidate, Artifacts: *artifacts,
+			Controller: *controller, Policy: *policy, Workdir: *workdir, Provider: *providerName, Model: *modelOverride,
+			Tasks: *taskFilter, MaxSteps: *maxSteps, Timeout: *timeout, LiveCodex: *liveCodexOAuth, KeepWorkdirs: *keepWorkdirs}
+		if *candidateHost != "" {
+			return runEvalHostCandidate(*candidateHost, opts)
+		}
+		return runEvalExperiment(opts)
+	}
+	if *candidate != "" || *artifacts != "" {
+		return errors.New("--candidate and --artifacts require --plan")
+	}
 	if *list {
 		for _, task := range evalharness.Catalog() {
 			fmt.Printf("%s\t%s\t%s\n", task.ID, task.Name, task.Description)
@@ -92,18 +127,26 @@ func runEval(args []string) error {
 			JSONOutput:    *jsonOutput,
 			OutputPath:    *outputPath,
 			KeepWorkdirs:  *keepWorkdirs,
+			Workdir:       *workdir,
 			HomeDir:       homeDir,
 		})
 	}
 
-	configRoot, err := resolveWorkdir(*workdir)
+	binding, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
-	cfg, configPath, err := config.LoadFrom(configRoot, homeDir)
+	defer binding.Close()
+	services, err := binding.Services()
 	if err != nil {
 		return err
 	}
+	selectedConfig, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	cfg := selectedConfig.Config
+	configPath := "selected:" + services.GenerationID
 	providerCfg, resolvedName, err := cfg.ResolveProvider(*providerName)
 	if err != nil {
 		return err
@@ -124,7 +167,7 @@ func runEval(args []string) error {
 		result := runEvalTask(evalTaskRunConfig{
 			Task:          task,
 			Config:        cfg,
-			ConfigPath:    configPath,
+			ConfigPath:    "",
 			ProviderName:  resolvedName,
 			ModelOverride: *modelOverride,
 			MaxSteps:      *maxSteps,
@@ -208,6 +251,7 @@ func runEvalTraceReplay(tracePath string, jsonOutput bool, outputPath string) er
 }
 
 type liveCodexOAuthEvalConfig struct {
+	Workdir       string
 	ModelOverride string
 	TaskFilter    string
 	MaxSteps      int
@@ -223,7 +267,23 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 	if homeDir == "" {
 		homeDir = os.Getenv("HOME")
 	}
-	source, authErr := codex.LocalOAuthStatus(homeDir, true)
+	binding, err := openCommandState(context.Background(), cfg.Workdir)
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		return err
+	}
+	selectedConfig, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	source, authErr := codex.OAuthStatus(context.Background(), services.Credentials, true)
+	if errors.Is(authErr, authstorage.ErrUnavailable) {
+		return authErr
+	}
 	if authErr != nil {
 		msg := fmt.Sprintf("SKIP live Codex OAuth eval: %v", authErr)
 		if cfg.JSONOutput {
@@ -264,9 +324,17 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		return err
 	}
 
-	runtimeConfig := config.Default()
+	runtimeConfig := selectedConfig.Config
 	runtimeConfig.DefaultProvider = "openai-codex"
-	providerCfg := runtimeConfig.Providers["openai-codex"]
+	providerCfg, exists := runtimeConfig.Providers["openai-codex"]
+	if !exists {
+		providerCfg = config.Default().Providers["openai-codex"]
+	}
+	providerCfg.ReuseCodexCredentials = true
+	if runtimeConfig.Providers == nil {
+		runtimeConfig.Providers = map[string]config.ProviderConfig{}
+	}
+	runtimeConfig.Providers["openai-codex"] = providerCfg
 	if cfg.ModelOverride != "" {
 		providerCfg.Model = cfg.ModelOverride
 		runtimeConfig.Providers["openai-codex"] = providerCfg
@@ -278,7 +346,7 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		result := runEvalTask(evalTaskRunConfig{
 			Task:          task,
 			Config:        runtimeConfig,
-			ConfigPath:    "live-codex-oauth",
+			ConfigPath:    "",
 			ProviderName:  "openai-codex",
 			ModelOverride: cfg.ModelOverride,
 			MaxSteps:      cfg.MaxSteps,
@@ -320,20 +388,24 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 }
 
 type evalTaskRunConfig struct {
-	Task          evalharness.Task
-	Config        config.Config
-	ConfigPath    string
-	ProviderName  string
-	ModelOverride string
-	MaxSteps      int
-	Timeout       time.Duration
-	HomeDir       string
-	KeepWorkdir   bool
+	Task             evalharness.Task
+	Config           config.Config
+	ConfigPath       string
+	ProviderName     string
+	ModelOverride    string
+	MaxSteps         int
+	Timeout          time.Duration
+	HomeDir          string
+	KeepWorkdir      bool
+	WuuHome          string
+	Catalog          *[]pluginpkg.Plugin
+	EvidenceDir      string
+	ExpectedPackages map[string]string
 }
 
-// waitForSubAgentQuiescence blocks until every spawned sub-agent reaches a
-// terminal lifecycle state, so task verification observes finished child work
-// instead of racing it. Bounded by ctx (the per-task timeout).
+// waitForSubAgentQuiescence closes worker admission after every child becomes
+// terminal, then waits for physical execution release before task verification.
+// The task context bounds the wait without releasing unfinished ownership.
 func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentControl) error {
 	if control == nil {
 		return nil
@@ -348,7 +420,10 @@ func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentC
 			}
 		}
 		if active == 0 {
-			return nil
+			// Terminal status precedes finalization and physical lease release.
+			// Stop admission before taking the final execution-drain snapshot.
+			control.BeginShutdown()
+			return control.WaitOwnedWorkerExecutions(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -358,9 +433,9 @@ func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentC
 	}
 }
 
-func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
+func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	started := time.Now()
-	result := evalharness.Result{
+	result = evalharness.Result{
 		TaskID:   cfg.Task.ID,
 		TaskName: cfg.Task.Name,
 	}
@@ -374,9 +449,18 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	if cfg.KeepWorkdir {
 		result.Workdir = taskRoot
 	} else {
-		defer os.RemoveAll(taskRoot)
+		defer func() {
+			if result.RetainedStateDir != "" {
+				result.Workdir = taskRoot
+				return
+			}
+			if err := os.RemoveAll(taskRoot); err != nil {
+				result.Success = false
+				result.Error = errors.Join(errors.New(result.Error), err).Error()
+			}
+		}()
 	}
-	if cfg.Task.IsolateWuuHome {
+	if cfg.Task.IsolateWuuHome && cfg.WuuHome == "" {
 		defer setTemporaryEnv("WUU_HOME", filepath.Join(taskRoot, ".wuu-home"))()
 	}
 
@@ -393,110 +477,179 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 		return result
 	}
 
-	runtimeConfig := cfg.Config
+	var runtimeConfig config.Config
+	configBytes, configErr := json.Marshal(cfg.Config)
+	if configErr == nil {
+		configErr = json.Unmarshal(configBytes, &runtimeConfig)
+	}
+	if configErr != nil {
+		result.Error = configErr.Error()
+		return result
+	}
 	if cfg.Task.Configure != nil {
 		runtimeConfig = cfg.Task.Configure(taskRoot, runtimeConfig)
 	}
 
 	rt, err := runtime.NewSession(runtime.Options{
-		RootDir:       taskRoot,
-		HomeDir:       cfg.HomeDir,
-		ConfigPath:    cfg.ConfigPath,
-		Config:        runtimeConfig,
-		ProviderName:  cfg.ProviderName,
-		ModelOverride: cfg.ModelOverride,
+		RootDir:           taskRoot,
+		HomeDir:           cfg.HomeDir,
+		ConfigPath:        cfg.ConfigPath,
+		Config:            runtimeConfig,
+		ProviderName:      cfg.ProviderName,
+		ModelOverride:     cfg.ModelOverride,
+		WuuHome:           cfg.WuuHome,
+		DiscoveredPlugins: cfg.Catalog,
 	})
 	if err != nil {
 		result.Error = err.Error()
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
-	evalSessionID := "eval-" + cfg.Task.ID + "-" + sessionid.NewID()
-	if err := rt.SetSessionID(evalSessionID); err != nil {
-		_, _ = rt.Cleanup()
-		result.Error = err.Error()
+	var engine agentengine.Session
+	defer func() {
+		var cleanupErr error
+		if engine != nil {
+			// An expired task context must not release the workspace while the
+			// engine still owns worker cleanup and its provider generation.
+			cleanupErr = engine.Close(context.Background())
+		}
+		_, workspaceErr := rt.Cleanup()
+		if cleanupErr = errors.Join(cleanupErr, workspaceErr); cleanupErr != nil {
+			result.RetainedStateDir = rt.StateDir
+			result.Success = false
+			if result.Error == "" {
+				result.Error = cleanupErr.Error()
+			} else {
+				result.Error = errors.Join(errors.New(result.Error), cleanupErr).Error()
+			}
+		}
+		result.Validation = evalharness.BuildValidationSummary(result)
 		result.DurationMS = time.Since(started).Milliseconds()
+		persistEvalTrace(&result)
+	}()
+	if cfg.EvidenceDir != "" {
+		if err := saveEvalRuntimeEvidence(cfg.EvidenceDir, rt, cfg.ExpectedPackages); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			result.Error = err.Error()
+			return result
+		}
+	}
+	evalSessionID := "eval-" + cfg.Task.ID + "-" + session.NewID()
+	if err := rt.SetSessionID(evalSessionID); err != nil {
+		result.Error = err.Error()
 		return result
 	}
-	defer func() {
-		_, _ = rt.Cleanup()
-	}()
-	if cfg.MaxSteps > 0 {
-		rt.StreamRunner.MaxSteps = cfg.MaxSteps
+	engine, thread, err := runtime.NewWuuEngine(rt).OpenWithRuntime(ctx, agentengine.OpenRequest{ThreadID: evalSessionID, RootDir: taskRoot})
+	if err != nil {
+		result.Error = err.Error()
+		return result
 	}
-	if rt.Toolkit != nil {
-		if err := waitForMCPRequiredTools(ctx, rt.Toolkit, cfg.Task.RequiredTools, 5*time.Second); err != nil {
+	runner := thread.StreamRunner
+	if _, err := thread.Sessions.WithContext(ctx).CreateInitialized(session.Session{
+		ID: evalSessionID, Title: cfg.Task.Name, CWD: taskRoot, WorkspaceID: rt.WorkspaceID,
+		Source: "eval", EngineID: string(agentengine.EngineWuu),
+		Provider: runner.ProviderName, Model: runner.Model, Variant: runner.Variant,
+		Effort: runner.Effort, PermissionMode: thread.Selection.PermissionMode,
+	}, nil); err != nil {
+		result.Error = fmt.Sprintf("create eval session: %v", err)
+		return result
+	}
+	if cfg.MaxSteps > 0 {
+		runner.MaxSteps = cfg.MaxSteps
+	}
+	if thread.Toolkit != nil {
+		if err := waitForMCPRequiredTools(ctx, thread.Toolkit, cfg.Task.RequiredTools, 5*time.Second); err != nil {
 			result.Error = err.Error()
-			result.DurationMS = time.Since(started).Milliseconds()
 			return result
 		}
 	}
 
 	var contextRequests []agent.RequestContextInfo
-	if rt.StreamRunner != nil {
-		previous := rt.StreamRunner.OnRequestContext
-		previousTokenUsage := rt.StreamRunner.OnTokenUsage
-		rt.StreamRunner.OnRequestContext = func(info agent.RequestContextInfo) {
-			if previous != nil {
-				previous(info)
-			}
-			contextRequests = append(contextRequests, agent.RequestContextInfo{
-				StepIndex:                info.StepIndex,
-				TransientMessages:        info.TransientMessages,
-				ContentBytes:             info.ContentBytes,
-				BlockKinds:               append([]string(nil), info.BlockKinds...),
-				BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
-				BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
-				SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
-				SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
-				SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
-				MessageCount:             info.MessageCount,
-				SystemMessages:           info.SystemMessages,
-				HiddenMessages:           info.HiddenMessages,
-				ToolCount:                info.ToolCount,
-				StablePrefix:             info.StablePrefix,
-				TurnPrefix:               info.TurnPrefix,
-				DynamicBytes:             info.DynamicBytes,
-				SystemBytes:              info.SystemBytes,
-				StablePrefixBytes:        info.StablePrefixBytes,
-				TurnPrefixBytes:          info.TurnPrefixBytes,
-				MessageBytes:             info.MessageBytes,
-				ToolSchemaBytes:          info.ToolSchemaBytes,
-				LoadableToolCount:        info.LoadableToolCount,
-				LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
-				LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
-				SystemHash:               info.SystemHash,
-				StablePrefixHash:         info.StablePrefixHash,
-				TurnPrefixHash:           info.TurnPrefixHash,
-				ToolSurfaceHash:          info.ToolSurfaceHash,
-				PromptCacheKey:           info.PromptCacheKey,
-				InputTokens:              info.InputTokens,
-				OutputTokens:             info.OutputTokens,
-				CacheCreationTokens:      info.CacheCreationTokens,
-				CacheReadTokens:          info.CacheReadTokens,
-			})
+	previous := runner.OnRequestContext
+	previousTokenUsage := runner.OnTokenUsage
+	runner.OnRequestContext = func(info agent.RequestContextInfo) {
+		if previous != nil {
+			previous(info)
 		}
-		rt.StreamRunner.OnTokenUsage = func(usage providers.TokenUsage) {
-			if previousTokenUsage != nil {
-				previousTokenUsage(usage)
-			}
-			attachUsageToLatestEvalRequestContext(contextRequests, usage)
+		contextRequests = append(contextRequests, agent.RequestContextInfo{
+			StepIndex:                info.StepIndex,
+			TransientMessages:        info.TransientMessages,
+			ContentBytes:             info.ContentBytes,
+			BlockKinds:               append([]string(nil), info.BlockKinds...),
+			BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
+			BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
+			SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
+			SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
+			SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
+			MessageCount:             info.MessageCount,
+			SystemMessages:           info.SystemMessages,
+			HiddenMessages:           info.HiddenMessages,
+			ToolCount:                info.ToolCount,
+			StablePrefix:             info.StablePrefix,
+			TurnPrefix:               info.TurnPrefix,
+			DynamicBytes:             info.DynamicBytes,
+			SystemBytes:              info.SystemBytes,
+			StablePrefixBytes:        info.StablePrefixBytes,
+			TurnPrefixBytes:          info.TurnPrefixBytes,
+			MessageBytes:             info.MessageBytes,
+			ToolSchemaBytes:          info.ToolSchemaBytes,
+			LoadableToolCount:        info.LoadableToolCount,
+			LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
+			LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
+			SystemHash:               info.SystemHash,
+			StablePrefixHash:         info.StablePrefixHash,
+			TurnPrefixHash:           info.TurnPrefixHash,
+			ToolSurfaceHash:          info.ToolSurfaceHash,
+			PromptCacheKey:           info.PromptCacheKey,
+			InputTokens:              info.InputTokens,
+			OutputTokens:             info.OutputTokens,
+			CacheCreationTokens:      info.CacheCreationTokens,
+			CacheReadTokens:          info.CacheReadTokens,
+		})
+	}
+	runner.OnTokenUsage = func(usage providers.TokenUsage) {
+		if previousTokenUsage != nil {
+			previousTokenUsage(usage)
 		}
+		attachUsageToLatestEvalRequestContext(contextRequests, usage)
+	}
+	if thread.AgentControl != nil {
+		thread.AgentControl.StartWorkerTerminalRecovery()
+		thread.AgentControl.StartQueuedWork()
 	}
 
 	history := []providers.ChatMessage{}
-	if strings.TrimSpace(rt.StreamRunner.SystemPrompt) != "" {
-		history = append(history, providers.ChatMessage{Role: "system", Content: rt.StreamRunner.SystemPrompt})
+	if strings.TrimSpace(runner.SystemPrompt) != "" {
+		history = append(history, providers.ChatMessage{Role: "system", Content: runner.SystemPrompt})
 	}
 	userMessage := providers.ChatMessage{Role: "user", Content: cfg.Task.Prompt}
 	history = append(history, userMessage)
 
-	runResult, runErr := rt.StreamRunner.RunWithCallback(ctx, history, nil)
+	if cfg.EvidenceDir != "" {
+		if err := writeEvalEvidence(filepath.Join(cfg.EvidenceDir, "runtime-locations.json"), map[string]string{
+			"state_dir": rt.StateDir, "session_id": evalSessionID,
+			"session_dir": statepath.SessionArtifactDir(rt.StateDir, evalSessionID), "workdir": taskRoot,
+		}); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			result.Error = fmt.Errorf("save recovery locations before admission: %w", err).Error()
+			return result
+		}
+	}
+	turnResult, runErr := engine.RunTurn(ctx, agentengine.TurnInput{History: history}, nil)
+	runResult := turnResult.Result
+	if cfg.EvidenceDir != "" {
+		if err := writeEvalEvidence(filepath.Join(cfg.EvidenceDir, "execution.json"), runResult); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			runErr = errors.Join(runErr, fmt.Errorf("save full execution: %w", err))
+		}
+	}
 	// Background sub-agents spawned during the turn outlive the main agent's
 	// final answer. Verification must observe their terminal state, not race
-	// against it: wait (bounded by the task ctx) until every child settles.
-	if waitErr := waitForSubAgentQuiescence(ctx, rt.AgentControl); waitErr != nil && runErr == nil {
-		runErr = fmt.Errorf("sub-agents still running at verification: %w", waitErr)
+	// against it: wait (bounded by the task ctx) until every child releases its
+	// physical execution lease, without removing worktrees before verification.
+	waitErr := waitForSubAgentQuiescence(ctx, thread.AgentControl)
+	if waitErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("sub-agents still running at verification: %w", waitErr))
 	}
 	result.InputTokens = runResult.InputTokens
 	result.OutputTokens = runResult.OutputTokens
@@ -504,8 +657,8 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	result.CacheReadTokens = runResult.CacheReadTokens
 	result.CacheHitRate = evalharness.CacheHitRate(result.InputTokens, result.CacheReadTokens)
 	result.Turns = countAssistantTurns(runResult.NewMessages)
-	if rt.Toolkit != nil {
-		records := rt.Toolkit.ToolTelemetry()
+	if thread.Toolkit != nil {
+		records := thread.Toolkit.ToolTelemetry()
 		result.ToolCalls = len(records)
 		result.ToolNames = uniqueToolNames(records)
 		result.ToolSequence = toolNameSequence(records)
@@ -516,22 +669,23 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	result.MissingToolCalls = missingRequiredToolCalls(cfg.Task.RequiredToolCalls, runResult.NewMessages)
 	result.MissingToolSeq = missingRequiredToolSequence(cfg.Task.RequiredToolSequence, runResult.NewMessages)
 
-	verification, verifyErr := evalharness.VerifyTask(ctx, cfg.Task, taskRoot, runResult.Content)
-	if verifyErr != nil {
-		result.Error = verifyErr.Error()
+	if waitErr == nil {
+		verification, verifyErr := evalharness.VerifyTask(ctx, cfg.Task, taskRoot, runResult.Content)
+		if verifyErr != nil {
+			result.Error = verifyErr.Error()
+		} else {
+			result.Success = runErr == nil && verification.Passed && len(result.MissingTools) == 0 && len(result.ForbiddenToolsUsed) == 0 && len(result.MissingToolCalls) == 0 && len(result.MissingToolSeq) == 0 && len(result.MissingErrors) == 0
+			result.VerificationReason = verification.Reason
+			result.VerificationEvidence = verification.Evidence
+		}
 	} else {
-		result.Success = runErr == nil && verification.Passed && len(result.MissingTools) == 0 && len(result.ForbiddenToolsUsed) == 0 && len(result.MissingToolCalls) == 0 && len(result.MissingToolSeq) == 0 && len(result.MissingErrors) == 0
-		result.VerificationReason = verification.Reason
-		result.VerificationEvidence = verification.Evidence
+		result.VerificationReason = "verification skipped while worker executions remain active"
 	}
 	if runErr != nil {
 		result.Error = runErr.Error()
 	}
-	result.Observability = collectEvalObservability(rt, evalSessionID, taskRoot, cfg.KeepWorkdir, runResult.Content, contextRequests)
+	result.Observability = collectEvalObservability(thread, rt.StateDir, evalSessionID, taskRoot, cfg.KeepWorkdir, runResult.Content, contextRequests)
 	applyEvalAttentionIssues(&result)
-	result.Validation = evalharness.BuildValidationSummary(result)
-	result.DurationMS = time.Since(started).Milliseconds()
-	persistEvalTrace(&result)
 	return result
 }
 
@@ -578,7 +732,7 @@ func attachUsageToLatestEvalRequestContext(records []agent.RequestContextInfo, u
 	record.CacheReadTokens = usage.CacheReadTokens
 }
 
-func collectEvalObservability(rt *runtime.Session, sessionID, taskRoot string, keepWorkdir bool, finalAnswer string, contextRequests []agent.RequestContextInfo) *evalharness.Observability {
+func collectEvalObservability(rt *runtime.ThreadRuntime, stateDir, sessionID, taskRoot string, keepWorkdir bool, finalAnswer string, contextRequests []agent.RequestContextInfo) *evalharness.Observability {
 	obs := &evalharness.Observability{
 		SessionID:          strings.TrimSpace(sessionID),
 		FinalAnswerPreview: evalSafePreview(finalAnswer, evalAnswerPreviewLimit),
@@ -594,7 +748,7 @@ func collectEvalObservability(rt *runtime.Session, sessionID, taskRoot string, k
 		obs.Warnings = append(obs.Warnings, "runtime session is unavailable")
 		return obs
 	}
-	obs.StateDir = strings.TrimSpace(rt.StateDir)
+	obs.StateDir = strings.TrimSpace(stateDir)
 	obs.ModelProfile = evalModelProfileObservation(rt)
 	obs.ContextBlocks = evalContextBlockObservations(rt)
 	if obs.StateDir != "" {
@@ -641,22 +795,20 @@ func persistEvalTrace(result *evalharness.Result) {
 	}
 }
 
-func evalModelProfileObservation(rt *runtime.Session) *evalharness.ModelProfileObservation {
-	if rt == nil {
+func evalModelProfileObservation(rt *runtime.ThreadRuntime) *evalharness.ModelProfileObservation {
+	if rt == nil || rt.StreamRunner == nil {
 		return nil
 	}
-	apiModel := ""
-	if rt.StreamRunner != nil {
-		apiModel = strings.TrimSpace(rt.StreamRunner.APIModel)
-	}
+	runner := rt.StreamRunner
+	apiModel := strings.TrimSpace(runner.APIModel)
 	modelForProfile := apiModel
 	if modelForProfile == "" {
-		modelForProfile = strings.TrimSpace(rt.Model)
+		modelForProfile = strings.TrimSpace(runner.Model)
 	}
-	profile := modelprofile.Resolve(rt.ProviderName, modelForProfile)
+	profile := modelprofile.Resolve(runner.ProviderName, modelForProfile)
 	return &evalharness.ModelProfileObservation{
-		ProviderName:              rt.ProviderName,
-		Model:                     rt.Model,
+		ProviderName:              runner.ProviderName,
+		Model:                     runner.Model,
 		APIModel:                  apiModel,
 		Family:                    string(profile.Family),
 		ToolCalling:               string(profile.APIShape.ToolCalling),
@@ -672,7 +824,7 @@ func evalModelProfileObservation(rt *runtime.Session) *evalharness.ModelProfileO
 	}
 }
 
-func evalContextBlockObservations(rt *runtime.Session) []evalharness.ContextBlockObservation {
+func evalContextBlockObservations(rt *runtime.ThreadRuntime) []evalharness.ContextBlockObservation {
 	if rt == nil {
 		return nil
 	}
@@ -1022,7 +1174,7 @@ func summarizeEvalResults(results []evalharness.Result) evalSummary {
 func countAssistantTurns(messages []providers.ChatMessage) int {
 	count := 0
 	for _, msg := range messages {
-		if msg.Role == "assistant" {
+		if msg.Role == "assistant" && msg.Origin != "plugin" {
 			count++
 		}
 	}

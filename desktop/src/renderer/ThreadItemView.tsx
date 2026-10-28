@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { ConversationTriggers } from "./ConversationTriggers";
 import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -41,15 +42,15 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
 import {
   AgentMessageActions,
+  EmptyMessageActions,
   MessageCopyButton,
   MessageEditButton,
   MessageFileList,
   MessageImageGrid,
   MessageTime,
 } from "./MessageActions";
-import { StreamingMarkdown } from "./StreamingMarkdown";
-import { streamTextKey, streamTextStore } from "./StreamText";
-import { streamFieldValue } from "./ThreadItemText";
+import { ApplicationStreamingMarkdown } from "./StreamingMarkdown";
+import { userMessageBodyText } from "./ThreadItemText";
 import { ToolActivityRow } from "./ToolActivity";
 import { RemoteItemContent } from "./RemoteItemContent";
 import {
@@ -58,21 +59,16 @@ import {
   TurnNotice,
 } from "./TurnNotice";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
-import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { showErrorToast } from "./Toast";
 import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
 import { useI18n } from "./i18n";
-import { ConversationItemPresentation, toConversationItemSnapshot } from "./plugins/ConversationItemPresentation";
-import { PluginCommandActions, usePluginCommandActions } from "./plugins/PluginCommandActions";
-import {
-  ConversationMessageSurface,
-  type ConversationMessageSurfaceContext,
-} from "./plugins/ConversationMessageSurface";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import type { PluginHost } from "./plugins/PluginHost";
-import { PluginSlot } from "./plugins/PluginSlot";
+import { useConversationControls } from "./ConversationControlsContext";
+import { toConversationItemSnapshot } from "./plugins/ApplicationSnapshots";
+import { streamTextKey, useStreamedText } from "./StreamText";
+import { placeUserMessageActions } from "./UserMessageActionPlacement";
 
 interface ThreadItemViewProps {
   turnID: string;
@@ -108,107 +104,29 @@ interface ThreadItemViewProps {
   ) => void;
   onOpenAgent?: (agentID: string) => void;
   editSummaryCard?: JSX.Element;
-  pluginHost?: PluginHost;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
-  const { item, onEditMessage, turnID, editing } = props;
-  const { t } = useI18n();
+  const { item } = props;
+  const { slots, slotOwner } = useConversationControls();
+  const threadId = useContext(ArtifactThreadContext);
+  const text = useStreamedText(streamTextKey(props.turnID, item.id, "text"), item.text,
+    props.streaming && item.status === "in_progress");
+  const nativeContent = useMemo(() => <BuiltInThreadItemView {...props} />, [props]);
   if (item.remote_content_ref && item.type !== "tool_call") {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
   }
   if (item.type === "user_message" && isInternalUserNotificationItem(item)) {
     return null;
   }
-  const pluginSlotContext = Object.freeze({
-    kind: item.type,
-    turnStatus: props.turnStatus,
-    streaming: props.streaming,
-    editing: Boolean(editing),
-  });
-  if (item.type === "tool_call") {
-    return (
-      <PluginMessageSlots host={props.pluginHost} context={pluginSlotContext}>
-        <BuiltInThreadItemView {...props} />
-      </PluginMessageSlots>
-    );
-  }
-  const text = item.type === "error" ? undefined : item.text ?? item.reason;
-  const editable = item.type === "user_message"
-    && !editing
-    && !item.read_only
-    && onEditMessage !== undefined
-    && ((item.text?.trim().length ?? 0) > 0 || (item.images?.length ?? 0) > 0 || (item.files?.length ?? 0) > 0);
-  const fallback = (
-    <ConversationMessageSurface
-      context={conversationMessageSurfaceContext(props, editable)}
-      fallback={<BuiltInThreadItemView {...props} />}
-    />
-  );
-  return (
-    <PluginMessageSlots host={props.pluginHost} context={pluginSlotContext}>
-      <ConversationItemPresentation
-        item={item}
-        text={text}
-        fallback={fallback}
-        onEdit={editable ? () => onEditMessage(turnID, item) : undefined}
-      />
-    </PluginMessageSlots>
-  );
+  const context = Object.freeze({ threadId, turnId: props.turnID, itemId: item.id,
+    snapshot: toConversationItemSnapshot(item, undefined, item.text === undefined && text === "" ? undefined : text) });
+  return <>
+    <slots.Slot name={`${slotOwner}/conversation.message.before`} context={context} />
+    <slots.Slot name={`${slotOwner}/conversation.message`} context={context} fallback={nativeContent} />
+    <slots.Slot name={`${slotOwner}/conversation.message.after`} context={context} />
+  </>;
 });
-
-function conversationMessageSurfaceContext(
-  { item, turnID, streaming, onEditMessage, onForkMessage }: ThreadItemViewProps,
-  editable: boolean,
-): ConversationMessageSurfaceContext {
-  const kind = item.type === "user_message"
-    ? "user-message"
-    : item.type === "agent_message"
-      ? "assistant-message"
-      : item.type === "reasoning"
-        ? "reasoning"
-        : "notice";
-  const status = item.status === "in_progress" ? "streaming" : item.status;
-  const threadId = desktopPluginHost.getActiveConversationThreadId();
-  return Object.freeze({
-    version: 1,
-    messageId: item.id,
-    turnId: turnID,
-    ...(threadId === undefined ? {} : { threadId }),
-    kind,
-    status,
-    phase:
-      item.type === "agent_message"
-        ? item.terminal
-          ? "final_answer"
-          : "commentary"
-        : undefined,
-    streaming,
-    attachmentCount: (item.images?.length ?? 0) + (item.files?.length ?? 0),
-    actions: Object.freeze({
-      edit: editable && onEditMessage ? () => onEditMessage(turnID, item) : undefined,
-      fork: onForkMessage ? () => onForkMessage(turnID, item.id) : undefined,
-    }),
-  });
-}
-
-function PluginMessageSlots({
-  host = desktopPluginHost,
-  context,
-  children,
-}: {
-  host?: PluginHost;
-  context: Readonly<Record<string, unknown>>;
-  children: JSX.Element;
-}): JSX.Element {
-  return (
-    <>
-      <PluginSlot host={host} id="conversation.message.before" context={context} />
-      {children}
-      <PluginSlot host={host} id="conversation.message.after" context={context} />
-    </>
-  );
-}
 
 function BuiltInThreadItemView({
   turnID,
@@ -232,25 +150,17 @@ function BuiltInThreadItemView({
   onSubmitEditMessage,
   onOpenAgent,
   editSummaryCard,
-  pluginHost = desktopPluginHost,
 }: ThreadItemViewProps): JSX.Element | null {
   const { t } = useI18n();
   const owningThreadId = useContext(ArtifactThreadContext);
-  const threadId = owningThreadId ?? pluginHost.getActiveConversationThreadId();
-  const commandContext = useMemo(() => {
-    if (editing || (item.type !== "user_message" && item.type !== "agent_message")) return undefined;
-    return Object.freeze({
-      contractVersion: 1 as const,
-      target: "conversation.message.actions" as const,
-      ...(threadId === undefined ? {} : { threadId }),
-      turnId: turnID,
-      item: toConversationItemSnapshot(item, item.type === "user_message" ? "user-message" : "assistant-message"),
-    });
-  }, [editing, item, threadId, turnID]);
-  const hasPluginActions = usePluginCommandActions(pluginHost, commandContext).length > 0;
-  const pluginActions = commandContext === undefined ? null : (
-    <PluginCommandActions host={pluginHost} context={commandContext} buttonClassName="message-action-button" />
-  );
+  const { application, slots, slotOwner } = useConversationControls();
+  const [emptyActions, setEmptyActions] = useState(false);
+  const hasPluginActions = !editing && !emptyActions;
+  const pluginActions = editing ? null : <slots.Slot
+    name={`${slotOwner}/conversation.message.actions`}
+    context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id, snapshot: toConversationItemSnapshot(item) }}
+    fallback={<EmptyMessageActions onEmpty={setEmptyActions} />}
+  />;
   const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
   // Only a live item/turn completion handoff should animate. Historical
   // completed messages mount without this marker, so virtualized content does
@@ -311,7 +221,7 @@ function BuiltInThreadItemView({
         && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
-          requestOpenThreadInSplit(relatedSessionID);
+          void application.invoke("conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
         }
       };
       return (
@@ -325,17 +235,16 @@ function BuiltInThreadItemView({
         >
           <div className="user-message-motion" data-message-arrival>
           {sessionMessage ? (
-            <button
+            <Tooltip asChild content={sourceLabel}><button
               type="button"
               className="session-message-source"
               onClick={openRelatedSession}
               disabled={!relatedSessionAvailable}
-              title={sourceLabel}
               aria-label={`${t("message.openRelatedSession")}: ${sourceName}`}
             >
               <MessagesSquare aria-hidden="true" />
               <span>{sourceName}</span>
-            </button>
+            </button></Tooltip>
           ) : null}
           {editing ? (
             <UserMessageInlineEditor
@@ -360,8 +269,10 @@ function BuiltInThreadItemView({
             />
           )}
           </div>
-          {!editing && (copyable || editActionVisible || relatedSessionAvailable || hasPluginActions) ? (
+          {!editing ? (
             <div
+              style={copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? undefined : { display: "none" }}
+              ref={placeUserMessageActions}
               className="message-actions user-message-actions"
               data-wuu-component="message-actions"
               data-wuu-placement="overlay"
@@ -376,15 +287,14 @@ function BuiltInThreadItemView({
                 />
               ) : null}
               {relatedSessionAvailable && !sessionMessage ? (
-                <button
+                <Tooltip asChild content={t("message.openRelatedSession")}><button
                   type="button"
                   className="message-action-button"
                   aria-label={t("message.openRelatedSession")}
-                  title={t("message.openRelatedSession")}
                   onClick={openRelatedSession}
                 >
                   <Info size={15} />
-                </button>
+                </button></Tooltip>
               ) : null}
               {editActionVisible && onEditMessage ? (
                 <MessageEditButton
@@ -400,10 +310,7 @@ function BuiltInThreadItemView({
       );
     }
     case "agent_message": {
-      const streamKeyValue = streamTextKey(turnID, item.id, "text");
-      const agentText = streamTextStore.has(streamKeyValue)
-        ? streamTextStore.get(streamKeyValue)
-        : (item.text ?? "");
+      const agentText = owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? "";
       const copyable = agentText.trim() !== "";
       const isProcessText = !item.terminal;
       const finalItemCompletedBeforeTurn =
@@ -424,7 +331,7 @@ function BuiltInThreadItemView({
       const actionsVisible = forkVisible || hasPluginActions;
       const actionsPersistent =
         actionsVisible &&
-        (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
+        (!isProcessText || item.id === latestAgentMessageID);
       // Without contributed actions, reserve space only for final answers.
       // Live commentary must not gain an empty answer-action gap.
       const reserveActionSlot = hasPluginActions || (!isProcessText &&
@@ -455,14 +362,15 @@ function BuiltInThreadItemView({
             {(item.images?.length ?? 0) > 0 ? <MessageImageGrid images={item.images ?? []} collapsedLimit={4} /> : null}
           </div>
           {editSummaryCard}
-          {actionsVisible ? (
-            <AgentMessageActions
-              getText={() => streamFieldValue(turnID, item, "text")}
+          <AgentMessageActions
+              hidden={!actionsVisible && !reserveActionSlot}
+              reserved={!actionsVisible}
+              getText={() => owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? ""}
               placement={actionsPersistent ? "persistent" : "overlay"}
-              timestamp={turnAnswerReadyAt}
+              timestamp={actionsVisible ? turnAnswerReadyAt : undefined}
               trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
                 ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
-              showCopy={copyable}
+              showCopy={actionsVisible && copyable}
               showFork={forkVisible}
               onFork={
                 forkVisible && onForkMessage
@@ -472,9 +380,6 @@ function BuiltInThreadItemView({
             >
               {pluginActions}
             </AgentMessageActions>
-          ) : reserveActionSlot ? (
-            <div className="message-actions agent-message-actions" aria-hidden="true" />
-          ) : null}
         </AssistantResponseArticle>
       );
     }
@@ -548,7 +453,7 @@ function UserMessageContent({
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const bubbleText = structured ? textParts.map((part) => part.text).join("\n\n") : text;
+  const bubbleText = userMessageBodyText(text, contentParts);
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
@@ -913,16 +818,15 @@ function UserMessageInlineEditor({
         rows={Math.max(1, Math.min(8, text.split("\n").length))}
       />
       <div className="user-message-edit-toolbar">
-        <button
+        <Tooltip asChild content={t("message.addImageOrPdf")}><button
           type="button"
           className="composer-tool-button user-message-edit-attach-button"
           aria-label={t("composer.addAttachment")}
-          title={t("message.addImageOrPdf")}
           disabled={submitting}
           onClick={() => fileInputRef.current?.click()}
         >
           <Plus aria-hidden="true" />
-        </button>
+        </button></Tooltip>
         <div className="user-message-edit-spacer" />
         <div className="user-message-edit-actions">
           <button
@@ -933,17 +837,16 @@ function UserMessageInlineEditor({
           >
             {t("common.cancel")}
           </button>
-          <button
+          <Tooltip asChild content={t("composer.send")}><button
             className="composer-action-button composer-send-button"
             type="button"
             aria-label={t("composer.send")}
-            title={t("composer.send")}
             disabled={!canSubmit || submitting}
             aria-busy={submitting}
             onClick={submit}
           >
             {submitting ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
-          </button>
+          </button></Tooltip>
         </div>
       </div>
     </div>
@@ -973,7 +876,7 @@ function AgentMessageContent({
   pendingCompanionReasoning?: boolean;
   onStreamFrame: () => void;
 }): JSX.Element {
-  const streamKeyValue = streamTextKey(turnID, item.id, "text");
+  const threadId = useContext(ArtifactThreadContext);
   // Liveness comes from the back-end state alone: once the item or its turn
   // is terminal the surface must settle, whatever the streaming buffer holds.
   // A terminal turn ends every stream even if an item completion was missed.
@@ -1001,17 +904,11 @@ function AgentMessageContent({
     };
   }, [pendingCompanionReasoning]);
 
-  const hasBufferedStream = streamTextStore.has(streamKeyValue);
-  const canReleaseBufferedStream = !isLive && typeof item.text === "string" && item.text.length > 0;
 
   return (
-    <StreamingMarkdown
-      streamKey={streamKeyValue}
-      initialText={
-        isLive && hasBufferedStream
-          ? streamTextStore.seedValue(streamKeyValue)
-          : item.text
-      }
+    <ApplicationStreamingMarkdown
+      threadId={threadId} turnId={turnID} itemId={item.id}
+      initialText={item.text}
       cwd={cwd}
       onOpenFile={onOpenFile}
       isLive={isLive && cursorArmed}
@@ -1021,11 +918,6 @@ function AgentMessageContent({
           : "commentary"
       }
       onFrame={onStreamFrame}
-      onSettled={
-        canReleaseBufferedStream
-          ? () => streamTextStore.clearItem(turnID, item.id)
-          : undefined
-      }
     />
   );
 }
@@ -1045,31 +937,20 @@ function ReasoningContent({
   live: boolean;
   onStreamFrame: () => void;
 }): JSX.Element {
-  const streamKeyValue = streamTextKey(turnID, item.id, "text");
+  const threadId = useContext(ArtifactThreadContext);
   const isLive = live;
 
-  const hasBufferedStream = streamTextStore.has(streamKeyValue);
-  const canReleaseBufferedStream = !isLive && typeof item.text === "string" && item.text.length > 0;
 
   return (
-    <StreamingMarkdown
-      streamKey={streamKeyValue}
-      initialText={
-        isLive && hasBufferedStream
-          ? streamTextStore.seedValue(streamKeyValue)
-          : item.text
-      }
+    <ApplicationStreamingMarkdown
+      threadId={threadId} turnId={turnID} itemId={item.id}
+      initialText={item.text}
       className="streaming-markdown rich-content reasoning-stream"
       cwd={cwd}
       onOpenFile={onOpenFile}
       isLive={isLive}
       phase="commentary"
       onFrame={onStreamFrame}
-      onSettled={
-        canReleaseBufferedStream
-          ? () => streamTextStore.clearItem(turnID, item.id)
-          : undefined
-      }
     />
   );
 }

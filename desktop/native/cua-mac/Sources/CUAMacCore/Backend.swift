@@ -483,6 +483,8 @@ public final class MacComputerBackend: ComputerBackend {
             guard context.snapshotter.isCurrent(id: rootID), let element = context.snapshotter.element(id: rootID) else { throw ComputerError.staleSnapshot("subtree changed") }
             root = element
         }
+        let rootWindow = axString(root, kAXRoleAttribute as String) == kAXWindowRole as String
+            ? root : (axValue(root, kAXWindowAttribute as String) as! AXUIElement?) ?? preferredAXWindow(axApplication)
         let previousTicket = context.snapshotTicket
         let previousSnapshot = context.storedSnapshot
         let sameOwner = previousTicket?.processID == app.processIdentifier &&
@@ -526,7 +528,6 @@ public final class MacComputerBackend: ComputerBackend {
             if command.scope == .window {
                 // Legacy single-window path: unchanged so scope=window (the default)
                 // stays byte-for-byte identical to the pre-composite behaviour.
-                let rootWindow = axString(root, kAXRoleAttribute as String) == kAXWindowRole as String ? root : (axValue(root, kAXWindowAttribute as String) as! AXUIElement?)
                 let capture = try captureWindowWithForegroundFallback(context: context, command, app: app, preferredFrame: rootWindow.flatMap(axFrame))
                 screenshot = capture.data
                 if context.lastScreenshotData != capture.data {
@@ -602,9 +603,14 @@ public final class MacComputerBackend: ComputerBackend {
         let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch, resourceRevision: context.resourceRevision)
         context.snapshotTicket = ticket
         context.snapshotWindows = currentWindowFrames(processID: app.processIdentifier)
-        if structured["window_id"] == nil, let frame = axFrame(root) {
+        if context.lastWindowID == nil, let frame = rootWindow.flatMap(axFrame) {
             let matches = context.snapshotWindows.filter { $0.value == frame }.map(\.key)
-            if matches.count == 1 { structured["window_id"] = Int(matches[0]) }
+            if matches.count == 1 {
+                // AX-only observations must retain the same window identity used
+                // by screenshot observations for the next directed keyboard input.
+                context.lastWindowID = matches[0]
+                structured["window_id"] = Int(matches[0])
+            }
         }
         context.storedSnapshot = snapshot
         context.snapshotRoot = accessibility ? root : nil
@@ -985,43 +991,14 @@ public final class MacComputerBackend: ComputerBackend {
         let pid = app.processIdentifier
         return try performDirectedOrForeground(context: context, command, app: app,
             directed: {
-                try withHeldKey(heldKey, post: { $0.postToPid(pid) }) {
-                    try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration)
-                }
+                try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration, heldKey: heldKey)
             }, foreground: {
                 try withHeldKey(heldKey, post: { $0.post(tap: .cghidEventTap) }) {
-                    try self.postClick(point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration)
+                    try postClicks(point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration) {
+                        $0.post(tap: .cghidEventTap)
+                    }
                 }
             })
-    }
-
-    private func postClick(point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers, duration: TimeInterval) throws {
-        let source = syntheticEventSource()
-        let button: CGMouseButton
-        let downType: CGEventType
-        let upType: CGEventType
-        switch name?.lowercased() ?? "left" {
-        case "right": button = .right; downType = .rightMouseDown; upType = .rightMouseUp
-        case "middle": button = .center; downType = .otherMouseDown; upType = .otherMouseUp
-        default: button = .left; downType = .leftMouseDown; upType = .leftMouseUp
-        }
-        try ComputerExecution.input()
-        markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button))?.post(tap: .cghidEventTap)
-        usleep(20_000)
-        for click in 1...max(1, min(count, 3)) {
-            guard let down = markSynthetic(CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: button)),
-                  let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button)) else {
-                throw ComputerError.operationFailed("could not create mouse event")
-            }
-            down.flags = modifiers.eventFlags
-            up.flags = modifiers.eventFlags
-            down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
-            up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
-            try ComputerExecution.input()
-            down.post(tap: .cghidEventTap)
-            defer { up.post(tap: .cghidEventTap) }
-            try holdInput(for: max(0.035, duration))
-        }
     }
 
     private func drag(context: AppControlContext, _ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -1124,7 +1101,7 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func postKey(_ key: String, duration: TimeInterval = 0) throws {
-        try withHeldKey(KeyChord.parse(key), post: { $0.post(tap: .cghidEventTap) }) { try holdInput(for: duration) }
+        try withHeldKey(KeyChord.parse(key), duration: duration, post: { $0.post(tap: .cghidEventTap) }) {}
     }
 
     private func scroll(context: AppControlContext, _ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -1197,12 +1174,12 @@ public final class MacComputerBackend: ComputerBackend {
             try setAXValue(resolved, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue)
         }
         return try performDirectedOrForeground(context: context, command, app: app,
-            directed: { try postUnicodeToPid(pid, text: text) },
+            directed: { try postUnicode(text) { $0.postToPid(pid) } },
             foreground: {
                 if let target {
                     try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue)
                 }
-                try self.postUnicodeGlobal(text: text)
+                try postUnicode(text) { $0.post(tap: .cghidEventTap) }
             })
     }
 
@@ -1215,43 +1192,25 @@ public final class MacComputerBackend: ComputerBackend {
             let focus = {
                 if let target { try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue) }
             }
-            let mechanism = try performDirectedOrForeground(context: context, command, app: app,
-                directed: {
-                    try focus()
-                    try postKeyChordToPid(app.processIdentifier, chord: KeyChord.parse("command+v"))
-                }, foreground: {
-                    try focus()
-                    try self.postKey("command+v")
-                })
+            let dispatch = Result {
+                try performDirectedOrForeground(context: context, command, app: app,
+                    directed: {
+                        try focus()
+                        try postKeyChordToPid(app.processIdentifier, chord: KeyChord.parse("command+v"))
+                    }, foreground: {
+                        try focus()
+                        try self.postKey("command+v")
+                    })
+            }
             // A cancelled request can still have queued Cmd-V. Keep the paste
             // content available during delivery even when the wait is interrupted;
             // restoring immediately could paste the user's previous clipboard.
             let clipboardReadDeadline = Date().addingTimeInterval(0.25)
             defer { RunLoop.current.run(until: clipboardReadDeadline) }
+            let mechanism = try dispatch.get()
             try holdInput(for: max(0, clipboardReadDeadline.timeIntervalSinceNow))
             _ = try settle(activity, app: app, application: application)
             return mechanism
-        }
-    }
-
-    private func postUnicodeGlobal(text: String) throws {
-        let source = syntheticEventSource()
-        for units in unicodeChunks(text) {
-            guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)),
-                  let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)) else {
-                throw ComputerError.operationFailed("could not create text input event")
-            }
-            down.flags = []
-            up.flags = []
-            units.withUnsafeBufferPointer { buffer in
-                guard let baseAddress = buffer.baseAddress else { return }
-                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-            }
-            try ComputerExecution.input()
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
-            usleep(4_000)
         }
     }
 

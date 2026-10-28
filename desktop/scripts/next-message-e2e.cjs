@@ -222,7 +222,13 @@ app.whenReady().then(async () => {
       const key = JSON.stringify([params.fingerprint, params.workspace_id]);
       if (!runtimeInstances.has(key)) {
         const instance = createNextMessagePlugin();
-        runtimeInstances.set(key, (async () => { await instance.initialize({}, host); return instance; })());
+        runtimeInstances.set(key, (async () => {
+          const lifecycle = { signal: new AbortController().signal };
+          await instance.initialize({}, host, lifecycle);
+          await instance.prepare?.(host, lifecycle);
+          await instance.activate?.(host, lifecycle);
+          return instance;
+        })());
       }
       const instance = await runtimeInstances.get(key);
       const result = await instance.invokeCapability({ capability: "plugin.client.request", input: { method: params.method, input: params.input } }, host, { signal: controller.signal });
@@ -635,7 +641,8 @@ app.whenReady().then(async () => {
     await evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.setProperty("--conversation-message-font-size", "20px"); document.documentElement.style.setProperty("--wuu-font-size-ui", "20px"); });
     await evaluate(() => document.querySelector('.plugin-ui-input').scrollIntoView({ block: "center" }));
     await screenshot("settings-dark-large-narrow");
-    await evaluate(() => document.querySelector(".settings-back-button").click()); await until(selector => Boolean(document.querySelector(selector)), inputSelector);
+    await evaluate(() => document.querySelector('[data-wuu-component="conversations-section"]').click());
+    await until(selector => !document.querySelector('.app-shell[data-settings-open]') && Boolean(document.querySelector(selector)), inputSelector);
   });
   await check("real UI recording captures completion acceptance typing and dismissal", async () => {
     win.setContentSize(1000, 760); await until(() => innerWidth === 1000);

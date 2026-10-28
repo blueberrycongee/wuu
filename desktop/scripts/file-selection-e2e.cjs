@@ -22,8 +22,10 @@ app.whenReady().then(run).then(() => app.quit()).catch(async error => {
   if (win && !win.isDestroyed()) {
     try {
       await screenshot("failure");
-      report.failureDOM = await evaluate(() => ({ text: document.body.innerText, active: document.activeElement?.outerHTML,
-        inputs: Array.from(document.querySelectorAll("textarea")).map(input => ({ value: input.value, visible: Boolean(input.getBoundingClientRect().width) })) }));
+      report.failureDOM = await evaluate(() => ({ text: document.body.innerText, active: document.activeElement ? { tag: document.activeElement.tagName, className: document.activeElement.className } : null,
+        inputs: Array.from(document.querySelectorAll("textarea")).map(input => ({ value: input.value, visible: Boolean(input.getBoundingClientRect().width) })),
+        tabs: Array.from(document.querySelectorAll("[data-wuu-tab-kind]")).map(tab => ({ kind: tab.dataset.wuuTabKind, active: tab.dataset.wuuActive, text: tab.textContent })),
+        surfaces: Array.from(document.querySelectorAll(".workspace-file-resource, .workspace-side-thread-content, .workspace-document-composer")).map(surface => ({ className: surface.className, hidden: surface.hidden, width: surface.getBoundingClientRect().width, height: surface.getBoundingClientRect().height })) }));
       report.failureFixture = await snapshot();
     } catch { /* A crashed renderer cannot provide diagnostics. */ }
   }
@@ -62,6 +64,8 @@ async function run() {
       callback({ cancel: true });
     });
     await win.loadFile(renderer);
+    await waitFor(() => Boolean(document.querySelector(".sidebar-session-row .thread-row-main")), "fixture session in navigation");
+    await click(".sidebar-session-row .thread-row-main");
     await waitFor(() => Boolean(document.querySelector(".conversation-pane .turn")), "active fixture session");
     await evaluate(({ theme, size }) => {
       document.documentElement.dataset.theme = theme;
@@ -466,7 +470,9 @@ async function verifyTextAttachments(variant) {
   await click(".user-message-pasted-text-toggle");
   await waitFor(text => document.querySelector(".user-message-pasted-text-content")?.textContent === text, "sent attachment preview", text);
   await screenshot(variant.name + "-text-history");
+  await evaluate(() => document.querySelector(".user-message-pasted-text-toggle").scrollIntoView({ block: "center", behavior: "instant" }));
   await click(".user-message-pasted-text-toggle");
+  await waitFor(() => !document.querySelector(".user-message-pasted-text-content"), "sent attachment preview collapsed");
   report.cases.push({ variant, kind: "text-attachment", sent, scrolling, checks: ["preserved-instruction", "multiple-attachments", "direct-expansion", "editing-focus", "expanded-scroll", "independent-removal", "snapshot-submission", "history-preview"] });
   writeReport();
   await showWorkspacePanel();
@@ -578,7 +584,13 @@ async function click(selector) {
   await visibleGeometry(selector);
   await settle();
   const rect = await visibleGeometry(selector);
-  await mouseClick({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+  const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  await evaluate(({ selector, point }) => {
+    const element = document.querySelector(selector);
+    const hit = document.elementFromPoint(point.x, point.y);
+    if (!element.contains(hit)) throw new Error(`Target ${selector} is obscured by ${hit?.outerHTML.slice(0, 400)}`);
+  }, { selector, point });
+  await mouseClick(point);
 }
 
 async function mouseClick(point) {

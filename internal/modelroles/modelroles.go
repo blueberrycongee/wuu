@@ -293,6 +293,15 @@ func BuildFacts(providerName string, provider config.ProviderConfig, model strin
 	capabilities := capabilitiesFromProfile(ruleProviderName, ruleProvider, modelCfg, profile, budget)
 	options := modelvariant.ResolveForProvider(ruleProviderName, ruleProvider, model, "", "").ProviderOptions
 	capabilities.FreeformTool = modelprofile.SupportsFreeformTools(modelcatalog.APIModel(ruleProvider, model), options)
+	if strings.EqualFold(strings.TrimSpace(provider.Type), "chatgpt") {
+		// These are restrictions of the plan inference route, independent of
+		// model-specific metadata or the configured provider's display name.
+		capabilities.Responses = true
+		capabilities.SystemRole = false
+		capabilities.DeveloperRole = true
+		capabilities.VideoInput = false
+		capabilities.VideoInputKnown = true
+	}
 	return capabilities, behaviorFromProfile(profile)
 }
 
@@ -520,7 +529,7 @@ func protocolFamily(providerName string, provider config.ProviderConfig) string 
 	switch providerType {
 	case "anthropic", "claude", "anthropic-official":
 		return "anthropic_messages"
-	case "openai-codex", "codex-subscription", "chatgpt-codex", "codex-cli", "codex":
+	case "chatgpt", "openai-codex", "codex-subscription", "chatgpt-codex", "codex-cli", "codex":
 		return "openai_responses"
 	case "xai-subscription", "xai-oauth", "grok-subscription", "supergrok":
 		return "openai_responses"

@@ -29,7 +29,8 @@ func ResolveForProvider(providerName string, provider config.ProviderConfig, mod
 	legacyEffort = strings.TrimSpace(legacyEffort)
 	if strings.EqualFold(variant, "none") || (variant == "" && strings.EqualFold(legacyEffort, "none")) {
 		desc := compatDescriptor(providerName, provider, model)
-		if isGLM53(desc.APIID) || AnthropicRequiresBoundThinking(desc.APIID) {
+		if isGLM53(desc.APIID) || AnthropicRequiresBoundThinking(desc.APIID) ||
+			isMiniMaxM31(desc.APIID) || isMiniMaxM31(desc.ModelID) || isKimiK31(desc.APIID) {
 			// These models cannot disable reasoning. Migrate the retired switch to
 			// the least expensive valid tier rather than falling back to max.
 			variant = "low"
@@ -74,7 +75,21 @@ func DefaultVariantForProvider(_ string, provider config.ProviderConfig, model s
 	if value := strings.TrimSpace(modelCfg.DefaultVariant); value != "" {
 		return value
 	}
-	return strings.TrimSpace(modelCfg.DefaultEffort)
+	if value := strings.TrimSpace(modelCfg.DefaultEffort); value != "" {
+		return value
+	}
+	apiID := strings.TrimSpace(modelCfg.ID)
+	if apiID == "" {
+		apiID = model
+	}
+	if isKimiK31(apiID) {
+		// Kimi Code and the pay-as-you-go API have different defaults.
+		if strings.HasPrefix(strings.ToLower(apiID), "k3.1-") {
+			return "high"
+		}
+		return "max"
+	}
+	return ""
 }
 
 func Options(provider config.ProviderConfig, model, variant string) (map[string]any, bool) {

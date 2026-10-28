@@ -623,7 +623,7 @@ export function createRuntimeSettingsActions(
   async function selectEngineRuntime(update: Parameters<RuntimeSettingsActions["selectEngineRuntime"]>[0]): Promise<boolean> {
     const state = deps.getAppState();
     const thread = activeThreadForState(state);
-    if (!thread || !thread.engine_id || thread.engine_id === "wuu" || deps.getViewContextSwitchPending()) return false;
+    if (!thread || !thread.engine_id || deps.getViewContextSwitchPending()) return false;
     try {
       await sendRuntimeSelection(update);
       return true;

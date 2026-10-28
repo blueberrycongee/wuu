@@ -1,19 +1,16 @@
+import { Tooltip } from "./Tooltip";
 import { X } from "./WuuIcons";
 import type {
   InputFile,
   InputImage,
   MessageContentPart,
-  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
   UserQuestionRequest,
 } from "../shared/protocol";
-import { SplitPaneComposer } from "./ComposerView";
+import { useConversationControls } from "./ConversationControlsContext";
 import {
-  activeTurnIsAnswerReady,
-  isThreadRunning,
-  type ComposerDraftState,
   type ConversationPaneID,
   type TurnStreamStatus,
 } from "./AppState";
@@ -25,33 +22,16 @@ import { useI18n } from "./i18n";
 
 export function ConversationSplitPane({
   pane,
+  ownerTabId,
   thread,
   active,
   activeContextCwd,
-  workspaceId,
-  workspaceRoot,
   streamStatus,
-  draft,
-  viewSwitchPending,
-  queuedCount,
-  pendingCount,
-  stopState,
-  submitting,
-  queryHistory,
-  requestedHandoffIntent,
   editingMessage,
   onActivate,
   onClose,
   onBodyRef,
   onScroll,
-  onSetPrompt,
-  onPasteAttachmentFiles,
-  onRemoveFile,
-  onRemoveImage,
-  onChangeSelection,
-  onRemoveSelection,
-  onSend,
-  onInterrupt,
   onForkMessage,
   onOpenFile,
   onOpenURL,
@@ -66,33 +46,16 @@ export function ConversationSplitPane({
   onCancelUserQuestion,
 }: {
   pane: ConversationPaneID;
+  ownerTabId?: string;
   thread: Thread;
   active: boolean;
   activeContextCwd?: string;
-  workspaceId?: string;
-  workspaceRoot?: string;
   streamStatus?: TurnStreamStatus;
-  draft: ComposerDraftState;
-  viewSwitchPending: boolean;
-  queuedCount?: number;
-  pendingCount?: number;
-  stopState?: "pending" | "retry";
-  submitting?: boolean;
-  queryHistory: string[];
-  requestedHandoffIntent?: string;
   editingMessage?: { turnID: string; itemID: string; submitting: boolean };
   onActivate: () => void;
   onClose: () => void;
   onBodyRef: (node: HTMLElement | null) => void;
   onScroll: (node: HTMLElement) => void;
-  onSetPrompt: (value: string) => void;
-  onPasteAttachmentFiles: (files: File[]) => void;
-  onRemoveFile: (id: string) => void;
-  onRemoveImage: (id: string) => void;
-  onChangeSelection?: (selection: ResponseSelection) => void;
-  onRemoveSelection?: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
@@ -114,6 +77,7 @@ export function ConversationSplitPane({
   onCancelUserQuestion?: (requestID: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const { slots, slotOwner } = useConversationControls();
   const paneTurns = thread.turns ?? [];
   const paneLatestAgentMessageID = latestAgentMessageItemID(paneTurns);
   const pendingQuestion =
@@ -143,7 +107,6 @@ export function ConversationSplitPane({
     );
     return attachAfterTurn ? <div className="user-question-after-turn">{card}</div> : card;
   };
-  const paneRunning = isThreadRunning(thread);
   const paneReadOnly = Boolean(thread.read_only);
 
   return (
@@ -156,15 +119,14 @@ export function ConversationSplitPane({
       onPointerDown={onActivate}
     >
       {pane === "secondary" && (
-        <button
+        <Tooltip asChild content={t("split.closeRight")}><button
           className="icon-button conversation-split-close"
           type="button"
           aria-label={t("split.closeRight")}
-          title={t("split.closeRight")}
           onClick={onClose}
         >
           <X className="icon" />
-        </button>
+        </button></Tooltip>
       )}
       <div
         ref={onBodyRef}
@@ -197,6 +159,7 @@ export function ConversationSplitPane({
             renderTurn={(turn) => (
                 <TurnView
                   threadID={thread.id}
+                  sessionLocator={thread.session_locator}
                   engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
@@ -233,34 +196,8 @@ export function ConversationSplitPane({
           />
         </div>
       </div>
-      {!paneReadOnly && (
-        <SplitPaneComposer
-          prompt={draft.prompt}
-          setPrompt={onSetPrompt}
-          files={draft.files}
-          selections={draft.selections}
-          onChangeSelection={onChangeSelection}
-          onRemoveSelection={onRemoveSelection}
-          images={draft.images}
-          running={(paneRunning && !activeTurnIsAnswerReady(thread)) || viewSwitchPending}
-          sendDisabled={viewSwitchPending}
-          submitting={submitting}
-          stopState={stopState}
-          readOnly={viewSwitchPending}
-          onPasteAttachmentFiles={onPasteAttachmentFiles}
-          onRemoveFile={onRemoveFile}
-          onRemoveImage={onRemoveImage}
-          onSend={onSend}
-          onInterrupt={onInterrupt}
-          queryHistorySessionID={thread.id}
-          workspaceId={workspaceId}
-          workspaceRoot={workspaceRoot}
-          queuedCount={queuedCount}
-          pendingCount={pendingCount}
-          turnId={thread.turns?.at(-1)?.id}
-          queryHistory={queryHistory}
-          requestedHandoffIntent={requestedHandoffIntent}
-        />
+      {!paneReadOnly && ownerTabId && (
+        <slots.Slot name={`${slotOwner}/application.composer`} context={{ variant: "dock", pane, ownerTabId }} />
       )}
     </section>
   );

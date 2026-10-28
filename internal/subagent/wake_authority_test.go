@@ -25,7 +25,7 @@ func TestFollowup_WakeRefreshesAuthority(t *testing.T) {
 		releaseFirst: make(chan struct{}),
 		secondSeen:   make(chan providers.ChatRequest, 1),
 	}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 	kit := &wakeProbeToolkit{}
 	var refreshed atomic.Int32
 	var refreshedWith atomic.Value
@@ -88,7 +88,7 @@ func TestFollowup_WakeRefreshesAuthority(t *testing.T) {
 // itself is registration, not admission — only the wake refreshes.
 func TestRestoreThenFollowup_WakeRefreshesAuthority(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "resumed"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 	kit := &wakeProbeToolkit{}
 	var refreshed atomic.Int32
 	var refreshedWith atomic.Value

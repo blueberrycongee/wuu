@@ -7,6 +7,8 @@ description: Observe and control native macOS apps through Accessibility, Screen
 
 Use the `computer` tool from the `cua-mac` plugin for native macOS app interaction.
 
+Provide `display_title` on every computer call: a short action description in the user's language, such as “观察 Wuu Dev 当前窗口” or “点击搜索框”. Describe the intended action, never claim success before checking the result. Keep internal tool names and sensitive input out of the title.
+
 ## Control model
 
 - Prefer a dedicated API, connector, or CLI when it can complete the task.

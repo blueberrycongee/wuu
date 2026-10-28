@@ -1,82 +1,9 @@
-import { useEffect, useState } from "react";
-import type { RuntimeContext, ServerEvent } from "../shared/protocol";
+import { useSyncExternalStore } from "react";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 
-const BUSY_LIFECYCLE_METHODS = new Set([
-  "turn/started",
-  "turn/completed",
-  "turn/error",
-  "thread/started",
-  "thread/resumed",
-]);
-
-function invalidatesGitActionBusy(event: ServerEvent): boolean {
-  if (event.kind === "server-exit") {
-    return true;
-  }
-  return (
-    event.kind === "notification" &&
-    BUSY_LIFECYCLE_METHODS.has(event.message.method)
+export function useGitActionBusy(environment: ApplicationEnvironmentV1): boolean {
+  return useSyncExternalStore(
+    listener => environment.subscribe(listener),
+    () => environment.getSnapshot().actionBusy,
   );
-}
-
-export function useGitActionBusy(
-  context: RuntimeContext | undefined,
-  runningThreadKey: string,
-): boolean {
-  const [snapshot, setSnapshot] = useState<{
-    lookupKey: string;
-    busy: boolean;
-  }>(() => ({ lookupKey: "", busy: true }));
-  const contextKey = context
-    ? [context.kind, context.kind === "project" ? context.project_id : "", context.cwd].join(
-        "\0",
-      )
-    : "";
-  const workspaceRoot = context?.cwd;
-  const lookupKey = `${contextKey}\0${runningThreadKey}`;
-
-  useEffect(() => {
-    if (!workspaceRoot) {
-      return;
-    }
-    let cancelled = false;
-    let requestID = 0;
-    const refresh = (): void => {
-      const currentRequestID = ++requestID;
-      const query = window.wuu.gitActionBusy;
-      if (typeof query !== "function") {
-        setSnapshot({ lookupKey, busy: true });
-        return;
-      }
-      void query(workspaceRoot)
-        .then((busy) => {
-          if (!cancelled && currentRequestID === requestID) {
-            setSnapshot({ lookupKey, busy });
-          }
-        })
-        .catch(() => {
-          if (!cancelled && currentRequestID === requestID) {
-            setSnapshot({ lookupKey, busy: true });
-          }
-        });
-    };
-
-    refresh();
-    const off = window.wuu.onServerEvent((event) => {
-      if (!invalidatesGitActionBusy(event)) {
-        return;
-      }
-      setSnapshot({ lookupKey: "", busy: true });
-      refresh();
-    });
-    return () => {
-      cancelled = true;
-      off();
-    };
-  }, [lookupKey, workspaceRoot]);
-
-  if (!context) {
-    return false;
-  }
-  return snapshot.lookupKey === lookupKey ? snapshot.busy : true;
 }

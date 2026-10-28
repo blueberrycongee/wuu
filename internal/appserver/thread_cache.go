@@ -16,8 +16,17 @@ type cachedThreadCandidate struct {
 }
 
 func (s *Server) pruneCachedThreads(keepIDs ...string) {
+	if cleanup := s.evictCachedThreads(keepIDs...); cleanup != nil {
+		cleanup()
+	}
+}
+
+// evictCachedThreads removes idle projections and captures their old resources
+// before returning. Callers may defer the joins, but never the cache mutation:
+// the next request can already be using a newly loaded projection of that ID.
+func (s *Server) evictCachedThreads(keepIDs ...string) func() {
 	if s == nil || cachedThreadLimit <= 0 {
-		return
+		return nil
 	}
 	keep := make(map[string]struct{}, len(keepIDs))
 	for _, id := range keepIDs {
@@ -31,7 +40,7 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 	threadCount := len(s.threads)
 	if threadCount <= cachedThreadLimit {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	candidates := make([]cachedThreadCandidate, 0, threadCount)
 	for id, th := range s.threads {
@@ -46,7 +55,7 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 
 	candidates = s.filterCachedThreadCandidates(candidates)
 	if len(candidates) == 0 {
-		return
+		return nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		left := candidateAccessTime(candidates[i])
@@ -57,7 +66,7 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 		return candidates[i].id < candidates[j].id
 	})
 
-	evicted := make([]*threadState, 0, len(candidates))
+	cleanups := make([]func(), 0, len(candidates))
 	s.mu.Lock()
 	evictCount := len(s.threads) - cachedThreadLimit
 	for _, candidate := range candidates {
@@ -71,33 +80,46 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 		if current == nil || current != candidate.thread {
 			continue
 		}
-		if !cachedThreadStillIdle(current) {
+		if s.activeExecutionRunID(current.ID) != "" {
 			continue
 		}
+		current.mu.Lock()
+		if !cachedThreadStillIdleLocked(current) {
+			current.mu.Unlock()
+			continue
+		}
+		detached := detachThreadRuntimeLocked(current)
+		current.maybeReleasePluginGenerationExecutionLeaseLocked()
+		binding := current.state
 		delete(s.threads, candidate.id)
-		evicted = append(evicted, current)
+		current.mu.Unlock()
+		cleanups = append(cleanups, func() {
+			s.releaseDetachedThreadRuntime(detached)
+			if binding != nil {
+				_ = binding.Close()
+			}
+		})
 		evictCount--
 	}
 	s.mu.Unlock()
 
-	for _, th := range evicted {
-		s.releaseThreadRuntime(th)
+	if len(cleanups) == 0 {
+		return nil
+	}
+	return func() {
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
 	}
 }
 
 func (s *Server) cachedThreadCandidateLocked(id string, th *threadState) (cachedThreadCandidate, bool) {
-	if th == nil {
+	if th == nil || s.activeExecutionRunID(id) != "" {
 		return cachedThreadCandidate{}, false
 	}
 	th.mu.Lock()
 	defer th.mu.Unlock()
-	if cachedThreadExecutionActiveLocked(th) {
-		return cachedThreadCandidate{}, false
-	}
-	if th.Ephemeral {
-		return cachedThreadCandidate{}, false
-	}
-	if !th.PersistHistory && !th.ReadOnly {
+	if !cachedThreadStillIdleLocked(th) {
 		return cachedThreadCandidate{}, false
 	}
 	return cachedThreadCandidate{
@@ -141,6 +163,10 @@ func cachedThreadStillIdle(th *threadState) bool {
 	}
 	th.mu.Lock()
 	defer th.mu.Unlock()
+	return cachedThreadStillIdleLocked(th)
+}
+
+func cachedThreadStillIdleLocked(th *threadState) bool {
 	if cachedThreadExecutionActiveLocked(th) {
 		return false
 	}
@@ -157,7 +183,5 @@ func cachedThreadExecutionActiveLocked(th *threadState) bool {
 	if th.running || th.executionLease != nil || th.admissionReserved || th.nativeHistoryMutation {
 		return true
 	}
-	return th.execRuntime != nil &&
-		th.execRuntime.AgentControl != nil &&
-		th.execRuntime.AgentControl.HasOwnedWorkerExecutions()
+	return threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)
 }

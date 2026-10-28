@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>外部连接 · 全页状态预览</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #202020; background: #eceeed; }
+    header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; padding: 12px 20px; border-bottom: 1px solid #d8dadd; background: #fff; }
+    h1 { font: inherit; font-weight: 600; margin: 0; }
+    label { display: flex; align-items: center; gap: 8px; }
+    select, button, a { font: inherit; }
+    select, button { min-height: 34px; border: 1px solid #c7c9cc; border-radius: 6px; padding: 4px 8px; background: #fff; color: #202020; }
+    button { cursor: pointer; } button:disabled { color: #666; cursor: default; }
+    a { color: #0068da; text-underline-offset: 3px; }
+    :focus-visible { outline: 2px solid #0068da; outline-offset: 2px; }
+    .preview { padding: 16px; overflow: auto; }
+    iframe { display: block; border: 0; width: 1100px; height: calc(100vh - 120px); min-height: 620px; margin: 0 auto; background: #f7f7f7; }
+    .note { color: #60656b; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>外部连接 · 全页预览</h1>
+    <label>场景<select id="scene"><option value="daily">日常状态</option><option value="attention">额度不足与异常</option><option value="loading">首次加载</option><option value="empty">空列表</option><option value="long">长名称</option></select></label>
+    <label>主题<select id="theme"><option value="light">浅色</option><option value="dark">深色</option></select></label>
+    <label>字号<select id="size"><option>15</option><option>20</option></select></label>
+    <label>窗口<select id="width"><option value="1100">1100px</option><option value="850">850px</option><option value="960">960px</option><option value="1280">1280px</option><option value="auto">跟随窗口</option></select></label>
+    <label>语言<select id="lang"><option value="zh">中文</option><option value="en">English</option></select></label>
+    <button id="resolve" disabled>显示额度</button>
+    <a id="standalone" target="_blank" rel="noopener">独立打开</a>
+    <span class="note">示例账户数据</span>
+  </header>
+  <div class="preview"><iframe id="preview" title="外部连接设置页"></iframe></div>
+  <script type="module">
+    const frame = document.querySelector('#preview');
+    const controls = Object.fromEntries(['scene','theme','size','width','lang'].map(id => [id, document.getElementById(id)]));
+    const resolve = document.querySelector('#resolve');
+    const render = () => {
+      const state = controls.scene.value;
+      const query = new URLSearchParams({ page: 'providers', overview: state === 'empty' ? 'daily' : state, theme: controls.theme.value, size: controls.size.value, lang: controls.lang.value });
+      if (state === 'empty') query.set('empty', '');
+      const url = '/dev/settings/?' + query;
+      frame.src = url;
+      frame.style.width = controls.width.value === 'auto' ? '100%' : controls.width.value + 'px';
+      document.querySelector('#standalone').href = url;
+      resolve.disabled = true;
+    };
+    frame.addEventListener('load', () => { resolve.disabled = controls.scene.value !== 'loading'; });
+    Object.values(controls).forEach(control => control.addEventListener('change', render));
+    resolve.addEventListener('click', () => { frame.contentWindow.dispatchEvent(new Event('connection-preview-ready')); resolve.disabled = true; });
+    render();
+  </script>
+</body>
+</html>

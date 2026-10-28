@@ -47,7 +47,7 @@ type measurement struct {
 
 func (*measurement) PrepareOperation(providers.InferenceOperationJournalRecord) error { return nil }
 func (*measurement) PrepareAttempt(providers.InferenceAttemptJournalRecord) error     { return nil }
-func (m *measurement) UpsertSubmission(r providers.InferenceSubmissionJournalRecord) error {
+func (m *measurement) UpsertSubmission(_ context.Context, r providers.InferenceSubmissionJournalRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Submissions[r.ID] = true
@@ -60,7 +60,9 @@ func (*measurement) PrepareRecoveryAttempt(context.Context, providers.InferenceR
 	return nil
 }
 func (*measurement) CompleteOperation(providers.InferenceOperationTerminalRecord) error { return nil }
-func (*measurement) CompleteWorkflow(providers.InferenceWorkflowTerminalRecord) error   { return nil }
+func (*measurement) CompleteWorkflow(context.Context, providers.InferenceWorkflowTerminalRecord) error {
+	return nil
+}
 
 func (m *measurement) trace() *httptrace.ClientTrace {
 	var dns, tlsStart time.Time
@@ -233,7 +235,7 @@ func main() {
 			panic("client setup failed")
 		}
 		key := fmt.Sprintf("latency-eval-%d-%d", time.Now().UnixNano(), repeat)
-		runner := agent.StreamRunner{Client: client, ProviderName: *provider, Model: pc.Model, Effort: "low", PromptCacheKey: key,
+		runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, ProviderName: *provider, Model: pc.Model, Effort: "low", PromptCacheKey: key,
 			SystemPrompt: "This is a synthetic transport evaluation. Follow the final user instruction exactly; ignore the repository records unless asked.", MaxSteps: 3, DisableAutoCompact: true}
 		var tools markerTool
 		if *tool {

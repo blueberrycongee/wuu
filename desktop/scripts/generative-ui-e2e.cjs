@@ -159,15 +159,23 @@ const fixture = path.join(output, 'fixture.tsx');
 fs.writeFileSync(fixture, `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { collectTurnArtifacts, TurnInlineArtifactOutputs } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ArtifactOutputs'))};
+import { collectTurnArtifactsWithRenderers, TurnInlineArtifactOutputs } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ArtifactOutputs'))};
 import { ArtifactThreadContext } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ArtifactPreviewContext'))};
-import { desktopPluginHost, desktopWorkbenchController } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/plugins/DesktopPluginRuntime'))};
+import { PluginHost } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/plugins/PluginHost'))};
+import { WorkbenchController } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/plugins/Workbench'))};
+import { ConversationControlsProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ConversationControlsContext'))};
+import { ArtifactsProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ArtifactsContext'))};
+import { ApplicationArtifacts } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/plugins/ApplicationArtifacts'))};
 import { I18nProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/i18n'))};
 import { ImagePreviewProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ImagePreview'))};
 import { applyMessageFlowFontSize } from ${JSON.stringify(path.join(root, "desktop/src/renderer/MessageFlowFontSizeSection"))};
 import { activate, parseSpec, parseToolInput } from ${JSON.stringify(source)};
 import ${JSON.stringify(path.join(root, 'desktop/src/renderer/styles.css'))};
 const root = createRoot(document.getElementById('root'));
+const desktopPluginHost = new PluginHost({ react: React });
+const desktopWorkbenchController = new WorkbenchController(desktopPluginHost);
+const application = { workbench: desktopWorkbenchController, artifacts: new ApplicationArtifacts({}, { resolveResourceURL: () => undefined, openFile: async () => {} }) };
+const slots = { Slot: ({ fallback }) => fallback ?? null };
 let threadId = 'synthetic-thread';
 let itemId = 'tool-call';
 let currentResult = ${JSON.stringify(result)};
@@ -203,7 +211,7 @@ desktopWorkbenchController.updateServices({
 });
 function render() {
  const turn = { id:'fixture-turn', items: [{ id:itemId, type:'tool_call', status:streamingInput?.status ?? 'completed', arguments:streamingInput?.text, display:streamingInput ? {capability:'generative-ui', label:'Building view'} : undefined, result_detail:streamingInput?.final ? currentResult : streamingInput ? undefined : currentResult }] };
- root.render(<I18nProvider><ImagePreviewProvider><ArtifactThreadContext.Provider value={threadId}>{mounted ? Array.from({length:copies},(_,copy)=><section key={copy} data-fixture-copy={copy}><TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(turn)} /></section>) : null}</ArtifactThreadContext.Provider></ImagePreviewProvider></I18nProvider>);
+ root.render(<I18nProvider><ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}><ImagePreviewProvider><ArtifactThreadContext.Provider value={threadId}>{mounted ? Array.from({length:copies},(_,copy)=><section key={copy} data-fixture-copy={copy}><TurnInlineArtifactOutputs artifacts={collectTurnArtifactsWithRenderers(turn, desktopWorkbenchController.getSnapshot().renderers)} /></section>) : null}</ArtifactThreadContext.Provider></ImagePreviewProvider></ArtifactsProvider></ConversationControlsProvider></I18nProvider>);
 }
 window.nativeEvents=[];
 for(const type of ["submit","invalid","keydown","keypress","keyup"]) document.addEventListener(type,event=>{window.nativeEvents.push({type,trusted:event.isTrusted,target:event.target.getAttribute("data-genui-node"),key:event.key,value:event.target.value});if(window.nativeEvents.length>100)window.nativeEvents.shift();},true);
@@ -245,7 +253,7 @@ const pdfWorker = require.resolve('pdfjs-dist/build/pdf.worker.min.mjs');
 fs.copyFileSync(pdfWorker, path.join(output, 'pdf.worker.min.mjs'));
 fs.writeFileSync(path.join(output, 'pdf-worker-url.js'), 'export default "./pdf.worker.min.mjs";');
 fs.writeFileSync(path.join(output, 'pdf-inline-css.js'), `export default ${JSON.stringify(fs.readFileSync(require.resolve('pdfjs-dist/web/pdf_viewer.css'), 'utf8'))};`);
-buildSync({ entryPoints: [fixture], outfile: path.join(output, 'fixture.js'), bundle: true, platform: 'browser', format: 'iife', alias: { 'pdfjs-dist/build/pdf.worker.min.mjs?url': path.join(output, 'pdf-worker-url.js'), 'pdfjs-dist/web/pdf_viewer.css?inline': path.join(output, 'pdf-inline-css.js') }, define: { 'import.meta.env': '{}' }, loader: { '.woff2': 'file', '.woff': 'file', '.ttf': 'file', '.svg': 'file', '.gif': 'file' }, nodePaths: [path.join(root, 'desktop/node_modules')], logLevel: 'warning' });
+buildSync({ entryPoints: [fixture], outfile: path.join(output, 'fixture.js'), bundle: true, platform: 'browser', format: 'iife', alias: { 'pdfjs-dist/build/pdf.worker.min.mjs?url': path.join(output, 'pdf-worker-url.js'), 'pdfjs-dist/web/pdf_viewer.css?inline': path.join(output, 'pdf-inline-css.js') }, define: { 'import.meta.env': '{}' }, loader: { '.woff2': 'file', '.woff': 'file', '.ttf': 'file', '.svg': 'file', '.gif': 'file', '.png': 'file' }, nodePaths: [path.join(root, 'desktop/node_modules')], logLevel: 'warning' });
 fs.writeFileSync(path.join(output, 'index.html'), '<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; font-src \'self\' data:; img-src \'self\' data:"><link rel="stylesheet" href="fixture.css"><style>body{overflow:auto;margin:0;padding:32px}#root{max-width:760px;margin:auto}html{--font-size:14px}</style></head><body><main id="root"></main><script src="fixture.js"></script></body></html>');
 if (process.env.WUU_GENUI_PREPARE_ONLY === '1') {
   const checkedProgram = toolCall(program, 'prepare-reactive-program').result?.result;
@@ -508,8 +516,7 @@ const rendererRun = app.whenReady().then(async () => {
   const nativeInput = async (selector, value) => {
     await click(win, selector);
     await waitFor(win, `document.activeElement === document.querySelector(${JSON.stringify(selector)})`);
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'A',modifiers:['control']});
-    win.webContents.sendInputEvent({type:'keyUp',keyCode:'A',modifiers:['control']});
+    win.webContents.selectAll();
     win.webContents.sendInputEvent({type:'keyDown',keyCode:'Backspace'});
     win.webContents.sendInputEvent({type:'keyUp',keyCode:'Backspace'});
     await waitFor(win, `document.querySelector(${JSON.stringify(selector)}).value === ''`);
@@ -519,8 +526,7 @@ const rendererRun = app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector('[data-genui-node="capacityMetric"] strong')?.textContent === '200'`);
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="capacitySlider"] input').value`), '50');
   await click(win, '[data-genui-node="capacityInput"]');
-  win.webContents.sendInputEvent({type:'keyDown',keyCode:'A',modifiers:['control']});
-  win.webContents.sendInputEvent({type:'keyUp',keyCode:'A',modifiers:['control']});
+  win.webContents.selectAll();
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
   await waitFor(win, `document.querySelector('[data-genui-node="capacityInput"]').value === ''`);

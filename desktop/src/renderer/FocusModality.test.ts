@@ -72,4 +72,18 @@ describe("FocusModality", () => {
     keyDown("Tab");
     expect(readFocusModality()).toBe("pointer");
   });
+
+  it("keeps keyboard focus visible independently in a native popup document", () => {
+    const popup = document.implementation.createHTMLDocument("Browser panel");
+    stops.push(startFocusModality(), startFocusModality(popup));
+    const field = popup.createElement("input");
+    popup.body.append(field);
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(popup.documentElement.getAttribute(FOCUS_MODALITY_ATTRIBUTE)).toBe("pointer");
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(popup.documentElement.getAttribute(FOCUS_MODALITY_ATTRIBUTE)).toBe("keyboard");
+    expect(readFocusModality()).toBe("pointer");
+    popup.dispatchEvent(new Event("pointerdown"));
+    expect(popup.documentElement.getAttribute(FOCUS_MODALITY_ATTRIBUTE)).toBe("pointer");
+  });
 });

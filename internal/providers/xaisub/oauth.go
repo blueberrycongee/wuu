@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -47,15 +48,15 @@ const (
 
 // OAuthConfig configures the SuperGrok credential source.
 type OAuthConfig struct {
-	BaseURL    string
-	Home       string
-	HTTPClient *http.Client
+	BaseURL     string
+	Credentials credentialstore.Store
+	HTTPClient  *http.Client
 }
 
 // OAuthSource resolves SuperGrok bearer tokens from Wuu's auth store.
 type OAuthSource struct {
 	baseURL    string
-	home       string
+	selected   credentialstore.Store
 	httpClient *http.Client
 	// mu serializes refreshes. The auth store is the only copy of the session:
 	// a sign-in or sign-out elsewhere must reach every source built from it.
@@ -93,21 +94,14 @@ func NewOAuthSource(cfg OAuthConfig) *OAuthSource {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	return &OAuthSource{
 		baseURL:    baseURL,
-		home:       home,
+		selected:   cfg.Credentials,
 		httpClient: cfg.HTTPClient,
 	}
 }
 
 func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (credentials, error) {
-	if strings.TrimSpace(s.home) == "" {
-		return credentials{}, errors.New("home directory is required for xAI SuperGrok OAuth")
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -116,11 +110,11 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 	if err := ctx.Err(); err != nil {
 		return credentials{}, err
 	}
-	store, err := authstorage.ForHome(s.home)
-	if err != nil {
+	store := authstorage.NewBound(ctx, s.selected)
+	state, err := store.Get(AuthProviderID)
+	if err != nil && !errors.Is(err, authstorage.ErrNotFound) {
 		return credentials{}, err
 	}
-	state, err := store.Get(AuthProviderID)
 	if err != nil {
 		return credentials{}, errors.New("no wuu xAI SuperGrok OAuth credentials found; run `wuu login xai` or sign in from Settings")
 	}
@@ -523,3 +517,29 @@ var (
 	errAuthorizationPending = errors.New("xAI SuperGrok authorization is pending")
 	errSlowDown             = errors.New("xAI SuperGrok authorization asked to slow down")
 )
+
+// OAuthStatus checks the selected account without a network refresh.
+func OAuthStatus(ctx context.Context, selected credentialstore.Store) (string, error) {
+	state, err := authstorage.NewBound(ctx, selected).Get(AuthProviderID)
+	if err != nil {
+		return "", err
+	}
+	creds := credentialsFromStore(state)
+	if creds.accessToken == "" && creds.refreshToken == "" {
+		return "", errors.New("xAI SuperGrok OAuth credentials not found")
+	}
+	if credentialExpiring(creds, 0) && creds.refreshToken == "" {
+		return "", errors.New("xAI SuperGrok OAuth credentials are expired; sign in again")
+	}
+	return "wuu-auth-store", nil
+}
+
+// SaveTokens persists a login through the captured credential service.
+func SaveTokens(ctx context.Context, selected credentialstore.Store, tokens TokenResponse, baseURL string) error {
+	return authstorage.NewBound(ctx, selected).Update(AuthProviderID, func(state *authstorage.Credentials) { *state = persistTokenState(*state, tokens, baseURL) })
+}
+
+// RemoveTokens signs out only the selected account source.
+func RemoveTokens(ctx context.Context, selected credentialstore.Store) error {
+	return authstorage.NewBound(ctx, selected).DeleteProvider(AuthProviderID)
+}

@@ -98,10 +98,12 @@ type ClientConfig struct {
 	// StreamingHTTPClient shares a preconfigured pool across credential adapters.
 	// When set, its transport deadlines must match StreamConfig and Timeout must
 	// be zero. Otherwise New builds and owns a streaming client from HTTPClient.
-	StreamingHTTPClient     *http.Client
-	StreamConfig            *providers.StreamTransportConfig
-	Coordinator             *providers.ProviderCoordinator
-	ProviderScope           providers.ProviderScope
+	StreamingHTTPClient *http.Client
+	StreamConfig        *providers.StreamTransportConfig
+	Coordinator         *providers.ProviderCoordinator
+	ProviderScope       providers.ProviderScope
+	// ResponsesChatGPT applies the official ChatGPT plan HTTP protocol constraints.
+	ResponsesChatGPT        bool
 	ResponsesStore          *bool
 	ResponsesTransport      providers.StreamTransportMode
 	ResponsesWebSocketCache *ResponsesWebSocketCache
@@ -120,9 +122,12 @@ type Client struct {
 	streamConfig       providers.StreamTransportConfig
 	coordinator        *providers.ProviderCoordinator
 	providerScope      providers.ProviderScope
+	responsesChatGPT   bool
 	responsesStore     *bool
 	responsesTransport providers.StreamTransportMode
 	responsesWSCache   *ResponsesWebSocketCache
+	ownsWSCache        bool
+	ownsStreamClient   bool
 }
 
 // New creates an OpenAI-compatible client.
@@ -147,7 +152,8 @@ func New(cfg ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.ResponsesWebSocketCache == nil && responsesTransportUsesWebSocket(responsesTransport) {
+	ownsWSCache := cfg.ResponsesWebSocketCache == nil && responsesTransportUsesWebSocket(responsesTransport)
+	if ownsWSCache {
 		cfg.ResponsesWebSocketCache = NewResponsesWebSocketCache()
 	}
 	providerScope := cfg.ProviderScope
@@ -173,9 +179,12 @@ func New(cfg ClientConfig) (*Client, error) {
 		streamConfig:       streamConfig,
 		coordinator:        cfg.Coordinator,
 		providerScope:      providerScope,
+		responsesChatGPT:   cfg.ResponsesChatGPT,
 		responsesStore:     cfg.ResponsesStore,
 		responsesTransport: responsesTransport,
 		responsesWSCache:   cfg.ResponsesWebSocketCache,
+		ownsWSCache:        ownsWSCache,
+		ownsStreamClient:   cfg.StreamingHTTPClient == nil,
 	}, nil
 }
 
@@ -421,13 +430,21 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	// Let the caller's ctx and the idle watchdog own cancellation instead.
 	// Use the single-attempt request — ReliableStreamClient handles retries
 	// with proper UI feedback at the caller layer.
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleChatCompletionsRequest(ctx, c.streamHTTPClient, body, true, req.Attempt)
 	if err != nil {
+		endReceipt(nil)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readSSE(ctx, resp, lease, ch)
+	go func() {
+		defer endReceipt(nil)
+		c.readSSE(ctx, resp, lease, ch)
+	}()
 	return ch, nil
 }
 
@@ -613,6 +630,8 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 
 		if chunk.Usage != nil {
 			lastUsage = chunk.Usage.asTokenUsage()
+			// Delivery can lose to cancellation after the receipt was decoded.
+			lease.ObserveUsage(lastUsage)
 			if !emit.Send(providers.StreamEvent{Type: providers.EventUsage, Usage: lastUsage}) {
 				return
 			}
@@ -998,6 +1017,7 @@ func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, erro
 		Temperature     float64          `json:"temperature,omitempty"`
 		MaxTokens       int              `json:"max_tokens,omitempty"`
 		Stream          bool             `json:"stream,omitempty"`
+		StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
 		PromptCacheKey  string           `json:"prompt_cache_key,omitempty"`
 		ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 		Reasoning       *reasoningConfig `json:"reasoning,omitempty"`
@@ -1011,6 +1031,7 @@ func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, erro
 		Temperature:     payload.Temperature,
 		MaxTokens:       payload.MaxTokens,
 		Stream:          payload.Stream,
+		StreamOptions:   payload.StreamOptions,
 		PromptCacheKey:  payload.PromptCacheKey,
 		ReasoningEffort: payload.ReasoningEffort,
 		Reasoning:       payload.Reasoning,
@@ -1116,6 +1137,10 @@ func mergeChatProviderOptions(object map[string]any, options map[string]any, for
 			}
 			mergeProviderOptionValue(object, key, value)
 		}
+	}
+	// Apply the model capability after all sources so options cannot restore it.
+	if !temperatureSupported(options) {
+		delete(object, "temperature")
 	}
 }
 
@@ -1348,27 +1373,44 @@ func (u *chunkUsage) asTokenUsage() *providers.TokenUsage {
 	}
 }
 
-// effectiveTemperature drops the sampling temperature for models that reject
-// the field (per-model config "temperature": false arrives as the
-// temperatureSupported provider option via modelvariant). Zero is omitted on
-// the wire by omitempty, matching the "do not send" semantics.
+// effectiveTemperature omits the scalar default for models that reject it.
+// An explicit zero can still be carried in ProviderOptions when supported.
 func effectiveTemperature(req providers.ChatRequest) float64 {
+	if !temperatureSupported(req.ProviderOptions) {
+		return 0
+	}
+	return req.Temperature
+}
+
+// Capability constraints apply to both the request default and explicit options.
+func temperatureSupported(options map[string]any) bool {
 	for _, key := range []string{"temperatureSupported", "temperature_supported"} {
-		value, exists := req.ProviderOptions[key]
+		value, exists := options[key]
 		if !exists {
 			continue
 		}
 		switch v := value.(type) {
 		case bool:
 			if !v {
-				return 0
+				return false
 			}
 		case string:
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "false", "0", "no", "off":
-				return 0
+				return false
 			}
 		}
 	}
-	return req.Temperature
+	return true
+}
+
+// Close is called after the owning provider has drained its admitted callbacks.
+func (c *Client) Close() error {
+	if c.ownsStreamClient {
+		providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	}
+	if c.ownsWSCache {
+		return c.responsesWSCache.Close()
+	}
+	return nil
 }

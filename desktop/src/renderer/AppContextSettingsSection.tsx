@@ -1,13 +1,16 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import { normalizeAppContextShortcut } from "../shared/appContextShortcut";
 import type { AppContextSettings, AppContextState } from "../shared/protocol";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 export function AppContextSettingsSection(): JSX.Element | null {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
-  const supported = window.wuu?.platform === "darwin" && Boolean(window.wuu.getAppContextState);
+  const supported = settingsControls.capabilities.appContext;
   const [state, setState] = useState<AppContextState>();
   const [settings, setSettings] = useState<AppContextSettings>();
   const [error, setError] = useState("");
@@ -20,17 +23,20 @@ export function AppContextSettingsSection(): JSX.Element | null {
     recordingAttempt.current += 1;
     setRecording(false);
     setRecordingReady(false);
-    void window.wuu.setAppContextShortcutRecording?.(false).catch(reason => setError((reason as Error).message));
+    if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(reason => {
+      if (!isPluginLifecycleCancellation(reason)) setError((reason as Error).message);
+    });
   };
 
   useEffect(() => {
+    setRecording(false); setRecordingReady(false);
     window.addEventListener("blur", stopRecording);
     return () => {
       window.removeEventListener("blur", stopRecording);
       recordingAttempt.current += 1;
-      void window.wuu.setAppContextShortcutRecording?.(false).catch(() => undefined);
+      if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(() => undefined);
     };
-  }, []);
+  }, [settingsControls]);
 
   useEffect(() => {
     if (!supported) return;
@@ -38,7 +44,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
     const refresh = async (): Promise<void> => {
       const current = ++generation.current;
       try {
-        const next = await window.wuu.getAppContextState!();
+        const next = await settingsControls.getAppContextState!();
         if (!active || current !== generation.current) return;
         setState(next);
         setSettings(value => value ?? next.settings);
@@ -46,10 +52,10 @@ export function AppContextSettingsSection(): JSX.Element | null {
         if (active && current === generation.current) setError((reason as Error).message);
       }
     };
-    const unsubscribe = window.wuu.onAppContextChanged?.(() => { void refresh(); });
+    const unsubscribe = settingsControls.capabilities.appContextChanges ? settingsControls.onAppContextChanged(() => { void refresh(); }) : undefined;
     void refresh();
     return () => { active = false; unsubscribe?.(); };
-  }, [supported]);
+  }, [supported, settingsControls]);
 
   if (!supported) return null;
   const disabled = busy || !state?.available;
@@ -74,21 +80,21 @@ export function AppContextSettingsSection(): JSX.Element | null {
         <SettingsRow title={t("composer.appContext.enable")}>
           <button className="settings-switch" type="button" role="switch" aria-checked={settings?.enabled ?? false}
             aria-label={t("composer.appContext.enable")} disabled={disabled || !settings}
-            onClick={() => settings && void perform(() => window.wuu.updateAppContextSettings!({ ...settings, enabled: !settings.enabled }), true)}>
+            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, enabled: !settings.enabled }), true)}>
             <span className="settings-switch-thumb" aria-hidden="true" />
           </button>
         </SettingsRow>
         <SettingsRow title={t("composer.appContext.shortcut")}>
           <button className="settings-button" type="button" data-app-context-shortcut
             aria-label={`${t("composer.appContext.shortcut")}: ${shortcutLabel}`} aria-pressed={recording}
-            disabled={disabled || !settings || !window.wuu.setAppContextShortcutRecording}
+            disabled={disabled || !settings || !settingsControls.capabilities.appContextRecording}
             onClick={async event => {
               if (recording) return;
               event.currentTarget.focus();
               const attempt = ++recordingAttempt.current;
               setError(""); setRecording(true);
               try {
-                await window.wuu.setAppContextShortcutRecording!(true);
+                await settingsControls.setAppContextShortcutRecording!(true);
                 if (attempt === recordingAttempt.current) setRecordingReady(true);
               } catch (reason) {
                 if (attempt === recordingAttempt.current) { stopRecording(); setError((reason as Error).message); }
@@ -113,7 +119,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
                   event.metaKey && "Command", event.ctrlKey && "Control", event.altKey && "Alt", event.shiftKey && "Shift", key,
                 ].filter(Boolean).join("+"));
                 stopRecording();
-                void perform(() => window.wuu.updateAppContextSettings!({ ...settings!, shortcut }), true);
+                void perform(() => settingsControls.updateAppContextSettings!({ ...settings!, shortcut }), true);
               } catch { setError(t("composer.appContext.shortcutInvalid")); }
             }}>
             {shortcutLabel}
@@ -122,7 +128,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
         <SettingsRow title={t("composer.appContext.includeText")}>
           <button className="settings-switch" type="button" role="switch" aria-checked={settings?.include_text ?? false}
             aria-label={t("composer.appContext.includeText")} disabled={disabled || !settings}
-            onClick={() => settings && void perform(() => window.wuu.updateAppContextSettings!({ ...settings, include_text: !settings.include_text }), true)}>
+            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, include_text: !settings.include_text }), true)}>
             <span className="settings-switch-thumb" aria-hidden="true" />
           </button>
         </SettingsRow>

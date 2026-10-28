@@ -113,10 +113,14 @@ export function BrowserPiPHostReporter(): null {
     };
     const mutationObserver = new MutationObserver(onMutation);
     // Ignore streaming text and class updates. Size changes come from
-    // ResizeObserver; dialog state can also change without mounting a node.
+    // ResizeObserver; dialogs and retained native sections can change visibility
+    // without mounting a node or changing the conversation's dimensions. The
+    // conversation advertises its anchor only after scroll restoration.
     mutationObserver.observe(document.body, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: ["aria-modal", "open", "hidden"],
+      attributeFilter: [
+        "aria-modal", "open", "hidden", "inert", "data-pip-anchor-host", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
+      ],
     });
     window.addEventListener("resize", schedule);
     window.addEventListener("focus", onFocus);
@@ -156,7 +160,7 @@ export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
   return records.some((record) => {
     if (record.type === "attributes") {
       return record.attributeName === "aria-modal" || record.attributeName === "open"
-        || elementMentionsHost(record.target);
+        || record.attributeName === "data-pip-anchor-host" || elementMentionsHost(record.target);
     }
     return [...record.addedNodes, ...record.removedNodes].some(elementMentionsHost);
   });
@@ -169,7 +173,7 @@ function elementMentionsHost(node: Node): boolean {
 }
 
 function visibleRect(element: Element): HostRect | null {
-  if (!(element instanceof HTMLElement) || element.hidden) return null;
+  if (!(element instanceof HTMLElement) || element.hidden || element.closest("[inert]")) return null;
   const style = getComputedStyle(element);
   if (style.display === "none" || style.visibility === "hidden") return null;
   const rect = element.getBoundingClientRect();

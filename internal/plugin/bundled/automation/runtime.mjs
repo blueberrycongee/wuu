@@ -4,6 +4,10 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
 
+// packages/plugin-sdk/src/persistence.ts
+var DOCUMENT_STORE_SERVICE = "state.documents";
+var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
 // packages/plugin-sdk/src/theme-contract.generated.ts
 var PUBLIC_THEME_TOKEN_NAMES = [
   "--wuu-paper",
@@ -145,6 +149,280 @@ var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
 // packages/plugin-sdk/src/bundle-contract.ts
 var encoder = new TextEncoder();
 
+// packages/plugin-sdk/src/model.ts
+var BACKGROUND_SERVICE = "host.background";
+function requireBackgroundService() {
+  return { name: BACKGROUND_SERVICE, major_version: 1, required: true };
+}
+async function startBackground(host, input) {
+  return await host.call("host.service.call", { service: BACKGROUND_SERVICE, method: "start", params: input });
+}
+
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
+  version: "1.2.0"
+};
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
+// packages/plugin-sdk/src/tool-service.ts
+var TOOL_SERVICE = "agent.tools";
+var TOOL_SERVICE_DESCRIPTOR = {
+  name: TOOL_SERVICE,
+  version: "1.0.0",
+  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+    name,
+    input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
+    output_schema: `${TOOL_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/tool-batch.ts
+var TOOL_BATCH_SERVICE = "agent.tool.batch";
+var TOOL_BATCH_SERVICE_DESCRIPTOR = {
+  name: TOOL_BATCH_SERVICE,
+  version: "1.0.0",
+  methods: [{ name: "execute", input_schema: `${TOOL_BATCH_SERVICE}.execute.input.v1`, output_schema: `${TOOL_BATCH_SERVICE}.execute.output.v1` }]
+};
+var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
+  ...TOOL_BATCH_SERVICE_DESCRIPTOR,
+  methods: [...TOOL_BATCH_SERVICE_DESCRIPTOR.methods, {
+    name: "stream_admit",
+    input_schema: `${TOOL_BATCH_SERVICE}.stream.admit.input.v1`,
+    output_schema: `${TOOL_BATCH_SERVICE}.stream.admit.output.v1`
+  }]
+};
+
+// packages/plugin-sdk/src/session-service.ts
+var sessionDomainArity = {
+  "AcceptHeldUserWork": [2, 1],
+  "AdmitThreadExecution": [4, 1],
+  "AppendAcceptedUserHistoryRecord": [3, 1],
+  "AppendContinuationHistoryRecord": [4, 1],
+  "AppendControlledHistoryRecord": [3, 1],
+  "AppendHistoryRecord": [2, 0],
+  "AppendHistoryRecordReturningSeq": [2, 1],
+  "AppendHistoryRecords": [2, 0],
+  "AppendHistoryRecordsReturningRange": [2, 2],
+  "BindDriver": [2, 0],
+  "BindWorktree": [2, 1],
+  "CancelHeldUserWork": [3, 1],
+  "ChangeControl": [4, 1],
+  "ClaimHeldUserWork": [2, 0],
+  "CompareAndSwapCompactionNote": [3, 1],
+  "CompleteParticipantRun": [4, 0],
+  "CountParticipantsByKind": [1, 1],
+  "Create": [1, 1],
+  "CreateFolder": [1, 1],
+  "CreateForkWithMetadata": [3, 1],
+  "CreateInitialized": [2, 1],
+  "CreateInitializedWithInbox": [5, 1],
+  "CreateInitializedWithLaunch": [4, 1],
+  "CreateManagedForkWithMetadata": [4, 1],
+  "CreateManagedWithMetadata": [3, 1],
+  "CreateManagedWithWorktree": [5, 1],
+  "CreateWithMetadata": [2, 1],
+  "CreateWithWorktree": [4, 1],
+  "Delete": [1, 1],
+  "DeleteArchived": [1, 1],
+  "DeleteFolder": [1, 0],
+  "DeleteHeldUserWork": [2, 1],
+  "DeletePluginTurnLifecycleOutbox": [2, 0],
+  "DeletePluginTurnLifecycleOutboxForPlugin": [1, 0],
+  "EnqueueInbox": [1, 0],
+  "Find": [1, 2],
+  "FindManagedByRequest": [2, 2],
+  "FindPinnedArchived": [1, 1],
+  "FindPluginTurnLifecycle": [4, 2],
+  "FindRetiredParticipantByName": [2, 2],
+  "GetParticipant": [1, 1],
+  "HasHeldUserWorkReceipt": [2, 1],
+  "InboxHas": [1, 1],
+  "InboxTargets": [0, 1],
+  "Journal.Close": [1, 0],
+  "Journal.CompleteAttempt": [3, 0],
+  "Journal.CompleteOperation": [3, 0],
+  "Journal.CompleteWorkflow": [3, 0],
+  "Journal.MarkAttemptFirstEvent": [6, 0],
+  "Journal.PrepareAttempt": [3, 0],
+  "Journal.PrepareOperation": [3, 0],
+  "Journal.PrepareRecoveryAttempt": [3, 0],
+  "Journal.Prune": [2, 1],
+  "Journal.ReconcileOrphans": [2, 1],
+  "Journal.UpsertSubmission": [3, 0],
+  "LatestHistoryCheckpoint": [1, 2],
+  "LatestSubscriptionActivity": [1, 1],
+  "List": [1, 1],
+  "ListControls": [0, 1],
+  "ListForCWD": [3, 1],
+  "ListOrganization": [0, 1],
+  "ListPage": [1, 1],
+  "ListParticipantRuns": [2, 1],
+  "ListParticipants": [1, 1],
+  "ListPluginTurnLifecycleOutbox": [0, 1],
+  "ListProjectWork": [1, 1],
+  "ListTokenUsage": [0, 1],
+  "LoadActiveHistoryRecords": [2, 1],
+  "LoadCompactionNote": [2, 2],
+  "LoadContextSeed": [1, 2],
+  "LoadDriverBinding": [1, 2],
+  "LoadDriverCheckpoint": [1, 2],
+  "LoadHeldUserWork": [1, 1],
+  "LoadHistoryRecords": [2, 1],
+  "LoadModelInputReceipts": [1, 1],
+  "LoadProviderHistorySnapshot": [1, 1],
+  "LoadRequestContextCheckpoint": [1, 1],
+  "LoadSessionLaunch": [1, 2],
+  "MaintainModelInputReceipts": [1, 1],
+  "MaintainRedundantStorage": [0, 1],
+  "MostRecent": [0, 1],
+  "MostRecentForCWD": [2, 1],
+  "NewInferenceJournalRuntime": [1, 1],
+  "PendingInbox": [1, 1],
+  "PendingProjectWork": [1, 1],
+  "ProjectWorkOperation": [1, 2],
+  "PutContextSeed": [1, 1],
+  "PutPluginTurnLifecycleOutbox": [3, 0],
+  "PutSessionLaunch": [1, 1],
+  "ReadControl": [1, 2],
+  "ReadHistoryPage": [3, 1],
+  "ReadHistoryQuery": [1, 1],
+  "ReadPluginGenerationSnapshot": [1, 2],
+  "ReadProjectWork": [1, 1],
+  "RebuildSessionIndexes": [0, 0],
+  "ReconcileProjectWork": [2, 0],
+  "ReleaseHeldUserWork": [2, 0],
+  "RenameFolder": [2, 1],
+  "ReorderFolders": [1, 0],
+  "ReplaceHeldUserWork": [2, 0],
+  "RequestThreadExecutionResetRecord": [1, 0],
+  "RetireParticipant": [1, 0],
+  "RewriteHistoryRecords": [2, 0],
+  "RewriteHistoryRecordsAtBaseline": [3, 0],
+  "RewriteHistoryRecordsForEdit": [4, 0],
+  "RewriteHistoryRecordsForEngineEdit": [6, 0],
+  "SaveDriverCheckpoint": [2, 0],
+  "SaveModelInputReceipt": [2, 0],
+  "SaveProjectWork": [3, 1],
+  "SaveRequestContextCheckpoint": [2, 0],
+  "SearchHistoryPage": [4, 1],
+  "SearchHistoryQuery": [1, 1],
+  "SetEngine": [2, 1],
+  "SetEngineRef": [2, 1],
+  "SetHistoryEngineTurnID": [5, 0],
+  "SetModelSelection": [4, 1],
+  "SetProjectMembership": [4, 1],
+  "SetNextStepModelSelection": [2, 1],
+  "SetRuntimeSelection": [2, 1],
+  "SetSource": [2, 1],
+  "SetWorkspaceID": [2, 1],
+  "SettleInbox": [2, 0],
+  "StoreCompactionNote": [1, 0],
+  "StoreContextWindow": [4, 1],
+  "StoreHistoryCheckpointAtBaseline": [4, 1],
+  "ThreadExecutionResetRequested": [2, 1],
+  "UpdateArchived": [2, 1],
+  "UpdateGeneratedTitle": [2, 1],
+  "UpdateHeldUserWork": [3, 1],
+  "UpdateIndex": [3, 0],
+  "UpdateOrganization": [2, 1],
+  "UpdatePinned": [2, 1],
+  "UpdateTitle": [2, 1],
+  "UpdateWorkspaceBinding": [5, 1],
+  "UpsertParticipant": [1, 0],
+  "UpsertParticipantRun": [1, 0],
+  "ValidateContinuationControl": [1, 0],
+  "ValidateControl": [1, 0],
+  "ValidateInboxControls": [1, 0],
+  "WorktreeInfoForSession": [1, 2],
+  "WritePluginGenerationSnapshot": [2, 0]
+};
+var SESSION_DOMAIN_METHODS = Object.freeze(Object.keys(sessionDomainArity));
+
+// packages/plugin-sdk/src/compaction-service.ts
+var COMPACTION_SERVICE = "agent.compaction";
+var COMPACTION_SERVICE_DESCRIPTOR = {
+  name: COMPACTION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover", "note-attempt"].map((name) => ({
+    name,
+    input_schema: `agent.compaction.${name}.input.v1`,
+    output_schema: `agent.compaction.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/title-service.ts
+var TITLE_SERVICE = "session.title";
+var TITLE_SERVICE_DESCRIPTOR = {
+  name: TITLE_SERVICE,
+  version: "1.0.0",
+  methods: ["plan", "resolve"].map((name) => ({
+    name,
+    input_schema: `${TITLE_SERVICE}.${name}.input.v1`,
+    output_schema: `${TITLE_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/session-sharing.ts
+var SESSION_SHARING_SERVICE = "session.sharing";
+var SESSION_SHARING_DESCRIPTOR = {
+  name: SESSION_SHARING_SERVICE,
+  version: "1.0.0",
+  methods: ["preview", "create", "resolve", "read", "attachment", "revoke", "authorize"].map((name) => ({
+    name,
+    input_schema: `session.sharing.${name}.input.v1`,
+    output_schema: `session.sharing.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -156,7 +434,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.storage.compare_exchange": "host.storage.compare-exchange",
   "host.settings.get": "host.settings.get",
   "host.settings.list": "host.settings.list",
+  "host.credentials.request": "host.credentials.request",
   "host.session.create": "host.session.create",
+  "host.session.route": "host.session.route",
   "host.session.send": "host.session.send",
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
@@ -192,12 +472,36 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
     switch (request.method) {
       case "initialize": {
         const result = await plugin.initialize(request.params, host, lifecycle);
+        const protocolVersion = result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version;
+        if ((protocolVersion ?? 1) === 1 && (result.capabilities?.length || result.model_adapters?.length)) {
+          throw Object.assign(new Error("initialize() must return protocol_version: 2 or 3 when declaring capabilities or model_adapters; omission selects legacy v1"), { code: "invalid_capability_protocol" });
+        }
+        const offered = request.params.supported_host_features;
+        const required = result.required_host_features;
+        for (const features of [offered, required]) {
+          if (features !== void 0 && (!Array.isArray(features) || features.some((feature) => typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
+            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
+          }
+        }
+        const requirements = new Set(required);
+        if (result.provided_services?.some((service) => service.name === DOCUMENT_STORE_SERVICE && service.methods?.some((method) => method.name === "authority"))) {
+          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
+        }
+        for (const feature of requirements) {
+          if (!offered?.includes(feature)) {
+            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
+          }
+        }
         return { id: request.id, result: {
           ...result,
-          protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
+          ...requirements.size ? { required_host_features: [...requirements] } : {},
+          protocol_version: protocolVersion,
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -221,18 +525,30 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
   }
 }
 function scopedRuntimeHost(host, execution) {
   return {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
-      const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
-        ...execution.executionId ? { execution_id: execution.executionId } : {}
+        ...options?.cleanup ? { execution_id: void 0, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}
       }, { signal });
     }
   };
@@ -260,6 +576,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -268,6 +585,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -291,7 +611,10 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method, params } : kernelServiceCall(id, method, params);
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
+        frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
+      }
       void this.send(frame).catch(fail);
     });
   }
@@ -335,6 +658,11 @@ async function runJSONLRuntime(plugin, streams) {
   const host = new JSONLRuntimeHost(send);
   const lifetime = new AbortController();
   const executions = /* @__PURE__ */ new Map();
+  const callerScopes = /* @__PURE__ */ new Map();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
   const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
@@ -386,6 +714,8 @@ async function runJSONLRuntime(plugin, streams) {
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
       for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
       return;
     }
     if (!isRuntimeRequest(parsed)) {
@@ -396,7 +726,7 @@ async function runJSONLRuntime(plugin, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -407,7 +737,14 @@ async function runJSONLRuntime(plugin, streams) {
     let controllers = executions.get(executionId);
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
-    const execution = { executionId, signal: controller.signal };
+    let caller;
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller };
     const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
     const run = async () => {
       await ready;
@@ -476,7 +813,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request = value;
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 
@@ -637,34 +974,21 @@ function restoreRun(raw) {
   for (const key of ["triggered_at", "completed_at"]) if (fields[key] !== void 0 && !Number.isFinite(Date.parse(fields[key]))) throw new Error(`invalid timestamp ${key}`);
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
 }
-var cronSchema = {
-  type: "object",
-  properties: {
-    action: { type: "string", enum: ["list", "add", "remove"] },
-    cron: { type: "string" },
-    prompt: { type: "string" },
-    title: { type: "string" },
-    timezone: { type: "string" },
-    mode: { type: "string", enum: ["new_thread", "thread_heartbeat"] },
-    heartbeat_thread_id: { type: "string" },
-    workspace: { type: "string", enum: ["shared", "worktree"] },
-    recurring: { type: "boolean" },
-    durable: { type: "boolean" },
-    id: { type: "string" }
-  },
-  required: ["action"]
-};
 function createAutomationPlugin() {
   let host;
-  let workspaceID = "", workspaceRoot = "";
+  let pluginID = "", workspaceID = "", workspaceRoot = "";
   let tasks = /* @__PURE__ */ new Map(), runs = [];
   let timer;
   let dispatch = Promise.resolve(), stateQueue = Promise.resolve();
-  let stopped = false;
+  let stopped = false, schedulingStopped = false;
   const abort = new AbortController();
+  function stopScheduling() {
+    schedulingStopped = true;
+    clearInterval(timer);
+  }
   function stop() {
     stopped = true;
-    clearInterval(timer);
+    stopScheduling();
     abort.abort();
   }
   function locked(fn) {
@@ -769,6 +1093,7 @@ function createAutomationPlugin() {
     });
   }
   async function clientRequest(host2, method, input = {}) {
+    if (stopped) throw new Error("automation provider is stopped");
     switch (method.trim()) {
       case "automation.list":
         return locked(() => ({ tasks: snapshotTasks(), workspace: { id: workspaceID, root: workspaceRoot } }));
@@ -787,6 +1112,7 @@ function createAutomationPlugin() {
   }
   async function consume(task, now) {
     await locked(async () => {
+      if (schedulingStopped) return;
       const existing = tasks.get(task.id);
       if (!existing || existing.paused || Date.parse(existing.next_run_at) !== Date.parse(task.next_run_at)) return;
       if (existing.recurring) {
@@ -806,15 +1132,23 @@ function createAutomationPlugin() {
     const runID = `run-${task.id}-${Math.floor(scheduledAt / 1e3)}`, requestID = `automation-${runID}`;
     const settled = await locked(async () => {
       const existing = runs.find((run) => run.id === runID);
-      if (existing && terminal.has(existing.status)) return true;
+      if (existing) {
+        if (existing.status === "starting") {
+          existing.status = "uncertain";
+          existing.error = "Dispatch outcome is unknown; inspect the session before scheduling replacement work";
+          await save(host);
+        }
+        return true;
+      }
       if (!existing) {
         runs.push({ id: runID, task_id: task.id, task: structuredClone(task), request_id: requestID, status: "starting", triggered_at: now.toISOString() });
         if (runs.length > 500) runs = runs.slice(-500);
       }
-      await saveBestEffort(host);
+      await save(host);
       return false;
     });
     if (settled) return true;
+    if (schedulingStopped) return false;
     let sessionID = task.heartbeat_thread_id || "", executionRoot = "", error;
     const workspaceMode = task.workspace_mode || "shared";
     let sent;
@@ -842,27 +1176,21 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";
       }
+      if (schedulingStopped) return false;
       sent = await send();
     } catch (cause) {
       error = cause;
     }
     return locked(async () => {
-      if (stopped) return false;
+      if (schedulingStopped) return false;
       const index = runs.findIndex((run2) => run2.id === runID), run = runs[index];
       if (!run) return true;
       if (terminal.has(run.status)) return true;
       const message = error instanceof Error ? error.message : String(error);
-      if (error && message.includes("session service is unavailable")) {
-        if (run.status !== "starting") return true;
-        runs.splice(index, 1);
-        await saveBestEffort(host);
-        return false;
-      }
       run.session_id = sessionID || void 0;
       run.workspace_root = executionRoot || void 0;
       if (error) {
-        run.status = "failed";
-        run.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+        run.status = "uncertain";
         run.error = message;
       } else if (run.status === "running" && sent.state !== "running") {
         run.queue_id ||= sent.queue_id;
@@ -877,20 +1205,21 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
   }
   function fireDue() {
     dispatch = dispatch.then(async () => {
-      if (stopped) return;
+      if (schedulingStopped) return;
       const now = /* @__PURE__ */ new Date();
       const due = await locked(() => [...tasks.values()].filter((task) => !task.paused && Date.parse(task.next_run_at || zeroTime) <= now.getTime()).map((task) => ({ ...task })));
       for (const task of due) {
-        if (stopped) break;
-        if (await fire(task, now) && !stopped) await consume(task, now);
+        if (schedulingStopped) break;
+        if (await fire(task, now) && !schedulingStopped) await consume(task, now);
       }
     }).catch((error) => {
       console.error("automation dispatch failed:", error);
     });
   }
   async function settle(host2, input) {
-    if (input.state !== "running" && !terminal.has(input.state)) return;
+    if (stopped || input.state !== "running" && !terminal.has(input.state)) return;
     await locked(async () => {
+      if (stopped) return;
       const run = runs.find((value) => value.request_id === input.request_id);
       if (!run) return;
       if (input.state === "running") {
@@ -911,13 +1240,23 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
     });
   }
   return {
-    async initialize(params, runtimeHost) {
+    concurrentServices: ["automation.scheduler"],
+    initialize(params, runtimeHost) {
       host = runtimeHost;
+      pluginID = params.plugin_id;
       workspaceID = params.workspace_id?.trim() || "";
       workspaceRoot = params.project_root.trim();
       tasks = /* @__PURE__ */ new Map();
       runs = [];
       stopped = false;
+      schedulingStopped = false;
+      return {
+        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
+        capabilities: [{ id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
+        required_services: [requireBackgroundService(), ...["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)]
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value != null) {
         try {
@@ -933,51 +1272,46 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
           throw new Error(`decode automation plugin state: ${String(error)}`);
         }
       }
-      return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
-        required_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)
-      };
     },
-    activate(_runtimeHost, lifecycle) {
+    async activate(activeHost, lifecycle) {
       if (lifecycle.signal.aborted) {
         stop();
         return;
       }
       lifecycle.signal.addEventListener("abort", stop, { once: true });
-      fireDue();
-      timer = setInterval(fireDue, 15e3);
+      await startBackground(activeHost, { key: "scheduler", service: "automation.scheduler", method: "run" });
     },
     async shutdown() {
       stop();
       await dispatch;
       await stateQueue;
     },
-    async executeTool(call, host2) {
-      const input = mutationInput(call.arguments);
-      let value;
-      switch (input.action?.trim()) {
-        case "list":
-          value = await locked(snapshotTasks);
-          break;
-        case "add":
-          input.heartbeat_thread_id ||= call.session_id || call.thread_id;
-          value = { action: "cron", task: await add(host2, input) };
-          break;
-        case "remove":
-          await remove(host2, input.id);
-          value = { action: "cron", removed: input.id?.trim() };
-          break;
-        default:
-          throw new Error("cron requires action=list, add, or remove");
+    async invokeService(call, scoped, execution) {
+      if (call.service !== "automation.scheduler") throw new Error("unknown automation service");
+      if (call.method === "run") {
+        if (call.caller !== pluginID) throw new Error("automation scheduler must be started by its owner");
+        if (!execution) throw new Error("automation scheduler execution is unavailable");
+        if (stopped || schedulingStopped || execution.signal.aborted) {
+          stopScheduling();
+          return {};
+        }
+        host = scoped;
+        const signal = AbortSignal.any([execution.signal, abort.signal]);
+        const cancelled = new Promise((resolve) => signal.addEventListener("abort", () => {
+          stopScheduling();
+          resolve();
+        }, { once: true }));
+        fireDue();
+        timer = setInterval(fireDue, 15e3);
+        await cancelled;
+        await dispatch;
+        return {};
       }
-      return { result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
+      if (call.method !== "request") throw new Error("unknown automation service method");
+      const request = call.params;
+      return clientRequest(scoped, request.method, request.input);
     },
     async invokeCapability(call, host2) {
-      if (call.capability === "plugin.client.request") {
-        const request = call.input;
-        return { output: { result: await clientRequest(host2, request.method, request.input) } };
-      }
       if (call.capability === "agent.turn.lifecycle") {
         await settle(host2, call.input);
         return { output: {} };

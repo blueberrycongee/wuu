@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -25,9 +24,9 @@ func TestServerSavingAPIKeyClearsPreviousBearerConfig(t *testing.T) {
 				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
 			}))
 			defer endpoint.Close()
-			writeProviderSettingsConfig(t, rt, fmt.Sprintf(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"fake-key","model":"fake-model"},"gateway":{"type":"anthropic","base_url":%q,"model":"synthetic-model",%s}}}`, endpoint.URL, oldConfig))
+			rt = writeProviderSettingsConfig(t, rt, fmt.Sprintf(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"fake-key","model":"fake-model"},"gateway":{"type":"anthropic","base_url":%q,"model":"synthetic-model",%s}}}`, endpoint.URL, oldConfig))
 			out := &lockedBuffer{}
-			srv := New(rt, out)
+			srv := newProviderSettingsServer(t, rt, out)
 			result := requestProviderSettings(t, srv, out, "save-key", `{"provider":"gateway","api_key":"new-key","keep_selection":true}`)
 			if result["error"] != nil {
 				t.Fatalf("settings update: %v", result["error"])
@@ -36,7 +35,12 @@ func TestServerSavingAPIKeyClearsPreviousBearerConfig(t *testing.T) {
 			if saved.AuthToken != "" || saved.AuthTokenEnv != "" || saved.APIKey != "" || saved.APIKeyEnv != "" {
 				t.Errorf("config retained credential fields after saving key: %+v", saved)
 			}
-			client, err := providerfactory.BuildClient(saved, "gateway")
+			services, release, err := rt.RetainStateServices()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			client, err := services.ModelClient(saved, "gateway")
 			if err != nil {
 				t.Fatal(err)
 			}

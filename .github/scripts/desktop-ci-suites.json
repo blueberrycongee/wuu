@@ -24,11 +24,18 @@
     "desktop/scripts/session-switch-e2e.cjs": "session",
     "desktop/scripts/sidebar-scroll-fade-e2e.cjs": "shell",
     "desktop/scripts/composer-inline-e2e.cjs": "shell",
+    "desktop/scripts/conversation-addons-e2e.cjs": "shell",
+    "desktop/scripts/conversation-addons-e2e-preload.cjs": "shell",
     "desktop/scripts/app-context-e2e.cjs": "shell",
     "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
     "desktop/scripts/settings-sidebar-hit-e2e.cjs": "shell",
+    "desktop/scripts/settings-overlay-e2e.cjs": "shell",
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
-    "desktop/scripts/ptc-settings-e2e.cjs": "shell"
+    "desktop/scripts/ptc-settings-e2e.cjs": "shell",
+    "desktop/scripts/first-send-continuity-e2e.cjs": "session",
+    "desktop/scripts/error-message-style-e2e.cjs": "session",
+    "desktop/scripts/confirmed-archive-e2e.cjs": "session",
+    "desktop/scripts/composer-footer-e2e.cjs": "session"
   }
 }

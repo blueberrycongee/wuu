@@ -65,7 +65,7 @@ OpenAI Responses 上支持该功能的 GPT-5.4 及更新模型（不包括
 [GPT-5.4 nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano)）、Anthropic 上
 [支持工具搜索的 Claude 模型](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#model-compatibility)
 （包括 Haiku 4.5，不包括 Opus 4.1 及更早模型），以及 `https://api.moonshot.ai/v1` 或
-`https://api.moonshot.cn/v1` 上使用 Chat Completions 的 `kimi-k3`。
+`https://api.moonshot.cn/v1` 上使用 Chat Completions 的 `kimi-k3`、`kimi-k3.1-pro` 或 `kimi-k3.1-pro-highspeed`。
 Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Responses 或 Anthropic 兼容接口。
 
 原生加载通过 `tool_search` 按需把延迟工具的 schema 加入模型上下文，启用的内置浏览器

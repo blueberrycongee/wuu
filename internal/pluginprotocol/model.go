@@ -2,7 +2,10 @@
 // It contains no plugin authoring or process runtime API.
 package pluginprotocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	KernelModelInvokeService        = "host.model.invoke"
@@ -10,6 +13,7 @@ const (
 	KernelBackgroundService         = "host.background"
 	CapabilityModelRequestTransform = "model.request.transform"
 	CapabilityModelRequestObserve   = "model.request.observe"
+	CapabilityModelRequestMetrics   = "model.request.metrics"
 	CapabilityModelAdapter          = "model.adapter"
 	CapabilityModelMiddleware       = "model.middleware"
 )
@@ -18,6 +22,8 @@ const (
 // Host credentials, retry state and execution authority never appear here.
 // Preserve provider-native history and unknown option keys when copying it.
 type LogicalModelRequestV1 struct {
+	// ResumeSampling starts a fresh sampling turn without adding durable user input.
+	ResumeSampling              bool              `json:"resume_sampling,omitempty"`
 	Version                     int               `json:"version"`
 	Adapter                     string            `json:"adapter,omitempty"`
 	Provider                    string            `json:"provider,omitempty"`
@@ -89,13 +95,14 @@ type ModelProviderItemV1 struct {
 }
 
 type ModelToolCallV1 struct {
-	ID                   string `json:"id,omitempty"`
-	Name                 string `json:"name,omitempty"`
-	Arguments            string `json:"arguments,omitempty"`
-	Kind                 string `json:"kind,omitempty"`
-	ProviderItemID       string `json:"provider_item_id,omitempty"`
-	ProviderItemProvider string `json:"provider_item_provider,omitempty"`
-	ProviderItemModel    string `json:"provider_item_model,omitempty"`
+	Display              *ModelToolCallDisplayV1 `json:"display,omitempty"`
+	ID                   string                  `json:"id,omitempty"`
+	Name                 string                  `json:"name,omitempty"`
+	Arguments            string                  `json:"arguments,omitempty"`
+	Kind                 string                  `json:"kind,omitempty"`
+	ProviderItemID       string                  `json:"provider_item_id,omitempty"`
+	ProviderItemProvider string                  `json:"provider_item_provider,omitempty"`
+	ProviderItemModel    string                  `json:"provider_item_model,omitempty"`
 }
 
 type ModelToolV1 struct {
@@ -182,9 +189,22 @@ type ModelResponseV1 struct {
 	Truncated         bool                    `json:"truncated,omitempty"`
 }
 
+type ModelFailureV1 struct {
+	Origin            string `json:"origin"`
+	Category          string `json:"category"`
+	ProviderFamily    string `json:"provider_family,omitempty"`
+	ProviderCode      string `json:"provider_code,omitempty"`
+	HTTPStatus        int    `json:"http_status,omitempty"`
+	RetryAfterMS      int64  `json:"retry_after_ms,omitempty"`
+	ContextOverflow   bool   `json:"context_overflow,omitempty"`
+	AuthRefreshable   bool   `json:"auth_refreshable,omitempty"`
+	Confidence        string `json:"confidence,omitempty"`
+	SuggestedRecovery string `json:"suggested_recovery,omitempty"`
+}
 type ModelErrorV1 struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Failure *ModelFailureV1 `json:"failure,omitempty"`
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
 }
 
 type ModelStreamEventV1 struct {
@@ -229,6 +249,30 @@ type ModelResponseObserveInput struct {
 }
 
 type ModelRequestObserveInput = ModelResponseObserveInput
+
+// ModelRequestMetricsInput is one metadata-only selected-adapter invocation.
+// Durations use the host monotonic clock; chunks and bytes are never tokens.
+// Delivery is bounded, best effort, and independent of the model execution.
+type ModelRequestMetricsInput struct {
+	Version         int                     `json:"version"`
+	RequestID       string                  `json:"request_id"`
+	Origin          ModelInvocationOriginV1 `json:"origin"`
+	TurnID          string                  `json:"turn_id,omitempty"`
+	AttemptID       string                  `json:"attempt_id,omitempty"`
+	Adapter         string                  `json:"adapter"`
+	Provider        string                  `json:"provider,omitempty"`
+	Model           string                  `json:"model"`
+	Streaming       bool                    `json:"streaming"`
+	Status          string                  `json:"status"`
+	StartedAt       time.Time               `json:"started_at"`
+	DurationMS      float64                 `json:"duration_ms"`
+	FirstOutputMS   *float64                `json:"first_output_ms,omitempty"`
+	TextDeltaEvents int                     `json:"text_delta_events"`
+	TextUTF8Bytes   int                     `json:"text_utf8_bytes"`
+	Usage           *ModelRequestUsage      `json:"usage,omitempty"`
+	UsageSource     string                  `json:"usage_source,omitempty"`
+	DroppedBefore   uint64                  `json:"dropped_before,omitempty"`
+}
 
 type ModelMiddlewareInput struct {
 	Version        int                     `json:"version"`
@@ -275,16 +319,40 @@ type ModelAdapterDescriptor struct {
 	// Mode is direct (default) or delegate. Direct callbacks are admitted as
 	// potentially billable before invocation; delegate response usage is only
 	// a summary of independently accounted host.model.invoke child calls.
-	Mode string `json:"mode,omitempty"`
+	Mode       string   `json:"mode,omitempty"`
+	Operations []string `json:"operations,omitempty"`
 }
 type ModelAdapterInput struct {
-	AdapterID string                `json:"adapter_id"`
-	Request   LogicalModelRequestV1 `json:"request"`
-	Stream    bool                  `json:"stream"`
+	Configuration   json.RawMessage       `json:"configuration,omitempty"`
+	ConfiguredModel string                `json:"configured_model,omitempty"`
+	Operation       string                `json:"operation,omitempty"`
+	Receipt         *ModelAdapterReceipt  `json:"receipt,omitempty"`
+	SessionID       string                `json:"session_id,omitempty"`
+	RecoveryAction  string                `json:"recovery_action,omitempty"`
+	AdapterID       string                `json:"adapter_id"`
+	Request         LogicalModelRequestV1 `json:"request"`
+	Stream          bool                  `json:"stream"`
+}
+
+type ModelAdapterReceipt struct {
+	ID             string `json:"id"`
+	AttemptID      string `json:"attempt_id"`
+	AttemptOrdinal int    `json:"attempt_ordinal"`
+	OperationID    string `json:"operation_id"`
+	Profile        string `json:"profile"`
 }
 
 type ModelAdapterOutput struct {
-	Response *ModelResponseV1 `json:"response,omitempty"`
+	Quota              json.RawMessage        `json:"quota,omitempty"`
+	QuotaError         string                 `json:"quota_error,omitempty"`
+	Error              *ModelErrorV1          `json:"error,omitempty"`
+	Request            *LogicalModelRequestV1 `json:"request,omitempty"`
+	Media              *ModelMediaInputV1     `json:"media,omitempty"`
+	Replacement        []ModelMessageV1       `json:"replacement,omitempty"`
+	Usage              *ModelRequestUsage     `json:"usage,omitempty"`
+	ProviderStateScope string                 `json:"provider_state_scope,omitempty"`
+	Supported          bool                   `json:"supported,omitempty"`
+	Response           *ModelResponseV1       `json:"response,omitempty"`
 }
 
 type BackgroundStartParams struct {
@@ -330,7 +398,7 @@ type ArtifactPresentation struct {
 	Placement string `json:"placement,omitempty"`
 	Ref       string `json:"ref,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
+	SizeBytes *int64 `json:"size_bytes,omitempty"`
 }
 
 type ActivityRef struct {
@@ -347,4 +415,13 @@ type ModelRequestUsage struct {
 	CacheCreationTokens  int  `json:"cache_creation_tokens"`
 	CacheReadTokens      int  `json:"cache_read_tokens"`
 	CacheCreationUnknown bool `json:"cache_creation_unknown"`
+}
+
+type ModelToolCallDisplayV1 struct {
+	Kind  string `json:"kind,omitempty"`
+	Label string `json:"label,omitempty"`
+	// LabelTranslations overrides Label by locale without changing tool identity.
+	LabelTranslations map[string]string `json:"label_translations,omitempty"`
+	Text              string            `json:"text,omitempty"`
+	Capability        string            `json:"capability,omitempty"`
 }

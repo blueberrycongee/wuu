@@ -20,6 +20,7 @@ import {
   type ConversationPaneID,
 } from "./AppState";
 import {
+  OPTIMISTIC_TURN_ID_PREFIX,
   composerContextFromMessage,
   createComposerMessage,
   createOptimisticTurn,
@@ -90,7 +91,9 @@ export type ConversationHistoryActionsDeps = {
     targetThread: Thread,
     prepareThread?: () => Promise<Thread>,
   ) => Promise<boolean>;
+  unadmittedComposerMessage?: (id: string) => QueuedComposerMessage | undefined;
   worktreeForkNonGitReason: string;
+  onError?: (error: unknown, fallback: string) => void;
 };
 
 export type ConversationHistoryActions = {
@@ -248,7 +251,7 @@ export function createConversationHistoryActions(
         }),
       );
     } catch (error) {
-      showErrorToast(error, t("thread.forkFailed"));
+      (deps.onError ?? showErrorToast)(error, t("thread.forkFailed"));
       throw error;
     }
   }
@@ -369,12 +372,18 @@ deps.rememberConversationScrollForEdit();
       media_type: file.media_type,
       data: file.data,
       filename: file.filename,
+      remote_ref: file.remote_ref,
     }));
-    const message = createComposerMessage(text, composerImages, composerFiles, contentParts);
+    const localTurn = turnID.startsWith(OPTIMISTIC_TURN_ID_PREFIX);
+    const unchangedInput = text === (item.input_text ?? item.text ?? "")
+      && JSON.stringify([images, files, contentParts]) === JSON.stringify([item.images ?? [], item.files ?? [], item.content_parts]);
+    const retained = localTurn && unchangedInput && item.source_id ? deps.unadmittedComposerMessage?.(item.source_id) : undefined;
+    const message = retained ?? createComposerMessage(text, composerImages, composerFiles, contentParts);
     if (!message) {
       showActionErrorToast(t("history.emptyEdit"));
       return;
     }
+    if (localTurn && unchangedInput && item.source_id) message.id = item.source_id;
     if (isThreadRunning(sourceThread)) {
       showActionErrorToast(t("history.waitForReply"));
       return;
@@ -397,7 +406,11 @@ deps.rememberConversationScrollForEdit();
       const sent = await deps.sendComposerMessageToThread(message, sourceThread, async () => {
         // Editing mutates persisted history. Even after Stop, wait for its
         // authoritative result before the sender settles the interrupted turn.
-        const result = await window.wuu.editThreadMessage(sourceThread.id, turnID, item.id);
+        // A local placeholder has no persisted cutoff. Retry its original
+        // client ID so uncertain admission cannot append duplicate input.
+        const result = localTurn
+          ? { thread: { ...sourceThread, turns: sourceThread.turns.filter(turn => turn.id !== turnID) } }
+          : await window.wuu.editThreadMessage(sourceThread.id, turnID, item.id);
         const thread = requireThread(
           { thread: result.thread },
           "thread/edit-message did not return a thread",
@@ -496,7 +509,7 @@ deps.rememberConversationScrollForEdit();
           ? { ...current, submitting: false }
           : current,
       );
-      showErrorToast(error, t("history.editFailed"));
+      (deps.onError ?? showErrorToast)(error, t("history.editFailed"));
     }
   }
 

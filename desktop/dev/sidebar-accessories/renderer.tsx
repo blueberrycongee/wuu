@@ -43,11 +43,10 @@ function Fixture() {
   const visible = empty ? [] : threads;
   return <WuuUIRoot><div className="app-shell" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
     <AppSidebar
-      state={{ ...initialState, projects: workspaces, threads: visible.map(thread => ({ ...thread, turns: [] })),
-        initialized: { protocol_version: "wuu-app-server/v0.1", provider: "preview", model: "preview", workspace_root: "/preview" },
-        activeContext: { kind: "project", project_id: project.id, cwd: project.path },
-        lastViewedTurnByThreadID: { idle: "done", running: "done", fork: "done", "fork-running": "done" },
-      }}
+      initialized
+      activeContextKind="project"
+      activeSessionTabID={initialState.activeSessionTabID}
+      lastViewedTurnByThreadID={{ idle: "done", running: "done", fork: "done", "fork-running": "done" }}
       sidebarWorkspaces={workspaces} pinnedThreads={empty ? [] : [threads[0]]}
       activeThreadID={active} activeWorkspaceID={project.id}
       collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
@@ -64,7 +63,7 @@ function Fixture() {
       onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_project, id) => setActive(id)}
       onRemoveWorkspace={noop} onRelocateWorkspace={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
       unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}
-      sidebarCollapsed={false} onToggleSidebar={noop}
+      sidebarCollapsed={false} onShowConversations={noop}
     />
     <main style={{ padding: 24 }}>Sidebar accessory preview · {params.get("theme") || "light"} · {params.get("size") || 14}px</main>
   </div></WuuUIRoot>;

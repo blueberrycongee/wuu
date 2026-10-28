@@ -26,7 +26,9 @@ async function run() {
       backgroundThrottling: false
     }
   });
-  await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
+  await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
+  await waitFor(win, () => !!document.querySelector(".thread-row-main"));
+  await evaluate(win, () => [...document.querySelectorAll(".thread-row-main")].find(row => row.textContent.includes("Resize fixture")).click());
   await waitFor(win, () => !!document.querySelector(".turn"));
 
   // Hold navigation closed while crossing its breakpoint to distinguish a
@@ -46,8 +48,75 @@ async function run() {
     win.setContentSize(width, 820);
     const geometry = await settledGeometry(win, width);
     checkGeometry(geometry);
+    checkReadingWidth(geometry);
     populated.set(width, geometry);
+    if (width === 1380 || width === 390) {
+      fs.writeFileSync(path.join(userData, `conversation-${width}.png`), (await win.webContents.capturePage()).toPNG());
+    }
   }
+  fs.writeFileSync(path.join(userData, "geometry.json"), JSON.stringify([...populated.entries()], null, 2));
+  console.log(`Geometry and screenshots: ${userData}`);
+  for (const theme of ["light", "dark"]) {
+    for (const size of [15, 20]) {
+      await evaluate(win, ({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+        window.dispatchEvent(new Event("wuu-content-size-change"));
+      }, { theme, size });
+      for (const width of [1380, 600]) {
+        win.setContentSize(width, 820);
+        const geometry = await settledGeometry(win, width);
+        checkGeometry(geometry);
+        checkReadingWidth(geometry);
+        fs.writeFileSync(path.join(userData, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+    }
+  }
+  await evaluate(win, () => {
+    document.documentElement.style.removeProperty("--conversation-message-font-size");
+    document.documentElement.dataset.theme = "light";
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
+  await evaluate(win, () => {
+    const key = 'wuu.appearance.v1';
+    const appearance = JSON.parse(localStorage.getItem(key) || '{}');
+    localStorage.setItem(key, JSON.stringify({ ...appearance, messageStyle: 'im' }));
+    document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
+  for (const width of [1380, 600, 390]) {
+    win.setContentSize(width, 820);
+    const geometry = await settledGeometry(win, width);
+    checkGeometry(geometry);
+    checkReadingWidth(geometry);
+    const frame = await evaluate(win, () => {
+      const message = document.querySelector('.cached-conversation-pane[data-active="true"] .user-message');
+      const bounds = message.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, width: bounds.width, style: document.documentElement.dataset.messageStyle,
+        textPadding: parseFloat(getComputedStyle(message).paddingLeft) };
+    });
+    assert.equal(frame.style, "im");
+    assert.ok(frame.textPadding >= 6, `IM text needs an inset inside its frame: ${JSON.stringify(frame)}`);
+    assert.ok(frame.width >= geometry.flowRight - geometry.flowLeft - 1 && frame.width <= geometry.composerWidth + 1
+      && frame.left >= geometry.composerLeft - 1 && frame.right <= geometry.composerRight + 1,
+      `IM frame should fit the composer width: ${JSON.stringify({ geometry, frame })}`);
+    await evaluate(win, () => document.querySelector('.cached-conversation-pane[data-active="true"] .user-message').scrollIntoView({ block: "center" }));
+    await waitFor(win, () => !!document.querySelector('.jump-to-latest-cluster'));
+    const statusCenter = await evaluate(win, () => {
+      const bounds = document.querySelector('.jump-to-latest-cluster').getBoundingClientRect();
+      return bounds.left + bounds.right;
+    });
+    assert.ok(Math.abs(statusCenter - geometry.composerLeft - geometry.composerRight) <= 2,
+      `Floating status and composer must share a centerline: ${JSON.stringify({ geometry, statusCenter })}`);
+    fs.writeFileSync(path.join(userData, `im-20-${width}.png`), (await win.webContents.capturePage()).toPNG());
+  }
+  await evaluate(win, () => {
+    const key = 'wuu.appearance.v1';
+    const appearance = JSON.parse(localStorage.getItem(key) || '{}');
+    localStorage.setItem(key, JSON.stringify({ ...appearance, messageStyle: 'bubble' }));
+    document.documentElement.style.removeProperty("--conversation-message-font-size");
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
   const samples = [...populated.entries()];
   for (let index = 1; index < samples.length; index += 1) {
     const [width, current] = samples[index];
@@ -88,15 +157,35 @@ async function run() {
   await win.webContents.debugger.sendCommand("Emulation.setSafeAreaInsetsOverride", { insets: {} });
   win.webContents.debugger.detach();
 
+  // The environment panel is currently feature-disabled. Exercise its
+  // reserved-layout CSS directly so it cannot silently misalign the dock.
+  await evaluate(win, () => document.querySelector('.conversation-pane').classList.add('environment-panel-reserved'));
+  for (const width of [1380, 1024]) {
+    win.setContentSize(width, 820);
+    const geometry = await settledGeometry(win, width);
+    checkGeometry(geometry);
+    checkReadingWidth(geometry);
+  }
+  await evaluate(win, () => document.querySelector('.conversation-pane').classList.remove('environment-panel-reserved'));
+
   win.setContentSize(1024, 820);
   await settledGeometry(win, 1024);
-  await evaluate(win, () => document.querySelector('[aria-label="打开关联会话"]').click());
+  await evaluate(win, () => document.querySelector('button[aria-label="Open related session"], button[aria-label="打开关联会话"]').click());
   await waitFor(win, () => document.querySelectorAll(".conversation-split-pane").length === 2);
-  for (const width of [1024, 800]) {
+  for (const width of [1024, 800, 600]) {
     win.setContentSize(width, 820);
     for (const side of ["first-child", "last-child"]) {
       checkGeometry(await settledGeometry(win, width, `.conversation-split-pane:${side}`));
     }
+    const split = await evaluate(win, () => {
+      const scroll = document.querySelector('.split-scroll-region');
+      const content = scroll.querySelector(':scope > .scroll-region-content');
+      const panes = [...content.querySelectorAll('.conversation-split-pane')].map(pane => pane.getBoundingClientRect().width);
+      return { available: scroll.clientWidth, rail: parseFloat(getComputedStyle(content).paddingRight), panes };
+    });
+    assert.ok(split.panes.every(pane => pane >= (split.available - split.rail) / 2 - 1),
+      `Split panes should use the available width beside the rail: ${JSON.stringify(split)}`);
+    if (width === 600) fs.writeFileSync(path.join(userData, 'split-600.png'), (await win.webContents.capturePage()).toPNG());
   }
 
   // Custom Chromium scrollbars occupy real layout space even on macOS. Measure
@@ -119,6 +208,14 @@ async function run() {
   });
   await waitFor(win, () => !document.querySelector(".conversation-split-pane"));
 
+  for (const width of [800, 390]) {
+    win.setContentSize(width, 820);
+    const geometry = await settledGeometry(win, width);
+    assert.ok(geometry.scrollbarWidth > 0, `Main history must reserve a classic scrollbar: ${JSON.stringify(geometry)}`);
+    checkGeometry(geometry);
+    checkReadingWidth(geometry);
+  }
+
   win.setContentSize(1380, 820);
   await settledGeometry(win, 1380);
   await evaluate(win, () => {
@@ -138,6 +235,24 @@ async function run() {
   checkGeometry(await settledGeometry(win, 1380, ".side-thread-panel"));
   await evaluate(win, () => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
   await waitFor(win, () => !document.querySelector(".side-thread-panel"));
+
+  win.setContentSize(720, 820);
+  await evaluate(win, () => {
+    document.querySelector('.sidebar-toggle-button').click();
+    document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
+    window.dispatchEvent(new Event('wuu-content-size-change'));
+  });
+  await waitFor(win, () => !document.querySelector('.app-shell').classList.contains('sidebar-collapsed'));
+  const populatedBesideSidebar = await settledGeometry(win, 720);
+  checkGeometry(populatedBesideSidebar);
+  checkReadingWidth(populatedBesideSidebar);
+  fs.writeFileSync(path.join(userData, 'populated-sidebar-20-720.png'), (await win.webContents.capturePage()).toPNG());
+  await evaluate(win, () => {
+    document.querySelector('.sidebar-toggle-button').click();
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
+    window.dispatchEvent(new Event('wuu-content-size-change'));
+  });
+  await waitFor(win, () => document.querySelector('.app-shell').classList.contains('sidebar-collapsed'));
 
   win.setContentSize(1024, 820);
   await settledGeometry(win, 1024);
@@ -161,20 +276,36 @@ async function run() {
   assert.ok(besideSidebar.composerWidth < populated.get(1024).composerWidth,
     "Composer should follow the available pane, not the whole window");
 
+  win.setContentSize(720, 820);
+  await evaluate(win, () => {
+    document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
+  const narrowSidebar = await settledGeometry(win, 720);
+  checkGeometry(narrowSidebar);
+  checkReadingWidth(narrowSidebar);
+  fs.writeFileSync(path.join(userData, "sidebar-20-720.png"), (await win.webContents.capturePage()).toPNG());
+
   console.log(`Session composer geometry verified at ${populated.size} widths, including empty/populated sessions, split/side threads, classic scrollbars and one-sided safe areas.`);
   win.close();
   app.quit();
 }
 
 function checkGeometry(value) {
-  assert.ok(value.composerWidth > 0 && value.composerWidth <= 801, JSON.stringify(value));
+  assert.ok(value.composerWidth > 0, JSON.stringify(value));
   assert.ok(value.leftGap >= 11 && value.rightGap >= 11,
     `Composer must stay inside its available pane: ${JSON.stringify(value)}`);
   assert.ok(Math.abs(value.leftGap - value.rightGap) <= 1,
-    `Composer must stay centered: ${JSON.stringify(value)}`);
-  assert.ok(Math.abs(value.flowLeft - value.composerLeft) <= 1 &&
-    Math.abs(value.flowRight - value.composerRight) <= 1,
-    `Composer must align with the content column: ${JSON.stringify(value)}`);
+    `Composer must stay centered in its pane: ${JSON.stringify(value)}`);
+  assert.ok(value.composerWidth >= value.flowRight - value.flowLeft - 1,
+    `Composer must be at least as wide as the content column: ${JSON.stringify(value)}`);
+  assert.ok(value.flowLeft >= value.composerLeft - 1 && value.flowRight <= value.composerRight + 1,
+    `The content column must fit within the composer: ${JSON.stringify(value)}`);
+}
+
+function checkReadingWidth(value) {
+  assert.ok(value.flowRight - value.flowLeft >= Math.min(value.readingTarget, value.rightOnlyReadingWidth) - 1,
+    `Avoid sacrificing a readable measure to a matching empty rail gutter: ${JSON.stringify(value)}`);
 }
 
 async function settledGeometry(win, width, paneSelector = ".conversation-pane") {
@@ -194,14 +325,13 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const flowStyle = getComputedStyle(flow);
       const scrollRect = scroll.getBoundingClientRect();
       const scrollStyle = getComputedStyle(scroll);
+      const content = scroll.querySelector(":scope > .scroll-region-content");
+      const contentStyle = content ? getComputedStyle(content) : null;
       const scrollbarWidth = scroll.offsetWidth - scroll.clientWidth;
-      // .scroll-region reserves its stable gutter on both edges, so the
-      // content box sits half a gutter inside each edge of the padding box.
-      // That box is what the message flow centers in, and the input has to
-      // share its centerline — measure the composer against it, not against
-      // the pane box, so a pane whose two margins differ fails here.
-      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft);
-      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
+      const railInset = pane.querySelector('[data-main-conversation-composer="dock"]')
+        ? parseFloat(contentStyle?.paddingRight || "0") : 0;
+      const contentLeft = scrollRect.left + scrollbarWidth / 2;
+      const contentRight = scrollRect.right - scrollbarWidth / 2;
       return {
         windowWidth: innerWidth,
         composerWidth: rect.width,
@@ -210,13 +340,17 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
         leftGap: rect.left - contentLeft,
         rightGap: contentRight - rect.right,
         scrollbarWidth,
+        railInset,
+        readingTarget: 20 * parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--conversation-message-font-size")),
+        rightOnlyReadingWidth: scroll.clientWidth - parseFloat(scrollStyle.paddingLeft) - parseFloat(scrollStyle.paddingRight)
+          - railInset - parseFloat(flowStyle.paddingLeft) - parseFloat(flowStyle.paddingRight),
         scrollbarMode: scrollStyle.scrollbarWidth,
         scrollbarGutter: scrollStyle.scrollbarGutter,
         flowLeft: flowRect.left + parseFloat(flowStyle.paddingLeft),
         flowRight: flowRect.right - parseFloat(flowStyle.paddingRight)
       };
     }, paneSelector);
-    if (value?.windowWidth === width && value.compact === (width < 760) && JSON.stringify(value) === previous) {
+    if (value?.windowWidth === width && JSON.stringify(value) === previous) {
       stable += 1;
       if (stable >= 4) return value;
     } else {

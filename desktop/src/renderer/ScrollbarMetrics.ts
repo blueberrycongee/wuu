@@ -1,16 +1,12 @@
 /*
  * Runtime scrollbar gutter measurement.
  *
- * The conversation composer and the message flow are centered in different
- * containing blocks: the flow lives inside .scroll-region, whose content box
- * already excludes the real scrollbar gutter (scrollbar-gutter: stable
- * both-edges), while the dock composer overlays the full grid cell and mirrors
- * that box with padding-inline: var(--scrollbar-width). For those two boxes to
- * share one centerline, --scrollbar-width must equal the platform's ACTUAL
- * gutter width, not a static design value:
+ * The flow lives inside .scroll-region, whose content box excludes the real
+ * scrollbar gutter on both edges. The centered dock overlays the full grid cell
+ * and mirrors those gutters with padding-inline: var(--scrollbar-width), so its
+ * width stays consistent with the reading column on each platform:
  *
- *   - macOS overlay scrollbars occupy 0px of layout, so any fixed value
- *     shifts the composer off the flow.
+ *   - macOS overlay scrollbars occupy 0px of layout.
  *   - Windows/Linux classic scrollbars occupy a platform-dependent width
  *     that a fixed 10px only approximates.
  *

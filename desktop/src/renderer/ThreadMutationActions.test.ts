@@ -93,8 +93,12 @@ function installWuuApi(baseThread: Thread): {
 
 function buildActions({
   initial,
+  signal,
+  knownThreads = [],
 }: {
   initial: AppState;
+  signal?: AbortSignal;
+  knownThreads?: Thread[];
 }) {
   let appState = initial;
   const clearPrimaryComposerDraft = vi.fn();
@@ -106,7 +110,9 @@ function buildActions({
   const removeCachedSidebarThread = vi.fn();
   const clearThreadPendingComposerMessages = vi.fn();
   const actions = createThreadMutationActions({
+    signal,
     getAppState: () => appState,
+    getKnownThread: (id: string) => appState.threads.find(row => row.id === id) ?? knownThreads.find(row => row.id === id),
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
@@ -353,7 +359,7 @@ describe("createThreadMutationActions", () => {
     expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
   });
 
-  it("reports a remotely owned running turn without showing archive success", async () => {
+  it("reports the remote ownership fence without offering a force retry that cannot cross it", async () => {
     const context = projectContext();
     const base = thread();
     const api = installWuuApi(base);
@@ -374,14 +380,11 @@ describe("createThreadMutationActions", () => {
 
     const outcome = await harness.actions.archiveThread(summary(base));
 
-    expect(outcome).toEqual({
-      ok: false,
-      error: "对话仍在运行，结束后再归档",
-      forceRetryable: true,
-    });
+    expect(outcome).toMatchObject({ ok: false, forceRetryable: false });
+    if (!outcome.ok) expect(outcome.error).toContain("another app-server");
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().status).toBe("ready");
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(expect.stringContaining("another app-server"));
   });
 
   it("reuses a parked workspace draft when archiving the active thread", async () => {
@@ -579,10 +582,59 @@ describe("createThreadMutationActions", () => {
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().thread?.id).toBe(base.id);
   });
+
+  it("retains a cache-only source for explicit confirmation after switching workspaces", async () => {
+    const base = thread();
+    base.turns = [{ id: "source-turn", status: "completed", items_view: "full", items: [{ id: "answer", type: "agent_message", text: "Retain full source history" }] }];
+    const api = installWuuApi(base);
+    api.archiveThread.mockRejectedValueOnce(new Error("cannot archive a running thread"));
+    const harness = buildActions({
+      initial: { ...initialState, activeContext: { kind: "project", project_id: "other", cwd: "/tmp/other" }, threads: [], status: "ready" },
+      knownThreads: [base],
+    });
+
+    expect(await harness.actions.archiveThread(summary(base))).toMatchObject({ ok: false, forceRetryable: true });
+    expect(harness.updateCachedSidebarThread).toHaveBeenCalledExactlyOnceWith(base);
+    expect(harness.updateCachedSidebarThread.mock.calls[0][0].turns[0].items[0].text).toBe("Retain full source history");
+    expect(harness.getAppState().threads).toEqual([]);
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+
+    expect(await harness.actions.archiveThread(summary(base), { force: true })).toEqual({ ok: true });
+    expect(harness.getAppState().threads).toEqual([{ ...base, archived: true }]);
+    expect(harness.getAppState().activeContext?.cwd).toBe("/tmp/other");
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+  });
 });
 
 
 describe("archive draft ownership", () => {
+  it.each(["confirmed", "rejected"])("does not write through a retired owner after archive is %s", async outcome => {
+    const base = thread();
+    const api = installWuuApi(base);
+    const owner = new AbortController();
+    let resolve!: (value: { thread: Thread }) => void;
+    let reject!: (error: Error) => void;
+    api.archiveThread.mockReturnValue(new Promise((complete, fail) => { resolve = complete; reject = fail; }));
+    const harness = buildActions({ signal: owner.signal, initial: {
+      ...initialState, activeContext: projectContext(), thread: base,
+      threads: [base], sessionTabs: [createThreadSessionTab(base, projectContext())],
+      activeSessionTabID: threadSessionTabID(base.id),
+    } });
+    const pending = harness.actions.archiveThread(summary(base), { force: true });
+    const admittedState = harness.getAppState();
+    owner.abort(new Error("Application owner retired"));
+    const stopped = expect(pending).rejects.toThrow("Application owner retired");
+    if (outcome === "confirmed") resolve({ thread: { ...base, archived: true } });
+    else reject(new Error("Selected storage rejected archive"));
+    await stopped;
+    expect(harness.getAppState()).toBe(admittedState);
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.updateCachedSidebarThread).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+  });
+
   it("preserves drafts and pending messages when archive is rejected", async () => {
     const context = projectContext();
     const base = thread();

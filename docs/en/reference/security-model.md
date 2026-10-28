@@ -49,13 +49,13 @@ Project `.mcp.json` entries require a local trust decision before loading. Trust
 
 ## Extensions and hooks
 
-Enabled extensions are trusted code, not sandboxed code. The current local-package workflow separates staging files from approving and activating them; see [plugin installation and updates](../customize/plugins.md). Wuu's loader, diagnostics, and safe mode do not certify an extension's safety.
+Enabled extensions are trusted code, not sandboxed code. Installing a local package grants trust and enables it. Same-source updates retain trust; changing the source requires confirmation; see [plugin installation and updates](../customize/plugins.md). Wuu's loader, diagnostics, and safe mode do not certify an extension's safety.
 
 Hooks and MCP subprocesses likewise run code outside the narrow agent-command sandbox contract. Check the source, arguments, environment, and remote destinations of code you enable. Disabling an extension is a lifecycle control, not a way to undo actions it already performed.
 
 ## Credentials and local records
 
-Provider configuration can refer to environment variables. Managed desktop OAuth credentials use macOS Keychain; a Keychain failure is surfaced rather than silently falling back to a plaintext credential file. Headless authentication has file-based storage options, so secure the account and state directory that run it.
+Provider configuration can refer to environment variables. Managed desktop MCP OAuth credentials use macOS Keychain or Linux Secret Service. Linux requires a session D-Bus and an available Secret Service keyring. A keyring failure is surfaced rather than silently falling back to a plaintext credential file. Headless authentication has file-based storage options, so secure the account and state directory that run it.
 
 Conversation history, tool results, logs, artifacts, and plugin data can contain source code and private text. Treat Wuu's state directory, session exports, and diagnostic bundles as sensitive even when obvious tokens have been redacted. Review them before sharing or backing them up to another service.
 

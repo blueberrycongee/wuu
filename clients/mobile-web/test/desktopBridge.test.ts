@@ -19,6 +19,7 @@ vi.mock("@wuu/remote-core", () => ({
     suspend = remote.suspend;
     constructor(_credentials: Credentials, options: RemoteClientOptions) { remote.options = options; }
     isAttached = () => remote.attached;
+    rpc = () => ({ call: remote.call });
     start = () => remote.options.onAttach?.({ session: "first", resumed: false });
     waitAttached = async () => {};
     latestState = () => null;
@@ -66,6 +67,36 @@ describe("browser host contract", () => {
     expect(remote.call).not.toHaveBeenCalled();
   });
 
+  it("keeps ChatGPT login local while exposing host-owned account management", async () => {
+    const host = await api();
+    for (const [method, args] of [
+      ["startChatGPTLogin", ["account-1", true]],
+      ["pollChatGPTLogin", ["attempt-1"]],
+      ["cancelChatGPTLogin", ["attempt-1"]],
+    ] as const) {
+      expect(host.unsupportedMethods).toContain(method);
+      await expect((host[method] as (...args: readonly unknown[]) => Promise<unknown>)(...args))
+        .rejects.toMatchObject({ code: "host_operation_unavailable", operation: method });
+    }
+    expect(remote.call).not.toHaveBeenCalled();
+    expect(window.open).not.toHaveBeenCalled();
+
+    const accounts = { accounts: [{ id: "account-1", email: "fixture@example.test", status: "connected" }] };
+    remote.call.mockResolvedValueOnce(accounts);
+    await expect(host.listChatGPTAccounts()).resolves.toEqual(accounts);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/accounts", undefined, 30_000, expect.any(String));
+    const models = { models: [{ id: "fixture-model", name: "Fixture" }], providers: [] };
+    remote.call.mockResolvedValueOnce(models);
+    await expect(host.listChatGPTModels("account-1")).resolves.toEqual(models);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/models", { account_id: "account-1" }, 30_000, expect.any(String));
+    const signedOut = { ok: true, revocation_confirmed: false, providers: [] };
+    remote.call.mockResolvedValueOnce(signedOut);
+    await expect(host.signOutChatGPTAccount("account-1")).resolves.toEqual(signedOut);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/signout", { account_id: "account-1" }, 30_000, expect.any(String));
+    remote.call.mockRejectedValueOnce(new Error("account unavailable"));
+    await expect(host.listChatGPTModels("missing-account")).rejects.toThrow("account unavailable");
+  });
+
   it("preserves explicit resets and thread-scoped model selection over RPC", async () => {
     await (await api()).updateRuntimeSettings(undefined, undefined, "", undefined, "", "read_only", "thread-1");
     expect(remote.call).toHaveBeenCalledWith("config/model/update", {
@@ -83,6 +114,14 @@ describe("browser host contract", () => {
     expect(remote.call).toHaveBeenLastCalledWith("engine/auth/cancel", {
       engine_id: "antigravity",
     }, 30_000, expect.any(String));
+  });
+
+  it("does not forward the desktop-only local CLI login", async () => {
+    const host = await api();
+    await expect(host.authenticateEngine("grok", "local-cli")).rejects.toMatchObject({
+      code: "host_operation_unavailable", operation: "authenticateEngine",
+    });
+    expect(remote.call).not.toHaveBeenCalled();
   });
 
   it("does not open executable URL schemes", async () => {
@@ -103,9 +142,71 @@ async function connectBridge() {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
+
+describe("remote desktop activation ownership", () => {
+  const initialized = (graph: string) => ({ extension_inventory: [{ id: "shell", fingerprint: "source", desktop: {}, graph_generation: graph }] });
+  const report = (graph: string, activation = 1) => ({ id: "shell", fingerprint: "source", graph_generation: graph, activation, phase: "registration" as const, status: "active" as const });
+
+  it("routes ACKs to captured graph workspaces and strips caller-selected identities", async () => {
+    remote.call.mockResolvedValueOnce({ current: "/a", current_id: "a", workspaces: [{ id: "a", name: "A", path: "/a" }, { id: "b", name: "B", path: "/b" }] });
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("a"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation({ ...report("a"), renderer_id: "spoof", disconnected: true } as ReturnType<typeof report>);
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", report("a"), 30_000, "/a");
+    await bridge.api.selectProject("b");
+    remote.call.mockResolvedValueOnce(initialized("b"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation({ ...report("a"), phase: "cleanup", status: "disposed" });
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", { ...report("a"), phase: "cleanup", status: "disposed" }, 30_000, "/a");
+    remote.options.onNotification?.("plugin/inventory/changed", initialized("a-next"), "/a");
+    await bridge.api.reportPluginDesktopActivation(report("a-next", 2));
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", report("a-next", 2), 30_000, "/a");
+    const count = remote.call.mock.calls.length;
+    await expect(bridge.api.reportPluginDesktopActivation(report("unknown"))).rejects.toThrow(/graph/i);
+    expect(remote.call).toHaveBeenCalledTimes(count);
+    await bridge.disconnect();
+  });
+
+  it("rejects old cleanup after a replacement attachment even when the graph is unchanged", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation(report("same"));
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    const count = remote.call.mock.calls.length;
+    await expect(bridge.api.reportPluginDesktopActivation({ ...report("same"), phase: "cleanup", status: "disposed" })).rejects.toThrow(/connection/i);
+    expect(remote.call).toHaveBeenCalledTimes(count);
+    await bridge.api.reportPluginDesktopActivation(report("same", 2));
+    await bridge.api.reportPluginDesktopActivation({ ...report("same", 2), phase: "render" });
+    remote.call.mockRejectedValueOnce(new Error("ACK transport failed"));
+    await expect(bridge.api.reportPluginDesktopActivation({ ...report("same", 2), phase: "render", status: "failed" })).rejects.toThrow("ACK transport failed");
+    await bridge.disconnect();
+  });
+
+  it("keeps activation ownership on a resumed attachment and rejects in-flight replies from a replaced one", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation(report("same"));
+    remote.options.onAttach?.({ session: "first", resumed: true });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    const pending = deferred<unknown>();
+    remote.call.mockReturnValueOnce(pending.promise);
+    const rendered = bridge.api.reportPluginDesktopActivation({ ...report("same"), phase: "render" });
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    pending.resolve({ ok: true });
+    await expect(rendered).rejects.toThrow(/connection/i);
+    await bridge.disconnect();
+  });
+});
 
 describe("connection recovery", () => {
   it("invalidates event consumers immediately before the disconnect grace phase changes", async () => {
@@ -292,6 +393,64 @@ describe("connection recovery", () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
     expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
     restore.resolve();
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+  });
+
+  it("retires an old restore owner without poisoning replacement RPC readiness", async () => {
+    const bridge = await connectBridge();
+    const old = deferred<void>(), next = deferred<void>(), rendererCommit = deferred<void>();
+    bridge.api.onRuntimeRestore!(() => rendererCommit.promise);
+    const handler = vi.fn().mockImplementationOnce(() => old.promise).mockImplementationOnce(() => next.promise);
+    const unsubscribe = bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    unsubscribe();
+    // Native provider teardown/initialization has an asynchronous registration gap.
+    await Promise.resolve(); await Promise.resolve();
+    expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
+    // The same callback identity can be re-registered by a new owner.
+    bridge.api.onRuntimeRestore!(handler);
+    rendererCommit.resolve();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+    old.reject(new DOMException("signal is aborted without reason", "AbortError"));
+    expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
+    next.resolve();
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    await expect(bridge.api.listWorkspaceFiles()).resolves.toBeDefined();
+  });
+
+  it("preserves failure from the live replacement restore owner", async () => {
+    const bridge = await connectBridge();
+    const old = deferred<void>(), next = deferred<void>();
+    const handler = vi.fn(() => old.promise);
+    const unsubscribe = bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    unsubscribe();
+    const replacement = vi.fn(() => next.promise);
+    bridge.api.onRuntimeRestore!(replacement);
+    await vi.waitFor(() => expect(replacement).toHaveBeenCalledOnce());
+    next.reject(new Error("current snapshot unavailable"));
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("error"));
+    expect(bridge.getConnectionSnapshot().error).toBe("current snapshot unavailable");
+    old.resolve();
+    await Promise.resolve();
+    expect(bridge.getConnectionSnapshot().phase).toBe("error");
+    await expect(bridge.api.listWorkspaceFiles()).rejects.toThrow(/restoring/);
+  });
+
+  it("permits fresh provider bootstrap reads while restoration still blocks ordinary actions", async () => {
+    const bridge = await connectBridge(), gate = deferred<void>();
+    const handler = vi.fn(() => gate.promise);
+    bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    remote.call.mockResolvedValueOnce({ id: "selected", fingerprint: "current-source", entry: "wuu-builtin:default-shell", digest: "validated" });
+    await expect(bridge.api.loadPluginDesktopModule({ id: "selected", fingerprint: "current-source" })).resolves.toMatchObject({ url: "wuu-builtin:default-shell" });
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-module/read", { id: "selected", fingerprint: "current-source" }, expect.any(Number), "/paired/workspace");
+    await expect(bridge.api.requestPluginRuntime({ id: "selected", fingerprint: "current-source", graph_generation: "current-graph", method: "mutate" })).rejects.toThrow(/restoring/);
+    await expect(bridge.api.listWorkspaceFiles()).rejects.toThrow(/restoring/);
+    gate.resolve();
     await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
   });
 
@@ -669,4 +828,76 @@ it("marks a terminal as ended when a new remote attachment replaces its owner", 
  remote.options.onDetach?.();remote.options.onAttach?.({session:'replacement',resumed:false});
  expect(events).toContainEqual(expect.objectContaining({type:'error',id:'term-1'}));
  await bridge.disconnect();
+});
+
+it("forwards explicit continuation without inventing user input", async () => {
+  const host = await api();
+  await host.startTurn("thread", "", undefined, undefined, undefined, undefined, undefined, undefined, undefined, "turn-interrupted");
+  expect(remote.call).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+    thread_id: "thread", prompt: "", resume_after_turn_id: "turn-interrupted",
+  }), expect.any(Number), expect.any(String));
+});
+
+describe('selected artifacts in the shared browser renderer',()=>{
+ it('routes cloud artifacts through the captured authenticated workspace and releases URLs across switches',async()=>{
+  remote.call.mockResolvedValueOnce({current:'/a',current_id:'a',workspaces:[{id:'a',name:'A',path:'/a'},{id:'b',name:'B',path:'/b'}]});
+  const bridge=await connectBridge();
+  const bytes=new TextEncoder().encode('cloud artifact through shared renderer');
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  const artifact={id:'cloud-resource',uri:'s3://selected-bucket/object',name:'result.txt',mime_type:'text/plain',size:bytes.length,sha256:digest};
+  remote.call.mockImplementation(async(method:string,params:Record<string,unknown>)=>{
+   if(method==='thread/artifact/resolve')return {artifact,generation_id:'cloud-provider-generation'};
+   if(method==='thread/artifact/read')return {data:btoa(String.fromCharCode(...bytes)),offset:params.offset,total:bytes.length,mime_type:artifact.mime_type,sha256:digest};
+   return {ok:true};
+  });
+  const {ApplicationArtifacts}=await import('../../../desktop/src/renderer/plugins/ApplicationArtifacts');
+  const service=new ApplicationArtifacts(bridge.api,{resolveResourceURL:()=>undefined,openFile:async()=>{}});
+  const source=await service.acquireSource({id:artifact.id,uri:artifact.uri,threadId:'thread-a',sha256:digest,name:artifact.name,mimeType:artifact.mime_type});
+  expect(service.capabilities.source).toMatchObject({strategy:'bounded-memory',maxBytes:8*1024*1024});
+  expect(await (await fetch(source.url)).text()).toBe('cloud artifact through shared renderer');
+  expect(remote.call).toHaveBeenCalledWith('thread/artifact/read',expect.objectContaining({thread_id:'thread-a',generation_id:'cloud-provider-generation',uri:artifact.uri,sha256:digest}),30_000,'/a');
+  await bridge.api.selectProject('b');
+  await expect(fetch(source.url)).rejects.toThrow();
+  await expect(bridge.api.saveArtifactFile!('result.txt',source.url)).rejects.toThrow(/lease/);
+  service.releaseSource(source.leaseId!);await bridge.disconnect();
+ });
+ it('cancels shared-renderer acquisition before its first range completes',async()=>{
+  const bridge=await connectBridge();const chunk=deferred<unknown>();let requestID='';
+  remote.call.mockImplementation(async(method:string,params:Record<string,unknown>)=>{
+   if(method==='thread/artifact/resolve')return {artifact:{id:'a',uri:'remote-store://object',name:'result',mime_type:'text/plain',size:3,sha256:'a'.repeat(64)},generation_id:'generation'};
+   if(method==='thread/artifact/read'){requestID=String(params.request_id);return chunk.promise;}
+   return {ok:true};
+  });
+  const {ApplicationArtifacts}=await import('../../../desktop/src/renderer/plugins/ApplicationArtifacts');
+  const service=new ApplicationArtifacts(bridge.api,{resolveResourceURL:()=>undefined,openFile:async()=>{}});
+  const abort=new AbortController();const pending=service.acquireSource({id:'a',uri:'remote-store://object',threadId:'t',sha256:'a'.repeat(64),name:'result',mimeType:'text/plain'},{signal:abort.signal});
+  await vi.waitFor(()=>expect(requestID).not.toBe(''));abort.abort();
+  await expect(pending).rejects.toThrow(/released|aborted/);
+  expect(remote.call).toHaveBeenCalledWith('thread/artifact/cancel',{thread_id:'t',request_id:requestID},30_000,'/paired/workspace');
+  chunk.resolve({});await bridge.disconnect();
+ });
+ it('clears a loaded preview when the selected provider changes or the authenticated link detaches',async()=>{
+  const bridge=await connectBridge();const digest='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  remote.call.mockResolvedValue({artifact:{id:'empty',uri:'cloud://empty',name:'empty',mime_type:'text/plain',size:0,sha256:digest},generation_id:'generation'});
+  const first=await bridge.api.acquireArtifactSource!({uri:'cloud://empty',threadId:'t',sha256:digest});
+  remote.options.onNotification?.('plugin/inventory/changed',{},'/paired/workspace');await expect(fetch(first.url)).rejects.toThrow();
+  const second=await bridge.api.acquireArtifactSource!({uri:'cloud://empty',threadId:'t',sha256:digest});
+  remote.options.onDetach?.();await expect(fetch(second.url)).rejects.toThrow();await bridge.disconnect();
+ });
+});
+
+
+it('keeps unmanaged HTTP downloads as explicit anchors without granting provider or foreign Blob access', async () => {
+  const bridge = await connectBridge();
+  const anchor = { href: '', download: '', rel: '', click: vi.fn() };
+  vi.stubGlobal('document', { createElement: () => anchor });
+  const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  try {
+    await bridge.api.saveArtifactFile!('image.png', 'https://example.invalid/user-chosen.png');
+    expect(anchor.href).toBe('https://example.invalid/user-chosen.png');
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(bridge.api.saveArtifactFile!('secret', 's3://selected-provider/private')).rejects.toThrow(/lease/);
+    await expect(bridge.api.saveArtifactFile!('foreign', 'blob:unowned')).rejects.toThrow(/lease/);
+  } finally { fetchSpy.mockRestore(); await bridge.disconnect(); vi.unstubAllGlobals(); }
 });

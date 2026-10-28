@@ -3,22 +3,29 @@ package appserver
 import (
 	"context"
 
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // sessionTranscriptExcerpt reads a bounded recent slice of a session's settled
 // history plus the running turn's live progress, for a managing agent that
 // must assess evidence without loading the whole transcript.
-func (s *Server) sessionTranscriptExcerpt(ctx context.Context, id, query string, before, limit int) (map[string]any, error) {
+func (s *Server) sessionTranscriptExcerpt(binding *runtime.State, ctx context.Context, id, query string, before, limit int) (map[string]any, error) {
+	return s.sessionTranscriptExcerptWithStore(ctx, binding.Sessions, id, query, before, limit)
+}
+
+func (s *Server) sessionTranscriptExcerptWithStore(ctx context.Context, store *session.Store, id, query string, before, limit int) (map[string]any, error) {
 	if limit < 1 || limit > 30 {
 		limit = 8
 	}
 	var page session.HistoryPage
 	var err error
 	if query != "" {
-		page, err = session.SearchHistoryQuery(ctx, s.rt.SessionDir, session.HistorySearchQuery{SessionID: id, Query: query, BeforeSeq: before, Limit: limit})
+		page, err = store.WithContext(ctx).
+			SearchHistoryQuery(session.HistorySearchQuery{SessionID: id, Query: query, BeforeSeq: before, Limit: limit})
 	} else {
-		head, readErr := session.ReadHistoryPage(ctx, s.rt.SessionDir, id, 1, 1)
+		head, readErr := store.WithContext(ctx).
+			ReadHistoryPage(id, 1, 1)
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -27,7 +34,8 @@ func (s *Server) sessionTranscriptExcerpt(ctx context.Context, id, query string,
 			end = before - 1
 		}
 		start := max(1, end-limit+1)
-		page, err = session.ReadHistoryQuery(ctx, s.rt.SessionDir, session.HistoryReadQuery{SessionID: id, StartSeq: start, EndSeq: end, Limit: limit})
+		page, err = store.WithContext(ctx).
+			ReadHistoryQuery(session.HistoryReadQuery{SessionID: id, StartSeq: start, EndSeq: end, Limit: limit})
 		page.HasMore = start > 1
 		if page.HasMore {
 			page.Next = &session.HistoryCursor{SessionID: id, SnapshotSeq: head.HeadSeq, Seq: start}
@@ -44,7 +52,7 @@ func (s *Server) sessionTranscriptExcerpt(ctx context.Context, id, query string,
 		items = append(items, map[string]any{"seq": r.Seq, "role": r.Role, "name": r.Name, "content": excerpt(r.Content, 1600), "tool_calls": excerpt(string(r.ToolCalls), 1600), "tool_result": excerpt(string(r.ToolResult), 1600), "truncated": len([]rune(r.Content)) > 1600})
 	}
 	progress := make([]map[string]any, 0)
-	if th := s.thread(id); th != nil {
+	if th := s.thread(id); th != nil && th.state != nil && th.state.Sessions == store {
 		th.mu.Lock()
 		if th.running && len(th.Turns) > 0 {
 			current := th.Turns[len(th.Turns)-1]

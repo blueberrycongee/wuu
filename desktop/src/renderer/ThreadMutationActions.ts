@@ -9,6 +9,7 @@ import {
   draftSessionTabForContext,
   ensureSessionTab,
   isThreadRunning,
+  mergeSidebarThread,
   removeSessionTab,
   threadSessionTabID,
   upsertThread,
@@ -40,7 +41,12 @@ function withThreadTitle(
 }
 
 export type ThreadMutationActionsDeps = {
+  /** Fences local projection writes; an admitted backend mutation may still commit. */
+  signal?: AbortSignal;
   getAppState: () => AppState;
+  getKnownThread: (threadID: string) => Thread | undefined;
+  /** Void actions reject through this hook; archive retains its typed retry outcome. */
+  onError?: (error: Error) => never;
   setAppState: SetAppState;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
   clearPrimaryComposerDraft: () => void;
@@ -79,11 +85,9 @@ export type ThreadArchiveOutcome =
   | { ok: false; error: string; forceRetryable?: boolean };
 
 function isRunningArchiveRejection(message: string): boolean {
-  return (
-    message.includes("cannot archive a running thread") ||
-    message.includes("already has a running turn") ||
-    message.includes("execution is owned by another app-server")
-  );
+  // Force can settle this server's execution, never another process's lease.
+  // Preserve that ownership error instead of advertising an impossible retry.
+  return message.includes("cannot archive a running thread");
 }
 
 function archiveThreadFailure(error: unknown): { message: string; forceRetryable: boolean } {
@@ -101,6 +105,7 @@ export function createThreadMutationActions(
   deps: ThreadMutationActionsDeps,
 ): ThreadMutationActions {
   function setStatus(status: string): void {
+    deps.onError?.(new Error(status));
     showErrorToast(status);
   }
 
@@ -161,13 +166,15 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads: current.threads.map((item) =>
-          item.id === result.thread.id ? result.thread : item,
+          item.id === result.thread.id ? mergeSidebarThread(item, result.thread) : item,
         ),
         status: current.status === "ready" ? "ready" : current.status,
       }));
@@ -209,10 +216,12 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads:
           current.threads.some((item) => item.id === result.thread.id) ||
@@ -239,25 +248,26 @@ export function createThreadMutationActions(
     thread: ThreadSummary,
     options?: ThreadArchiveOptions,
   ): Promise<ThreadArchiveOutcome> {
+    deps.signal?.throwIfAborted();
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
       const error = translateCurrent("thread.archive.noWorkspace");
-      setStatus(error);
+      if (!deps.onError) setStatus(error);
       return { ok: false, error };
     }
     const force = options?.force === true;
     if (!force && isThreadRunning(thread)) {
       const error = translateCurrent("thread.archive.running");
-      setStatus(error);
+      if (!deps.onError) setStatus(error);
       return { ok: false, error, forceRetryable: true };
     }
     // Reflect the archive in the visible lists on the click: the sidebar row
     // disappears and Settings → Archive gains the entry immediately. Pane and
     // session-tab teardown stays on the server confirmation so a rejection
     // never has to rebuild an open conversation; failures flip the row back.
-    const previousThread = currentState.threads.find(
-      (candidate) => candidate.id === thread.id,
-    );
+    // A background workspace row may exist only in the selected owner's cache.
+    // Retain the full row so a rejection keeps its confirmation target/history.
+    const previousThread = deps.getKnownThread(thread.id);
     deps.removeCachedSidebarThread(thread.id);
     deps.setAppState((current) => ({
       ...current,
@@ -269,20 +279,21 @@ export function createThreadMutationActions(
       const result = force
         ? await window.wuu.archiveThread(thread.id, true, true)
         : await window.wuu.archiveThread(thread.id, true);
+      deps.signal?.throwIfAborted();
       // Destructive local cleanup follows server confirmation and belongs
       // only to the conversation that is still active now.
       deps.clearThreadPendingComposerMessages(thread.id);
       const fallbackTab = prepareConfirmedThreadRemoval(thread.id);
-      // Archived conversations remain in AppState for Settings → Archive, and
-      // the optimistic flip already dropped the sidebar row; the confirmation
-      // only needs to tear down the panes/tabs that still show the thread.
+      // Keep the canonical result in the archive catalog even when the source
+      // belonged only to a background workspace cache. The optimistic flip
+      // already dropped its row; only its own panes/tabs can be torn down.
       deps.setAppState((current) => {
         const nextTabs = removeSessionTab(
           current.sessionTabs,
           threadSessionTabID(thread.id),
         );
         return archiveMarkThreadState(
-          current,
+          { ...current, threads: upsertThread(current.threads, result.thread) },
           result.thread.id,
           true,
           nextTabs,
@@ -291,6 +302,9 @@ export function createThreadMutationActions(
       });
       return { ok: true };
     } catch (error) {
+      // Retirement does not undo a durable archive. The successor refreshes
+      // canonical state; this owner must not clean up, roll back or report it.
+      deps.signal?.throwIfAborted();
       if (previousThread) {
         deps.updateCachedSidebarThread(previousThread);
       }
@@ -303,7 +317,7 @@ export function createThreadMutationActions(
         ),
       }));
       const failure = archiveThreadFailure(error);
-      setStatus(failure.message);
+      if (!deps.onError) setStatus(failure.message);
       return { ok: false, error: failure.message, forceRetryable: failure.forceRetryable };
     }
   }
@@ -340,10 +354,12 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads: upsertThread(current.threads, result.thread),
         status: current.status === "ready" ? "ready" : current.status,

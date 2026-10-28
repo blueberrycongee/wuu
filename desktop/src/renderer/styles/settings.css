@@ -2,12 +2,12 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --settings-canvas: var(--paper);
-  --settings-card: var(--wuu-color-surface, var(--gray-0));
+  --settings-canvas: var(--surface-1);
+  --settings-card: var(--theme-override-color-surface, var(--gray-0));
   /* A group is a sheet lifted off the canvas: a large corner, a faint edge
    * and a soft shadow, so grouping reads without a gray frame. */
   --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: var(--shadow-soft);
+  --settings-group-shadow: var(--shadow-card);
   /* Row breathing room; empty lines and list rows share it. */
   --settings-row-pad-block: var(--space-4);
   --subscription-meter: var(--wuu-accent);
@@ -24,11 +24,11 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f1f1f4;
-  --settings-preview-light-line: #dfdfe2;
-  --settings-preview-dark-canvas: #1c1c1d;
-  --settings-preview-dark-sidebar: #151516;
-  --settings-preview-dark-line: #3e3e40;
+  --settings-preview-light-sidebar: #f7f7f7;
+  --settings-preview-light-line: #dddddd;
+  --settings-preview-dark-canvas: #191a1c;
+  --settings-preview-dark-sidebar: #0d0e10;
+  --settings-preview-dark-line: #414247;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;
@@ -136,8 +136,9 @@
   width: 100%;
   min-height: var(--sidebar-row-height);
   border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
+  box-shadow: var(--shadow-soft);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
@@ -146,7 +147,7 @@
 }
 
 .settings-search input:hover {
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  background: var(--field-hover-bg);
 }
 
 .settings-search input::placeholder {
@@ -213,8 +214,7 @@
   color: var(--ink);
 }
 
-/* Selection is the fill alone, as in the main rail: a heavier weight would
- * widen the label and shift it while switching pages. */
+/* Share the navigation selection surface without changing label metrics. */
 .settings-nav-item.active {
   background: var(--sidebar-row-selected-bg);
   box-shadow: var(--sidebar-row-selected-shadow);
@@ -247,6 +247,8 @@
   display: grid;
   min-width: 0;
   min-height: 0;
+  /* Titlebar actions must not impose their min-content width on the page. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   position: relative;
   overflow: hidden;
@@ -271,6 +273,7 @@
  * content area — not just the tiny traffic-light spacer in the sidebar. */
 .settings-titlebar {
   display: flex;
+  min-width: 0;
   height: var(--canvas-titlebar-height);
   min-height: var(--canvas-titlebar-height);
   align-items: center;
@@ -366,22 +369,14 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-/* --- Titlebar crumb ------------------------------------------------------
- * "Settings / Page" sits in the window strip, set like the conversation
+/* --- Page title ----------------------------------------------------------
+ * The page title sits in the window strip, set like the conversation
  * title, with page actions at its trailing edge. The page opens on its
  * scope line or first group instead of repeating its name in large type.
  * ------------------------------------------------------------------------- */
 
 .settings-titlebar {
   gap: var(--space-2);
-}
-
-.settings-crumb-root,
-.settings-crumb-separator {
-  flex: 0 0 auto;
-  color: var(--ink-tertiary);
-  font-size: var(--font-body);
-  white-space: nowrap;
 }
 
 .settings-titlebar-slot {
@@ -405,7 +400,9 @@
 }
 
 .settings-titlebar-slot > .settings-page-actions {
+  flex: 0 0 auto;
   min-height: 0;
+  white-space: nowrap;
   margin: 0 0 0 auto;
   -webkit-app-region: no-drag;
 }
@@ -483,6 +480,15 @@
   }
 }
 
+.settings-language-options {
+  flex-wrap: wrap;
+}
+
+.settings-language-options button {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
 /* --- Section --------------------------------------------------------------
  * A section title is a quiet label above its group. The settings inside
  * carry the weight, so the eye lands on what can be changed.
@@ -518,8 +524,8 @@
 
 .settings-section-title {
   margin: 0;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
+  color: var(--ink-strong);
+  font-size: var(--font-title);
   font-weight: var(--weight-medium);
   line-height: 1.4;
 }
@@ -541,7 +547,7 @@
   align-self: flex-start;
   align-items: center;
   gap: var(--space-2);
-  margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
+  margin-block: calc((var(--font-title) * 1.4 - var(--control-field-height)) / 2);
 }
 
 /* An inline form: its rows, then the actions that commit or discard them,
@@ -584,7 +590,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
@@ -641,7 +647,8 @@
   min-width: 0;
 }
 
-.settings-row-error {
+.settings-row-error,
+.settings-row-detail {
   grid-column: 1 / -1;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -652,7 +659,7 @@
 .settings-row-label-title {
   color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1.4;
 }
 
@@ -689,6 +696,36 @@
   justify-content: flex-end;
   gap: var(--space-2);
   min-width: 0;
+}
+
+.browser-extension-entry + .browser-extension-entry {
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.browser-extension-entry > .settings-row {
+  border-bottom: 0;
+}
+
+.browser-extension-details {
+  padding-bottom: var(--space-4);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.browser-extension-details dl {
+  display: grid;
+  grid-template-columns: minmax(7em, auto) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.browser-extension-details dt,
+.browser-extension-details dd {
+  margin: 0;
+}
+
+.browser-extension-details p {
+  margin: var(--space-3) 0 0;
 }
 
 @container settings-page (max-width: 32em) {
@@ -860,7 +897,8 @@
   gap: var(--space-2);
   min-width: 0;
   border-radius: var(--radius-sm);
-  background: var(--wuu-control-secondary-background, var(--surface-2));
+  background: var(--control-secondary-bg);
+  box-shadow: var(--shadow-soft);
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
@@ -879,7 +917,7 @@
 }
 
 .settings-button:hover:not(:disabled) {
-  background: var(--wuu-control-secondary-background, var(--surface-3));
+  background: var(--control-secondary-hover-bg);
 }
 
 .settings-button:active:not(:disabled) {
@@ -903,6 +941,7 @@
 }
 
 .settings-button-ghost {
+  box-shadow: none;
   background: transparent;
   color: var(--ink-soft);
 }
@@ -1206,7 +1245,7 @@ button.settings-engine-expand:hover {
   align-content: start;
   gap: var(--space-4);
   padding: var(--card-padding);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
@@ -1810,21 +1849,50 @@ button.settings-engine-expand:hover {
 
 /* --- MCP servers + pets --------------------------------------------------------- */
 
+.settings-mcp-details-toggle {
+  padding-inline: 0;
+  color: var(--ink-soft);
+}
+
+.settings-mcp-diagnostic-text {
+  max-height: 14em;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.5;
+}
+
+.settings-mcp-list-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-mcp-list-failure > .settings-mcp-diagnostic {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
 .settings-mcp-code-input {
   width: 9.5em;
   min-width: 7.5em;
 }
 
 /* A state mark leads the meta line and must not wrap away from it. */
-.settings-row-label-description:has(> .settings-row-attention) {
+.settings-mcp-status {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   column-gap: var(--space-1);
 }
 
 .settings-row-attention {
   display: inline-flex;
+  flex: 0 0 auto;
   color: var(--ink-tertiary);
 }
 
@@ -2652,8 +2720,9 @@ button.settings-engine-expand:hover {
   }
 
   /* Switches, numbers, short values, buttons and icon actions are narrow
-   * enough to stay beside their label. */
-  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
+   * enough to stay beside their label. Action groups with a text button
+   * need their own line so recovery guidance keeps its reading space. */
+  .settings-row:not(.settings-row-block):not(:has(> .settings-row-control > .settings-row-actions > .settings-button:not(.settings-icon-button))):not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
@@ -2683,4 +2752,135 @@ button.settings-engine-expand:hover {
   .settings-page {
     animation: none;
   }
+}
+
+/* Settings shares the native workbench frame and drawer controller. The
+   existing settings presentation still owns its navigation and form pages. */
+.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar {
+  pointer-events: none;
+}
+
+.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar > .sidebar-content,
+.app-shell.navigation-ribbon-layout[data-settings-open] > :is(
+  .conversation-pane,
+  .workspace-right-panel,
+  .workspace-right-panel-resizer,
+  .shell-right-sidebar-toggle
+) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.settings-standalone-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 119;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-shell:has(> .settings-standalone-layer) > .sidebar {
+  visibility: hidden;
+}
+
+.app-shell:has(> .settings-standalone-layer) > :is(
+  .sidebar-resizer,
+  .sidebar-hover-zone,
+  .globalized-sidebar-toggle-region,
+  .section-sidebar-toggle
+) {
+  display: none;
+}
+
+.settings-workbench-layer {
+  position: absolute;
+  inset: var(--workbench-top, var(--window-titlebar-height)) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
+  z-index: 119;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--conversation-canvas-radius);
+  background: var(--workbench-canvas-bg);
+}
+
+/* Lazy settings load inside their existing pane so window chrome stays usable. */
+.settings-workbench-layer > .view-switch-loading-inline,
+.settings-standalone-layer > .view-switch-loading-inline {
+  height: 100%;
+}
+
+.app-shell .settings-shell.settings-embedded {
+  --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
+  grid-template-columns: max(0px, calc(var(--sidebar-width) - var(--sidebar-ribbon-compact-width, 52px))) minmax(0, 1fr);
+  height: 100%;
+  padding: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
+  grid-column: 1;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  background: var(--workbench-canvas-bg);
+  box-shadow: none;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar .sidebar-content {
+  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded .settings-main {
+  margin: 0;
+  border-radius: 0;
+  background: var(--settings-canvas);
+}
+
+.app-shell .settings-embedded .settings-main::before {
+  content: none;
+}
+
+.app-shell .settings-embedded .settings-titlebar {
+  padding: 0 var(--window-titlebar-padding-inline);
+}
+
+.app-shell .settings-embedded .settings-navigation-title {
+  margin: 0;
+  padding-block: 0;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed .settings-sidebar,
+.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-docking .settings-sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  transform: none;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .settings-sidebar {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .settings-sidebar {
+  box-shadow: var(--shadow-drawer-right);
+}
+
+.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-closing .settings-sidebar .sidebar-content {
+  opacity: 0;
+  transform: translate3d(-18px, 0, 0);
+  pointer-events: none;
+}
+
+.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-resizer,
+.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-hover-zone {
+  z-index: 121;
 }

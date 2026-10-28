@@ -49,11 +49,17 @@ func PrepareMessagesForProviderRequestWithPolicy(provider, model string, msgs []
 // ResolveProviderHistory expands the portable fallback behind opaque native
 // checkpoints that are incompatible with the active provider state scope.
 // Empty scope means the caller can only enforce provider provenance.
+// IncompleteStreamFragment is a display-only assistant fragment from a failed attempt.
+const IncompleteStreamFragment = "incomplete_stream_fragment"
+
 func ResolveProviderHistory(msgs []ChatMessage, provider, scope string) []ChatMessage {
 	provider = strings.TrimSpace(provider)
 	scope = strings.TrimSpace(scope)
 	out := make([]ChatMessage, 0, len(msgs))
 	for _, msg := range msgs {
+		if msg.Cause == IncompleteStreamFragment {
+			continue
+		}
 		resolved := false
 		for _, item := range msg.ProviderItems {
 			providerMismatch := item.Provider != "" && strings.TrimSpace(item.Provider) != provider

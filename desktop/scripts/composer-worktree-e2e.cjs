@@ -1,7 +1,9 @@
 // Real Electron/main/preload/Go coverage for starting a conversation in its own
-// Git worktree from the composer. Build core and desktop first;
-// WUU_WORKTREE_CORE can override the binary. A local HTTP provider answers the
-// turn, so no account or paid inference is used. Screenshots and the evidence
+// Git worktree through the public desktop API, with composer branch controls.
+// Build core and desktop first;
+// WUU_WORKTREE_CORE and WUU_WORKTREE_DESKTOP can select frozen build inputs.
+// A local HTTP provider answers the turn, so no account or paid inference is used.
+// Screenshots and the evidence
 // record are written to artifacts/composer-worktree/ for visual review.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,23 +14,29 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 
-const desktop = path.resolve(__dirname, '..');
+const desktop = path.resolve(process.env.WUU_WORKTREE_DESKTOP || path.join(__dirname, '..'));
 const output = process.env.WUU_WORKTREE_OUTPUT || path.resolve(desktop, '../artifacts/composer-worktree');
+const narrowWidth = Number(process.env.WUU_WORKTREE_NARROW_WIDTH || 760);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-composer-worktree-'));
 const home = path.join(fixture, 'home');
+const userHome = path.join(fixture, 'user-home');
 const project = path.join(fixture, 'project');
 const plain = path.join(fixture, 'plain');
 const longProjectName = 'an-unusually-long-project-name-for-the-narrow-composer';
 const longProject = path.join(fixture, longProjectName);
-for (const dir of [home, project, plain]) fs.mkdirSync(dir);
+for (const dir of [home, userHome, project, plain]) fs.mkdirSync(dir);
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(fixture, 'profile'));
-process.env.WUU_HOME = home;
+Object.assign(process.env, {
+  WUU_HOME: home, HOME: userHome, XDG_CACHE_HOME: path.join(userHome, '.cache'),
+  CODEX_HOME: path.join(userHome, '.codex'), GROK_HOME: path.join(userHome, '.grok'),
+  WUU_ENABLE_CUA_MAC: '0', WUU_ENABLE_CUA_LINUX: '0',
+});
 process.env.WUU_DESKTOP_CORE = process.env.WUU_WORKTREE_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 
 const git = (cwd, ...args) => {
@@ -89,10 +97,16 @@ const server = http.createServer((req, res) => {
       res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } })}\n\ndata: [DONE]\n\n`);
       return;
     }
-    if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage === 0) {
-      rebindStage++;
-      res.write(chunk({ role: 'assistant', content: 'Moving this session back to the project.' }));
-      res.write(chunk({ tool_calls: [{ index: 0, id: 'workspace-fixture', type: 'function', function: { name: 'set_session_workspace', arguments: JSON.stringify({ root: fs.realpathSync(project) }) } }] }));
+    if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage < 2) {
+      const discovering = rebindStage++ === 0;
+      // Workspace rebinding is deferred: load its public schema before calling it.
+      if (!discovering) assert(requests.at(-1).body.tools?.some(tool => tool.function?.name === 'set_session_workspace'),
+        'Tool discovery must expose the workspace operation before invocation.');
+      res.write(chunk({ role: 'assistant', content: discovering ? 'Finding the workspace operation.' : 'Moving this session back to the project.' }));
+      res.write(chunk({ tool_calls: [{ index: 0, id: `workspace-fixture-${rebindStage}`, type: 'function', function: {
+        name: discovering ? 'tool_search' : 'set_session_workspace',
+        arguments: JSON.stringify(discovering ? { query: 'select:set_session_workspace' } : { root: fs.realpathSync(project) }),
+      } }] }));
       res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
       return;
     }
@@ -106,7 +120,8 @@ const evaluate = (win, fn, arg) => win.webContents.executeJavaScript(`(${fn})(${
 async function waitFor(win, fn, arg, timeout = 30000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
-    if (await evaluate(win, fn, arg)) return;
+    const value = await evaluate(win, fn, arg);
+    if (value) return value;
     await delay(50);
   }
   throw new Error(`Timed out: ${fn}`);
@@ -118,6 +133,8 @@ async function capture(win, name) {
     .flatMap(node => node.getAnimations())
     .filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime))
     .map(animation => animation.finished.catch(() => {}))));
+  // Navigation can retain old compositor pixels after the live DOM is ready.
+  await waitFor(win, () => !document.querySelector('[data-wuu-compositor-frame], [data-wuu-presentation-frame]'));
   await settle(win);
   fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
 }
@@ -139,11 +156,57 @@ async function captureCrop(win, rect) {
   const crop = Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, Math.round(value * zoom)]));
   return (await win.webContents.capturePage(crop)).toPNG();
 }
-const click = (win, selector) => evaluate(win, target => {
-  const element = document.querySelector(target);
-  if (!element) throw new Error(`missing ${target}`);
-  element.click();
-}, selector);
+const nativeClicks = [];
+async function click(win, selector) {
+  win.focus(); win.webContents.focus();
+  const focusDeadline = Date.now() + 30000;
+  while (!(win.isFocused() && win.webContents.isFocused()) && Date.now() < focusDeadline) await delay(50);
+  assert(win.isFocused() && win.webContents.isFocused(), 'Native window focus is required for the click.');
+  await evaluate(win, () => document.fonts.ready.then(() => undefined));
+  const point = await waitFor(win, async selector => {
+    let previous, target;
+    for (let frame = 0; frame < 4; frame++) {
+      await new Promise(requestAnimationFrame);
+      const element = [...document.querySelectorAll(selector)].find(node => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && !node.disabled
+          && !node.closest('[inert], [aria-hidden="true"]');
+      });
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      const current = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      const bounds = [rect.x, rect.y, rect.width, rect.height].join();
+      if (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight
+        || !element.contains(document.elementFromPoint(current.x, current.y))
+        || (previous && (bounds !== previous || target !== element))) return;
+      previous = bounds; target = element;
+      if (frame === 3) return current;
+    }
+  }, selector);
+  nativeClicks.push({ selector, ...point });
+  const zoom = win.webContents.getZoomFactor();
+  const dip = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+    win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...dip });
+  }
+}
+const branchControl = '.composer-branch-control button[aria-haspopup="menu"]';
+const projectControl = '.composer-project-control button[aria-haspopup="menu"]';
+async function waitForBranch(win, branch) {
+  await waitFor(win, ({ selector, label }) => {
+    const control = document.querySelector(selector);
+    return control && !control.disabled && control.getAttribute('aria-label') === label;
+  }, { selector: branchControl, label: `Switch branch: ${branch}` });
+}
+async function sendDraft(win) {
+  // The controlled draft can lag behind the input event; clicking its disabled
+  // send button is a no-op. Wait for rendering and confirm submission consumed it.
+  await settle(win);
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value.trim()
+    && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
+  await click(win, '.composer-send-button');
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+}
 async function waitForSkillRow(win) {
   await waitFor(win, () => {
     const row = document.querySelector('.slash-command-item[id$="-skill:compact"]');
@@ -157,20 +220,12 @@ async function waitForSkillRow(win) {
     return row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
   });
 }
-const gitControls = win => evaluate(win, () => {
-  const group = document.querySelector('.composer-git-controls');
-  const toggle = group?.querySelector('.composer-worktree-toggle');
-  return group ? {
-    branch: group.querySelector('.hero-project-pill-text')?.textContent,
-    worktree: toggle?.getAttribute('aria-pressed'),
-  } : null;
-});
 const workspaceRow = win => evaluate(win, () => {
   const barNode = document.querySelector('.composer-workspace-bar');
   const bar = barNode.getBoundingClientRect();
   const groups = [...document.querySelectorAll('.composer-workspace-group')].map(group => group.getBoundingClientRect());
   const measure = document.createElement('canvas').getContext('2d');
-  const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text, .composer-worktree-toggle span')]
+  const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text')]
     .map(node => {
       const style = getComputedStyle(node);
       measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
@@ -181,7 +236,7 @@ const workspaceRow = win => evaluate(win, () => {
     });
   const buttons = [...barNode.querySelectorAll('button')].map(button => {
     const rect = button.getBoundingClientRect();
-    return { left: rect.left, right: rect.right, height: rect.height,
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height,
       hittable: rect.width > 0 && button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)) };
   });
   return { viewport: { width: innerWidth, height: innerHeight }, barLeft: bar.left, barRight: bar.right,
@@ -213,26 +268,12 @@ async function run() {
   while (!main) await delay(25);
   main.webContents.setBackgroundThrottling(false);
   main.setSize(1280, 820);
-  await waitFor(main, () => document.querySelector('.composer textarea') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
+  await waitFor(main, () => document.querySelector('.composer textarea:not(:disabled)'));
+  await waitForBranch(main, 'main');
 
-  // Off by default: branch choice keeps its checkout meaning.
-  assert.deepEqual(await gitControls(main), { branch: 'main', worktree: 'false' });
+  // Branch choice keeps its checkout meaning; isolation is requested through the API.
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
   await capture(main, '01-draft-light-default.png');
-
-  // On: the branch segment becomes the start point, and choosing a branch
-  // checks nothing out in the shared project.
-  await click(main, '.composer-worktree-toggle');
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
-  await click(main, '.composer-git-controls .hero-project-pill');
-  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]'));
-  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.composer-branch-menu form, .composer-branch-menu button[role="menuitem"]'))), false,
-    'Creating and checking out a branch is not offered for a worktree start point.');
-  await capture(main, '02-worktree-start-menu.png');
-  await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
-  await waitFor(main, () => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'feature');
-  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'Choosing a start point must not check out the shared project.');
-  assert.deepEqual(await gitControls(main), { branch: 'feature', worktree: 'true' });
-  await capture(main, '03-worktree-on-feature.png');
 
   // Select before the new checkout exists; browsing must not create a worktree.
   const worktreeCount = () => git(project, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length;
@@ -253,7 +294,14 @@ async function run() {
   assert.deepEqual(JSON.parse(initialSkillDraft.split('\n')[0].slice('/skill '.length)), { name: 'compact', source: 'project', project: projectIdentity });
   assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
   await capture(main, '03b-initial-skill-draft.png');
-  await click(main, '.composer-send-button');
+  await evaluate(main, async ({ draft, cwd }) => {
+    const { thread } = await window.wuu.startThread({ cwd, workspace_id: 'repo', workspace: 'worktree', base_revision: 'feature' });
+    await window.wuu.renameThread(thread.id, 'Worktree API fixture');
+    await window.wuu.startTurn(thread.id, draft);
+    window.dispatchEvent(new Event('focus'));
+  }, { draft: initialSkillDraft, cwd: project });
+  await waitFor(main, () => [...document.querySelectorAll('.thread-row-main')].some(button => button.getAttribute('aria-label')?.includes('Worktree API fixture')));
+  await evaluate(main, () => [...document.querySelectorAll('.thread-row-main')].find(button => button.getAttribute('aria-label')?.includes('Worktree API fixture')).click());
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')]
     .some(flow => flow.textContent.includes('Worktree fixture answer.')), undefined, 60000);
   const thread = await evaluate(main, async () => {
@@ -283,7 +331,7 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Check manual skill admission fixture');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Manual-only skill admission verified.'));
   assert.equal(typeof skillAdmissionResult, 'string', 'The synthetic-provider tool round trip must return a tool result.');
   assert.match(skillAdmissionResult, /skill.*compact.*not found/i, 'Model invocation must reject the manual-only skill.');
@@ -309,7 +357,7 @@ async function run() {
     name: 'compact', source: 'project', project: projectIdentity,
   });
   await capture(main, '08-explicit-skill-draft-light.png');
-  main.setSize(760, 820);
+  main.setSize(narrowWidth, 820);
   await evaluate(main, () => {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
@@ -326,7 +374,7 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text + 'verify selected workflow');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }, selectedDraft);
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   const receivedSelectedSkill = () => requests.some(request => (request.body.messages || []).some(message =>
     message.role === 'user' && typeof message.content === 'string'
     && message.content.includes('SELECTED_SKILL_MARKER verify selected workflow')
@@ -348,7 +396,7 @@ async function run() {
   const threadIDsBeforeDismissal = await evaluate(main, async () => (await window.wuu.listThreads()).threads.map(item => item.id).sort());
   const worktreesBeforeDismissal = worktreeCount();
   const forkDismissals = [];
-  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
+  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, narrowWidth]) {
     await setAppearance(main, { theme, fontSize, width });
     for (const dismissal of ['backdrop', 'Escape']) {
       await evaluate(main, () => {
@@ -414,7 +462,7 @@ async function run() {
   });
   await waitFor(main, () => document.querySelector('.composer textarea')?.value === 'Rebind workspace fixture'
     && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   await waitFor(main, () => [...document.querySelectorAll('.user-message-motion')].some(node => node.textContent.includes('Rebind workspace fixture'))
     && document.querySelector('.composer-send-button[data-wuu-state="send"]'));
   await waitFor(main, async id => {
@@ -446,7 +494,7 @@ async function run() {
   }), 'The workspace operation must follow its initiating message.');
   assert(await evaluate(main, root => document.querySelector('.workspace-tool-details')?.textContent.includes(root), fs.realpathSync(project)));
   await capture(main, '10-workspace-tool-light.png');
-  main.setSize(760, 820);
+  main.setSize(narrowWidth, 820);
   await evaluate(main, id => {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
@@ -464,32 +512,51 @@ async function run() {
     document.documentElement.style.removeProperty('--appearance-scale');
   });
 
-  // The next draft starts shared again, and with worktree off a branch choice
-  // is a checkout of the shared project.
+  // The next draft starts shared again; branch choice checks out the project.
   await click(main, '.session-tab-new');
   // Git status refreshes for the draft's project after leaving the worktree.
-  await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
-  assert.deepEqual(await gitControls(main), { branch: 'main', worktree: 'false' });
-  await click(main, '.composer-git-controls .hero-project-pill');
-  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]:not(:disabled)'));
-  await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
-  await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'feature');
-  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'With worktree off, choosing a branch checks it out.');
+  await waitForBranch(main, 'main');
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+  await click(main, branchControl);
+  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][aria-label="feature"]:not(:disabled)'));
+  await click(main, '.composer-branch-menu [role="menuitemradio"][aria-label="feature"]');
+  await waitForBranch(main, 'feature');
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'Choosing a branch checks it out.');
 
-  // Dark, large text, narrow window with worktree on.
-  await click(main, '.composer-worktree-toggle');
-  main.setSize(760, 820);
+  // Dark, large text, narrow window with a long branch name.
+  main.setSize(narrowWidth, 820);
   await evaluate(main, () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
-  await click(main, '.composer-git-controls .hero-project-pill');
-  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
-  await waitFor(main, branch => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  await click(main, branchControl);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][aria-label="${branch}"]`), longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][aria-label="${longBranch}"]`);
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  await waitForBranch(main, longBranch);
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
+  // The expanded rail uses icons: their accessible names retain the full identity.
+  // Exercise that native entry point before checking the text-label fallback.
+  await click(main, branchControl);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [aria-label="${branch}"][aria-checked="true"]`), longBranch);
+  const railSelection = await evaluate(main, ({ branchSelector, projectSelector }) => ({
+    branch: document.querySelector(branchSelector).getAttribute('aria-label'),
+    project: document.querySelector(projectSelector).getAttribute('aria-label'),
+    menuSelectedBranch: document.querySelector('.composer-branch-menu [aria-checked="true"]').getAttribute('aria-label'),
+  }), { branchSelector: branchControl, projectSelector: projectControl });
+  assert.equal(railSelection.menuSelectedBranch, longBranch);
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), longBranch);
+  await capture(main, '05c-tool-rail-long-branch-dark-large-narrow.png');
+  for (const type of ['keyDown', 'keyUp']) main.webContents.sendInputEvent({ type, keyCode: 'Escape' });
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  assert(await evaluate(main, selector => document.activeElement === document.querySelector(selector), branchControl),
+    'Dismissing the branch menu returns focus to its trigger.');
+  if (await evaluate(main, () => Boolean(document.querySelector('.composer-workspace-rail')))) {
+    await click(main, '[data-wuu-component="workspace-tool-rail-toggle"]');
+  }
+  await waitFor(main, () => document.querySelector('.composer-workspace-bar'));
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05-draft-dark-large-narrow.png');
   const narrow = await workspaceRow(main);
   assert.equal(narrow.groups.length, 2);
@@ -497,48 +564,47 @@ async function run() {
   assert.ok(Math.abs(narrow.groups[0].height - narrow.groups[1].height) < 0.5, 'Both groups share one height.');
   assert(narrow.text.slice(0, 2).every(item => item.width >= item.prefixWidth),
     `Both names retain space for an identifiable prefix and ellipsis. Layout: ${JSON.stringify(narrow)}`);
-  assert(narrow.text[1].clipped && !narrow.text[2].clipped,
-    `The long branch truncates while the worktree toggle stays whole. Layout: ${JSON.stringify(narrow)}`);
+  assert(narrow.text[1].clipped,
+    `The long branch truncates within its available width. Layout: ${JSON.stringify(narrow)}`);
 
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(15 / 14)));
-  await setAppearance(main, { theme: 'dark', fontSize: 15, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 15, width: narrowWidth });
   await capture(main, '05b-draft-dark-default-narrow.png');
   const defaultNarrow = await workspaceRow(main);
   assert.deepEqual(defaultNarrow.text.filter(item => item.clipped).map(item => item.text), [longBranch],
-    `At the default text size, the project and toggle labels stay whole. Layout: ${JSON.stringify(defaultNarrow)}`);
+    `At the default text size, the project label stays whole. Layout: ${JSON.stringify(defaultNarrow)}`);
   assert(defaultNarrow.text[1].width >= defaultNarrow.text[1].prefixWidth,
     `The default-size branch retains its readable prefix. Layout: ${JSON.stringify(defaultNarrow)}`);
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(20 / 14)));
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
 
-  // A genuinely long project must still leave the branch identifiable and
-  // the worktree toggle accessible.
-  await click(main, '.composer-project-control .hero-project-pill');
-  await waitFor(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`), longProjectName);
-  await evaluate(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`).click(), longProjectName);
-  await waitFor(main, name => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === name
-    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main', longProjectName);
-  await click(main, '.composer-worktree-toggle');
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
-  await click(main, '.composer-git-controls .hero-project-pill');
-  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
-  await waitFor(main, branch => !document.querySelector('.composer-branch-menu')
-    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  // A long project name must still leave the branch identifiable.
+  await click(main, projectControl);
+  await waitFor(main, name => document.querySelector(`.composer-project-menu button[aria-label="${name}"]`), longProjectName);
+  await click(main, `.composer-project-menu button[aria-label="${longProjectName}"]`);
+  await waitFor(main, ({ selector, name }) => document.querySelector(selector)?.getAttribute('aria-label') === `Switch workspace: ${name}`,
+    { selector: projectControl, name: longProjectName });
+  await waitForBranch(main, 'main');
+  await click(main, branchControl);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][aria-label="${branch}"]`), longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][aria-label="${longBranch}"]`);
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  await waitForBranch(main, longBranch);
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05a-draft-long-project-dark-large-narrow.png');
   const longProjectNarrow = await workspaceRow(main);
   assert.ok(longProjectNarrow.groups.every(rect => rect.right <= longProjectNarrow.barRight + 0.5),
     `Long project controls stay inside the bar. Layout: ${JSON.stringify(longProjectNarrow)}`);
   assert.deepEqual(longProjectNarrow.text.filter(item => item.clipped).map(item => item.text), [longProjectName, longBranch],
-    `Long names truncate without clipping the worktree toggle. Layout: ${JSON.stringify(longProjectNarrow)}`);
+    `Long names truncate within the workspace row. Layout: ${JSON.stringify(longProjectNarrow)}`);
   assert(longProjectNarrow.text.slice(0, 2).every(item => item.width >= item.prefixWidth),
     `Both long names retain readable prefixes. Layout: ${JSON.stringify(longProjectNarrow)}`);
   for (const row of [narrow, defaultNarrow, longProjectNarrow]) {
-    assert.equal(row.buttons.length, 3);
+    assert.equal(row.buttons.length, 2);
     assert(row.buttons.every((button, index) => button.left >= row.barLeft - 0.5
       && button.right <= row.barRight + 0.5 && button.hittable
-      && (index === 0 || button.left >= row.buttons[index - 1].right)),
+      && row.buttons.slice(0, index).every(previous => button.left >= previous.right
+        || button.top >= previous.bottom || button.bottom <= previous.top)),
     `Workspace controls stay in bounds, separate and clickable. Layout: ${JSON.stringify(row)}`);
   }
 
@@ -549,10 +615,11 @@ async function run() {
     document.documentElement.style.removeProperty('--conversation-message-font-size');
     document.documentElement.style.removeProperty('--appearance-scale');
   });
-  await click(main, '.composer-project-control .hero-project-pill');
-  await waitFor(main, () => document.querySelector('.composer-project-menu button[title="plain-folder"]'));
-  await click(main, '.composer-project-menu button[title="plain-folder"]');
-  await waitFor(main, () => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === 'plain-folder' && !document.querySelector('.composer-git-controls'));
+  await click(main, projectControl);
+  await waitFor(main, () => document.querySelector('.composer-project-menu button[aria-label="plain-folder"]'));
+  await click(main, '.composer-project-menu button[aria-label="plain-folder"]');
+  await waitFor(main, selector => document.querySelector(selector)?.getAttribute('aria-label') === 'Switch workspace: plain-folder'
+    && !document.querySelector('.composer-branch-control'), projectControl);
   await capture(main, '06-draft-non-git.png');
 
   const crossProject = await evaluate(main, async draft => {
@@ -570,6 +637,8 @@ async function run() {
     fixture,
     featureHead,
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
+    railSelection,
+    nativeClicks,
     narrow,
     defaultNarrow,
     longProjectNarrow,

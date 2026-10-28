@@ -25,6 +25,17 @@
   color: var(--context-meter-text);
 }
 
+.composer-context-meter.is-compact {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
+.composer-context-meter.is-compact .composer-context-meter-svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  transform: none;
+}
+
 .composer-context-meter:focus-visible {
   border-radius: var(--radius-pill);
 }

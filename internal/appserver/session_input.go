@@ -55,9 +55,9 @@ func isHumanUserMessage(msg providers.ChatMessage) bool {
 	return !(strings.HasPrefix(content, "<process_recheck>") && strings.HasSuffix(content, "</process_recheck>"))
 }
 
-func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
+func (s *Server) validateInboxInput(binding *runtime.State, msg providers.ChatMessage) error {
 	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == "project" || msg.Cause == projectCauseResult) {
-		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
+		return binding.Sessions.ValidateInboxControls(msg.ClientID)
 	}
 	return nil
 }
@@ -65,9 +65,10 @@ func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
 // trySubmitSessionInput is shared by extension sends and project sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
-func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (sessionInputResult, bool, error) {
+// The bools report handled input and transfer of snapshot ownership respectively.
+func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (sessionInputResult, bool, bool, error) {
 	if active, err := session.ThreadExecutionActive(s.rt.SessionDir, th.ID); err != nil {
-		return sessionInputResult{}, false, err
+		return sessionInputResult{}, false, false, err
 	} else if !active {
 		th.mu.Lock()
 		if !th.running {
@@ -75,34 +76,34 @@ func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg
 		}
 		th.mu.Unlock()
 		if err != nil {
-			return sessionInputResult{}, false, err
+			return sessionInputResult{}, false, false, err
 		}
 	}
 	if prior, ok := s.findSessionInput(th, msg.ClientID); ok {
-		return prior, true, nil
+		return prior, true, false, nil
 	}
 	if snapshot.Control != nil {
-		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
-			return sessionInputResult{}, false, err
+		if err := th.state.Sessions.ValidateControl(*snapshot.Control); err != nil {
+			return sessionInputResult{}, false, false, err
 		}
 	}
 	if mode == sessionIfRunningSteer {
 		if turn, ok := s.steerSessionInput(th, msg, snapshot); ok {
-			return sessionInputResult{State: "running", SessionID: th.ID, TurnID: turn, Steered: true}, true, nil
+			return sessionInputResult{State: "running", SessionID: th.ID, TurnID: turn, Steered: true}, true, false, nil
 		}
 	}
 	started, ok, err := s.startSubmittedSessionTurn(ctx, th, msg, snapshot)
 	if errors.Is(err, errSessionInputApplied) {
 		prior, found := s.findSessionInput(th, msg.ClientID)
-		return prior, found, nil
+		return prior, found, false, nil
 	}
 	if err != nil {
-		return sessionInputResult{}, false, err
+		return sessionInputResult{}, false, false, err
 	}
 	if ok {
-		return sessionInputResult{State: "running", SessionID: th.ID, TurnID: started.turnID}, true, nil
+		return sessionInputResult{State: "running", SessionID: th.ID, TurnID: started.turnID}, true, true, nil
 	}
-	return sessionInputResult{State: "queued", SessionID: th.ID}, false, nil
+	return sessionInputResult{State: "queued", SessionID: th.ID}, false, false, nil
 }
 
 func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (string, bool) {
@@ -131,7 +132,7 @@ func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, s
 		}
 	}
 	if snapshot.Control != nil {
-		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+		if err := th.state.Sessions.ValidateControl(*snapshot.Control); err != nil {
 			return "", false
 		}
 		if th.pendingSteerControls == nil {
@@ -211,8 +212,8 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 	if !ok {
 		return startedThreadTurn{}, false, nil
 	}
-	launch, accepted := s.reserveBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
+	launch, accepted := s.reserveBackgroundWithState(th.state, func(binding *runtime.State) {
+		s.runTurn(binding, started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
 	})
 	if !accepted {
 		return startedThreadTurn{}, false, errors.Join(errServerClosed, s.abortStartedThreadTurnDurably(th, started, errServerClosed))
@@ -230,12 +231,12 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 func (s *Server) pruneRevokedSteersLocked(th *threadState) {
 	next := th.pendingSteers[:0]
 	for _, msg := range th.pendingSteers {
-		if err := s.validateInboxInput(msg); err != nil {
+		if err := s.validateInboxInput(th.state, msg); err != nil {
 			delete(th.pendingSteerControls, msg.ClientID)
 			continue
 		}
 		if c, ok := th.pendingSteerControls[msg.ClientID]; ok {
-			if err := session.ValidateControl(s.rt.SessionDir, c); err != nil {
+			if err := th.state.Sessions.ValidateControl(c); err != nil {
 				delete(th.pendingSteerControls, msg.ClientID)
 				continue
 			}
@@ -245,12 +246,12 @@ func (s *Server) pruneRevokedSteersLocked(th *threadState) {
 	th.pendingSteers = next
 }
 
-func (s *Server) revokeSessionInputs(id string) {
-	if th := s.thread(id); th != nil {
+func (s *Server) revokeSessionInputs(binding *runtime.State, id string) {
+	if th := s.threadForState(binding, id); th != nil {
 		th.mu.Lock()
 		s.pruneRevokedSteersLocked(th)
 		th.mu.Unlock()
 	}
 	// Queued inputs retain their control snapshot and are checked at admission.
-	s.kickQueuedTurnDrain(id)
+	s.kickQueuedTurnDrain(binding, id)
 }

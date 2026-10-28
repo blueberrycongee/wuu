@@ -140,14 +140,19 @@ Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.
 
-## Composer project and worktree controls
+## Composer project and branch controls
 
-A new conversation's project sits in one outlined group; in a Git project, the
-branch and the worktree toggle share a second group of the same height. Hover
-fills a segment edge to edge, and the toggle's on state uses the interaction
-accent like Fast mode. A folder outside Git shows only the project group.
+New and existing conversations show their project and Git branch in a borderless
+row below the input. A folder outside Git shows only the project. When the right-side tool
+rail is collapsed, permissions, context usage, and model selection occupy the
+right end of this row; the other tool shortcuts stay hidden. Narrow panes wrap
+the row and truncate long names without reducing text size. The composer has
+no manual worktree toggle.
 
-Both groups open compact menu cards. The project card lists **Conversation**
+In a new conversation, both groups open compact menu cards. Existing conversations
+keep the project label visible without offering to change its binding; their branch
+picker switches the current working tree and is disabled while that tree is busy.
+The project card lists **Conversation**
 first, as the sidebar does, then projects in sidebar order; opening a folder and
 creating a blank workspace follow a divider. The branch card needs no heading
 outside a worktree: the checked-out branch comes first with a count of its
@@ -160,9 +165,9 @@ in its own worktree, the card is headed **Start from**, choosing a branch change
 nothing in the project, and it offers no new branch.
 
 Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
-conversation in a worktree through Electron and the Go core with a disposable
-profile, Git fixture, and local provider. It checks that choosing a start branch
-leaves the project's checkout alone and captures light/dark, default/large-font,
+conversation in a worktree through the desktop API and Go core with a disposable
+profile, Git fixture, and local provider. It checks that the requested base
+revision leaves the project's checkout alone and captures light/dark, default/large-font,
 wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
 visible, so the pointer's position can add a hover surface to a capture.
 
@@ -186,7 +191,7 @@ Settings starts with General, Appearance, and Phone access when available. **Mod
 
 Every page shares one column measured in UI text, so content stays in place while navigating and a label stays within a glance of its control at large sizes. The titlebar reads "Settings / page", set like the conversation title, with page actions at its trailing edge; a refresh action is an icon button whose tooltip names it. The page opens on an optional line that states a non-obvious scope, then its first group. Section titles are quiet labels in soft ink; the setting's name in each row carries the medium weight, over a regular, soft description. Groups, service lists, the provider catalog, and subscription cards share one sheet: the `--hairline` edge, the panel radius, and a soft shadow, with rows spaced by `--settings-row-pad-block`. A section title sits `--section-heading-gap` above its content. Keep a row description only for constraints or consequences the title does not already state. A unit belongs inside its numeric field instead: a numeric placeholder keeps the unit, while a word such as "Auto" appears alone.
 
-A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. **General** gathers how a new conversation starts: the agent, then the built-in agent's model, reasoning effort, and environment, with one line saying the last three apply to Wuu only; language and the version follow. The Agent page lists installed agents, each with a switch and a disclosure; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. **General** contains application preferences such as language, system permissions, and version information. Choose the agent, model, and reasoning effort in the conversation composer, which remembers selections for new conversations. The default execution environment lives alongside its profiles under **Built-in agent**. The Agent page lists installed agents, each with a switch and a disclosure; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
 
 **Model providers** is built for bring-your-own-key use and reads by how often each part is used. Connected services come first, as one list with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles in one run on the same surface, their marks on the cards' inset: subscription sign-ins, then likely vendors for the interface language, with **More providers** for the whole model catalog and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. Only the full catalog names its kinds (subscription, vendor, relay, local); the short list on the page does not. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. A visible trash icon removes any model choice; deleting the selected model requires an explicit replacement. Removed choices wait under a disclosure for restoration, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
 
@@ -198,7 +203,7 @@ Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`
 
 ## Plugins catalog
 
-The Plugins page, named **Plugins** like its sidebar entry, uses the settings page column. The titlebar already names it, so the page opens on a toolbar: search, then reload and local install. **Plugins** and **Skills** are separate tabs with their counts; a catalog without plugins opens on Skills. A search hides every group it leaves empty.
+The **Extensions** entry groups **Plugins** and **Skills** in the sidebar. The catalog uses the settings page column, with a large heading naming the selected category above the toolbar: search, then reload and local install. When rendered without the sidebar navigation, the catalog shows Plugins and Skills as tabs with their counts; a catalog without plugins opens on Skills. A search hides every group it leaves empty.
 
 Plugins are grouped by what they need from you, each group a bordered list like a settings group. **Needs attention** rows name the plugin and the one most serious reason — it failed to start or misses a requirement, then a staged update, a changed or unapproved package, or a conflict — and open the plugin's page, where that decision is made. **On** and **Off** rows carry the mark, the name over a one-line tagline, a switch that turns a trusted plugin on or off in place, and a chevron to the plugin's page. Turning on a plugin that is not approved yet opens its page when it asks for permissions and approves it directly otherwise. Rows show the manifest's display name and tagline, not the plugin ID. Skills are listed the same way, under **Official skills** and **Your skills**; a skill row ends in the owning plugin's name, when there is one, and a chevron that opens the preview.
 
@@ -242,9 +247,15 @@ confirmation through the global status field.
 
 Pointer clicks do not paint an extra outline. Text fields keep the caret; other controls keep their rest and hover surfaces. A 2px `--focus-ring` outline appears after Tab, or after arrow-key movement on a non-text control. Arrow keys inside an input or textarea do not count as keyboard focus movement. Chromium still reports `:focus-visible` for a click into a text field, so rings key off `html[data-focus-modality]` from [`FocusModality.ts`](../../../desktop/src/renderer/FocusModality.ts) rather than that pseudo-class alone. Do not add a per-control click ring or a second frame around an existing field border.
 
+Hover hints name icon-only actions or explain a non-obvious state, restriction, or destination. Do not repeat a complete visible label or attach a paragraph to an entire card. Use [`TruncatedText`](../../../desktop/src/renderer/TruncatedText.tsx) for names and paths that need a hint only when clipped. Use [`Tooltip`](../../../desktop/src/renderer/Tooltip.tsx) with `asChild` for a DOM trigger to preserve its layout, selectors, handlers, and ref; composite triggers can retain the wrapper. Controls keep accessible names and descriptions independently of the visual hint. Native window chrome and embedded browser boundaries may retain native hints.
+
+Short hints use the saved UI text size, regular weight, an opaque theme surface, and wrapping within the viewport. They stay beside the trigger without covering it; if native content leaves no nearby space, the rendered hint stays hidden. Only one short hint opens at a time. Hover waits for intent; keyboard focus can reveal a hint, while pointer focus alone cannot. The shortened delay applies only between neighboring triggers of the same reveal type, so crossing from a toolbar into a hover card does not open it immediately.
+
 Respect the user's separate UI and code font preferences. Let rows grow with their content, reserve space for trailing actions and status indicators, and align peer labels independently of whether a row is running or unread. Density changes whitespace rather than removing minimum target sizes; coarse pointers have larger control floors.
 
 Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. The shell radius combines the inner radius with the inset to keep nested corners related. Panel and dialog overlays use their own radius role. Reusing one numeric radius on every padded layer does not produce the same geometry. Click-open overlay cards — context menus, permission pickers, and select panels — use `--font-menu` (one step below `--font-ui`) for item labels, with `--weight-medium`. Group labels and secondary hints use `--font-xs`. Compact composer chips and triggers share `--font-sm` with that overlay step. Question cards above the composer stay on `--font-ui`; they are reading surfaces.
+
+Desktop object context menus, such as rename, pin, move, copy, and delete, and standard text editing use the optional public `application.desktop.contextMenu` capability. Choose by function, not by whether the trigger is a right-click or a button. The operating system owns their typography, spacing, placement, and keyboard navigation. Menu requests belong to the mounted UI generation and close when it retires. Web hosts retain the shared rendered menu. Creation menus, composer attachments and commands, workspace/branch pickers, model controls, and panel toggles remain rendered in the app. Group session actions as rename/pin, folder organization, directory/ID utilities, and deletion. Keep unavailable actions disabled and isolate destructive actions at the bottom.
 
 Context menu items name actions, not the data they act on: "Open in system browser", not the full URL. Show a destination in the trigger's tooltip or a separate secondary line. Context menus size to their actions, stay inside the viewport, and ellipsize or scroll instead of spreading across the reading column. Only one context menu is open at a time, and tooltips stay closed while it is open, matching native menus.
 
@@ -339,6 +350,8 @@ The glide models a position and a live target, not the remaining distance: the p
 Use a CSS transition from the ladder for motion whose geometry is already known: an entrance, a menu, a panel sliding to a fixed size, a hover wash. Reach for a frame-driven trajectory when the destination is only known while the motion runs — scrolling to content that is still arriving — or when something else keeps moving the target underneath it. Such motion needs no deadline and cannot restart; expressed as a transition it would have to be retargeted with a second transition, which is the seam this design removes. Keep a deliberate constant cadence as it is: a summary that reveals at about twelve characters per second is not settling, and a retained glide would turn it into a different animation.
 
 ## Conversation disclosure scrolling
+
+The active process row shows the latest running tool call, falling back to the latest settled call between tools. Earlier process groups and completed turns summarize their tool activity. Reasoning stays in the expanded trail when tools are present; reasoning-only rows retain their thinking label. Compact rows keep the shared quiet text color.
 
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.
 

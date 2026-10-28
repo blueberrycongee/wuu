@@ -12,6 +12,7 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 export default {
   initialize() {
     return {
+      protocol_version: 3,
       tools: [{
         id: "greet",
         description: "Return a friendly greeting",
@@ -32,7 +33,7 @@ Run:
 wuu plugin dev ./hello.ts
 ```
 
-This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without calling `initialize`, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn and its outstanding workers or managed processes keep their existing generation. The conversation adopts the update at its next idle turn boundary after that work settles. The actual host then initializes the candidate with read-phase services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
+This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without calling `initialize`, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn and its outstanding workers or managed processes keep their existing generation. The conversation can adopt the update at an idle turn boundary after that work settles and the host finishes preparation and activation. The actual host collects the candidate's declarations in `initialize`, then calls `prepare` to validate state through the selected services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
 
 Use a regular `.ts` file, not a symlink. Only Node builtins and `@wuu/plugin-sdk` imports are supported in this single-file path. Other local files, npm dependencies, JSX, and custom `tsconfig` transforms need the package workflow below. TypeScript execution does not type-check your code. Keep stdout for the protocol; use `console.error` for diagnostics. Importing a module runs its top-level code, even during validation. Development authorization grants trust to this source; it does not sandbox code or approve a distributed package.
 
@@ -45,9 +46,20 @@ In a Wuu-engine conversation, the deferred `plugin_manager` tool provides a scop
 1. Use `write_file` to save `hello.ts` inside the conversation's workspace.
 2. Discover `plugin_manager` and call it with `{"action":"apply","path":"./hello.ts"}`. A plugin directory is also accepted. Apply publishes once, like `wuu plugin dev --watch=false`; it does not start a watcher.
 3. Check the result, then finish the current turn. Its tool definitions stay pinned to the old generation.
-4. On the next idle turn, discover and call the new greeting tool. Use `{"action":"status"}` or status with an exact `id` to compare published state with the current conversation's generation. Check the actual tool result before calling it usable.
+4. Once the host has activated the published generation, discover and call the new greeting tool in an idle turn. Use `{"action":"status"}` or status with an exact `id` to compare published state with the current conversation's generation. Check the actual tool result before calling it usable.
 
-Outstanding conversation workers and managed processes must settle before this conversation can adopt the update. Do not leave a `wuu plugin dev` watcher running as work owned by this turn; use the one-shot apply path above.
+For authoring through the local `bash` tool (Git Bash on Windows), use
+`"$WUU_CLI_EXECUTABLE" plugin create <name>` or
+`"$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory>`.
+Wuu supplies the absolute path of its running CLI, so an older `wuu` on `PATH`
+or another installed app cannot silently select the wrong SDK. The `describe`
+command inspects a new CLI composition, not the conversation's pinned generation.
+This hint does not change `PATH` or grant additional permissions. It is set by
+the execution host, not user configuration: a remote Wuu CLI worker supplies its
+own executable, while library hosts without an authoring CLI omit it rather than
+forwarding a host-only path.
+
+A new optional plugin may still be preparing while unrelated turns continue. Publication alone does not make its tools available; app-server clients can await the exact fingerprint in that server's committed inventory as described in the [generation contract](plugin-system.md#runtime-generations). Outstanding conversation workers and managed processes must settle before this conversation can adopt the update. Do not leave a `wuu plugin dev` watcher running as work owned by this turn; use the one-shot apply path above.
 
 Apply can execute module top-level code and package build scripts on the host. Before validation or import, it requires an `unconfined` session, or `standard` mode with an enabled, configured permission reviewer returning an allow decision. Read-only mode rejects mutations. Workspace write permission alone does not authorize host code execution. The host chooses the executable and plugin storage; this tool does not grant general filesystem access to `$WUU_HOME`. Remote-environment source paths are not supported.
 
@@ -55,25 +67,20 @@ Apply can execute module top-level code and package build scripts on the host. B
 
 ## Grow into a package
 
-For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using a source checkout matching your CLI for the SDK.
+For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using the matching SDK embedded in your CLI.
 
 ## Prepare the SDK and package
 
-Use the SDK from the checkout rather than depending on an npm registry release. Replace the first path with your checkout's absolute path, then run these commands from the directory where you want the plugin project:
+Run these commands from the directory where you want the plugin project. No Wuu checkout or npm release of `@wuu/plugin-sdk` is required:
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create hello-plugin
 cd hello-plugin
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
-npm install --save-dev esbuild
-npm pkg set 'scripts.build=tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js'
+npm run build
 ```
 
-The generator creates `plugin.json`, `package.json`, `tsconfig.json`, and `src/index.ts`. Its manifest starts `node dist/index.js` using the `wuu-plugin-v1` runtime transport. The build command above bundles the SDK into that file: Wuu's package preparation excludes `node_modules`, so plain TypeScript compilation would leave a runtime dependency missing from the installed package.
+The generator creates `plugin.json`, `package.json`, `tsconfig.json`, `src/index.ts`, and a local `sdk/` source package. `@wuu/plugin-sdk` resolves to that snapshot, while npm installs the ordinary TypeScript, type-definition, and bundler dependencies. Its manifest starts `node dist/index.js` using the `wuu-plugin-v1` runtime transport. The generated build type-checks your source and bundles the SDK into the runtime file: Wuu's package preparation excludes `node_modules`, so installed plugins do not depend on the development directory. `--type desktop` and `--type full` also generate browser-targeted desktop bundles.
 
 ## Add the tool
 
@@ -181,7 +188,7 @@ The first command drives the shipped plugin executables over JSONL with disposab
 host services. It covers tools, persisted state, background work, cancellation,
 and shutdown, saving protocol transcripts, runtime hashes, and results under
 `.tmp/e2e/bundled-plugins/`. The second runs the real Go app-server against a local
-synthetic model endpoint. It verifies live-turn publication, next-turn adoption,
+synthetic model endpoint. It verifies live-turn publication, adoption after same-server readiness,
 last-good recovery, and disable cleanup without a model account. Neither command
 checks rendered desktop contributions.
 
@@ -190,10 +197,9 @@ checks rendered desktop contributions.
 ```bash
 wuu plugin pack .
 wuu plugin install ./hello-plugin-0.1.0.zip
-wuu plugin approve hello-plugin
 ```
 
-The current CLI stages a local package before approval enables code execution. Development-directory authorization is separate and is not distributed in the zip. Plugins run with your user authority; package validation is not a security audit. See [plugin management](plugins.md) for disabling and removing packages.
+Installing a local package confirms trust and enables code execution. Updates from the same recorded source retain trust; changing the source requires confirmation. Development-directory authorization is separate and is not distributed in the zip. Plugins run with your user authority; package validation is not a security audit. See [plugin management](plugins.md) for disabling and removing packages.
 
 For persistent state, services, and lifecycle callbacks, continue with the [authoring reference](plugin-authoring.md). To add UI instead of a model tool, use the [desktop quickstart](desktop-plugin-quickstart.md).
 

@@ -6,16 +6,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 func TestDevicePushRegisterRequiresRemoteSessionRegistrar(t *testing.T) {
 	var out bytes.Buffer
-	srv := New(&runtime.Session{
-		SessionDir: t.TempDir(),
-		WuuHome:    t.TempDir(),
-	}, &out)
+	srv := New(newTestRuntime(t, &fakeClient{}), &out)
+	defer srv.Close()
 
 	err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"device/push_register","params":{"token":"abc","platform":"ios"}}`))
 	if err != nil {

@@ -17,10 +17,10 @@ import (
 func TestThreadSearchMessageAddressAndArchiveScope(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	for _, id := range []string{"body", "archived", "archived-disk"} {
-		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
-		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{
+		if err := rewriteChatHistory(rt.Sessions, id, []providers.ChatMessage{
 			{Role: "user", Content: "An unrelated opening"},
 			{Role: "assistant", Content: "A warm introduction", ReasoningContent: "cobalt quartz reasoning"},
 			{Role: "user", Content: "A later question"},
@@ -30,47 +30,47 @@ func TestThreadSearchMessageAddressAndArchiveScope(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := session.UpdateIndex(rt.SessionDir, id, 6, "An unrelated opening"); err != nil {
+		if err := rt.Sessions.UpdateIndex(id, 6, "An unrelated opening"); err != nil {
 			t.Fatal(err)
 		}
 		if id != "body" {
-			if _, err := session.UpdateArchived(rt.SessionDir, id, true); err != nil {
+			if _, err := rt.Sessions.UpdateArchived(id, true); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 	for _, id := range []string{"private", "private-live"} {
-		if _, err := session.CreateManagedWithMetadata(rt.SessionDir, id, rt.RootDir, session.ManagedMetadata{
+		if _, err := rt.Sessions.CreateManagedWithMetadata(id, rt.RootDir, session.ManagedMetadata{
 			Owner: "test-plugin", Visibility: pluginhost.SessionVisibilityPlugin,
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{{Role: "user", Content: "forbidden cobalt quartz"}}); err != nil {
+		if err := rewriteChatHistory(rt.Sessions, id, []providers.ChatMessage{{Role: "user", Content: "forbidden cobalt quartz"}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := session.UpdateArchived(rt.SessionDir, id, true); err != nil {
+		if _, err := rt.Sessions.UpdateArchived(id, true); err != nil {
 			t.Fatal(err)
 		}
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	now := time.Now()
-	archived, err := srv.loadPersistedThreadState("archived", now)
+	archived, err := srv.loadPersistedThreadState(testRuntimeState(t, srv.rt), "archived", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	archived.ReadOnly = true // Archived display threads must still be searchable.
 	srv.threads["archived"] = archived
-	private, err := srv.loadPersistedThreadState("private-live", now)
+	private, err := srv.loadPersistedThreadState(testRuntimeState(t, srv.rt), "private-live", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.threads[private.ID] = private
-	srv.threads["title"] = &threadState{ID: "title", Title: "Cobalt plan", UpdatedAt: now,
+	srv.threads["title"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "title", Title: "Cobalt plan", UpdatedAt: now,
 		History: []providers.ChatMessage{{Seq: 12, Role: "user", Content: "cobalt body"}}}
-	srv.threads["technical"] = &threadState{ID: "technical", Title: "Logs", UpdatedAt: now, PinnedAt: &now,
+	srv.threads["technical"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "technical", Title: "Logs", UpdatedAt: now, PinnedAt: &now,
 		History: []providers.ChatMessage{{Seq: 17, Role: "tool", Content: "cobalt output"}}}
-	srv.threads["unaddressed"] = &threadState{ID: "unaddressed", Title: "Draft", UpdatedAt: now,
+	srv.threads["unaddressed"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "unaddressed", Title: "Draft", UpdatedAt: now,
 		History: []providers.ChatMessage{
 			{Role: "assistant", Content: "first amber draft"},
 			{Seq: 21, Role: "assistant", Content: "second amber draft"},
@@ -155,21 +155,21 @@ func TestThreadSearchMessageAddressAndArchiveScope(t *testing.T) {
 
 func TestThreadSearchLazyHistoryPreservesResults(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "disk", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("disk", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, "disk", []providers.ChatMessage{{Role: "user", Content: "disk-only needle"}}); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, "disk", []providers.ChatMessage{{Role: "user", Content: "disk-only needle"}}); err != nil {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	now := time.Now()
-	live := &threadState{ID: "disk", Title: "live title", Model: "model", UpdatedAt: now, History: []providers.ChatMessage{
+	live := &threadState{state: testRuntimeState(t, srv.rt), ID: "disk", Title: "live title", Model: "model", UpdatedAt: now, History: []providers.ChatMessage{
 		{Role: "user", Content: "unpersisted needle"},
 		{Role: "assistant", Content: "hidden secret", Hidden: true},
 	}}
 	srv.threads[live.ID] = live
-	srv.threads["pinned"] = &threadState{ID: "pinned", Title: "pinned title", PinnedAt: &now, UpdatedAt: now.Add(-time.Hour)}
+	srv.threads["pinned"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "pinned", Title: "pinned title", PinnedAt: &now, UpdatedAt: now.Add(-time.Hour)}
 	search := func(id, query string, limit int) []ThreadSearchResultItem {
 		t.Helper()
 		params, err := json.Marshal(ThreadSearchParams{Query: query, Limit: limit})
@@ -210,14 +210,14 @@ func TestThreadSearchRanksBeforeLimiting(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	now := time.Now()
-	srv.threads["tool"] = &threadState{ID: "tool", Title: "Recent logs", UpdatedAt: now, PinnedAt: &now,
+	srv.threads["tool"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "tool", Title: "Recent logs", UpdatedAt: now, PinnedAt: &now,
 		History: []providers.ChatMessage{{Role: "tool", Content: `{"output":"onboarding\\nlog"}`}}}
-	srv.threads["body"] = &threadState{ID: "body", Title: "Design discussion", UpdatedAt: now.Add(-time.Hour),
+	srv.threads["body"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "body", Title: "Design discussion", UpdatedAt: now.Add(-time.Hour),
 		History: []providers.ChatMessage{
 			{Role: "tool", Content: "onboarding build output"},
 			{Role: "user", Content: "Improve onboarding for new users"},
 		}}
-	srv.threads["title"] = &threadState{ID: "title", Title: "Onboarding layout", UpdatedAt: now.Add(-2 * time.Hour)}
+	srv.threads["title"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "title", Title: "Onboarding layout", UpdatedAt: now.Add(-2 * time.Hour)}
 	for _, limit := range []int{1, 2, 3} {
 		id := fmt.Sprint(limit)
 		params, _ := json.Marshal(ThreadSearchParams{Query: "ONBOARDING", Limit: limit})
@@ -251,7 +251,7 @@ func TestThreadSearchLimitedPageMatchesFullRanking(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 16; i++ {
 		id := fmt.Sprintf("thread-%02d", i)
-		th := &threadState{ID: id, Title: "unrelated", UpdatedAt: now.Add(time.Duration(i/2) * time.Hour)}
+		th := &threadState{state: testRuntimeState(t, srv.rt), ID: id, Title: "unrelated", UpdatedAt: now.Add(time.Duration(i/2) * time.Hour)}
 		switch i % 4 {
 		case 0:
 			th.Title = "needle title"
@@ -305,17 +305,17 @@ func BenchmarkThreadSearchOpen(b *testing.B) {
 	rt := &runtime.Session{RootDir: root, SessionDir: root + "/sessions", Model: "model", ProviderName: "provider"}
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("thread-%03d", i)
-		if _, err := session.CreateWithMetadata(rt.SessionDir, id, root); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(id, root); err != nil {
 			b.Fatal(err)
 		}
 		preview := "unrelated conversation"
 		if i < 40 {
 			preview = "conversation summary"
 		}
-		if err := session.UpdateIndex(rt.SessionDir, id, 1, preview); err != nil {
+		if err := rt.Sessions.UpdateIndex(id, 1, preview); err != nil {
 			b.Fatal(err)
 		}
-		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{{Role: "user", Content: strings.Repeat("history text ", 10000)}}); err != nil {
+		if err := rewriteChatHistory(rt.Sessions, id, []providers.ChatMessage{{Role: "user", Content: strings.Repeat("history text ", 10000)}}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -337,10 +337,10 @@ func BenchmarkThreadSearchOpen(b *testing.B) {
 func TestThreadSearchPersistedHistoryRefreshesAcrossQueries(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	for _, id := range []string{"first", "second"} {
-		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
-		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{{Role: "user", Content: "onboarding discussion"}}); err != nil {
+		if err := rewriteChatHistory(rt.Sessions, id, []providers.ChatMessage{{Role: "user", Content: "onboarding discussion"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -363,12 +363,12 @@ func TestThreadSearchPersistedHistoryRefreshesAcrossQueries(t *testing.T) {
 		}
 	}
 	search("1", "onboarding", 2)
-	if err := rewriteChatHistory(rt.SessionDir, "first", []providers.ChatMessage{{Role: "user", Content: "replacement discussion"}}); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, "first", []providers.ChatMessage{{Role: "user", Content: "replacement discussion"}}); err != nil {
 		t.Fatal(err)
 	}
 	search("2", "onboarding", 1)
 	search("3", "replacement", 1)
-	if err := session.AppendHistoryRecord(rt.SessionDir, "second", session.HistoryRecord{Role: "user", Content: "fresh append"}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord("second", session.HistoryRecord{Role: "user", Content: "fresh append"}); err != nil {
 		t.Fatal(err)
 	}
 	search("4", "fresh append", 1)

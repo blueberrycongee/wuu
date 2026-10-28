@@ -1,10 +1,16 @@
+import { TruncatedText } from "./TruncatedText";
+import { Tooltip } from "./Tooltip";
 import { ArrowRight, Check, ChevronRight, FolderOpen, Info, LoaderCircle, RefreshCw } from "./WuuIcons";
-import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+  BrowserCookieImportResult,
+  BrowserProfile,
+  CatalogProviderSummary,
   EngineInfo,
   EngineListResult,
   EngineUpdateParams,
   ExtensionInventoryRecord,
+  ExtensionPackageEnablementUpdate,
   ExtensionPackageUpdateParams,
   ProviderSummary,
   RecentWorkspace,
@@ -16,8 +22,11 @@ import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
-import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
+import { ONBOARDING_PLUGIN_MANIFESTS, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
+import type { ApplicationOnboardingV1 } from "../../../packages/plugin-sdk/src/ui-onboarding";
+import { useSettingsControls } from "./SettingsControlsContext";
+import { OnboardingBrowserImport } from "./OnboardingBrowserImport";
 import { SystemPermissionsPanel } from "./SystemPermissions";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
 import { PluginIcon } from "./PublicIcon";
@@ -25,10 +34,33 @@ import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
 import { toastErrorMessage } from "./Toast";
 
-type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "permissions" | "ready";
+type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "permissions" | "browser" | "ready";
 type PluginPreset = "minimal" | "recommended" | "all" | "custom";
 
-const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "permissions", "ready"];
+export type FirstRunOnboardingState = {
+  step: OnboardingStep;
+  selectedPluginIDs: Set<string>;
+  initializedPluginSelection: boolean;
+  applyingPlugins: boolean;
+  savingProvider: boolean;
+  connected: boolean;
+  savingRuntime: boolean;
+  finishing: boolean;
+  importingBrowser: string;
+  browserImportError: string;
+  browserImportResults: Record<string, BrowserCookieImportResult>;
+  browserImported: boolean;
+  workspaceScan?: RecentWorkspacesResult;
+  scanningWorkspaces: boolean;
+  choosingWorkspace: boolean;
+  selectedPaths: Set<string>;
+  scanAttempt: number;
+  scannedRevision: number;
+  error: { title: string; detail?: string } | null;
+  selectedEngine: string;
+};
+
+const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "permissions", "browser", "ready"];
 const RECOMMENDED_ENGINE = "wuu";
 
 export function bundledOnboardingPlugins(
@@ -84,26 +116,39 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
   runtime: "onboarding.runtimeTitle",
   provider: "onboarding.providerTitle",
   permissions: "permissions.title",
+  browser: "onboarding.browserTitle",
   ready: "onboarding.readyTitle",
 };
 
 export function FirstRunOnboarding({
+  onboarding,
+  onImportBrowser,
+  state: sharedState,
+  onStateChange,
   inventory: liveInventory,
   providers: liveProviders,
+  catalogProviders,
   engines,
   preview = false,
   onDismissPreview,
   onUpdateExtensionPackage,
   onSaveProvider,
+  onProvidersChanged,
   onUpdateEngines,
   onComplete,
 }: {
+  onboarding: Pick<ApplicationOnboardingV1, "getSnapshot" | "discoverWorkspaces" | "chooseWorkspace">;
+  onImportBrowser: (profilePath: string) => Promise<BrowserCookieImportResult>;
+  state?: FirstRunOnboardingState;
+  onStateChange?: Dispatch<SetStateAction<FirstRunOnboardingState | undefined>>;
   inventory?: readonly ExtensionInventoryRecord[];
   providers?: readonly ProviderSummary[];
+  catalogProviders?: CatalogProviderSummary[];
   engines?: EngineListResult;
   preview?: boolean;
   onDismissPreview?: () => void;
   onUpdateExtensionPackage: (update: ExtensionPackageUpdateParams) => Promise<void>;
+  onProvidersChanged?: (providers: ProviderSummary[]) => void;
   onSaveProvider: (
     provider: string,
     model: string,
@@ -113,41 +158,54 @@ export function FirstRunOnboarding({
   onComplete: (paths?: string[]) => Promise<void>;
 }): JSX.Element {
   const { t, locale } = useI18n();
+  const controls = useSettingsControls();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const pluginBodyRef = useRef<HTMLDivElement>(null);
+  const browserImportPending = useRef(false);
   // Preview keeps connections isolated but uses real CLI discovery.
   const inventory = preview ? PREVIEW_PLUGINS : liveInventory;
   const providers = preview ? undefined : liveProviders;
   const bundledPlugins = useMemo(() => bundledOnboardingPlugins(inventory), [inventory]);
-  const [step, setStep] = useState<OnboardingStep>("welcome");
-  const [selectedPluginIDs, setSelectedPluginIDs] = useState<Set<string>>(
-    () => initialPluginSubjectIDs(bundledPlugins),
-  );
-  const initializedPluginSelection = useRef(bundledPlugins.length > 0);
-  const [applyingPlugins, setApplyingPlugins] = useState(false);
-  const [savingProvider, setSavingProvider] = useState(false);
-  // A preview connection is not saved, so the ready step learns of it here.
-  const [connected, setConnected] = useState(false);
-  const [savingRuntime, setSavingRuntime] = useState(false);
-  const [finishing, setFinishing] = useState(false);
-  const [workspaceScan, setWorkspaceScan] = useState<RecentWorkspacesResult>();
-  const [scanningWorkspaces, setScanningWorkspaces] = useState(false);
-  const [choosingWorkspace, setChoosingWorkspace] = useState(false);
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
-  const [scanAttempt, setScanAttempt] = useState(0);
-  const scannedRevision = useRef(-1);
-  const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
-  const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
-  const catalog = useCatalogProviders(0);
+  // App owns the real flow across shell activations; previews remain local.
+  const [localState, setLocalState] = useState<FirstRunOnboardingState>(() => ({
+    step: "welcome", selectedPluginIDs: initialPluginSubjectIDs(bundledPlugins),
+    initializedPluginSelection: bundledPlugins.length > 0,
+    applyingPlugins: false, savingProvider: false, connected: false, savingRuntime: false,
+    finishing: false, importingBrowser: "", browserImportError: "", browserImportResults: {}, browserImported: false,
+    scanningWorkspaces: false, choosingWorkspace: false, selectedPaths: new Set(),
+    scanAttempt: 0, scannedRevision: -1, error: null, selectedEngine: RECOMMENDED_ENGINE,
+  }));
+  const {
+    step, selectedPluginIDs, initializedPluginSelection, applyingPlugins, savingProvider,
+    connected, savingRuntime, finishing, importingBrowser, browserImportError, browserImportResults, browserImported, workspaceScan,
+    scanningWorkspaces, choosingWorkspace, selectedPaths, scanAttempt, scannedRevision, error, selectedEngine,
+  } = sharedState ?? localState;
+  function setFlow(update: (current: FirstRunOnboardingState) => FirstRunOnboardingState): void {
+    if (onStateChange) onStateChange(current => update(current ?? localState));
+    else setLocalState(update);
+  }
+  function setField<K extends keyof FirstRunOnboardingState>(key: K, update: SetStateAction<FirstRunOnboardingState[K]>): void {
+    setFlow(current => {
+      const next = typeof update === "function"
+        ? (update as (value: FirstRunOnboardingState[K]) => FirstRunOnboardingState[K])(current[key]) : update;
+      return Object.is(current[key], next) ? current : { ...current, [key]: next };
+    });
+  }
+  function setStep(next: OnboardingStep): void {
+    setFlow(current => ({ ...current, step: next, error: null }));
+  }
+  const catalog = useCatalogProviders(0, catalogProviders);
   const localProviders = discoveredLocalProviders(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
-  const showPermissions = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.getSystemPermissions));
-  const steps = STEP_ORDER.filter(item => item !== "permissions" || showPermissions);
-  const afterProvider: OnboardingStep = showPermissions ? "permissions" : "ready";
+  const showPermissions = preview || controls.capabilities.systemPermissions;
+  const showBrowser = preview || onboarding.getSnapshot().capabilities.browserImport;
+  const steps = STEP_ORDER.filter(item => (item !== "permissions" || showPermissions) && (item !== "browser" || showBrowser));
+  const afterPermissions: OnboardingStep = showBrowser ? "browser" : "ready";
+  const afterProvider: OnboardingStep = showPermissions ? "permissions" : afterPermissions;
   const currentStepIndex = steps.indexOf(step);
-  const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace;
+  const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace || Boolean(importingBrowser);
   const wornPluginIDs = useMemo(() => bundledPlugins
     .filter((plugin) => selectedPluginIDs.has(plugin.id))
     .map((plugin) => plugin.provenance.plugin_id ?? "")
@@ -169,16 +227,18 @@ export function FirstRunOnboarding({
 
   useLayoutEffect(() => {
     const root = document.documentElement;
+    // Cleanup may run after the selected service generation has retired.
+    const previousTheme = controls.initialThemePreference;
     root.dataset.theme = "light";
     return () => {
-      applyThemePreference(window.wuu?.initialThemePreference ?? "system");
+      applyThemePreference(previousTheme);
     };
-  }, []);
+  }, [controls]);
 
   useEffect(() => {
-    if (initializedPluginSelection.current || bundledPlugins.length === 0) return;
-    initializedPluginSelection.current = true;
-    setSelectedPluginIDs(initialPluginSubjectIDs(bundledPlugins));
+    if (initializedPluginSelection || bundledPlugins.length === 0) return;
+    setField("initializedPluginSelection", true);
+    setField("selectedPluginIDs", initialPluginSubjectIDs(bundledPlugins));
   }, [bundledPlugins]);
 
   useLayoutEffect(() => {
@@ -197,7 +257,7 @@ export function FirstRunOnboarding({
   }, [step, bundledPlugins]);
 
   useEffect(() => {
-    setSelectedEngine((current) => {
+    setField("selectedEngine", (current) => {
       const stillReady = selectableEngines.some((engine) => engine.id === current);
       return stillReady ? current : RECOMMENDED_ENGINE;
     });
@@ -206,38 +266,37 @@ export function FirstRunOnboarding({
   // Each step starts at its title: assistive technology announces the new
   // step, Tab continues into its choices, and Enter takes the primary action.
   useEffect(() => {
-    setError(null);
     titleRef.current?.focus({ preventScroll: true });
   }, [step]);
 
   useEffect(() => {
-    if (step !== "ready" || scannedRevision.current === scanAttempt) return;
+    if (step !== "ready" || scannedRevision === scanAttempt) return;
     let current = true;
-    setScanningWorkspaces(true);
-    setError(null);
+    setField("scanningWorkspaces", true);
+    setField("error", null);
     const scan = preview
       ? Promise.resolve({ candidates: PREVIEW_WORKSPACES, incomplete: false })
-      : window.wuu?.discoverRecentWorkspaces?.() ?? Promise.resolve({ candidates: [], incomplete: false });
+      : onboarding.getSnapshot().capabilities.discoverWorkspaces ? onboarding.discoverWorkspaces().then(result => structuredClone(result) as RecentWorkspacesResult) : Promise.resolve({ candidates: [], incomplete: false });
     void scan.then((result) => {
       if (!current) return;
-      const firstScan = scannedRevision.current < 0;
-      scannedRevision.current = scanAttempt;
+      const firstScan = scannedRevision < 0;
+      setField("scannedRevision", scanAttempt);
       const manual = (workspaceScan?.candidates ?? []).filter((item) => item.sources.length === 0 && !result.candidates.some((found) => found.path === item.path));
       const candidates = [...result.candidates, ...manual];
-      setWorkspaceScan({ ...result, candidates });
+      setField("workspaceScan", { ...result, candidates });
       const now = Date.now();
-      setSelectedPaths((current) => firstScan ? new Set(candidates.filter((item) => {
+      setField("selectedPaths", (current) => firstScan ? new Set(candidates.filter((item) => {
         const age = now - Date.parse(item.lastUsedAt);
         return item.isRepository && item.sessionCount >= 3 && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000;
       }).map((item) => item.path)) : new Set(candidates.filter((item) => current.has(item.path)).map((item) => item.path)));
     }).catch((reason: unknown) => {
       if (current) failure(reason, "onboarding.discoveryFailed");
-    }).finally(() => { if (current) setScanningWorkspaces(false); });
+    }).finally(() => { if (current) setField("scanningWorkspaces", false); });
     return () => { current = false; };
   }, [step, preview, scanAttempt]);
 
   function toggleWorkspace(path: string): void {
-    setSelectedPaths((current) => {
+    setField("selectedPaths", (current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path);
       else next.add(path);
@@ -246,44 +305,44 @@ export function FirstRunOnboarding({
   }
 
   async function chooseWorkspace(): Promise<void> {
-    setChoosingWorkspace(true);
-    setError(null);
+    setField("choosingWorkspace", true);
+    setField("error", null);
     try {
-      const path = preview ? "/Users/example/Projects/new-workspace" : await window.wuu.chooseWorkspaceDirectory?.();
+      const path = preview ? "/Users/example/Projects/new-workspace" : await onboarding.chooseWorkspace();
       if (!path) return;
       const candidate: RecentWorkspace = {
         path, name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
         sources: [], sessionCount: 0, lastUsedAt: "", isRepository: false,
       };
-      setWorkspaceScan((current) => ({
+      setField("workspaceScan", (current) => ({
         candidates: current?.candidates.some((item) => item.path === path)
           ? current.candidates : [...(current?.candidates ?? []), candidate],
         incomplete: current?.incomplete ?? false,
       }));
-      setSelectedPaths((current) => new Set([...current, path]));
+      setField("selectedPaths", (current) => new Set([...current, path]));
     } catch (reason) { failure(reason, "onboarding.discoveryFailed"); }
-    finally { setChoosingWorkspace(false); }
+    finally { setField("choosingWorkspace", false); }
   }
 
   function failure(reason: unknown, fallback: TranslationKey): void {
     const detail = toastErrorMessage(reason) || undefined;
-    setError({ title: t(fallback), detail });
+    setField("error", { title: t(fallback), detail });
   }
 
   function choosePreset(next: Exclude<PluginPreset, "custom">): void {
     if (next === "minimal") {
-      setSelectedPluginIDs(new Set());
+      setField("selectedPluginIDs", new Set());
       return;
     }
     if (next === "all") {
-      setSelectedPluginIDs(new Set(bundledPlugins.map((plugin) => plugin.id)));
+      setField("selectedPluginIDs", new Set(bundledPlugins.map((plugin) => plugin.id)));
       return;
     }
-    setSelectedPluginIDs(recommendedPluginSubjectIDs(bundledPlugins));
+    setField("selectedPluginIDs", recommendedPluginSubjectIDs(bundledPlugins));
   }
 
   function togglePlugin(id: string): void {
-    setSelectedPluginIDs((current) => {
+    setField("selectedPluginIDs", (current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -297,25 +356,29 @@ export function FirstRunOnboarding({
       setStep("runtime");
       return;
     }
-    setApplyingPlugins(true);
-    setError(null);
+    setField("applyingPlugins", true);
+    setField("error", null);
     try {
+      const updates: ExtensionPackageEnablementUpdate[] = [];
       for (const plugin of bundledPlugins) {
         const shouldEnable = selectedPluginIDs.has(plugin.id);
         // Persist the choice even when it matches a package default, so an
         // interrupted setup cannot replace it with a recommended preset.
         if (plugin.enabled_override !== shouldEnable) {
-          await onUpdateExtensionPackage({
+          updates.push({
             id: plugin.id,
+            fingerprint: plugin.fingerprint,
             action: shouldEnable ? "enable" : "disable",
           });
         }
       }
+      // Validate and activate the complete choice, without intermediate graphs.
+      if (updates.length > 0) await onUpdateExtensionPackage({ updates });
       setStep("runtime");
     } catch (reason) {
       failure(reason, "onboarding.pluginsFailed");
     } finally {
-      setApplyingPlugins(false);
+      setField("applyingPlugins", false);
     }
   }
 
@@ -325,8 +388,8 @@ export function FirstRunOnboarding({
       setStep("provider");
       return;
     }
-    setSavingRuntime(true);
-    setError(null);
+    setField("savingRuntime", true);
+    setField("error", null);
     try {
       if (onUpdateEngines) {
         await onUpdateEngines({ default_engine: selectedEngine });
@@ -335,26 +398,26 @@ export function FirstRunOnboarding({
     } catch (reason) {
       failure(reason, "onboarding.runtimeFailed");
     } finally {
-      setSavingRuntime(false);
+      setField("savingRuntime", false);
     }
   }
 
   async function reuseLocalLogin(provider: ProviderSummary): Promise<void> {
     if (savingProvider) return;
-    setSavingProvider(true);
-    setError(null);
+    setField("savingProvider", true);
+    setField("error", null);
     try {
       if (!preview) {
         await onSaveProvider(provider.name, provider.model, isCodexSubscriptionProvider(provider)
           ? { reuse_codex_credentials: true }
           : {});
       }
-      setConnected(true);
+      setField("connected", true);
       setStep(afterProvider);
     } catch (reason) {
       failure(reason, "provider.saveFailed");
     } finally {
-      setSavingProvider(false);
+      setField("savingProvider", false);
     }
   }
 
@@ -364,13 +427,39 @@ export function FirstRunOnboarding({
       onDismissPreview?.();
       return;
     }
-    setFinishing(true);
-    setError(null);
+    setField("finishing", true);
+    setField("error", null);
     try {
       await onComplete(paths);
     } catch (reason) {
       failure(reason, "onboarding.finishFailed");
-      setFinishing(false);
+      setField("finishing", false);
+    }
+  }
+
+  async function importBrowser(profile: BrowserProfile): Promise<void> {
+    if (browserImportPending.current || importingBrowser) return;
+    browserImportPending.current = true;
+    setFlow(current => {
+      const results = { ...current.browserImportResults };
+      delete results[profile.profilePath];
+      return { ...current, importingBrowser: profile.profilePath, browserImportError: "", browserImportResults: results };
+    });
+    try {
+      // Preview never reads a local profile or invokes the production importer.
+      const result: BrowserCookieImportResult = preview
+        ? { ...profile, discovered: 24, imported: 22, skippedExpired: 2, skippedInvalid: 0, failed: 0 }
+        : await onImportBrowser(profile.profilePath);
+      setFlow(current => ({
+        ...current,
+        browserImportResults: { ...current.browserImportResults, [profile.profilePath]: result },
+        browserImported: current.browserImported || result.imported > 0,
+      }));
+    } catch (reason) {
+      setField("browserImportError", reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      browserImportPending.current = false;
+      setField("importingBrowser", "");
     }
   }
 
@@ -388,27 +477,39 @@ export function FirstRunOnboarding({
         }
           // Without a connection the service tiles are the step's actions.
           : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: savingProvider, run: () => setStep(afterProvider) } : undefined)
-            : step === "permissions" ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") }
+            : step === "permissions" ? { label: t("onboarding.continue"), disabled: false, run: () => setStep(afterPermissions) }
+            : step === "browser" ? { label: t(browserImported ? "onboarding.continue" : "onboarding.browserSkip"), disabled: Boolean(importingBrowser), run: () => setStep("ready") }
             : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
   const back = currentStepIndex > 0 ? steps[currentStepIndex - 1] : undefined;
   // Only a consequence the choices do not show earns a line under the title.
-  const lead = step === "permissions" ? t("permissions.description")
+  const lead = step === "browser" ? t("onboarding.browserLead")
+    : step === "permissions" ? t("permissions.description")
     : step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
-    : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
       : undefined;
 
   const connector = (
     <ServiceConnector
+      onProvidersChanged={onProvidersChanged}
       providers={providers?.filter((provider) => !provider.auto_discovered) ?? []}
       running={savingProvider}
       catalog={catalog}
       defaultOn
       onSave={async (name, model, _effort, connection) => {
         // The preview never persists; it only walks the flow.
-        if (!preview) await onSaveProvider(name, model, connection ?? {});
+        if (preview) return;
+        setField("savingProvider", true);
+        setField("error", null);
+        try {
+          await onSaveProvider(name, model, connection ?? {});
+        } catch (reason) {
+          failure(reason, "provider.saveFailed");
+          throw reason;
+        } finally {
+          setField("savingProvider", false);
+        }
       }}
       onConnected={() => {
-        setConnected(true);
+        setField("connected", true);
         setStep(afterProvider);
       }}
     />
@@ -445,6 +546,7 @@ export function FirstRunOnboarding({
             className="settings-button settings-button-ghost onboarding-preview-exit"
             type="button"
             data-testid="onboarding-preview-exit"
+            disabled={busy}
             onClick={onDismissPreview}
           >
             {t("onboarding.previewExit")}
@@ -466,12 +568,11 @@ export function FirstRunOnboarding({
             <h1 id={titleID} ref={titleRef} tabIndex={-1}>
               {t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
             </h1>
-            {step === "ready" ? <p className="onboarding-lead">{t("onboarding.workspacesLead")}</p> : null}
             {lead ? <p className="onboarding-lead">{lead}</p> : null}
           </div>
 
           {step === "plugins" ? (
-            <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="">
+            <SettingsGroup className="onboarding-choice-card">
               <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
                 {(["minimal", "recommended", "all"] as const).map((item) => (
                   <button
@@ -485,55 +586,59 @@ export function FirstRunOnboarding({
                   </button>
                 ))}
               </div>
-              {inventory === undefined ? (
-                <p className="onboarding-status" role="status">
-                  <LoaderCircle className="icon settings-spin" aria-hidden="true" />
-                  {t("onboarding.loadingPlugins")}
-                </p>
-              ) : bundledPlugins.length === 0 ? (
-                <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
-              ) : (
-                <div className="onboarding-plugins">
-                  {bundledPlugins.map((plugin) => (
-                    <OnboardingPluginChoice
-                      key={plugin.id}
-                      plugin={plugin}
-                      selected={selectedPluginIDs.has(plugin.id)}
-                      disabled={applyingPlugins}
-                      onToggle={() => togglePlugin(plugin.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+              <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="compact">
+                {inventory === undefined ? (
+                  <p className="onboarding-status" role="status">
+                    <LoaderCircle className="icon settings-spin" aria-hidden="true" />
+                    {t("onboarding.loadingPlugins")}
+                  </p>
+                ) : bundledPlugins.length === 0 ? (
+                  <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
+                ) : (
+                  <div className="onboarding-plugins">
+                    {bundledPlugins.map((plugin) => (
+                      <OnboardingPluginChoice
+                        key={plugin.id}
+                        plugin={plugin}
+                        selected={selectedPluginIDs.has(plugin.id)}
+                        disabled={applyingPlugins}
+                        onToggle={() => togglePlugin(plugin.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </SettingsGroup>
           ) : null}
 
           {step === "runtime" ? (
-            <div className="onboarding-body" data-scroll-fade="">
-              <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
-                {selectableEngines.map((engine) => {
-                  const nameID = `${titleID}-engine-${engine.id}`;
-                  return (
-                    <label key={engine.id} className="onboarding-engine">
-                      <input
-                        className="settings-engine-radio"
-                        type="radio"
-                        name={`${titleID}-engine`}
-                        checked={selectedEngine === engine.id}
-                        disabled={savingRuntime}
-                        aria-labelledby={nameID}
-                        data-testid={`onboarding-engine-${engine.id}`}
-                        onChange={() => setSelectedEngine(engine.id)}
-                      />
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        <EngineIcon engine={engine.id} />
-                      </span>
-                      <span className="catalog-row-title" id={nameID}>{engine.label}</span>
-                    </label>
-                  );
-                })}
+            <SettingsGroup className="onboarding-choice-card">
+              <div className="onboarding-body" data-scroll-fade="compact">
+                <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
+                  {selectableEngines.map((engine) => {
+                    const nameID = `${titleID}-engine-${engine.id}`;
+                    return (
+                      <label key={engine.id} className="onboarding-engine">
+                        <input
+                          className="settings-engine-radio"
+                          type="radio"
+                          name={`${titleID}-engine`}
+                          checked={selectedEngine === engine.id}
+                          disabled={savingRuntime}
+                          aria-labelledby={nameID}
+                          data-testid={`onboarding-engine-${engine.id}`}
+                          onChange={() => setField("selectedEngine", engine.id)}
+                        />
+                        <span className="catalog-row-mark" aria-hidden="true">
+                          <EngineIcon engine={engine.id} />
+                        </span>
+                        <span className="catalog-row-title" id={nameID}>{engine.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            </SettingsGroup>
           ) : null}
 
           {step === "provider" ? (
@@ -588,22 +693,10 @@ export function FirstRunOnboarding({
             <div className="onboarding-body" data-scroll-fade=""><SystemPermissionsPanel preview={preview} /></div>
           ) : null}
 
+          {step === "browser" ? <OnboardingBrowserImport preview={preview} busy={importingBrowser} importError={browserImportError} results={browserImportResults} onImport={importBrowser} /> : null}
+
           {step === "ready" ? (
-            <div className="onboarding-workspace-browser">
-              <div className="onboarding-workspace-toolbar">
-                <span className="onboarding-workspace-section-title">{t("onboarding.recentWorkspaces")}</span>
-                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost onboarding-workspace-select" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
-                  {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
-                </button> : null}
-                <div className="onboarding-workspace-tools">
-                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
-                    <FolderOpen className="icon" aria-hidden="true" />{t("onboarding.chooseWorkspace")}
-                  </button>
-                  <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>
-                    <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
+            <SettingsGroup className="onboarding-choice-card onboarding-workspace-browser">
               {workspaceScan?.incomplete ? <p className="onboarding-status onboarding-workspace-notice" role="status"><Info className="icon" aria-hidden="true" />{t("onboarding.workspaceScanIncomplete")}</p> : null}
               <div className="onboarding-body onboarding-workspaces" data-scroll-fade="compact">
                 {scanningWorkspaces ? <p className="onboarding-status" role="status"><LoaderCircle className="icon settings-spin" aria-hidden="true" />{t("onboarding.scanningWorkspaces")}</p> : null}
@@ -617,17 +710,29 @@ export function FirstRunOnboarding({
                       </span>
                       <span className="onboarding-workspace-details">
                         <span className="onboarding-workspace-name">{item.name}</span>
-                        <span className="onboarding-workspace-path" id={`${titleID}-workspace-${index}`} title={item.path}>{item.path}</span>
+                        <TruncatedText as="span" className="onboarding-workspace-path" id={`${titleID}-workspace-${index}`} text={item.path} />
                       </span>
                       <span className="onboarding-workspace-sources">
-                        {item.sources.map((source) => <span key={source} role="img" aria-label={engineLabel(source)} title={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span>)}
+                        {item.sources.map((source) => <Tooltip asChild content={engineLabel(source)} key={source}><span role="img" aria-label={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span></Tooltip>)}
                       </span>
-                      {item.lastUsedAt ? <time dateTime={item.lastUsedAt} title={new Date(item.lastUsedAt).toLocaleString(locale)}>{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(item.lastUsedAt))}</time> : null}
                     </label>
                   ))}
                 </div>
               </div>
-            </div>
+              <div className="onboarding-workspace-toolbar">
+                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost onboarding-workspace-select" type="button" disabled={busy} onClick={() => setField("selectedPaths", selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
+                  {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
+                </button> : null}
+                <div className="onboarding-workspace-tools">
+                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !onboarding.getSnapshot().capabilities.chooseWorkspace)} onClick={() => void chooseWorkspace()}>
+                    {t("onboarding.chooseWorkspace")}
+                  </button>
+                  <Tooltip asChild content={t("onboarding.scanAgain")}><button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setField("scanAttempt", (attempt) => attempt + 1)}>
+                    <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
+                  </button></Tooltip>
+                </div>
+              </div>
+            </SettingsGroup>
           ) : null}
 
           {error ? (
@@ -650,7 +755,7 @@ export function FirstRunOnboarding({
             </button>
           ) : null}
           {step === "permissions" ? (
-            <button className="settings-button settings-button-ghost" type="button" onClick={() => setStep("ready")}>{t("permissions.skip")}</button>
+            <button className="settings-button settings-button-ghost" type="button" onClick={() => setStep(afterPermissions)}>{t("permissions.skip")}</button>
           ) : null}
           {step === "ready" && selectedPaths.size > 0 ? (
             <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => void finish([])}>{t("onboarding.skipWorkspaces")}</button>
@@ -681,15 +786,16 @@ function OnboardingPluginChoice({
   const { t } = useI18n();
   const id = useId();
   const descriptionKey = PLUGIN_DESCRIPTION_KEYS[plugin.provenance.plugin_id ?? ""];
+  const manifest = ONBOARDING_PLUGIN_MANIFESTS[plugin.provenance.plugin_id ?? ""];
   // The whole row is the switch's label, so a click anywhere on it toggles.
   return (
     <label className="onboarding-plugin" data-plugin={plugin.provenance.plugin_id}>
       <span className="catalog-row-mark" aria-hidden="true">
         <PluginIcon icon={plugin.icon} pluginId={plugin.id} fingerprint={plugin.fingerprint ?? ""} />
       </span>
-      <span className="catalog-row-title" id={`${id}-name`}>{plugin.name}</span>
+      <span className="catalog-row-title" id={`${id}-name`}>{manifest?.name ?? plugin.name}</span>
       <span className="catalog-row-description" id={`${id}-description`}>
-        {descriptionKey ? t(descriptionKey) : plugin.description}
+        {descriptionKey ? t(descriptionKey) : manifest?.description ?? plugin.description}
       </span>
       <button
         className="settings-switch"

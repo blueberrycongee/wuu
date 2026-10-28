@@ -11,6 +11,8 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.cjs",
+    "build:remote": "npm run build:core && node scripts/build-web.cjs && vite build --config remote.vite.config.ts",
+    "remote:serve": "node out-remote/host.mjs",
     "dev:onboarding": "electron-vite --config dev/onboarding/electron.vite.config.ts --entry out-dev/onboarding/main/index.js --ignoreConfigWarning",
     "dev:remote": "node scripts/env-run.cjs VITE_ENABLE_REMOTE_CONTROL=true npm run dev",
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
@@ -34,10 +36,18 @@
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
+    "test:e2e:conversation-restoration": "electron scripts/conversation-restoration-e2e.cjs",
     "test:e2e:draft-recovery": "electron scripts/draft-recovery-e2e.cjs",
     "test:e2e:workspace-preview": "node scripts/workspace-preview-e2e.cjs",
+    "test:e2e:plugin-live-creation": "npm run build:core && npm run build && electron scripts/plugin-live-creation-e2e.cjs",
     "test:e2e:fast-mode": "npm run build:core && npm run build && electron scripts/fast-mode-e2e.cjs",
     "test:e2e:composer-worktree": "npm run build:core && npm run build && electron scripts/composer-worktree-e2e.cjs",
+    "test:e2e:first-send": "electron scripts/first-send-continuity-e2e.cjs",
+    "test:e2e:error-message-style": "electron scripts/error-message-style-e2e.cjs",
+    "test:e2e:confirmed-archive": "electron scripts/confirmed-archive-e2e.cjs",
+    "test:e2e:composer-footer": "electron scripts/composer-footer-e2e.cjs",
+    "test:e2e:terminal-handoff": "electron scripts/terminal-handoff-e2e.cjs",
+    "test:e2e:session-presentation": "node scripts/env-run.cjs WUU_SWITCH_PRESENTATION=1 WUU_SWITCH_STABLE_PRESENTATION=1 electron scripts/session-switch-e2e.cjs",
     "test:e2e:concurrent-send": "npm run build:core && npm run build && electron scripts/concurrent-send-e2e.mjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
@@ -73,45 +83,26 @@
     "test:e2e:subscription-quota": "npm run build:core && electron-vite build && electron scripts/subscription-quota-e2e.cjs",
     "test:e2e:project-agent": "electron-vite build && electron scripts/project-agent-gate-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
+    "test:e2e:settings-overlay": "electron scripts/settings-overlay-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
     "typecheck": "tsc --noEmit",
     "test:release-signing": "node --test scripts/test-release-signing.cjs",
     "test:e2e:onboarding-workspaces": "electron scripts/onboarding-workspaces-e2e.cjs",
     "build:app-context-mac": "node scripts/build-app-context-mac.cjs",
     "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs",
+    "build:cua-linux": "node scripts/build-cua-linux.cjs",
+    "pack:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "release:linux": "node scripts/release-linux.cjs",
+    "test:e2e:linux-package": "node scripts/linux-package-e2e.cjs",
+    "test:release-packaging": "node --experimental-strip-types --test scripts/bundled-dependency-licenses.test.mjs scripts/packaged-worker-observer.test.cjs",
+    "test:e2e:packaged": "node scripts/packaged-runtime-smoke.cjs",
     "test:e2e:generative-ui": "electron scripts/generative-ui-e2e.cjs",
     "test:e2e:generative-ui-app": "npm run build:core && npm run build && electron scripts/generative-ui-app-e2e.cjs"
   },
   "dependencies": {
-    "@dnd-kit/core": "^6.3.1",
-    "@dnd-kit/modifiers": "^9.0.0",
-    "@dnd-kit/sortable": "^10.0.0",
-    "@dnd-kit/utilities": "^3.2.2",
-    "@pierre/trees": "^1.0.0-beta.4",
-    "@vvo/tzdb": "^6.198.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "blobatar": "file:vendor/blobatar",
-    "cordis": "4.0.0-rc.8",
     "electron-updater": "6.8.10",
-    "highlight.js": "^11.11.1",
-    "katex": "^0.16.47",
-    "lucide-react": "^0.562.0",
-    "mdast-util-to-markdown": "^2.1.2",
-    "mermaid": "^11.15.0",
-    "monaco-editor": "^0.53.0",
-    "node-pty": "^1.1.0",
-    "pdfjs-dist": "5.4.624",
-    "qrcode": "^1.5.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "rehype-raw": "^7.0.0",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "remark-parse": "^11.0.0",
-    "unified": "^11.0.5"
+    "node-pty": "^1.1.0"
   },
   "build": {
     "appId": "com.blueberrycongee.wuu",
@@ -123,7 +114,8 @@
     "files": [
       "out/**/*",
       "vendor/zeron/LICENSE",
-      "package.json"
+      "package.json",
+      "!**/*.{js,cjs,mjs,css}.map"
     ],
     "extraResources": [
       {
@@ -167,7 +159,9 @@
       "sign": "scripts/sign-mac.cjs",
       "hardenedRuntime": false,
       "extendInfo": {
-        "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks."
+        "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks.",
+        "NSMicrophoneUsageDescription": "Wuu uses the microphone when you dictate text or allow a website to use it.",
+        "NSCameraUsageDescription": "Wuu uses the camera only when you allow a website to use it."
       },
       "extraResources": [
         {
@@ -211,25 +205,108 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "artifactName": "${productName}-${os}-${arch}-setup.${ext}"
-    }
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "executableName": "wuu",
+      "executableArgs": [
+        "--ozone-platform=x11"
+      ],
+      "artifactName": "${productName}-linux-x64.${ext}",
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "build/bin",
+          "to": "bin",
+          "filter": [
+            "wuu-cua-linux"
+          ]
+        }
+      ]
+    },
+    "deb": {
+      "packageName": "wuu",
+      "recommends": [],
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2",
+        "libgbm1"
+      ]
+    },
+    "afterPack": "scripts/after-pack-linux.cjs",
+    "publish": null
   },
   "devDependencies": {
     "@babel/parser": "7.29.7",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/modifiers": "^9.0.0",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@electron/asar": "3.4.1",
     "@electron/osx-sign": "1.3.3",
+    "@pierre/trees": "^1.0.0-beta.4",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.10.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^44.1.0",
+    "@vvo/tzdb": "^6.198.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "blobatar": "file:vendor/blobatar",
+    "cordis": "4.0.0-rc.8",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "highlight.js": "^11.11.1",
     "js-yaml": "4.3.2",
     "jsdom": "^25.0.0",
+    "katex": "^0.16.47",
+    "lucide-react": "^0.562.0",
+    "mdast-util-to-markdown": "^2.1.2",
+    "mermaid": "^11.15.0",
+    "monaco-editor": "^0.53.0",
     "node-api-headers": "1.9.0",
+    "pdfjs-dist": "5.4.624",
+    "pele": "1.6.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
     "typescript": "^7.0.2",
+    "unified": "^11.0.5",
     "vite": "^7.3.6",
     "vitest": "^3.2.7"
-  }
+  },
+  "homepage": "https://github.com/blueberrycongee/wuu",
+  "desktopName": "wuu.desktop"
 }

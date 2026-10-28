@@ -1,3 +1,4 @@
+import { engineRequiresHostModel } from "./RuntimeHelpers";
 import type { EngineInfo, EngineListResult } from "../shared/protocol";
 import { clearRecentSelections, readRecentSelections, rememberRecentSelection } from "./RecentSelectionMemory";
 
@@ -93,10 +94,10 @@ export function resolveDraftEngineMemory(
 ): DraftEngineMemory | undefined {
   const memory = readDraftEngineMemory();
   if (!memory) return undefined;
-  // An explicit wuu pick overrides an external default engine and needs no
-  // detection, so it applies before the inventory arrives.
-  if (memory.engine === "wuu") {
-    return { engine: "wuu", model: "", effort: "" };
+  // Host-model choices are retained in the host configuration rather than
+  // the engine-owned model memory; keep the chosen service identity.
+  if (engineRequiresHostModel(memory.engine, inventory?.engines.find(engine => engine.id === memory.engine))) {
+    return { engine: memory.engine, model: "", effort: "" };
   }
   const engine = engineForMemory(memory.engine, inventory);
   if (!engine) return undefined;
@@ -117,7 +118,7 @@ export function rememberedEngineRuntime(
   inventory: EngineListResult | undefined,
 ): { model: string; effort: string; speed?: string; model_options?: Record<string, string> } | undefined {
   const id = engineID.trim();
-  if (!id || id === "wuu") return undefined;
+  if (!id || engineRequiresHostModel(id, inventory?.engines.find(engine => engine.id === id))) return undefined;
   const memory = recentDraftEngineSelections().find((entry) => entry.engine === id);
   if (!memory) return undefined;
   const engine = engineForMemory(id, inventory);
@@ -130,7 +131,7 @@ function engineForMemory(
   engineID: string,
   inventory: EngineListResult | undefined,
 ): EngineInfo | undefined {
-  if (!engineID || engineID === "wuu" || !inventory) return undefined;
+  if (!engineID || !inventory) return undefined;
   const engine = inventory.engines.find((item) => item.id === engineID);
   if (!engine?.enabled || !engine.binary_ok) return undefined;
   return engine;

@@ -42,7 +42,12 @@ func (s *Server) handleThreadTextSnapshot(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	th, err := s.historyThread(params.ThreadID)
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ThreadID, true)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+	th, err := s.historyThread(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

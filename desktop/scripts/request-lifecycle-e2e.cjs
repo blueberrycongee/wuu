@@ -56,16 +56,17 @@ async function run() {
   });
   await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
   await until(() => evaluate(() => Boolean(document.querySelector(".composer textarea"))), "composer");
-  async function submit(text) {
+  async function submit(text, queue = false) {
     await evaluate((value) => {
       const input = document.querySelector(".composer textarea");
       input.focus();
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }, text);
-    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await evaluate(ctrlKey => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey, bubbles: true })), queue);
   }
   assert(await evaluate(() => document.querySelector('[data-wuu-state="send"]')?.getAttribute("aria-busy") !== "true"));
+  const submittedAt = Date.now();
   await submit("Review the request lifecycle");
   const creation = await until(() => gates.get("thread/start"), "thread creation gate");
   await until(() => evaluate(() => document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true"), "creation submission feedback");
@@ -74,12 +75,11 @@ async function run() {
     await evaluate(setVisualTheme, theme, font);
     fs.writeFileSync(path.join(evidence, `submitting-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
   }
-  await submit("Then verify the queue order");
-  await submit("Keep these messages after Stop");
+  await submit("Review the request lifecycle");
   assert.equal(queued.length, 0);
-  await evaluate(() => document.querySelector('.composer-pending-drawer button[aria-expanded]').click());
-  await until(() => evaluate(() => document.querySelectorAll(".composer-queue-list li").length === 2), "two buffered messages");
-  await until(() => evaluate(() => parseInt(document.querySelector(".turn-process-meta")?.textContent) >= 2), "local waiting timer");
+  assert(await evaluate(() => document.querySelector(".composer textarea")?.value === "Review the request lifecycle" &&
+    !document.querySelector(".composer-pending-drawer")), "creation retains one draft without exposing a queue");
+  await until(() => Date.now() - submittedAt >= 2200, "delayed creation interval");
   creation.resolve();
   const admission = await until(() => gates.get("turn/start"), "turn admission gate");
   assert(await evaluate(() => Boolean(document.querySelector('[data-wuu-state="submitting"]'))), "submission feedback survives thread creation");
@@ -89,7 +89,10 @@ async function run() {
   ] };
   notify("turn/started", { thread_id: threadId, turn });
   await until(() => evaluate(() => document.querySelectorAll(".assistant-turn-shell").length === 1), "single acknowledged turn");
-  assert(await evaluate(() => parseInt(document.querySelector(".turn-process-meta")?.textContent) >= 2));
+  await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
+    Boolean(document.querySelector(".composer-stop-button"))), "event confirmation clears the draft before admission RPC returns");
+  assert(await evaluate(elapsed => parseInt(document.querySelector(".turn-process-meta")?.textContent) >= Math.max(2, elapsed - 1),
+    Math.floor((Date.now() - submittedAt) / 1000)), "event confirmation preserves elapsed submission time");
   const reasoning = { id: "reasoning-before-stop", type: "reasoning", status: "in_progress", text: "Partial reasoning stays readable after Stop." };
   notify("item/started", { thread_id: threadId, turn_id: turnId, item: reasoning });
   await until(() => evaluate(() => document.querySelector(".reasoning-stream")?.getAttribute("data-stream-state") === "streaming"), "live reasoning");
@@ -114,9 +117,7 @@ async function run() {
   // The terminal turn must stop rendering even if an item completion was missed.
   notify("turn/completed", { thread_id: threadId, turn: { ...turn, status: "interrupted", items: [...turn.items, reasoning] } });
   admission.resolve();
-  await until(() => queued.length === 2, "held follow-ups");
-  assert.deepEqual(queued.map((item) => item.text), ["Then verify the queue order", "Keep these messages after Stop"]);
-  assert(queued.every((item) => item.hold === true && item.threadId === threadId));
+  assert.equal(queued.length, 0, "repeated Enter during creation did not dispatch a follow-up");
   await until(() => evaluate(() => !document.querySelector('[data-wuu-state="pending"]')), "confirmed stop");
   assert(await evaluate(() => !document.querySelector(".composer-stop-button")), "late admission must not resurrect the turn");
   const toggle = () => evaluate(() => {
@@ -154,7 +155,67 @@ async function run() {
   }
   fs.writeFileSync(path.join(evidence, "reasoning-stopped.json"), JSON.stringify(reasoningEvidence, null, 2));
   fs.writeFileSync(path.join(evidence, "confirmed-stop.png"), (await win.webContents.capturePage()).toPNG());
-  console.log("PASS: immediate queue, event-first timing, graphical Stop, terminal-before-RPC, ordered held inputs, two rendered layouts");
+  // Admission acknowledgement transfers the draft to the drawer before the
+  // active turn stops; held events subsequently confirm the stopped queue.
+  const stored = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadId);
+  const turns = [{ ...turn, status: "interrupted", items: [...turn.items, reasoning] }];
+  const held = [];
+  const followUps = ["Then verify the queue order", "Keep these messages after Stop"];
+  for (const [index, prompt] of followUps.entries()) {
+    gates.delete("turn/start");
+    gates.delete("turn/interrupt");
+    gates.delete("turn/queue");
+    await submit(`Run before queued follow-up ${index + 1}`);
+    const nextAdmission = await until(() => gates.get("turn/start"), "queue fixture admission");
+    const nextTurn = { id: nextAdmission.params.turnId, status: "in_progress", items_view: "full", items: [
+      { id: `user-${nextAdmission.params.clientId}`, type: "user_message", status: "completed",
+        text: nextAdmission.params.text, source_id: nextAdmission.params.clientId },
+    ] };
+    nextAdmission.resolve();
+    await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
+      Boolean(document.querySelector(".composer-stop-button"))), "queue fixture accepted");
+    turns.push(nextTurn);
+    notify("thread/updated", { thread: { ...stored, status: "in_progress", turns } });
+    await submit(prompt, true);
+    await until(() => queued.length === index + 1, "queued follow-up receipt");
+    assert.equal(queued[index].text, prompt);
+    assert.equal(queued[index].threadId, threadId);
+    assert.equal(queued[index].hold, false, "input was delivered before Stop");
+    await until(() => evaluate(value => document.querySelector(".composer textarea")?.value === value &&
+      document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true", prompt), "unacknowledged queue retains the draft");
+    await submit(prompt, true);
+    assert.equal(queued.length, index + 1, "repeated Enter does not duplicate pending delivery");
+    const queuedAdmission = await until(() => gates.get("turn/queue"), "queue admission gate");
+    queuedAdmission.resolve();
+    await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
+      !document.querySelector('[data-wuu-state="submitting"]') && Boolean(document.querySelector(".composer-pending-drawer"))), "queue acknowledgement transfers draft to drawer");
+    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+    assert.equal(queued.length, index + 1, "repeated Enter after acknowledgement does not replay the cleared draft");
+    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    const stop = await until(() => gates.get("turn/interrupt"), "Stop with an acknowledged queued message");
+    stop.resolve();
+    await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-state="pending"]'))), "queue Stop awaits terminal confirmation");
+    const stopped = { ...nextTurn, status: "interrupted" };
+    turns[turns.length - 1] = stopped;
+    held.push({ id: queued[index].id, thread_id: threadId, origin: "queue", prompt });
+    notify("turn/completed", { thread_id: threadId, turn: stopped });
+    notify("turn/held", { thread_id: threadId, messages: held });
+    notify("thread/updated", { thread: { ...stored, status: "idle", turns } });
+    await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
+      !document.querySelector('[data-wuu-state="submitting"], [data-wuu-state="pending"]')), "held confirmation keeps the draft released");
+  }
+  assert.deepEqual(queued.map(item => item.text), followUps);
+  await evaluate(() => {
+    const button = document.querySelector('.composer-pending-drawer button[aria-expanded]');
+    if (button.getAttribute("aria-expanded") !== "true") button.click();
+  });
+  await until(() => evaluate(() => document.querySelectorAll(".composer-queue-list li").length === 2), "two confirmed held messages");
+  const heldRows = await evaluate(() => [...document.querySelectorAll(".composer-queue-list li")].map(row => row.textContent));
+  heldRows.forEach((text, index) => assert(text.includes(followUps[index]), "held queue preserves submission order"));
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  fs.writeFileSync(path.join(evidence, "confirmed-held-order.png"), (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(evidence, "confirmed-delivery.json"), JSON.stringify({ queued, heldRows }, null, 2));
+  console.log("PASS: retained pending draft, event-first timing, graphical Stop, terminal-before-RPC, ordered confirmed held inputs, two rendered layouts");
   win.destroy();
   await verifyHistoryEdits();
   await verifyQuestionOffers();

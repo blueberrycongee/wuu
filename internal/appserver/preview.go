@@ -28,6 +28,12 @@ const (
 // written yet (brand-new sessions, in-memory threads not yet flushed), and
 // the preview pane should just show "暂无预览" instead of failing.
 func (s *Server) handleThreadPreview(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadPreviewParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -44,7 +50,7 @@ func (s *Server) handleThreadPreview(req Request) error {
 		limit = maxThreadPreviewLimit
 	}
 
-	history, err := loadChatMessages(s.rt.SessionDir, threadID)
+	history, err := loadChatMessages(binding.Sessions, threadID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return s.writeResponse(req.ID, ThreadPreviewResult{Turns: []Turn{}}, nil)

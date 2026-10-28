@@ -1,17 +1,20 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, clipboard } = require("electron");
+const { app, BrowserWindow } = require("electron");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..");
 const rendererHtml = path.join(desktopRoot, "out", "renderer", "index.html");
 const preload = path.join(__dirname, "resize-e2e-preload.cjs");
+const resizeEvidence = path.join(desktopRoot, "out", "e2e", "resize");
+fs.mkdirSync(resizeEvidence, { recursive: true });
 const resizeUserData = path.join(desktopRoot, "out", "e2e", "resize-user-data");
 const disableGpu = process.env.WUU_E2E_DISABLE_GPU === "true";
 const visible = process.env.WUU_E2E_VISIBLE === "true";
 
 process.env.WUU_RESIZE_E2E_CWD = repoRoot;
+process.env.WUU_RESIZE_E2E_LOCALE = "zh-CN";
 fs.rmSync(resizeUserData, { recursive: true, force: true });
 fs.mkdirSync(resizeUserData, { recursive: true });
 app.setPath("userData", resizeUserData);
@@ -72,13 +75,13 @@ async function run() {
   const debugSettingVisible = await evaluate(win, () => Boolean(document.querySelector(".settings-switch")));
   assert.equal(debugSettingVisible, false, "Production desktop builds must not expose the debug controls setting.");
   await evaluate(win, () => {
-    const button = document.querySelector(".settings-back-button");
+    const button = document.querySelector('[data-wuu-component="conversations-section"]');
     if (!(button instanceof HTMLButtonElement)) {
-      throw new Error("Settings back button not found.");
+      throw new Error("Conversations navigation button not found.");
     }
     button.click();
   });
-  await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 3000);
+  await waitFor(win, () => !document.querySelector('.app-shell[data-settings-open]') && Boolean(document.querySelector(".conversation-pane")), 3000);
 
   const primaryScroll = await evaluate(win, () => {
     const node = document.querySelector(".scroll-region");
@@ -180,54 +183,23 @@ async function run() {
   );
   assert.equal(scrollbarHiddenAfterIdle, true, "Conversation scrollbar should hide after scrolling stops.");
 
-  const defaultEnvironment = await waitFor(win, () => environmentSnapshot(), 5000);
+  // The information panel is disabled in the product. Resizing must not
+  // retain its obsolete inset or misalign the message flow and composer.
+  const defaultLayout = await waitFor(win, () => layoutInsetSnapshot(), 5000);
   const defaultFlow = await waitFor(win, () => flowSnapshot(), 1000);
   assertFlowInset(defaultFlow, "Default-window");
-  assert.equal(defaultEnvironment.visible, true, "Environment panel should start visible above the wide-window breakpoint.");
-  assert.equal(typeof defaultEnvironment.panelRightGap, "number", "Environment panel right gap should be measurable.");
-  assert.equal(typeof defaultEnvironment.panelMessageGap, "number", "Environment panel message gap should be measurable.");
-  assert.equal(typeof defaultEnvironment.panelWidth, "number", "Environment panel width should be measurable.");
-  assert.equal(typeof defaultEnvironment.conversationContentWidth, "number", "Message flow width should be measurable.");
-  assert.ok(defaultEnvironment.panelRightGap <= 24, "Environment panel should sit near the right edge on wide windows.");
+  assert.ok(defaultLayout.scrollPaddingRight <= 1 && Math.abs(defaultLayout.composerPaddingRight - defaultLayout.scrollbarInset) <= 1,
+    `Conversation should use the available width. Layout=${JSON.stringify(defaultLayout)}`);
 
   win.setSize(1720, 860);
   await waitFor(win, () => !document.documentElement.classList.contains("window-resizing"), 1000);
-  const beforeEnvironmentResize = await waitFor(
-    win,
-    () => {
-      const snapshot = environmentSnapshot();
-      return snapshot && snapshot.visible && !snapshot.resizing ? snapshot : null;
-    },
-    1000
-  );
-  assert.equal(typeof beforeEnvironmentResize.panelRightGap, "number", "Wide environment panel right gap should be measurable.");
-  assert.equal(typeof beforeEnvironmentResize.panelMessageGap, "number", "Wide environment panel message gap should be measurable.");
-  assert.ok(
-    beforeEnvironmentResize.panelRightGap <= 24,
-    `Environment panel should keep its right-side anchor as width grows. Wide=${JSON.stringify(beforeEnvironmentResize)}`
-  );
-  assert.ok(
-    beforeEnvironmentResize.panelWidth >= 320 && beforeEnvironmentResize.panelWidth >= defaultEnvironment.panelWidth + 40,
-    `Extra width should grow the environment panel toward full size. Default=${JSON.stringify(defaultEnvironment)} Wide=${JSON.stringify(beforeEnvironmentResize)}`
-  );
-  assert.ok(
-    beforeEnvironmentResize.conversationContentWidth <= 680,
-    `Extra width should preserve the readable message-flow cap. Wide=${JSON.stringify(beforeEnvironmentResize)}`
-  );
+  const wideLayout = await waitFor(win, () => layoutInsetSnapshot(), 1000);
   const wideFlow = await waitFor(win, () => flowSnapshot(), 1000);
   assertFlowInset(wideFlow, "Wide-screen");
-  assert.ok(
-    beforeEnvironmentResize.panelMessageGap <= 136,
-    `The wider flow and panel should keep the full-screen gap controlled. Wide=${JSON.stringify(beforeEnvironmentResize)}`
-  );
-  assert.ok(
-    beforeEnvironmentResize.scrollPaddingRight >= 40 && beforeEnvironmentResize.scrollPaddingRight <= 100,
-    `Scroll region should reserve only the space needed to clear the environment panel. Wide=${JSON.stringify(beforeEnvironmentResize)}`
-  );
-  assert.ok(
-    Math.abs(beforeEnvironmentResize.composerPaddingRight - beforeEnvironmentResize.scrollPaddingRight) <= 1,
-    "Composer and message flow should consume the same dynamic environment-panel inset."
-  );
+  assert.ok(wideFlow.conversationContentWidth <= 990,
+    `Extra width should preserve the readable message-flow cap. Flow=${JSON.stringify(wideFlow)}`);
+  assert.ok(wideLayout.scrollPaddingRight <= 1 && Math.abs(wideLayout.composerPaddingRight - wideLayout.scrollbarInset) <= 1,
+    `A wider window must not reserve space for the disabled information panel. Layout=${JSON.stringify(wideLayout)}`);
 
   await evaluate(win, () => {
     const button = Array.from(document.querySelectorAll(".sidebar-toggle-button")).find((candidate) =>
@@ -243,12 +215,13 @@ async function run() {
     () => {
       const shell = document.querySelector(".app-shell");
       const pane = document.querySelector(".conversation-pane");
-      if (!(shell instanceof HTMLElement) || !(pane instanceof HTMLElement)) {
+      const ribbon = document.querySelector(".sidebar-ribbon");
+      if (!(shell instanceof HTMLElement) || !(pane instanceof HTMLElement) || !(ribbon instanceof HTMLElement)) {
         return null;
       }
       return shell.classList.contains("sidebar-collapsed") &&
         !shell.classList.contains("sidebar-animating") &&
-        pane.getBoundingClientRect().left <= 1
+        Math.abs(pane.getBoundingClientRect().left - ribbon.getBoundingClientRect().right) <= 1
         ? true
         : null;
     },
@@ -291,53 +264,20 @@ async function run() {
   await waitFor(win, () => !document.documentElement.classList.contains("window-resizing"), 1000);
 
   win.setSize(1280, 640);
-  const duringEnvironmentResize = await waitFor(
-    win,
-    () => {
-      const snapshot = environmentSnapshot();
-      return snapshot && snapshot.resizing && snapshot.scrollPaddingRight > 300 && snapshot.composerPaddingRight > 300
-        ? snapshot
-        : null;
-    },
-    120
-  );
-  assert.match(
-    duringEnvironmentResize.scrollTransitionDuration,
-    /^0s(, 0s)*$/,
-    "Scroll region padding must not depend on a resize marker to avoid animation."
-  );
-  assert.match(
-    duringEnvironmentResize.composerTransitionDuration,
-    /^0s(, 0s)*$/,
-    "Composer padding must not depend on a resize marker to avoid animation."
-  );
-  assert.ok(
-    duringEnvironmentResize.scrollPaddingRight > 300,
-    "Scroll region should keep the previous environment panel space during live resize."
-  );
-  assert.ok(
-    duringEnvironmentResize.composerPaddingRight > 300,
-    "Composer should keep the previous environment panel space during live resize."
-  );
+  const duringResize = await waitFor(win, () => {
+    const snapshot = layoutInsetSnapshot();
+    return snapshot && snapshot.resizing ? snapshot : null;
+  }, 120);
+  assert.match(duringResize.scrollTransitionDuration, /^0s(, 0s)*$/,
+    "Scroll region padding must not animate during viewport resizing.");
+  assert.match(duringResize.composerTransitionDuration, /^0s(, 0s)*$/,
+    "Composer padding must not animate during viewport resizing.");
+  assert.ok(duringResize.scrollPaddingRight <= 1 && Math.abs(duringResize.composerPaddingRight - duringResize.scrollbarInset) <= 1,
+    `Live resize must keep the full conversation width. Layout=${JSON.stringify(duringResize)}`);
   await waitFor(win, () => !document.documentElement.classList.contains("window-resizing"), 1000);
-  const afterEnvironmentResize = await waitFor(
-    win,
-    () => {
-      const snapshot = environmentSnapshot();
-      return snapshot && !snapshot.visible && snapshot.scrollPaddingRight <= 1 && snapshot.composerPaddingRight <= 1
-        ? snapshot
-        : null;
-    },
-    1200
-  );
-  assert.ok(
-    afterEnvironmentResize.scrollPaddingRight <= 1,
-    "Scroll region should release inline environment panel space after resize settles."
-  );
-  assert.ok(
-    afterEnvironmentResize.composerPaddingRight <= 1,
-    "Composer should release inline environment panel space after resize settles."
-  );
+  const afterResize = await waitFor(win, () => layoutInsetSnapshot(), 1000);
+  assert.ok(afterResize.scrollPaddingRight <= 1 && Math.abs(afterResize.composerPaddingRight - afterResize.scrollbarInset) <= 1,
+    `Settled resize must keep the full conversation width. Layout=${JSON.stringify(afterResize)}`);
   const flowResize = await waitFor(win, () => flowSnapshot(), 1000);
   assertFlowInset(flowResize, "Resized-window");
   assert.ok(
@@ -387,6 +327,9 @@ async function run() {
       Math.abs(sample.composerStackRight - sample.conversationContentRight)
     ])
   );
+  fs.writeFileSync(path.join(resizeEvidence, "continuous-resize.json"), JSON.stringify({
+    maxFrameMs, maxConversationContentWidth, maxFlowCenterDelta, maxComposerInsetDelta, samples: flowProbe.samples,
+  }, null, 2));
   assert.ok(
     maxConversationContentWidth <= 990,
     `Message flow content should stay capped throughout continuous right-side resize. Max=${maxConversationContentWidth}`
@@ -418,10 +361,10 @@ async function run() {
     /grid-template-(columns|rows)/,
     "Top-level grid layout must not transition because viewport-driven columns should track live resize immediately."
   );
-  assert.match(
-    appShellIdleTransitions.duration,
-    /^0s(, 0s)*$/,
-    "Top-level grid layout should not keep idle transitions that can lag live resize."
+  assert.doesNotMatch(
+    appShellIdleTransitions.property,
+    /(?:^|,\s*)(?:all|width|height|inline-size|block-size|padding(?:-[a-z]+)?|margin(?:-[a-z]+)?|left|right|top|bottom|transform)(?:,|$)/,
+    "Idle shell transitions must not animate viewport geometry; scrollbar color may still fade."
   );
 
   await evaluate(win, () => {
@@ -624,15 +567,15 @@ async function run() {
   );
   await waitFor(
     win,
-    () => Boolean(document.querySelector(".workspace-file-tree-row")) || null,
+    () => Boolean(document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot?.querySelector("[data-item-path]")) || null,
     3000
   );
   const openedArtifactPath = await evaluate(win, () => {
-    const row = document.querySelector(".workspace-file-tree-row");
-    if (!(row instanceof HTMLButtonElement)) {
+    const row = document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot?.querySelector("[data-item-path]");
+    if (!(row instanceof HTMLElement)) {
       throw new Error("Workspace file row not found.");
     }
-    const path = row.getAttribute("title") ?? row.textContent?.trim() ?? "";
+    const path = row.getAttribute("data-item-path") ?? "";
     row.click();
     return path;
   });
@@ -647,7 +590,7 @@ async function run() {
     const conversation = document.querySelector(".conversation-pane");
     return {
       resourceID: activeResource?.getAttribute("data-workspace-tab-id") ?? "",
-      tabTitle: activeWorkspaceTab?.getAttribute("title") ?? "",
+      tabTitle: activeWorkspaceTab?.getAttribute("aria-label") ?? "",
       sessionTabs: document.querySelectorAll(".session-tab").length,
       conversationWidth:
         conversation instanceof HTMLElement ? conversation.getBoundingClientRect().width : 0
@@ -668,46 +611,21 @@ async function run() {
     "Docked artifact review must keep the conversation visible beside it."
   );
 
-  await evaluate(win, () => {
-    const sourceMode = Array.from(document.querySelectorAll(".workspace-markdown-mode-switch button")).find(
-      (button) => button.textContent?.trim() === "源码"
-    );
-    if (sourceMode instanceof HTMLButtonElement) {
-      sourceMode.click();
-    }
+  await waitFor(win, () => Boolean(document.querySelector(".workspace-file-resource.active .monaco-editor textarea")) || null, 3000);
+  const previewText = await evaluate(win, () => {
+    window.__resizeArtifactViewer = document.querySelector(".workspace-file-resource.active .monaco-editor");
+    return document.querySelector(".workspace-file-resource.active .view-lines")?.textContent ?? "";
   });
-  await waitFor(
-    win,
-    () => Boolean(document.querySelector(".workspace-file-resource.active .monaco-editor textarea")) || null,
-    3000
-  );
-  const draftMarker = "wuu-full-panel-draft";
-  clipboard.writeText(draftMarker);
-  await evaluate(win, () => {
-    const input = document.querySelector(".workspace-file-resource.active .monaco-editor textarea");
-    if (!(input instanceof HTMLTextAreaElement)) {
-      throw new Error("Active Monaco input not found.");
-    }
-    input.focus();
-  });
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["meta"] });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: ["meta"] });
-  win.webContents.paste();
-  await waitFor(
-    win,
-    () => {
-      const dirtyTab = document.querySelector(".workspace-tool-tab.active.dirty");
-      const editorText = document.querySelector(".workspace-file-resource.active .view-lines")?.textContent ?? "";
-      return dirtyTab && editorText.includes("wuu-full-panel-draft") ? true : null;
-    },
-    3000
-  );
+  assert.ok(previewText.includes("resize-fixture-000.ts"), "The active preview should display the selected file contents.");
 
   await evaluate(win, () => {
     const expand = document.querySelector('[aria-label="展开为全面板"]');
     if (!(expand instanceof HTMLButtonElement)) {
       throw new Error("Full-panel expand button not found.");
     }
+    const conversation = document.querySelector(".conversation-pane");
+    const panel = document.querySelector(".workspace-right-panel");
+    window.__fullPanelBounds = { left: conversation.getBoundingClientRect().left, right: panel.getBoundingClientRect().right };
     expand.click();
   });
   await waitFor(
@@ -723,7 +641,7 @@ async function run() {
         return null;
       }
       const rect = panel.getBoundingClientRect();
-      return rect.left <= 1 && rect.right >= window.innerWidth - 1 ? true : null;
+      return Math.abs(rect.left - window.__fullPanelBounds.left) <= 1 && Math.abs(rect.right - window.__fullPanelBounds.right) <= 1 ? true : null;
     },
     3000
   );
@@ -738,11 +656,12 @@ async function run() {
     return {
       globalized: shell.classList.contains("right-panel-globalized"),
       resourceID: activeResource?.getAttribute("data-workspace-tab-id") ?? "",
-      dirty: Boolean(document.querySelector(".workspace-tool-tab.active.dirty")),
+      sameViewer: document.querySelector(".workspace-file-resource.active .monaco-editor") === window.__resizeArtifactViewer,
       editorText: document.querySelector(".workspace-file-resource.active .view-lines")?.textContent ?? "",
       panelLeft: panelRect.left,
       panelRight: panelRect.right,
-      viewportWidth: window.innerWidth,
+      canvasLeft: window.__fullPanelBounds.left,
+      canvasRight: window.__fullPanelBounds.right,
       exitControlVisible: Boolean(document.querySelector('[aria-label="退出全面板"]'))
     };
   });
@@ -752,18 +671,15 @@ async function run() {
     dockedArtifactState.resourceID,
     "Full-panel mode must preserve the active artifact tab."
   );
-  assert.equal(fullPanelArtifactState.dirty, true, "Full-panel mode must preserve the dirty file state.");
+  assert.equal(fullPanelArtifactState.sameViewer, true, "Full-panel mode must preserve the mounted file preview.");
+  assert.equal(fullPanelArtifactState.editorText, previewText, "Full-panel mode must preserve the displayed file contents.");
   assert.ok(
-    fullPanelArtifactState.editorText.includes(draftMarker),
-    "Full-panel mode must preserve the unsaved Monaco draft."
+    Math.abs(fullPanelArtifactState.panelLeft - fullPanelArtifactState.canvasLeft) <= 1,
+    `Full-panel workspace should cover the conversation up to the sidebar edge: ${JSON.stringify(fullPanelArtifactState)}`
   );
   assert.ok(
-    fullPanelArtifactState.panelLeft <= 1,
-    `Full-panel workspace should reach the left window edge: ${JSON.stringify(fullPanelArtifactState)}`
-  );
-  assert.ok(
-    fullPanelArtifactState.panelRight >= fullPanelArtifactState.viewportWidth - 1,
-    "Full-panel workspace should reach the right window edge."
+    Math.abs(fullPanelArtifactState.panelRight - fullPanelArtifactState.canvasRight) <= 1,
+    "Full-panel workspace should preserve the shared canvas right edge."
   );
   assert.equal(fullPanelArtifactState.exitControlVisible, true, "Full-panel mode should expose its exit control.");
 
@@ -792,7 +708,7 @@ async function run() {
   const restoredArtifactState = await evaluate(win, () => ({
     resourceID:
       document.querySelector(".workspace-file-resource.active")?.getAttribute("data-workspace-tab-id") ?? "",
-    dirty: Boolean(document.querySelector(".workspace-tool-tab.active.dirty")),
+    sameViewer: document.querySelector(".workspace-file-resource.active .monaco-editor") === window.__resizeArtifactViewer,
     editorText: document.querySelector(".workspace-file-resource.active .view-lines")?.textContent ?? "",
     sessionTabs: document.querySelectorAll(".session-tab").length,
     conversationWidth:
@@ -810,45 +726,35 @@ async function run() {
     sessionTabCountBeforeFileOpen,
     "Full-panel round trips must not alter conversation tabs."
   );
-  assert.equal(restoredArtifactState.dirty, true, "Docked mode must restore the dirty file state.");
-  assert.ok(
-    restoredArtifactState.editorText.includes(draftMarker),
-    "Docked mode must restore the unsaved Monaco draft."
-  );
-  clipboard.writeText("-after-focus");
+  assert.equal(restoredArtifactState.sameViewer, true, "Docked mode must preserve the mounted file preview.");
+  assert.equal(restoredArtifactState.editorText, previewText, "Docked mode must preserve the displayed file contents.");
   await evaluate(win, () => {
     const input = document.querySelector(".workspace-file-resource.active .monaco-editor textarea");
-    if (!(input instanceof HTMLTextAreaElement)) {
-      throw new Error("Restored Monaco input not found.");
-    }
+    if (!(input instanceof HTMLTextAreaElement)) throw new Error("Restored Monaco input not found.");
     input.focus();
   });
-  win.webContents.paste();
-  await waitFor(
-    win,
-    () => {
-      const editorText = document.querySelector(".workspace-file-resource.active .view-lines")?.textContent ?? "";
-      return editorText.includes("wuu-full-panel-draft-after-focus") ? true : null;
-    },
-    3000
-  );
+  await waitFor(win, () => document.activeElement === document.querySelector(".workspace-file-resource.active .monaco-editor textarea"), 1000);
   assert.ok(restoredArtifactState.conversationWidth > 300, "Exiting full-panel mode should restore the conversation.");
 
   await evaluate(win, () => {
-    const filesTab = Array.from(
-      document.querySelectorAll(".workspace-panel-tabs .workspace-tool-tab-main")
-    ).find((tab) => tab.getAttribute("title") === "文件");
-    if (!(filesTab instanceof HTMLButtonElement)) {
-      throw new Error("Workspace files tab not found after full-panel round trip.");
-    }
-    filesTab.click();
+    const picker = document.querySelector(".workspace-panel-add");
+    if (!(picker instanceof HTMLButtonElement)) throw new Error("Right panel tool picker not found after full-panel round trip.");
+    picker.click();
+  });
+  await waitFor(win, () => Array.from(document.querySelectorAll(".workspace-right-panel .workspace-tool-menu-item")).some(item => item.textContent?.includes("文件")) || null, 3000);
+  await evaluate(win, () => {
+    const files = Array.from(document.querySelectorAll(".workspace-right-panel .workspace-tool-menu-item")).find(item => item.textContent?.includes("文件"));
+    if (!(files instanceof HTMLButtonElement)) throw new Error("Right panel file tool not found after full-panel round trip.");
+    files.click();
   });
   await waitFor(
     win,
-    () => Boolean(document.querySelector(".workspace-file-tree-row")) || null,
+    () => Boolean(document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot?.querySelector("[data-item-path]")) || null,
     3000
   );
 
+  fs.writeFileSync(path.join(resizeEvidence, "wide.png"), (await win.webContents.capturePage()).toPNG());
+  await evaluate(win, () => { window.__resizeTreeHost = document.querySelector(".workspace-file-tree-frame file-tree-container"); });
   const before = await waitFor(win, () => treeSnapshot(), 5000);
   assert.ok(before.frameHeight > 500, "Initial file tree frame should be tall enough for resize verification.");
   assert.ok(before.renderedRows > 20, "Initial file tree should render workspace rows.");
@@ -907,7 +813,8 @@ async function run() {
   assert.ok(during, "Resize probe should capture a shrunken file tree frame during programmatic resize.");
 
   assert.equal(during.resizing, true, "Window resize marker should be set by programmatic BrowserWindow resizing.");
-  assert.equal(during.shellTransitionProperty, "none", "App shell transitions should be disabled only during live resize.");
+  assert.equal(during.shellTransitionProperty, during.sidebarAnimating ? "grid-template-columns" : "none",
+    "Live resize may animate only the bounded sidebar auto-collapse transition.");
   assert.equal(during.animationProbePlayState, "paused", "Targeted resize animations should pause during live window resize.");
   assert.equal(during.animationProbeTransitionProperty, "none", "Targeted resize transitions should be disabled during live window resize.");
   assert.ok(during.viewportHeight < before.viewportHeight - 180, "Renderer viewport should shrink with the Electron window.");
@@ -920,9 +827,19 @@ async function run() {
     Math.abs(during.frameHeight - during.scrollHeight - (before.frameHeight - before.scrollHeight)) <= 2,
     "File tree scroll frame should preserve its internal chrome while tracking container height."
   );
-  assert.equal(during.renderedRows, before.renderedRows, "Workspace file rows should stay mounted while the panel resizes.");
+  assert.equal(during.sameTreeHost, true, "The file tree should stay mounted while the panel resizes.");
+  assert.equal(during.totalRows, before.totalRows, "Resizing must preserve the file tree contents.");
+  assert.equal(during.firstPath, before.firstPath, "Resizing must preserve the file tree scroll position.");
+  assert.ok(during.renderedRows > 0 && during.renderedRows <= before.renderedRows,
+    "The virtualized file tree should keep rows visible while adapting to the smaller viewport.");
   await waitFor(win, () => !document.documentElement.classList.contains("window-resizing"), 1000);
+  await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("sidebar-animating"), 1500);
 
+  fs.writeFileSync(path.join(resizeEvidence, "narrow.png"), (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(resizeEvidence, "report.json"), JSON.stringify({ passed: true,
+    defaultLayout, wideLayout, duringResize, afterResize, appShellIdleTransitions, maxFrameMs, maxConversationContentWidth,
+    maxFlowCenterDelta, maxComposerInsetDelta, before, during, liveResizeSamples,
+  }, null, 2));
   console.log("resize e2e passed");
   app.exit(0);
 }
@@ -961,8 +878,11 @@ async function evaluate(win, fn) {
   const source = `(() => {
     window.treeSnapshot = () => {
       const frame = document.querySelector(".workspace-file-tree-frame");
-      const scroll = frame?.querySelector(".workspace-file-tree-scroll");
-      const list = frame?.querySelector(".workspace-file-tree-list");
+      const host = frame?.querySelector("file-tree-container");
+      const tree = host?.shadowRoot;
+      const scroll = tree?.querySelector("[data-file-tree-virtualized-scroll]");
+      const list = tree?.querySelector("[data-file-tree-virtualized-list]");
+      const firstRow = tree?.querySelector("[data-item-path]");
       const animationProbe = document.querySelector(".resize-e2e-animation-probe");
       const animationProbeStyle = animationProbe ? getComputedStyle(animationProbe) : undefined;
       if (!frame || !scroll || !list) {
@@ -972,8 +892,12 @@ async function evaluate(win, fn) {
         animationProbePlayState: animationProbeStyle?.animationPlayState ?? "",
         animationProbeTransitionProperty: animationProbeStyle?.transitionProperty ?? "",
         frameHeight: frame.getBoundingClientRect().height,
-        renderedRows: frame.querySelectorAll(".workspace-file-tree-row").length,
+        renderedRows: tree.querySelectorAll("[data-item-path]").length,
+        totalRows: Number(firstRow?.getAttribute("aria-setsize")),
+        firstPath: firstRow?.getAttribute("data-item-path"),
+        sameTreeHost: host === window.__resizeTreeHost,
         resizing: document.documentElement.classList.contains("window-resizing"),
+        sidebarAnimating: document.querySelector(".app-shell")?.classList.contains("sidebar-animating") === true,
         shellTransitionProperty: getComputedStyle(document.querySelector(".app-shell")).transitionProperty,
         scrollHeight: scroll.getBoundingClientRect().height,
         viewportHeight: window.innerHeight,
@@ -981,26 +905,18 @@ async function evaluate(win, fn) {
         contentHeight: list.getBoundingClientRect().height
       };
     };
-    window.environmentSnapshot = () => {
+    window.layoutInsetSnapshot = () => {
       const pane = document.querySelector(".conversation-pane");
       const scroll = document.querySelector(".scroll-region");
       const composer = document.querySelector(".dock-composer-wrap");
-      const panel = document.querySelector(".environment-panel");
       if (!pane || !scroll || !composer) {
         return null;
       }
-      const paneRect = pane.getBoundingClientRect();
-      const panelRect = panel instanceof HTMLElement ? panel.getBoundingClientRect() : undefined;
-      const flow = window.flowSnapshot?.();
       const scrollStyle = getComputedStyle(scroll);
       const composerStyle = getComputedStyle(composer);
       return {
-        visible: pane.classList.contains("environment-panel-visible"),
         resizing: document.documentElement.classList.contains("window-resizing"),
-        panelMessageGap: panelRect && flow ? panelRect.left - flow.conversationContentRight : null,
-        panelRightGap: panelRect ? paneRect.right - panelRect.right : null,
-        panelWidth: panelRect?.width ?? null,
-        conversationContentWidth: flow?.conversationContentWidth ?? null,
+        scrollbarInset: (scroll.getBoundingClientRect().width - scroll.clientWidth) / 2,
         scrollPaddingRight: Number.parseFloat(scrollStyle.paddingRight || "0"),
         composerPaddingRight: Number.parseFloat(composerStyle.paddingRight || "0"),
         scrollTransitionProperty: scrollStyle.transitionProperty,
@@ -1049,8 +965,8 @@ async function evaluate(win, fn) {
         conversationCenter: conversationRect.left + conversationRect.width / 2,
         conversationRight: conversationRect.right,
         conversationWidth: conversationRect.width,
-        scrollContentCenter: scrollRect.left + (scroll.clientWidth - scrollPaddingRight) / 2,
-        scrollContentRight: scrollRect.left + scroll.clientWidth - scrollPaddingRight
+        scrollContentCenter: scrollRect.left + scroll.clientLeft + (scroll.clientWidth - scrollPaddingRight) / 2,
+        scrollContentRight: scrollRect.left + scroll.clientLeft + scroll.clientWidth - scrollPaddingRight
       };
     };
     return (${fn.toString()})();
@@ -1062,7 +978,11 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fail(error) {
+async function fail(error) {
   console.error(error);
-  app.exit(1);
+  fs.writeFileSync(path.join(resizeEvidence, "failure.txt"), String(error.stack || error));
+  const window = BrowserWindow.getAllWindows()[0];
+  try {
+    if (window && !window.isDestroyed()) fs.writeFileSync(path.join(resizeEvidence, "failure.png"), (await window.webContents.capturePage()).toPNG());
+  } finally { app.exit(1); }
 }

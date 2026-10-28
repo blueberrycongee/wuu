@@ -48,9 +48,12 @@ func TestServerInterruptSettlesPartialStreamItems(t *testing.T) {
 				ConfigPath: filepath.Join(repo, ".wuu.json"), ConfigLoadMode: runtime.ConfigLoadFile,
 				SessionDir: filepath.Join(repo, "sessions"), HookDispatcher: hooks.NewDispatcher(nil),
 				StreamRunner: &agent.StreamRunner{
+					LoopDriver: agent.DefaultDriver{},
+
 					Client: client, Model: "test-model", SystemPrompt: "system", Tools: fastToolExecutor{},
 				},
 			}
+			registerTestWuuEngine(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
@@ -194,12 +197,15 @@ func TestRepro_InterruptAfterToolCompletes_PersistsMessages(t *testing.T) {
 		ConfigLoadMode: runtime.ConfigLoadFile,
 		HookDispatcher: hooks.NewDispatcher(nil),
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: agent.DefaultDriver{},
+
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",
 			SystemPrompt: "system",
 		},
 	}
 	rt.StreamRunner.Tools = fastToolExecutor{}
+	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -221,7 +227,7 @@ func TestRepro_InterruptAfterToolCompletes_PersistsMessages(t *testing.T) {
 	}
 	waitForMethod(t, out, NotificationTurnError)
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}

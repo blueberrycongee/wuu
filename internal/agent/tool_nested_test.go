@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
 
 type orchestrationTestTools struct {
@@ -34,7 +36,7 @@ func TestNestedCallsUseLedgerWithoutProviderProjection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	dir := t.TempDir()
-	ledger, err := toolledger.New(dir, "nested-owner")
+	ledger, err := toolledger.New(agentTestDocuments(t, dir), "nested-owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,15 +84,26 @@ func TestNestedCallsUseLedgerWithoutProviderProjection(t *testing.T) {
 	if err != nil || len(pending) != 1 || pending[0].ProviderCallID != "parent" {
 		t.Fatalf("provider projection: %+v, %v", pending, err)
 	}
-	db, err := session.OpenStore(dir)
+	view, err := agentTestDocuments(t, dir).Read(ctx, persistence.Query{Namespace: toolstate.Invocations})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	var state, callID, result string
-	err = db.QueryRowContext(ctx, `SELECT state, provider_call_id, result_json FROM tool_invocations WHERE parent_invocation_id = ?`, messages[0].ToolInvocationID).Scan(&state, &callID, &result)
-	if err != nil || state != string(toolledger.InvocationSucceeded) || callID == "local" || result == "" {
-		t.Fatalf("child not independently recorded: %s %s %s, %v", state, callID, result, err)
+	children := 0
+	for _, row := range view.Documents {
+		var invocation toolstate.Invocation
+		if err := json.Unmarshal(row.Value, &invocation); err != nil {
+			t.Fatal(err)
+		}
+		if invocation.ParentInvocationID != messages[0].ToolInvocationID {
+			continue
+		}
+		children++
+		if invocation.State != string(toolledger.InvocationSucceeded) || invocation.ProviderCallID == "local" || invocation.Result == nil {
+			t.Fatalf("child not independently recorded: %+v", invocation)
+		}
+	}
+	if children != 1 {
+		t.Fatalf("independent child receipts = %d, want 1", children)
 	}
 	if _, err := retained.Invoke(ctx, providers.ToolCall{ID: "late", Name: "write"}); err == nil {
 		t.Fatal("completed parent retained execution authority")
@@ -233,4 +246,84 @@ func TestToolExecutionGateSerializesWritersAgainstReaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
+}
+
+type streamingOrchestrationTools struct{ orchestrationTestTools }
+
+func (e streamingOrchestrationTools) ToolMetadata(call providers.ToolCall) (ToolMetadata, bool) {
+	return ToolMetadata{ReadOnly: true, ConcurrencySafe: true, Orchestrator: call.Name == "orchestrate"}, true
+}
+
+func TestOrphanStreamingParentClosesNestedAdmissionBeforeReconciliationUnlocks(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	scopes := make(chan toolctx.NestedExecutor, 1)
+	executor := streamingOrchestrationTools{orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+		if call.Name != "orchestrate" {
+			return "unadmitted child effect", nil
+		}
+		scope, _ := toolctx.Nested(ctx)
+		scopes <- scope
+		<-ctx.Done()
+		return "", ctx.Err()
+	}}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, RunContext: ctx})
+	releaseCancel := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCancel) }) }
+	defer func() { release(); runtime.Close() }()
+	call := providers.ToolCall{ID: "orphan", Name: "orchestrate", Arguments: `{}`}
+	if err := runtime.ObserveStreamEvent(ctx, providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call}); err != nil {
+		t.Fatal(err)
+	}
+	var scope toolctx.NestedExecutor
+	select {
+	case scope = <-scopes:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	cancelEntered := make(chan struct{})
+	runtime.mu.Lock()
+	run := runtime.byID[call.ID]
+	originalCancel := run.cancel
+	run.cancel = func() {
+		close(cancelEntered)
+		<-releaseCancel
+		originalCancel()
+	}
+	runtime.mu.Unlock()
+	joined := make(chan error, 1)
+	go func() { _, err := runtime.ExecuteFinalCalls(ctx, nil, nil); joined <- err }()
+	select {
+	case <-cancelEntered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	child := make(chan error, 1)
+	go func() {
+		_, err := scope.Invoke(ctx, providers.ToolCall{ID: "late", Name: "read", Arguments: `{}`})
+		child <- err
+	}()
+	// Keep cancellation deliberately pending: reconciliation must not expose an
+	// unlocked, still-live orphan scope in which this late child can execute.
+	select {
+	case err := <-child:
+		t.Fatalf("late child crossed orphan reconciliation before cancellation: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if err := <-joined; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-child:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("late child was not canceled: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if len(runtime.TakeRequestContextSegments()) != 0 {
+		t.Fatal("orphan child context entered the next model request")
+	}
 }

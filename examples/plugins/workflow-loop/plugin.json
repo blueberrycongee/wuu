@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "evidence-workflow",
+  "name": "Evidence Workflow",
+  "version": "1.0.0",
+  "description": "Gather evidence in one tool batch, then synthesize an answer.",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.ts"] }
+}

@@ -12,7 +12,7 @@ import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import type { MessageContentPart } from "../shared/protocol";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
-import { buildFileSelectionPart } from "./FileSelectionContext";
+import { buildFileSelectionPart } from "./FileSelectionParts";
 
 export type CollapsedComposerPromptBlock = {
   id: string;

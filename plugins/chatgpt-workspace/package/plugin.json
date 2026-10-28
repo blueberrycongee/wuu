@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "chatgpt-workspace",
+  "name": "ChatGPT",
+  "description": "Open ChatGPT in the desktop workbench. Sign in through the website.",
+  "icon": {
+    "light": "icon-light.svg",
+    "dark": "icon-dark.svg"
+  },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "desktop": {
+    "entry": "desktop.js"
+  },
+  "contributes": {
+    "navigation": [
+      {
+        "id": "chatgpt",
+        "view": "website",
+        "title": "ChatGPT",
+        "icon": {
+          "light": "icon-light.svg",
+          "dark": "icon-dark.svg"
+        },
+        "order": 70
+      }
+    ]
+  },
+  "interface": {
+    "displayName": "ChatGPT",
+    "shortDescription": "A website destination in your workbench.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": []
+  }
+}

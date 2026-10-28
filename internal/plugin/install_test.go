@@ -228,3 +228,42 @@ func writeZip(t *testing.T, destination string, entries []zipTestEntry) {
 		t.Fatal(err)
 	}
 }
+
+func TestPackageSourceIdentityFollowsDistributionLocation(t *testing.T) {
+	root := t.TempDir()
+	first, second := filepath.Join(root, "first.zip"), filepath.Join(root, "second.zip")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("first generation"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(root, "source.zip")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+	original, err := PackageSourceIdentity(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := PackageSourceIdentity(first)
+	if err != nil || original != direct {
+		t.Fatalf("alias identity = %q, direct %q: %v", original, direct, err)
+	}
+	if err := os.WriteFile(first, []byte("next generation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := PackageSourceIdentity(link)
+	if err != nil || updated != original {
+		t.Fatalf("same zip location changed source: %q %v", updated, err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(second, link); err != nil {
+		t.Fatal(err)
+	}
+	retargeted, err := PackageSourceIdentity(link)
+	if err != nil || retargeted == original {
+		t.Fatalf("retargeted alias retained old source: %q %v", retargeted, err)
+	}
+}

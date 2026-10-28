@@ -26,10 +26,11 @@ function fixture(id = 1, stopTerminals = vi.fn<(ownerID: number) => void>()) {
   });
   const handle = window as unknown as BrowserWindow;
   const load = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const prompt = vi.fn<() => Promise<"reload" | "close">>(() => new Promise(() => {}));
-  installRendererRecovery(handle, { app: app as App, load, prompt, stopTerminals });
+  const prompt = vi.fn<() => Promise<"reload" | "close" | "recover">>(() => new Promise(() => {}));
+  const recover = vi.fn(async () => {});
+  installRendererRecovery(handle, { app: app as App, load, prompt, stopTerminals, recover });
   return {
-    app, window, contents, frame, load, prompt, stopTerminals,
+    app, window, contents, frame, load, prompt, stopTerminals, recover,
     gone: (reason = "crashed") => contents.emit("render-process-gone", {}, { reason, exitCode: 1 }),
     loaded: () => { contents.emit("dom-ready"); contents.emit("did-finish-load"); },
     send: () => sendToWindow(handle, "event", { value: 1 }),
@@ -145,6 +146,18 @@ describe("renderer recovery lifecycle", () => {
     expect(f.load).toHaveBeenCalledTimes(3);
     expect(f.prompt).toHaveBeenCalledOnce();
     expect(f.window.close).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("opens independent recovery after exhausting reloads without restarting the failed page", async () => {
+    const f = fixture();
+    f.load.mockRejectedValue(new Error("renderer unavailable"));
+    f.prompt.mockResolvedValue("recover");
+    f.gone("launch-failed");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(f.load).toHaveBeenCalledTimes(3);
+    expect(f.recover).toHaveBeenCalledOnce();
+    expect(f.window.close).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 

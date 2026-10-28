@@ -27,6 +27,8 @@ func (sideThreadRuntimeTools) Execute(context.Context, providers.ToolCall) (stri
 func TestNewSideThreadRunnerRemovesMutableMainThreadCallbacks(t *testing.T) {
 	called := false
 	base := &agent.StreamRunner{
+		LoopDriver: agent.DefaultDriver{},
+
 		Client:               providers.AdaptStreamClient(&staticClient{}),
 		Tools:                sideThreadRuntimeTools{},
 		Model:                "test-model",
@@ -66,6 +68,8 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 		t.Fatalf("tools.New: %v", err)
 	}
 	base := &agent.StreamRunner{
+		LoopDriver: agent.DefaultDriver{},
+
 		Client:       providers.AdaptStreamClient(&staticClient{}),
 		ProviderName: "test-provider",
 		Model:        "test-model",
@@ -102,11 +106,12 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 	}
 }
 
-// A read-only side chat must open even when the conversation's pinned model
-// cannot be resolved (no loadable config, a removed provider). The runner
-// degrades to the workspace model instead of failing the whole side chat.
-func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
+// An unavailable explicit model must fail admission rather than execute with
+// another provider's credentials or model.
+func TestNewSideThreadRunnerRejectsUnresolvableModel(t *testing.T) {
 	base := &agent.StreamRunner{
+		LoopDriver: agent.DefaultDriver{},
+
 		Client: providers.AdaptStreamClient(&staticClient{}),
 		Model:  "workspace-model",
 	}
@@ -116,11 +121,8 @@ func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
 		Provider: "ghost-provider",
 		Model:    "ghost-model",
 	}, "Test side policy")
-	if err != nil {
-		t.Fatalf("NewSideThreadRunner: %v", err)
-	}
-	if runner.Model != "workspace-model" {
-		t.Fatalf("fallback runner model = %q, want workspace-model", runner.Model)
+	if err == nil || runner != nil {
+		t.Fatalf("unavailable explicit model returned runner=%v, error=%v", runner, err)
 	}
 }
 
@@ -160,6 +162,8 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	// or is unknown). The pinned model is explicitly configured as text-only,
 	// so the side runner must re-derive a rejecting policy.
 	base := &agent.StreamRunner{
+		LoopDriver: agent.DefaultDriver{},
+
 		Client: providers.AdaptStreamClient(&staticClient{}),
 		Model:  "workspace-model",
 		MediaInput: providers.MediaInputPolicy{

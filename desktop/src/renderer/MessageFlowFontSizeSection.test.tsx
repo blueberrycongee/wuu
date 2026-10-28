@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,9 +77,9 @@ describe("MessageFlowFontSizeControl", () => {
   async function renderControl(): Promise<HTMLInputElement> {
     await act(async () => {
       root.render(
-        <I18nProvider>
+        <SettingsControlsProvider controls={createApplicationSettingsControls()}>{<I18nProvider>
           <MessageFlowFontSizeControl />
-        </I18nProvider>,
+        </I18nProvider>}</SettingsControlsProvider>,
       );
     });
     return container.querySelector<HTMLInputElement>(

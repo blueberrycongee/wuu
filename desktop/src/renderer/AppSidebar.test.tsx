@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
+import { DesktopControlsProvider } from "./DesktopControlsContext";
+import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench, WorkbenchController } from "./plugins/Workbench";
-import type { NavigationSnapshotV1 } from "../shared/workbench";
 import {
   initialState,
   SCRATCH_PSEUDO_PROJECT_ID,
@@ -18,8 +19,12 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let unreadViewOpen = false;
 let attentionStickyIDs = new Set<string>();
+const desktop: ApplicationDesktopControlsV1 = { hostKind: "desktop", popOut: { kind: null, threadID: null, context: null },
+  capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false },
+  onVisibilityChange: () => () => {} };
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   unreadViewOpen = false;
   attentionStickyIDs = new Set();
@@ -32,9 +37,11 @@ afterEach(() => {
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
+  desktopPluginHost.unload("test:app-sidebar-other");
   root = null;
   container.remove();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function initialized(): InitializeResult {
@@ -71,6 +78,7 @@ const sidebarWorkspaces: DesktopProject[] = [
 ];
 
 interface RenderOptions {
+  workbenchController?: WorkbenchController;
   expandedSidebarSectionIDs?: Set<string>;
   pinnedThreads?: ThreadSummary[];
   onTogglePinned?: (thread: ThreadSummary) => void;
@@ -84,6 +92,7 @@ interface RenderOptions {
   collapsedSidebarSectionIDs?: Set<string>;
   onCreateProject?: (workspaceID?: string) => void;
   onAdoptIntoProject?: (projectID: string, threadID: string) => void;
+  onStartNewThread?: () => void;
 }
 
 // The bell view is driven by App-owned state (it has to survive faces that
@@ -113,10 +122,18 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     onAdoptIntoProject,
     pinnedThreads = [],
     onTogglePinned = () => {},
+    onStartNewThread = () => {},
   } = options;
   return (
-    <AppSidebar
-      state={state}
+    <DesktopControlsProvider controls={desktop}><AppSidebar
+      workbenchController={options.workbenchController}
+      initialized={Boolean(state.initialized)}
+      activeContextKind={state.activeContext?.kind}
+      activeSessionTabID={state.activeSessionTabID}
+      selectedWorkspaceID={state.activeProjectId}
+      extensionInventory={state.initialized?.extension_inventory}
+      lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+      catalogActive={state.sessionTabs.some(tab => tab.id === state.activeSessionTabID && tab.kind === "skills")}
       sidebarWorkspaces={sidebarWorkspaces}
       pinnedThreads={pinnedThreads}
       activeThreadID={activeThreadID}
@@ -131,7 +148,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       workspaceMenuRef={createRef<HTMLDivElement>()}
       searchOpen={false}
       sectionOrder={sectionOrder}
-      onStartNewThread={() => {}}
+      onStartNewThread={onStartNewThread}
       onOpenSkillsTab={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={unreadViewOpen}
@@ -163,7 +180,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onCreateProject={onCreateProject}
       onAdoptIntoProject={onAdoptIntoProject}
       onOpenSettings={() => {}}
-    />
+    /></DesktopControlsProvider>
   );
 }
 
@@ -175,11 +192,127 @@ function renderSidebar(options: RenderOptions = {}): void {
 }
 
 describe("AppSidebar layout", () => {
+  it("composes contextual sidebar content only for the active owner and removes it on unload", async () => {
+    const contexts: Readonly<Record<string, unknown>>[] = [];
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-navigation", manifestId: "wuu.default-navigation", generation: "one", register(api) {
+      api.registerUISlot({ id: "sidebar.primary", cardinality: "many" });
+      api.registerUISlot({ id: "sidebar.footer", cardinality: "many" });
+    } });
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-view", generation: "one", register(api) {
+      api.registerViewType({ id: "context.view", title: "Context view", render: () => null });
+      api.registerUIContribution({ id: "context-sidebar", target: "wuu.default-navigation/sidebar.primary", render: ({ context }) => {
+        contexts.push(context);
+        return <div data-owner-sidebar>{context.viewTypeId ? "contextual" : "general"}</div>;
+      } });
+      api.registerUIContribution({ id: "footer", target: "wuu.default-navigation/sidebar.footer", render: ({ context }) => <div data-sidebar-footer>{String(context.initialized)}</div> });
+    } });
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-other", generation: "one", register(api) {
+      api.registerUIContribution({ id: "other-sidebar", target: "wuu.default-navigation/sidebar.primary", render: ({ context }) => <div data-other-sidebar>{context.viewTypeId ? "leaked" : "general"}</div> });
+    } });
+    const controller = new WorkbenchController(desktopPluginHost, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+    try {
+      renderSidebar({ workbenchController: controller });
+      expect(container.querySelector("[data-owner-sidebar]")?.textContent).toBe("general");
+      expect(container.querySelector("[data-sidebar-footer]")?.textContent).toBe("true");
+      expect(contexts.at(-1)).toMatchObject({ initialized: true, hasActiveThread: false, workspaceCount: 3 });
+      let viewID!: string;
+      await act(async () => { viewID = await controller.openPluginView("test:app-sidebar-view", "context.view", { region: "primary" }); });
+      const contextual = container.querySelector(".sidebar-section-scroll [data-owner-sidebar]");
+      expect(contextual?.textContent).toBe("contextual");
+      expect(container.querySelector(".sidebar-section-scroll [data-other-sidebar]")).toBeNull();
+      const context = contexts.find(item => item.viewTypeId === "context.view");
+      expect(context?.viewContext).toBe(controller.getSnapshot().views.find(view => view.id === viewID)?.context);
+      act(() => desktopPluginHost.unload("test:app-sidebar-view"));
+      expect(container.querySelector("[data-owner-sidebar]")).toBeNull();
+      expect(container.querySelector("[data-sidebar-footer]")).toBeNull();
+    } finally { controller.dispose(); }
+  });
+
+  it("opens a recent conversation across workspaces and removes archived or pinned entries", () => {
+    const thread = (id: string, day: number, extra: Partial<ThreadSummary> = {}): ThreadSummary => ({
+      id, title: id, cwd: "/repo/wuu", status: "idle", source: "desktop", pinned: false, archived: false,
+      created_at: "2026-09-01T00:00:00Z", updated_at: `2026-09-${day}T00:00:00Z`,
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0, ...extra,
+    });
+    const older = thread("older", 11);
+    const newer = thread("newer", 12);
+    const select = vi.fn();
+    const startNew = vi.fn();
+    const options: RenderOptions = {
+      onSelectThread: select,
+      onStartNewThread: startNew,
+      activeThreadID: newer.id,
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [older, thread("archived", 14, { archived: true })],
+        "project-2": [newer, older, thread("pinned", 15, { pinned: true })],
+      },
+    };
+    renderSidebar(options);
+    const recent = () => container.querySelector('[data-sidebar-recents]')!;
+    const titles = () => [...recent().querySelectorAll('.thread-row-title')].map(row => row.textContent);
+    expect(titles()).toEqual(["newer", "older"]);
+    expect(recent().querySelector('.thread-row.active')?.textContent).toContain("newer");
+    act(() => recent().querySelector<HTMLButtonElement>('.thread-row-main')!.click());
+    expect(select).toHaveBeenCalledWith(newer.id);
+    const startConversation = recent().querySelector<HTMLButtonElement>('.sidebar-recents-new-thread')!;
+    expect(startConversation).not.toBeNull();
+    act(() => startConversation.click());
+    expect(startNew).toHaveBeenCalledTimes(1);
+    renderSidebar({ ...options, workspaceThreadsByWorkspaceID: {
+      "project-1": [older], "project-2": [{ ...newer, archived: true }],
+    } });
+    expect(titles()).toEqual(["older"]);
+  });
+
+  it("orders running and unread conversations at the top of Recent", () => {
+    const thread = (id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary => ({
+      id, title, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle",
+      pinned: false, archived: false,
+      created_at: "2026-09-15T00:00:00Z", updated_at: "2026-09-15T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 1,
+      latest_completed_turn_id: "turn-1", ...overrides,
+    });
+    const running = thread("running-session", "Running reply", {
+      status: "in_progress", updated_at: "2026-09-15T00:00:00Z", turn_count: 0,
+      latest_completed_turn_id: undefined,
+    });
+    const unread = thread("unread-session", "Unread reply", {
+      updated_at: "2026-09-16T00:00:00Z",
+    });
+    const settled = thread("settled-session", "Settled reply", {
+      updated_at: "2026-09-17T00:00:00Z",
+    });
+    renderSidebar({
+      workspaceThreadsByWorkspaceID: { "project-1": [settled, unread, running] },
+      state: {
+        ...initialState,
+        initialized: initialized(),
+        activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/wuu" },
+        lastViewedTurnByThreadID: { [settled.id]: "turn-1" },
+      },
+    });
+
+    expect(container.querySelector('[data-conversation-section="running"]')).toBeNull();
+    expect(container.querySelector('[data-conversation-section="unread"]')).toBeNull();
+    const recent = container.querySelector<HTMLElement>("[data-sidebar-recents]");
+    const titles = [...(recent?.querySelectorAll(".thread-row-title") ?? [])]
+      .map((title) => title.textContent);
+    expect(titles).toEqual([running.title, unread.title, settled.title]);
+    expect(recent?.querySelectorAll(".thread-row.has-unread")).toHaveLength(1);
+  });
+
   it.each([
     { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
     // Projects take the place a saved order gave Collaboration.
     { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned"] },
-  ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
+  ])("restores group order without resetting existing preferences: $saved", async ({ saved, expected }) => {
+    // Empty groups have no heading; populate both optional groups to inspect their saved order.
+    vi.stubGlobal("wuu", {
+      ...window.wuu,
+      getSessionOrganization: async () => ({
+        organization: { folders: [{ id: "folder-1", name: "Design" }] },
+      }),
+    });
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
@@ -190,7 +323,9 @@ describe("AppSidebar layout", () => {
       created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
       preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
     };
-    renderSidebar({ onCreateProject: vi.fn(), pinnedThreads: [pinned] });
+    await act(async () => {
+      renderSidebar({ onCreateProject: vi.fn(), pinnedThreads: [pinned] });
+    });
     expect(order()).toEqual(expected);
   });
 
@@ -211,7 +346,7 @@ describe("AppSidebar layout", () => {
     const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
       .map((element) => element.textContent);
     renderSidebar(options);
-    expect(currentTitles()).toEqual([threads[0].title]);
+    expect(currentTitles()).toEqual([threads[0].title, threads[0].title]);
 
     const bell = container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!;
     act(() => bell.click());
@@ -227,7 +362,7 @@ describe("AppSidebar layout", () => {
     expect(currentTitles()).toEqual([threads[1].title]);
     expect(target.getAttribute("aria-busy")).toBe("true");
     act(() => bell.click());
-    expect(currentTitles()).toEqual([threads[1].title]);
+    expect(currentTitles()).toEqual([threads[1].title, threads[1].title]);
   });
 
   it("keeps an opened unread session in the attention view after it is marked read", () => {
@@ -286,101 +421,6 @@ describe("AppSidebar layout", () => {
     expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
   });
 
-  it("keeps an open navigation View mounted when the navigation presenter is replaced and unloaded", async () => {
-    function NavigationView(): JSX.Element {
-      const [count, setCount] = useState(0);
-      return <button data-navigation-view onClick={() => setCount(count + 1)}>View clicks: {count}</button>;
-    }
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:app-sidebar-view",
-      generation: "one",
-      register(api) {
-        api.registerViewType({ id: "navigation.view", title: "Navigation view", render: NavigationView });
-      },
-    });
-    const controller = new WorkbenchController(desktopPluginHost, {}, {
-      getItem: () => null, setItem: () => {}, removeItem: () => {},
-    });
-    try {
-      const viewID = await controller.openView("navigation.view", { region: "navigation" });
-      act(() => {
-        root = createRoot(container);
-        root.render(<>
-          <SidebarHarness options={{}} />
-          <DesktopWorkbench host={desktopPluginHost} controller={controller} />
-        </>);
-      });
-      const navigation = container.querySelector("aside.sidebar");
-      const view = container.querySelector<HTMLButtonElement>("[data-navigation-view]");
-      expect(view).not.toBeNull();
-      act(() => view!.click());
-      expect(view?.textContent).toBe("View clicks: 1");
-
-      await act(async () => desktopPluginHost.activateGeneration({
-        pluginId: "test:app-sidebar-navigation",
-        generation: "replacement",
-        register(api) {
-          api.registerPresenter({
-            id: "sidebar", target: "navigation.primary",
-            render: () => <nav data-custom-sidebar-root>Custom navigation</nav>,
-          });
-        },
-      }));
-      expect(container.querySelector("[data-custom-sidebar-root]")).not.toBeNull();
-      expect(container.querySelector("[data-navigation-view]")).toBe(view);
-      expect(navigation?.contains(view)).toBe(true);
-      expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
-      act(() => view!.click());
-      expect(view?.textContent).toBe("View clicks: 2");
-
-      act(() => desktopPluginHost.unload("test:app-sidebar-navigation"));
-      expect(container.querySelector("[data-custom-sidebar-root]")).toBeNull();
-      expect(container.querySelector(".sidebar-content")).not.toBeNull();
-      expect(container.querySelector("[data-navigation-view]")).toBe(view);
-      expect(view?.textContent).toBe("View clicks: 2");
-      expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
-      await act(async () => controller.closeView(viewID));
-      expect(container.querySelector("[data-navigation-view]")).toBeNull();
-      expect(container.querySelector(".sidebar-content")).not.toBeNull();
-    } finally {
-      controller.dispose();
-    }
-  });
-
-  it("lets a navigation presenter replace production navigation within one stable shell", async () => {
-    let snapshot: NavigationSnapshotV1 | undefined;
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:app-sidebar-navigation",
-      generation: "one",
-      register(api) {
-        api.registerPresenter({
-          id: "sidebar",
-          target: "navigation.primary",
-          render: ({ snapshot: nextSnapshot }) => {
-            snapshot = nextSnapshot as NavigationSnapshotV1;
-            return <main data-custom-sidebar-root>custom</main>;
-          },
-        });
-      },
-    });
-
-    renderSidebar();
-
-    expect(container.querySelector("[data-custom-sidebar-root]")?.textContent).toBe("custom");
-    expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
-    expect(container.querySelector(".sidebar-content")).toBeNull();
-    expect(snapshot?.nodes.map(({ id }) => id)).toEqual([
-      "command:new-conversation",
-      "command:search-conversations",
-      "command:skills",
-      "section:workspace",
-      `project:${SCRATCH_PSEUDO_PROJECT_ID}`,
-      "project:project-1",
-      "project:project-2",
-      "command:settings",
-    ]);
-  });
-
   it("keeps a fork in its owning project while the scratch cache catches up", () => {
     const fork: ThreadSummary = {
       id: "fork-thread", title: "Forked conversation", cwd: "/repo/wuu/.worktrees/topic",
@@ -398,7 +438,7 @@ describe("AppSidebar layout", () => {
       },
       onSelectWorkspaceThread: select,
     });
-    const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('[data-functional-group-id="workspace"] .thread-row-main')]
       .filter((row) => row.textContent?.includes(fork.title!));
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());

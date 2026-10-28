@@ -9,8 +9,32 @@ import path from 'node:path';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import electron from 'electron';
 
+// The wire adapter may merge interrupted and current user messages. Match the
+// current fixture message, never an earlier marker or an arbitrary substring.
+function backgroundForRequest(text, registered) {
+  const current = typeof text === 'string' ? text.split('\n').filter(line => line.length > 0).at(-1) : undefined;
+  return registered.has(current) ? current : undefined;
+}
+function hasPromptLine(text, prompt) {
+  return typeof text === 'string' && text.split('\n').includes(prompt);
+}
+if (process.argv.includes('--self-test')) {
+  const previous = 'Competing background turn interrupted';
+  const current = 'Competing background turn current';
+  const registered = new Set([previous, current]);
+  assert.equal(backgroundForRequest(current, registered), current);
+  assert.equal(backgroundForRequest(`${previous}\n${current}`, registered), current);
+  assert.equal(backgroundForRequest(`${previous}\nordinary new input`, registered), undefined);
+  assert.equal(backgroundForRequest(`${current} suffix`, registered), undefined);
+  assert.equal(backgroundForRequest(`prefix ${current}`, registered), undefined);
+  assert.equal(hasPromptLine(`${previous}\nheld message\n${current}`, 'held message'), true);
+  assert.equal(hasPromptLine('Competing background turn held message', 'held message'), false);
+  console.log('Concurrent-send fixture contracts passed');
+  process.exit(0);
+}
+
+const { default: electron } = await import('electron');
 const { app, ipcMain } = electron;
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.resolve(process.env.WUU_CONCURRENT_SEND_OUTPUT || path.join(desktop, 'out/e2e/concurrent-send'));
@@ -22,7 +46,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_CONCURRENT_SEND_CORE || path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
 
@@ -34,6 +58,7 @@ const deferred = () => {
 const rpc = [], requests = [], checks = [];
 let collision, queueFailure = false;
 const blockers = new Map();
+const backgrounds = new Set();
 const server = http.createServer((req, res) => {
   let raw = '';
   req.on('data', chunk => { raw += chunk; });
@@ -43,7 +68,7 @@ const server = http.createServer((req, res) => {
     const messages = body.messages || [];
     const user = messages.findLast(message => message.role === 'user'
       && !String(message.content).trimStart().startsWith('<system-reminder>'));
-    const text = typeof user?.content === 'string' ? user.content : JSON.stringify(user?.content);
+    const text = typeof user?.content === 'string' ? user.content : (user?.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
     if (!body.stream) return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Concurrent send' } }] }));
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -53,10 +78,11 @@ const server = http.createServer((req, res) => {
       res.end('data: [DONE]\n\n');
     };
     if (body.tools?.length) {
-      requests.push({ text, messages });
-      if (text?.startsWith('Competing background turn ')) {
+      const background = backgroundForRequest(text, backgrounds);
+      requests.push({ text, messages, background });
+      if (background) {
         chunk({ role: 'assistant', content: 'Background work is running.' });
-        blockers.set(text, finish);
+        blockers.set(background, finish);
         return;
       }
     }
@@ -70,7 +96,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// Keep the busy response in flight until a second send or Stop has been issued.
+// Keep the busy response in flight while the retained draft or Stop is inspected.
 const register = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => register(channel, async (...args) => {
   if (channel === 'wuu:turn-start') {
@@ -139,10 +165,11 @@ async function send(text, attachment = false) {
   await until(() => rpc.some(row => row.method === 'turn/start' && row.prompt === text)
     || evaluate(() => document.querySelector('.composer textarea')?.value === ''), `submitted ${text}`);
 }
-const idle = () => until(() => evaluate(() => Boolean(document.querySelector('.composer-send-button[data-wuu-state="send"]'))), 'idle composer');
+const idle = () => until(() => evaluate(() => Boolean(document.querySelector('.composer-send-button[data-wuu-state="send"], .composer-send-button[data-wuu-state="continue"]'))), 'idle composer');
 const snapshot = id => evaluate(id => window.wuu.resumeThread(id), id);
 function arm(prompt, options = {}) {
   collision = { prompt, background: `Competing background turn ${prompt}`, release: deferred(), ...options };
+  backgrounds.add(collision.background);
   return collision;
 }
 async function completed(id, prompt) {
@@ -185,22 +212,44 @@ async function run() {
   const first = arm('Retain this first message');
   await send(first.prompt, true);
   await until(() => first.rejection, 'first busy rejection');
-  await send('Retain this second message');
-  assert.equal(rpc.filter(row => row.method === 'turn/queue').length, 0, 'later input waits for the first admission');
+  await evaluate(() => {
+    window.sendWaitFrames = [];
+    window.recordSendWait = true;
+    const sample = () => {
+      if (!window.recordSendWait) return;
+      const input = document.querySelector('.composer textarea');
+      window.sendWaitFrames.push({ text: input?.value, queue: Boolean(document.querySelector('[data-wuu-component="composer-pending"]')), state: document.querySelector('[data-wuu-component="composer-send"]')?.dataset.wuuState, top: input?.getBoundingClientRect().top });
+      requestAnimationFrame(sample);
+    };
+    sample();
+  });
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+  assert.equal(rpc.filter(row => row.method === 'turn/queue').length, 0, 'duplicate Enter does not enqueue the retained draft');
+  assert.equal(rpc.filter(row => row.method === 'turn/start' && row.prompt === first.prompt).length, 1);
   first.release.resolve();
-  await until(() => rpc.filter(row => row.method === 'turn/queue').length === 2, 'both messages queued');
+  await until(() => rpc.filter(row => row.method === 'turn/queue').length === 1, 'first message queued');
   const queued = rpc.filter(row => row.method === 'turn/queue');
-  assert.deepEqual(queued.map(row => row.prompt), [first.prompt, 'Retain this second message']);
+  assert.deepEqual(queued.map(row => row.prompt), [first.prompt]);
   assert.equal(queued[0].client, first.input[8], 'fallback retains the original client ID');
   assert.deepEqual(queued[0].files, first.input[3], 'fallback retains encoded attachments');
   assert.equal(queued[0].files.length, 1);
   await until(() => blockers.has(first.background), 'background provider blocked');
   const retained = await snapshot(id);
-  assert.equal(retained.pending_user_messages.length, 2, 'core snapshot includes both accepted messages');
-  assert.equal(await evaluate(() => Boolean(document.querySelector('[data-wuu-component="composer-pending"]'))), true);
+  assert.equal(retained.pending_user_messages.length, 1, 'core retains the waiting message');
+  const frames = await evaluate(() => { window.recordSendWait = false; return window.sendWaitFrames; });
+  assert.ok(frames.length > 0);
+  assert.ok(frames.every(frame => frame.text === first.prompt && !frame.queue && frame.state === 'submitting'), 'waiting never flashes a queue row or clears the input');
+  assert.ok(Math.max(...frames.map(frame => frame.top)) - Math.min(...frames.map(frame => frame.top)) < 1, 'waiting input stays in place');
+  fs.writeFileSync(path.join(output, 'waiting-frames.json'), JSON.stringify(frames, null, 2));
+  fs.writeFileSync(path.join(output, 'waiting.png'), (await main.webContents.capturePage()).toPNG());
   assert.equal(await evaluate(() => Boolean(document.querySelector('[data-wuu-component="notice"][data-wuu-variant="error"]'))), false);
   blockers.get(first.background)();
+  await completed(id, first.prompt);
+  await idle();
+  await send('Retain this second message');
   await completed(id, 'Retain this second message');
+  fs.writeFileSync(path.join(output, 'delivered.png'), (await main.webContents.capturePage()).toPNG());
   const delivered = await snapshot(id);
   for (const prompt of [first.prompt, 'Retain this second message']) {
     assert.equal(delivered.thread.turns.flatMap(turn => turn.items).filter(item => item.type === 'user_message' && item.text === prompt).length, 1);
@@ -208,38 +257,61 @@ async function run() {
   const attachmentRequest = requests.find(row => row.text?.startsWith(`${first.prompt}\n`));
   const attachmentPath = attachmentRequest.text.match(/"context\.txt"[^\n]*: (.+)/)[1];
   assert.equal(fs.readFileSync(attachmentPath, 'utf8'), 'ATTACHMENT_SURVIVES_ADMISSION_RACE');
-  checks.push('Real busy rejection queues once, preserves attachment and identity, and drains in send order');
+  checks.push('Busy admission retains one stable draft and spinner, suppresses duplicate Enter, and delivers once with its attachment');
   await idle();
 
   const stopped = arm('Keep this message after Stop');
   await send(stopped.prompt);
   await until(() => stopped.rejection, 'stop scenario busy rejection');
-  await evaluate(() => document.querySelector('.composer-stop-button, .composer-send-button[data-wuu-state="submitting"], .composer-send-button[data-wuu-state="stop"]').click());
+  await evaluate(() => document.querySelector('.composer textarea').focus());
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-component="composer-send"][data-wuu-state="pending"]'))), 'stop requested');
   stopped.release.resolve();
   await until(() => rpc.some(row => row.method === 'turn/queue' && row.prompt === stopped.prompt), 'stopped send held');
   assert.equal(rpc.find(row => row.method === 'turn/queue' && row.prompt === stopped.prompt).hold, true);
   await until(async () => (await snapshot(id)).held_user_messages?.some(message => message.prompt === stopped.prompt), 'stopped message persisted');
-  assert.equal(requests.filter(row => row.text === stopped.prompt).length, 0);
+  assert.equal(requests.filter(row => hasPromptLine(row.text, stopped.prompt)).length, 0);
   checks.push('Stop during admission retains the message as held without running it');
   await idle();
+
+  await until(async () => (await snapshot(id)).thread.turns.some(turn => turn.status === 'interrupted'
+    && turn.items.some(item => item.type === 'user_message' && item.text === stopped.background)),
+  'Stop settles the competing turn as interrupted before the next send');
+  const interrupted = await snapshot(id);
+  assert.ok(interrupted.held_user_messages?.some(message => message.id === stopped.input[8]
+    && message.prompt === stopped.prompt), 'Stop preserves the original client identity');
 
   queueFailure = true;
   const failed = arm('Restore this rejected queue draft');
   await send(failed.prompt);
   await until(() => failed.rejection, 'queue failure busy rejection');
   failed.release.resolve();
-  await until(() => evaluate(text => document.querySelector('.composer textarea')?.value === text, failed.prompt), 'queue failure restores draft');
+  await until(() => rpc.some(row => row.method === 'turn/queue' && row.prompt === failed.prompt), 'queue failure attempted');
+  await idle();
+  assert.equal(await evaluate(() => document.querySelector('.composer textarea')?.value), failed.prompt, 'failed draft remains in place');
   queueFailure = false;
   await until(() => blockers.has(failed.background), 'failure scenario blocker');
   blockers.get(failed.background)();
   await completed(id, failed.background);
+  const afterFailure = await snapshot(id);
+  assert.ok(afterFailure.held_user_messages?.some(message => message.id === stopped.input[8]
+    && message.prompt === stopped.prompt), 'A later send cannot silently consume held input');
+  assert.equal(afterFailure.thread.turns.some(turn => turn.items.some(item =>
+    item.type === 'user_message' && item.text === stopped.prompt)), false,
+  'Held input has not become an executed user turn');
+  for (const prompt of [stopped.prompt, failed.prompt]) {
+    assert.equal(requests.some(row => hasPromptLine(row.text, prompt)), false,
+      'Neither held input nor a failed queue draft reaches inference inside merged wire content');
+  }
   checks.push('Queue persistence failure restores the original draft');
   await idle();
 
   const before = rpc.filter(row => row.method === 'turn/queue').length;
   arm('Do not replay ambiguous timeout', { timeout: true });
   await send('Do not replay ambiguous timeout');
-  await until(() => evaluate(() => document.querySelector('.composer textarea')?.value === 'Do not replay ambiguous timeout'), 'timeout draft restored');
+  await idle();
+  assert.equal(await evaluate(() => document.querySelector('.composer textarea')?.value), 'Do not replay ambiguous timeout');
   assert.equal(rpc.filter(row => row.method === 'turn/queue').length, before);
   checks.push('Ambiguous timeout is not automatically resubmitted');
   save('passed');

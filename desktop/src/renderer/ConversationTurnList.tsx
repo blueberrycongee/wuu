@@ -1,3 +1,4 @@
+import { useConversationControls } from "./ConversationControlsContext";
 import {
   Component,
   memo,
@@ -133,6 +134,7 @@ export function ConversationTurnList({
   forcedFullTurnIDs,
   autoLoadEarlier = true,
 }: ConversationTurnListProps): JSX.Element {
+  const { application } = useConversationControls();
   const { t, formatNumber } = useI18n();
   const renderActive = useConversationRenderActive();
   const [expandedTurnIDs, setExpandedTurnIDs] = useState<Set<string>>(
@@ -194,15 +196,18 @@ export function ConversationTurnList({
   const visibleStartIndex = Math.min(storedStartIndex, requiredStartIndex);
   const visibleTurns = turns.slice(visibleStartIndex);
   const hasLocalEarlier = visibleStartIndex > 0;
-  const hasRemoteEarlier = Boolean(historyCursor && window.wuu.loadEarlierThreadHistory);
+  const hasRemoteEarlier = Boolean(historyCursor);
   const hasEarlierTurns = hasLocalEarlier || hasRemoteEarlier;
-  const loadingRemote = useRef(false);
+  const loadingRemote = useRef<AbortController | undefined>(undefined);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remoteError, setRemoteError] = useState("");
 
   useEffect(() => {
     setExpandedTurnIDs(new Set());
-  }, [threadID]);
+    setRemoteBusy(false);
+    setRemoteError("");
+    return () => { loadingRemote.current?.abort(); loadingRemote.current = undefined; };
+  }, [application, threadID]);
 
   useEffect(() => {
     if (turnWindow.threadID === threadID) {
@@ -258,13 +263,16 @@ export function ConversationTurnList({
         0,
         visibleStartIndex - TURN_LIST_PREPEND_BATCH_TURNS,
       );
-      if (!hasLocalEarlier && historyCursor && window.wuu.loadEarlierThreadHistory) {
+      if (!hasLocalEarlier && historyCursor) {
         if (loadingRemote.current) return;
-        loadingRemote.current = true; setRemoteBusy(true); setRemoteError("");
+        const request = new AbortController();
+        loadingRemote.current = request; setRemoteBusy(true); setRemoteError("");
         setTurnWindow({ threadID, visibleCount: turns.length + 20, coldWindowed: true });
-        void window.wuu.loadEarlierThreadHistory(threadID, historyCursor).catch(error => {
-          setRemoteError(error instanceof Error ? error.message : String(error));
-        }).finally(() => { loadingRemote.current = false; setRemoteBusy(false); });
+        void application.invoke("conversation.load-earlier", { threadId: threadID, cursor: historyCursor }, { signal: request.signal }).catch(error => {
+          if (!request.signal.aborted) setRemoteError(error instanceof Error ? error.message : String(error));
+        }).finally(() => {
+          if (loadingRemote.current === request) { loadingRemote.current = undefined; setRemoteBusy(false); }
+        });
         return;
       }
       setTurnWindow({
@@ -274,6 +282,7 @@ export function ConversationTurnList({
       });
     },
     [
+      application,
       hasEarlierTurns,
       hasLocalEarlier,
       historyCursor,

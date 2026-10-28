@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -15,7 +15,7 @@ import (
 // ClientConfig configures the SuperGrok subscription provider.
 type ClientConfig struct {
 	BaseURL         string
-	Home            string
+	Credentials     credentialstore.Store
 	Headers         map[string]string
 	HTTPClient      *http.Client
 	StreamConfig    *providers.StreamTransportConfig
@@ -42,10 +42,6 @@ func New(cfg ClientConfig) (*Client, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	streamTransport := cfg.StreamTransport
 	if streamTransport == "" {
 		streamTransport = providers.StreamTransportSSE
@@ -53,7 +49,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:          baseURL,
-		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, Home: home, HTTPClient: cfg.HTTPClient}),
+		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, Credentials: cfg.Credentials, HTTPClient: cfg.HTTPClient}),
 		headers:          cloneHeaders(cfg.Headers),
 		httpClient:       cfg.HTTPClient,
 		streamConfig:     streamConfig,
@@ -87,7 +83,16 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 // StreamChat opens a streaming Responses API call.
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	var err error
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			endReceipt(nil)
+		}
+	}()
 	req, err = c.PrepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -108,7 +113,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return ch, err
 	}
 	out := make(chan providers.StreamEvent, 64)
+	started = true
 	go func() {
+		defer endReceipt(nil)
 		defer close(out)
 		for event := range ch {
 			if event.Type == providers.EventError && providers.IsAuthError(event.Error) {
@@ -192,4 +199,10 @@ func cloneHeaders(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// Close releases provider-owned pools after admitted callbacks have drained.
+func (c *Client) Close() error {
+	providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	return nil
 }

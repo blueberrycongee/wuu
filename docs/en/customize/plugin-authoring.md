@@ -54,9 +54,35 @@ A missing, disabled, untrusted, or version-incompatible required dependency leav
 
 Package dependencies and runtime service requirements serve different purposes. A package dependency selects an installed package and its lifecycle order. `provided_services` / `required_services` negotiate a named API and service major version; they do not select by package ID or inherit that package's version. Declare both when a feature needs a specific package and its API. A service-only consumer can instead accept any eligible provider of that service.
 
+## Cooperating without replacing a provider
+
+A new plugin can consume an existing service and contribute UI to its owner's
+published slots without modifying that owner or selecting a replacement. For
+example, the [counter and controls packages](../../../examples/plugins/additive-counter/README.md)
+combine an external process state/action API, a typed public helper, cancellable
+subscriptions, and a nested desktop contribution. This is one testable example,
+not a limit on the combinations of services, hooks, capabilities and UI a plugin
+may use.
+
+Declare `desktop.required_services` before using `api.invokeService`; runtime
+consumers declare `required_services` during initialization. The host routes calls
+with the consumer's identity and captured generation. Publish an owned
+`registerUISlot` and let other packages add `registerUIContribution` entries.
+Use the public UI kit and contract context rather than private DOM or controller
+access. Registrations and invocation cancellation belong to the generation;
+stop domain subscriptions when their view unmounts as well.
+
+A missing required dependency rejects interactive installation. An update that
+would break an active required consumer is rejected before publication, keeping
+the last working graph. Optional dependencies do not guarantee availability:
+handle call failure and disable only the affected feature. A package version
+constraint and a service major version are separate checks. Installing an addon
+is not an implicit request to replace an existing provider; conflicting providers
+still need an explicit composition choice.
+
 ## Declarative contributions
 
-Themes and settings need no desktop module. For example, merge this fragment into a manifest:
+Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:
 
 ```json
 {
@@ -83,23 +109,153 @@ Themes and settings need no desktop module. For example, merge this fragment int
 }
 ```
 
-Theme tokens come from the [generated theme contract](theme-surface-matrix.md), not arbitrary host CSS variables. Settings support `boolean`, `string`, `number`, and `enum`, with `scope=user|workspace` and `apply=live|restart`. Read settings through `host.settings.get/list` services in the runtime or `host.getSetting` in a desktop view. Disabling or removing the package preserves settings and storage by default.
+Theme tokens come from the [generated theme contract](theme-surface-matrix.md), not arbitrary host CSS variables. Public semantic colors have readable defaults for independent UI shells. Declare colors in the theme's `tokens` to override built-in surfaces; omitted colors retain each component's default appearance. Clearing or disabling the theme restores those defaults. Settings support `boolean`, `string`, `number`, and `enum`, with `scope=user|workspace` and `apply=live|next-operation|restart`. Read settings through `host.settings.get/list` services in the runtime or `host.getSetting` in a desktop view. Disabling or removing the package preserves settings and storage by default.
 
 Commands under `contributes.commands` have a local ID and a kind. `prompt_template` references a bounded UTF-8 file inside the package and supplies a host-owned composer action. `runtime_action` points to a command registered by the desktop generation; declaring it alone does not execute code. `side_conversation` references a package-owned prompt and opens the host’s attached conversation surface. Its messages use the existing side-chat execution and history; the host retains its current permission boundary. The send request identifies the public `plugin.command` ID, and disabling or removing its owning package cancels active answers without deleting history. Same-ID updates apply to the next answer; an active answer keeps its retained generation. No desktop entry or helper process is required.
 
 First-run setup preserves applied plugin choices if it is interrupted before completion. Inventory distinguishes the effective `enabled` state from an optional `enabled_override` user policy; an absent override means the package default applies.
 
-UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
+Manifest UI declarations use `contributes.presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. For declared UI regions, call `registerUIContribution` with an owner-qualified target; no manifest entry is needed. The former `contributes.slots` and `surfaces` fields are rejected. See [desktop UI plugins](desktop-plugins.md) for composition rules.
+
+### Configuration snapshots and effectiveness
+
+Configuration changes do not restart the plugin or rebuild its resources. Choose
+an application mode for each non-secret setting:
+
+| `apply` | Runtime reads |
+| --- | --- |
+| `live` | Each read or refresh sees the latest validated candidate. |
+| `next-operation` | The first snapshot or non-secret settings read in an authenticated tool, capability, or service execution captures all operation settings; subsequent reads in that execution retain them. A new execution captures newer values. |
+| `restart` | Values are captured before generation preparation and remain fixed for that generation, including retained in-flight work. A successful reload or host restart adopts saved changes. |
+
+Use `restart` for resource structure, such as pool construction or a connection
+endpoint, and `next-operation` for operation parameters. Use the callback's `host`
+for execution-scoped reads; a background host has no enclosing operation. For an
+application-defined operation, capture once and pass that immutable snapshot to
+all its steps, even when its settings are marked `live`:
+
+```ts
+import { createPluginSettings, requireKernelService } from "@wuu/plugin-sdk";
+
+// initialize(): required_services: [requireKernelService("host.settings.list")]
+// Inside executeTool, invokeService, or invokeCapability:
+const settings = createPluginSettings(host, { signal: execution.signal });
+const config = await settings.capture();
+// Keep config.values for the whole operation. Later refreshes never mutate it.
+```
+
+`host.settings.list` still accepts `{}` and returns `entries`. It additionally
+returns an opaque `revision`, configured `scope_revisions`, and local
+`restart_required` keys. Optional `{scope: "user" | "workspace"}` filters the
+returned snapshot and its metadata. Revisions are content tokens: compare for
+equality, not ordering; they are not an event log. One provider document is read
+per scope, and all declared values are validated before publication. Scopes are
+independently committed; a combined snapshot is **not** a cross-scope transaction.
+Keep coupled values in one scope. Secret entries remain empty strings and never
+contribute secret material or secret-presence changes to revisions.
+
+The reader's `refresh()` atomically replaces `current` only after a successful
+read and optional `validate(values)` cross-field check. Invalid persisted values,
+backend failures, or cancellation reject the refresh without altering previously
+captured snapshots. `subscribe(callback)` observes changed published revisions;
+its return value unsubscribes. `watch(intervalMs)` optionally refreshes every
+1 second by default (100–60,000 ms allowed), coalescing with concurrent refreshes.
+It must be awaited or have a rejection handler. Watching is not started by
+subscription; it can coalesce intermediate changes and is not a durable event
+stream. Pass the generation lifecycle signal for background watching. Aborting
+it removes listeners and prevents late responses from publishing. Listener
+failures reject refresh **after** publication and do not roll back settings.
+
+The existing `get`/`getAll` interface and `host.settings.get/list` call shapes
+remain available. The new helper requires snapshot metadata and explicitly
+rejects older hosts rather than pretending separate reads are consistent.
+Desktop `host.getSetting` is a configuration-editor read of the **saved** value,
+not the runtime-effective restart value. Secret reads still reveal no token.
+
+The fingerprint-gated `plugin/setting/set` editor route accepts an optional
+`patch` of additional non-secret keys in the primary key's scope, alongside the
+existing `key` and `value`. It validates the complete declared candidate and
+commits it in one selected-provider compare-and-exchange. Duplicate keys,
+foreign keys, cross-scope edits and secrets in a patch are rejected without a
+write. This also permits atomic repair of multiple invalid saved fields after a
+schema change. Removed declarations remain stored for downgrade compatibility
+but are not exposed to the current plugin. Uncertain provider write failures
+are not retried automatically; reread before deciding whether to retry.
+
+Run `node scripts/plugin-settings-e2e.mjs` for a packed-SDK process acceptance
+check covering in-flight reads, reload, resource stability, rejected candidates,
+and retirement. It uses synthetic state and writes repeatable evidence under
+`.tmp/e2e/plugin-settings/` (override with `WUU_SETTINGS_EVIDENCE`).
+
+### Shell skins
+
+Declare `contributes.skins` independently of `contributes.themes`. Each skin has a plugin-local `id`, `name`, and required `light` and `dark` variants. A variant supplies opaque `#RRGGBB` `background` and `foreground` colors, an optional package-relative `image`, and optional `overlay`, `hover`, and `active` colors (`#RRGGBB` or `#RRGGBBAA`). `position` is `center` (default), `top`, `bottom`, `left`, or `right`.
+
+```json
+{
+  "contributes": {
+    "skins": [{
+      "id": "ocean",
+      "name": "Ocean",
+      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg" },
+      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555" }
+    }]
+  }
+}
+```
+
+Images may be PNG, JPEG, WebP, or self-contained SVG, up to 8 MiB each. Use an image for gradients or textures. Image paths remain inside the package; SVG external references and scripts are rejected. The desktop serves only declared images from the requested package fingerprint. Artwork covers the full window continuously behind the ribbon and frame. The host owns layout, cropping, interaction and content boundaries; skin colors do not override content theme tokens. Pair foreground, hover and active colors with artwork that keeps controls readable.
+
+Skin selection is local to the desktop profile, follows light/dark mode, and survives plugin updates. Disabled, removed, or safe-mode plugins stop decorating the frame; re-enabling the same plugin restores the selection. A failed image load uses the variant background and reports the missing artwork in its preview. One package may offer both skins and content themes, and users select them independently. See the installable shell skin example in `examples/plugins/shell-skins`.
+
+### Secret settings and authenticated requests
+
+Declare a `secret` setting with `default: ""`, `scope: "user"`, `apply: "live"`,
+and `credential_origins: ["https://api.example.com"]`. Each origin must be an
+exact HTTPS origin without a path, query, fragment or user information. The
+host-generated settings control accepts masked input and provides explicit Save
+and Remove actions. Values go to macOS Keychain or Linux Secret Service, with no
+plaintext-file fallback. Unsupported or locked stores fail visibly. Secret
+setting reads return an empty string; only the host settings UI receives a
+`configured` presence flag. They never enter ordinary settings or tool history.
+
+A runtime declares `requireKernelService("host.credentials.request")` and calls
+`host.call("host.credentials.request", { credential: "token", url, method,
+headers, body }, { signal })`. The key names its own declared secret setting.
+The host adds Bearer authentication only for a declared origin, blocks redirects
+and caller-supplied authentication, cookie, routing or connection headers, and
+returns `{ status, headers, body }`. Response header names are lower case; only
+content type, retry timing and request IDs are exposed. Requests time out after
+20 seconds and request/response bodies are limited to 4 MiB. Tokens are redacted
+from response bodies, headers and transport errors. Never accept credentials as
+tool arguments or copy them to ordinary storage, logs or generated bundles.
+
+The credential is bound to the Wuu home, plugin source identity, local key and
+origin set; project plugins also bind the project root. Changing any of these
+requires a fresh credential. Disabling a plugin prevents new calls but preserves
+its credential until the user removes it. A saved credential does not prove API
+access. Token refresh and service-specific authorization remain plugin concerns.
+A failed or timed-out write may have applied remotely: do not retry it silently.
 
 ## Runtime process and lifecycle
 
 The host starts the manifest's command and exchanges one JSON object per line over stdin/stdout. Reserve stdout for protocol frames and stderr for diagnostics. The manifest transport name `wuu-plugin-v1` and the negotiated capability protocol number are different fields; new service-using runtimes should negotiate `protocol_version: 3`.
 
-The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v1 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
+The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v2 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
+
+Return `protocol_version: 3` from `initialize` when adding capabilities, including
+observers. This is the **result** field: the host's `params.protocol_version: 1`
+identifies the transport and must not be echoed as the capability version;
+`params.capability_protocol_version` advertises the host's capability support.
+Without services, an omitted result version means legacy tool-only v1, not the
+latest version. The SDK rejects capabilities or model adapters under v1 with
+`invalid_capability_protocol` before returning their declarations. Explicit v2
+capabilities remain supported; service declarations retain the SDK's v3 selection.
 
 | Callback | Responsibility |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | Return tools, capabilities, provided services, and required services |
+| `prepare(host, lifecycle)` | Read and validate state after service bindings resolve; do not write or start background work |
 | `activate(host, lifecycle)` | Start timers, subscriptions, or other behavior after the runtime change commits |
 | `executeTool(params, host, execution)` | Run a registered tool and return its result |
 | `invokeCapability(params, host, execution)` | Handle a declared capability |
@@ -107,7 +263,7 @@ The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `R
 | `serviceChanged(params, host)` | Respond to a service resolution change |
 | `shutdown()` | Stop plugin-owned work and release resources |
 
-Initialization is preparation, not permission to start product behavior. The host permits only its read-phase services during native preflight. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
+`initialize` only declares contracts. Lifecycle v2 requires a separate `prepare` request after all declarations are bound. Move persisted-state reads and validation from `initialize` into `prepare`, rebuild with the matching SDK, and return `lifecycle_version: 2` in hand-written adapters. An adapter using an older lifecycle is rejected before commit. Providers prepare before consumers; only declared methods marked `preparation: true` may be called during preparation, including nested calls. Marking a method promises no durable writes or external effects. Omitted flags mean active-only methods. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
 
 `lifecycle.signal` aborts when shutdown is requested or the transport closes.
 Use it for activation-owned background work and stop timers in shutdown. Cleanup
@@ -123,7 +279,7 @@ Adjacent explicitly safe tools may overlap, with at most eight tool handlers
 running per runtime. Omitted or false values, unknown tool IDs, and ordinary
 capability/service callbacks remain FIFO exclusive barriers. `read_only` alone
 does not enable concurrency. These barriers apply across both shared and distinct
-execution IDs. Initialize, activate, and shutdown also wait for previously
+execution IDs. Initialize, prepare, activate, and shutdown also wait for previously
 admitted reentrant callbacks before proceeding.
 
 Protect shared mutable state before opting in. Keep each invocation's execution
@@ -152,13 +308,14 @@ Capabilities are declared separately, with an ID, `kind`, and version. Current s
 | `agent.system_prompt.section` | `transform`: contribute a prompt section |
 | `agent.request.transform` | `transform`: prepend system messages to the model request |
 | `agent.pre_step` | `transform`: append identified messages before a step |
+| `agent.step.policy` | `decision`: continue or stop default-loop model admission; see [harness experiments](harness-experiments.md) |
 | `agent.turn.completed`, `agent.turn.lifecycle`, `agent.turn.interrupted` | `observe`: react to supported turn events |
 | `plugin.client.request` | `decision`: dispatch requests from the plugin's desktop UI |
 | `agent.compaction` | `decision`: experimental compaction contract |
 
 `agent.request.transform` receives a provider-neutral request view; its public output is `prepend_system_messages`, not arbitrary mutation of a provider's wire request. The SDK marks compaction experimental, so do not treat it as a stable general replacement for the whole agent loop.
 
-Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher priority runs first; equal priorities preserve discovery order. `error_policy` is `propagate`, `isolate`, or `ignore`: observers cannot propagate, and only observers may ignore. The built-in turn observers default to isolation; other capabilities default to propagation. Handle expected failures inside the plugin rather than relying on one blanket error policy.
+Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher priority runs first; equal priorities sort by plugin ID. `error_policy` is `propagate`, `isolate`, or `ignore`: observers cannot propagate, and only observers may ignore. The built-in turn observers default to isolation; other capabilities default to propagation. Handle expected failures inside the plugin rather than relying on one blanket error policy.
 
 ## Calling host services
 
@@ -204,6 +361,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.background` | Generation-owned calls to a plugin’s own service |
 | `host.process` | Conversation-bound shell processes, output and event delivery |
 | `host.settings.get/list` | Declared setting values |
+| `host.credentials.request` | Origin-bound HTTPS requests using a host-held Bearer credential |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
 | `host.workspace.status/apply/discard` | Inspect or resolve work from an owned session workspace |
@@ -221,6 +379,33 @@ For session creation, provide a stable `request_id`, `visibility=user|plugin`, a
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
+#### Live session progress
+
+For a status card or subagent dashboard, declare
+`required_host_features: [SESSION_PROGRESS_HOST_FEATURE]` and the ordinary
+`host.session.inspect` service requirement. Pass `include_progress: true` with
+an explicit `request_id`. Default inspection does not include content-bearing
+progress. `progress` is a version-1 **snapshot**, not an event stream: replace
+the displayed snapshot on each read instead of appending it as new messages.
+
+The caller must own the session, and its request must be the turn's only input
+identity. A queued request has no turn to project; a steer cannot borrow the
+original request's progress. Once different inputs share a turn, neither can
+claim its output exclusively. In these cases, `available: false` reports
+`session_not_owned`, `request_not_exclusive`, or `turn_unavailable`, without
+content. Shared-session inspection remains available without progress.
+
+Available snapshots identify the session, request, turn, and items. They contain
+at most 32 recent assistant/tool display items and 32 KiB of JSON. Assistant text
+is limited to 4096 UTF-8 bytes per item; `truncated` explicitly reports shortened
+text or omitted items. Prompts, reasoning, tool arguments/results, attachments,
+and private provider state are excluded. Empty `items` is valid before output.
+Reading progress neither subscribes nor changes the observed work. A finished
+turn may remain inspectable, but the snapshot is not durable evidence of success,
+input consumption, or message delivery. Use the existing terminal inspection and
+lifecycle receipts for settlement; this API provides no replay or lost-event
+recovery. See the SDK-only [session progress example](../../../examples/plugins/session-progress/).
 
 ### Shared file locks
 
@@ -318,6 +503,7 @@ accounting. Native forwarding cannot install arbitrary endpoints or credentials.
 | --- | --- |
 | `model.request.transform` | Version-1 `transform` capability. Receives `{ request, origin }`; returns `{ request? }` before provider dispatch. |
 | `model.request.observe` | Version-1 `observe` capability. Receives request and terminal response/error phases, with the logical request and host-authenticated origin. |
+| `model.request.metrics` | Version-1 metadata-only `observe` capability. Bounded, nonblocking terminal timing and adapter-reported usage; no request or response content. |
 | `model.middleware` | Version-1 `decision` capability with `propagate` errors. Wraps dispatch, returns a replacement response, or calls its single-use continuation. |
 | `model.adapter` | Version-1 `decision` capability with `propagate` errors. Supplies an explicitly selected adapter implementation. |
 
@@ -325,6 +511,65 @@ Plugin-initiated independent calls bypass request hooks and around-call middlewa
 so observing a normal request and replaying it does not recursively trigger the
 same policy. `origin.kind`, `plugin_id`, operation IDs and available session context
 are host metadata; supplying copied metadata cannot impersonate an agent request.
+
+
+### Metadata-only model performance observation
+
+Declare `MODEL_REQUEST_METRICS_CAPABILITY` (`model.request.metrics`) with
+`kind: "observe", version: 1` and protocol 2 or 3 to receive
+`ModelRequestMetricsInput`. This is separate from content-bearing
+`model.request.observe`: it sends no prompts, outputs, tool arguments, provider
+options, or raw errors, and its callbacks cannot delay or change model completion.
+It supports performance displays and latency diagnostics without retaining a
+conversation snapshot.
+
+Each terminal record describes one selected-adapter invocation, before outer
+middleware can rewrite its response. `request_id` is unique per invocation;
+`origin.operation_id` correlates retries, and `attempt_id` identifies an admitted
+attempt when available. Session metadata and `turn_id` come from authenticated
+host contexts; absent context stays absent. Independent plugin calls are included,
+except inference descending from a metrics callback, which is excluded to prevent
+recursive observation. Middleware-only cached responses and rejected model routes
+that never reach an adapter produce no record. This is not a tool-duration or
+native external-engine event feed.
+
+- `duration_ms` uses the host monotonic clock from adapter admission through the
+  terminal outcome, including capacity wait. `started_at` is a wall-clock timestamp
+  for display, not duration arithmetic.
+- `first_output_ms` is the host-observed first nonempty text, reasoning, tool output,
+  or image in a stream. It is a time-to-first-output proxy, not a provider token
+  timestamp. Unary and empty responses omit it.
+- `text_delta_events` and `text_utf8_bytes` count nonempty text deltas, not tokens.
+  They exclude reasoning and replacement events; stream resets do not erase
+  already observed traffic.
+- `usage` is the latest optional adapter assertion, labeled
+  `usage_source: "adapter_reported"`. Native provider adapters forward provider
+  usage; custom adapters can supply their own values. This is not independently
+  verified physical billing evidence. Missing usage means unknown, never zero or
+  an estimate from chunks; cancellation may leave only partial usage. A reported
+  output-token count divided by total duration is a request-wide average, not
+  instantaneous generation speed.
+- `status` is `completed`, `error`, `cancelled` (including deadline expiry), or
+  `incomplete` when a stream closes without a terminal event. Each invocation
+  captures at most one terminal record, including early iterator cancellation.
+
+Delivery is best effort and not durable. Each exact plugin registration has one
+serial callback and a queue of 64 records. Queue overflow drops new records;
+`dropped_before` reports overflow since the previous delivered callback. Callback
+execution has a five-second deadline. A timeout cancels the callback. Timeout or
+unacknowledged execution cancellation suspends
+this registration's metrics delivery until reload, discarding its queue: a cancel
+signal does not prove a remote handler has stopped. No further metrics callbacks
+are admitted behind an unacknowledged one; unrelated plugin capabilities remain
+available. Removal and generation shutdown cancel accepted delivery, discard queued
+records, and join delivery before the plugin's ordinary process cleanup; old
+records never move to a replacement registration. Delivery failures
+are isolated and appear as fixed, content-free plugin diagnostics (unless
+`error_policy: "ignore"`); overflow also leaves a diagnostic. No delivery error
+becomes a conversation toast or model failure. Do not treat the feed as an
+exactly-once billing ledger. Keep handlers short and opt into
+`concurrentCapabilities` when their own plugin must handle other callbacks while
+observing.
 
 ### Independent calls and streaming
 
@@ -351,7 +596,9 @@ when a consumer breaks or throws. Consume streams within the handler lifetime;
 use a background job for work that must outlive the originating handler. Preserve
 opaque `provider_state` and `lifecycle` payloads when forwarding events. If
 `reset_partial` is true, discard prior partial output before accepting replacement
-events from a retry.
+events from a retry. The `assistant_item_done` event carries a complete assistant
+`message` checkpoint for interrupted-turn recovery. Forward it intact; it does not
+append another visible message.
 
 A middleware receives `ModelMiddlewareInput` with `request`, `origin`, `stream`
 and `continuation_id`. Forward through `invokeModel` or `startModelInvocation`
@@ -461,7 +708,7 @@ and durable history; handles do not survive a runtime restart. The bundled
 
 Return `provided_services` during initialization and implement `invokeService`. A descriptor contains a dotted lowercase name, strict `MAJOR.MINOR.PATCH` version, and methods with `input_schema` and `output_schema` identifiers. These identifiers name contracts; they are not inline JSON Schema definitions.
 
-Consumers declare the service name and major version, then call the gateway. The host supplies the caller identity and routes to the active provider. Do not address another plugin's process or depend on its private files. A package cannot provide and require the same service name in one initialization result. Missing required services block the consumer; duplicate providers for a name and major version produce diagnostics rather than merging their implementations.
+Consumers declare the service name and major version, then call the gateway. The host supplies the caller identity and routes to the active provider. Do not address another plugin's process or depend on its private files. An adapter may provide and require the same service with an explicit consumer binding to a different implementation; the resolved graph rejects self-routing and cycles. See [partial provider extension](replaceable-providers.md#partially-extending-a-provider). Missing required services block the consumer; duplicate providers for a name and major version produce diagnostics rather than merging their implementations.
 
 The [service composition example](../../../examples/plugins/service-composition/README.md) contains two buildable packages: a stateless text-analysis provider and a writing-report tool that consumes its version-1 API. It demonstrates both declarations and a real gateway call.
 
@@ -525,7 +772,7 @@ Local UI control is an exception to ordinary generation retention. Updating an o
 
 ## Development and distribution
 
-`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` runs only in the actual host with its read-phase services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
+`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
 
@@ -533,6 +780,6 @@ For monorepo packages, `package.json` may declare additional build inputs with `
 
 Use `validate` for package structure, `test` for executable initialization and negotiated descriptors, and real conversations or rendered UI for behavior. `pack` creates a local zip; it does not upload to a registry. Inspect the archive before distributing it: preparation excludes `.git` and `node_modules`, not every local file that might contain private data.
 
-The current install/update CLI stages packages and uses a separate approval step before code activation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
+The install CLI grants trust and enables the package. Updates from the same recorded source retain trust and the enabled state; a changed or previously unrecorded source requires confirmation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
 
 Exact authoring types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts). The Go host and its internal application-embedding facade are host implementation code, not additional plugin authoring SDKs. Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.

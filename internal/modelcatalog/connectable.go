@@ -94,6 +94,17 @@ const (
 // tool-capable main line, then within that line the base model of its latest
 // release (the shortest ID, so "gpt-6-astra" wins over "-pro" and "-fast").
 func suggestedModel(models []Model) string {
+	paid := make([]Model, 0, len(models))
+	for _, model := range models {
+		if !freeModel(model) {
+			paid = append(paid, model)
+		}
+	}
+	// Free tiers are useful choices but should not replace a paid main line
+	// as the default for a new connection. Keep free-only providers working.
+	if len(paid) > 0 {
+		models = paid
+	}
 	type family struct {
 		name   string
 		newest time.Time
@@ -162,4 +173,9 @@ func releaseTime(model Model) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+func freeModel(model Model) bool {
+	id := strings.ToLower(strings.TrimSpace(model.ID))
+	return strings.HasSuffix(id, ":free") || strings.HasSuffix(id, "-free") || strings.HasSuffix(id, "/free")
 }

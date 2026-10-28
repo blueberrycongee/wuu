@@ -33,11 +33,13 @@ export function appShellWebPreferences(isPackaged: boolean): { devTools?: false 
 export function productionApplicationMenuTemplate(
   platform: string,
   updateItem?: MenuItemConstructorOptions,
+  recoveryItem?: MenuItemConstructorOptions,
 ): MenuItemConstructorOptions[] {
   return [
-    platform === "darwin" && updateItem ? {
+    platform === "darwin" && (updateItem || recoveryItem) ? {
       role: "appMenu", submenu: [
-        { role: "about" }, { type: "separator" }, updateItem,
+        { role: "about" }, { type: "separator" },
+        ...(updateItem ? [updateItem] : []), ...(recoveryItem ? [recoveryItem] : []),
         { type: "separator" }, { role: "services" }, { type: "separator" },
         { role: "hide" }, { role: "hideOthers" }, { role: "unhide" },
         { type: "separator" }, { role: "quit" },
@@ -45,6 +47,7 @@ export function productionApplicationMenuTemplate(
     } : { role: platform === "darwin" ? "appMenu" : "fileMenu" },
     { role: "editMenu" },
     { role: "windowMenu" },
+    ...(platform !== "darwin" && (updateItem || recoveryItem) ? [{ role: "help" as const, submenu: [...(updateItem ? [updateItem] : []), ...(recoveryItem ? [recoveryItem] : [])] }] : []),
   ];
 }
 
