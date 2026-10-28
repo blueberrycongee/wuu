@@ -35,6 +35,9 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
       // Business commands still require the exact currently displayed model.
       const lifecycle = event.command.type === "dismiss";
       if (lifecycle ? event.generation > generation.current : event.generation !== generation.current) return;
+      // Failure is terminal for this opening. Persistent panels may update
+      // their collapsed model in onDismiss; that must not retry a broken view.
+      if (event.command.type === "dismiss" && event.command.reason === "failed") token.current = undefined;
       callbacks.current.onCommand(event.command);
       if (event.command.type === "dismiss") callbacks.current.onDismiss();
     });

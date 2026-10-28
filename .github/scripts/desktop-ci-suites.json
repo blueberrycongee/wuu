@@ -29,6 +29,7 @@
     "desktop/scripts/app-context-e2e.cjs": "shell",
     "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
     "desktop/scripts/settings-sidebar-hit-e2e.cjs": "shell",
+    "desktop/scripts/settings-overlay-e2e.cjs": "shell",
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
     "desktop/scripts/ptc-settings-e2e.cjs": "shell",

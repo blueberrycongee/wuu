@@ -234,6 +234,8 @@ import {
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
+import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
+import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
 import {
   macWorkspaceItemMenuTemplate,
   macWorkspaceApplications,
@@ -799,6 +801,9 @@ function gitServiceForContext(getContext: () => RuntimeContext): GitService {
     },
   );
 }
+
+const workspaceDirectoryReader = new WorkspaceDirectoryReader(() => createWorkspaceDirectoryWorker({}));
+const directoryReaderOwners = new Map<number, number>();
 
 function workspaceFilesForEvent(event: IpcMainInvokeEvent): WorkspaceFileService {
   return new WorkspaceFileService(() => runtimeContextForEvent(event));
@@ -1839,8 +1844,27 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "wuu:file-directory-list",
-    (event, path?: string, root?: string) =>
-      workspaceFilesForEvent(event).directoryList(path, root),
+    async (event, path?: string, root?: string) => {
+      const owner = event.sender.id;
+      if (!directoryReaderOwners.has(owner)) {
+        directoryReaderOwners.set(owner, 0);
+        event.sender.on("render-process-gone", () => {
+          workspaceDirectoryReader.cancelOwner(owner);
+          directoryReaderOwners.set(owner, (directoryReaderOwners.get(owner) ?? 0) + 1);
+        });
+        event.sender.once("destroyed", () => {
+          workspaceDirectoryReader.cancelOwner(owner);
+          directoryReaderOwners.delete(owner);
+        });
+      }
+      const generation = directoryReaderOwners.get(owner);
+      const boundContext = windowRegistry.runtimeContextForWindow(owner);
+      const context = boundContext ? { ...boundContext } : await projectManager.readRuntimeContext();
+      if (event.sender.isDestroyed() || directoryReaderOwners.get(owner) !== generation) {
+        throw Object.assign(new Error("directory read owner was destroyed"), { name: "AbortError" });
+      }
+      return workspaceDirectoryReader.list(root ? resolve(root) : context.cwd, path, owner);
+    },
   );
   ipcMain.handle("wuu:file-read", (event, path: string, root?: string) =>
     workspaceFilesForEvent(event).readFile(path, root),
@@ -3417,6 +3441,7 @@ function prepareToQuit(): Promise<void> {
   // host can synchronously re-enter quit through window-all-closed.
   quitCleanup = Promise.resolve().then(async () => {
     desktopUpdates?.stop();
+    const directoryShutdown = Promise.allSettled([workspaceDirectoryReader.close()]);
     const renderers = await Promise.allSettled(windowRegistry.allWindows().map(stopRenderer));
     for (const result of renderers) {
       if (result.status === "rejected") console.error("Renderer shutdown failed", result.reason);
@@ -3434,7 +3459,8 @@ function prepareToQuit(): Promise<void> {
     // down so no WebContentsView leaks past quit.
     browserHostCoordinator.destroyAll();
     webWorkspaceHost.destroyAll();
-    return Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+    return [...await directoryShutdown, ...shutdown];
   })
     .then((results) => {
       for (const result of results) {

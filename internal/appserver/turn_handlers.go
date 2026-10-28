@@ -205,7 +205,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	phaseStarted = req.timing.now()
-	binding, stateErr := s.rt.RetainState()
+	binding, th, stateErr := s.retainThreadAdmissionState(params.ThreadID)
 	req.timing.span("start_state", phaseStarted)
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -213,7 +213,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	defer binding.Close()
 
 	phaseStarted = req.timing.now()
-	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
+	if th == nil {
+		th, err = s.ensureThreadLoaded(binding, params.ThreadID)
+	}
 	req.timing.span("start_thread_load", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)

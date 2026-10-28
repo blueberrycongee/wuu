@@ -50,6 +50,16 @@ disabled release behavior. Packaged releases must omit this build tag.
 absent, disabled and enabled backend capabilities, saving screenshots and results
 under `desktop/out/e2e/project-agent-gate/`.
 
+After building the desktop, `npm --prefix desktop run test:e2e:settings-overlay`
+exercises the real native Settings menu, not its hidden DOM measurement copy.
+It checks visible bounds, painted pixels, hit targets, dismissal and focus,
+Settings navigation with a running conversation and draft, and recovery when a
+first-paint acknowledgement is lost. The synthetic backend needs no model or
+account. Results, transport traces and separate shell/menu captures go to
+`desktop/out/e2e/settings-overlay/`; `WUU_SETTINGS_OVERLAY_OUTPUT` overrides it.
+Linux and hosted macOS CI run this gate; separate captures do not replace a
+composed desktop screenshot or physical macOS acceptance.
+
 For CLI-only development:
 
 ```bash

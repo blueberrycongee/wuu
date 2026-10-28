@@ -323,32 +323,32 @@ describe("WorkspaceFileTree", () => {
     expect(container.textContent).toContain("button code");
   });
 
-  it.each(["resolve", "reject"])("ignores a stale child directory %s after switching roots", async (outcome) => {
+  it.each([["", "resolve"], ["", "reject"], ["src", "resolve"], ["src", "reject"]])("ignores a stale directory %j %s after switching roots", async (pendingPath, outcome) => {
     let completeOld: (result: WorkspaceDirectoryListResult) => void = () => {};
     let rejectOld: (error: Error) => void = () => {};
     listWorkspaceDirectory.mockImplementation((path = "", cwd = "/repo") => {
-      if (path === "src" && cwd === "/repo") {
+      if (path === pendingPath && cwd === "/repo") {
         return new Promise((resolve, reject) => { completeOld = resolve; rejectOld = reject; });
       }
       return Promise.resolve({ ...directoryResults[path], root: cwd });
     });
     await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
     await settleDirectoryLoads();
-    await act(async () => rowButtonByTitle("src/").click());
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
     const nextContext: RuntimeContext = { kind: "no_project", cwd: "/other" };
     await render(<WorkspaceFileTree activeContext={nextContext} open onOpenFile={() => {}} />);
     await settleDirectoryLoads();
-    await act(async () => rowButtonByTitle("src/").click());
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
     await settleDirectoryLoads();
-    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/other");
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith(pendingPath, "/other");
     await act(async () => {
       if (outcome === "reject") rejectOld(new Error("Old root disappeared"));
-      else completeOld({ root: "/repo", path: "src", entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
+      else completeOld({ root: "/repo", path: pendingPath, entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
       await Promise.resolve();
     });
     await settleDirectoryLoads();
     expect(treeShadowRoot().querySelector('[data-item-path="src/stale.ts"]')).toBeNull();
-    expect(rowButtonByTitle("src/index.ts")).toBeTruthy();
+    expect(rowButtonByTitle(pendingPath ? "src/index.ts" : "README.md")).toBeTruthy();
     expect(container.textContent).not.toContain("Old root disappeared");
   });
 

@@ -30,7 +30,8 @@
   gap: 16px;
   width: min(var(--environment-panel-width), calc(100% - 32px));
   height: calc(100vh - 86px);
-  max-height: calc(100vh - 86px);
+  /* The centered dock uses the full pane, so keep this stack above it. */
+  max-height: min(100vh - 86px, max(0px, 100% - 66px - var(--dock-composer-height, 0px) - var(--space-2)));
   min-height: 0;
   pointer-events: none;
 }

@@ -200,8 +200,9 @@ func TestNativeExecutionRejectsSharedExecutionNotRemoteStorage(t *testing.T) {
 			registry := pluginhost.NewServiceRegistry()
 			provider := &providerAuthorityFixture{authorityProviderFixture: &authorityProviderFixture{Service: persistence.NewService("remote.store", t.TempDir(), "sqlite")}, info: remoteAuthorityInfo()}
 			provider.info.ExecutionTopology = executionTopology
-			domain := newNativeSessionDomain(registry, t.TempDir())
-			host := pluginhost.New(provider, domain)
+			host := pluginhost.New(provider)
+			domain := newNativeSessionDomain(registry, t.TempDir(), host)
+			host.Add(domain)
 			host.AttachServiceRegistry(registry, registry.RegisterClients(provider, domain))
 			t.Cleanup(func() { _ = host.Close(context.Background()) })
 			err := host.Prepare(context.Background())

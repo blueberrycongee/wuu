@@ -19,6 +19,7 @@ type InferenceJournalRuntime struct {
 	lazy                              *lazyInferenceRuntime
 	remote                            *remoteJournalRuntime
 	store                             *documentStore
+	backgroundStore                   *documentStore
 	workspaceScope, runtimeID         string
 	stop, heartbeatDone, progressDone chan struct{}
 	closeOnce                         sync.Once
@@ -68,7 +69,11 @@ func (s *documentStore) NewInferenceJournalRuntime(workspaceScope string) (*Infe
 	}); err != nil {
 		return nil, fmt.Errorf("register inference journal runtime: %w", err)
 	}
-	r := &InferenceJournalRuntime{store: s.WithContext(context.Background()), workspaceScope: workspaceScope, runtimeID: id,
+	backgroundStore := s.WithContext(context.Background())
+	if s.journalBackgroundDocuments != nil {
+		backgroundStore.documents = s.journalBackgroundDocuments
+	}
+	r := &InferenceJournalRuntime{store: s.WithContext(context.Background()), backgroundStore: backgroundStore, workspaceScope: workspaceScope, runtimeID: id,
 		stop: make(chan struct{}), heartbeatDone: make(chan struct{}), progressDone: make(chan struct{})}
 	go func() {
 		defer close(r.heartbeatDone)
@@ -77,7 +82,7 @@ func (s *documentStore) NewInferenceJournalRuntime(workspaceScope string) (*Infe
 		for {
 			select {
 			case at := <-ticker.C:
-				if err := r.store.transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, at.UnixMilli(), false) }); err != nil {
+				if err := r.backgroundStore.transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, at.UnixMilli(), false) }); err != nil {
 					providers.DebugLogf("inference journal heartbeat update: %v", err)
 				}
 			case <-r.stop:
@@ -291,12 +296,14 @@ func (r *InferenceJournalRuntime) flushSubmissionProgress(allowClosing bool) {
 	}
 	stamp := time.Now().UTC().UnixMilli()
 	ctx := context.Background()
+	store := r.backgroundStore
 	if allowClosing {
 		r.lifecycleMu.Lock()
 		ctx = r.cleanupContext
 		r.lifecycleMu.Unlock()
+		store = r.store
 	}
-	err := r.store.WithContext(ctx).transaction(func(tx *persistence.Tx) error {
+	err := store.WithContext(ctx).transaction(func(tx *persistence.Tx) error {
 		if err := r.heartbeat(tx, stamp, false); err != nil {
 			return err
 		}
