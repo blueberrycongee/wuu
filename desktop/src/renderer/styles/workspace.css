@@ -127,10 +127,17 @@
   --workspace-tool-rail-bottom-clearance: var(--workspace-conversation-dock-height, 0px);
 }
 
-/* Keep the viewport and its scrollbar at the canvas edge. Only the message
- * content and floating status controls yield space to the rail. */
+/* Keep the viewport and scrollbar at the canvas edge. A matching gutter
+ * centers wide reading columns; narrow panes give that gutter back. */
 .conversation-pane .scroll-region-content {
+  padding-left: var(--conversation-rail-start);
   padding-right: var(--workspace-tool-rail-inset, 0px);
+}
+
+/* Each split has its own composer and axis. A matching gutter outside both
+ * panes only takes space from each without aligning either composer. */
+.conversation-pane .split-scroll-region > .scroll-region-content {
+  padding-left: 0;
 }
 
 .conversation-pane > .environment-side-stack {

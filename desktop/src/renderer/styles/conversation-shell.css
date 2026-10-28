@@ -209,9 +209,18 @@
     ),
     var(--environment-panel-reserved-width)
   );
-  /* Floating status controls follow the reading content beside the tool rail.
-     The bottom composer uses the full canvas independently of the rail. */
-  --conversation-visible-inset-left: 0px;
+  /* Keep a useful reading measure as the pane shrinks. Once the symmetric
+     gutter would leave less than 20 font-size units, give that space back and
+     move the composer and status controls onto the same remaining axis. */
+  --conversation-environment-inset: 0px;
+  --conversation-rail-start: clamp(
+    0px,
+    calc(100cqi - var(--conversation-environment-inset) - 2 * var(--scrollbar-width) -
+      var(--workspace-tool-rail-inset, 0px) - 2 * var(--session-outer-padding-inline) -
+      20 * var(--conversation-message-font-size)),
+    var(--workspace-tool-rail-inset, 0px)
+  );
+  --conversation-visible-inset-left: var(--conversation-rail-start);
   --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;
@@ -295,6 +304,7 @@
 }
 
 .conversation-pane.environment-panel-reserved {
+  --conversation-environment-inset: var(--environment-panel-content-inset);
   --conversation-visible-inset-right: calc(var(--environment-panel-content-inset) + var(--workspace-tool-rail-inset, 0px));
 }
 

@@ -219,6 +219,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
+
 - Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
 - Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
 - Require the default native tool provider to use its own admitted tool callback before executing; inherited scopes and ordinary service forwarding can no longer bypass the authority boundary enforced for external providers.
