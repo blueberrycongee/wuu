@@ -243,6 +243,7 @@ func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 		drainingQueuedTurns:         make(map[string]bool),
 		activeRunByThread:           make(map[string]string),
 	}
+	t.Cleanup(s.Close)
 	s.recordCancelledPendingSubmission(threadID, steerID, session.HeldUserWorkOriginQueue)
 	params, err := json.Marshal(TurnRequeueParams{ThreadID: threadID, SteerID: steerID})
 	if err != nil {
