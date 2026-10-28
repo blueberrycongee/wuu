@@ -86,11 +86,18 @@ async function click(selector) {
   const target = await until(() => evaluate(async selector => {
     const el = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().height && !node.closest('[inert]'));
     if (!el || el.disabled) return;
+    const panel = el.closest('.workspace-right-panel');
+    if (panel?.getAnimations().some(animation => animation.playState === 'running'
+      && animation.effect?.getComputedTiming().iterations !== Infinity)) return;
     el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const r = el.getBoundingClientRect(), x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
     if (!el.contains(document.elementFromPoint(x, y))) return;
-    el.addEventListener('click', event => { window.closeFixtureTrustedClicks = (window.closeFixtureTrustedClicks || 0) + Number(event.isTrusted); }, { once: true });
+    document.addEventListener('click', event => {
+      if (event.isTrusted && event.target instanceof Element && event.target.closest(selector)) {
+        window.closeFixtureTrustedClicks = (window.closeFixtureTrustedClicks || 0) + 1;
+      }
+    }, { capture: true, once: true });
     return { x, y };
   }, selector), `click target ${selector}`);
   win.focus(); win.webContents.focus();
@@ -125,7 +132,7 @@ async function run() {
   win.setContentSize(1280, 900); win.show(); win.focus(); win.webContents.setBackgroundThrottling(false);
   await click(composer); await win.webContents.insertText('Start the synthetic running task');
   await until(() => evaluate(selector => document.querySelector(selector)?.value === 'Start the synthetic running task', composer), 'prompt entered');
-  for (const type of ['keyDown', 'char', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Return' });
+  await click('[data-main-conversation-composer] .composer-action-button');
   await until(() => response && evaluate(() => Boolean(document.querySelector('.rich-file-link'))), 'running response with file link');
   const listed = await evaluate(() => window.wuu.listAllThreads());
   targetThread = listed.threads.find(thread => thread.status === 'in_progress')?.id;
@@ -167,6 +174,14 @@ async function run() {
   assert.equal(await evaluate(() => Boolean(document.querySelector('[data-main-conversation-composer="document"]'))), false);
   assert.equal(response.destroyed, false, 'closing the view does not cancel the running model response');
   await capture('02-file-only');
+  await click('.thread-row:not([data-draft-id]) .thread-row-main');
+  await until(() => evaluate(selector => document.querySelector('.workspace-conversation-tab [role="tab"]')?.getAttribute('aria-selected') === 'true'
+    && document.querySelector(selector)?.value === 'Retain this unsent draft', composer), 'reopen in expanded workspace');
+  assert.equal(response.destroyed, false);
+  await click('[data-wuu-tab-kind="file"] [role="tab"]');
+  await until(() => evaluate(() => Boolean(document.querySelector('.workspace-file-resource.active'))), 'file selected again');
+  await click('.workspace-conversation-tab .workspace-tool-tab-close');
+  await until(() => evaluate(() => !document.querySelector('.workspace-conversation-tab') && document.querySelector('.workspace-file-resource.active')), 'close reopened conversation');
   await click('.workspace-panel-globalize');
   await until(() => evaluate(() => !document.querySelector('.app-shell').classList.contains('right-panel-globalized')), 'docked');
   assert.equal(await evaluate(selector => document.querySelector(selector)?.value, composer), '');
