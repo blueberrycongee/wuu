@@ -8,7 +8,8 @@ import { CHROME_OVERLAY_VERSION } from "../shared/chromeOverlay";
 export const chromeOverlayScheme = { scheme: "wuu-chrome", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } };
 const ORIGIN = "wuu-chrome://ui";
 const PARTITION = "wuu-chrome-overlays";
-type Surface = { owner: BrowserWindow; view: WebContentsView; kind: ChromeOverlaySurface; request?: ChromeOverlayRequest; loaded: boolean; focusPending?: boolean; focusBefore?: WebContents };
+const OPENING_TIMEOUT_MS = 10_000;
+type Surface = { owner: BrowserWindow; view: WebContentsView; kind: ChromeOverlaySurface; request?: ChromeOverlayRequest; loaded: boolean; focusPending?: boolean; focusBefore?: WebContents; openingTimeout?: ReturnType<typeof setTimeout> };
 
 /** Bounded, trusted UI views. Transparent pixels still hit-test inside these rectangles. */
 export class ChromeOverlayHost {
@@ -104,9 +105,15 @@ export class ChromeOverlayHost {
     }
     if (request.focus && (!previous || previous.token !== request.token || !previous.focus)) surface.focusPending = true;
     surface.request = request;
+    if (previous?.token !== request.token) this.cancelOpening(surface);
     // Hidden Chromium renderers suspend rAF. Unthrottle only the finite paint
     // handshake; once visible (or dismissed), normal visibility throttling resumes.
-    if (!surface.view.getVisible()) surface.view.webContents.setBackgroundThrottling(false);
+    if (!surface.view.getVisible() && !this.fullscreen) {
+      surface.view.webContents.setBackgroundThrottling(false);
+      // A successful document load does not prove its JS mounted or acknowledged
+      // the model. Bound the opening, not every streaming/geometry revision.
+      surface.openingTimeout ??= setTimeout(() => this.fail(surface), OPENING_TIMEOUT_MS);
+    }
     this.layout(surface);
     if (surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", request);
   }
@@ -139,8 +146,8 @@ export class ChromeOverlayHost {
     contents.on("will-navigate", event => event.preventDefault());
     contents.on("will-frame-navigate", event => event.preventDefault());
     contents.on("will-attach-webview", event => event.preventDefault());
-    contents.on("render-process-gone", () => { this.dismiss(surface, "failed"); this.remove(surface); });
-    contents.on("did-fail-load", (_event, _code, _description, _url, mainFrame) => { if (mainFrame) this.dismiss(surface, "failed"); });
+    contents.on("render-process-gone", () => this.fail(surface));
+    contents.on("did-fail-load", (_event, _code, _description, _url, mainFrame) => { if (mainFrame) this.fail(surface); });
     // Native-tree mutation in a blur callback can invalidate Chromium's focus
     // traversal. Defer dismissal, and never pull focus away from its new owner.
     contents.on("blur", () => queueMicrotask(() => {
@@ -149,7 +156,7 @@ export class ChromeOverlayHost {
       if (!surface.request || !surface.view.getVisible() || contents.isDestroyed() || contents.isFocused()) return;
       if (kind === "account") this.dismiss(surface, "outside");
     }));
-    void contents.loadURL(`${ORIGIN}/chrome-overlay.html?surface=${kind}`).catch(() => this.dismiss(surface, "failed"));
+    void contents.loadURL(`${ORIGIN}/chrome-overlay.html?surface=${kind}`).catch(() => this.fail(surface));
     return surface;
   }
 
@@ -172,6 +179,7 @@ export class ChromeOverlayHost {
     if (!surface) return;
     const request = surface.request;
     if (!request || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
+    this.cancelOpening(surface);
     this.layout(surface);
     const opening = !surface.view.getVisible();
     if (opening) surface.view.setVisible(true);
@@ -217,6 +225,7 @@ export class ChromeOverlayHost {
   private dismiss(surface: Surface, reason?: Extract<ChromeOverlayCommand, { type: "dismiss" }>["reason"], restoreFocus = false): void {
     // Native teardown can deliver blur before the owner's JS closed callback.
     if (surface.owner.isDestroyed() || this.surfaces.get(surface.kind) !== surface) return;
+    this.cancelOpening(surface);
     surface.focusPending = false;
     const focused = !surface.view.webContents.isDestroyed() && surface.view.webContents.isFocused();
     if (reason) this.emitCurrent(surface, { type: "dismiss", reason });
@@ -265,7 +274,7 @@ export class ChromeOverlayHost {
 
   close(owner: BrowserWindow): void {
     for (const surface of this.surfaces.values()) if (surface.owner === owner) {
-      if (surface.kind === "capsule") surface.view.setVisible(false);
+      if (surface.kind === "capsule") { this.cancelOpening(surface); surface.view.setVisible(false); }
       else this.dismiss(surface, "owner");
     }
   }
@@ -278,6 +287,7 @@ export class ChromeOverlayHost {
   private restoreCapsule(owner: BrowserWindow): void {
     const surface = this.surfaces.get("capsule");
     if (!this.fullscreen && surface?.request && surface.loaded && owner.isVisible() && !owner.isMinimized()) {
+      this.cancelOpening(surface);
       this.layout(surface); surface.view.setVisible(true); this.raise(owner);
     }
   }
@@ -318,11 +328,25 @@ export class ChromeOverlayHost {
     });
   }
 
+  private fail(surface: Surface): void {
+    // A retired renderer can report more than one failure. Never revoke its
+    // replacement when an old load rejection or process callback arrives late.
+    if (this.surfaces.get(surface.kind) !== surface) return;
+    this.dismiss(surface, "failed");
+    this.remove(surface);
+  }
+
   private remove(surface: Surface): void {
+    this.cancelOpening(surface);
     // Revoke the surface before closing contents can enqueue blur/load callbacks.
     surface.request = undefined;
     this.surfaces.delete(surface.kind);
     if (!surface.owner.isDestroyed()) surface.owner.contentView.removeChildView(surface.view);
     if (!surface.view.webContents.isDestroyed()) surface.view.webContents.close();
+  }
+
+  private cancelOpening(surface: Surface): void {
+    clearTimeout(surface.openingTimeout);
+    surface.openingTimeout = undefined;
   }
 }
