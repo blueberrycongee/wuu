@@ -16,8 +16,9 @@ import (
 )
 
 type attentionCall struct {
-	input  pluginhost.SessionAttentionInput
-	result chan bool
+	input     pluginhost.SessionAttentionInput
+	principal bool
+	result    chan bool
 }
 type attentionPolicyClient struct {
 	pluginClientRequestTestRuntime
@@ -32,7 +33,8 @@ func (c *attentionPolicyClient) InvokeCapability(ctx context.Context, params plu
 	if err := json.Unmarshal(params.Input, &input); err != nil {
 		return pluginhost.CapabilityInvokeResult{}, err
 	}
-	call := attentionCall{input: input, result: make(chan bool, 1)}
+	_, authenticated := principal.FromContext(ctx)
+	call := attentionCall{input: input, principal: authenticated, result: make(chan bool, 1)}
 	select {
 	case c.calls <- call:
 	case <-ctx.Done():
@@ -93,7 +95,7 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	case <-time.After(2 * time.Second):
 		t.Fatal("host did not consult owner notification policy")
 	}
-	if quiet.input.SessionID != main.SessionID || quiet.input.AgentID != "agent-main" || quiet.input.TurnID != first.TurnID || quiet.input.Outcome != "completed" || quiet.input.MessageSeq < 1 || quiet.input.UserSpaceID != "local" || quiet.input.ProductDomain != "personal" {
+	if quiet.principal || quiet.input.RequestID != "quiet-completion" || quiet.input.SessionID != main.SessionID || quiet.input.AgentID != "agent-main" || quiet.input.TurnID != first.TurnID || quiet.input.Outcome != "completed" || quiet.input.MessageSeq < 1 || quiet.input.UserSpaceID != "local" || quiet.input.ProductDomain != "personal" {
 		t.Fatalf("untrusted policy input: %+v", quiet.input)
 	}
 	fmt.Fprintln(writer, `{"id":"responsive","method":"initialize"}`)
@@ -107,6 +109,9 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	case allowed = <-policy.calls:
 	case <-time.After(2 * time.Second):
 		t.Fatal("next policy was not admitted")
+	}
+	if allowed.input.RequestID != "allowed-completion" || allowed.principal {
+		t.Fatalf("terminal request binding borrowed a principal or another request: %+v", allowed.input)
 	}
 	allowed.result <- true
 	// Delivery and every replay recheck the owning preference. Continue serving
@@ -155,6 +160,9 @@ func TestUserHostAttentionIsOwnerPolicyBoundAndDoesNotBlockClients(t *testing.T)
 	case replay = <-policy.calls:
 	case <-time.After(2 * time.Second):
 		t.Fatal("buffered attention did not recheck current policy")
+	}
+	if replay.input.RequestID != "allowed-completion" {
+		t.Fatalf("replay changed the admitted request: %+v", replay.input)
 	}
 	replay.result <- true
 	select {

@@ -92,3 +92,63 @@ func (c *Client) Inspect(ctx context.Context, r InspectRequest) (IssueResult, er
 	}
 	return result, err
 }
+
+func (c *Client) AcquireCommit(ctx context.Context, r CommitRequest) (CommitGuard, error) {
+	var result CommitGuard
+	if err := c.invoke(ctx, "acquire-commit", r, &result); err != nil {
+		return CommitGuard{}, err
+	}
+	if !result.matches(r) || result.Principal.Validate() != nil || result.ExpiresAt.IsZero() {
+		return CommitGuard{}, errors.New("invalid execution commit admission result")
+	}
+	return result, nil
+}
+
+// ReleaseCommit must use the captured generation's cleanup route. It never
+// substitutes not-committed for an unknown publication or retries that effect.
+func (c *Client) ReleaseCommit(ctx context.Context, r ReleaseCommitRequest) (CommitRelease, error) {
+	var result CommitRelease
+	if err := c.invoke(ctx, "release-commit", r, &result); err != nil {
+		return CommitRelease{}, err
+	}
+	if !result.Released {
+		return CommitRelease{}, errors.New("execution commit release omitted confirmation")
+	}
+	return result, nil
+}
+func (c *Client) InspectCommit(ctx context.Context, r CommitRequest) (CommitStatus, error) {
+	var result CommitStatus
+	if err := c.invoke(ctx, "inspect-commit", r, &result); err != nil {
+		return CommitStatus{}, err
+	}
+	if !result.Guard.matches(r) || !bounded(result.Caller, 1024) || result.Outcome != "" && result.Outcome != "committed" && result.Outcome != "not-committed" || result.Outcome == "committed" && !digestValid(result.ReceiptDigest) || result.Outcome != "committed" && result.ReceiptDigest != "" || result.Outcome != "not-committed" && (result.Guard.Principal.Validate() != nil || result.Guard.ExpiresAt.IsZero()) {
+		return CommitStatus{}, errors.New("invalid execution commit inspection result")
+	}
+	return result, nil
+}
+func (c *Client) ReconcileCommit(ctx context.Context, r ReconcileCommitRequest) (CommitRelease, error) {
+	var result CommitRelease
+	if err := c.invoke(ctx, "reconcile-commit", r, &result); err != nil {
+		return CommitRelease{}, err
+	}
+	if !result.Released {
+		return CommitRelease{}, errors.New("execution commit reconciliation omitted confirmation")
+	}
+	return result, nil
+}
+
+func (c *Client) ListCommits(ctx context.Context) (CommitList, error) {
+	var result CommitList
+	if err := c.invoke(ctx, "list-commits", struct{}{}, &result); err != nil {
+		return CommitList{}, err
+	}
+	if result.Commits == nil {
+		return CommitList{}, errors.New("execution commit listing omitted intents")
+	}
+	for _, entry := range result.Commits {
+		if !entry.Request.valid() || !entry.Guard.matches(entry.Request) || entry.Guard.Principal.Validate() != nil || entry.Guard.ExpiresAt.IsZero() || !bounded(entry.Caller, 1024) || entry.Outcome != "" || entry.ReceiptDigest != "" {
+			return CommitList{}, errors.New("invalid unresolved execution commit intent")
+		}
+	}
+	return result, nil
+}

@@ -1,3 +1,4 @@
+import { personalMemory } from "@wuu/plugin-sdk";
 import { isDeepStrictEqual } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TASK_EXECUTION_ACTIONS, FEEDBACK_ACTIONS, SESSION_DELIVERY_ACTIONS, issueAuthorization, authorizationExpiry, authorizationRequired, authorizationError, authorizationCurrent, sameAuthorization, type PersonalAuthorization, type PersonalAuthorizationIntent } from "./grants.js";
@@ -99,7 +100,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
@@ -142,6 +143,9 @@ export class PersonalPlugin implements RuntimePlugin {
     this.memory = new PersonalRecords(this.space, this.host, params.plugin_id, {
       context: session_id => this.request("agents.memory_context", { session_id }),
       evidence: (session_id, ref) => this.request("agents.memory_evidence", { session_id, ref }),
+      records: session_id => personalMemory(this.host).records(session_id),
+      operation: (session_id, id) => personalMemory(this.host).operation(session_id, id),
+      commit: (session_id, input) => personalMemory(this.host).commit(session_id, input),
     });
     this.routines = new PersonalRoutines(this.host, this.space, {
       active: () => this.assertActive(), mutation: () => this.beginAuthorityMutation(), agent: (agentID, allowInactive) => this.agent(agentID, allowInactive), main: () => this.main(),
@@ -1302,15 +1306,13 @@ export class PersonalPlugin implements RuntimePlugin {
         const input = object(call.input) as unknown as SessionAttentionInput & Record<string, unknown>;
         if (input.product_domain !== "personal" || input.user_space_id !== this.space || !["completed", "failed"].includes(text(input, "outcome"))) return { output: { allowed: false } };
         const sessionID = text(input, "session_id", true), agentID = text(input, "agent_id", true);
-        const turnID = text(input, "turn_id", true);
+        text(input, "turn_id", true);
+        const requestID = text(input, "request_id", true);
         if (input.message_seq !== undefined && number(input, "message_seq") < 1) return { output: { allowed: false } };
-        const context = await this.host.call("host.session.context", { session_id: sessionID });
-        if (context.product_domain !== "personal" || context.user_space_id !== this.space || context.agent_id !== agentID || context.parent_session_id) return { output: { allowed: false } };
+        // The host binds the exact persisted turn and send. This background
+        // decision has no user principal and must not borrow general read authority.
         const agent = await this.agent(agentID);
         if (agent.agent_id !== this.mainID() || agent.main_session_id !== sessionID) return { output: { allowed: false } };
-        const receipt = await this.host.call("host.session.inspect", { session_id: sessionID, turn_id: turnID });
-        const requestID = receipt.turn?.request_id;
-        if (receipt.turn?.turn_id !== turnID || !requestID) return { output: { allowed: false } };
         if (requestID.startsWith("personal-result-")) {
           const task = (await this.list<PersonalTask>("task")).find(task => task.delivery?.request_id === requestID || task.previous_deliveries?.some(delivery => delivery.request_id === requestID));
           if (!task || task.previous_deliveries?.some(delivery => delivery.request_id === requestID) || task.delivery?.request_id !== requestID || task.delivery.status === "suppressed" || task.cancel_requested || task.state !== "completed" || pendingCancellation(task) || task.result?.requirements_revision !== task.requirements_revision || !await this.routines.resultAttention(task)) return { output: { allowed: false } };
@@ -1496,27 +1498,7 @@ export class PersonalPlugin implements RuntimePlugin {
         return { session_id: sessionID, agent_id: agent.agent_id, role: main ? "main" : "background" };
       }
       case "agents.memory_evidence": {
-        const callerID = text(input, "session_id", true), ref = text(input, "ref", true);
-        const caller = await this.host.call("host.session.context", { session_id: callerID });
-        if (caller.product_domain !== "personal" || caller.user_space_id !== this.space || !caller.agent_id) throw new Error("memory evidence caller is outside this Personal space");
-        const agent = await this.agent(caller.agent_id);
-        const match = /^personal-message:([^:]+):([1-9][0-9]*)$/.exec(ref);
-        if (!match) throw new Error("unsupported canonical memory source");
-        const sourceID = decodeURIComponent(match[1]), seq = Number(match[2]);
-        if (encodeURIComponent(sourceID) !== match[1] || !sourceID || !Number.isSafeInteger(seq) || String(seq) !== match[2]) throw new Error("invalid canonical memory source");
-        const source = await this.host.call("host.session.context", { session_id: sourceID });
-        if (source.product_domain !== "personal" || source.user_space_id !== this.space || source.agent_id !== agent.agent_id) throw new Error("memory evidence source is outside this Personal identity");
-        const owned = sourceID === agent.main_session_id || (await this.list<PersonalTask>("task")).some(task => task.agent_id === agent.agent_id && (task.execution.session_id === sourceID || task.previous_executions.some(execution => execution.session_id === sourceID)));
-        if (!owned) throw new Error("memory evidence source is not an owned main or task conversation");
-        const page = await this.host.call("host.session.history.read", { session_id: sourceID, start_seq: seq, end_seq: seq, limit: 1 });
-        const record = page.records?.find(record => record.seq === seq);
-        if (!record || record.role !== "user" || record.origin !== "user" || record.hidden || record.read_only || record.truncated || !record.content?.trim()) throw new Error("memory evidence requires an exact visible original user message");
-        if (Buffer.byteLength(record.content) > 64_000) throw new Error("memory evidence exceeds the bounded source size");
-        if (!record.at || !/(?:Z|[+-]\d\d:\d\d)$/.test(record.at) || !Number.isFinite(Date.parse(record.at)) || Date.parse(record.at) > Date.now()) throw new Error("memory evidence requires a valid persisted source timestamp");
-        // Workers can normalize provenance timestamps, but only the bound main
-        // receives original user text for semantic candidate review.
-        const main = agent.agent_id === this.mainID() && agent.main_session_id === callerID;
-        return { ref, occurred_at: new Date(record.at).toISOString(), ...(main ? { content: record.content } : {}) };
+        return personalMemory(this.host).source(text(input, "session_id", true), text(input, "ref", true));
       }
       case "agents.resolve": { const { agent, task } = await this.resolve(text(input, "session_id", true)); return { agent, task_id: task?.task_id, requirements_revision: task?.requirements_revision }; }
       case "agents.messages.pending": {
@@ -1714,6 +1696,10 @@ export class PersonalPlugin implements RuntimePlugin {
         const batch = input.notification_batch_seconds === undefined ? undefined : number(input, "notification_batch_seconds");
         if (batch !== undefined && batch > 900) throw new Error("notification_batch_seconds must be an integer from 0 to 900");
         return { settings: await this.change<Settings>("settings", "preferences", current => ({ revision: current?.revision ?? 0, created_at: current?.created_at ?? now(), updated_at: now(), quiet_hours: { enabled: quiet.enabled as boolean, start, end, timezone }, notifications: input.notifications as boolean, notification_batch_seconds: batch ?? current?.notification_batch_seconds ?? 0 }), number(input, "expected_revision")) };
+      }
+      case "memory.operations": case "memory.reconcile": {
+        if (!ownerClient || !clientHost) throw new Error("memory recovery requires the authenticated owner client");
+        return callPersonalHost(clientHost, method, input);
       }
       case "memory.query": case "memory.read": case "memory.correct": case "memory.forget": {
         const agent = await this.conversation(input, true);

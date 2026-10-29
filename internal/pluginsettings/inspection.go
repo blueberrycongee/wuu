@@ -21,6 +21,21 @@ type StateInspection struct {
 	StateView
 }
 
+// AcquireInspection and ReleaseInspection expose the same selected-provider
+// fence for coordinators whose durable intent owns the ID across crash recovery.
+func (c *Client) AcquireInspection(ctx context.Context, request InspectionRequest) (StateInspection, error) {
+	var result StateInspection
+	err := c.invoke(ctx, "acquire-inspection", request, &result)
+	if err == nil && (result.ID != request.ID || result.Document.PluginID != request.Subject || result.Revision == "") {
+		return StateInspection{}, settingsError("invalid_response", "invalid state inspection response")
+	}
+	return result, inspectionError(err)
+}
+func (c *Client) ReleaseInspection(ctx context.Context, request InspectionRequest) error {
+	var result struct{}
+	return inspectionError(c.invoke(ctx, "release-inspection", request, &result))
+}
+
 // WithStateInspection prevents state CAS, direct writes and ownership transfers
 // for the subject until cleanup. No uncertain acquisition can enter use.
 func (c *Client) WithStateInspection(ctx context.Context, subject string, scope Scope, use func(StateDocument) error) (err error) {

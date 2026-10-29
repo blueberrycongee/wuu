@@ -75,14 +75,14 @@ func (p *personalActions) withTaskInspection(ctx context.Context, use func(conte
 		defer func() { err = errors.Join(err, sessionScope.Close()) }()
 		sessions := session.NewClient(sessionScope.Context, inspectionServiceCall(state.Host, sessionScope, runtime.SessionStateConsumer, session.ServiceName))
 		return sessions.WithInspection(sessionScope.Context, func() (err error) {
-			// The ledger can outlive a graph publication. Fence its captured dataset,
-			// never assume a current consumer-specific binding names the same store.
-			reviewScope, err := p.state.Host.OpenServiceScope(sessionScope.Context, personalActionsConsumerID, persistence.ServiceName)
+			// Fence the same captured ledger used by this operation, including an
+			// admitted action whose generation predates the current publication.
+			reviewScope, err := state.Host.OpenServiceScope(sessionScope.Context, personalActionsConsumerID, persistence.ServiceName)
 			if err != nil {
 				return err
 			}
 			defer func() { err = errors.Join(err, reviewScope.Close()) }()
-			guardStore, err := personalreview.NewDocumentStore(persistence.NewClient(inspectionServiceCall(p.state.Host, reviewScope, personalActionsConsumerID, persistence.ServiceName)))
+			guardStore, err := personalreview.NewDocumentStore(persistence.NewClient(inspectionServiceCall(state.Host, reviewScope, personalActionsConsumerID, persistence.ServiceName)))
 			if err != nil {
 				return err
 			}

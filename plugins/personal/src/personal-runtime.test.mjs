@@ -12,10 +12,53 @@ import { fileURLToPath } from "node:url";
 // Execute the generated shipped entry point and public JSONL transport. The
 // Failure cases: absent optional Memory, forged authority, stale correction, lost
 // restart data, forgotten-source resurrection, and Coding-tool exposure.
-// The fixture supplies only host storage/session services, never Personal authority
-// or memory behavior: the shipped Personal runtime creates its own main binding.
+// The fixture supplies host storage/session services and the memory journal
+// boundary; the shipped Personal runtime creates its own main binding.
 const root = fileURLToPath(new URL("../../../", import.meta.url));
-const executable = join(root, "internal/plugin/bundled/personal/runtime.mjs");
+const executable = process.env.WUU_PERSONAL_RUNTIME_PATH ?? join(root, "internal/plugin/bundled/personal/runtime.mjs");
+
+function memoryJournal(storage, contexts) {
+  const records = new Map(), operations = new Map();
+  return {
+    records, operations, loseReply: false,
+    call({ operation, session_id, input }) {
+      if (operation === "owner.check") return { ok: true, value: {} };
+      const context = contexts[session_id];
+      assert.equal(context?.product_domain, "personal"); assert.equal(context?.user_space_id, "local");
+      const agent = [...storage.values()].map(raw => JSON.parse(raw)).find(record => record.agent_id === context.agent_id && record.main_session_id && record.status === "active");
+      assert(agent, "memory requires the stored active Personal identity");
+      if (operation === "memory.read") return { ok: true, value: { records: Object.fromEntries(records) } };
+      assert.equal(agent.main_session_id, session_id, "this fixture admits only main memory writes");
+      let saved = operations.get(input.id);
+      if (saved) assert.equal(saved.session_id, session_id, "receipt is bound to its original session");
+      if (saved?.redacted) throw new Error("forgotten_record: publication receipt was redacted");
+      if (saved?.swapped && records.get(saved.write.key) !== saved.write.value) throw new Error("revision_conflict: memory receipt was superseded");
+      if (operation === "memory.operation") return { ok: true, value: saved ? { write: structuredClone(saved.write) } : null };
+      assert.equal(operation, "memory.commit");
+      if (saved) {
+        assert.deepEqual(saved.write, input, "restart retry uses the exact first prepared bytes");
+        if (!saved.swapped) throw new Error("memory operation was reconciled as not committed");
+      } else {
+        saved = { session_id, write: structuredClone(input), swapped: false };
+        operations.set(input.id, saved);
+        const current = records.get(input.key) ?? storage.get(`user:personal.records.v1.${input.key}`) ?? null;
+        if (current !== input.expected) throw new Error("memory revision_conflict");
+        const next = JSON.parse(input.value);
+        assert.equal(next.id, input.key); assert.equal(next.product_domain, "personal"); assert.equal(next.user_space_id, "local");
+        assert.equal(next.revision, (current ? JSON.parse(current).revision : 0) + 1);
+        records.set(input.key, input.value); saved.swapped = true;
+        if (next.status === "forgotten") {
+          saved.write.expected = null; saved.redacted = true;
+          for (const prior of operations.values()) {
+            if (prior !== saved && prior.write.key === input.key) { prior.write.expected = null; prior.write.value = ""; prior.redacted = true; }
+          }
+        }
+      }
+      if (this.loseReply) { this.loseReply = false; throw new Error("memory commit reply lost"); }
+      return { ok: true, value: { swapped: true, value: saved.write.value } };
+    },
+  };
+}
 
 test("Personal memory shipped runtime persists bound corrections and forget across process replacement", async t => {
   const scratch = await mkdtemp(join(tmpdir(), "wuu-personal-memory-runtime-"));
@@ -24,12 +67,14 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const storage = new Map(), frames = [], active = new Set(), locks = new Set();
   const contexts = {};
+  const memory = memoryJournal(storage, contexts);
   let mainSession, mainAgent;
   const host = async frame => {
     assert.equal(frame.method, "host.service.call");
     const { service, method, params } = frame.params;
     const key = `${params?.scope}:${params?.key}`;
     switch (service) {
+      case "host.personal": assert.equal(method, "call"); return memory.call(params);
       case "host.session.create": {
         const session_id = `session-${params.request_id}`;
         const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
@@ -43,6 +88,7 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
       case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
       case "host.storage.get": return { value: storage.get(key) ?? null };
       case "host.storage.compare-exchange": {
+        assert(!params.key.startsWith("personal.records.v1."), "all new memory writes belong to the host journal");
         const current = storage.get(key) ?? null;
         if (current !== params.expected) return { swapped: false, value: current };
         storage.set(key, params.value); return { swapped: true, value: params.value };
@@ -55,7 +101,7 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
     }
   };
   async function start(pluginID = "personal") {
-    const child = spawn(process.execPath, [join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
+    const child = spawn(process.execPath, [pluginID === "personal" ? executable : join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
     let seq = 0, stderr = ""; const pending = new Map(), background = [];
     child.stderr.on("data", buffer => { stderr += buffer; });
     const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };
@@ -118,7 +164,13 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   const source = (ref, seconds) => [{ kind: "message", ref, occurred_at: new Date(Date.now() - 60_000 + seconds * 1000).toISOString() }];
   const record = (await runtime.tool("personal_memory_create", { key: "address.home", expected_revision: 0, content: "Synthetic Old Street", evidence: "explicit", sources: source("synthetic-message:1", 0) })).record;
   assert.equal((await runtime.service("query", { query: "address" })).records[0].id, record.id);
-  const corrected = (await runtime.service("correct", { id: record.id, expected_revision: 1, content: "Synthetic New Street", evidence: "explicit", sources: source("synthetic-message:2", 10) })).record;
+  const correction = { id: record.id, expected_revision: 1, content: "Synthetic New Street", evidence: "explicit", sources: source("synthetic-message:2", 10) };
+  memory.loseReply = true;
+  await assert.rejects(runtime.service("correct", correction), /reply lost/);
+  const committed = memory.records.get(record.id);
+  await runtime.close(); runtime = await start();
+  const corrected = (await runtime.service("correct", correction)).record;
+  assert.equal(memory.records.get(record.id), committed, "process replacement replays the durable receipt without generating another write");
   assert.equal(corrected.updated_by_agent_id, mainAgent);
   assert.equal(corrected.contributions[0].agent_id, mainAgent);
   const prompt = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 1, messages: [{ role: "user", content: "Which address?" }] }, execution_id: "prompt-1" });
@@ -126,12 +178,15 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await runtime.close(); runtime = await start();
   assert.equal((await runtime.service("read", { id: record.id })).record.revision, 2);
   await runtime.service("forget", { id: record.id, expected_revision: 2 });
+  await assert.rejects(runtime.service("correct", correction), /forgotten_record/);
   assert.equal((await runtime.service("query", {})).records.length, 0);
   await assert.rejects(runtime.tool("personal_memory_create", { key: "address.rephrased", expected_revision: 0, content: "Synthetic Old Street again", evidence: "explicit", sources: source("synthetic-message:1", 0) }), /forgotten_source/);
   await assert.rejects(runtime.tool("memory_list", {}), /Coding|unavailable|unknown Personal tool/);
   await runtime.close();
   assert.equal(locks.size, 0);
-  assert(!JSON.stringify([...storage.values()]).includes("Street"));
+  assert(!JSON.stringify([...memory.records.values()]).includes("Street"));
+  assert(!JSON.stringify([...memory.operations.values()]).includes("Street"), "forget redacts publication and retry receipts, including the forget operation's expected value");
+  assert(![...storage.keys()].some(key => key.startsWith("user:personal.records.v1.")));
   assert(!frames.some(({ direction, frame }) => direction === "plugin" && ["personal.agents", "memory.records"].includes(frame.params?.service)), "internal memory must not call external plugin services");
   await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), node: process.version, completed_at: new Date().toISOString(), scenarios: ["Personal-only main binding owns host-attributed records", "correction freshness at next model step", "restart recovery", "forget removes source data and blocks extraction", "Personal rejects legacy Coding tools"] }, null, 2));
 });
@@ -146,6 +201,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const storage = new Map(), frames = [], active = new Set(), locks = new Set();
   const contexts = {}, turns = new Map(), grants = new Map();
+  const memory = memoryJournal(storage, contexts);
   let loseFeedbackReply = false;
   let mainSession, mainAgent;
   let failReactionWrite = false;
@@ -162,10 +218,11 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
     const { service, method, params } = frame.params;
     const key = `${params?.scope}:${params?.key}`;
     switch (service) {
+      case "host.personal": assert.equal(method, "call"); return memory.call(params);
       case "host.execution.authorization": {
         if (params.operation === "describe") return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:["fixture"],scope_kinds:["exact-run"]};
         assert.equal(params.operation,"issue");assert.equal(params.kind,"exact-run");assert.equal(params.session_id,mainSession);assert(params.request_id.startsWith("personal-feedback-"));assert.equal(params.task_id,params.request_id);
-        assert.deepEqual(params.requested_actions,["user/session/send","user/session/inspect","user/session/context","user/session/history.read"]);assert(!params.parent);assert(Number.isFinite(Date.parse(params.expires_at)));
+        assert.deepEqual(params.requested_actions,["personal/memory.read","user/session/send","user/session/inspect","user/session/context","user/session/history.read"]);assert(!params.parent);assert(Number.isFinite(Date.parse(params.expires_at)));
         const saved=[...storage.values()].map(raw=>JSON.parse(raw)).find(value=>value.request_id===params.request_id && value.reaction_revision);
         assert.equal(saved.authorization_request.expires_at,params.expires_at,"feedback expiry intent precedes grant issue");
         const grant=grants.get(params.request_id) ?? {reference:{provider:"fixture-grant-provider",id:params.request_id},expires_at:params.expires_at};grants.set(params.request_id,grant);return grant;
@@ -190,6 +247,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
       case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
       case "host.storage.get": return { value: storage.get(key) ?? null };
       case "host.storage.compare-exchange": {
+        assert(!params.key.startsWith("personal.records.v1."), "all new memory writes belong to the host journal");
         if (failReactionWrite && params.key.includes(".reaction.")) throw new Error("fixture storage unavailable");
         const current = storage.get(key) ?? null;
         if (current !== params.expected) return { swapped: false, value: current };
@@ -203,7 +261,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
     }
   };
   async function start(pluginID = "personal") {
-    const child = spawn(process.execPath, [join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
+    const child = spawn(process.execPath, [pluginID === "personal" ? executable : join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
     let seq = 0, stderr = ""; const pending = new Map(), background = [];
     child.stderr.on("data", buffer => { stderr += buffer; });
     const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };

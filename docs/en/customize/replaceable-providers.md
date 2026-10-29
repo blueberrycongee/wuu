@@ -182,6 +182,48 @@ grant with an absent/unknown delivery receipt cannot be automatically replayed.
 renewal; transport errors and malformed responses remain distinct unknown
 outcomes, not permission to reissue or borrow an owner.
 
+`validate` is a point-in-time verdict, not a publication transaction. A durable
+publication that must serialize with revocation uses `acquire-commit` and
+`release-commit`. Persist `{ id, operation_digest, authorization }` before
+acquisition; `authorization` is the exact validate request. Acquisition requires
+host-attested `execution/commit/acquire` admission (`execution-grant` authority
+for a restored non-owner grant), with the same authenticated principal as the
+selected grant. The provider atomically pins the leaf and every ancestor and
+returns an exact-bound guard. Unknown or malformed acquisition admits no effect.
+
+The bundled provider stores newly issued grants in a fence-aware namespace with
+version-distinct opaque references. Legacy grants remain readable and revocable
+for ordinary work; they are not migrated, deleted or silently renewed. Publication
+fencing rejects any legacy leaf **or ancestor** and requires explicit live-owner
+renewal with a new issuance nonce. The shared issuance index preserves old nonce
+idempotency; an older writer cannot find or revoke a new-format grant. Deriving
+from a legacy parent does not upgrade its revocation semantics.
+
+The guard's expiry is the admission cutoff, not a timer that releases the fence.
+The one admitted operation may reach its terminal receipt after expiry or process
+restart. A revocation that encounters a pin returns `execution_commit_active`,
+not success; retry revocation after terminal release. A successful revoke prevents
+new acquisition. Reusing an active ID requires identical caller, operation and
+authorization; a released ID can never acquire again.
+
+Release uses the captured provider generation's cleanup route, including after
+caller cancellation. `committed` requires the SHA-256 digest of the authoritative
+durable receipt; `not-committed` requires establishing that no write can still
+commit. Unknown publication retains the fence. Release-before-acquire with
+`not-committed` persists a tombstone against delayed acquisition. These methods
+never retry the publication or extend its resource grant. They do not replace
+independent source, task or resource-policy fences.
+
+Recovery first resolves the original persisted intent and receipt. The same
+stable service caller can `inspect-commit` and release after expiry without
+restoring an old owner principal. If the worker or its local intent is gone,
+owner-attested `list-commits`, `inspect-commit` and `reconcile-commit` use actions
+`execution/commits/list`, `execution/commits/inspect` and
+`execution/commits/reconcile`. Reconciliation binds the full original request,
+expected caller, terminal receipt and reason; the host must stop the original
+writer and establish disposition first. Listing an unresolved intent does not
+authorize dispatch, and an unknown receipt cannot be reconciled away.
+
 `executionGrants(host).callService({ reference, service, method, params })`
 revalidates an exact-run grant for `service/<service>/<method>` and routes through
 that consumer's declared selected service. Downstream callbacks inherit the
@@ -290,9 +332,35 @@ read/export/checkpoint operations; `migration` permits explicit transfer;
 None permits arbitrary plugin callers to bypass ownership or create an owner.
 
 
+## Replace web search
+
+When the native `agent.tools@1` registry is selected, a trusted plugin tool can replace `web_search` without replacing the other tools. Install and enable the plugin first, then select its actual manifest ID and declared tool ID in trusted user agent configuration. Project settings cannot select replacements:
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+The [synthetic search example](../../../examples/plugins/synthetic-web-search.ts) is a runnable authoring example; it returns a fixed demonstration result, not real search data. Install it with `wuu plugin dev` and replace `example-search` above with the plugin ID returned by Wuu. Only `web_search` is supported. The replacement must declare exactly the native input schema, freeform and direct-only settings; orchestration tools cannot be selected. The plugin's description is exposed under `web_search`, while its namespaced tool name is hidden. Missing, disabled or incompatible targets fail without falling back. Removing the binding is an explicit choice to use the native implementation in the next prepared generation.
+
+A successful result must be a single JSON object in the text or structured result: `action` is `web_search`, `query` matches the request, `evidence` has an `id`, `kind: "search"`, `source`, `source_tier`, RFC 3339 `retrieved_at`, and `version_matched_to_repo`, and it contains either `results` (at most 10 items with URLs) or a nonempty `error`. If both text and structured content are present, they must agree. Evidence IDs and source tiers contain only letters, digits, underscores or hyphens. For `version_matched_to_repo`, use the trimmed, whitespace-normalized `version_hint` when present; otherwise use `package_context` as `ecosystem name@version` using the available fields. Truncate to 160 Unicode characters and append `...` if longer; use `unknown` if neither supplies a value. The host rejects incompatible results and records valid evidence for the existing evidence context.
+
+A session with an explicit tool allowlist must allow both `web_search` and the plugin tool’s namespaced public name. Run `wuu plugin describe --workdir <workspace>` and inspect `tools` to find the namespaced name registered for the plugin tool; the plugin ID and declared tool ID contribute to that name, which also contains a collision-dependent suffix. The command inspects a new CLI generation, so verify it matches the session’s selected generation before relying on it.
+
+Scheduling uses the more restrictive native and plugin activity declarations. Both the original and plugin tool authorization apply; disabling either name prevents execution. A plugin runs as a trusted extension using its own callback identity. Native file and process safeguards do not automatically constrain arbitrary plugin-process code: use authenticated host gateways for managed effects and implement appropriate checks. Admitted work retains its generation; explicit removal or disable revokes the target. A frozen tool surface retains its definitions until the turn releases it, but execution checks target availability each time.
+
+Run `node scripts/tool-replacement-e2e.mjs` for a packed-SDK synthetic plugin, a controlled model, direct and code-mode execution, worker and side-conversation paths, authorization and generation replacement. This does not test an external search service, real model quality or rendered UI.
+
 ## Session, tool and agent policy providers
 
 `session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
+
+`ReadActiveHistoryQuery` is an additive `session.domain@1` operation using the existing `HistoryReadQuery` and `HistoryPage` types. It reads a bounded sequence range while excluding currently retracted records, including when a caller supplies an older snapshot or cursor. Desktop attention uses this operation to revalidate its exact admitted input and any result target before delivery. Unsupported providers fail closed; the host does not substitute physical history or its cached projection. The native provider reads the indexed range and current retraction spans without loading the full transcript.
 
 Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispatch their typed argument/value arrays. `sessionDomain(host).call(method, args)` is the bound consumer. Preserve the exported record field names, including Go-style casing where specified. Journal handles belong to the authenticated caller and provider generation. `session_outcome_unknown` requires durable inspection before replay; it is not proof that a mutation failed. OS locks and execution identity remain host mechanisms, while the provider owns atomic membership and domain decisions.
 
@@ -715,10 +783,14 @@ There is no second host-side policy registry.
 | `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
 | `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
 
-A policy cannot replay visible partial output, accepted tool effects, an unknown
-submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
-potentially billable outcomes; the selected policy may permit a bounded model
-reattempt, but cannot replay accepted or uncertain tool effects.
+A loop retry cannot replay partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. For `transport_retry`, the host may
+set `partial_output_resettable` when the consumer can discard the failed attempt
+and a replay guard is installed. A recovery decision still passes that guard,
+which protects completed checkpoints and accepted or uncertain tool effects.
+Without this capability, partial output blocks transport recovery. Transport
+recovery retains physical submission receipts, including unknown but potentially
+billable outcomes; the selected policy may permit a bounded model reattempt.
 Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
 receipts survive failed attempts. Credential refresh, transport changes and
 retries still require their existing write-ahead receipts and adapter support.

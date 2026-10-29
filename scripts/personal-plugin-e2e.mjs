@@ -28,6 +28,80 @@ let UserRoutineScheduler;
 class Host {
   bindings = new Map(); storage = new Map(); sessions = new Map(); turns = new Map(); histories = new Map(); calls = []; intercept;
   userInputs = new Map(); reviews = new Map(); grants = new Map();
+  memoryRecords = new Map(); memoryOperations = new Map(); memoryExecutions = new Map();
+  memoryActor(sessionID, executionID, operation) {
+    const session = this.sessions.get(sessionID);
+    if (!session || session.product_domain !== 'personal' || session.user_space_id !== 'local') throw new Error('memory session is outside Personal scope');
+    const records = [...this.storage.values()].map(raw => JSON.parse(raw));
+    const agent = records.find(record => record.agent_id === session.agent_id && record.main_session_id && record.status === 'active');
+    if (!agent) throw new Error('memory requires active bound Personal identity');
+    const main = agent.main_session_id === sessionID;
+    if (main) return { session, agent, main };
+    const task = records.find(record => record.execution?.session_id === sessionID);
+    const admitted = this.memoryExecutions.get(executionID);
+    const grant = this.grants.get(admitted?.reference?.id);
+    if (!task || !['running', 'queued', 'dispatching'].includes(task.state) || task.execution.finished_state || !admitted || !grant || Date.parse(grant.expires_at) <= Date.now()
+      || admitted.task_id !== task.task_id || admitted.revision !== task.requirements_revision || admitted.run_id !== task.execution.request_id
+      || JSON.stringify(admitted.reference) !== JSON.stringify(task.execution.authorization?.reference)
+      || grant.scope.kind !== 'exact-run' || grant.scope.session_id !== sessionID || grant.scope.task_id !== task.task_id) throw new Error('memory requires the exact active admitted worker run');
+    const issued = this.calls.find(call => call.service === 'host.execution.authorization' && call.params.operation === 'issue' && `grant-${call.params.request_id}` === admitted.reference.id);
+    assert(issued?.params.requested_actions.includes(`personal/${operation}`), 'memory access requires its exact admitted action');
+    return { session, agent, main, task, admitted };
+  }
+  memorySource(actor, ref) {
+    const match = /^personal-message:([^:]+):([1-9][0-9]*)$/.exec(ref);
+    if (!match) throw new Error('unsupported canonical memory source');
+    const sessionID = decodeURIComponent(match[1]), seq = Number(match[2]);
+    if (!Number.isSafeInteger(seq) || `personal-message:${encodeURIComponent(sessionID)}:${seq}` !== ref) throw new Error('invalid canonical memory source');
+    if (sessionID !== actor.agent.main_session_id) throw new Error('memory source outside its bound Personal conversation');
+    if (!actor.main && (actor.task.source.message_binding !== 'host_turn' || actor.task.source.session_id !== sessionID || actor.task.source.message_seq !== seq)) throw new Error('memory source is not the exact host-bound task source');
+    const session = this.sessions.get(sessionID);
+    if (session?.agent_id !== actor.agent.agent_id || session.product_domain !== 'personal' || session.user_space_id !== 'local') throw new Error('memory source outside its bound Personal conversation');
+    const source = this.histories.get(sessionID)?.find(record => record.seq === seq);
+    if (!source || source.role !== 'user' || source.origin !== 'user' || source.hidden || source.read_only || source.truncated || !source.content?.trim() || Buffer.byteLength(source.content) > 64000 || !Number.isFinite(Date.parse(source.at)) || Date.parse(source.at) > Date.now()) throw new Error('memory evidence must be an exact active original user message with persisted timestamp');
+    return { ref, occurred_at: new Date(source.at).toISOString(), ...(actor.main ? { content: source.content } : {}) };
+  }
+  memoryCall(frame, params) {
+    const { operation, session_id, input } = params;
+    const actor = this.memoryActor(session_id, frame.params.execution_id, operation);
+    const identity = { session_id, ...(actor.admitted ? { task_id: actor.admitted.task_id, run_id: actor.admitted.run_id, revision: actor.admitted.revision } : {}) };
+    if (operation === 'memory.read') return { records: Object.fromEntries(this.memoryRecords) };
+    if (operation === 'memory.source') return this.memorySource(actor, input.ref);
+    let saved = this.memoryOperations.get(input.id);
+    if (saved) assert.deepEqual(saved.identity, identity, 'memory intent belongs to its original session and exact run');
+    if (saved?.redacted) throw new Error('forgotten_record: publication receipt was redacted');
+    if (saved?.state === 'committed' && this.memoryRecords.get(saved.write.key) !== saved.write.value) throw new Error('revision_conflict: memory receipt was superseded');
+    if (operation === 'memory.operation') return saved ? { write: structuredClone(saved.write) } : null;
+    assert.equal(operation, 'memory.commit');
+    if (saved) {
+      assert.deepEqual(saved.write, input, 'retries must preserve first prepared memory bytes');
+      if (saved.state !== 'committed') throw new Error('memory operation was reconciled as not committed');
+      return { swapped: true, value: saved.write.value };
+    }
+    saved = { identity, write: structuredClone(input), state: 'pending' };
+    this.memoryOperations.set(input.id, saved);
+    try {
+      const current = this.memoryRecords.get(input.key) ?? this.storage.get(`user:personal.records.v1.${input.key}`) ?? null;
+      if (current !== input.expected) throw new Error('memory revision_conflict: reread current record');
+      const next = JSON.parse(input.value), previous = current && JSON.parse(current);
+      assert.match(input.key, /^mem_[a-f0-9]{64}$/); assert.equal(next.id, input.key); assert.equal(next.product_domain, 'personal'); assert.equal(next.user_space_id, 'local');
+      assert.equal(next.revision, (previous?.revision ?? 0) + 1); assert.notEqual(previous?.status, 'forgotten');
+      if (!actor.main) { assert(next.sources?.length && next.sources.every(source => source.kind === 'message' && source.ref.startsWith('personal-message:')), 'worker publication requires canonical task source'); assert.equal(next.status, 'candidate'); assert.notEqual(next.tier, 'core'); if (previous) { assert.equal(previous.status, 'candidate'); assert.equal(previous.contributor_agent_id, actor.agent.agent_id); } }
+      if (next.status !== 'forgotten') {
+        assert.equal(next.updated_by_agent_id, actor.agent.agent_id); assert.equal(next.contributions.at(-1).executor_session_id, session_id);
+        for (const source of next.sources) if (source.ref.startsWith('personal-message:')) { assert.equal(source.kind, 'message'); assert.equal(source.occurred_at, this.memorySource(actor, source.ref).occurred_at); }
+      }
+      this.memoryRecords.set(input.key, input.value); saved.state = 'committed';
+      if (next.status === 'forgotten') {
+        saved.write.expected = null; saved.redacted = true;
+        for (const prior of this.memoryOperations.values()) {
+          if (prior !== saved && prior.write.key === input.key) { prior.write.expected = null; prior.write.value = ''; prior.redacted = true; if (prior.state === 'pending') prior.state = 'not-committed'; }
+        }
+      }
+    } catch (error) { saved.state = 'not-committed'; throw error; }
+    if (this.loseMemoryCommitReply) { this.loseMemoryCommitReply = false; throw new Error('memory commit reply lost'); }
+    return { swapped: true, value: input.value };
+  }
   async call(frame) {
     assert.equal(frame.method, 'host.service.call');
     const { service, method, params: p = {} } = frame.params;
@@ -35,7 +109,7 @@ class Host {
     if (this.intercept) { const result = await this.intercept(service, p); if (result !== undefined) return result; }
     const key = `${p.scope}:${p.key}`;
     switch (service) {
-      case 'host.personal': assert.equal(method, 'call'); if (p.operation === 'review.execution.status') { const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution?.session_id===p.session_id); if(task?.execution.authorization) assert.deepEqual(p.execution_authorization,task.execution.authorization.reference,'receipt recovery carries its exact execution grant'); return { ok: true, value: { requests: this.reviews?.get(p.session_id) ?? [] } }; } assert.equal(p.operation, 'owner.check'); return { ok: true, value: {} };
+      case 'host.personal': assert.equal(method, 'call'); if (p.operation.startsWith('memory.')) return { ok: true, value: this.memoryCall(frame, p) }; if (p.operation === 'review.execution.status') { const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution?.session_id===p.session_id); if(task?.execution.authorization) assert.deepEqual(p.execution_authorization,task.execution.authorization.reference,'receipt recovery carries its exact execution grant'); return { ok: true, value: { requests: this.reviews?.get(p.session_id) ?? [] } }; } assert.equal(p.operation, 'owner.check'); return { ok: true, value: {} };
       case 'host.execution.authorization': {
         assert.equal(method,'call');
         if(p.operation==='describe') return {default_lifetime_seconds:86400,max_lifetime_seconds:86400,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run']};
@@ -81,6 +155,7 @@ class Host {
       case 'host.storage.get': return { value: this.storage.get(key) ?? null };
       case 'host.storage.keys': return { keys: [...this.storage.keys()].filter(k => k.startsWith(`${p.scope}:`)).map(k => k.slice(p.scope.length + 1)) };
       case 'host.storage.compare-exchange': {
+        assert(!p.key.startsWith('personal.records.v1.'), 'new memory writes must not mutate legacy plugin storage');
         const value = this.storage.get(key) ?? null;
         if (value !== p.expected) return { swapped: false, value };
         if (p.value === null) this.storage.delete(key); else this.storage.set(key, p.value);
@@ -94,7 +169,7 @@ class Host {
       case 'host.session.send': {
         if(p.cause==='personal.reminder')assert.equal(p.disable_tools,true,'a reminder is bounded delivery, not permission to run tools');
         if(p.disable_tools && p.execution_authorization){const issue=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert(issue.requested_actions.includes('user/session/context'),'disabled-tools delivery still needs scoped pre-step context');assert(issue.requested_actions.includes('user/session/history.read'),'delivery hook reads remain explicitly scoped');}
-        if(p.cause==='personal.reaction.feedback'){assert(p.execution_authorization,'bounded feedback recovery needs its own exact grant');const intent=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert.equal(intent.kind,'exact-run');assert(intent.requested_actions.every(a=>['user/session/send','user/session/inspect','user/session/context','user/session/history.read'].includes(a)));assert.equal(p.disable_tools,true);}
+        if(p.cause==='personal.reaction.feedback'){assert(p.execution_authorization,'bounded feedback recovery needs its own exact grant');const intent=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert.equal(intent.kind,'exact-run');assert(intent.requested_actions.every(a=>['personal/memory.read','user/session/send','user/session/inspect','user/session/context','user/session/history.read'].includes(a)));assert.equal(p.disable_tools,true);}
         if(['personal.review.outcome','personal.connector.outcome'].includes(p.cause)){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
         assert(this.sessions.has(p.session_id));
         if (p.user_input_request_id) {
@@ -171,11 +246,20 @@ class Runtime {
   }
   call(method, params, timeout = 15000) {
     const id = `r-${++this.seq}`;
+    const memorySession = method === 'tool.execute' && params.tool_id?.startsWith('personal_memory_') ? params.session_id
+      : method === 'service.invoke' && (params.service === 'memory.records' || params.method === 'agents.memory-evidence') ? params.params?.session_id
+      : method === 'capability.invoke' && params.capability === 'agent.pre_step' ? params.input?.session_id : undefined;
+    // This is host-side invocation admission, not a grant supplied by the plugin.
+    const task = memorySession && [...this.host.storage.values()].map(raw => JSON.parse(raw)).find(record => record.execution?.session_id === memorySession);
+    if (task) {
+      params = { ...params, execution_id: params.execution_id ?? `memory-${id}` };
+      this.host.memoryExecutions.set(params.execution_id, { task_id: task.task_id, revision: task.requirements_revision, run_id: task.execution.request_id, reference: structuredClone(task.execution.authorization?.reference) });
+    }
     return new Promise((resolve, reject) => {
       const timer = timeout ? setTimeout(() => reject(new Error(`timeout ${method}: ${this.stderr}`)), timeout) : undefined;
       this.pending.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
       this.send({ id, method, params });
-    });
+    }).finally(() => { if (task) this.host.memoryExecutions.delete(params.execution_id); });
   }
   client(method, input = {}) {
     if (method === 'agents.send') this.host.userInputs.set(input.request_id, { prompt: input.prompt, attachments: input.attachments, relation: input.relation, execution_id: `x-${this.seq}` });
@@ -725,15 +809,30 @@ try {
     const mainStep = await p.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id: agent.main_session_id, source_message: { session_id: agent.main_session_id, seq: 1 }, messages: [] } });
     const exposed = mainStep.output.append_messages.flatMap(message => message.content.match(/personal-message:[^\s]+:[1-9][0-9]*/g) ?? []);
     assert(exposed.includes(ref), 'ordinary main input must expose usable host-bound source identity without a reply relation');
-    const candidate = (await p.tool('personal_memory_create', { key: 'integration-candidate', expected_revision: 0, content: 'May prefer morning meetings', evidence: 'inferred', sources: [{ ...sources[0], ref }] }, worker)).record;
+    const candidateInput = { key: 'integration-candidate', expected_revision: 0, content: 'May prefer morning meetings', evidence: 'inferred', sources: [{ ...sources[0], ref }] };
+    h.loseMemoryCommitReply = true;
+    await assert.rejects(p.tool('personal_memory_create', candidateInput, worker), /reply lost/);
+    const candidate = (await p.tool('personal_memory_create', candidateInput, worker)).record;
     assert.equal(candidate.status, 'candidate'); assert.equal(candidate.sources[0].occurred_at, sourceTime);
+    assert.equal(h.memoryRecords.size, 2, 'worker callback retry replays one committed publication');
+    assert.equal([...h.memoryOperations.values()].filter(operation => operation.identity.session_id === worker).length, 1);
+    await assert.rejects(p.tool('personal_memory_create', { ...candidateInput, key: 'forged-worker-source', sources: [{ ...sources[0], ref: 'forged-unbound-source' }] }, worker), /canonical task source/);
     const reviewed = await p.tool('personal_memory_evidence', { id: candidate.id }, agent.main_session_id);
     assert.equal(reviewed.sources[0].content, 'I usually schedule meetings before lunch');
     const admitted = (await p.tool('personal_memory_accept', { id: candidate.id, expected_revision: reviewed.record.revision }, agent.main_session_id)).record;
     assert.equal(admitted.status, 'active'); assert.equal(admitted.evidence, 'inferred');
+    await assert.rejects(p.tool('personal_memory_create', candidateInput, worker), /revision_conflict/, 'an accepted candidate supersedes its original creation receipt');
     assert.deepEqual(admitted.sources, candidate.sources); assert.equal(admitted.source_at, sourceTime);
     const resolve = (sourceRef, session_id = agent.main_session_id) => p.call('service.invoke', { service: 'personal.agents', method: 'agents.memory-evidence', caller: 'fixture', params: { session_id, ref: sourceRef } });
     assert.equal((await resolve(ref, worker)).content, undefined, 'workers receive provenance metadata, not source text');
+    const grant = h.grants.get(task.execution.authorization.reference.id), expiresAt = grant.expires_at;
+    grant.expires_at = '2000-01-01T00:00:00.000Z';
+    await assert.rejects(resolve(ref, worker), /exact active admitted worker run/);
+    grant.expires_at = expiresAt;
+    const storedTask = [...h.storage.entries()].find(([, raw]) => JSON.parse(raw).task_id === task.task_id);
+    h.storage.set(storedTask[0], JSON.stringify({ ...JSON.parse(storedTask[1]), state: 'stopped' }));
+    await assert.rejects(resolve(ref, worker), /exact active admitted worker run/);
+    h.storage.set(storedTask[0], storedTask[1]);
     for (const [i, override] of [{ role: 'assistant' }, { origin: 'plugin' }, { hidden: true }, { read_only: true }, { truncated: true }, { at: 'not-a-date' }, { at: new Date(Date.now() + 3600000).toISOString() }].entries()) {
       const seq = i + 2;
       h.histories.get(agent.main_session_id).push({ seq, role: 'user', origin: 'user', content: 'Not valid evidence', at: sourceTime, ...override });
@@ -746,7 +845,7 @@ try {
     h.sessions.set('other-identity', { ...mainContext, session_id: 'other-identity', agent_id: 'another-agent' });
     for (const session of ['unowned-source', 'foreign-source', 'other-identity']) await assert.rejects(resolve(`personal-message:${session}:1`), /owned|outside/);
     h.histories.set(worker, [{ seq: 1, role: 'user', origin: 'user', content: 'Original task reply', at: sourceTime }]);
-    assert.equal((await resolve(`personal-message:${encodeURIComponent(worker)}:1`)).content, 'Original task reply');
+    await assert.rejects(resolve(`personal-message:${encodeURIComponent(worker)}:1`), /bound|outside/);
 
     await assert.rejects(p.tool('personal_memory_forget', { id: accepted.id, expected_revision: 1 }, worker), /main/);
     const forgotten = await p.client('memory.forget', { agent_id: agent.agent_id, id: accepted.id, expected_revision: 1 });
@@ -1127,8 +1226,21 @@ try {
   });
   await scenario('memory correction uses the bound main session and ignores forged client routing fields', async () => {
     const original = (await runtime.tool('personal_memory_create', { key: 'correction-routing', expected_revision: 0, content: 'Original preference', evidence: 'explicit', sources: [{ kind: 'message', ref: 'correction-source', occurred_at: new Date(Date.now() - 60000).toISOString() }] }, main.main_session_id)).record;
-    const corrected = (await runtime.client('memory.correct', { agent_id: main.agent_id, request_id: 'edit-one', id: original.id, expected_revision: 1, content: 'Updated preference' })).record;
+    const correction = { agent_id: main.agent_id, request_id: 'edit-one', id: original.id, expected_revision: 1, content: 'Updated preference' };
+    host.loseMemoryCommitReply = true;
+    await assert.rejects(runtime.client('memory.correct', correction), /reply lost/);
+    const persisted = host.memoryRecords.get(original.id), operationCount = host.memoryOperations.size;
+    const committed = JSON.parse(persisted);
+    // The real desktop ingress generates a new user-edit timestamp each call.
+    // Cross that exact clock boundary, rather than supplying a fixed source in a stub.
+    while (Date.now() <= Date.parse(committed.sources[0].occurred_at)) await new Promise(setImmediate);
+    const corrected = (await runtime.client('memory.correct', correction)).record;
+    assert.equal(host.memoryRecords.get(original.id), persisted, 'desktop retry must retain the first committed bytes and generated timestamp');
+    assert.equal(host.memoryOperations.size, operationCount, 'same owner request must not prepare a second memory intent');
+    assert.equal(corrected.sources[0].occurred_at, committed.sources[0].occurred_at);
+    assert.equal(corrected.revision, 2);
     assert.equal(corrected.updated_by_agent_id, main.agent_id); assert.equal(corrected.evidence, 'explicit'); assert.equal(corrected.sources[0].kind, 'user_edit');
+    await assert.rejects(runtime.client('memory.correct', { ...correction, content: 'Changed stale intent' }), /revision_conflict/);
     const routed = (await runtime.client('memory.correct', { agent_id: main.agent_id, session_id: 'forged-main', request_id: 'edit-two', id: original.id, expected_revision: 2, content: 'Bound correction' })).record;
     assert.equal(routed.updated_by_agent_id, main.agent_id);
     assert.equal((await runtime.client('memory.read', { agent_id: main.agent_id, id: original.id })).record.revision, 3);
@@ -1302,7 +1414,7 @@ try {
     let paused=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(paused.authorization_state,'needs_authorization');assert.equal(paused.state,'completed');assert.deepEqual(paused.result,completed.result);
     await assert.rejects(r.call('service.invoke',{service:'personal.agents',method:'tasks.reconcile',caller:'forged-owner',params:{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision}}),/Owner|owner|live/);
     const retried=(await r.client('tasks.reconcile',{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision})).task;assert.equal(retried.state,'completed');assert.deepEqual(retried.result,completed.result);assert.equal(retried.requirements_revision,completed.requirements_revision);assert.equal(retried.authorization.reference.id,completed.authorization.reference.id);assert.equal(retried.delivery.request_id,completed.delivery.request_id);
-    const issued=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.run_id===retried.delivery.request_id).params;assert.notEqual(issued.request_id,issued.run_id);assert.equal(issued.parent,undefined);assert.deepEqual(issued.requested_actions,['user/session/send','user/session/inspect','user/session/cancel','user/session/context','user/session/history.read']);assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.cause==='personal.task').length,1);
+    const issued=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.run_id===retried.delivery.request_id).params;assert.notEqual(issued.request_id,issued.run_id);assert.equal(issued.parent,undefined);assert.deepEqual(issued.requested_actions,['personal/memory.read','user/session/send','user/session/inspect','user/session/cancel','user/session/context','user/session/history.read']);assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.cause==='personal.task').length,1);
     const missing=JSON.parse(h.storage.get(entry[0]));missing.delivery.authorization.expires_at='2000-01-01T00:00:00Z';h.storage.set(entry[0],JSON.stringify(missing));h.turns.delete(missing.delivery.request_id);
     paused=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(paused.authorization_state,'needs_authorization');const before=h.calls.filter(c=>c.service==='host.session.send').length;
     await assert.rejects(r.client('tasks.reconcile',{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision}),/unconfirmed|unknown/);assert.equal(h.calls.filter(c=>c.service==='host.session.send').length,before);assert.equal((await r.client('tasks.get',{task_id:task.task_id})).task.delivery.request_id,missing.delivery.request_id);await r.close();
@@ -1738,9 +1850,14 @@ try {
   });
   await scenario('attention decisions verify main-session ownership and current notification preferences fail closed', async () => {
     assert(runtime.definition.capabilities.some(capability => capability.id === 'session.attention' && capability.kind === 'decision' && capability.version === 1));
-    const input = { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: 'persisted-main-turn', message_seq: 2, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' };
+    const input = { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: 'persisted-main-turn', request_id: 'personal-chat-attention-test', message_seq: 2, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' };
     host.turns.set('personal-chat-attention-test', { request_id: 'personal-chat-attention-test', session_id: main.main_session_id, turn_id: input.turn_id, state: 'completed', final_output: 'Persisted direct response' });
-    const attention = async changes => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { ...input, ...changes } })).output;
+    const attention = async changes => {
+      const start = host.calls.length;
+      const output = (await runtime.call('capability.invoke', { capability: 'session.attention', input: { ...input, ...changes } })).output;
+      assert(!host.calls.slice(start).some(call => ['host.session.context', 'host.session.inspect'].includes(call.service)), 'background attention must not borrow general session read authority');
+      return output;
+    };
     assert.deepEqual(await attention({}), { allowed: false }, 'current quiet interval applies to all main replies');
     let settings = (await runtime.client('settings.get')).settings;
     await runtime.client('settings.update', { expected_revision: settings.revision, notifications: false, quiet_hours: { ...settings.quiet_hours, enabled: false } });
@@ -1748,7 +1865,7 @@ try {
     settings = (await runtime.client('settings.get')).settings;
     await runtime.client('settings.update', { expected_revision: settings.revision, notifications: true, quiet_hours: { ...settings.quiet_hours, enabled: false } });
     assert.deepEqual(await attention({}), { allowed: true, batch_window_seconds: 0 }); assert.deepEqual(await attention({ outcome: 'failed' }), { allowed: true, batch_window_seconds: 0 });
-    for (const mismatch of [{ product_domain: 'coding' }, { user_space_id: 'another-space' }, { agent_id: specialist.agent_id }, { session_id: 'unknown-session' }, { outcome: 'interrupted' }]) assert.deepEqual(await attention(mismatch), { allowed: false });
+    for (const mismatch of [{ product_domain: 'coding' }, { user_space_id: 'another-space' }, { agent_id: specialist.agent_id }, { session_id: 'unknown-session' }, { outcome: 'interrupted' }, { request_id: undefined }, { request_id: 'unrecognized-request' }]) assert.deepEqual(await attention(mismatch), { allowed: false });
     const internal = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'attention-internal', title: 'Internal attention denied', goal: 'Remain a background executor' })).task;
     assert.deepEqual(await attention({ session_id: internal.execution.session_id }), { allowed: false });
     host.intercept = service => { if (service === 'host.storage.get') throw new Error('preference storage unavailable'); };
@@ -1758,7 +1875,7 @@ try {
     await assert.rejects(runtime.client('session.attention', input), /unknown Personal client method/);
   });
   await scenario('late result attention is denied after Routine pause or superseded requirements even if cancellation fails', async () => {
-    const attention = async turnID => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: turnID, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
+    const attention = async turnID => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: turnID, request_id: [...host.turns.values()].find(turn => turn.turn_id === turnID)?.request_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
     for (const policy of ['routine-pause', 'superseded']) {
       let routine;
       let task;
@@ -1793,7 +1910,7 @@ try {
     const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: 'old-reminder-event', binding_revision: binding.revision };
     await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
     const receipt = [...host.turns.values()].filter(turn => turn.request_id.startsWith('personal-reminder-')).at(-1);
-    const attention = async () => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: receipt.turn_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
+    const attention = async () => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: receipt.turn_id, request_id: receipt.request_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
     assert.equal((await attention()).allowed, true);
     routine = (await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id);
     routine = (await runtime.client('routines.pause', { routine_id: routine.routine_id, expected_revision: routine.revision })).routine;
@@ -1806,7 +1923,7 @@ try {
     for (const value of [-1, 901, 1.5, '60']) await assert.rejects(update(value), /batch|integer|900/i);
     settings = (await update(60)).settings; assert.equal(settings.notification_batch_seconds, 60);
     settings = (await runtime.client('settings.update', { expected_revision: settings.revision, notifications: true, quiet_hours: settings.quiet_hours })).settings; assert.equal(settings.notification_batch_seconds, 60, 'omission preserves saved policy');
-    const input = { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: 'persisted-main-turn', outcome: 'completed', user_space_id: 'local', product_domain: 'personal' };
+    const input = { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: 'persisted-main-turn', request_id: 'personal-chat-attention-test', outcome: 'completed', user_space_id: 'local', product_domain: 'personal' };
     assert.deepEqual((await runtime.call('capability.invoke', { capability: 'session.attention', input })).output, { allowed: true, batch_window_seconds: 60 });
     settings = (await update(0)).settings; assert.equal(settings.notification_batch_seconds, 0);
     assert.deepEqual((await runtime.call('capability.invoke', { capability: 'session.attention', input })).output, { allowed: true, batch_window_seconds: 0 });
@@ -1839,7 +1956,7 @@ try {
     task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
     const receipt = host.turns.get(task.delivery.request_id); receipt.state = 'completed'; receipt.final_output = 'The meeting changed';
     await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: main.main_session_id, request_id: receipt.request_id, state: 'completed', final_output: receipt.final_output } });
-    const attention = async () => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: receipt.turn_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
+    const attention = async () => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: receipt.turn_id, request_id: receipt.request_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
     assert.equal((await attention()).allowed, true, 'recording delivery must not make its own attention look like a duplicate result');
     let releaseStatus, enteredStatus;
     const heldStatus = new Promise(resolve => { releaseStatus = resolve; });

@@ -36,6 +36,9 @@ test("transport policy retains submission evidence without inventing a zero-cost
  const input={phase:"transport_retry",attempt:1,step_index:0,failure:{message:"rejected",origin:"provider",category:"server",http_status:503,context_overflow:false,recovery:{attempt_count:1,retry_count:0,max_attempts:3,submission_count:1,stop_reason:""}}} as const;
  assert.equal((await policy(input)).action,"recover");
  assert.equal((await policy({...input,failure:{...input.failure,http_status:0}})).action,"recover");
+ await assert.rejects(policy({...input,partial_output:true}),/partial output/);
+ assert.equal((await policy({...input,partial_output:true,partial_output_resettable:true})).action,"recover");
+ await assert.rejects(policy({...input,partial_output:true,partial_output_resettable:true,tool_work_started:true}),/effects/);
  await assert.rejects(policy({...input,tool_work_started:true}),/effects/);
 });
 

@@ -7,7 +7,7 @@ import "embed"
 
 // Sources contains the SDK and its generated public theme contract.
 //
-//go:embed src/client.ts src/execution-authorization.ts
+//go:embed src/client.ts src/execution-authorization.ts src/personal-memory.ts
 //go:embed src/session-transport.ts src/desktop-session-transport.ts src/session-sharing.ts src/identity.ts src/resource-policy.ts
 //go:embed src/model-capacity.ts src/experiment.ts src/agent-policy.ts src/ui-contributions.ts src/engine-admin.ts src/engine.ts
 //go:embed src/execution-backend.ts

@@ -88,7 +88,7 @@ func ValidatePolicyDecision(in pluginprotocol.AgentPolicyInput, out pluginprotoc
 	if out.Action == "retry" && (in.Failure == nil || in.Failure.Recovery == nil || in.Failure.Recovery.SubmissionCount != 0) {
 		return fmt.Errorf("policy cannot retry an unknown or submitted model operation")
 	}
-	if (in.Phase == "retry" || in.Phase == "transport_retry") && out.Action != "fail" && (in.PartialOutput || in.ToolWorkStarted) {
+	if (in.Phase == "retry" || in.Phase == "transport_retry") && out.Action != "fail" && (in.ToolWorkStarted || (in.PartialOutput && (in.Phase != "transport_retry" || !in.PartialOutputResettable))) {
 		return fmt.Errorf("policy cannot replay partial output or accepted tool effects")
 	}
 	if in.Phase == "transport_retry" && out.Action == "recover" {
@@ -115,7 +115,7 @@ func (c *PolicyClient) StreamRecoveryPlanner() providers.StreamRecoveryPlanner {
 		if errors.As(in.Failure.Cause, &hinted) {
 			hint = string(hinted.InferenceRecoveryAction())
 		}
-		input := pluginprotocol.AgentPolicyInput{Phase: "transport_retry", ExecutionID: ExecutionContextFromContext(ctx).ExecutionID, Attempt: in.Attempt, MaxAttempts: in.MaxAttempts, InitialDelayMS: in.Config.InitialDelay.Milliseconds(), MaxDelayMS: in.Config.MaxDelay.Milliseconds(), RecoveryHint: hint, Failure: failure, PartialOutput: in.ForwardedEvents > 0, ToolWorkStarted: len(in.FinalizedToolCalls) > 0}
+		input := pluginprotocol.AgentPolicyInput{Phase: "transport_retry", ExecutionID: ExecutionContextFromContext(ctx).ExecutionID, Attempt: in.Attempt, MaxAttempts: in.MaxAttempts, InitialDelayMS: in.Config.InitialDelay.Milliseconds(), MaxDelayMS: in.Config.MaxDelay.Milliseconds(), RecoveryHint: hint, Failure: failure, PartialOutput: in.ForwardedEvents > 0, PartialOutputResettable: in.PartialOutputResettable, ToolWorkStarted: len(in.FinalizedToolCalls) > 0}
 		decision, err := c.Evaluate(ctx, input)
 		if err != nil {
 			return providers.RecoveryPlan{}, 0, err

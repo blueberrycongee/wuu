@@ -10,12 +10,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const maxPendingAttentionAgents = 128
 const maxAttentionBatchWindow = 15 * time.Minute
 
 type userAttentionJob struct {
+	sourceSeq  int
 	owner      string
 	input      pluginhost.SessionAttentionInput
 	location   UserLocation
@@ -26,6 +28,7 @@ type userAttentionJob struct {
 // The buffered locator keeps revocable identity, not a live generation lease.
 // A subscriber must reacquire the same current generation and recheck policy.
 type userAttentionEvent struct {
+	sourceSeq    int
 	notification UserAttentionNotification
 	owner        string
 	input        pluginhost.SessionAttentionInput
@@ -160,24 +163,24 @@ func (h *UserHost) runAttentionPolicy() {
 
 func (h *UserHost) admitAttention(job userAttentionJob) (userAttentionEvent, time.Duration, bool) {
 	defer h.runtime.ReleasePluginGeneration(job.generation)
+	ctx, cancel := context.WithTimeout(h.attentionCtx, 5*time.Second)
+	defer cancel()
 	event := userAttentionEvent{
 		notification: UserAttentionNotification{UserSpaceID: job.input.UserSpaceID, ProductDomain: job.input.ProductDomain, UserLocation: job.location, TurnID: job.input.TurnID, Outcome: job.input.Outcome, ItemCount: 1},
-		owner:        job.owner, input: job.input, generation: job.generation,
+		owner:        job.owner, input: job.input, generation: job.generation, sourceSeq: job.sourceSeq,
 	}
-	if !h.runtime.IsCurrentPluginGeneration(job.generation) || !h.attentionOwnerCurrent(event) {
+	if !h.runtime.IsCurrentPluginGeneration(job.generation) || !h.attentionOwnerCurrent(ctx, event) {
 		return userAttentionEvent{}, 0, false
 	}
 	capability, ok := job.host.Capability(job.owner, pluginhost.CapabilitySessionAttention)
 	if !ok {
 		return userAttentionEvent{}, 0, false
 	}
-	ctx, cancel := context.WithTimeout(h.attentionCtx, 5*time.Second)
-	defer cancel()
 	var output pluginhost.SessionAttentionOutput
 	if err := job.host.InvokeCapability(ctx, capability, job.input, &output); err != nil || !output.Allowed || ctx.Err() != nil {
 		return userAttentionEvent{}, 0, false
 	}
-	if !h.attentionOwnerCurrent(event) || !h.runtime.IsCurrentPluginGeneration(job.generation) || ctx.Err() != nil {
+	if !h.attentionOwnerCurrent(ctx, event) || !h.runtime.IsCurrentPluginGeneration(job.generation) || ctx.Err() != nil {
 		return userAttentionEvent{}, 0, false
 	}
 	if _, ok := job.host.Capability(job.owner, pluginhost.CapabilitySessionAttention); !ok {
@@ -237,7 +240,7 @@ func (h *UserHost) publishAttention(event userAttentionEvent) {
 
 // Delayed delivery may outlive the persisted session or its main ownership.
 // Re-read this authority both before and after calling the plugin's policy.
-func (h *UserHost) attentionOwnerCurrent(event userAttentionEvent) bool {
+func (h *UserHost) attentionOwnerCurrent(ctx context.Context, event userAttentionEvent) bool {
 	binding := h.runtime.UserBinding()
 	input := event.input
 	if input.UserSpaceID != binding.UserSpaceID || input.ProductDomain != binding.ProductDomain {
@@ -248,10 +251,37 @@ func (h *UserHost) attentionOwnerCurrent(event userAttentionEvent) bool {
 		return false
 	}
 	defer state.Close()
-	metadata, found, err := state.Sessions.Find(input.SessionID)
-	return err == nil && found && metadata.UserSpaceID == input.UserSpaceID && metadata.ProductDomain == input.ProductDomain &&
-		metadata.Owner == "plugin:"+event.owner && metadata.ParentID == "" && metadata.Visibility == "plugin" &&
-		metadata.AgentID != "" && metadata.AgentID == input.AgentID
+	sessions := state.Sessions.WithContext(ctx)
+	metadata, found, err := sessions.Find(input.SessionID)
+	if err != nil || !found || metadata.UserSpaceID != input.UserSpaceID || metadata.ProductDomain != input.ProductDomain ||
+		metadata.Owner != "plugin:"+event.owner || metadata.ParentID != "" || metadata.Visibility != "plugin" || metadata.ArchivedAt != nil ||
+		metadata.AgentID == "" || metadata.AgentID != input.AgentID || event.sourceSeq < 1 || input.RequestID == "" {
+		return false
+	}
+	// The input's stable address was captured from the host's exact settled
+	// turn, not the notification payload or a later session's latest request.
+	// Re-read through the selected store so deletion/editing revokes replay.
+	// A physical page can retain a retracted source. The distinct selected
+	// active query must be supported; never fall back to raw history or cache.
+	page, err := sessions.ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: input.SessionID, StartSeq: event.sourceSeq, EndSeq: event.sourceSeq, Limit: 1})
+	if err != nil || len(page.Records) != 1 {
+		return false
+	}
+	record := page.Records[0]
+	if record.Seq != event.sourceSeq || record.Role != "user" || record.Hidden || record.Steered || record.ClientID != pluginSessionRequestClientID(event.owner, input.RequestID) {
+		return false
+	}
+	if !(record.Origin == "user" && !record.ReadOnly || record.Origin == pluginhost.SessionInputPlugin && record.OriginID == event.owner && record.ReadOnly) {
+		return false
+	}
+	// An external edit can retract only the answer while retaining its input.
+	// Do not replay a locator to that inactive result. Failed turns may have no
+	// persisted answer and legitimately navigate to the owning agent instead.
+	if input.MessageSeq > 0 {
+		page, err := sessions.ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: input.SessionID, StartSeq: input.MessageSeq, EndSeq: input.MessageSeq, Limit: 1})
+		return err == nil && len(page.Records) == 1 && page.Records[0].Seq == input.MessageSeq && page.Records[0].Role == "assistant" && !page.Records[0].Hidden
+	}
+	return true
 }
 
 // SubscribeUserAttention observes admitted attention independently of client
@@ -304,27 +334,27 @@ func (h *UserHost) revalidateAttention(parent context.Context, event userAttenti
 	if parent.Err() != nil || h.attentionCtx.Err() != nil {
 		return false
 	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(h.attentionCtx, cancel)
+	defer stop()
 	host, generation := h.runtime.RetainPluginHost(pluginhost.CapabilitySessionAttention)
 	if host == nil {
 		return false
 	}
 	defer h.runtime.ReleasePluginGeneration(generation)
-	if generation != event.generation || !h.runtime.IsCurrentPluginGeneration(generation) || !h.attentionOwnerCurrent(event) {
+	if generation != event.generation || !h.runtime.IsCurrentPluginGeneration(generation) || !h.attentionOwnerCurrent(ctx, event) {
 		return false
 	}
 	capability, ok := host.Capability(event.owner, pluginhost.CapabilitySessionAttention)
 	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-	defer cancel()
-	stop := context.AfterFunc(h.attentionCtx, cancel)
-	defer stop()
 	var output pluginhost.SessionAttentionOutput
 	if err := host.InvokeCapability(ctx, capability, event.input, &output); err != nil || !output.Allowed || ctx.Err() != nil {
 		return false
 	}
-	if !h.attentionOwnerCurrent(event) || !h.runtime.IsCurrentPluginGeneration(generation) || ctx.Err() != nil {
+	if !h.attentionOwnerCurrent(ctx, event) || !h.runtime.IsCurrentPluginGeneration(generation) || ctx.Err() != nil {
 		return false
 	}
 	_, ok = host.Capability(event.owner, pluginhost.CapabilitySessionAttention)

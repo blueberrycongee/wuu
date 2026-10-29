@@ -822,6 +822,9 @@ export interface SessionDomainMethods {
   "PutSessionLaunch": { args: readonly [record: SessionDomainSessionLaunchRecord]; values: readonly [SessionDomainSessionLaunchRecord]; };
   "ReadControl": { args: readonly [id: string]; values: readonly [SessionDomainControl, boolean]; };
   "ReadHistoryPage": { args: readonly [id: string, startSeq: number, limit: number]; values: readonly [SessionDomainHistoryPage]; };
+  /** Bounded active transcript read: current retractions apply even to an older snapshot/cursor.
+   * Unsupported providers must reject this distinct operation, never substitute physical history. */
+  "ReadActiveHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadPluginGenerationSnapshot": { args: readonly [sessionID: string]; values: readonly [SessionDomainPluginGenerationSnapshot, boolean]; };
   "ReadProjectWork": { args: readonly [id: string]; values: readonly [SessionDomainProjectWork]; };
@@ -981,6 +984,7 @@ const sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
   "ReadProjectWork": [1, 1],

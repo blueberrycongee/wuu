@@ -3188,6 +3188,7 @@ var sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
   "ReadProjectWork": [1, 1],
@@ -3282,8 +3283,9 @@ var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
 var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
   name: EXECUTION_AUTHORIZATION_SERVICE,
   version: "1.0.0",
-  methods: ["describe", "inspect", "issue", "validate", "revoke"].map((name) => ({
+  methods: ["describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"].map((name) => ({
     name,
+    ...name === "release-commit" ? { cleanup: true } : {},
     input_schema: `execution.authorization.${name}.input.v1`,
     output_schema: `execution.authorization.${name}.output.v1`
   }))

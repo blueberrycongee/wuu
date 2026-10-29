@@ -40,6 +40,20 @@ func (s *documentStore) ReleaseInspection(id string) error {
 	return inspector.ReleaseInspection(s.ctx, persistence.InspectionRequest{ID: sessionInspectionID(s.caller, id), Namespaces: sessionInspectionNamespaces})
 }
 
+// AcquireInspection and ReleaseInspection allow a durable coordinator to keep
+// the exact inspection identity through an uncertain publication or restart.
+func (s *Store) AcquireInspection(ctx context.Context, id string) (persistence.InspectionGuard, error) {
+	var guard persistence.InspectionGuard
+	err := s.WithContext(ctx).invoke("AcquireInspection", []any{id}, []any{&guard})
+	if err == nil && guard.ID != id {
+		return persistence.InspectionGuard{}, persistence.ErrCorrupt
+	}
+	return guard, sessionInspectionError(err)
+}
+func (s *Store) ReleaseInspection(ctx context.Context, id string) error {
+	return sessionInspectionError(s.WithContext(ctx).invoke("ReleaseInspection", []any{id}, []any{}))
+}
+
 // WithInspection retains the selected session provider's authority boundary.
 // It never invokes the effect after an uncertain acquire and never retries it.
 func (s *Store) WithInspection(ctx context.Context, use func() error) (err error) {

@@ -1633,6 +1633,7 @@ jobs:
             clients/mobile-web/package-lock.json
             plugins/package-lock.json
       - name: Install locked renderer dependencies
+        id: install-focused-dependencies
         timeout-minutes: 10
         run: |
           for workspace in desktop clients/core clients/mobile-web plugins; do
@@ -1665,6 +1666,84 @@ jobs:
           git rev-parse HEAD > "$WUU_SETTINGS_OVERLAY_OUTPUT/source-commit.txt"
           set -o pipefail
           desktop/node_modules/.bin/electron desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee "$WUU_SETTINGS_OVERLAY_OUTPUT/run.log"
+      - name: Build the shipped Personal desktop fixture
+        id: build-personal-fixture
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          PERSONAL_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p desktop/out/personal-desktop-acceptance
+          node <<'NODE' > desktop/out/personal-desktop-acceptance/source.json
+          const { execFileSync } = require('node:child_process');
+          console.log(JSON.stringify({
+            checkout_sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+            event_sha: process.env.GITHUB_SHA,
+            pull_request_head_sha: process.env.PERSONAL_PR_HEAD || null,
+            run_id: process.env.GITHUB_RUN_ID,
+            run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+            platform: process.platform,
+            architecture: process.arch,
+            node_version: process.version,
+            electron_version: require('./desktop/node_modules/electron/package.json').version,
+            playwright_version: require('./clients/mobile-web/node_modules/playwright/package.json').version,
+            scope: 'Production Personal desktop contribution and application shell; synthetic transport, no live accounts, model or external effects',
+          }, null, 2));
+          NODE
+          set -o pipefail
+          node scripts/build-personal-desktop.mjs --check 2>&1 | tee desktop/out/personal-desktop-acceptance/build.log
+          node desktop/scripts/build-personal-fixture.cjs 2>&1 | tee -a desktop/out/personal-desktop-acceptance/build.log
+          shasum -a 256 desktop/out/personal-fixture/index.html \
+            internal/plugin/bundled/personal/desktop.js \
+            internal/plugin/bundled/personal-calendar/desktop.js \
+            desktop/package-lock.json clients/mobile-web/package-lock.json \
+            > desktop/out/personal-desktop-acceptance/inputs.sha256
+      - name: Exercise sandboxed Personal desktop settings
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_PERSONAL_SETTINGS_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/settings
+        run: |
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/settings.log
+      - name: Install locked Chromium for Personal desktop approval checks
+        id: install-personal-chromium
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -o pipefail
+          clients/mobile-web/node_modules/.bin/playwright install chromium 2>&1 | tee desktop/out/personal-desktop-acceptance/chromium-install.log
+      - name: Exercise sandboxed Personal home and approval recovery
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' && steps.install-personal-chromium.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_REVIEW_PLAYWRIGHT_PATH: ${{ github.workspace }}/clients/mobile-web/node_modules/playwright
+          WUU_REVIEW_UI_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/approval
+        run: |
+          set -o pipefail
+          node desktop/scripts/personal-approval-ui-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/approval.log
+          shasum -a 256 --check desktop/out/personal-desktop-acceptance/inputs.sha256
+      - name: Upload hosted macOS Personal desktop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-desktop-hosted-macos-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          # Do not upload Electron profiles or the embedded fixture bundle.
+          path: |
+            desktop/out/personal-desktop-acceptance/*.json
+            desktop/out/personal-desktop-acceptance/*.log
+            desktop/out/personal-desktop-acceptance/*.sha256
+            desktop/out/personal-desktop-acceptance/settings/*.json
+            desktop/out/personal-desktop-acceptance/settings/*.png
+            desktop/out/personal-desktop-acceptance/settings/*.txt
+            desktop/out/personal-desktop-acceptance/approval/*.json
+            desktop/out/personal-desktop-acceptance/approval/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload hosted macOS Settings overlay evidence
         if: always()
         uses: actions/upload-artifact@v4

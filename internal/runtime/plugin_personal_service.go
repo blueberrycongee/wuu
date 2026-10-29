@@ -64,7 +64,7 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		if !found || !s.binding.Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) || metadata.Visibility != "plugin" || !strings.HasPrefix(metadata.Owner, "plugin:") {
 			return nil, errors.New("Personal read requires a host-resolved plugin session")
 		}
-		if (call.Operation == "review.execution.status" || strings.HasPrefix(call.Operation, "connectors.")) && metadata.Owner != "plugin:"+s.pluginID {
+		if (call.Operation == "review.execution.status" || strings.HasPrefix(call.Operation, "connectors.") || strings.HasPrefix(call.Operation, "memory.")) && metadata.Owner != "plugin:"+s.pluginID {
 			return nil, errors.New("review status requires the owning plugin session")
 		}
 		verifiedSession = metadata.ID

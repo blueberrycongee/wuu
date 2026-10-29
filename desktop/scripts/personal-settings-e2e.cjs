@@ -1,11 +1,12 @@
 // Actual App settings navigation and shipped Personal entry; synthetic transport.
 const {app,BrowserWindow}=require('electron');
 const fs=require('node:fs'), path=require('node:path'), assert=require('node:assert/strict');
-const output=path.resolve(__dirname,'../out/personal-settings-e2e');fs.mkdirSync(output,{recursive:true});
+const output=path.resolve(process.env.WUU_PERSONAL_SETTINGS_OUTPUT || path.join(__dirname,'../out/personal-settings-e2e'));fs.mkdirSync(output,{recursive:true});
 app.setPath('userData',fs.mkdtempSync(path.join(output,'profile-')));
+let win;
 const watchdog=setTimeout(()=>{fs.writeFileSync(path.join(output,"timeout.txt"),"Fixture exceeded 45 seconds");app.exit(2);},45000);
 app.whenReady().then(async()=>{
-  const win=new BrowserWindow({width:1280,height:1000,show:false,webPreferences:{contextIsolation:true}});
+  win=new BrowserWindow({width:1280,height:1000,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!details.url.startsWith('file:')&&!details.url.startsWith('data:')}));
   const evaluate=fn=>win.webContents.executeJavaScript(`(${fn})()`,true);
   const until=async fn=>{const end=Date.now()+10000;while(Date.now()<end){if(await win.webContents.executeJavaScript(`Boolean((${fn})())`,true))return;await new Promise(r=>setTimeout(r,30));}throw new Error(`Timed out: ${fn}`);};
@@ -49,6 +50,10 @@ app.whenReady().then(async()=>{
   await capture('settings-stale-calendar');
   const stale=await evaluate(()=>({alert:document.querySelector('.gcal-view > .gcal-notice')?.textContent,event:document.querySelector('.gcal-event')?.textContent}));
   assert.ok(stale.event.includes('合成日程'));
-  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar'],geometry,stale},null,2));
+  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar'],geometry,stale},null,2));
   clearTimeout(watchdog);app.exit(0);
-}).catch(error=>{fs.writeFileSync(path.join(output,'error.txt'),String(error.stack||error));app.exit(1);});
+}).catch(async error=>{
+  fs.writeFileSync(path.join(output,'error.txt'),String(error.stack||error));
+  if(win&&!win.isDestroyed())try{fs.writeFileSync(path.join(output,'failure.png'),(await win.webContents.capturePage()).toPNG());}catch(captureError){fs.writeFileSync(path.join(output,'capture-error.txt'),String(captureError));}
+  app.exit(1);
+});

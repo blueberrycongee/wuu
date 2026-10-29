@@ -546,6 +546,7 @@ func newRuntimeCleanupWorktree(t *testing.T, sessionID string) (*agentcontrol.Ag
 type sessionRecordingClient struct {
 	mu            sync.Mutex
 	last          providers.ChatRequest
+	first         *providers.ChatRequest
 	streamBatches [][]providers.StreamEvent
 }
 
@@ -868,6 +869,10 @@ func writeRuntimeTerminalFinalization(t *testing.T, harnessDir, workerID string)
 func (c *sessionRecordingClient) Chat(_ context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
 	c.mu.Lock()
 	c.last = req
+	if c.first == nil {
+		first := req
+		c.first = &first
+	}
 	c.mu.Unlock()
 	return providers.ChatResponse{Content: "done"}, nil
 }
@@ -875,6 +880,10 @@ func (c *sessionRecordingClient) Chat(_ context.Context, req providers.ChatReque
 func (c *sessionRecordingClient) StreamChat(_ context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
 	c.mu.Lock()
 	c.last = req
+	if c.first == nil {
+		first := req
+		c.first = &first
+	}
 	if len(c.streamBatches) > 0 {
 		events := append([]providers.StreamEvent(nil), c.streamBatches[0]...)
 		c.streamBatches = c.streamBatches[1:]
@@ -3369,7 +3378,7 @@ func TestWorkerDeferredToolCatalogPromptForToolkit(t *testing.T) {
 	// produce a worker-scoped catalog from it.
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
 
-	surface, err := workerToolSurfaceForToolkit(kit, "openai", "gpt-5-codex", true)
+	surface, err := workerToolSurfaceForToolkit(kit, nil, "openai", "gpt-5-codex", true, agentcontrol.WorkerType{}, agentthread.Metadata{Path: "/root/worker"})
 	if err != nil {
 		t.Fatalf("workerDeferredToolCatalogPromptForToolkit: %v", err)
 	}
@@ -3388,7 +3397,7 @@ func TestWorkerDeferredToolCatalogPromptForToolkit(t *testing.T) {
 		}
 	}
 
-	disabled, err := workerToolSurfaceForToolkit(kit, "openai", "gpt-5-codex", false)
+	disabled, err := workerToolSurfaceForToolkit(kit, nil, "openai", "gpt-5-codex", false, agentcontrol.WorkerType{}, agentthread.Metadata{Path: "/root/worker"})
 	if err != nil {
 		t.Fatalf("workerDeferredToolCatalogPromptForToolkit (tool search off): %v", err)
 	}

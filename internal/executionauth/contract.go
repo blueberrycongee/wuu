@@ -292,3 +292,63 @@ func capabilitiesEqual(a, b []Capability) bool {
 	}
 	return true
 }
+
+// CommitRequest identifies one immutable publication intent. Persist it before
+// acquisition. A confirmed acquisition admits only this exact operation, not a
+// reusable grant. Unknown acquisition admits no effect.
+type CommitRequest struct {
+	ID              string          `json:"id"`
+	OperationDigest string          `json:"operation_digest"`
+	Authorization   ValidateRequest `json:"authorization"`
+}
+
+// CommitGuard holds leaf and ancestor revocation until terminal disposition.
+// ExpiresAt is the grant's admission cutoff, not a fence timeout. An admitted
+// operation may finish after expiry; its fence never expires or unlocks on loss.
+type CommitGuard struct {
+	ID                  string             `json:"id"`
+	OperationDigest     string             `json:"operation_digest"`
+	AuthorizationDigest string             `json:"authorization_digest"`
+	Principal           principal.Identity `json:"principal"`
+	ExpiresAt           time.Time          `json:"expires_at"`
+}
+
+// ReleaseCommitRequest is cleanup, never permission to perform or retry an
+// effect. Committed requires a digest of the authoritative durable receipt;
+// not-committed requires proof no effect can still commit. Unknown stays fenced.
+// Releasing not-committed before acquisition tombstones a delayed acquire.
+type ReleaseCommitRequest struct {
+	CommitRequest
+	Outcome       string `json:"outcome"`
+	ReceiptDigest string `json:"receipt_digest,omitempty"`
+}
+type CommitRelease struct {
+	Released bool `json:"released"`
+}
+type CommitStatus struct {
+	Guard         CommitGuard         `json:"guard"`
+	Caller        string              `json:"caller"`
+	Outcome       string              `json:"outcome,omitempty"`
+	ReceiptDigest string              `json:"receipt_digest,omitempty"`
+	ReconciledBy  *principal.Identity `json:"reconciled_by,omitempty"`
+	Reason        string              `json:"reason,omitempty"`
+}
+
+// ReconcileCommitRequest requires host-attested owner maintenance after stopping
+// the original writer and establishing the exact durable receipt disposition.
+// It cannot release a different caller, request, or unresolved publication.
+type ReconcileCommitRequest struct {
+	ReleaseCommitRequest
+	ExpectedCaller string `json:"expected_caller"`
+	Reason         string `json:"reason"`
+}
+
+// CommitList exposes unresolved intents only to authenticated owner maintenance;
+// it is for recovery, never permission to replay a publication.
+type CommitEntry struct {
+	Request CommitRequest `json:"request"`
+	CommitStatus
+}
+type CommitList struct {
+	Commits []CommitEntry `json:"commits"`
+}

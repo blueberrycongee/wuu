@@ -9,13 +9,13 @@ export function createShareCapturePanel(react:typeof React,_ui:unknown,invoke:In
   const [url,setURL]=react.useState(''),[body,setBody]=react.useState(''),[capture,setCapture]=react.useState<Record<string,unknown>|null>(null),[busy,setBusy]=react.useState(false),[message,setMessage]=react.useState('');
   const live=react.useRef(true), pending=react.useRef(false), generation=react.useRef(0);
   react.useEffect(()=>{live.current=true;return()=>{live.current=false;generation.current++;};},[]);
-  const submit=async()=>{if(pending.current)return;pending.current=true;setBusy(true);setMessage('');const epoch=generation.current;
+  const submit=async()=>{if(pending.current)return;pending.current=true;setBusy(true);setMessage('');const epoch=++generation.current;
    try{const value=capture??{schema:'wuu.share.v1',capture_id:crypto.randomUUID(),kind:url.trim()?'bookmark':'text',...(url.trim()?{url:url.trim()}:{}),...(body.trim()?{text:body}:{})};const normalized=normalizeShareCapture(value);setCapture(value);await invoke('capture.send',normalized);if(live.current&&epoch===generation.current){setMessage('已交给主聊天；请以主聊天中的接收记录为准。');setCapture(null);setURL('');setBody('');}}
    catch{if(live.current&&epoch===generation.current)setMessage('未确认接收。可以用同一份材料重试；不要重新生成副本。');}
    finally{pending.current=false;if(live.current&&epoch===generation.current)setBusy(false);}
   };
   const load=async(event:React.ChangeEvent<HTMLInputElement>)=>{const file=event.target.files?.[0];if(!file)return;const epoch=++generation.current;setMessage('');try{if(file.size>100000)throw Error();const raw=JSON.parse(await file.text());if(raw.attachments!==undefined)throw Error();normalizeShareCapture(raw);if(live.current&&epoch===generation.current){setCapture(raw);setURL(typeof raw.url==='string'?raw.url:'');setBody(typeof raw.text==='string'?raw.text:'');}}catch{if(live.current&&epoch===generation.current)setMessage('文件无效：请选择不超过 100 KB 的 .wuu-share.json。');}finally{event.target.value='';}};
-  const edit=()=>{setCapture(null);setMessage('');};
+  const edit=()=>{generation.current++;setCapture(null);setMessage('');};
   return h('section',{'data-personal-share':true},h('h3',null,'分享与收藏'),h('p',null,'只接收你主动分享的文字、链接或当前页；不读取浏览记录，不自动打开链接。'),
    h('label',null,'链接',h('input',{type:'url',value:url,disabled:busy,onChange:(e:React.ChangeEvent<HTMLInputElement>)=>{edit();setURL(e.target.value);},placeholder:'https://…'})),
    h('label',null,'文字',h('textarea',{value:body,disabled:busy,maxLength:65536,rows:3,onChange:(e:React.ChangeEvent<HTMLTextAreaElement>)=>{edit();setBody(e.target.value);}})),

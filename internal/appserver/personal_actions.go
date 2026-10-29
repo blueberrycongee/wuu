@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
@@ -28,6 +29,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -36,7 +38,6 @@ import (
 // grants account access nor changes Coding policy, MCP, shell or plugin tools.
 type personalActions struct {
 	server         *Server
-	state          *runtime.State
 	store          *personalreview.Store
 	engine         *personalreview.Engine
 	mu             sync.Mutex
@@ -54,6 +55,7 @@ type personalActions struct {
 	admissions     map[personalreview.Key]personalActionAdmission
 	admissionEpoch uint64
 	effectGate     chan struct{}
+	memoryLeases   sync.Map // operation ID -> *personalMemoryLease
 }
 
 // Admission provenance is live host state, never a serialized owner claim or a
@@ -72,14 +74,25 @@ func newPersonalActions(s *Server) (*personalActions, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer state.Close()
 	if state.Host == nil {
-		_ = state.Close()
 		return nil, errors.New("selected Personal review provider is unavailable")
 	}
+	p := &personalActions{server: s, kits: map[string]*tools.Toolkit{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
 	documents := persistence.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		result, err := state.Host.CallService(ctx, personalActionsConsumerID, persistence.ServiceName, method, raw)
+		// Each operation pins its invocation before entering the ledger. New
+		// requests use the published graph; admitted actions keep their capture.
+		selected, err := p.retainState(ctx)
 		if err != nil {
 			return nil, err
+		}
+		defer selected.Close()
+		if selected.Host == nil {
+			return nil, errors.New("selected Personal review provider is unavailable")
+		}
+		result, callErr := selected.Host.CallService(ctx, personalActionsConsumerID, persistence.ServiceName, method, raw)
+		if callErr != nil {
+			return nil, callErr
 		}
 		return result, nil
 	})
@@ -87,8 +100,8 @@ func newPersonalActions(s *Server) (*personalActions, error) {
 	if stateRoot == "" {
 		stateRoot = filepath.Dir(s.rt.SessionDir)
 	}
-	if err := personalreview.CheckLegacyMigration(context.Background(), filepath.Join(stateRoot, "personal-review.sqlite"), documents); err != nil {
-		_ = state.Close()
+	startup := runtime.WithInvocationState(context.Background(), state)
+	if err := personalreview.CheckLegacyMigration(startup, filepath.Join(stateRoot, "personal-review.sqlite"), documents); err != nil {
 		if errors.Is(err, personalreview.ErrLegacyMigrationRequired) {
 			return nil, fmt.Errorf("%w; stop all hosts, then inspect with `wuu state migrate-personal-review --user-space %q --composition-profile <same-profile> [--config <same-config>]`; apply only the inspected source digest with --apply --expect-source-digest", err, s.rt.UserBinding().UserSpaceID)
 		}
@@ -96,10 +109,9 @@ func newPersonalActions(s *Server) (*personalActions, error) {
 	}
 	store, err := personalreview.NewDocumentStore(documents)
 	if err != nil {
-		_ = state.Close()
 		return nil, err
 	}
-	p := &personalActions{server: s, state: state, store: store, kits: map[string]*tools.Toolkit{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
+	p.store = store
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	operations := map[string]personalreview.Operation{}
 	for _, name := range []string{"write_file", "edit_file"} {
@@ -107,12 +119,11 @@ func newPersonalActions(s *Server) (*personalActions, error) {
 	}
 	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
 	if err == nil {
-		err = p.engine.Recover(context.Background())
+		err = p.engine.Recover(startup)
 	}
 	if err != nil {
 		p.cancel()
 		store.Close()
-		_ = state.Close()
 		return nil, err
 	}
 	return p, nil
@@ -144,15 +155,15 @@ func (p *personalActions) signal() {
 func (p *personalActions) close() error {
 	p.cancel()
 	<-p.done
+	closeErr := p.closeMemoryLeases()
 	p.admissionsMu.Lock()
 	admissions := p.admissions
 	p.admissions = nil
 	p.admissionsMu.Unlock()
-	var closeErr error
 	for _, admission := range admissions {
 		closeErr = errors.Join(closeErr, admission.state.Close())
 	}
-	return errors.Join(closeErr, p.store.Close(), p.state.Close())
+	return errors.Join(closeErr, p.store.Close())
 }
 func (p *personalActions) ownerID() string {
 	return "personal-owner:" + p.server.rt.UserBinding().UserSpaceID
@@ -218,6 +229,7 @@ func (p *personalActions) withAuthority(ctx context.Context, scope personalrevie
 		return err
 	}
 	defer state.Close()
+	ctx = runtime.WithInvocationState(ctx, state)
 	selected, services, err := p.selectedTaskProvider(state)
 	if errors.Is(err, errPersonalTaskInactive) {
 		// Definitive lifecycle revocation invalidates unclaimed approvals. It
@@ -390,15 +402,20 @@ func (p *personalActions) authority(ctx context.Context, state *runtime.State, s
 		if !ok || sourceMeta.UserSpaceID != b.UserSpaceID || sourceMeta.ProductDomain != "personal" || sourceMeta.Owner != owner || sourceMeta.ParentID != "" {
 			a.BoundaryReason = "source is not the owning Personal conversation"
 		} else {
-			page, err := state.Sessions.WithContext(ctx).ReadHistoryPage(sourceSession, sourceSeq, 1)
+			// Physical audit rows survive logical edits. Only the exact active
+			// source can authorize this task, including at guarded dispatch.
+			page, err := state.Sessions.WithContext(ctx).ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: sourceSession, StartSeq: sourceSeq, EndSeq: sourceSeq, Limit: 1})
 			if err != nil {
 				return a, err
 			}
 			if len(page.Records) == 1 {
 				r := page.Records[0]
-				if r.Seq == sourceSeq && r.Role == "user" && r.Origin == "user" && !r.Hidden && !r.ReadOnly && strings.TrimSpace(r.Content) != "" {
+				if r.Seq == sourceSeq && r.Role == "user" && r.Origin == "user" && !r.Hidden && !r.ReadOnly && !r.Truncated && strings.TrimSpace(r.Content) != "" {
 					a.UserMessages = []personalreview.HumanMessage{{ID: fmt.Sprintf("%s:%d", sourceSession, sourceSeq), Text: r.Content}}
 				}
+			}
+			if len(a.UserMessages) == 0 {
+				a.BoundaryReason = "source is no longer an active original user message"
 			}
 		}
 	}
@@ -698,6 +715,12 @@ func (p *personalActions) review(ctx context.Context, input personalreview.Revie
 	return decision, nil
 }
 func (p *personalActions) Call(ctx context.Context, operation string, raw json.RawMessage, verifiedSession string) (json.RawMessage, error) {
+	state, err := p.retainState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer state.Close()
+	ctx = runtime.WithInvocationState(ctx, state)
 	if err := p.server.authorizePersonalOperation(ctx, operation, verifiedSession); err != nil {
 		return nil, err
 	}
@@ -764,9 +787,19 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 		key := personalreview.Key{SpaceID: input.SpaceID, ID: input.ID}
 		p.admissionsMu.Lock()
 		admitted, live := p.admissions[key]
-		p.admissionsMu.Unlock()
+		var admittedState *runtime.State
 		if live {
-			ctx = runtime.WithInvocationState(ctx, admitted.state)
+			// Terminal delivery may release the admission before this request
+			// finishes reading its response. Own a capture before unlocking.
+			admittedState, err = p.retainState(runtime.WithInvocationState(ctx, admitted.state))
+		}
+		p.admissionsMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			defer admittedState.Close()
+			ctx = runtime.WithInvocationState(ctx, admittedState)
 		}
 		var err error
 		if operation == "review.resolve" {
@@ -981,7 +1014,7 @@ func (c *personalActionsConsumer) Status() pluginhost.Status {
 }
 func (*personalActionsConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 func (*personalActionsConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: "personal.agents", MajorVersion: 1}, {Name: persistence.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: "personal.agents", MajorVersion: 1}, {Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: executionauth.ServiceName, MajorVersion: 1}}
 }
 func (c *personalActionsConsumer) Activate(context.Context) error { c.active.Store(true); return nil }
 func (c *personalActionsConsumer) Close(context.Context) error    { c.active.Store(false); return nil }

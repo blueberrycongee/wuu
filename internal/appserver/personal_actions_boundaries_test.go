@@ -15,9 +15,11 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -43,7 +45,7 @@ type personalBoundaryFixture struct {
 	sourceSeq   int
 }
 
-func newPersonalBoundaryFixture(t *testing.T, client *fakeClient) *personalBoundaryFixture {
+func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...func(*persistence.Service) pluginhost.Client) *personalBoundaryFixture {
 	t.Helper()
 	if client == nil {
 		client = &fakeClient{response: providersResponse(`{"outcome":"allow","reason":"synthetic exact requested note"}`)}
@@ -61,7 +63,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient) *personalBound
 	}
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}, SubjectID: "plugin:bundled:personal"}}
-	provider := attachPersonalBoundaryGeneration(t, rt)
+	provider := attachPersonalBoundaryGeneration(t, rt, documents...)
 	var err error
 	rt.Toolkit, err = tools.New(rt.RootDir)
 	if err != nil {

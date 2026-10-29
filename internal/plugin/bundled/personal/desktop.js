@@ -82,7 +82,7 @@ var personalDesktop = (() => {
         pending.current = true;
         setBusy(true);
         setMessage("");
-        const epoch = generation.current;
+        const epoch = ++generation.current;
         try {
           const value = capture ?? { schema: "wuu.share.v1", capture_id: crypto.randomUUID(), kind: url.trim() ? "bookmark" : "text", ...url.trim() ? { url: url.trim() } : {}, ...body.trim() ? { text: body } : {} };
           const normalized = normalizeShareCapture(value);
@@ -123,6 +123,7 @@ var personalDesktop = (() => {
         }
       };
       const edit = () => {
+        generation.current++;
         setCapture(null);
         setMessage("");
       };
@@ -173,21 +174,24 @@ var personalDesktop = (() => {
   function createConnectorOAuth(react) {
     const h = react.createElement;
     return function OAuth({ provider, service, onConnected, existing }) {
-      const [resource, setResource] = react.useState(existing?.resources.join("\n") ?? (provider === "gmail" ? "me" : "")), [selected, setSelected] = react.useState(existing?.scopes ?? [permissions[provider]?.[0]?.[1]].filter(Boolean)), [allowWork, setAllowWork] = react.useState(false), [state, setState] = react.useState("idle"), [message, setMessage] = react.useState("");
-      const active = react.useRef(true), pending = react.useRef(false), attempt = react.useRef(""), cancelled = react.useRef(false), timer = react.useRef(void 0);
+      const [resource, setResource] = react.useState(existing?.resources.join("\n") ?? (provider === "gmail" ? "me" : "")), [selected, setSelected] = react.useState(existing?.scopes ?? [permissions[provider]?.[0]?.[1]].filter(Boolean)), [allowWork, setAllowWork] = react.useState(false), [state, setState] = react.useState("idle"), [message, setMessage] = react.useState(""), [cancellationUnknown, setCancellationUnknown] = react.useState(false);
+      const active = react.useRef(true), pending = react.useRef(false), attempt = react.useRef(""), generation = react.useRef(0), timer = react.useRef(void 0);
+      const cancelAttempt = async (id) => {
+        try {
+          await service.cancel({ attempt_id: id });
+        } catch {
+          if (active.current) setCancellationUnknown(true);
+        }
+      };
       const cancel = async () => {
-        cancelled.current = true;
+        const epoch = ++generation.current;
         clearTimeout(timer.current);
         if (attempt.current) {
           const id = attempt.current;
           attempt.current = "";
-          try {
-            await service.cancel({ attempt_id: id });
-          } catch {
-            if (active.current) setMessage("\u53D6\u6D88\u5C1A\u672A\u6838\u5B9E\uFF1B\u8BF7\u5728\u6388\u6743\u9875\u505C\u6B62\u64CD\u4F5C\u5E76\u5237\u65B0\u72B6\u6001\u3002");
-          }
+          await cancelAttempt(id);
         }
-        if (active.current) {
+        if (active.current && epoch === generation.current) {
           setState("idle");
           pending.current = false;
         }
@@ -207,23 +211,23 @@ var personalDesktop = (() => {
           return;
         }
         pending.current = true;
-        cancelled.current = false;
+        const epoch = ++generation.current, isCurrent = () => active.current && epoch === generation.current;
         setState("starting");
         setMessage("");
         try {
           const work = provider === "slack" || provider === "feishu";
           const initial = result(await service.start({ provider, connection_id: existing?.connection_id ?? `${provider}-${crypto.randomUUID()}`, ...existing ? { account_id: existing.account_id } : {}, domain: work ? "work" : "personal", scopes: selected, resources, ...work ? { work_read_policy: allowWork ? "selected_resources" : "confirm_each_request" } : {} }));
-          attempt.current = initial.attempt_id;
-          if (!active.current || cancelled.current) {
-            await cancel();
+          if (!isCurrent()) {
+            await cancelAttempt(initial.attempt_id);
             return;
           }
+          attempt.current = initial.attempt_id;
           setState(initial.state);
           setMessage("\u8BF7\u5728\u5BBF\u4E3B\u6253\u5F00\u7684\u6388\u6743\u9875\u5B8C\u6210\u9009\u62E9\uFF1B\u6B64\u5904\u4E0D\u4F1A\u63A5\u6536\u5BC6\u7801\u6216\u4EE4\u724C\u3002");
           const poll = async () => {
             try {
               const current = result(await service.attempt({ attempt_id: initial.attempt_id }));
-              if (!active.current || cancelled.current) return;
+              if (!isCurrent()) return;
               setState(current.state);
               if (["pending", "exchanging"].includes(current.state)) {
                 timer.current = setTimeout(() => void poll(), 750);
@@ -236,7 +240,7 @@ var personalDesktop = (() => {
                 onConnected();
               } else setMessage(`\u6388\u6743\u672A\u5B8C\u6210\uFF1A${current.error_code ?? current.state}`);
             } catch {
-              if (active.current) {
+              if (isCurrent()) {
                 setMessage("\u6388\u6743\u72B6\u6001\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\uFF1B\u8BF7\u53D6\u6D88\u540E\u518D\u68C0\u67E5\u3002");
                 setState("unknown");
               }
@@ -244,8 +248,8 @@ var personalDesktop = (() => {
           };
           void poll();
         } catch (error) {
-          pending.current = false;
-          if (active.current) {
+          if (isCurrent()) {
+            pending.current = false;
             setState("idle");
             const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
             setMessage(code === "oauth_client_not_configured" ? "\u5BBF\u4E3B\u5C1A\u672A\u914D\u7F6E\u6B64\u670D\u52A1\u7684 OAuth \u5BA2\u6237\u7AEF\u3002\u8BF7\u5148\u5B8C\u6210\u5B89\u5168\u914D\u7F6E\uFF1B\u8D26\u53F7\u5C1A\u672A\u63A5\u901A\u3002" : `\u65E0\u6CD5\u5F00\u59CB\u6388\u6743${code ? `\uFF08${code}\uFF09` : ""}\u3002\u6CA1\u6709\u786E\u8BA4\u8D26\u53F7\u5DF2\u63A5\u901A\u3002`);
@@ -260,7 +264,8 @@ var personalDesktop = (() => {
         h("fieldset", { disabled: busy }, h("legend", null, provider === "notion" ? "\u9700\u6838\u5B9E\u7684\u96C6\u6210\u80FD\u529B\uFF08\u987B\u5728 Notion \u96C6\u6210\u8BBE\u7F6E\u914D\u7F6E\uFF09" : provider === "github" ? "\u9700\u6838\u5B9E\u7684\u4ED3\u5E93\u6743\u9650" : "\u6240\u9700\u6743\u9650"), ...(permissions[provider] ?? []).map(([label, scope]) => h("label", { key: scope }, h("input", { type: "checkbox", checked: selected.includes(scope), onChange: () => setSelected((previous) => previous.includes(scope) ? previous.filter((s) => s !== scope) : [...previous, scope]) }), label))),
         ["slack", "feishu"].includes(provider) ? h("label", null, h("input", { type: "checkbox", checked: allowWork, disabled: busy, onChange: () => setAllowWork((v) => !v) }), "\u5141\u8BB8 Personal \u4EFB\u52A1\u8BFB\u53D6\u6240\u9009\u5DE5\u4F5C\u9891\u9053\uFF1B\u4E0D\u81EA\u52A8\u7EB3\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002\u672A\u52FE\u9009\u5219\u9010\u6B21\u786E\u8BA4\u3002") : null,
         h("div", { className: "personal-connectors-controls" }, h("button", { "data-oauth-start": true, disabled: busy, onClick: () => void begin() }, existing ? "\u91CD\u65B0\u6388\u6743" : "\u5F00\u59CB\u6388\u6743"), busy ? h("button", { onClick: () => void cancel() }, "\u53D6\u6D88\u6388\u6743") : null),
-        message ? h("p", { role: "status" }, message) : null
+        message ? h("p", { role: "status" }, message) : null,
+        cancellationUnknown ? h("p", { role: "alert", "data-oauth-cancellation-unknown": true }, "\u5148\u524D\u6388\u6743\u7684\u53D6\u6D88\u5C1A\u672A\u6838\u5B9E\uFF1B\u8BF7\u5728\u6388\u6743\u9875\u505C\u6B62\u64CD\u4F5C\uFF0C\u5E76\u5237\u65B0\u8FDE\u63A5\u72B6\u6001\u6838\u5BF9\u662F\u5426\u5DF2\u63A5\u901A\u3002") : null
       );
     };
   }

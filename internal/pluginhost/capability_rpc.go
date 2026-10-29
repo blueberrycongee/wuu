@@ -78,6 +78,9 @@ const (
 // SessionAttentionInput is host-authenticated, content-free terminal context.
 // It is never accepted from a client as permission to send a notification.
 type SessionAttentionInput struct {
+	// RequestID is the exact host-admitted send bound to this persisted turn.
+	// It is observation provenance, never session read or execution authority.
+	RequestID     string `json:"request_id"`
 	UserSpaceID   string `json:"user_space_id"`
 	ProductDomain string `json:"product_domain"`
 	SessionID     string `json:"session_id"`

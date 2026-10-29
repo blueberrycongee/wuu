@@ -38,7 +38,11 @@ func TestStateInspectionMaintenanceRequiresOwnerAndPolicy(t *testing.T) {
 			t.Fatalf("owner cannot inspect selected %s recovery state: %+v", target, row)
 		}
 	}
-	state := f.host.actions.state
+	state, err := f.rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
 	if _, directErr := state.Host.CallService(owner, runtime.StateServicesConsumer, pluginsettings.ServiceName, "list-inspections", json.RawMessage(`{"scope":"user"}`)); directErr == nil {
 		t.Fatal("declared state consumer bypassed host maintenance admission")
 	}

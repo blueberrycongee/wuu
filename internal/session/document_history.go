@@ -237,6 +237,15 @@ func (s *documentStore) RewriteHistoryRecords(id string, records []HistoryRecord
 
 type historyRetraction struct{ FromSeq, ThroughSeq int }
 
+func historySequenceRetracted(seq int, retractions []historyRetraction) bool {
+	for _, span := range retractions {
+		if seq >= span.FromSeq && seq <= span.ThroughSeq {
+			return true
+		}
+	}
+	return false
+}
+
 func loadHistoryDocuments(tx *persistence.Tx, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	rows, err := readDocumentRows[HistoryRecord](tx, "session_messages", documentPrefix(id))
 	if err != nil {
@@ -253,14 +262,7 @@ func loadHistoryDocuments(tx *persistence.Tx, id string, includeMeta, activeOnly
 		if !includeMeta && strings.EqualFold(row.Role, "meta") {
 			continue
 		}
-		retracted := false
-		for _, span := range retractions {
-			if row.Seq >= span.FromSeq && row.Seq <= span.ThroughSeq {
-				retracted = true
-				break
-			}
-		}
-		if retracted {
+		if historySequenceRetracted(row.Seq, retractions) {
 			continue
 		}
 		hydrateHistoryRecordFromStorage(&row)

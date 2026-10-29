@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -46,7 +48,7 @@ func TestWorkerPTCSurfaceUsesGlobalSetting(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		kit.ConfigurePTC(service, config.PTCConfig{Enabled: enabled})
 		kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
-		surface, err := workerToolSurfaceForToolkit(kit, "anthropic", "claude-sonnet-4", true)
+		surface, err := workerToolSurfaceForToolkit(kit, nil, "anthropic", "claude-sonnet-4", true, agentcontrol.WorkerType{}, agentthread.Metadata{Path: "/root/worker"})
 		if err != nil {
 			t.Fatal(err)
 		}

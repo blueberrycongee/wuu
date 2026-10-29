@@ -27,6 +27,7 @@ func (p *personalActions) connectorAuthority(ctx context.Context, actor personal
 		return "", err
 	}
 	defer state.Close()
+	ctx = runtime.WithInvocationState(ctx, state)
 	selected, services, err := p.selectedTaskProvider(state)
 	if err != nil {
 		return "", err
@@ -51,6 +52,9 @@ func (p *personalActions) connectorAuthorityForState(ctx context.Context, state 
 	}
 	taskID := ""
 	if metadata.ParentID == "" {
+		// Select the latest physical human source, then require its exact active
+		// projection in authority below. Falling back to an older active source
+		// after an edit could revive an earlier connector confirmation.
 		head, err := state.Sessions.WithContext(ctx).ReadHistoryPage(actor.SessionID, 1, 1)
 		if err != nil {
 			return "", err

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -55,7 +55,7 @@ const report = { started_at: new Date().toISOString(), binary, scratch, status: 
 const providerEvents = new EventEmitter(), providerCalls = [], active = new Set(), held = new Map();
 const heldTags = new Set();
 const toolPlans = new Map(), planCalls = new Map();
-let personal, coding, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq, replyChainSeq;
+let personal, coding, personalConfigOwner, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq, replyChainSeq;
 
 function waitFor(events, event, history, predicate, label, timeout = 30_000) {
   const previous = history.find(predicate);
@@ -161,10 +161,14 @@ const provider = createServer(async (request, response) => {
 
 class Host {
   events = new EventEmitter(); transcript = []; requests = []; stderr = ""; sequence = 0;
-  constructor(label, domain, cwd = invocation, owner) { this.label = label; this.domain = domain; this.cwd = cwd; this.owner = owner; }
+  inventoryRevision = 0; inventoryRequests = new Map();
+  constructor(label, domain, cwd = invocation, owner, configPath = join(home, domain ? "config.json" : "coding-config.json"), compositionProfile) {
+    this.label = label; this.domain = domain; this.cwd = cwd; this.owner = owner; this.configPath = configPath; this.compositionProfile = compositionProfile;
+  }
   async start() {
     const env = { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
-    const args = ["app-server", "--workdir", this.cwd, "--config", join(home, this.domain ? "config.json" : "coding-config.json")];
+    const args = ["app-server", "--workdir", this.cwd, "--config", this.configPath];
+    if (this.compositionProfile) args.push("--composition-profile", this.compositionProfile);
     if (this.domain) args.push("--user-space", "local", "--product-domain", this.domain);
     if (this.owner) {
       this.child = this.owner.child; this.connections = this.owner.connections;
@@ -179,6 +183,15 @@ class Host {
         if (!target) throw new Error(`Unknown fixture connection: ${line}`);
         if (output.action) { target.events.emit(output.action); return; }
         const frame = this.domain ? output.frame : output;
+        // Inventory is a live protocol projection, not the initial handshake.
+        // Observe publication before resolving any waiting request. An inventory
+        // read already in flight cannot overwrite a newer notification.
+        if (frame.method === "plugin/inventory/changed" && Array.isArray(frame.params?.extension_inventory)) {
+          target.inventoryRevision++; target.inventory = frame.params.extension_inventory;
+        } else if (Array.isArray(frame.result?.extension_inventory) && target.inventoryRequests.get(frame.id) === target.inventoryRevision) {
+          target.inventory = frame.result.extension_inventory;
+        }
+        if (frame.id !== undefined) target.inventoryRequests.delete(frame.id);
         target.transcript.push(frame); target.events.emit("message", frame);
       }
       catch { this.stderr += `\nnon-JSON stdout: ${line}`; }
@@ -191,12 +204,13 @@ class Host {
     return this;
   }
   package(name) {
-    const item = this.initialized.extension_inventory?.find(item => item.id === name || item.id.endsWith(`:${name}`));
+    const item = this.inventory?.find(item => item.id === name || item.id.endsWith(`:${name}`));
     assert(item, `${this.label}: missing package ${name}; ${this.stderr}`); return item;
   }
   async raw(method, params = {}) {
     const request = { id: `${this.label}-${++this.sequence}`, method, params }; this.requests.push(request);
     assert.equal(this.child.exitCode, null, `${this.label} exited: ${this.stderr}`);
+    this.inventoryRequests.set(request.id, this.inventoryRevision);
     this.child.stdin.write(`${JSON.stringify(this.domain ? { client: this.label, frame: request } : request)}\n`);
     return await waitFor(this.events, "message", this.transcript, frame => frame.id === request.id, `${this.label} ${method}; stderr=${this.stderr}`, 45_000);
   }
@@ -212,21 +226,37 @@ class Host {
   async enable(name) {
     const item = this.package(name);
     if (!item.enabled) {
-      const control = this.domain ? coding : this, ownerItem = control.package(name);
-      const changed = await control.rpc("extension/package/update", { id: ownerItem.id, fingerprint: ownerItem.fingerprint, action: "enable" });
-      control.initialized.extension_inventory = changed.extension_inventory;
-      if (this.domain) await this.awaitPackage(name, true);
+      // Product transports intentionally cannot mutate package policy. The
+      // separate owner control must edit this exact selected source, not the
+      // unrelated Coding fixture's explicit configuration.
+      const control = this.domain ? await personalOwnerControl(this) : this, ownerItem = control.package(name);
+      const beforeGeneration = item.graph_generation;
+      await control.rpc("extension/package/update", { id: ownerItem.id, fingerprint: ownerItem.fingerprint, action: "enable" });
+      if (this.domain) {
+        const source = JSON.parse(await readFile(this.configPath, "utf8"));
+        assert.equal(source.extensions?.enabled?.[ownerItem.id], true, "owner policy update missed the selected source");
+        const profile = source.composition.profile, module = ownerItem.provenance.plugin_id;
+        // Trust/enablement and explicit graph selection are separate contracts.
+        // Select the optional module deliberately rather than expecting an
+        // enabled flag to add a hidden provider to the Personal profile.
+        source.composition.patches = [...(source.composition.patches ?? []), { modules: { [module]: true } }];
+        await writeOwnerComposition(this, source);
+        const observed = await this.awaitPackage(name, true);
+        assert.notEqual(observed.graph_generation, beforeGeneration, "Personal did not publish the selected config change");
+        this.lastConfigChange = { config_path: this.configPath, enabled_subject: ownerItem.id, selected_module: module, profile,
+          before_generation: beforeGeneration, after_generation: observed.graph_generation, runtime_state: observed.runtime_state };
+      }
     }
     const active = this.package(name);
     assert.equal(active.runtime_state, "active", `${name}: ${active.last_error ?? JSON.stringify(active)}`);
     return active;
   }
-  async awaitPackage(name, enabled) {
+  async awaitPackage(name, enabled, runtimeState = enabled ? "active" : undefined) {
     const deadline = Date.now() + 10_000;
     do {
       this.initialized = await this.rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "mosaic-host-e2e" } });
       const item = this.package(name);
-      if (item.enabled === enabled && (!enabled || item.runtime_state === "active")) return item;
+      if (item.enabled === enabled && (!runtimeState || item.runtime_state === runtimeState)) return item;
       await new Promise(resolve => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
     throw new Error(`Owner config change did not reload ${name}: ${JSON.stringify(this.package(name))}`);
@@ -275,12 +305,31 @@ class Host {
   }
 }
 
+async function personalOwnerControl(target) {
+  if (!personalConfigOwner) {
+    // This process is an ordinary local owner control, not a Personal client.
+    // Its process-only profile override leaves the selected source unchanged.
+    personalConfigOwner = await new Host("personal-config-owner", "", invocation, undefined, target.configPath, "desktop").start();
+  }
+  const selected = await personalConfigOwner.rpc("config/read");
+  assert.equal(resolve(selected.config_path), resolve(target.configPath), "owner control selected a different config source");
+  return personalConfigOwner;
+}
+
+async function writeOwnerComposition(target, source) {
+  const control = await personalOwnerControl(target), observed = control.transcript.length;
+  const pending = `${target.configPath}.mosaic-next`;
+  await writeFile(pending, JSON.stringify(source));
+  await rename(pending, target.configPath);
+  await waitFor(control.events, "message", control.transcript.slice(observed), frame => frame.method === "config/changed",
+    "owner control publication of explicit composition", 10_000);
+}
+
 async function codingBaseline() {
   coding = await new Host("coding", "").start();
   const initial = coding.package("memory");
   if (initial.enabled) {
-    const changed = await coding.rpc("extension/package/update", { id: initial.id, fingerprint: initial.fingerprint, action: "disable" });
-    coding.initialized.extension_inventory = changed.extension_inventory;
+    await coding.rpc("extension/package/update", { id: initial.id, fingerprint: initial.fingerprint, action: "disable" });
   }
   await assert.rejects(coding.client("memory.read", {}, "memory"), /inactive|disabled|unavailable|enabled/i);
   await coding.enable("memory");
@@ -294,8 +343,7 @@ async function codingBaseline() {
   assert(!names.some(name => /personal_memory|propose_specialist|create_task|complete_task/.test(name)), JSON.stringify(names));
   assert(JSON.stringify(calls).includes(projectMarker), "Coding positive control did not load its project AGENTS");
   const enabled = coding.package("memory");
-  const changed = await coding.rpc("extension/package/update", { id: enabled.id, fingerprint: enabled.fingerprint, action: "disable" });
-  coding.initialized.extension_inventory = changed.extension_inventory;
+  await coding.rpc("extension/package/update", { id: enabled.id, fingerprint: enabled.fingerprint, action: "disable" });
   await assert.rejects(coding.client("memory.read", {}, "memory"), /inactive|disabled|unavailable|enabled/i);
   return { thread_id: codingThread, notebook_retained: true, optional_disabled: true };
 }
@@ -722,16 +770,23 @@ try {
     assert(memoryRecord.sources.some(source => source.ref === "mosaic-fixture-user-message-1")); return memoryRecord;
   });
   await scenario("Personal-only worker candidates require main evidence review and acceptance", async () => {
-    await personal.send("memory-evidence-source");
-    const history = await personal.client("agents.history", { agent_id: main.agent_id });
-    const source = history.records.find(record => record.role === "user" && record.content === "MOSAIC_E2E_CASE:memory-evidence-source");
-    assert(source);
-    const ref = `personal-message:${encodeURIComponent(main.main_session_id)}:${source.seq}`;
-    toolPlans.set("memory-worker-candidate", { plugin: "personal", tool: "personal_memory_create", arguments: {
-      key: "fixture.worker.candidate", expected_revision: 0, content: "Synthetic worker review candidate", evidence: "inferred",
-      sources: [{ kind: "message", ref, occurred_at: "2026-01-01T00:00:00Z" }],
+    // The actual main host turn creates the task. Owner tasks.create has no
+    // bound user-message provenance and cannot authorize worker extraction.
+    toolPlans.set("memory-evidence-source", { plugin: "personal", tool: "create_task", arguments: {
+      request_id: "memory-candidate-worker", title: "Review memory evidence", goal: "MOSAIC_E2E_CASE:memory-worker-candidate",
     } });
-    const worker = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "memory-candidate-worker", title: "Review memory evidence", goal: "MOSAIC_E2E_CASE:memory-worker-candidate" })).task;
+    let source;
+    toolPlans.set("memory-worker-candidate", { plugin: "personal", tool: "personal_memory_create", arguments: async () => {
+      const history = await personal.client("agents.history", { agent_id: main.agent_id });
+      source = history.records.find(record => record.role === "user" && record.content === "MOSAIC_E2E_CASE:memory-evidence-source");
+      assert(source);
+      return { key: "fixture.worker.candidate", expected_revision: 0, content: "Synthetic worker review candidate", evidence: "inferred",
+        sources: [{ kind: "message", ref: `personal-message:${encodeURIComponent(main.main_session_id)}:${source.seq}`, occurred_at: "2026-01-01T00:00:00Z" }] };
+    } });
+    await personal.send("memory-evidence-source");
+    const worker = (await personal.client("tasks.list")).tasks.find(task => task.request_id === "memory-candidate-worker");
+    assert(worker, "real create_task did not persist the worker");
+    assert.equal(worker.source.message_binding, "host_turn");
     await personal.settled({ session_id: worker.execution.session_id, turn_id: worker.execution.turn_id });
     const records = (await personal.client("memory.query", { agent_id: main.agent_id, include_inactive: true })).records;
     const candidate = records.find(record => record.key === "fixture.worker.candidate");
@@ -751,16 +806,19 @@ try {
   });
   await scenario("Enabling optional Memory adds no duplicate Personal tools or records provider", async () => {
     assert.equal(personal.package("memory").enabled, false);
+    const codingBefore = await readFile(coding.configPath, "utf8");
     await personal.enable("memory");
+    assert.equal(await readFile(coding.configPath, "utf8"), codingBefore, "Personal owner control changed Coding's selected source");
     await personal.send("memory-both-enabled");
     const names = agentCalls("memory-both-enabled")[0].body.tools.map(item => item.function.name);
     assert.equal(names.filter(name => name.startsWith("plugin_personal_personal_memory_que")).length, 1);
     assert(!names.some(name => name.startsWith("plugin_memory_")));
     const query = await personal.client("memory.query", { agent_id: main.agent_id, query: "mint tea" });
     assert.equal(query.records.filter(record => record.id === memoryRecord.id).length, 1);
+    await coding.enable("memory");
     const notebook = await coding.client("memory.read", {}, "memory");
     assert(JSON.stringify(notebook).includes(codingMarker));
-    return { one_personal_memory_tool_set: true, coding_notebook_retained: true };
+    return { one_personal_memory_tool_set: true, coding_notebook_retained: true, owner_config_change: personal.lastConfigChange };
   });
   await scenario("The public product exposes only its durable main conversation", async () => {
     const listed = await personal.client("agents.list");
@@ -1085,16 +1143,26 @@ try {
     await assert.rejects(coding.client("calendar.status", {}, "personal-calendar"), /unavailable|does not accept|outside|capability/i);
     return { status, refreshed, no_external_calendar_account: true };
   });
-  await scenario("Stale generation is rejected and disabling Personal preserves Coding", async () => {
+  await scenario("Stale generation is rejected and explicit Personal composition removal preserves Coding", async () => {
     const item = personal.package("personal");
     await assert.rejects(personal.client("agents.list", {}, "personal", { fingerprint: "stale-generation" }), /fingerprint|changed|stale|generation.*active/i);
     const activeTask = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "disable-running-task", title: "Stop on disable", goal: "MOSAIC_E2E_CASE:background-disable" })).task;
     await waitFor(providerEvents, "request", providerCalls, call => call.tag === "background-disable", "owner task provider admission before disable");
     await assert.rejects(personal.rpc("extension/package/update", { id: item.id, fingerprint: item.fingerprint, action: "disable" }), /user host client method is unavailable/);
-    const ownerItem = coding.package("personal");
-    const changed = await coding.rpc("extension/package/update", { id: ownerItem.id, fingerprint: ownerItem.fingerprint, action: "disable" });
-    coding.initialized.extension_inventory = changed.extension_inventory;
-    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-disable" && call.cancelled, "disabling Personal must cancel its active owner session", 8_000);
+    const control = await personalOwnerControl(personal);
+    const source = JSON.parse(await readFile(personal.configPath, "utf8"));
+    assert.equal(source.composition.profile, "personal");
+    // A required Personal prompt binding cannot remain selected after removing
+    // its provider. The owner explicitly chooses another graph first; the user
+    // host retains its Personal identity and never gains generic Coding APIs.
+    source.composition.profile = "minimal";
+    await writeOwnerComposition(personal, source);
+    const removed = await personal.awaitPackage("personal", true, "inactive");
+    assert.notEqual(removed.graph_generation, item.graph_generation, "Personal did not publish its explicit removal");
+    const ownerItem = control.package("personal");
+    await control.rpc("extension/package/update", { id: ownerItem.id, fingerprint: ownerItem.fingerprint, action: "disable" });
+    await personal.awaitPackage("personal", false);
+    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-disable" && call.cancelled, "explicit Personal removal must cancel its active owner session", 8_000);
     await assert.rejects(personal.client("agents.list"), /inactive|disabled|unavailable|not approved and enabled/i);
     const before = providerCalls.length;
     await assert.rejects(personal.rpc("turn/start", { thread_id: main.main_session_id, prompt: "MOSAIC_E2E_CASE:disabled-owner-bypass" }), /user host client method is unavailable/);
@@ -1102,7 +1170,7 @@ try {
     const notebook = await coding.client("memory.read", {}, "memory"); assert(JSON.stringify(notebook).includes(codingMarker));
     const sent = await coding.rpc("turn/start", { thread_id: codingThread, prompt: "MOSAIC_E2E_CASE:coding-after-disable" });
     await coding.settled({ thread_id: codingThread, turn_id: sent.turn.id });
-    return { cancelled_execution_session_id: activeTask.execution.session_id };
+    return { cancelled_execution_session_id: activeTask.execution.session_id, explicit_profile_transition: "personal -> minimal", config_path: personal.configPath };
   });
   for (const call of providerCalls.filter(call => !call.tag.startsWith("coding-"))) {
     for (const marker of privateMarkers) assert(!JSON.stringify(call).includes(marker), `${call.tag} leaked ${marker}`);

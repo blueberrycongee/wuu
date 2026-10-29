@@ -748,6 +748,8 @@ export const PLUGIN_CLIENT_REQUEST_CAPABILITY = "plugin.client.request" as const
 /** Host-only admission after a persisted main conversation settles. */
 export const SESSION_ATTENTION_CAPABILITY = "session.attention" as const;
 export interface SessionAttentionInput {
+  /** Exact host-admitted send bound to this persisted turn; not read or execution authority. */
+  request_id: string;
   user_space_id: string;
   product_domain: string;
   session_id: string;
@@ -3143,3 +3145,5 @@ export * from "./identity.js";
 export * from "./resource-policy.js";
 
 export * from "./execution-authorization.js";
+
+export * from "./personal-memory.js";

@@ -310,21 +310,33 @@ func New(opts Options) (*Runtime, error) {
 // Serve is the trusted local-pipe embedding entrypoint. Network transports
 // must use ServeProviderAuthenticated or carry a verified device principal.
 func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	trustedLocal := false
 	if ctx != nil {
 		if _, ok := principal.FromContext(ctx); !ok {
+			trustedLocal = true
 			ctx = principal.WithContext(ctx, principal.LocalOwner())
 		}
 	}
-	return r.serve(ctx, in, out, nil, nil)
+	return r.serve(ctx, in, out, nil, nil, trustedLocal)
 }
 
 // ServeForDevice accepts an already-authenticated device principal and its
 // bound push registrar; it never upgrades a transport to local owner authority.
 func (r *Runtime) ServeForDevice(ctx context.Context, in io.Reader, out io.Writer, registrar appserver.PushRegistrar) error {
-	return r.serve(ctx, in, out, nil, nil, registrar)
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	caller, ok := principal.FromContext(ctx)
+	if !ok {
+		return errors.New("authenticated device principal is required")
+	}
+	if err := caller.Check(ctx); err != nil {
+		return err
+	}
+	return r.serve(ctx, in, out, nil, nil, false, registrar)
 }
 
-func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage, registrars ...appserver.PushRegistrar) error {
+func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage, trustedLocal bool, registrars ...appserver.PushRegistrar) error {
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -370,7 +382,16 @@ func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, creden
 	if r.userHost != nil {
 		return r.userHost.Serve(ctx, in, out, registrar)
 	}
-	return appserver.RunStdioForDevice(ctx, core, in, out, registrar, appserver.WithRuntimeBindings(r.bindings))
+	options := []appserver.ServerOption{appserver.WithRuntimeBindings(r.bindings)}
+	if trustedLocal {
+		// Forwarding belongs to this private ingress, not to a caller's owner
+		// identity. Authenticated peers and device transports cannot opt into it.
+		options = append(options, appserver.WithTrustedLocalTransport())
+	}
+	if len(registrars) > 0 {
+		return appserver.RunStdioForDevice(ctx, core, in, out, registrar, options...)
+	}
+	return appserver.RunStdio(ctx, core, in, out, options...)
 }
 
 // SubscribeUserAttention observes owner-admitted notifications for the user

@@ -104,11 +104,14 @@ async function mount(invokeRuntime: InvokeRuntime) {
 
 it("renders an unavailable service without crashing and recovers on the selected route", async () => {
   let available = false;
+  const failure = new Error("Selected goal.control provider is unavailable");
   const ui = await mount(async () => {
-    if (!available) throw new Error("Selected goal.control provider is unavailable");
+    if (!available) throw failure;
     return { goal: activeGoal };
   });
-  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("goal.control");
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
   expect(ui.container.textContent).not.toContain(activeGoal.objective);
   available = true;
   await act(async () => vi.advanceTimersByTimeAsync(1500));
@@ -198,8 +201,11 @@ it("discards stale reads and shows runtime errors even when collapsed", async ()
   expect(ui.container.textContent).not.toContain("Stale goal");
 
   await act(async () => vi.advanceTimersByTimeAsync(1500));
-  await act(async () => pending.at(-1)!.reject(new Error("storage unavailable")));
-  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("storage unavailable");
+  const failure = new Error("storage unavailable");
+  await act(async () => pending.at(-1)!.reject(failure));
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
 });
 
 it("scopes the direct entry to an editable main conversation", async () => {
@@ -233,4 +239,26 @@ it("keeps ordinary conversations empty until a goal is created", async () => {
   });
   expect(ui.container.textContent).toContain(activeGoal.objective);
   expect(ui.button("结束目标").disabled).toBe(false);
+});
+
+it("keeps action failures diagnostic-only while allowing an explicit retry", async () => {
+  const failure = new Error("internal goal writer path /private/state failed");
+  let rejected = true, goal = activeGoal;
+  const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
+    if (request.method === "pause") {
+      if (rejected) throw failure;
+      goal = { ...goal, status: "paused" };
+    }
+    return { goal };
+  });
+  const ui = await mount(invoke);
+  await ui.click("暂停");
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
+  expect(ui.button("暂停").disabled).toBe(false);
+  rejected = false;
+  await ui.click("暂停");
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(invoke.mock.calls.filter(([request]) => request.method === "pause")).toHaveLength(2);
 });

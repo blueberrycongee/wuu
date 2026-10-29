@@ -19,8 +19,9 @@ const (
 	reviewSettingsEvents = "wuu.personal_review_settings_events.v1"
 )
 
-// NewDocumentStore binds the ledger to a selected provider. Its owner must retain
-// that provider generation through cleanup; Close never closes or substitutes it.
+// NewDocumentStore binds the ledger to selected storage. Its owner must pin each
+// operation to one provider generation and retain it through completion; Close
+// never closes or substitutes the provider.
 // Storage is not an execution lease: WithExecutionAuthority must serialize
 // dispatch with permission and task revocation across the entire effect.
 func NewDocumentStore(documents persistence.Documents) (*Store, error) {
@@ -38,14 +39,10 @@ func (s *Store) claimAuthority(ctx context.Context) error {
 	if s.closed.Load() {
 		return persistence.ErrClosed
 	}
-	if s.ownershipClaimed {
-		return nil
-	}
-	if err := persistence.ClaimNamespaces(ctx, s.documents, reviewNamespaces()); err != nil {
-		return err
-	}
-	s.ownershipClaimed = true
-	return nil
+	// The document client may route a fresh operation to a new generation.
+	// Revalidate its idempotent ownership contract rather than caching a claim
+	// made against a retired implementation.
+	return persistence.ClaimNamespaces(ctx, s.documents, reviewNamespaces())
 }
 func reviewPart(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
 func reviewKey(key Key) string       { return reviewPart(key.SpaceID) + "/" + reviewPart(key.ID) }

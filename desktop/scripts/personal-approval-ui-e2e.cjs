@@ -31,6 +31,7 @@ async function capture(name) {
 }
 (async()=>{
   browser=await chromium.launch({headless:true,chromiumSandbox:true,...(process.env.WUU_REVIEW_CHROMIUM?{executablePath:process.env.WUU_REVIEW_CHROMIUM}:{}),args:['--disable-background-networking']});
+  report.browser_version=browser.version();
   for(const [name,scenario,extra,width,height] of [
     ['chat-light','ready',{},1100,950],['chat-dark','ready',{theme:'dark'},1100,950],
     ['chat-narrow-large-long','long',{theme:'dark',font:'20'},430,1100],
@@ -44,8 +45,8 @@ async function capture(name) {
     if(['expired','uncertain','stale','denied','revoked','succeeded'].includes(scenario))assert.equal(await page.locator('[data-review-choice="approve_once"]:enabled').count(),0);
   }
   report.cases.push('Main chat renders consequential file approval and saved terminal states; expired/stale/unknown actions are not confirmable');
-  await open('empty');assert.equal(await page.locator('[data-personal-action-review]').count(),0);assert(await page.locator('.mosaic-main textarea').isEnabled());
-  await open('unavailable');assert.equal(await page.locator('[data-personal-action-review]').count(),0);report.cases.push('No approval card for empty/unavailable action state; ordinary conversation remains usable');
+  await open('empty');await wait('.mosaic-main textarea');assert.equal(await page.locator('[data-personal-action-review]').count(),0);assert(await page.locator('.mosaic-main textarea').isEnabled());await capture('home-empty-actions');
+  await open('unavailable');await wait('.mosaic-main textarea');assert.equal(await page.locator('[data-personal-action-review]').count(),0);await capture('home-no-approval-service');report.cases.push('No approval card for empty/unavailable action state; ordinary conversation remains usable');
   await open();await wait('[data-review-choice="approve_once"]');
   await page.locator('[data-review-choice="approve_once"]').evaluate(node=>{node.click();node.click()});await wait('[data-review-state="approved"]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve').length),1);
@@ -63,4 +64,7 @@ async function capture(name) {
   const toggle=page.locator('[data-personal-action-review] [role="switch"]');assert.equal(await toggle.getAttribute('aria-checked'),'false');await toggle.evaluate(node=>{node.click();node.click()});await page.waitForFunction(()=>document.querySelector('[data-personal-action-review] [role="switch"]')?.getAttribute('aria-checked')==='true');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('AutoReview defaults off; explicit version-bound opt-in saves once without changing Coding');
   assert.deepEqual(report.errors,[]);report.status='passed';
-})().catch(error=>{report.status='failed';report.error=String(error.stack||error);process.exitCode=1}).finally(async()=>{await context?.close();await browser?.close();fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));});
+})().catch(async error=>{
+  report.status='failed';report.error=String(error.stack||error);process.exitCode=1;
+  if(page&&!page.isClosed())try{await page.screenshot({path:path.join(output,'failure.png')});report.screenshots.push({file:'failure.png'});}catch(captureError){report.capture_error=String(captureError);}
+}).finally(async()=>{fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));await context?.close();await browser?.close();});

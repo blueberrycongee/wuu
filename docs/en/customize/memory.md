@@ -89,7 +89,8 @@ No separate Memory plugin needs to be enabled. Personal itself remains a bundled
 default-enabled plugin: disabling Personal also stops its memory tools, service
 and recall. Coding Memory remains optional and keeps its existing behavior.
 Personal is the sole provider of the compatible `memory.records` service; its
-identity binding, source verification and candidate admission are internal calls.
+identity binding, source verification and candidate publication use the public
+`host.personal@1` memory operations described below.
 Dream is optional, is not enabled by this change, and is not needed for memory.
 
 An upgrade transfers existing Personal record storage through matched package
@@ -107,10 +108,11 @@ oversized facts remain available on demand. Provenance and contribution history
 are fetched with `personal_memory_query/read`, not repeated in every prompt.
 Existing records default to detail and are not automatically promoted to core.
 Expiry, corrections and forget tombstones apply to every projection, including
-new workers. The store is unchanged; projections do not duplicate records.
+new workers. Projections do not duplicate records.
 
 The bound main conversation can publish, correct and forget. Background tasks
-and optionally enabled Personal Dream can create and revise candidates, but cannot edit accepted
+with an exact admitted run and host-bound original user source can create and
+revise candidates, but cannot edit accepted
 records, select core, correct or forget. Candidates stay out of ordinary recall;
 `include_inactive: true` exposes them for review. The main conversation receives
 at most eight pending candidate IDs (not their facts) on its next normal model
@@ -125,7 +127,9 @@ corrections still use `correct`. No per-session permission dialog is required.
 
 Automatic admission currently supports only canonical
 `personal-message:<encodeURIComponent(session_id)>:<positive seq>` sources from
-owned Personal main/task history. The provider checks exact visible original user
+the bound Personal main conversation. A worker can use only the source captured
+by the real `create_task` host turn, not another historical message or an
+owner-created task without source provenance. The provider checks active original user
 authorship, rejects hidden/generated/truncated content, and supplies the persisted
 timestamp. Workers receive timestamp metadata only; source text review is main-only.
 Programmatic verification proves provenance, not semantic entailment: the main
@@ -144,6 +148,54 @@ extensions impersonating a session. Reads remain shared across the Personal user
 space, not restricted to one task. Coding and Project do not gain Personal access.
 
 Queries return `next_cursor` when more records remain. Continue with the same
-filters; if records change or the cursor is rejected, restart the query. The
-underlying host storage quotas still apply. Forgetting removes record content
+filters; if records change or the cursor is rejected, restart the query. Selected-provider document limits apply. Forgetting removes record content
 and blocks known source references, not source chats, files, exports or backups.
+
+### Publication and recovery contract
+
+Extensions replacing Personal can declare `host.personal@1` and use the SDK's
+`personalMemory(host)` helper. `records`, `source`, `operation` and `commit` use
+host-resolved session ownership and the selected Personal authority; there is no
+bundled-plugin ID bypass. This service is available only in the Personal product
+domain. It routes through the selected `state.documents`, task-state, session and
+`execution.authorization` providers, without a local storage fallback or broader
+main-history read grant. `commit` accepts `{id, key, expected, value}`; `key` is
+`mem_` plus the fact key's SHA-256, `expected` is the exact previous JSON or null,
+and `value` is the next `memory.records` JSON. Its boundary fields are `id`,
+`revision`, `product_domain: "personal"`, `user_space_id`, `status`, `tier`,
+`content`, `contributor_agent_id`, `updated_by_agent_id`, `sources` and
+`contributions`. Revisions advance by one; the latest contribution identifies
+`agent_id` and `executor_session_id`. Sources identify `kind`, `ref` and
+`occurred_at`; workers require exact canonical message provenance and non-core
+candidate status. Forgotten records retain `id`, revision, scope, status and
+`blocked_sources`, not content. Product fact normalization and recall policy
+remain the selected Personal implementation's responsibility.
+
+Every new memory write uses a separate authoritative record/receipt journal.
+Legacy Personal storage is read-only compatibility input: a journal record with
+the same ID always wins, including a forgotten tombstone. The first revision of
+a legacy record enters the journal; it is not copied to two live stores. Create,
+accept, correct and forget all use the same authority. Record and terminal
+receipt commit together while task/session inspection and the selected execution
+provider's grant fence are held. A concurrent stop, requirement change or grant
+revocation cannot silently cross this boundary. Old execution grants without
+commit-fence support fail closed and require a fresh owner-authorized grant.
+
+An operation ID identifies one stable semantic intent, not an ephemeral callback.
+`operation` recovers its exact prepared bytes before retrying `commit`; changed
+input cannot reuse the ID. A committed receipt is returned only while it remains
+the current record. Forgetting also redacts prior operation content, retaining
+digests needed for cleanup rather than a second recallable copy. An unknown
+publication is not failure: durable guards remain until an atomic terminal
+receipt or abort fences delayed publication. Do not invent a new ID to retry an
+unknown write.
+
+`operations` and `reconcile({id, writers_stopped: true, reason})` are owner-client
+maintenance, not model tools. Reconciliation drains this host's writers and
+requires the original selected bindings and single-host provider authority; a
+boolean alone does not establish exclusivity on a shared deployment. It records
+the owner's reason and either preserves the committed receipt or atomically
+aborts the exact pending intent before cleanup. Provider outages remain visible;
+shutdown may hand durable unresolved guards to this recovery path without
+retaining a dead in-memory generation. Provider replacement must preserve the
+original authoritative dataset or restore that binding for recovery.

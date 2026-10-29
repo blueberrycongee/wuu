@@ -51,8 +51,13 @@ func (s *Service) Status() pluginhost.Status {
 	return pluginhost.Status{ID: s.id, State: s.state}
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
-	methods := make([]pluginhost.ServiceMethodDescriptor, 0, len(domainMethods)+len(clientInputDomainMethods)+len(inspectionDomainMethods)+len(resourceMethods))
-	for _, name := range append(append(append(append([]string{}, domainMethods...), clientInputDomainMethods...), inspectionDomainMethods...), resourceMethods...) {
+	names := append([]string{}, domainMethods...)
+	names = append(names, clientInputDomainMethods...)
+	names = append(names, inspectionDomainMethods...)
+	names = append(names, activeHistoryDomainMethods...)
+	names = append(names, resourceMethods...)
+	methods := make([]pluginhost.ServiceMethodDescriptor, 0, len(names))
+	for _, name := range names {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1", Cleanup: name == "Journal.Close" || name == "ReleaseInspection" || name == "ReconcileInspection"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
@@ -193,7 +198,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			releaseHandle = id
 		}
 
-	} else if !containsMethod(domainMethods, method) && !containsMethod(clientInputDomainMethods, method) && !containsMethod(inspectionDomainMethods, method) {
+	} else if !containsMethod(domainMethods, method) && !containsMethod(clientInputDomainMethods, method) && !containsMethod(inspectionDomainMethods, method) && !containsMethod(activeHistoryDomainMethods, method) {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown session domain method"}
 	}
 	guardKey := ""

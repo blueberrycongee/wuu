@@ -134,6 +134,8 @@
     "dist/desktop-session-transport.d.ts",
     "dist/session-sharing.js",
     "dist/session-sharing.d.ts",
+    "dist/personal-memory.js",
+    "dist/personal-memory.d.ts",
     "dist/execution-authorization.js",
     "dist/execution-authorization.d.ts",
     "dist/identity.js",

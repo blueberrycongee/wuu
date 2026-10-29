@@ -150,6 +150,39 @@ owner 权限，也不自动重放授权过期期间错过的工作。
 `execution_authorization_required` 是需要实时续期的权威拒绝；传输错误和
 格式无效响应仍是独立的不确定结果，不能据此重新签发或借用 owner 权限。
 
+`validate` 是瞬时判定，不是发布事务。需要与撤销串行化的持久发布必须使用
+`acquire-commit` 和 `release-commit`。获取前先保存
+`{ id, operation_digest, authorization }`；`authorization` 是准确的 validate
+请求。获取需要宿主证明的 `execution/commit/acquire` 准入；恢复的非 owner
+授权使用 `execution-grant` 权威，主体必须与所选授权一致。提供者原子保护叶授权
+及全部祖先，并返回绑定准确请求的 guard。获取结果未知或格式无效时，不准入操作。
+
+内置提供者将新签发的授权存入支持保护的新命名空间，使用版本不同的不透明引用。
+旧授权仍可读取、撤销并支持原有普通操作，不会迁移、删除或静默续期。发布保护会
+拒绝旧格式叶授权及任意旧格式祖先，必须由实时 owner 使用新签发 nonce 明确续期。
+共享签发索引保留旧 nonce 的幂等语义；旧写入者无法查找或撤销新格式授权。
+从旧父授权派生不会升级其撤销语义。
+
+Guard 的过期时间是准入截止时间，不是自动释放保护的计时器。已经准入的唯一操作
+可以在过期或进程重启后完成终态回执。遇到保护的撤销返回
+`execution_commit_active`，不能报告成功；终态释放后才能重试撤销。成功撤销后
+不能新获取保护。重用活跃 ID 必须保持调用者、操作及授权完全一致；释放后的 ID
+永远不能再次获取。
+
+释放通过捕获的提供者 generation 的 cleanup 路由执行，包括调用者取消之后。
+`committed` 要求权威持久回执的 SHA-256 摘要；`not-committed` 要求确认没有写入
+仍可能提交。发布结果未知时必须保留保护。获取之前的 `not-committed` 释放会持久化
+墓碑，阻止迟到的获取。这些方法不会重试发布或扩大授权，也不能代替独立的来源、
+任务或资源策略保护。
+
+恢复先核对原始持久意图及回执。同一稳定服务调用者可以在过期后使用
+`inspect-commit` 并释放，无需恢复旧 owner 主体。若工作进程或本地意图已丢失，
+owner 证明的 `list-commits`、`inspect-commit`、`reconcile-commit` 分别使用
+`execution/commits/list`、`execution/commits/inspect`、
+`execution/commits/reconcile` 操作。协调恢复绑定完整原始请求、预期调用者、
+终态回执及原因；宿主必须先停止原写入者并确认结果。列出未解决意图不代表可以
+再次执行，未知回执不能被协调恢复成已释放。
+
 `executionGrants(host).callService({ reference, service, method, params })`
 针对 `service/<service>/<method>` 重新验证 exact-run 授权，再通过该消费者声明的
 所选服务路由调用。下游回调继承重新验证的非 owner 主体，不把不透明引用当作
@@ -237,9 +270,35 @@ registry 的实际调用者，绝不接受请求 JSON 指定。重复同一声�
 自行制造 owner。
 
 
+## 替换网页搜索
+
+选择原生 `agent.tools@1` 注册表时，可以用受信任的插件工具替换 `web_search`，其他工具保留原实现。先安装并启用插件，再在可信用户的 agent 配置中填写实际的插件清单 ID 和声明的工具 ID；项目设置不能选择替代实现：
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+[合成搜索示例](../../../examples/plugins/synthetic-web-search.ts)可直接运行，用于说明插件编写；它返回固定的演示结果，并不进行真实搜索。使用 `wuu plugin dev` 安装后，将上方的 `example-search` 替换成 Wuu 返回的插件 ID。目前只支持 `web_search`。替代实现必须声明与原工具完全相同的输入 schema、freeform 和 direct-only 设置，不能是编排工具。插件描述以 `web_search` 名称暴露，插件自身的命名空间名称则隐藏。目标缺失、禁用或不兼容时会失败，不会回退；删除绑定是显式选择，后续准备的 generation 使用原生实现。
+
+成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
+
+如果会话设置了工具允许列表，必须同时允许 `web_search` 和该插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
+
+工具调度采用原工具和替代实现中更严格的活动声明，调用经过原工具策略与插件工具授权；禁用任一名称都会阻止执行。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
+
+运行 `node scripts/tool-replacement-e2e.mjs`，可验证打包 SDK 合成插件、受控模型、直接和 code mode 调用、worker 与侧会话、授权及 generation 更新。该测试不验证外部搜索服务、真实模型质量或界面呈现。
+
 ## 会话、工具与 agent 策略提供者
 
 `session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
+
+`ReadActiveHistoryQuery` 是 `session.domain@1` 的新增操作，使用现有的 `HistoryReadQuery` 和 `HistoryPage` 类型。它读取限定的序列范围并排除当前已撤回的记录；即使调用者传入旧快照或游标，也不会恢复已撤回的内容。桌面端注意力通知通过该操作在投递前重新核验对应的已准入输入和结果定位目标。提供者不支持该方法时安全拒绝；宿主不改用物理历史或缓存投影。原生提供者读取索引范围和当前撤回区间，无需加载完整对话。
 
 使用 `sessionDomainProvider(handlers)` 声明已实现的方法，并分发类型化参数数组和结果数组；`sessionDomain(host).call(method, args)` 是绑定消费者。保留导出记录的字段名，包括明确规定的 Go 大小写。日志句柄属于认证调用者及提供者 generation。遇到 `session_outcome_unknown`，应先检查持久结果再决定是否重试，不能把它当作写入失败的证明。OS 锁和执行身份仍由宿主负责，原子成员变更与领域决策由提供者负责。
 
@@ -593,9 +652,11 @@ provider 会停止这些调用；错误或空决策不会切换到另一实现�
 | `retry` | 失败的循环步骤可选择 `fail`、使用有界上下文溢出恢复的 `recover`，或对证明尚未提交的请求显式 `retry`。重试必须提供 `max_attempts`，首次值固定总尝试上限，后续决策不能续领预算。 |
 | `transport_retry` | 接收已结束物理尝试的失败、提交次数、尝试预算及退避配置。`fail` 终止；`recover` 给出 `recovery_action`（`replay_same_payload`、`wait_then_replay`、`refresh_credential` 或 `switch_transport`）及可选 `delay_ms`。仍须满足适配器能力及持久化工作流预算。 |
 
-策略不能重放已显示的部分输出、已接纳工具副作用、提交结果不明的操作，或重置
-耗尽的推理预算。传输恢复保留物理提交回执，包括结果不明但可能计费的提交；选中策略可以在
-预算内重新尝试模型调用，但不能重放已接纳或结果不明的工具副作用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
+循环重试不能重放部分输出、已接纳的工具副作用、提交结果不明的操作，也不能重置
+耗尽的推理预算。对于 `transport_retry`，当消费者能够丢弃失败尝试且已安装重放安全检查时，
+宿主可设置 `partial_output_resettable`。恢复决策仍须通过安全检查，以保护已完成的检查点及
+已接纳或结果不明的工具副作用；没有此能力时，部分输出会阻止传输恢复。传输恢复保留物理
+提交回执，包括结果不明但可能计费的提交；选中策略可以在预算内重新尝试模型调用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
 会保留；刷新凭证、切换传输和重试仍需既有的预写回执及适配器支持。
 
 完整循环替换通过 `driverTurn(host, execution).evaluatePolicy()` 使用策略，

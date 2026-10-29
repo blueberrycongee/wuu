@@ -38,6 +38,8 @@ type Options struct {
 	OpenConnectorAuthorizationURL func(context.Context, string) error
 	// Review is the host-owned durable action coordinator, never a plugin callback.
 	Review func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
+	// Memory publishes exact source-bound records through selected durable providers.
+	Memory func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Leave nil until an approved OAuth client and secure store are configured.
 	Calendar Calendar
 	// Opens the provider URL in the trusted host. Never return that URL to UI.
@@ -88,6 +90,22 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 		return nil, err
 	}
 
+	if strings.HasPrefix(operation, "memory.") {
+		h.mu.Lock()
+		closed, handler := h.closed, h.options.Memory
+		h.mu.Unlock()
+		if closed || handler == nil {
+			return nil, errors.New("Personal memory coordinator unavailable")
+		}
+		if operation == "memory.operations" || operation == "memory.reconcile" {
+			if err := clientauthority.RequireOwner(ctx, h.binding); err != nil {
+				return nil, err
+			}
+		} else if verifiedSession == "" {
+			return nil, errors.New("memory requires a host-resolved session")
+		}
+		return handler(ctx, operation, raw, verifiedSession)
+	}
 	if strings.HasPrefix(operation, "connectors.") {
 		return h.callConnectors(ctx, operation, raw, verifiedSession)
 	}

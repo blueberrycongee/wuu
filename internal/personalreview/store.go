@@ -17,11 +17,10 @@ import (
 // Store is an isolated host-owned ledger. Never put it in plugin/model-writable
 // storage. Each state transition and its audit event commit in one transaction.
 type Store struct {
-	db               *sql.DB
-	documents        persistence.Documents
-	closed           atomic.Bool
-	ownershipMu      sync.Mutex
-	ownershipClaimed bool
+	db          *sql.DB
+	documents   persistence.Documents
+	closed      atomic.Bool
+	ownershipMu sync.Mutex
 }
 
 func Open(path string) (*Store, error) {

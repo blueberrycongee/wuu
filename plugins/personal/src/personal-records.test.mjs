@@ -23,7 +23,10 @@ function createRecordsHarness() {
     initialize(params, host) {
       records = new PersonalRecords("local", host, "personal", {
         context: session_id => host.call("host.service.call", { service: "personal.agents", method: "agents.memory-context", params: { session_id } }),
-        evidence: (session_id, ref) => host.call("host.service.call", { service: "personal.agents", method: "agents.memory-evidence", params: { session_id, ref } }),
+        evidence: (session_id, ref) => host.memory("memory.source", session_id, { ref }),
+        records: session_id => host.memory("memory.read", session_id),
+        operation: (session_id, id) => host.memory("memory.operation", session_id, { id }),
+        commit: (session_id, input) => host.memory("memory.commit", session_id, input),
       });
       return { provided_services: [{ name: "memory.records" }] };
     },
@@ -46,6 +49,9 @@ function createRecordsHarness() {
 
 class Host {
   storage = new Map();
+  journal = new Map();
+  operations = new Map();
+  loseCommitReply = false;
   contexts = new Map([
     ["a-main", { session_id: "a-main", agent_id: "agent-a", product_domain: "personal", user_space_id: "local" }],
     ["b-main", { session_id: "b-main", agent_id: "agent-b", product_domain: "personal", user_space_id: "local" }],
@@ -57,6 +63,10 @@ class Host {
   locks = new Map();
   releases = new Map();
   counter = 0;
+  async memory(operation, session_id, input = {}) {
+    const { value } = await this.call("host.service.call", { service: "host.personal", method: "call", params: { operation, session_id, input } });
+    return value;
+  }
   async call(service, params) {
     switch (service) {
       case "host.session.context": {
@@ -67,18 +77,66 @@ class Host {
       case "host.storage.keys": return { keys: [...this.storage.keys()] };
       case "host.storage.get": return { value: this.storage.get(params.key) ?? null };
       case "host.storage.compare_exchange": {
+        assert(!params.key.startsWith("personal.records.v1."), "new memory writes must not mutate legacy plugin storage");
         const current = this.storage.get(params.key) ?? null;
         if (current !== params.expected) return { swapped: false, value: current };
         this.storage.set(params.key, params.value);
         return { swapped: true, value: params.value };
       }
       case "host.service.call": {
-        if (params.service === "personal.agents") {
-          if (params.method === "agents.memory-evidence") {
-            const evidence = this.evidence.get(params.params.ref);
+        if (params.service === "host.personal") {
+          assert.equal(params.method, "call");
+          const { operation, session_id, input } = params.params;
+          const context = this.contexts.get(session_id);
+          assert.equal(context?.product_domain, "personal");
+          assert.equal(context?.user_space_id, "local");
+          let value;
+          if (operation === "memory.read") value = { records: Object.fromEntries(this.journal) };
+          else if (operation === "memory.source") {
+            const evidence = this.evidence.get(input.ref);
             if (!evidence) throw new Error("unsupported or unavailable memory evidence");
-            return structuredClone(evidence);
+            value = structuredClone(evidence);
+            if (!["a-main", "b-main"].includes(session_id)) delete value.content;
+          } else if (operation === "memory.operation") {
+            const saved = this.operations.get(input.id);
+            if (saved) assert.equal(saved.session_id, session_id, "intent belongs to its original session");
+            if (saved?.redacted) throw new Error("forgotten_record: publication receipt was redacted");
+            if (saved?.result?.swapped && this.journal.get(saved.write.key) !== saved.result.value) throw new Error("revision_conflict: memory receipt was superseded");
+            value = saved ? { write: structuredClone(saved.write) } : null;
+          } else {
+            assert.equal(operation, "memory.commit");
+            assert.match(input.key, /^mem_[a-f0-9]{64}$/);
+            let saved = this.operations.get(input.id);
+            if (saved) {
+              assert.equal(saved.session_id, session_id);
+              assert.deepEqual(saved.write, input, "stable operation must preserve exact first prepared bytes");
+            } else {
+              saved = { session_id, write: structuredClone(input) };
+              this.operations.set(input.id, saved);
+              const current = this.journal.get(input.key) ?? this.storage.get(`personal.records.v1.${input.key}`) ?? null;
+              if (current !== input.expected) saved.result = { swapped: false, value: current };
+              else {
+                const record = JSON.parse(input.value);
+                assert.equal(record.id, input.key); assert.equal(record.product_domain, "personal"); assert.equal(record.user_space_id, "local");
+                assert.equal(record.revision, (current ? JSON.parse(current).revision : 0) + 1);
+                this.journal.set(input.key, input.value);
+                if (record.status === "forgotten") {
+                  saved.write.expected = null; saved.redacted = true;
+                  for (const prior of this.operations.values()) {
+                    if (prior !== saved && prior.write.key === input.key) {
+                      prior.write.expected = null; prior.write.value = ""; prior.result = null; prior.redacted = true;
+                    }
+                  }
+                }
+                saved.result = { swapped: true, value: input.value };
+              }
+            }
+            value = saved.result;
+            if (this.loseCommitReply) { this.loseCommitReply = false; throw new Error("memory commit reply lost"); }
           }
+          return { ok: true, value: structuredClone(value) };
+        }
+        if (params.service === "personal.agents") {
           assert.equal(params.method, "agents.memory-context");
           const context = this.contexts.get(params.params.session_id);
           if (!context?.agent_id) throw new Error("unknown Personal identity");
@@ -189,7 +247,8 @@ test("ordered UI edits with equal timestamps survive replacement without admitti
 
 test("correction wins over old extraction and refreshes another agent's next model step", async t => {
   const f = await fixture(t);
-  const first = (await f.service("create", { ...createArgs("address", "old-chat"), content: "Lives at Old Street" })).record;
+  const initial = { ...createArgs("address", "old-chat"), content: "Lives at Old Street" };
+  const first = (await f.service("create", initial)).record;
   const input = { session_id: "a-main", step_index: 0, messages: [{ role: "user", content: "What address should I use?" }] };
   const before = await f.plugin.invokeCapability({ capability: "agent.pre_step", input, output: {} }, f.host, execution);
   assert.match(JSON.stringify(before), /Old Street/);
@@ -197,6 +256,7 @@ test("correction wins over old extraction and refreshes another agent's next mod
   const after = await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { ...input, step_index: 1 }, output: {} }, f.host, execution);
   assert.match(JSON.stringify(after), /New Street/);
   assert(!JSON.stringify(after).includes("Old Street"));
+  await assert.rejects(f.service("create", initial), /revision_conflict/, "superseded receipts cannot replay stale facts");
   await assert.rejects(f.service("revise", { id: first.id, expected_revision: 2, content: "Lives at Old Street", evidence: "explicit", sources: source("old-chat") }), /stale_source|superseded_source/);
   await assert.rejects(f.service("create", createArgs("renamed-address", "old-chat")), /superseded_source/);
   await assert.rejects(f.service("revise", { id: first.id, expected_revision: 2, content: "New guess", evidence: "inferred", sources: source("guess", 30) }, "b-main"), /contributor|author/);
@@ -208,9 +268,11 @@ test("forget purges content and traces, blocks old-source recreation across rest
   const forgotten = await f.service("forget", { id: first.id, expected_revision: 1 }, "b-main");
   assert.equal(forgotten.record.status, "forgotten");
   assert.equal((await f.service("query", {})).records.length, 0);
-  assert(!JSON.stringify([...f.host.storage.values()]).includes("Sensitive"));
-  assert(!JSON.stringify([...f.host.storage.values()]).includes("chat-sensitive"));
-  assert(!JSON.stringify([...f.host.storage.values()]).includes("private-trip"));
+  assert(!JSON.stringify([...f.host.journal.values()]).includes("Sensitive"));
+  assert(!JSON.stringify([...f.host.journal.values()]).includes("chat-sensitive"));
+  assert(!JSON.stringify([...f.host.journal.values()]).includes("private-trip"));
+  const receipts = JSON.stringify([...f.host.operations.values()]);
+  for (const secret of ["Sensitive", "chat-sensitive", "private-trip"]) assert(!receipts.includes(secret), "forget also redacts prior values from terminal receipts");
   await assert.rejects(f.service("create", createArgs("rephrased-location", "chat-sensitive")), /forgotten_source/);
   const fresh = await fixture(t, f.host);
   await assert.rejects(fresh.service("create", createArgs("new-record", "chat-sensitive")), /forgotten_source/);
@@ -238,6 +300,8 @@ test("cancelled writes do not publish data or retain locks", async t => {
   const controller = new AbortController(); controller.abort();
   await assert.rejects(f.plugin.invokeService({ service: "memory.records", method: "create", caller: "fixture", params: { ...createArgs("cancelled"), session_id: "a-main" } }, f.host, { executionId: "cancelled", signal: controller.signal }));
   assert.equal(f.host.storage.size, 0);
+  assert.equal(f.host.journal.size, 0);
+  assert.equal(f.host.operations.size, 0);
   assert.equal(f.host.releases.size, 0);
 });
 
@@ -359,7 +423,7 @@ test("main accepts a verified candidate without new user evidence or changing it
   assert.equal(accepted.status, "active"); assert.equal(accepted.evidence, "inferred"); assert.equal(accepted.tier, "detail");
   for (const field of ["content", "sources", "source_at", "effective_at", "expires_at"]) assert.deepEqual(accepted[field], candidate[field]);
   assert.equal(accepted.contributions.at(-1).operation, "accept");
-  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 1 }), /revision_conflict/);
+  assert.deepEqual((await f.tool("accept", { id: candidate.id, expected_revision: 1 })).record, accepted, "exact retry replays the committed receipt");
   await f.tool("forget", { id: candidate.id, expected_revision: 2 });
   await assert.rejects(f.tool("create", { ...createArgs("renamed"), sources: [{ kind: "message", ref, occurred_at }] }, "a-worker"), /forgotten_source/);
 });
@@ -405,7 +469,7 @@ test("source review cannot return a forgotten candidate after an in-flight evide
   const reading = new Promise(resolve => { entered = resolve; });
   const gate = new Promise(resolve => { release = resolve; });
   f.host.call = async (service, params) => {
-    if (service === "host.service.call" && params.method === "agents.memory-evidence") { entered(); await gate; }
+    if (service === "host.service.call" && params.service === "host.personal" && params.params.operation === "memory.source") { entered(); await gate; }
     return originalCall(service, params);
   };
   const pending = f.tool("evidence", { id: candidate.id });
@@ -413,4 +477,33 @@ test("source review cannot return a forgotten candidate after an in-flight evide
   await f.tool("forget", { id: candidate.id, expected_revision: 1 });
   release();
   await assert.rejects(pending, /changed|revision/);
+});
+
+
+// Failure cases: retained legacy bytes overriding newer journal state, a lost
+// committed response being rewritten with a new timestamp, and stale intent replay.
+test("journal authority overrides legacy rows and replays exact commits after lost responses and restart", async t => {
+  const f = await fixture(t);
+  const original = (await f.tool("create", createArgs("legacy-record"))).record;
+  const legacy = f.host.journal.get(original.id);
+  f.host.storage.set(`personal.records.v1.${original.id}`, legacy);
+  f.host.journal.delete(original.id);
+  const correction = { id: original.id, expected_revision: 1, content: "Updated journal fact", evidence: "explicit", sources: source("journal-correction", 10) };
+  f.host.loseCommitReply = true;
+  await assert.rejects(f.tool("correct", correction), /reply lost/);
+  const committed = f.host.journal.get(original.id);
+  const restarted = await fixture(t, f.host);
+  const reordered = { sources: correction.sources.map(({ occurred_at, ref, kind }) => ({ occurred_at, ref, kind })), evidence: correction.evidence, content: correction.content, expected_revision: correction.expected_revision, id: correction.id };
+  const recovered = (await restarted.tool("correct", reordered)).record;
+  assert.equal(recovered.revision, 2);
+  assert.equal(f.host.journal.get(original.id), committed, "retry must preserve generated timestamps and exact prepared bytes");
+  assert.equal(f.host.storage.get(`personal.records.v1.${original.id}`), legacy, "legacy remains read-only compatibility input");
+  assert.equal((await restarted.tool("query", {})).records[0].content, "Updated journal fact");
+  await assert.rejects(restarted.tool("correct", { ...correction, content: "Changed stale intent" }), /revision_conflict/);
+  await restarted.tool("forget", { id: original.id, expected_revision: 2 });
+  const latest = await fixture(t, f.host);
+  assert.equal((await latest.tool("query", {})).records.length, 0);
+  assert.equal((await latest.tool("read", { id: original.id })).record.status, "forgotten");
+  await assert.rejects(latest.tool("correct", correction), /forgotten_record/);
+  await assert.rejects(latest.tool("create", createArgs("legacy-resurrection", "legacy-record")), /forgotten_source/);
 });

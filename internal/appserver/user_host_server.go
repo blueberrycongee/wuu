@@ -117,6 +117,7 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 			broker.SetAuthorizationBoundary(h.actions.withConnectorAuthorization)
 		}
 		personalOptions.Review = h.actions.Call
+		personalOptions.Memory = h.actions.callMemory
 		if rt.Toolkit != nil {
 			rt.Toolkit.SetFileActionGate(h.actions.gate)
 		}
@@ -314,14 +315,40 @@ func (h *UserHost) terminalLocation(method string, raw json.RawMessage) (json.Ra
 	if terminal.Turn.ID == "" {
 		return data, nil, err
 	}
+	// Only the host's settled turn projection can name its originating send.
+	// Lifecycle receipts settle after terminal publication, so resolving the
+	// latest lifecycle here would race and could select another request.
+	thread := h.server.threadForState(state, terminal.ThreadID)
+	if thread == nil {
+		return data, nil, err
+	}
+	var source ThreadItem
+	thread.mu.Lock()
+	for _, turn := range thread.Turns {
+		if turn.ID != terminal.Turn.ID || turn.Status != terminal.Turn.Status {
+			continue
+		}
+		for _, item := range turn.Items {
+			if item.Type == ThreadItemUserMessage {
+				source = item
+				break
+			}
+		}
+		break
+	}
+	thread.mu.Unlock()
+	owner, requestID, valid := pluginSessionRequestFromClientID(source.SourceID)
+	if !valid || metadata.Owner != "plugin:"+owner || source.Seq < 1 {
+		return data, nil, err
+	}
 	outcome := "completed"
 	if method == NotificationTurnError {
 		outcome = "failed"
 	}
-	job := &userAttentionJob{owner: strings.TrimPrefix(metadata.Owner, "plugin:"), input: pluginhost.SessionAttentionInput{
+	job := &userAttentionJob{owner: owner, sourceSeq: source.Seq, input: pluginhost.SessionAttentionInput{
 		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain,
 		SessionID: terminal.ThreadID, AgentID: metadata.AgentID, MessageSeq: location.MessageSeq,
-		TurnID: terminal.Turn.ID, Outcome: outcome}, location: location}
+		TurnID: terminal.Turn.ID, RequestID: requestID, Outcome: outcome}, location: location}
 	return data, job, err
 }
 

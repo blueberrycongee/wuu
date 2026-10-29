@@ -126,9 +126,18 @@ export function personalMemoryTools(): ToolRegistration[] {
   ];
 }
 
+function canonicalIntent(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalIntent).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalIntent((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
 interface PersonalMemoryAuthority {
   context(sessionID: string): Promise<unknown>;
   evidence(sessionID: string, ref: string): Promise<unknown>;
+  records(sessionID: string): Promise<unknown>;
+  operation(sessionID: string, id: string): Promise<{ write: { id: string; key: string; expected: string | null; value: string } } | null>;
+  commit(sessionID: string, input: { id: string; key: string; expected: string | null; value: string }): Promise<{ swapped: boolean; value: string | null }>;
 }
 
 /** Personal-owned records; Coding notebooks are never imported or used as fallback. */
@@ -152,17 +161,31 @@ export class PersonalRecords {
     return record;
   }
 
-  private async all(host: RuntimeHost): Promise<StoredRecord[]> {
+  private async all(host: RuntimeHost, sessionID: string): Promise<StoredRecord[]> {
     const { keys } = await host.call("host.storage.keys", { scope: "user" });
     const records: StoredRecord[] = [];
     for (const key of keys.filter(key => key.startsWith(PREFIX))) {
       const { value } = await host.call("host.storage.get", { scope: "user", key });
       if (value !== null) records.push(this.decode(value));
     }
-    return records;
+    const journal = object(object(await this.authority.records(sessionID)).records);
+    const merged = new Map(records.map(record => [record.id, record]));
+    for (const [id, raw] of Object.entries(journal)) {
+      if (typeof raw !== "string") throw new Error("invalid authoritative memory journal");
+      const record = this.decode(raw);
+      if (record.id !== id) throw new Error("memory journal identity mismatch");
+      merged.set(id, record); // Journal tombstones override retained legacy bytes.
+    }
+    return [...merged.values()];
   }
 
-  private async load(id: string, host: RuntimeHost): Promise<{ raw: string | null; record?: StoredRecord }> {
+  private async load(id: string, host: RuntimeHost, sessionID: string): Promise<{ raw: string | null; record?: StoredRecord }> {
+    const journal = object(object(await this.authority.records(sessionID)).records);
+    if (Object.hasOwn(journal, id)) {
+      const raw = journal[id];
+      if (typeof raw !== "string") throw new Error("invalid authoritative memory journal");
+      return { raw, record: this.decode(raw) };
+    }
     const { value } = await host.call("host.storage.get", { scope: "user", key: PREFIX + id });
     return value === null ? { raw: null } : { raw: value, record: this.decode(value) };
   }
@@ -181,7 +204,7 @@ export class PersonalRecords {
     const actor = await this.actor(sessionID, host);
     if (method === "query") {
       exact(input, ["query", "topic", "task_id", "include_inactive", "limit", "cursor"]);
-      const records = this.select(await this.all(host), input);
+      const records = this.select(await this.all(host, sessionID), input);
       const token = hash(JSON.stringify([input.query ?? "", input.topic ?? "", input.task_id ?? "", input.include_inactive ?? false, records.map(record => [record.id, record.revision, availability(record)])]));
       let offset = 0;
       if (input.cursor !== undefined) {
@@ -195,7 +218,7 @@ export class PersonalRecords {
     }
     if (method === "read") {
       exact(input, ["id"]);
-      const { record } = await this.load(recordID(input.id), host);
+      const { record } = await this.load(recordID(input.id), host, sessionID);
       if (!record) throw new Error("personal memory record not found");
       return { version: 1, record: publicRecord(record) };
     }
@@ -209,10 +232,10 @@ export class PersonalRecords {
     const main = authority.role === "main";
     if (!main && (["correct", "forget", "accept", "evidence"].includes(method) || input.tier === "core")) throw new Error("only the bound main conversation may review, accept, correct, forget or select core memory");
     if (method === "evidence") {
-      const { record } = await this.load(recordID(input.id), host);
+      const { record } = await this.load(recordID(input.id), host, sessionID);
       if (!record || record.status !== "candidate") throw new Error("memory evidence review requires a candidate");
       const sources = await Promise.all(record.sources.map(source => this.evidence(source, actor)));
-      const { record: latest } = await this.load(record.id, host);
+      const { record: latest } = await this.load(record.id, host, sessionID);
       if (latest?.revision !== record.revision || latest.status !== "candidate") throw new Error("candidate changed during source review; reread its current revision");
       return { version: 1, record: publicRecord(record), sources };
     }
@@ -222,10 +245,25 @@ export class PersonalRecords {
     const key = method === "create" ? text(input.key, "key") : "";
     if (key.length > 200) throw new Error("personal memory key exceeds 200 characters");
     const id = method === "create" ? "mem_" + hash(key) : recordID(input.id);
+    // Semantic identity survives callback replacement and restart. The host keeps
+    // the exact first prepared value (including generated timestamps) durable.
+    // Desktop correction timestamps are host-generated on each delivery; the
+    // user-edit ref already binds its stable request ID. Model source times are
+    // intentional evidence and remain part of the semantic identity.
+    const identityInput = trustedUserEdit && Array.isArray(input.sources)
+      ? { ...input, sources: input.sources.map(source => { const { occurred_at, ...identity } = object(source); return identity; }) }
+      : input;
+    const operationID = `memory-${hash(canonicalIntent([sessionID, method, identityInput]))}`;
     const lock = await acquireFileLock(this.lifecycleHost, { root: "workspace_state", path: "memory-records/write.lock" }, execution.executionId);
     try {
       execution.signal.throwIfAborted();
-      const { raw, record: current } = await this.load(id, host);
+      const prior = await this.authority.operation(sessionID, operationID);
+      if (prior) {
+        const saved = await this.authority.commit(sessionID, prior.write);
+        if (!saved.swapped || !saved.value) throw new Error("memory publication requires reconciliation");
+        return { version: 1, record: publicRecord(this.decode(saved.value)), ...(method === "forget" ? { retention } : {}) };
+      }
+      const { raw, record: current } = await this.load(id, host, sessionID);
       if ((current?.revision ?? 0) !== revision) throw new Error(`revision_conflict: current revision is ${current?.revision ?? 0}; reread before changing the fact`);
       if (current?.status === "forgotten") throw new Error("forgotten_record: this fact cannot be automatically restored");
       if (method === "create" && current) throw new Error("personal memory record already exists; read and revise its current revision");
@@ -240,7 +278,7 @@ export class PersonalRecords {
           const evidence = await this.evidence(source, actor);
           if (evidence.occurred_at !== source.occurred_at) throw new Error("candidate source timestamp changed; reread the original evidence");
         }
-        for (const stored of await this.all(host)) {
+        for (const stored of await this.all(host, sessionID)) {
           const blocked = stored.status === "forgotten" ? stored.blocked_sources : stored.superseded_sources;
           if (current.sources.some(source => blocked.includes(sourceToken(source)))) throw new Error("candidate source was forgotten or superseded");
         }
@@ -275,7 +313,7 @@ export class PersonalRecords {
           if (sourceTime < previousTime || (sourceTime === previousTime && !orderedUserEdit)) throw new Error("stale_source: new evidence must be newer than the currently accepted source");
           if (trustedUserEdit && !orderedUserEdit) throw new Error("superseded_source: this user edit was already recorded");
         }
-        for (const stored of await this.all(host)) {
+        for (const stored of await this.all(host, sessionID)) {
           const blocked = stored.status === "forgotten" ? stored.blocked_sources : stored.superseded_sources;
           if (fact.sources.some(source => blocked.includes(sourceToken(source)))) throw new Error(stored.status === "forgotten" ? "forgotten_source: old source may not be re-extracted" : "superseded_source: old source was explicitly corrected");
           if (stored.id !== id && stored.status !== "forgotten" && fact.sources.some(source => tokens(stored).includes(sourceToken(source)))) throw new Error(`source_already_recorded: use existing record ${stored.id} revision ${stored.revision}`);
@@ -294,7 +332,9 @@ export class PersonalRecords {
         }
       }
       execution.signal.throwIfAborted();
-      const saved = await host.call("host.storage.compare_exchange", { scope: "user", key: PREFIX + id, expected: raw, value: JSON.stringify(next) });
+      // The host owns publication authority. No new writer mutates legacy storage;
+      // once an ID enters this journal, every revision and tombstone stays there.
+      const saved = await this.authority.commit(sessionID, { id: operationID, key: id, expected: raw, value: JSON.stringify(next) });
       if (!saved.swapped) throw new Error(`revision_conflict: current revision is ${saved.value ? this.decode(saved.value).revision : 0}; reread before changing the fact`);
       return { version: 1, record: publicRecord(next), ...(method === "forget" ? { retention } : {}) };
     } finally {
@@ -347,7 +387,7 @@ export class PersonalRecords {
     const sessionID = input.session_id || input.thread_id || "";
     await this.actor(sessionID, host);
     execution.signal.throwIfAborted();
-    const all = await this.all(host);
+    const all = await this.all(host, sessionID);
     // Retain legacy Memory-origin snapshots until all persisted conversations have advanced.
     const priorSnapshot = [...input.messages].reverse().find(message => message.origin === "plugin" && message.read_only && (message.origin_id?.startsWith(`${this.pluginID}:personal-memory-`) || message.origin_id?.startsWith("memory:personal-memory-")));
     let previous = this.injected.get(sessionID) ?? new Map<string, string>();

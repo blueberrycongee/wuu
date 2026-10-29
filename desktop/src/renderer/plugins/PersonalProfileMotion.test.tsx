@@ -6,7 +6,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PluginConversationComposer, PluginConversationMessage, PluginConversationView } from "./PluginConversation";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
-import { PluginViewContent, WorkbenchController } from "./Workbench";
+import { PluginViewContent } from "./Workbench";
+import { selectPersonalTestApplication } from "./PersonalApplication.test-support";
 
 // Exercise the shipped plugin rather than a parallel panel implementation.
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
@@ -35,9 +36,9 @@ async function mount({ systemReduced = false, appReduced = false, failUpdate = f
     return {};
   } });
   await host.activateGeneration({ pluginId: "personal", generation: "profile-motion", register: activate });
-  const controller = new WorkbenchController(host), container = document.createElement("div"); document.body.append(container);
+  const controller = await selectPersonalTestApplication(host), container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); container.remove(); });
+  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("test.application"); container.remove(); });
   await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />));
   const panel = () => container.querySelector<HTMLElement>('[data-personal-panel]')!;
   const trigger = () => container.querySelector<HTMLButtonElement>(triggerSelector)!;
@@ -53,7 +54,7 @@ it("uses a pure-avatar trigger while keeping its name and status accessible", as
   const ui = await mount();
   const identity = ui.container.querySelector<HTMLButtonElement>('.mosaic-identity-label');
   expect(ui.trigger().textContent?.trim()).toBe("");
-  expect(identity?.textContent).toMatch(/Mosaic.*(Ready|已就绪)/);
+  expect(identity?.textContent).toBe("Mosaic");
   expect(identity?.dataset.action).toBe("rename-personal");
   expect(ui.container.querySelector('[data-action="search-history"]')).toBeNull();
   expect(ui.trigger().querySelector(".mosaic-avatar")).not.toBeNull();

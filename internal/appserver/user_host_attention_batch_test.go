@@ -124,6 +124,11 @@ func TestUserHostAttentionBatchUsesFirstDeadlineAndPreservesResults(t *testing.T
 		requireNoBatchAttention(t, host)
 		time.Sleep(4 * time.Second)
 		event := requireBatchAttention(t, host, second.TurnID, 2)
+		changed := event
+		changed.input.RequestID = "another-request"
+		if host.revalidateAttention(context.Background(), changed) {
+			t.Fatal("attention retargeted a committed turn to another request")
+		}
 		if event.notification.UserLocation.AgentID != "alpha" || event.notification.UserLocation.MessageSeq != second.MessageSeq || first.MessageSeq >= second.MessageSeq {
 			t.Fatalf("digest did not retain the latest responsible-agent result: %+v", event.notification)
 		}
@@ -174,7 +179,7 @@ func TestUserHostAttentionBatchKeepsAgentsSeparateAndRevalidatesReplay(t *testin
 }
 
 func TestUserHostAttentionBatchRevokesPendingDelivery(t *testing.T) {
-	for _, cause := range []string{"policy disabled", "owner removed", "generation replaced", "session removed", "host closed"} {
+	for _, cause := range []string{"policy disabled", "owner removed", "generation replaced", "session removed", "input removed", "input retracted", "result retracted", "host closed"} {
 		t.Run(cause, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				host, rt, policy := newBatchAttentionHost(t, 10)
@@ -195,6 +200,32 @@ func TestUserHostAttentionBatchRevokesPendingDelivery(t *testing.T) {
 				case "session removed":
 					if _, err := rt.Sessions.Delete(input.SessionID); err != nil {
 						t.Fatal(err)
+					}
+				case "input removed":
+					if err := rt.Sessions.RewriteHistoryRecords(input.SessionID, nil); err != nil {
+						t.Fatal(err)
+					}
+				case "input retracted":
+					page, err := rt.Sessions.ReadHistoryPage(input.SessionID, 1, 1)
+					if err != nil || len(page.Records) != 1 {
+						t.Fatalf("read committed source: %+v %v", page, err)
+					}
+					if err := rt.Sessions.RewriteHistoryRecordsForEdit(input.SessionID, nil, 1, page.HeadSeq); err != nil {
+						t.Fatal(err)
+					}
+					if retained, err := rt.Sessions.ReadHistoryPage(input.SessionID, 1, 1); err != nil || len(retained.Records) != 1 {
+						t.Fatalf("edit must retain the raw admission while revoking its active projection: %+v %v", retained, err)
+					}
+				case "result retracted":
+					page, err := rt.Sessions.ReadHistoryPage(input.SessionID, 1, 1)
+					if err != nil || len(page.Records) != 1 || input.MessageSeq <= page.Records[0].Seq {
+						t.Fatalf("read input before result: %+v %v", page, err)
+					}
+					if err := rt.Sessions.RewriteHistoryRecordsForEdit(input.SessionID, page.Records, input.MessageSeq, page.HeadSeq); err != nil {
+						t.Fatal(err)
+					}
+					if retained, err := rt.Sessions.ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: input.SessionID, StartSeq: 1, EndSeq: 1, Limit: 1}); err != nil || len(retained.Records) != 1 {
+						t.Fatalf("result-only edit must retain the active source: %+v %v", retained, err)
 					}
 				case "host closed":
 					host.Close()
@@ -236,12 +267,16 @@ func TestUserHostAttentionBatchQueueIsBoundedWithoutBlockingCompletions(t *testi
 			_, err := rt.Sessions.CreateInitialized(session.Session{
 				ID: id, CreatedAt: time.Now(), UserSpaceID: "local", ProductDomain: "personal",
 				Owner: "plugin:fixture", Visibility: "plugin", AgentID: fmt.Sprintf("agent-%d", index),
-			}, []session.HistoryRecord{{Role: "assistant", Content: "persisted result"}})
+			}, []session.HistoryRecord{{Role: "user", ClientID: pluginSessionRequestClientID("fixture", id), Origin: "plugin", OriginID: "fixture", ReadOnly: true, Content: "finish"}, {Role: "assistant", Content: "persisted result"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			thread, err := host.server.ensureThreadLoaded(testRuntimeState(t, rt), id)
 			if err != nil {
 				t.Fatal(err)
 			}
 			raw, _ := json.Marshal(map[string]any{"method": NotificationTurnCompleted, "params": TurnCompletedNotification{
-				ThreadID: id, Turn: Turn{ID: id + "-turn", Status: TurnStatusCompleted, Items: []ThreadItem{{Type: ThreadItemAgentMessage, Terminal: true, Seq: 1}}},
+				ThreadID: id, Turn: thread.Turns[0],
 			}})
 			if _, err := host.Write(raw); err != nil {
 				t.Fatal(err)

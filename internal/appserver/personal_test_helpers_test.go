@@ -57,9 +57,17 @@ func (*personalTestSessionConsumer) RequiredServices() []pluginhost.ServiceRequi
 	return []pluginhost.ServiceRequirement{{Name: session.ServiceName, MajorVersion: 1, Required: true}, {Name: persistence.ServiceName, MajorVersion: 1, Required: true}}
 }
 
-func attachPersonalBoundaryGeneration(t *testing.T, rt *runtime.Session) *personalReceiptServiceClient {
+func attachPersonalBoundaryGeneration(t *testing.T, rt *runtime.Session, decorateDocuments ...func(*persistence.Service) pluginhost.Client) *personalReceiptServiceClient {
 	t.Helper()
 	provider := &personalReceiptServiceClient{pluginClientRequestTestRuntime: pluginClientRequestTestRuntime{id: "personal"}}
+	documents := persistence.NewService("fixture.documents", filepath.Join(rt.SessionDir, "documents"), "sqlite")
+	var selectedDocuments pluginhost.Client = documents
+	if len(decorateDocuments) > 0 {
+		if len(decorateDocuments) != 1 {
+			t.Fatal("Personal fixture requires at most one selected document provider decorator")
+		}
+		selectedDocuments = decorateDocuments[0](documents)
+	}
 	attachTestModelGeneration(t, rt,
 		provider,
 		NewPersonalActionsConsumer(),
@@ -68,7 +76,7 @@ func attachPersonalBoundaryGeneration(t *testing.T, rt *runtime.Session) *person
 		&personalTestStateConsumer{},
 		&personalTestSessionConsumer{},
 		session.NewService("fixture.session-domain", rt.Documents),
-		persistence.NewService("fixture.documents", filepath.Join(rt.SessionDir, "documents"), "sqlite"),
+		selectedDocuments,
 	)
 	return provider
 }

@@ -50,6 +50,14 @@ func (s *documentStore) ReadHistoryPage(id string, startSeq, limit int) (History
 }
 
 func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
+	return s.readHistoryQuery(query, false)
+}
+
+func (s *documentStore) ReadActiveHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
+	return s.readHistoryQuery(query, true)
+}
+
+func (s *documentStore) readHistoryQuery(query HistoryReadQuery, activeOnly bool) (HistoryPage, error) {
 	if query.StartSeq < 1 && query.Cursor == nil {
 		return HistoryPage{}, errors.New("history start sequence must be positive")
 	}
@@ -76,6 +84,12 @@ func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, e
 		if end < start {
 			return nil
 		}
+		var retractions []historyRetraction
+		if activeOnly {
+			if _, err := tx.Get(documentNamespace("session_history_retractions"), id, &retractions); err != nil {
+				return err
+			}
+		}
 		scan := persistence.Query{Namespace: documentNamespace("session_messages"), Prefix: documentPrefix(id), Start: historyDocumentKey(id, start), End: historyDocumentKey(id, end+1), Limit: min(query.Limit+1, 256)}
 		for {
 			view, err := tx.ReadView(scan)
@@ -86,6 +100,9 @@ func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, e
 				var record HistoryRecord
 				if err := json.Unmarshal(document.Value, &record); err != nil {
 					return err
+				}
+				if historySequenceRetracted(record.Seq, retractions) {
+					continue
 				}
 				if strings.EqualFold(record.Role, "meta") {
 					continue

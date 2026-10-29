@@ -70,12 +70,6 @@ func (s *Server) handleStateInspections(ctx context.Context, req Request) error 
 		if s.personalActions == nil {
 			return s.writeResponse(req.ID, nil, errors.New("selected review ledger is unavailable"))
 		}
-		held := s.personalActions.state.Retain()
-		if held == nil {
-			return s.writeResponse(req.ID, nil, errors.New("selected review ledger generation is closed"))
-		}
-		defer held.Close()
-		state = held
 		consumer, service = personalActionsConsumerID, persistence.ServiceName
 	default:
 		return s.writeResponse(req.ID, nil, errors.New("inspection target must be settings, sessions, or review-policy"))

@@ -22,13 +22,14 @@ import (
 )
 
 type pluginToolExecutor struct {
-	inner             agent.ToolExecutor
-	host              *pluginhost.Host
-	threadID          string
-	cwd               string
-	surfaceMu         sync.Mutex
-	freezeDepth       int
-	frozenDefinitions []providers.ToolDefinition
+	inner              agent.ToolExecutor
+	host               *pluginhost.Host
+	threadID           string
+	cwd                string
+	surfaceMu          sync.Mutex
+	freezeDepth        int
+	frozenDefinitions  []providers.ToolDefinition
+	replacementTargets map[string]struct{}
 }
 
 func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
@@ -75,7 +76,13 @@ func newNativeToolScopeExecutor(inner agent.ToolExecutor, host *pluginhost.Host,
 			bindToolkitHooks(kit, dispatcher)
 			backend = kit
 		}
-		return toolservice.Backend{Executor: newPluginToolExecutor(backend, host, threadID, cwd), Toolkit: kit}, nil
+		executor := newPluginToolExecutor(backend, host, threadID, cwd)
+		if kit != nil {
+			if err := configureToolReplacements(executor, kit, kit.ReplacementBindings()); err != nil {
+				return toolservice.Backend{}, err
+			}
+		}
+		return toolservice.Backend{Executor: executor, Toolkit: kit}, nil
 	})
 	actorID := threadID
 	if provider, ok := inner.(interface{ ExecutionActor() (string, string) }); ok {
@@ -150,6 +157,9 @@ func (e *pluginToolExecutor) livePluginDefinitions() []providers.ToolDefinition 
 	registered := e.host.ToolDefinitions()
 	plugin := make([]providers.ToolDefinition, 0, len(registered))
 	for _, definition := range registered {
+		if _, bound := e.replacementTargets[definition.Name]; bound {
+			continue
+		}
 		if kit, ok := e.inner.(*tools.Toolkit); ok && kit.IsToolDisabled(definition.Name) {
 			continue
 		}
@@ -187,6 +197,9 @@ func (e *pluginToolExecutor) TakeAdditionalContext(call providers.ToolCall) stri
 }
 
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if _, bound := e.replacementTargets[call.Name]; bound {
+		return toolresult.Result{}, fmt.Errorf("plugin tool %q is bound as a replacement", call.Name)
+	}
 	directOnly := false
 	if tool, ok := e.host.Tool(call.Name); ok {
 		directOnly = tool.Registration.DirectOnly
@@ -264,6 +277,9 @@ func (e *pluginToolExecutor) toolInput(ctx context.Context, call providers.ToolC
 }
 
 func (e *pluginToolExecutor) SupportsTool(name string) bool {
+	if _, bound := e.replacementTargets[name]; bound {
+		return false
+	}
 	if e.host.SupportsTool(name) {
 		return e.pluginToolAllowed(name)
 	}
@@ -318,6 +334,14 @@ func (e *pluginToolExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMe
 }
 
 func (e *pluginToolExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
+	if kit, ok := e.inner.(*tools.Toolkit); ok {
+		if replacement, found := kit.LookupTool(call.Name).(*replacementTool); found {
+			if replacement.registration.Display == nil {
+				return providers.ToolCallDisplay{}, false
+			}
+			return *replacement.registration.Display, true
+		}
+	}
 	if tool, ok := e.host.Tool(call.Name); ok {
 		if tool.Registration.Display == nil {
 			return providers.ToolCallDisplay{}, false

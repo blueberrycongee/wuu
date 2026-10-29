@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,15 +17,28 @@ import (
 	"github.com/blueberrycongee/wuu/internal/principal"
 )
 
-const grantsNamespace = "wuu.execution_grants.v1"
+const grantsNamespace = "wuu.execution_grants.v2"
+const legacyGrantsNamespace = "wuu.execution_grants.v1"
+const fencedGrantPrefix = "v2:"
 const requestsNamespace = "wuu.execution_grant_requests.v1"
 const eventsNamespace = "wuu.execution_grant_events.v1"
 
+// Version-distinct opaque references keep old writers from finding fence-aware
+// grants. Legacy grants remain valid/revocable, but cannot admit commit fences.
+// The request index remains shared so a nonce never silently renews authority.
+func grantNamespace(reference Reference) string {
+	if strings.HasPrefix(reference.ID, fencedGrantPrefix) {
+		return grantsNamespace
+	}
+	return legacyGrantsNamespace
+}
+
 type grantRecord struct {
 	IssueResult
-	Parent    *Reference `json:"parent,omitempty"`
-	Authority string     `json:"authority"`
-	Revoked   bool       `json:"revoked"`
+	Parent        *Reference `json:"parent,omitempty"`
+	Authority     string     `json:"authority"`
+	Revoked       bool       `json:"revoked"`
+	ActiveCommits []string   `json:"active_commits,omitempty"`
 }
 type requestRecord struct {
 	Digest    string    `json:"digest"`
@@ -52,8 +66,8 @@ func (s *Service) Status() pluginhost.Status {
 }
 func Descriptor() pluginhost.ServiceDescriptor {
 	methods := []pluginhost.ServiceMethodDescriptor{}
-	for _, name := range []string{"describe", "inspect", "issue", "validate", "revoke"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1"})
+	for _, name := range []string{"describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1", Cleanup: name == "release-commit"})
 	}
 	return pluginhost.ServiceDescriptor{Name: ServiceName, Version: "1.0.0", Methods: methods}
 }
@@ -72,7 +86,7 @@ func (s *Service) Activate(ctx context.Context) error {
 	if s.state != pluginhost.StatePrepared || s.documents == nil {
 		return errors.New("selected execution grant storage unavailable")
 	}
-	if err := persistence.ClaimNamespaces(ctx, s.documents, []string{grantsNamespace, requestsNamespace, eventsNamespace}); err != nil {
+	if err := persistence.ClaimNamespaces(ctx, s.documents, []string{grantsNamespace, legacyGrantsNamespace, requestsNamespace, eventsNamespace, commitsNamespace}); err != nil {
 		return err
 	}
 	s.state = pluginhost.StateActive
@@ -138,6 +152,8 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		if err = decode(p.Params, &r); err == nil {
 			result, err = s.validate(ctx, r)
 		}
+	case "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit":
+		result, err = s.invokeCommit(ctx, p)
 	case "revoke":
 		var r RevokeRequest
 		if err = decode(p.Params, &r); err == nil {
@@ -160,7 +176,7 @@ func admission(p pluginhost.ServiceInvokeParams, action string) (principal.Ident
 	if a == nil || a.Version != 1 || a.Principal.Validate() != nil || a.Action != action || a.InputJSON != string(p.Params) || a.InputDigest == "" || a.InputDigest != RawRequestDigest(p.Params) {
 		return principal.Identity{}, "", errors.New("authenticated execution admission required")
 	}
-	if a.Authority != "local-installation" && !(action == "execution/grant/derive" && a.Authority == "task-lineage") {
+	if a.Authority != "local-installation" && !(action == "execution/grant/derive" && a.Authority == "task-lineage") && !(action == "execution/commit/acquire" && a.Authority == "execution-grant") {
 		return principal.Identity{}, "", errors.New("durable account validity is unsupported by selected execution provider")
 	}
 	return a.Principal, a.Authority, nil
@@ -178,7 +194,12 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 	if _, err := rand.Read(entropy[:]); err != nil {
 		return IssueResult{}, err
 	}
-	reference := Reference{Provider: s.id, ID: hex.EncodeToString(entropy[:])}
+	reference := Reference{Provider: s.id, ID: fencedGrantPrefix + hex.EncodeToString(entropy[:])}
+	// Derivation does not upgrade an ancestor's revocation semantics. A live owner
+	// must explicitly renew the root with a new issuance nonce for commit fencing.
+	if r.Parent != nil && grantNamespace(*r.Parent) == legacyGrantsNamespace {
+		reference.ID = hex.EncodeToString(entropy[:])
+	}
 	result := IssueResult{Reference: reference, Principal: who, Scope: r.Scope, Capabilities: r.Capabilities, ExpiresAt: r.ExpiresAt}
 	key := RequestDigest(struct {
 		Principal principal.Identity
@@ -197,7 +218,7 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 				return errors.New("execution grant request ID conflicts with prior scope")
 			}
 			var stored grantRecord
-			ok, err := tx.Get(grantsNamespace, existing.Reference.ID, &stored)
+			ok, err := tx.Get(grantNamespace(existing.Reference), existing.Reference.ID, &stored)
 			if err != nil {
 				return err
 			}
@@ -217,7 +238,7 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 			}
 			authority = parent.Authority
 		}
-		if err = tx.Put(grantsNamespace, reference.ID, grantRecord{IssueResult: result, Parent: r.Parent, Authority: authority}); err != nil {
+		if err = tx.Put(grantNamespace(reference), reference.ID, grantRecord{IssueResult: result, Parent: r.Parent, Authority: authority}); err != nil {
 			return err
 		}
 		if err = tx.Put(requestsNamespace, key, requestRecord{Digest: digest, Reference: reference}); err != nil {
@@ -231,30 +252,35 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 	return result, err
 }
 func (s *Service) activeGrant(tx *persistence.Tx, reference Reference) (grantRecord, bool, error) {
-	var leaf grantRecord
+	chain, ok, err := s.activeGrantChain(tx, reference)
+	if !ok || err != nil {
+		return grantRecord{}, false, err
+	}
+	return chain[0], true, nil
+}
+func (s *Service) activeGrantChain(tx *persistence.Tx, reference Reference) ([]grantRecord, bool, error) {
+	var chain []grantRecord
 	seen := map[string]bool{}
 	for depth := 0; depth < 16; depth++ {
 		if reference.Provider != s.id || !bounded(reference.ID, 128) || seen[reference.ID] {
-			return grantRecord{}, false, nil
+			return nil, false, nil
 		}
 		seen[reference.ID] = true
 		var r grantRecord
-		found, err := tx.Get(grantsNamespace, reference.ID, &r)
+		found, err := tx.Get(grantNamespace(reference), reference.ID, &r)
 		if err != nil {
-			return grantRecord{}, false, err
+			return nil, false, err
 		}
 		if !found || r.Reference != reference || r.Revoked || r.Authority != "local-installation" || r.Principal.Validate() != nil || r.Scope.Validate() != nil || !validCapabilities(r.Capabilities) || !r.ExpiresAt.After(s.now()) {
-			return grantRecord{}, false, nil
+			return nil, false, nil
 		}
-		if depth == 0 {
-			leaf = r
-		}
+		chain = append(chain, r)
 		if r.Parent == nil {
-			return leaf, true, nil
+			return chain, true, nil
 		}
 		reference = *r.Parent
 	}
-	return grantRecord{}, false, nil
+	return nil, false, nil
 }
 func (s *Service) validate(ctx context.Context, r ValidateRequest) (Validation, error) {
 	result := Validation{Reason: "execution-grant-invalid"}
@@ -279,19 +305,22 @@ func (s *Service) revoke(ctx context.Context, r RevokeRequest, who principal.Ide
 			return errors.New("execution grant scope mismatch")
 		}
 		var record grantRecord
-		found, err := tx.Get(grantsNamespace, r.Reference.ID, &record)
+		found, err := tx.Get(grantNamespace(r.Reference), r.Reference.ID, &record)
 		if err != nil {
 			return err
 		}
 		if !found || record.Reference != r.Reference || !record.Scope.Equal(r.Scope) || record.Principal != who {
 			return errors.New("execution grant scope mismatch")
 		}
+		if len(record.ActiveCommits) != 0 {
+			return commitError("execution_commit_active", "execution grant has an admitted publication awaiting terminal receipt; retry revocation after release")
+		}
 		result.Revoked = true
 		if record.Revoked {
 			return nil
 		}
 		record.Revoked = true
-		if err = tx.Put(grantsNamespace, r.Reference.ID, record); err != nil {
+		if err = tx.Put(grantNamespace(r.Reference), r.Reference.ID, record); err != nil {
 			return err
 		}
 		return tx.Put(eventsNamespace, r.Reference.ID+"/revoked", struct {
