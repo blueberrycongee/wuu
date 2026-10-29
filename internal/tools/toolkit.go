@@ -116,6 +116,7 @@ func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, 
 }
 
 type permissionCheckedContextKey struct{}
+type permissionWorkspaceContextKey struct{}
 
 func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
 	if checked, _ := ctx.Value(permissionCheckedContextKey{}).(bool); checked {
@@ -129,8 +130,12 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	// The selected provider makes the policy decision before local enforcement
 	// or contextual review. Neither can turn its denial into an allowed action.
 	if t.authorizer != nil {
+		cwd := t.env.RootDir
+		if remoteCWD, ok := ctx.Value(permissionWorkspaceContextKey{}).(string); ok && remoteCWD != "" {
+			cwd = remoteCWD
+		}
 		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
-			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
+			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: cwd,
 			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
 		})
 		if err != nil {
@@ -463,9 +468,6 @@ func (t *Toolkit) SetReplacementBindings(bindings map[string]config.ToolReplacem
 // toolkit is used. Every key must name a native registry entry.
 func (t *Toolkit) SetNativeToolReplacements(replacements map[string]func(Tool) Tool) error {
 	for name := range replacements {
-		if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(name) {
-			return fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", name)
-		}
 		if t.registry.Lookup(name) == nil {
 			return fmt.Errorf("unknown native tool %q", name)
 		}
@@ -476,6 +478,12 @@ func (t *Toolkit) SetNativeToolReplacements(replacements map[string]func(Tool) T
 		replacement := replacements[name](original)
 		if replacement == nil || replacement.Name() != name {
 			return fmt.Errorf("replacement for %q must preserve the native name", name)
+		}
+		if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(name) {
+			marker, ok := replacement.(interface{ RemoteWorkspaceReplacement() bool })
+			if !ok || !marker.RemoteWorkspaceReplacement() {
+				return fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", name)
+			}
 		}
 		nativeDefinition, replacementDefinition := original.Definition(), replacement.Definition()
 		nativeSchema, nativeErr := json.Marshal(nativeDefinition.InputSchema)
@@ -1500,7 +1508,10 @@ func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (t
 		return toolresult.Result{}, fmt.Errorf("replacement for %q is not bound to this execution scope", call.Name)
 	}
 	if t.nativeReplacements[call.Name] != nil && t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
-		return toolresult.Result{}, fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", call.Name)
+		marker, ok := t.registry.Lookup(call.Name).(interface{ RemoteWorkspaceReplacement() bool })
+		if !ok || !marker.RemoteWorkspaceReplacement() {
+			return toolresult.Result{}, fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", call.Name)
+		}
 	}
 	if toolctx.IsNestedCall(ctx) && t.codeModeDirectOnly(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)

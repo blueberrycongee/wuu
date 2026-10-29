@@ -142,6 +142,16 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		args.Limit = nil
 	}
 
+	// The worker cannot atomically invalidate an earlier observation after a
+	// remote extension has finished transforming the result. Until that
+	// protocol exists, reject rather than leave an older observation in use.
+	if toolctx.IsUnobservedRead(ctx) {
+		release, err := t.env.readState.beginUnobservedRead()
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		defer release()
+	}
 	resolved, displayPath, managedArtifact, err := t.env.ResolveReadPath(args.Path)
 	if err != nil {
 		return toolresult.Result{}, err
@@ -307,15 +317,17 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 
 	// Track freshness without suppressing explicit reads: Code Mode may not have
 	// printed the earlier result, or its final output may have been cropped.
-	t.env.RecordRead(resolved, ReadFileEntry{
-		ManagedArtifact: managedArtifact,
-		MtimeUnix:       info.ModTime().Unix(),
-		MtimeUnixNano:   info.ModTime().UnixNano(),
-		Size:            info.Size(),
-		ContentSHA256:   contentHash,
-		Offset:          args.Offset,
-		Limit:           limit,
-	})
+	if !toolctx.IsUnobservedRead(ctx) {
+		t.env.RecordRead(resolved, ReadFileEntry{
+			ManagedArtifact: managedArtifact,
+			MtimeUnix:       info.ModTime().Unix(),
+			MtimeUnixNano:   info.ModTime().UnixNano(),
+			Size:            info.Size(),
+			ContentSHA256:   contentHash,
+			Offset:          args.Offset,
+			Limit:           limit,
+		})
+	}
 
 	result := map[string]any{
 		"action":             "read",

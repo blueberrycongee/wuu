@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/capability"
@@ -32,6 +34,20 @@ type replacementTool struct {
 	executor       *pluginToolExecutor
 	toolkit        *tools.Toolkit
 	continueNative func(context.Context, providers.ToolCall) (toolresult.Result, error)
+}
+
+// RemoteWorkspaceReplacement opts in only to a remote read adapter that
+// explicitly promises to consume the selected worker's native continuation.
+func (r *replacementTool) RemoteWorkspaceReplacement() bool {
+	if r.Name() != "read_file" {
+		return false
+	}
+	for _, contract := range r.registration.ReplacementContracts {
+		if contract == "read_file.remote.v1" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *replacementTool) ToolAvailable() bool {
@@ -96,7 +112,20 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	var pagination bool
 	var path string
 	var providerArguments = call.Arguments
-	if r.Name() == "read_file" {
+	var remoteRoot string
+	remoteEnv := r.toolkit.ExecutionEnvironment()
+	remoteRead := r.Name() == "read_file" && remoteEnv != nil
+	var remoteCompleted atomic.Bool
+	if remoteRead {
+		if !r.RemoteWorkspaceReplacement() {
+			return toolresult.Result{}, fmt.Errorf("remote read contract is required")
+		}
+		var err error
+		externalRead, remoteRoot, err = r.toolkit.PrepareRemoteExternalRead(ctx, remoteEnv, call.Arguments)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+	} else if r.Name() == "read_file" {
 		var input struct {
 			Path         string `json:"path"`
 			Continuation string `json:"continuation"`
@@ -183,21 +212,64 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	actor, actorPath := r.toolkit.ExecutionActor()
 	ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, r.toolkit)
+	if remoteRead {
+		location := remoteEnv.(interface {
+			Root() string
+			Backend() string
+			Identity() string
+		})
+		ctx = context.WithValue(ctx, remoteProcessBindingKey{}, remoteProcessBinding{root: location.Root(), backend: location.Backend(), identity: location.Identity(), actor: actor, actorPath: actorPath})
+		// A nested invocation must not inherit a parent scope with stale policy.
+		ctx = context.WithValue(ctx, pluginProcessScopeKey{}, (*tools.ProcessScope)(nil))
+	}
 	continuation := newNativeToolContinuation(ctx, func(nativeCtx context.Context) (toolresult.Result, error) {
 		if !r.ToolAvailable() {
 			return toolresult.Result{}, fmt.Errorf("replacement for %q is unavailable", r.Name())
 		}
+		if remoteRead {
+			currentActor, currentPath := r.toolkit.ExecutionActor()
+			if actor == "" || currentActor != actor || currentPath != actorPath {
+				return toolresult.Result{}, fmt.Errorf("remote continuation actor changed")
+			}
+		}
 		metadata, _ := r.executor.ToolMetadata(pluginCall)
-		if err := r.toolkit.AuthorizeTool(nativeCtx, pluginCall, metadata); err != nil {
+		var authErr error
+		if remoteRead {
+			authErr = r.toolkit.AuthorizeRemoteTool(nativeCtx, remoteEnv, pluginCall, metadata)
+		} else {
+			authErr = r.toolkit.AuthorizeTool(nativeCtx, pluginCall, metadata)
+		}
+		if authErr != nil {
+			return toolresult.Result{}, authErr
+		}
+		var result toolresult.Result
+		var err error
+		if remoteRead {
+			result, err = r.toolkit.ContinueRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+		} else {
+			result, err = r.continueNative(nativeCtx, call)
+		}
+		if err != nil || !remoteRead {
+			return result, err
+		}
+		result, err = sanitizeRemoteReadResult(result)
+		if err != nil {
 			return toolresult.Result{}, err
 		}
-		return r.continueNative(nativeCtx, call)
+		remoteCompleted.Store(true)
+		return result, nil
 	})
 	defer continuation.close()
 	ctx = context.WithValue(ctx, nativeToolContinuationKey{}, continuation)
 	ctx = pluginhost.WithNativeToolContinuationBinding(ctx, r.owner)
-	result, err := r.executor.host.ExecuteTool(ctx, r.publicName, input)
+	var result toolresult.Result
+	if remoteRead {
+		result, err = r.executor.host.ExecuteToolWithVisibleCWD(ctx, r.publicName, input, remoteRoot)
+	} else {
+		result, err = r.executor.host.ExecuteTool(ctx, r.publicName, input)
+	}
 	if externalRead != nil {
 		toolctx.MarkUnverified(ctx, "extension")
 	}
@@ -217,6 +289,9 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return toolresult.FromErrorText(result.Content[0].Text), nil
 		}
 		return result, nil
+	}
+	if remoteRead && !remoteCompleted.Load() {
+		return toolresult.Result{}, fmt.Errorf("remote read provider did not complete its worker continuation")
 	}
 	if externalRead != nil {
 		if pagination {
@@ -244,6 +319,39 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	}
 	r.toolkit.RecordWebSearchEvidence(text)
 	return result, nil
+}
+
+// Only the bounded structured text is transferred to an extension. Other
+// worker-provided media, activity and projections are never delegated.
+func sanitizeRemoteReadResult(result toolresult.Result) (toolresult.Result, error) {
+	invalid := func() (toolresult.Result, error) {
+		return toolresult.Result{}, fmt.Errorf("remote worker returned an unsupported read result")
+	}
+	if result.IsError || result.Validate() != nil || result.Activity != nil || len(result.Meta) != 0 || len(result.Content) != 1 || result.Content[0].Type != toolresult.ContentTypeText {
+		return invalid()
+	}
+	var view struct {
+		Action string `json:"action"`
+		Path   string `json:"path"`
+		Start  int    `json:"start_line"`
+		Count  int    `json:"num_lines"`
+		Total  int    `json:"total_lines"`
+	}
+	var body struct {
+		Text       *string `json:"text"`
+		Path       string  `json:"path"`
+		Start      int     `json:"start_line"`
+		Count      int     `json:"num_lines"`
+		TotalLines *int    `json:"total_lines"`
+	}
+	if json.Unmarshal([]byte(result.Content[0].Text), &view) != nil || json.Unmarshal(result.StructuredContent, &body) != nil || body.Text == nil || body.TotalLines == nil || view.Action != "read" || view.Path == "" || view.Path != body.Path || view.Start != body.Start || view.Count != body.Count || view.Total != *body.TotalLines || view.Start < 1 || view.Count < 0 || *body.TotalLines < 0 || !utf8.ValidString(*body.Text) || strings.IndexByte(*body.Text, 0) >= 0 || len(*body.Text) > 256*1024 {
+		return invalid()
+	}
+	safe, err := json.Marshal(map[string]any{"text": *body.Text, "path": body.Path, "start_line": body.Start, "num_lines": body.Count, "total_lines": *body.TotalLines})
+	if err != nil {
+		return invalid()
+	}
+	return toolresult.Result{StructuredContent: safe}, nil
 }
 
 var evidenceToken = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -372,6 +480,9 @@ func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, 
 		replacements[name] = func(original tools.Tool) tools.Tool {
 			return &replacementTool{original: original, definition: definition, registration: registration, publicName: publicName, executor: e, toolkit: kit, owner: binding.PluginID,
 				continueNative: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+					if call.Name == "read_file" {
+						return kit.ContinueRemoteReadOnly(ctx, original, call)
+					}
 					return kit.ContinueNativeWebSearch(ctx, original, call)
 				}}
 		}

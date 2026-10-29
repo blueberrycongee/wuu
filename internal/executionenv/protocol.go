@@ -19,7 +19,10 @@ type Init struct {
 	Session                  string            `json:"session"`
 }
 
+const UnobservedReadCapability = "read.unobserved.v1"
+
 type ToolRequest struct {
+	SuppressReadObservation   bool               `json:"suppress_read_observation,omitempty"`
 	ShellEarlyHandoffDisabled bool               `json:"shell_early_handoff_disabled,omitempty"`
 	GitAttributionEnabled     bool               `json:"git_attribution_enabled,omitempty"`
 	Call                      providers.ToolCall `json:"call"`
@@ -29,6 +32,10 @@ type ToolRequest struct {
 
 // Executor routes workspace tools to the selected environment. Host policy is
 // evaluated before this interface; the worker independently checks it again.
+type UnobservedReadExecutor interface {
+	ExecuteUnobservedRead(context.Context, ToolRequest) (toolresult.Result, error)
+}
+
 type Executor interface {
 	Execute(context.Context, ToolRequest) (toolresult.Result, error)
 }

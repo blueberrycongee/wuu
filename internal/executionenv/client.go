@@ -37,24 +37,25 @@ type Response struct {
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
-	processStart bool
-	closeGrace   time.Duration
-	event        func(json.RawMessage)
-	handlers     map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
-	contexts     map[string]context.Context
-	token        string
-	argv         []string
-	env          []string
-	mu           sync.Mutex
-	writeMu      sync.Mutex
-	cmd          *exec.Cmd
-	stdin        io.WriteCloser
-	pending      map[string]chan Response
-	retiring     map[string]chan struct{}
-	sequence     uint64
-	failed       error
-	exitErr      error
-	done         chan struct{}
+	processStart   bool
+	unobservedRead bool
+	closeGrace     time.Duration
+	event          func(json.RawMessage)
+	handlers       map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
+	contexts       map[string]context.Context
+	token          string
+	argv           []string
+	env            []string
+	mu             sync.Mutex
+	writeMu        sync.Mutex
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	pending        map[string]chan Response
+	retiring       map[string]chan struct{}
+	sequence       uint64
+	failed         error
+	exitErr        error
+	done           chan struct{}
 }
 
 func NewClient(argv, env []string) *Client {

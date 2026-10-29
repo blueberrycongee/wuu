@@ -502,6 +502,19 @@ func (h *Host) SupportsTool(name string) bool {
 // ExecuteTool routes a public tool call to its owning plugin and validates the
 // structured result before returning it to the runtime.
 func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteInput) (toolresult.Result, error) {
+	return h.executeTool(ctx, name, input, "")
+}
+
+// ExecuteToolWithVisibleCWD retains the authenticated host scope while sending
+// a separately captured environment root to the plugin process.
+func (h *Host) ExecuteToolWithVisibleCWD(ctx context.Context, name string, input ToolExecuteInput, cwd string) (toolresult.Result, error) {
+	if strings.TrimSpace(cwd) == "" {
+		return toolresult.Result{}, errors.New("visible execution root is required")
+	}
+	return h.executeTool(ctx, name, input, cwd)
+}
+
+func (h *Host) executeTool(ctx context.Context, name string, input ToolExecuteInput, visibleCWD string) (toolresult.Result, error) {
 	h.mu.RLock()
 	tool, ok := h.tools[name]
 	if !ok || tool.client.Status().State != StateActive {
@@ -513,8 +526,12 @@ func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteIn
 	input.ExecutionID = executionID
 	h.mu.RUnlock()
 	defer h.executions.End(input.ExecutionID)
+	wireInput := input
+	if visibleCWD != "" {
+		wireInput.CWD = visibleCWD
+	}
 	response, err := tool.client.ExecuteTool(executionCtx, ToolExecuteParams{
-		ToolExecuteInput: input,
+		ToolExecuteInput: wireInput,
 		ToolID:           tool.Registration.ID,
 	})
 	if err != nil {

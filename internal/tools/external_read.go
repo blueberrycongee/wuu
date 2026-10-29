@@ -10,10 +10,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/readcursor"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -159,6 +161,53 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string, allowImag
 		limit = *args.Limit
 	}
 	return &ExternalReadScope{env: t.env, path: display, resolved: resolved, offset: offset, limit: limit, previous: previous}, nil
+}
+
+// PrepareRemoteExternalRead validates only syntax and the captured worker
+// identity. The worker itself owns filesystem, sensitive-file and permission
+// checks; a host path must never be resolved or opened for a remote request.
+func (t *Toolkit) PrepareRemoteExternalRead(ctx context.Context, env executionenv.Executor, raw string) (*ExternalReadScope, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	remote, ok := env.(interface {
+		Root() string
+		Backend() string
+		Identity() string
+	})
+	if !ok || remote.Root() == "" || remote.Backend() == "" || remote.Identity() == "" {
+		return nil, "", errors.New("authenticated remote workspace unavailable")
+	}
+	var args struct {
+		Path           string          `json:"path"`
+		Continuation   string          `json:"continuation"`
+		Offset         int             `json:"offset"`
+		Limit          *int            `json:"limit"`
+		ExpectedSHA256 string          `json:"expected_sha256"`
+		ByteRange      json.RawMessage `json:"byte_range"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return nil, "", err
+	}
+	clean := path.Clean(args.Path)
+	if args.Path == "" || path.IsAbs(args.Path) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsAny(args.Path, "\\\x00") {
+		return nil, "", errors.New("remote external read requires a relative workspace path")
+	}
+	if args.Continuation != "" || args.ExpectedSHA256 != "" || (len(args.ByteRange) > 0 && string(args.ByteRange) != "null") {
+		return nil, "", errors.New("remote external read does not support continuations or byte selectors")
+	}
+	offset := args.Offset
+	if offset <= 0 {
+		offset = 1
+	}
+	limit := 0
+	if args.Limit != nil {
+		if *args.Limit < 0 {
+			return nil, "", errors.New("read_file limit must be positive")
+		}
+		limit = *args.Limit
+	}
+	return &ExternalReadScope{env: t.env, path: args.Path, resolved: path.Join(remote.Root(), clean), offset: offset, limit: limit}, remote.Root(), nil
 }
 
 // Render validates the extension's bounded text contract and builds the usual

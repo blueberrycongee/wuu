@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,17 @@ type ReadFileEntry struct {
 type readFileState struct {
 	mu    sync.RWMutex
 	state map[string]ReadFileEntry
+}
+
+// beginUnobservedRead holds native observation admission until the read
+// finishes. Later native observations remain intact and are never cleared.
+func (r *readFileState) beginUnobservedRead() (func(), error) {
+	r.mu.RLock()
+	if len(r.state) > 0 {
+		r.mu.RUnlock()
+		return nil, errors.New("unobserved remote read cannot follow an existing native read observation")
+	}
+	return r.mu.RUnlock, nil
 }
 
 func (r *readFileState) record(absPath string, entry ReadFileEntry) {

@@ -1,0 +1,14 @@
+import {execFile} from 'node:child_process';
+import {cp,mkdir,mkdtemp} from 'node:fs/promises';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {promisify} from 'node:util';
+import {preparePublicSDK} from '../packages/plugin-sdk/test/public-package.mjs';
+const exec=promisify(execFile),root=fileURLToPath(new URL('..',import.meta.url));
+const output=join(root,'.tmp/e2e/remote-read');await mkdir(output,{recursive:true});const run=await mkdtemp(join(output,'run-'));
+const {project,tsc}=await preparePublicSDK({sdk:join(root,'packages/plugin-sdk'),temporary:run});
+await cp(join(root,'scripts/remote-read-e2e/fixture.ts'),join(project,'fixture.ts'));
+await exec(process.execPath,[tsc,'fixture.ts','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','--strict','--skipLibCheck'],{cwd:project});
+await exec('go',['build','-o',join(run,'wuu'),'./cmd/wuu'],{cwd:root,env:process.env});
+const result=await exec('go',['test','-race','-count=1','-v','./internal/runtime','-run','^TestRemoteReadOnlyContinuation'],{cwd:root,env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project},maxBuffer:16*1024*1024});
+process.stdout.write(result.stdout);if(result.stdout.includes('--- SKIP:'))throw Error('a required process test was skipped');
