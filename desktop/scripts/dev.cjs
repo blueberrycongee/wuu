@@ -70,7 +70,11 @@ if (process.platform === "linux") {
   env.WUU_CUA_LINUX_HELPER ??= join(desktopRoot, "build", "bin", "wuu-cua-linux");
 }
 
-const dev = spawn(process.execPath, [electronVite, desktopRoot], {
+// Build switches belong to build-core; remaining arguments belong to Electron.
+const electronArgs = process.argv.slice(2).filter(arg =>
+  arg !== "--project-agent" && arg !== "--plugins-only" &&
+  !arg.startsWith("--platform=") && !arg.startsWith("--arch=") && arg !== "--");
+const dev = spawn(process.execPath, [electronVite, desktopRoot, "--", ...electronArgs], {
   cwd: desktopRoot,
   env,
   stdio: "inherit",

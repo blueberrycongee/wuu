@@ -34,6 +34,14 @@ func WithInvocationState(ctx context.Context, binding *State) context.Context {
 	}))
 }
 
+// HasInvocationState distinguishes a missing capture from a present capture
+// whose generation has closed. Callers must never replace a failed capture with
+// a newer authority merely because retention failed.
+func HasInvocationState(ctx context.Context) bool {
+	_, ok := ctx.Value(invocationStateKey{}).(invocationStateRetainer)
+	return ok
+}
+
 // RetainInvocationState acquires the authority supplied by this invocation.
 // It never selects a current Session or opens state by directory. Close the
 // returned handle after all synchronous and asynchronous consumers finish.

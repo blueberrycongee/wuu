@@ -81,6 +81,21 @@ func (c *Client) UpdateState(ctx context.Context, subject string, scope Scope, u
 		return result.Document, err
 	}
 }
+
+// MoveStatePrefix asks the selected provider to transfer ownership using durable
+// fences and receipts. The caller must authorize both exact subjects.
+// An uncertain result is never retried here: retrying the identical transfer is
+// safe only under the provider's durable fence-and-receipt contract.
+func (c *Client) MoveStatePrefix(ctx context.Context, transfer StateTransfer) error {
+	var result struct{}
+	err := c.invoke(ctx, "transfer-state", transfer, &result)
+	var hostErr *pluginhost.HostServiceError
+	if errors.As(err, &hostErr) && hostErr.Code == "method_not_found" {
+		return settingsError("storage_transfer_unsupported", "selected settings provider does not support ownership transfers")
+	}
+	return err
+}
+
 func (c *Client) invoke(ctx context.Context, method string, input, output any) error {
 	if c == nil || c.call == nil {
 		return settingsError("service_unavailable", "settings binding is unavailable")

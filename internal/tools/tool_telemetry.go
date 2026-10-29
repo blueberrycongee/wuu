@@ -145,7 +145,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	revisionRoot := ""
 	if trackWorkspaceRevision {
 		revisionRoot = t.env.RootDir
-		revisionBefore = workspaceRevision(ctx, revisionRoot, t.env.RuntimeHome)
+		revisionBefore = t.env.workspaceRevision(ctx, revisionRoot)
 	}
 	// Do not pass an inherited snapshot to another invocation. An empty root
 	// means no cached revision; an empty revision for the same root instead
@@ -154,7 +154,16 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 
 	var result toolresult.Result
 	var err error
-	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+	frozen, resumed := ctx.Value(fileActionContextKey{}).(FileAction)
+	if resumed && (frozen.Operation != call.Name || string(frozen.Arguments) != call.Arguments) {
+		return toolresult.Result{}, errors.New("reviewed file action binding mismatch")
+	}
+	if t.fileActionGate != nil && fileMutation(call.Name) && !resumed {
+		result, err = t.fileActionGate(ctx, t, call)
+	} else if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		if len(t.env.ProtectedPaths) > 0 {
+			return toolresult.Result{}, errors.New("remote execution cannot enforce this runtime's protected read/write paths")
+		}
 		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{
 			ShellEarlyHandoffDisabled: t.env.ShellEarlyHandoffDisabled,
 			GitAttributionEnabled:     !t.env.GitAttributionDisabled,
@@ -199,7 +208,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	revisionAfter := revisionBefore
 	if trackWorkspaceRevision {
 		// Failed executions can still have changed the workspace.
-		revisionAfter = workspaceRevision(ctx, t.env.RootDir, t.env.RuntimeHome)
+		revisionAfter = t.env.workspaceRevision(ctx, t.env.RootDir)
 	}
 	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, err, projectionDiag)
 	return returned, err
@@ -558,6 +567,12 @@ func filesystemWorkspaceRevision(ctx context.Context, rootDir, runtimeHome strin
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if env := protectedPathEnv(ctx); env != nil && env.rejectProtectedPath(path, false) != nil {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if path == root {
 			return nil

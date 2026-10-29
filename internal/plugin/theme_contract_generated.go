@@ -123,6 +123,7 @@ var allowedIconNames = map[string]struct{}{
 	"inbox":          {},
 	"layout-grid":    {},
 	"list-todo":      {},
+	"mascot":         {},
 	"message-square": {},
 	"moon":           {},
 	"plug":           {},

@@ -262,15 +262,17 @@ func (e *pluginToolExecutor) toolInput(ctx context.Context, call providers.ToolC
 		actorID, _ = provider.ExecutionActor()
 	}
 	return pluginhost.ToolExecuteInput{
-		SessionID: e.threadID,
-		ThreadID:  e.threadID,
-		TurnID:    execution.ExecutionID,
-		ActorID:   actorID,
-		CWD:       e.cwd,
-		StepIndex: stepIndex,
-		CallID:    call.ID,
-		Tool:      call.Name,
-		Arguments: json.RawMessage(arguments),
+		SourceMessage:   execution.SourceMessage,
+		MessageRelation: providers.CloneMessageRelation(execution.MessageRelation),
+		SessionID:       e.threadID,
+		ThreadID:        e.threadID,
+		TurnID:          execution.ExecutionID,
+		ActorID:         actorID,
+		CWD:             e.cwd,
+		StepIndex:       stepIndex,
+		CallID:          call.ID,
+		Tool:            call.Name,
+		Arguments:       json.RawMessage(arguments),
 	}, nil
 }
 

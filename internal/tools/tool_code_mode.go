@@ -84,6 +84,9 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
 		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
 	}); ok {
+		if len(e.toolkit.env.ProtectedPaths) > 0 {
+			return toolresult.Result{}, errors.New("remote code execution cannot enforce this runtime's protected read/write paths")
+		}
 		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{ResultView: args.ResultView, Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
 		if err != nil {
 			return toolresult.Result{}, err

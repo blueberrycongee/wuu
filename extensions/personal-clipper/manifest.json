@@ -1,0 +1,9 @@
+{
+ "manifest_version":3,
+ "name":"Wuu Personal explicit clipper",
+ "version":"0.1.0",
+ "description":"Export only the current page you explicitly choose into a Personal import file.",
+ "permissions":["activeTab","scripting","downloads"],
+ "action":{"default_title":"Share this page to Wuu Personal"},
+ "background":{"service_worker":"background.js"}
+}

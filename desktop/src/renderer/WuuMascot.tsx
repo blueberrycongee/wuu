@@ -175,7 +175,7 @@ type WuuMascotProps = Omit<
   /** Occasional idle glances and liquid gestures, suspended for work and reduced motion. */
   ambient?: boolean;
   morph?: MascotMorph;
-  /** Keep the authored identity without allocating morph artwork or animation work. */
+  /** Keep the authored silhouette without activity morphs or idle liquid deformation. */
   disableMorph?: boolean;
   motionPaused?: boolean;
   motionReplay?: number;
@@ -255,7 +255,7 @@ export function WuuMascot({
   const [svg, setSVG] = useState<SVGSVGElement | null>(null);
   const effectiveMorph = morph ?? ACTIVITY_MORPHS[activity];
   useMascotMorph(disableMorph ? null : svg, effectiveMorph, motionPaused || visible === false, motionReplay, `${identityName}:${identityTraitsSignature}`);
-  useMascotCoalescence(svg, ambient && effectiveMorph === "idle" && present && visible !== false && !motionPaused ? "idle" : "off", `${identityName}:${identityTraitsSignature}`);
+  useMascotCoalescence(svg, !disableMorph && ambient && effectiveMorph === "idle" && present && visible !== false && !motionPaused ? "idle" : "off", `${identityName}:${identityTraitsSignature}`);
   const [mascotLayers, setMascotLayers] = useState<{
     rear: SVGGElement;
     front: SVGGElement;

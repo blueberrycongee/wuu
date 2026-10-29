@@ -135,6 +135,7 @@ func runStatePreparationFixture() {
 				{config.ServiceName, "read", `{}`, "embedded", false},
 				{ServiceName, "update", `{}`, "", true},
 				{ServiceName, "update-state", `{}`, "", true},
+				{ServiceName, "transfer-state", `{}`, "", true},
 				{config.ServiceName, "compare-exchange", `{}`, "", true},
 			} {
 				if err = call(step.service, step.method, step.params, step.denied, step.expected); err != nil {

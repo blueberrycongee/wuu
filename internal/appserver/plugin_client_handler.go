@@ -6,8 +6,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 const maxPluginClientPayloadBytes = 1 << 20
@@ -15,12 +19,15 @@ const maxPluginClientPayloadBytes = 1 << 20
 // PluginClientRequestParams is a generation-bound opaque request from a Wuu
 // client to a plugin runtime or one of its declared service dependencies.
 type PluginClientRequestParams struct {
-	ID              string          `json:"id"`
-	Fingerprint     string          `json:"fingerprint"`
-	GraphGeneration string          `json:"graph_generation"`
-	Service         string          `json:"service,omitempty"`
-	Method          string          `json:"method"`
-	Input           json.RawMessage `json:"input,omitempty"`
+	UserInput       *runtime.ClientUserInput `json:"user_input,omitempty"`
+	UserSpaceID     string                   `json:"user_space_id,omitempty"`
+	ProductDomain   string                   `json:"product_domain,omitempty"`
+	ID              string                   `json:"id"`
+	Fingerprint     string                   `json:"fingerprint"`
+	GraphGeneration string                   `json:"graph_generation"`
+	Service         string                   `json:"service,omitempty"`
+	Method          string                   `json:"method"`
+	Input           json.RawMessage          `json:"input,omitempty"`
 	// RequestID opts into independently cancellable, asynchronous admission.
 	// It is scoped to this connection and exact plugin/fingerprint pair.
 	RequestID string `json:"request_id,omitempty"`
@@ -49,7 +56,9 @@ type pluginClientRequestKey struct {
 }
 
 type pluginClientRequest struct {
-	cancel context.CancelFunc
+	cancel    context.CancelFunc
+	resources []access.Resource
+	principal principal.Identity
 }
 
 func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) error {
@@ -87,6 +96,15 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("plugin runtime is unavailable"))
 	}
+	if params.UserSpaceID != "" || params.ProductDomain != "" {
+		requested := userspace.Binding{UserSpaceID: params.UserSpaceID, ProductDomain: params.ProductDomain}
+		if err := requested.Validate(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if !s.rt.UserBinding().Matches(requested) {
+			return s.writeResponse(req.ID, nil, errors.New("request belongs to another user space or product domain"))
+		}
+	}
 	if s.closed.Load() {
 		return s.writeResponse(req.ID, nil, errServerClosed)
 	}
@@ -117,8 +135,31 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 			return s.writeResponse(req.ID, nil, errors.New("plugin does not accept client requests"))
 		}
 	}
+	if params.UserInput != nil {
+		if err := runtime.ValidateClientUserInput(*params.UserInput); err != nil {
+			releaseGeneration()
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	resources, err := s.requestResources(req)
+	if err != nil {
+		releaseGeneration()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	invoke := func(callCtx context.Context) error {
 		defer releaseGeneration()
+		// A queued callback must revalidate the actual caller and exact captured
+		// route immediately before dispatch, not borrow an earlier UI grant.
+		if err := s.AuthorizeResource(callCtx, MethodPluginClientRequest, resources...); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		s.appendContextResponseScope(callCtx, MethodPluginClientRequest, resources...)
+		if params.UserInput != nil {
+			var revoke context.CancelFunc
+			callCtx, revoke = context.WithCancel(callCtx)
+			defer revoke()
+			callCtx = runtime.WithClientUserInput(callCtx, plugin.ID, *params.UserInput)
+		}
 		if service != "" {
 			result, callErr := host.CallService(callCtx, plugin.ID, service, method, params.Input)
 			if err := callCtx.Err(); err != nil {
@@ -137,7 +178,7 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 
 	key := pluginClientRequestKey{pluginID: params.ID, fingerprint: params.Fingerprint, graphGeneration: params.GraphGeneration, requestID: requestID}
 	callCtx, cancel := context.WithCancel(ctx)
-	request := &pluginClientRequest{cancel: cancel}
+	request := &pluginClientRequest{cancel: cancel, resources: append([]access.Resource(nil), resources...), principal: s.Principal(ctx).Identity()}
 	s.pluginClientMu.Lock()
 	if s.closed.Load() {
 		s.pluginClientMu.Unlock()
@@ -211,7 +252,7 @@ func (s *Server) writePluginClientResult(id json.RawMessage, result json.RawMess
 	return s.writeResponse(id, PluginClientRequestResult{Result: result}, nil)
 }
 
-func (s *Server) handlePluginClientCancel(req Request) error {
+func (s *Server) handlePluginClientCancel(ctx context.Context, req Request) error {
 	var params PluginClientCancelParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -228,6 +269,13 @@ func (s *Server) handlePluginClientCancel(req Request) error {
 	request := s.pluginClientRequests[key]
 	s.pluginClientMu.Unlock()
 	if request != nil {
+		if request.principal != s.Principal(ctx).Identity() {
+			return s.writeResponse(req.ID, nil, &access.Denied{Action: MethodPluginClientCancel, Reason: "request-owner-mismatch"})
+		}
+		if err := s.AuthorizeResource(ctx, MethodPluginClientCancel, request.resources...); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		s.appendContextResponseScope(ctx, MethodPluginClientCancel, request.resources...)
 		request.cancel()
 	}
 	return s.writeResponse(req.ID, PluginClientCancelResult{Cancelled: request != nil}, nil)

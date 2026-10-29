@@ -13,6 +13,20 @@ function process() {
 }
 
 describe("PluginRuntimeRequests", () => {
+  it("routes a scoped request without sending the desktop-only composition profile to the server", async () => {
+    const target = process();
+    const requests = new PluginRuntimeRequests({} as AppServerClientPool);
+    const params: PluginClientRequestParams = {
+      ...identity, method: "read", user_space_id: "local", product_domain: "personal", composition_profile: "personal",
+    };
+    const pending = requests.request("window", target.request, params);
+    expect(target.calls.mock.calls[0][1]).toEqual({
+      ...identity, request_id: expect.any(String), method: "read", user_space_id: "local", product_domain: "personal",
+    });
+    target.finish({ result: "ok" });
+    await pending;
+  });
+
   it("keeps service calls and cancellation on their captured process and graph", async () => {
     const first = process(), second = process();
     let current = first;

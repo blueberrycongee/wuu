@@ -39,6 +39,14 @@ test('isolated image test selects layout without unrelated platform jobs', () =>
   assert.equal(result.desktop, 'true');
   for (const job of ['go', 'clients', 'native']) assert.equal(result[job], 'false');
 });
+test('Personal desktop fixture changes select the required hosted controls without platform packaging', () => {
+  for (const path of ['desktop/scripts/build-personal-fixture.cjs', 'desktop/scripts/personal-settings-e2e.cjs', 'desktop/scripts/personal-approval-ui-e2e.cjs', 'desktop/dev/personal/index.tsx', 'desktop/dev/personal/shell.ts']) {
+    const result = select([path]);
+    assert.deepEqual(JSON.parse(result.desktop_suites), ['shell'], path);
+    assert.equal(result.desktop, 'true', path);
+    for (const job of ['go', 'clients', 'native']) assert.equal(result[job], 'false', `${path}: ${job}`);
+  }
+});
 test('multiple test changes union suites, including deleted entries', () => {
   assert.deepEqual(JSON.parse(select(['desktop/scripts/image-layout-e2e.cjs', 'desktop/scripts/file-selection-e2e.cjs'], 'pull_request', true).desktop_suites), ['selection', 'layout']);
 });

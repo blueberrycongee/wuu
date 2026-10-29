@@ -48,9 +48,13 @@ const (
 	KernelSessionListService            = "host.session.list"
 	KernelSessionCancelService          = "host.session.cancel"
 	KernelSessionInspectService         = "host.session.inspect"
+	KernelExecutionAuthorizationService = "host.execution.authorization"
+	KernelPersonalService               = "host.personal"
+	KernelSessionContextService         = "host.session.context"
 	KernelSessionControlService         = "host.session.control"
 	KernelSessionHistoryReadService     = "host.session.history.read"
 	KernelSessionHistorySearchService   = "host.session.history.search"
+	KernelSessionAttachmentReadService  = "host.session.attachment.read"
 	KernelWorkspaceStatusService        = "host.workspace.status"
 	KernelWorkspaceApplyService         = "host.workspace.apply"
 	KernelWorkspaceDiscardService       = "host.workspace.discard"
@@ -81,10 +85,10 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		KernelStorageKeysService, KernelStorageCompareExchangeService,
 		KernelSettingsGetService, KernelSettingsListService,
 		KernelSessionCreateService, KernelSessionSendService, KernelSessionListService,
-		KernelSessionCancelService, KernelSessionInspectService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService,
+		KernelSessionCancelService, KernelSessionInspectService, KernelSessionContextService,
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService,
 		KernelWorkspaceStatusService, KernelWorkspaceApplyService, KernelWorkspaceDiscardService,
-		KernelSessionControlService, KernelCredentialsRequestService, KernelSessionRouteService,
+		KernelSessionControlService, KernelPersonalService, KernelExecutionAuthorizationService, KernelCredentialsRequestService, KernelSessionRouteService,
 	}
 	descriptors := make([]ServiceDescriptor, 0, len(names))
 	for _, name := range names {
@@ -109,8 +113,8 @@ func preparationService(name string) bool {
 	switch name {
 	case KernelStorageGetService, KernelStorageKeysService,
 		KernelSettingsGetService, KernelSettingsListService,
-		KernelSessionListService, KernelSessionInspectService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelWorkspaceStatusService:
+		KernelSessionListService, KernelSessionInspectService, KernelSessionContextService,
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService, KernelWorkspaceStatusService:
 		return true
 	default:
 		return false
@@ -239,10 +243,13 @@ type ServiceContinueParams struct {
 // ServiceInvokeParams is the payload of the host -> provider service.invoke
 // request. Caller carries the validated consumer plugin ID.
 type ServiceInvokeParams struct {
-	Service string          `json:"service"`
-	Method  string          `json:"method"`
-	Caller  string          `json:"caller"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	// Admission is set only by authenticated host ingress, never service.call JSON.
+	Admission          *ServiceAdmission   `json:"admission,omitempty"`
+	StorageStewardship *StorageStewardship `json:"storage_stewardship,omitempty"`
+	Service            string              `json:"service"`
+	Method             string              `json:"method"`
+	Caller             string              `json:"caller"`
+	Params             json.RawMessage     `json:"params,omitempty"`
 	// ExecutionID, when set, binds the invoke to one execution scope so
 	// cross-process cancellation propagates through the execution plane.
 	ExecutionID string `json:"execution_id,omitempty"`
