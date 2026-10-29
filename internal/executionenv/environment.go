@@ -62,6 +62,62 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 	return result, nil
 }
 
+// ErrReadObservationCommitUnknown means a worker may have applied the
+// versioned invalidation before its acknowledgement was lost. It must not be
+// replayed against a newly started worker.
+var ErrReadObservationCommitUnknown = errors.New("remote read observation commit outcome unknown")
+
+func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolRequest) (PreparedRead, error) {
+	if request.Call.Name != "read_file" {
+		return PreparedRead{}, errors.New("prepared remote continuation requires read_file")
+	}
+	client, err := e.connect(ctx)
+	if err != nil {
+		return PreparedRead{}, err
+	}
+	if !client.observationCommit {
+		return PreparedRead{}, errors.New("execution worker does not support read observation commit")
+	}
+	data, err := client.Call(ctx, "read/prepare", request)
+	if err != nil {
+		return PreparedRead{}, err
+	}
+	var response struct {
+		Receipt string            `json:"receipt"`
+		Result  toolresult.Result `json:"result"`
+	}
+	if err = json.Unmarshal(data, &response); err != nil || response.Receipt == "" {
+		return PreparedRead{}, errors.New("invalid prepared remote read receipt")
+	}
+	receipt := struct {
+		Receipt                   string `json:"receipt"`
+		Actor                     string `json:"actor"`
+		PermissionMode            string `json:"permission_mode"`
+		GitAttributionEnabled     bool   `json:"git_attribution_enabled,omitempty"`
+		ShellEarlyHandoffDisabled bool   `json:"shell_early_handoff_disabled,omitempty"`
+	}{response.Receipt, request.Actor, request.PermissionMode, request.GitAttributionEnabled, request.ShellEarlyHandoffDisabled}
+	return PreparedRead{PermissionMode: request.PermissionMode, Result: response.Result, Commit: func(ctx context.Context) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		result, err := client.Call(ctx, "read/commit", receipt)
+		if err != nil {
+			return false, errors.Join(ErrReadObservationCommitUnknown, err)
+		}
+		var ack struct {
+			Committed bool `json:"committed"`
+			Changed   bool `json:"changed"`
+		}
+		if json.Unmarshal(result, &ack) != nil || !ack.Committed {
+			return false, ErrReadObservationCommitUnknown
+		}
+		return ack.Changed, nil
+	}, Abort: func(ctx context.Context) error {
+		_, err := client.Call(ctx, "read/abort", receipt)
+		return err
+	}}, nil
+}
+
 // ExecuteUnobservedRead requires an explicitly negotiated worker capability;
 // older workers must not silently record the delegated read as model-visible.
 func (e *Environment) ExecuteUnobservedRead(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
@@ -168,6 +224,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	}
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
+	client.observationCommit = slices.Contains(hello.Capabilities, ReadObservationCommitCapability)
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err

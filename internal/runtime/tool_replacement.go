@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/readcursor"
@@ -116,6 +117,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	remoteEnv := r.toolkit.ExecutionEnvironment()
 	remoteRead := r.Name() == "read_file" && remoteEnv != nil
 	var remoteCompleted atomic.Bool
+	var remotePrepared executionenv.PreparedRead
 	if remoteRead {
 		if !r.RemoteWorkspaceReplacement() {
 			return toolresult.Result{}, fmt.Errorf("remote read contract is required")
@@ -224,6 +226,14 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		// A nested invocation must not inherit a parent scope with stale policy.
 		ctx = context.WithValue(ctx, pluginProcessScopeKey{}, (*tools.ProcessScope)(nil))
 	}
+	releasePrepared := func(prepared executionenv.PreparedRead) {
+		if prepared.Abort == nil {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = prepared.Abort(cleanup)
+	}
 	continuation := newNativeToolContinuation(ctx, func(nativeCtx context.Context) (toolresult.Result, error) {
 		if !r.ToolAvailable() {
 			return toolresult.Result{}, fmt.Errorf("replacement for %q is unavailable", r.Name())
@@ -247,20 +257,35 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		var result toolresult.Result
 		var err error
 		if remoteRead {
-			result, err = r.toolkit.ContinueRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			var prepared executionenv.PreparedRead
+			prepared, err = r.toolkit.PrepareRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			published := false
+			defer func() {
+				if !published || nativeCtx.Err() != nil {
+					releasePrepared(prepared)
+				}
+			}()
+			result, err = sanitizeRemoteReadResult(prepared.Result)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			remotePrepared = prepared
+			remoteCompleted.Store(true)
+			published = true
+			return result, nil
 		} else {
 			result, err = r.continueNative(nativeCtx, call)
 		}
-		if err != nil || !remoteRead {
-			return result, err
-		}
-		result, err = sanitizeRemoteReadResult(result)
-		if err != nil {
-			return toolresult.Result{}, err
-		}
-		remoteCompleted.Store(true)
-		return result, nil
+		return result, err
 	})
+	defer func() {
+		if remoteCompleted.Load() {
+			releasePrepared(remotePrepared)
+		}
+	}()
 	defer continuation.close()
 	ctx = context.WithValue(ctx, nativeToolContinuationKey{}, continuation)
 	ctx = pluginhost.WithNativeToolContinuationBinding(ctx, r.owner)
@@ -311,7 +336,34 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			}
 			return result, nil
 		}
-		return externalRead.Render(ctx, result)
+		rendered, err := externalRead.Render(ctx, result)
+		if err != nil || !remoteRead {
+			return rendered, err
+		}
+		if err := ctx.Err(); err != nil {
+			return toolresult.Result{}, err
+		}
+		if !r.ToolAvailable() {
+			return toolresult.Result{}, fmt.Errorf("replacement for %q is unavailable", r.Name())
+		}
+		metadata, _ := r.executor.ToolMetadata(pluginCall)
+		if err := r.toolkit.AuthorizeRemoteTool(ctx, remoteEnv, pluginCall, metadata); err != nil {
+			return toolresult.Result{}, err
+		}
+		mode, err := r.toolkit.RecheckRemoteReadOnlyOn(ctx, remoteEnv, actor, actorPath, r.original, call)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		if mode != remotePrepared.PermissionMode {
+			return toolresult.Result{}, fmt.Errorf("remote read permission mode changed")
+		}
+		if remotePrepared.Commit == nil {
+			return toolresult.Result{}, fmt.Errorf("remote read commit unavailable")
+		}
+		if _, err = remotePrepared.Commit(ctx); err != nil {
+			return toolresult.Result{}, err
+		}
+		return rendered, nil
 	}
 	text, err := validateSearchReplacement(result, call.Arguments)
 	if err != nil {

@@ -41,10 +41,12 @@ type Server struct {
 	artifactRoots *tools.SessionArtifactManager
 	processes     *process.Manager
 	exports       map[string]exportFile
+	readReceipts  map[string]*readReceipt
+	closed        bool
 }
 
 func New() *Server {
-	return &Server{actors: make(map[string]*actor), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
+	return &Server{actors: make(map[string]*actor), readReceipts: make(map[string]*readReceipt), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
 }
 
 func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
@@ -85,7 +87,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability}})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -105,7 +107,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability}})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -125,6 +127,14 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			return nil, err
 		}
 		return json.Marshal(result)
+	case "read/prepare":
+		return s.prepareObservation(ctx, data)
+	case "read/commit":
+		return s.commitObservation(ctx, data, false)
+	case "read/status":
+		return s.commitObservation(ctx, data, true)
+	case "read/abort":
+		return s.abortObservation(ctx, data)
 	case "execute":
 		var request executionenv.ToolRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -157,8 +167,8 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled bool) (*actor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.init == nil {
-		return nil, errors.New("execution worker is not initialized")
+	if s.closed || s.init == nil {
+		return nil, errors.New("execution worker is not initialized or closed")
 	}
 	if id == "" {
 		return nil, errors.New("execution actor is required")
@@ -211,6 +221,8 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 func (s *Server) Close() error {
 	err := s.code.Close()
 	s.mu.Lock()
+	s.closed = true
+	clear(s.readReceipts)
 	manager := s.processes
 	init := s.init
 	for key, actor := range s.actors {
