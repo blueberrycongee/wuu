@@ -22,11 +22,11 @@ func TestExternalReadPreservesStructuredTextWithoutNativeObservation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"note.txt","offset":1,"limit":2}`)
+	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"note.txt","offset":1,"limit":2}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := scope.Render(toolresult.Result{StructuredContent: json.RawMessage(`{"text":"external\r\nsecond\n","total_lines":3}`)})
+	result, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(`{"text":"external\r\nsecond\n","total_lines":3}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,21 +61,21 @@ func TestExternalReadRejectsInvalidScopeAndResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range []string{`{"path":"../outside"}`, `{"path":".env"}`, `{"continuation":"plugin-cursor"}`} {
-		if _, err := kit.PrepareExternalRead(context.Background(), args); err == nil {
+		if _, err := kit.PrepareExternalRead(context.Background(), args, false); err == nil {
 			t.Fatalf("accepted unsafe args %s", args)
 		}
 	}
-	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt","limit":1}`)
+	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt","limit":1}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, data := range []string{`{}`, `{"text":"a\nb","total_lines":1}`, `{"text":"a","total_lines":0}`, `{"text":"a","total_lines":1,"continuation":"invented"}`} {
-		if _, err := scope.Render(toolresult.Result{StructuredContent: json.RawMessage(data)}); err == nil {
+		if _, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(data)}); err == nil {
 			t.Fatalf("accepted invalid result %s", data)
 		}
 	}
 	image := toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeImage, MIMEType: "image/png", Data: "aW1hZ2U="}}}
-	if _, err := scope.Render(image); err == nil {
+	if _, err := scope.Render(context.Background(), image); err == nil {
 		t.Fatal("accepted unsupported image")
 	}
 }
@@ -89,11 +89,11 @@ func TestExternalReadPreservesCRWithoutTrailingNewline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`)
+	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := scope.Render(toolresult.Result{StructuredContent: json.RawMessage(`{"text":"last\r","total_lines":1}`)})
+	result, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(`{"text":"last\r","total_lines":1}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,16 +118,16 @@ func TestExternalReadRejectsImagesRemoteAndCanceledCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"picture"}`); err == nil {
+	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"picture"}`, false); err == nil {
 		t.Fatal("image accepted")
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := kit.PrepareExternalRead(canceled, `{"path":"file.txt"}`); err == nil {
+	if _, err := kit.PrepareExternalRead(canceled, `{"path":"file.txt"}`, false); err == nil {
 		t.Fatal("canceled call accepted")
 	}
 	kit.SetExecutionEnvironment(&externalReadRemote{})
-	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`); err == nil {
+	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`, false); err == nil {
 		t.Fatal("remote environment accepted")
 	}
 }
@@ -153,17 +153,17 @@ func TestExternalReadDoesNotClaimPriorNativeObservation(t *testing.T) {
 	if len(kit.env.ReadEntries()) != 1 {
 		t.Fatal("native observation missing")
 	}
-	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`)
+	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"file.txt"}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scope.Render(toolresult.Result{StructuredContent: json.RawMessage(`{"text":"bad","total_lines":0}`)}); err == nil {
+	if _, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(`{"text":"bad","total_lines":0}`)}); err == nil {
 		t.Fatal("bad result accepted")
 	}
 	if len(kit.env.ReadEntries()) != 1 {
 		t.Fatal("failed extension removed native observation")
 	}
-	if _, err := scope.Render(toolresult.Result{StructuredContent: json.RawMessage(`{"text":"independent\n","total_lines":1}`)}); err != nil {
+	if _, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(`{"text":"independent\n","total_lines":1}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if len(kit.env.ReadEntries()) != 0 {

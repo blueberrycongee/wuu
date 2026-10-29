@@ -35,9 +35,16 @@ func readFileImage(ctx context.Context, file *os.File, path string, size int64) 
 	if len(data) > maxReadImageBytes {
 		return toolresult.Result{}, fmt.Errorf("image exceeds %d bytes; resize or crop it before reading", maxReadImageBytes)
 	}
-	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return renderReadFileImage(ctx, data, path, false, "")
+}
+
+func renderReadFileImage(ctx context.Context, data []byte, path string, external bool, declaredMediaType string) (toolresult.Result, error) {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return toolresult.Result{}, fmt.Errorf("cannot decode image: %w; use PNG, JPEG, static GIF, or WebP", err)
+	}
+	if external && declaredMediaType != "image/"+format {
+		return toolresult.Result{}, fmt.Errorf("image media type does not match its bytes")
 	}
 	if uint64(config.Width)*uint64(config.Height) > maxReadImagePixels {
 		return toolresult.Result{}, fmt.Errorf("image dimensions %dx%d exceed %d pixels; resize or crop it before reading", config.Width, config.Height, maxReadImagePixels)
@@ -55,11 +62,16 @@ func readFileImage(ctx context.Context, file *os.File, path string, size int64) 
 	if err := ctx.Err(); err != nil {
 		return toolresult.Result{}, err
 	}
-	text, err := mustJSON(map[string]any{
+	metadata := map[string]any{
 		"action": "read_image", "path": path, "media_type": encoded.MediaType,
 		"width": encoded.Width, "height": encoded.Height,
 		"source_width": config.Width, "source_height": config.Height, "resized": encoded.Resized,
-	})
+	}
+	if external {
+		metadata["source"] = "extension"
+		metadata["content_verified"] = false
+	}
+	text, err := mustJSON(metadata)
 	if err != nil {
 		return toolresult.Result{}, err
 	}

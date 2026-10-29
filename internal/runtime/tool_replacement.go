@@ -92,7 +92,11 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	var externalRead *tools.ExternalReadScope
 	if r.Name() == "read_file" {
 		var err error
-		externalRead, err = r.toolkit.PrepareExternalRead(ctx, call.Arguments)
+		allowImage := false
+		for _, contract := range r.registration.ReplacementContracts {
+			allowImage = allowImage || contract == "read_file.image.v1"
+		}
+		externalRead, err = r.toolkit.PrepareExternalRead(ctx, call.Arguments, allowImage)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -129,14 +133,25 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	}
 	ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, r.toolkit)
 	result, err := r.executor.host.ExecuteTool(ctx, r.publicName, input)
-	if err != nil || result.IsError {
+	if err != nil {
 		return result, err
 	}
 	if externalRead != nil {
 		if err := ctx.Err(); err != nil {
 			return toolresult.Result{}, err
 		}
-		return externalRead.Render(result)
+	}
+	if result.IsError {
+		if externalRead != nil {
+			if len(result.Content) != 1 || result.Content[0].Type != toolresult.ContentTypeText {
+				return toolresult.Result{}, fmt.Errorf("external read_file returned an invalid error result")
+			}
+			return toolresult.FromErrorText(result.Content[0].Text), nil
+		}
+		return result, nil
+	}
+	if externalRead != nil {
+		return externalRead.Render(ctx, result)
 	}
 	text, err := validateSearchReplacement(result, call.Arguments)
 	if err != nil {
