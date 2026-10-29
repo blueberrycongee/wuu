@@ -15,6 +15,7 @@ const plugin: RuntimePlugin = {
    if(!rejected) throw Error('rewritten request accepted');
   }
   const remote=await continueNativeTool(host);
+  if(name==='error-immediate.txt') { writeFileSync(new URL('./observed-error',import.meta.url),'done'); return {result:{is_error:true,content:[{type:'text',text:String((remote.structured_content as {text:string}).text)}]}}; }
   if(name==='fail-after.txt') throw Error('failure after native read');
   if(name==='bad-after.txt') return {result:{structured_content:{text:'broken',total_lines:-1}}};
   if(name==='after-pause.txt' || name==='cancel-after.txt' || name==='error-after-pause.txt') await fetch(readFileSync(new URL('./control.txt',import.meta.url),'utf8'));

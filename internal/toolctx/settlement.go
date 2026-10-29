@@ -28,14 +28,15 @@ type settlementAction struct {
 	abort   func()
 }
 type settlement struct {
-	mu         sync.Mutex
-	parent     *settlement
-	finished   bool
-	durable    bool
-	children   int
-	hadActions bool
-	actions    []settlementAction
-	media      [][32]byte
+	mu             sync.Mutex
+	parent         *settlement
+	finished       bool
+	durable        bool
+	children       int
+	remoteExposure bool
+	hadActions     bool
+	actions        []settlementAction
+	media          [][32]byte
 }
 
 func settlementMediaKey(part toolresult.ContentPart) [32]byte {
@@ -73,7 +74,7 @@ func FailedSettlementOutput(ctx context.Context, before, after toolresult.Result
 		return after
 	}
 	s.mu.Lock()
-	participated := s.hadActions || len(s.actions) != 0
+	participated := s.remoteExposure || s.hadActions || len(s.actions) != 0
 	media := append([][32]byte(nil), s.media...)
 	s.mu.Unlock()
 	if !participated {
@@ -140,6 +141,31 @@ func ReserveSettlementChild(ctx context.Context) (func(), error) {
 	s.mu.Unlock()
 	var once sync.Once
 	return func() { once.Do(func() { s.mu.Lock(); s.children--; s.mu.Unlock() }) }, nil
+}
+
+// MarkRemoteReadExposure records that a nested invocation dispatched a remote
+// read whose contents may reach its orchestrator. Propagate immediately to all
+// ancestors even if the read, plugin, cancellation or registration fails.
+func MarkRemoteReadExposure(ctx context.Context) {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	for s != nil {
+		s.mu.Lock()
+		s.remoteExposure = true
+		parent := s.parent
+		s.mu.Unlock()
+		s = parent
+	}
+}
+
+// HasRemoteReadExposure remains true after settlement closes or aborts.
+func HasRemoteReadExposure(ctx context.Context) bool {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.remoteExposure
 }
 
 // SettlementHasParticipants reports participants captured when the scope

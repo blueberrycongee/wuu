@@ -407,7 +407,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 				result = toolresult.MarkUnverifiedSource(result, source)
 			}
 			var beforeFinalization toolresult.Result
-			if toolctx.SettlementHasParticipants(runCtx) {
+			if toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx) {
 				if !orchestrator {
 					toolctx.TrackSettlementMedia(runCtx, result.Content)
 				}
@@ -428,7 +428,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if run.parent == nil || !success || valid != nil {
 				var prepareErr error
 				prepared, prepareErr = toolctx.PrepareSettlement(runCtx, success && valid == nil)
-				if valid != nil && toolctx.SettlementHasParticipants(runCtx) {
+				if valid != nil && (toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx)) {
 					result = toolresult.FromErrorText(errorJSON(fmt.Errorf("validate finalized tool result: %w", valid)))
 					run.clearFinalization()
 					success = false
@@ -439,12 +439,12 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					success = false
 				}
 			}
-			if toolctx.SettlementHasParticipants(runCtx) {
+			if toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx) {
 				run.mu.Lock()
 				run.hadParticipants = true
 				run.mu.Unlock()
 			}
-			if !success && toolctx.SettlementHasParticipants(runCtx) {
+			if !success && (toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx)) {
 				result = toolctx.FailedSettlementOutput(runCtx, beforeFinalization, result)
 				run.clearFinalization()
 				if source := toolctx.UnverifiedSource(runCtx); source != "" {

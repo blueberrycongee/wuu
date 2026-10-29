@@ -88,3 +88,22 @@ func TestSettlementAllowsUnfinishedChildWithoutParticipants(t *testing.T) {
 	require.True(t, aborted)
 	release()
 }
+
+func TestRemoteReadExposurePropagatesBeforeSettlementRegistration(t *testing.T) {
+	root := WithSettlement(context.Background())
+	middle := WithSettlement(root)
+	child := WithSettlement(middle)
+	require.False(t, HasRemoteReadExposure(root))
+	MarkRemoteReadExposure(child)
+	for _, scope := range []context.Context{child, middle, root} {
+		require.True(t, HasRemoteReadExposure(scope))
+		require.False(t, SettlementHasParticipants(scope))
+	}
+	_, err := PrepareSettlement(child, false)
+	require.NoError(t, err)
+	_, err = PrepareSettlement(middle, false)
+	require.NoError(t, err)
+	_, err = PrepareSettlement(root, false)
+	require.NoError(t, err)
+	require.True(t, HasRemoteReadExposure(root), "exposure survives abort without an action")
+}
