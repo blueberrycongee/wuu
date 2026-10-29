@@ -14,6 +14,7 @@ import (
 // defaults in the authority retained by State. Provider configuration and
 // capability records are immutable model metadata; request options are copied.
 type StateModels struct {
+	PermissionMode          string
 	Main                    providers.StreamClient
 	Title                   providers.Client
 	Roles                   modelroles.Set
@@ -57,7 +58,7 @@ func captureSessionStateModels(s *Session) *StateModels {
 	if s == nil || (s.StreamRunner == nil && s.TitleClient == nil) {
 		return nil
 	}
-	models := StateModels{Title: s.TitleClient, Roles: s.ModelRoles}
+	models := StateModels{Title: s.TitleClient, Roles: s.ModelRoles, PermissionMode: s.Permissions.Mode}
 	main := &models.Roles.Main
 	main.Provider, main.Model = s.ProviderName, s.Model
 	if runner := s.StreamRunner; runner != nil {
@@ -92,7 +93,7 @@ func captureGenerationStateModels(generation *PluginGeneration) *StateModels {
 	binding := generation.models
 	defaults := binding.config.Agent
 	models := cloneStateModels(StateModels{
-		Main: binding.main, Title: binding.title, Roles: binding.roles,
+		Main: binding.main, Title: binding.title, Roles: binding.roles, PermissionMode: config.ResolveAgentPermissions(defaults).Mode,
 		Temperature: defaults.Temperature, CompactThresholdPct: defaults.CompactThresholdPct,
 		CompactKeepRecentTokens: defaults.CompactKeepRecentTokens, DisableAutoCompact: defaults.DisableAutoCompact,
 		err: binding.err,
@@ -110,7 +111,8 @@ func captureGenerationModelBindings(s *Session) *generationModelBindings {
 	return &generationModelBindings{
 		main: models.Main, title: models.Title, worker: s.WorkerClient, roles: models.Roles, err: models.err,
 		config: config.Config{Agent: config.AgentConfig{
-			Temperature: models.Temperature, CompactThresholdPct: models.CompactThresholdPct,
+			PermissionMode: models.PermissionMode,
+			Temperature:    models.Temperature, CompactThresholdPct: models.CompactThresholdPct,
 			CompactKeepRecentTokens: models.CompactKeepRecentTokens, DisableAutoCompact: models.DisableAutoCompact,
 		}},
 	}

@@ -32,6 +32,19 @@ func (s *Server) refreshExtensions(cfg config.Config) error {
 	return s.rt.RefreshExtensions(cfg)
 }
 
+// requireUserHostSessionOwnerLocked gates both the initial lease and the final
+// post-hook start boundary. A disabled owner cannot be revived by a generic
+// client turn or by a reservation acquired before generation publication.
+func (s *Server) requireUserHostSessionOwnerLocked(th *threadState) error {
+	if s == nil || s.rt == nil || !s.rt.UserBinding().IsUser() {
+		return nil
+	}
+	if pluginID, owned := strings.CutPrefix(th.Owner, "plugin:"); owned && !s.rt.UserHostPluginAvailable(pluginID) {
+		return fmt.Errorf("session owner plugin %q is unavailable", pluginID)
+	}
+	return nil
+}
+
 // Resolve provider policy before acquiring thread or execution lease locks.
 func (s *Server) threadProjectAdmission(ctx context.Context, th *threadState) (int, error) {
 	metadata, found, err := th.state.Sessions.Find(th.ID)
@@ -51,6 +64,9 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 	}
 	if projectExecutionDisabled(th.Source) {
 		return false, errProjectAgentDisabled
+	}
+	if err := s.requireUserHostSessionOwnerLocked(th); err != nil {
+		return false, err
 	}
 	if s != nil && (s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load()) {
 		return false, nil
@@ -487,6 +503,10 @@ func (s *Server) abortStartedThreadTurnDurably(th *threadState, started startedT
 	if started.userMsgSeq > 0 {
 		diagnostic := BuildTurnError(cause, "")
 		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil, "", "", providers.TokenUsage{})
+	}
+	if s.clientInputReceiptsEnabled() && persistErr == nil && started.userMsgSeq > 0 && started.runtime.PluginTurn != nil {
+		ref := started.runtime.PluginTurn
+		persistErr = th.state.Sessions.SettleClientInputExecution(s.clientInputScope(th.ID, ref.PluginID), ref.RequestID, started.turnID, "failed", cause.Error())
 	}
 	abortStartedThreadTurn(th, started, cause)
 	if persistErr != nil {

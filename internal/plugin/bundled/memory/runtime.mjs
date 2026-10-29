@@ -132,6 +132,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
@@ -163,12 +164,13 @@ function descriptor(name, methods, preparation = []) {
     name: method,
     input_schema: `${name}.${method}.input.v1`,
     output_schema: `${name}.${method}.output.v1`,
-    ...preparation.includes(method) ? { preparation: true } : {}
+    ...preparation.includes(method) ? { preparation: true } : {},
+    ...["release-inspection", "reconcile-inspection"].includes(method) ? { cleanup: true } : {}
   })) };
 }
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
   version: "1.2.0"
@@ -238,6 +240,21 @@ var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
 
 // packages/plugin-sdk/src/session-service.ts
 var sessionDomainArity = {
+  "InspectionAuthority": [0, 1],
+  "ListInspections": [0, 1],
+  "ReconcileInspection": [1, 1],
+  "AcquireInspection": [1, 1],
+  "ReleaseInspection": [1, 0],
+  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
+  "ReadClientInput": [2, 2],
+  "ListUnsettledClientInputs": [1, 1],
+  "AcceptClientInput": [3, 2],
+  "ChangeClientInput": [6, 1],
+  "AppendAcceptedClientHistoryRecord": [6, 1],
+  "SettleClientInputExecution": [5, 0],
+  "ListClientInputRecoveryCandidates": [1, 1],
+  "RecoverClientInput": [2, 0],
+  "ClientInputHistoryReceipts": [1, 1],
   "AcceptHeldUserWork": [2, 1],
   "AdmitThreadExecution": [4, 1],
   "AppendAcceptedUserHistoryRecord": [3, 1],
@@ -329,6 +346,7 @@ var sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
   "ReadProjectWork": [1, 1],
@@ -418,10 +436,25 @@ var SESSION_SHARING_DESCRIPTOR = {
   }))
 };
 
+// packages/plugin-sdk/src/execution-authorization.ts
+var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
+var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
+  name: EXECUTION_AUTHORIZATION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"].map((name) => ({
+    name,
+    ...name === "release-commit" ? { cleanup: true } : {},
+    input_schema: `execution.authorization.${name}.input.v1`,
+    output_schema: `execution.authorization.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
 var FILE_LOCK_SERVICE = "host.file-lock";
+var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
+var SECURITY_AUTHORIZE_METHOD = "authorize";
 var KERNEL_SERVICE_NAMES = {
   "host.storage.get": "host.storage.get",
   "host.storage.set": "host.storage.set",
@@ -437,7 +470,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -454,6 +489,17 @@ function kernelServiceCall(id, method, params) {
 function requireKernelService(method) {
   return { name: KERNEL_SERVICE_NAMES[method], major_version: 1, required: true };
 }
+function authorizationServiceDescriptor(options = {}) {
+  return {
+    name: SECURITY_AUTHORIZE_SERVICE,
+    version: "1.0.0",
+    methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }, ...options.effect_fence ? [
+      { name: "acquire-authorization", input_schema: "security.authorize.acquire-authorization.input.v1", output_schema: "security.authorize.acquire-authorization.output.v1" },
+      { name: "release-authorization", input_schema: "security.authorize.release-authorization.input.v1", output_schema: "security.authorize.release-authorization.output.v1", cleanup: true }
+    ] : []]
+  };
+}
+var AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
 var RuntimeHostServiceError = class extends Error {
   code;
   constructor(error) {
@@ -1142,6 +1188,7 @@ var MemoryPlugin = class {
   lifecycleHost;
   notebook = "";
   workspaceStateDir = "";
+  available = true;
   jobs = /* @__PURE__ */ new Map();
   jobSnapshots = /* @__PURE__ */ new Map();
   initialize(params, host) {
@@ -1150,6 +1197,9 @@ var MemoryPlugin = class {
     if (!home) throw new Error("memory plugin requires wuu_home");
     this.notebook = join3(home, "memory");
     this.workspaceStateDir = params.workspace_state_dir?.trim() ?? "";
+    this.available = params.product_domain !== "personal";
+    if (!this.available) return { tools: [], capabilities: [], provided_services: [] };
+    if (params.product_domain && params.product_domain !== "coding") throw new Error("unsupported memory product domain");
     return {
       tools: [
         { id: "memory_list", description: "List the user's durable memory notebook files. Use only when durable cross-project user preferences, feedback, references, or lessons are relevant.", input_schema: objectSchema(), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -1176,10 +1226,12 @@ var MemoryPlugin = class {
     };
   }
   async activate() {
+    if (!this.available) return;
     if (!this.notebook.trim()) throw new Error("memory: notebook path is required");
     await mkdir2(this.notebook, { recursive: true, mode: 493 });
   }
-  async executeTool(call, _host, execution) {
+  async executeTool(call, host, execution) {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     if (call.tool_id === "memory_list") return jsonResult({ files: await this.readNotebook() });
     const input = object(call.arguments);
     if (call.tool_id === "session_memory") {
@@ -1209,7 +1261,8 @@ var MemoryPlugin = class {
         throw new Error(`unknown memory tool ${JSON.stringify(call.tool_id)}`);
     }
   }
-  async invokeCapability(call, host) {
+  async invokeCapability(call, host, execution) {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     switch (call.capability) {
       case CAPABILITY_PROMPT:
         return { output: { text: promptSection(this.notebook, await readSafeIndex(this.notebook)) } };
@@ -1224,7 +1277,8 @@ var MemoryPlugin = class {
         throw new Error(`unknown memory capability ${JSON.stringify(call.capability)}`);
     }
   }
-  async invokeService(call, _host, execution) {
+  async invokeService(call, host, execution) {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     if (call.service === NOTEBOOK_MEMORY_SERVICE) return readNotebookSnapshot(this.notebook, call.method, object(call.params));
     if (call.service !== SESSION_MEMORY_SERVICE) throw new Error(`memory plugin does not provide service ${JSON.stringify(call.service)}`);
     const params = object(call.params);
@@ -1344,7 +1398,10 @@ var MemoryPlugin = class {
 function compareNames(a, b) {
   return Buffer.compare(Buffer.from(a), Buffer.from(b));
 }
-var src_default = new MemoryPlugin();
+function createMemoryPlugin() {
+  return new MemoryPlugin();
+}
+var src_default = createMemoryPlugin();
 
 // plugins/memory/plugins/memory/runtime-entry.ts
 var [major, minor] = process.versions.node.split(".").map(Number);

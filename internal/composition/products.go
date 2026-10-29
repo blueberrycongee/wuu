@@ -53,6 +53,13 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 		"wuu.base":    {Patches: []Patch{{Modules: base}}},
 		"wuu.desktop": {Patches: []Patch{{Modules: desktop}}},
 	}
+	// Personal is an explicitly selected product, not an identity-triggered
+	// prompt override. Ordinary bindings and patches can replace its policy.
+	bundles["wuu.personal"] = Bundle{Patches: []Patch{{
+		Modules:  map[string]bool{"personal": true, "personal-calendar": true, "automation": true, "wuu.personal-actions-consumer": true, "wuu.resource-access": true, "wuu.resource-policy.default": true, "wuu.execution-access": true, "wuu.execution-authorization.default": true, "wuu.prompt.default": false},
+		Services: []Binding{{Service: "agent.prompt", Major: 1, Provider: "personal"}},
+	}}}
+	profiles["personal"] = Profile{Bundles: []string{"wuu.base", "wuu.desktop", "wuu.personal"}}
 	if version >= 4 {
 		// The default product extends this same host/state graph; minimum
 		// compositions do not select unrelated execution or business providers.
@@ -73,6 +80,8 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 		profiles["desktop"] = Profile{Bundles: []string{"wuu.session-host", "wuu.execution", "wuu.desktop"}}
 		profiles["headless"] = Profile{Bundles: []string{"wuu.session-host", "wuu.execution"}}
 		profiles["minimal"] = Profile{Bundles: []string{"wuu.session-host"}}
+
+		profiles["personal"] = Profile{Bundles: []string{"wuu.session-host", "wuu.execution", "wuu.desktop", "wuu.personal"}}
 	}
 	return profiles, bundles
 }

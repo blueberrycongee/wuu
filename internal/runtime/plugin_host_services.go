@@ -20,12 +20,16 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolbatch"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
+	ownerHost              *pluginhost.Host
+	binding                userspace.Binding
+	artifacts              *ArtifactClient
 	mu                     sync.RWMutex
 	active                 bool
 	open                   bool
@@ -120,6 +124,40 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServiceExecutionAuthorization:
+		return s.executionAuthorizationService(ctx, raw)
+	case pluginhost.HostServicePersonal:
+		return s.personalService(ctx, raw)
+	case pluginhost.HostServiceSessionContext:
+		var params struct {
+			SessionID              string                                      `json:"session_id"`
+			ExecutionAuthorization *pluginhost.ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+		}
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(params.SessionID) == "" {
+			return nil, serviceError("invalid_params", "session_id is required")
+		}
+		if s.sessions == nil {
+			return nil, serviceError("service_unavailable", "session context is unavailable")
+		}
+		ctx, accessErr := s.authorizeSessionResource(ctx, params.SessionID, params.ExecutionAuthorization, "context")
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		metadata, found, err := s.sessions.WithContext(ctx).Find(params.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, session.ErrSessionNotFound
+		}
+		binding := userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}
+		if !s.binding.Matches(binding) {
+			return nil, serviceError("domain_denied", "session belongs to another user space or product domain")
+		}
+		return marshalServiceResult(map[string]string{"session_id": metadata.ID, "user_space_id": metadata.UserSpaceID, "product_domain": binding.Domain(), "agent_id": metadata.AgentID, "parent_session_id": metadata.ParentID})
 	case pluginhost.HostServiceSessionRoute:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")
@@ -211,12 +249,30 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 			return nil, err
 		}
 		return marshalServiceResult(result)
+	case pluginhost.HostServiceSessionAttachmentRead:
+		var params pluginhost.SessionAttachmentReadParams
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		ctx, accessErr := s.authorizeSessionResource(ctx, params.SessionID, params.ExecutionAuthorization, "attachment.read")
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		result, err := readPluginSessionAttachment(ctx, s.sessions, s.artifacts, s.pluginID, s.binding, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionHistoryRead:
 		var params pluginhost.SessionHistoryReadParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
+		ctx, accessErr := s.authorizeSessionResource(ctx, params.SessionID, params.ExecutionAuthorization, "history.read")
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, params)
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +282,11 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := searchPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
+		ctx, accessErr := s.authorizeSessionResource(ctx, params.SessionID, params.ExecutionAuthorization, "history.search")
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		result, err := searchPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, params)
 		if err != nil {
 			return nil, err
 		}
@@ -363,8 +423,8 @@ func kernelServiceReadOnly(method pluginhost.HostServiceMethod) bool {
 	switch method {
 	case pluginhost.HostServiceStorageGet, pluginhost.HostServiceStorageKeys,
 		pluginhost.HostServiceSettingsGet, pluginhost.HostServiceSettingsList,
-		pluginhost.HostServiceSessionList, pluginhost.HostServiceSessionInspect,
-		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
+		pluginhost.HostServiceSessionList, pluginhost.HostServiceSessionInspect, pluginhost.HostServiceSessionContext,
+		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch, pluginhost.HostServiceSessionAttachmentRead,
 		pluginhost.HostServiceWorkspaceStatus:
 		return true
 	default:
@@ -499,26 +559,21 @@ func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement 
 }
 func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration {
 	descriptors := pluginhost.KernelServiceDescriptors()
-	methods := []pluginhost.HostServiceMethod{
-		pluginhost.HostServiceStorageGet, pluginhost.HostServiceStorageSet,
-		pluginhost.HostServiceStorageDelete, pluginhost.HostServiceStorageKeys,
-		pluginhost.HostServiceStorageCompareExchange, pluginhost.HostServiceSettingsGet,
-		pluginhost.HostServiceSettingsList, pluginhost.HostServiceSessionCreate,
-		pluginhost.HostServiceSessionSend, pluginhost.HostServiceSessionList,
-		pluginhost.HostServiceSessionCancel, pluginhost.HostServiceSessionInspect,
-		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
-		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
-		pluginhost.HostServiceWorkspaceDiscard,
-		pluginhost.HostServiceSessionControl, pluginhost.HostServiceCredentialsRequest, pluginhost.HostServiceSessionRoute,
-	}
+
 	registrations := make([]nativeServiceRegistration, 0, len(descriptors)+8)
-	for index, descriptor := range descriptors {
+	for _, descriptor := range descriptors {
+		method := pluginhost.HostServiceMethod(descriptor.Name)
+		// The original storage gateway used an underscore; the service name is hyphenated.
+		if descriptor.Name == pluginhost.KernelStorageCompareExchangeService {
+			method = pluginhost.HostServiceStorageCompareExchange
+		}
 		registrations = append(registrations,
 			nativeServiceRegistration{Descriptor: engineGatewayDescriptor(), Invoker: &engineGatewayInvoker{parent: k}}, nativeServiceRegistration{
-				Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]},
+				Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: method},
 			})
 	}
 	registrations = append(registrations,
+		nativeServiceRegistration{Descriptor: pluginhost.KernelClientInvalidationDescriptor(), Invoker: &clientInvalidationInvoker{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.KernelModelReceiptDescriptor(), Invoker: &modelReceiptInvoker{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.CompositionDescriptor(), Invoker: k.compositions},
 		nativeServiceRegistration{

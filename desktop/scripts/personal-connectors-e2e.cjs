@@ -1,0 +1,14 @@
+// Compiled production contribution, synthetic owner host only; never real effects.
+const {chromium}=require(process.env.WUU_CONNECTOR_PLAYWRIGHT||'/opt/codex/cua_node/lib/node_modules/playwright');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{pathToFileURL}=require('node:url');
+const output=path.resolve(__dirname,'../out/personal-connectors-e2e');fs.mkdirSync(output,{recursive:true});
+const report={scope:'Production Personal UI; synthetic owner responses, no OAuth/accounts/provider requests',cases:[],screenshots:[],errors:[]};
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium',chromiumSandbox:true,args:['--disable-background-networking']});try{
+for(const [name,scenario,theme,font,width] of [['light','ready','light','15',1100],['dark','ready','dark','15',1100],['narrow-large','ready','dark','20',430],['uncertain','uncertain','light','15',1000]]){
+ const context=await browser.newContext({viewport:{width,height:950},reducedMotion:'reduce'}),page=await context.newPage();page.on('pageerror',e=>report.errors.push(String(e)));
+ await page.route('**/*',r=>r.request().url().startsWith('file:')||r.request().url().startsWith('data:')?r.continue():r.abort());const url=pathToFileURL(path.resolve(__dirname,'../out/personal-fixture/index.html'));url.search=new URLSearchParams({connectors:scenario,review:'empty',theme,font});await page.goto(url.href);await page.waitForSelector('[data-personal-connectors="conversation"]');await page.locator('[data-personal-connectors="conversation"]').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,`${name}.png`)});
+ const geometry=await page.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll('[data-personal-connectors] button')].filter(n=>n.checkVisibility()).map(n=>({text:n.textContent,left:n.getBoundingClientRect().left,right:n.getBoundingClientRect().right}))}));assert(geometry.scrollWidth<=geometry.width+1);for(const b of geometry.buttons)assert(b.left>=-1&&b.right<=geometry.width+1);report.screenshots.push({file:`${name}.png`,geometry});
+ if(scenario==='ready'){await page.locator('[data-connector-approve]').evaluate(n=>{n.click();n.click()});await page.waitForFunction(()=>window.__connectorFixture.actions[0].state==='completed');assert.equal(await page.evaluate(()=>window.__connectorFixture.calls.length),1);report.cases.push(`${name}: exact owner action dispatched once`)}else assert.equal(await page.locator('[data-connector-approve]').count(),0);
+ await context.close();
+}
+assert.deepEqual(report.errors,[]);report.status='passed';}finally{await browser.close()}})().catch(e=>{report.status='failed';report.error=String(e.stack||e);process.exitCode=1}).finally(()=>{fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2))});

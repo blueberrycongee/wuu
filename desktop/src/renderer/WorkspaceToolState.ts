@@ -33,7 +33,7 @@ export function useWorkspaceToolState({
   openWorkspaceSideThread: () => void;
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
-  openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
+  openWorkspaceFileTab: (input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
   syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
@@ -97,7 +97,7 @@ export function useWorkspaceToolState({
   function openWorkspaceDiffTab(input: { threadID: string; path: string; selection: TurnFileDiffSelection }): void {
     void application.invoke("preview.open-diff", { threadId: input.threadID, path: input.path, selection: input.selection }).catch(showErrorToast);
   }
-  function openWorkspaceFileTab(input: { context: RuntimeContext; path: string }): void {
+  function openWorkspaceFileTab(input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }): void {
     void application.invoke("preview.open-file", input).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }

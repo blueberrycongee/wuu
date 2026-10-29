@@ -55,9 +55,30 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent); setIntent(intent); consumeNotification(intent)
     }
     private fun consumeNotification(intent: Intent) {
-        val host = intent.getStringExtra("host") ?: return
-        intent.removeExtra("host")
-        model.openPushHost(host)
+        if (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            // Consume once; delivery still requires the owner pressing Send.
+            val shared = Intent(intent)
+            intent.action = null; intent.removeExtra(Intent.EXTRA_TEXT); intent.removeExtra(Intent.EXTRA_STREAM)
+            model.perform {
+                check(model.personal.canSend && !model.personal.hasPending) { "请先连接 Personal 主聊天，再从原应用重新分享。" }
+                val stamp = model.personal.contextID
+                val (prompt, files) = readSharedMaterial(this@MainActivity, shared)
+                check(model.personal.contextID == stamp) { "连接已变更，请重新分享。" }
+                model.personal.stageSharedMaterial(prompt, files)
+                model.selectArea(true)
+            }
+            return
+        }
+        val url = intent.data
+        if (url?.host == "personal") {
+            intent.data = null
+            PersonalLocation.fromURL(url.toString())?.let(model::openPersonal)
+            return
+        }
+        val extras = intent.extras ?: return
+        val payload = extras.keySet().mapNotNull { key -> extras.getString(key)?.let { key to it } }.toMap()
+        payload.keys.forEach { intent.removeExtra(it) }
+        model.openNotification(payload)
     }
 }
 
@@ -85,7 +106,19 @@ class MainActivity : ComponentActivity() {
         model.host == null -> DevicesScreen(model)
         else -> {
             LaunchedEffect(model.activeID, model.workspace) { model.rememberLocation() }
-            Box(Modifier.fillMaxSize().navigationBarsPadding().imePadding()) { ConversationScreen(model) }
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding()) {
+                Box(Modifier.weight(1f)) {
+                    if (model.personalSelected) PersonalScreen(model)
+                    else if (model.isPersonalHost) Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+                        Text("此宿主用于 Personal。返回电脑列表以访问 Projects。")
+                        TextButton(onClick = { model.perform { model.leaveHost(); model.foreground() } }) { Text("电脑列表") }
+                    } else ConversationScreen(model)
+                }
+                NavigationBar {
+                    NavigationBarItem(selected = !model.personalSelected, onClick = { model.selectArea(false) }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Projects") })
+                    NavigationBarItem(selected = model.personalSelected, onClick = { model.selectArea(true) }, icon = { Icon(Icons.Default.Person, null) }, label = { Text("Personal") })
+                }
+            }
         }
     }
     model.recovery?.let { secret ->

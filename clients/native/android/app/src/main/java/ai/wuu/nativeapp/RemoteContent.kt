@@ -67,7 +67,7 @@ internal fun decodeInlineAttachment(attachment: JSONObject, encoded: String = at
 private suspend fun Remote.readEncoded(method: String, params: JSONObject, mediaType: String): String =
     readEncoded({ name, request -> call(name, request) }, method, params, mediaType)
 
-private suspend fun readEncoded(call: suspend (String, JSONObject) -> JSONObject, method: String, params: JSONObject, mediaType: String, limit: Int = 16 * 1024 * 1024, verifyDigest: Boolean = false): String {
+internal suspend fun readEncoded(call: suspend (String, JSONObject) -> JSONObject, method: String, params: JSONObject, mediaType: String, limit: Int = 16 * 1024 * 1024, verifyDigest: Boolean = false): String {
     val encoded = StringBuilder()
     var total: Int? = null
     do {

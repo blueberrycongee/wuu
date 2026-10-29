@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -115,6 +116,9 @@ type HistoryReadQuery struct {
 
 // HistorySearchQuery is an explicit, snapshot-bounded physical transcript search.
 type HistorySearchQuery struct {
+	View        string
+	TimeMin     time.Time
+	TimeMax     time.Time
 	SessionID   string
 	Query       string
 	StartSeq    int

@@ -14,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/statepath"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // NewSideThreadRunner clones the attached conversation's model configuration
@@ -77,7 +76,7 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 			kit.SetCodeModeStateOwner(parentSession[0])
 		}
 		kit.SetAgentIdentity(id, agentthread.RootPath)
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
+		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
 		if len(parentSession) > 0 {
 			stateDir, err := s.executionStateDir()
 			if err != nil {

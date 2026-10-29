@@ -153,6 +153,9 @@ func (args processArgs) validate() error {
 }
 
 func (t *ProcessTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if len(t.env.ProtectedPaths) > 0 {
+		return "", errors.New("managed processes cannot prove protected read/write enforcement for recovered or pre-existing commands")
+	}
 	var args processArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return "", err

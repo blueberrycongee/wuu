@@ -3,13 +3,18 @@ package pluginhost
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/principal"
 )
 
 const serviceProcessHelperEnv = "WUU_PLUGINHOST_SERVICE_PROCESS_HELPER"
@@ -67,6 +72,55 @@ func TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose(t *testing.
 	second := invokeServiceConsumer(t, consumer)
 	if second.Code != "service_unavailable" || second.ChangedReason != "provider_closed" {
 		t.Fatalf("closed result = %+v", second)
+	}
+}
+
+// Only the trusted host can attach admission metadata. It survives a real
+// process boundary but cannot be replayed by a different caller or payload.
+func TestServiceAdmissionCrossProcessBindsExactInvocation(t *testing.T) {
+	provider := startServiceProcess(t, "search-provider", "provider", nil)
+	consumer := &fakeServiceProcess{id: "admission-consumer", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	other := &fakeServiceProcess{id: "other-consumer", state: StateActive, required: consumer.required}
+	host := New(provider, consumer, other)
+	registry, conflicts := BuildServiceRegistry(provider, consumer, other)
+	host.AttachServiceRegistry(registry, conflicts)
+	defer host.Close(context.Background())
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"query":"admitted"}`)
+	digest := sha256.Sum256(input)
+	proof := ServiceAdmission{Version: 1, Principal: principal.LocalOwner().Identity(), Action: "test/issue", InputDigest: hex.EncodeToString(digest[:]), Authority: "local-installation", InputJSON: string(input)}
+	admission, cancel := context.WithCancel(context.Background())
+	ctx := WithServiceAdmission(admission, consumer.id, "search.provider", "query", proof)
+	invoke := func(ctx context.Context, caller string, raw json.RawMessage) *ServiceAdmission {
+		t.Helper()
+		out, err := registry.Call(ctx, caller, ServiceCallParams{Service: "search.provider", Method: "query", Params: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result serviceConsumerResult
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result.Admission
+	}
+	if got := invoke(ctx, consumer.id, input); got == nil || !reflect.DeepEqual(*got, proof) {
+		t.Fatalf("host admission lost over process boundary: %+v", got)
+	}
+	if invoke(ctx, other.id, input) != nil || invoke(ctx, consumer.id, json.RawMessage(`{"query":"changed"}`)) != nil {
+		t.Fatal("admission replay widened caller or payload")
+	}
+	cancel()
+	if invoke(context.WithoutCancel(ctx), consumer.id, input) != nil {
+		t.Fatal("detached callback revived an ended admission")
+	}
+	var spoof ServiceCallParams
+	if err := json.Unmarshal(mustRaw(map[string]any{"service": "search.provider", "method": "query", "params": json.RawMessage(`{"query":"forged"}`), "admission": proof}), &spoof); err != nil {
+		t.Fatal(err)
+	}
+	if invoke(context.Background(), consumer.id, spoof.Params) != nil {
+		t.Fatal("caller JSON manufactured host admission")
 	}
 }
 
@@ -193,11 +247,12 @@ func startServiceProcess(t *testing.T, id, role string, router ServiceRouter) *P
 }
 
 type serviceConsumerResult struct {
-	Caller        string `json:"caller,omitempty"`
-	Query         string `json:"query,omitempty"`
-	Code          string `json:"code,omitempty"`
-	ChangedReason string `json:"changed_reason,omitempty"`
-	Calls         int    `json:"calls,omitempty"`
+	Admission     *ServiceAdmission `json:"admission,omitempty"`
+	Caller        string            `json:"caller,omitempty"`
+	Query         string            `json:"query,omitempty"`
+	Code          string            `json:"code,omitempty"`
+	ChangedReason string            `json:"changed_reason,omitempty"`
+	Calls         int               `json:"calls,omitempty"`
 }
 
 func invokeServiceConsumer(t *testing.T, consumer *ProcessClient) serviceConsumerResult {
@@ -288,7 +343,7 @@ func runServiceProcessHelper(role string) {
 				}
 				continue
 			}
-			writeServiceHelperResult(encoder, request.ID, serviceConsumerResult{Caller: params.Caller, Query: input.Query, Calls: serviceCalls})
+			writeServiceHelperResult(encoder, request.ID, serviceConsumerResult{Admission: params.Admission, Caller: params.Caller, Query: input.Query, Calls: serviceCalls})
 		case ServiceChangedMethod:
 			var params ServiceChangedParams
 			if role != "consumer" || json.Unmarshal(request.Params, &params) != nil || params.Service != "search.provider" {

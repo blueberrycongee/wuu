@@ -47,3 +47,26 @@ func TestAuthenticatedConnectionRechecksExpiryRevocationAndIdentity(t *testing.T
 		t.Fatal("unbounded provider session accepted")
 	}
 }
+
+// A matching identity or a live owner connection is not evidence of durable
+// installation authority. Only the embedding's trusted local pipe supplies it.
+func TestDurableAuthorityCannotBeReconstructedFromIdentity(t *testing.T) {
+	local := LocalOwner()
+	if local.DurableAuthority() != "local-installation" {
+		t.Fatal("local installation provenance missing")
+	}
+	reconstructed, err := Authenticated(local.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconstructed.DurableAuthority() != "" {
+		t.Fatal("identity reconstructed durable authority")
+	}
+	owner, err := OwnerConnection(local.Identity(), func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.DurableAuthority() != "" {
+		t.Fatal("owner flag reconstructed durable account validity")
+	}
+}

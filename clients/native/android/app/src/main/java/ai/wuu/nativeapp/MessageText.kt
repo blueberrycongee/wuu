@@ -54,7 +54,7 @@ private class MermaidSpan
 private data class MessagePart(val text: Spanned, val diagram: Boolean)
 private data class ParsedMessage(val source: String, val content: Spanned)
 
-@Composable fun MessageText(text: String, markdown: Boolean, modifier: Modifier = Modifier, isLive: Boolean = false) {
+@Composable fun MessageText(text: String, markdown: Boolean, modifier: Modifier = Modifier, isLive: Boolean = false, selectable: Boolean = true, onLongClick: (() -> Unit)? = null) {
     val bodyStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 23.sp)
     if (!markdown || text.toByteArray().size > 128 * 1024) { Text(text, modifier, style = bodyStyle); return }
     val context = LocalContext.current
@@ -111,13 +111,13 @@ private data class ParsedMessage(val source: String, val content: Spanned)
         parts.forEachIndexed { index, part ->
             key(index) {
                 if (part.diagram) MermaidDiagram(part.text.toString(), isLive || snapshot.source != text)
-                else NativeMarkdownText(part.text, renderer, bodyStyle)
+                else NativeMarkdownText(part.text, renderer, bodyStyle, selectable, onLongClick)
             }
         }
     }
 }
 
-@Composable private fun NativeMarkdownText(value: Spanned, renderer: Markwon, bodyStyle: androidx.compose.ui.text.TextStyle) {
+@Composable private fun NativeMarkdownText(value: Spanned, renderer: Markwon, bodyStyle: androidx.compose.ui.text.TextStyle, selectable: Boolean, onLongClick: (() -> Unit)?) {
     val color = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColor = MaterialTheme.colorScheme.primary.toArgb()
     val size = bodyStyle.fontSize.value
@@ -125,11 +125,13 @@ private data class ParsedMessage(val source: String, val content: Spanned)
     AndroidView(factory = { TextView(it).apply {
         // WRAP_CONTENT so short agent bubbles hug text; parents that need full width pass Modifier.fillMaxWidth().
         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        setTextIsSelectable(true)
+        setTextIsSelectable(selectable)
         // Populate before the first measure; lazy prefetch can otherwise cache an empty layout.
         renderer.setParsedMarkdown(this, value)
         tag = value
     } }, update = { view ->
+        if (view.isTextSelectable != selectable) view.setTextIsSelectable(selectable)
+        if (onLongClick != null) view.setOnLongClickListener { onLongClick(); true }
         view.setTextColor(color); view.setLinkTextColor(linkColor); view.textSize = size
         view.setLineHeight(lineHeight)
         if (view.tag !== value) { renderer.setParsedMarkdown(view, value); view.tag = value }

@@ -101,7 +101,7 @@ export class ApplicationNavigation {
       destinations: primaryViewNavigation(this.host.getContributions().getNavigationEntries(), workbench),
       regionVisibilityRequest: this.regionVisibilityRequest,
       activePluginView: active && { closable: !this.host.getContributions().getNavigationEntries().some(entry => entry.pluginId === active.view.pluginId && entry.view === active.view.viewTypeId)
-        || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, webPage: workbench.webPageViewIds.includes(active.view.id) },
+        || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, layout: active.definition.layout, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
       projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),

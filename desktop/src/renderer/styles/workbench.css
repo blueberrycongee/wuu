@@ -40,17 +40,15 @@
   height: 100%;
 }
 
-/* Conversation layers share this pane with the primary plugin page. Hide them
-   so the empty-session greeting, dock composer, and environment panel cannot
-   show through or take focus while that page is open. */
+/* Retain Coding state without reserving grid rows or allowing descendants with
+   explicit visibility to paint through the primary plugin page. */
 .conversation-pane[data-primary-plugin-view] > :is(
   .scroll-region,
   .dock-composer-wrap,
   .jump-to-latest-cluster,
   .environment-side-stack
 ) {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 /* An overlay or side view names its tabs and ends on the shared close
@@ -271,6 +269,54 @@
   gap: var(--space-2);
 }
 
+/* A user-space view owns the title row. Keeping the hidden Coding row would
+ * leave an empty titlebar above the view's native conversation header. */
+.conversation-pane[data-workbench-layout="user-space"] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.conversation-pane[data-workbench-layout="user-space"] > .plugin-workbench-view-primary {
+  grid-row: 1;
+}
+.conversation-pane[data-workbench-layout="user-space"] > .titlebar[hidden] {
+  display: none;
+}
+/* The host lifts its drawer toggle over independent conversation headers.
+ * Reserve that occupied slot only while the collapsed shell renders it. */
+.app-shell.sidebar-collapsed[data-workbench-layout="user-space"] .plugin-conversation-titlebar {
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+
+.plugin-conversation {
+  display: grid;
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+.plugin-conversation-titlebar { grid-row: 1; }
+.plugin-conversation-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.plugin-conversation-heading { min-width: 0; display: flex; align-items: baseline; gap: var(--space-3); }
+.plugin-conversation-heading h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-conversation-subtitle { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-conversation-scroll { margin-bottom: var(--plugin-composer-height, 124px); }
+.plugin-conversation-composer { grid-column: 1; grid-row: 2; align-self: end; min-width: 0; z-index: 5; }
+.plugin-conversation-flow { --conversation-flow-bottom-space: var(--conversation-turn-boundary-gap); }
+.plugin-conversation-message { display: flex; flex-direction: column; min-width: 0; font-family: var(--conversation-message-font-family); font-weight: var(--conversation-message-font-weight); }
+.plugin-conversation-message[data-role="user"] { margin-bottom: calc(var(--conversation-user-rule-gap) - var(--conversation-user-message-trailing-gap)); }
+.plugin-conversation-message[data-role="assistant"] + .plugin-conversation-message[data-role="user"] { margin-top: var(--conversation-turn-boundary-gap); }
+.plugin-conversation-message[data-role="assistant"] + .plugin-conversation-message[data-role="assistant"] { margin-top: var(--conversation-turn-item-gap); }
+.plugin-conversation-attachments { width: 100%; min-width: 0; }
+.agent-block > .plugin-conversation-attachments { margin-top: var(--conversation-image-gap); }
+.plugin-conversation-attachment { min-width: 0; max-width: 100%; }
+.plugin-conversation-attachment img { display: block; max-width: 100%; max-height: 360px; object-fit: contain; margin-top: var(--conversation-image-gap); }
+.plugin-conversation-attachment > [role="alert"] { color: var(--danger); overflow-wrap: anywhere; }
+.plugin-conversation-search { width: min(760px, calc(100vw - var(--space-6))); }
+.plugin-conversation-search .mosaic-history-search { margin: 0; }
+
+/* Buttons join the shared 32px control family: no border, filled with the
+ * secondary-control ramp, a scale press, and a halo focus ring. The primary
 /* Buttons join the shared control family: softly lifted surfaces, a scale
  * press, and a visible keyboard focus ring. The primary
  * action is the strongest contrast pair in the ramp, not the accent — the
@@ -534,3 +580,172 @@
   justify-content: flex-end;
   padding: var(--space-1) var(--space-2);
 }
+
+/* Opt-in messaging presentation. The standard/Coding flow is untouched. */
+.plugin-conversation[data-presentation="bubbles"] .plugin-conversation-scroll {
+  touch-action: pan-y;
+  overscroll-behavior-x: contain;
+}
+.plugin-conversation-message[data-bubble] {
+  position: relative;
+  box-sizing: border-box;
+  margin: 0;
+  --conversation-reading-line-height: calc(var(--conversation-message-font-size) * 1.375);
+  /* The reveal distance and reserved width share a column that scales with text. */
+  --bubble-time-gutter: max(88px, calc(var(--conversation-message-font-size) * 6));
+}
+.plugin-conversation-message[data-bubble] + .plugin-conversation-message[data-bubble] { margin-top: 16px; }
+.plugin-conversation-message[data-bubble][data-role="assistant"] + .plugin-conversation-message[data-bubble][data-role="assistant"],
+.plugin-conversation-message[data-bubble][data-role="user"] + .plugin-conversation-message[data-bubble][data-role="user"] { margin-top: 4px; }
+.plugin-conversation-message[data-bubble] .bubble-message-content {
+  align-self: flex-start;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(88%, calc(100% - var(--bubble-time-gutter)));
+  min-width: 0;
+  border-radius: 22px;
+  padding: 9px 16px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content {
+  align-self: flex-end;
+  padding: 0;
+  background: transparent;
+  max-width: min(88%, calc(100% - var(--bubble-time-gutter)));
+  --wuu-message-user-background: #3566f0;
+  --wuu-message-user-color: #fff;
+  --user-message-radius: 22px;
+}
+[data-times-dragging="true"] .plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body,
+[data-times-dragging="true"] .bubble-message-time { transition: none; }
+.plugin-conversation-message[data-bubble] .user-message-block { max-width: 100%; margin: 0; }
+.plugin-conversation-message[data-bubble] .user-message { padding: 9px 16px; }
+.plugin-conversation-message[data-bubble] .agent-block { max-width: 100%; }
+.bubble-message-time {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translate(calc((1 - var(--bubble-time-progress, 0)) * var(--bubble-time-gutter)), -50%);
+  width: calc(var(--bubble-time-gutter) - 8px);
+  box-sizing: border-box;
+  text-align: right;
+  color: var(--ink-muted);
+  font-size: max(12px, calc(var(--conversation-message-font-size) * .75));
+  line-height: 1.3333;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms cubic-bezier(.19, 1, .22, 1), transform 300ms cubic-bezier(.19, 1, .22, 1);
+}
+[data-times-revealed="true"] .bubble-message-time { opacity: 1; }
+.bubble-time-toggle {
+  position: absolute;
+  z-index: 6;
+  top: calc(var(--canvas-titlebar-height) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+}
+.bubble-time-toggle:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--ink-muted); outline-offset: 2px; }
+
+/* Remote attachment cards share the shell's file tabs, not workspace paths. */
+.conversation-file-card { display: flex; align-items: center; gap: var(--space-2); width: fit-content; max-width: 100%; min-height: 40px; padding: 0 4px 0 2px; border: 1px solid var(--hairline-soft); border-radius: 12px; background: var(--surface-1); }
+.conversation-file-card-main { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; min-height: 38px; padding: 8px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; border-radius: var(--radius-md); }
+.conversation-file-card-main:hover { background: var(--surface-2); }
+.conversation-file-card-main > svg { flex-shrink: 0; width: 20px; height: 20px; color: var(--ink-muted); }
+.conversation-file-card-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.conversation-file-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.conversation-file-card-copy > span { font-size: var(--font-sm); color: var(--ink-muted); overflow-wrap: anywhere; }
+.conversation-attachment-preview [role="alert"] { color: var(--danger); }
+
+/* Bubble attachments form their own compact row above the prose, never a card
+   inside a second grey bubble. Standard conversation layout stays unchanged. */
+.plugin-conversation-message[data-bubble] > .bubble-message-body > .plugin-conversation-attachments {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
+  width: fit-content; max-width: calc(100% - var(--bubble-time-gutter)); align-self: flex-start;
+}
+.plugin-conversation-message[data-bubble] > .bubble-message-body > .plugin-conversation-attachments:has(+ .bubble-message-content) { margin-bottom: 7px; }
+.plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body > .plugin-conversation-attachments {
+  align-self: flex-end; justify-content: flex-end; max-width: calc(100% - var(--bubble-time-gutter));
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card {
+  --attachment-chip-background: var(--paper);
+  position: relative; gap: 0; padding: 0; border-radius: 12px;
+  background: var(--attachment-chip-background);
+  border-color: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card-main {
+  padding: 9px 12px 9px 10px; min-height: 38px; line-height: 20px; gap: 6px;
+  font-size: max(16px, var(--conversation-message-font-size));
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card-main > svg { width: 20px; height: 20px; flex: 0 0 20px; color: currentColor; }
+.plugin-conversation-message[data-bubble] .conversation-file-card-copy strong { font-weight: 400; }
+
+/* Bubble reply affordances mirror the quiet inline action, never a second row. */
+.bubble-message-body { position: relative; display: flex; flex-direction: column; align-self: flex-start; width: fit-content; max-width: min(88%, calc(100% - var(--bubble-time-gutter))); min-width: 0; }
+.plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body {
+  align-self: flex-end;
+  transform: translateX(calc(-1 * var(--bubble-time-progress, 0) * var(--bubble-time-gutter)));
+  transition: transform 300ms cubic-bezier(.19, 1, .22, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-conversation-message[data-bubble][data-role] > .bubble-message-body, .bubble-message-time { transition: none; }
+}
+@container style(--motion-reduced: 1) {
+  .plugin-conversation-message[data-bubble][data-role] > .bubble-message-body, .bubble-message-time { transition: none; }
+}
+.plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .bubble-message-content { max-width: 100%; }
+.plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .plugin-conversation-attachments { max-width: 100%; }
+.plugin-message-reply { position: absolute; left: calc(100% + 9px); top: calc(50% - 14px); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.plugin-message-reply svg { width: 16px; height: 16px; }
+.plugin-conversation-message[data-role="user"] .plugin-message-reply { left: auto; right: calc(100% + 9px); }
+.plugin-conversation-message:hover .plugin-message-reply, .plugin-conversation-message:focus-within .plugin-message-reply { opacity: 1; pointer-events: auto; }
+.plugin-message-reply:hover, .plugin-message-reply:focus-visible { background: var(--surface-2); color: var(--ink); }
+.plugin-message-reply:focus-visible, .plugin-reply-reference:focus-visible { outline: 2px solid var(--focus-ring, var(--ink)); outline-offset: 2px; }
+.plugin-reply-reference { display: flex; align-items: center; align-self: flex-start; gap: 2px; max-width: min(456px, 100%); margin: 6px 0 5px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink-muted); font: inherit; font-size: max(12px, calc(var(--conversation-message-font-size) * .75)); line-height: 1.5; text-align: start; cursor: pointer; }
+.plugin-conversation-message[data-role="user"] > .plugin-reply-reference { align-self: flex-end; }
+.plugin-reply-reference svg { width: 20px; height: 20px; flex: none; }
+.plugin-reply-reference span { min-width: 0; margin-inline-end: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-reply-reference:disabled { cursor: default; }
+.plugin-composer-reply-context { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-left: 2px solid var(--ink-muted); margin-bottom: var(--space-2); }
+.plugin-composer-reply-context > div { min-width: 0; flex: 1; }
+.plugin-composer-reply-context span { color: var(--ink-muted); }
+.plugin-composer-reply-context p { margin: var(--space-1) 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-composer-reply-context > button { flex: none; }
+@media (hover: none), (pointer: coarse) { .plugin-message-reply { opacity: 1; pointer-events: auto; } }
+@media (prefers-reduced-motion: reduce) { .plugin-message-reply { transition: none; } }
+
+/* Explicit reaction props opt messages into this compact messaging treatment. */
+.bubble-message-body[data-has-reaction] { margin-top: 18px; }
+.conversation-reaction-badge { position:absolute;z-index:2;top:-18px;left:-12px;display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 3px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);font-size:20px;line-height:1;color:var(--ink); }
+button.conversation-reaction-badge { cursor:pointer; }
+.conversation-reaction-trigger { position:absolute;left:calc(100% + 9px);top:calc(50% - 32px);display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink-muted);cursor:pointer;opacity:0;pointer-events:none; }
+.bubble-message-body[data-reactable] > .plugin-message-reply { top:calc(50% + 4px); }
+.plugin-conversation-message:hover .conversation-reaction-trigger,.plugin-conversation-message:focus-within .conversation-reaction-trigger { opacity:1;pointer-events:auto; }
+.conversation-reaction-trigger:hover { background:var(--surface-2);color:var(--ink); }
+.conversation-reaction-picker { position:fixed;z-index:1000;display:flex;gap:2px;max-width:calc(100vw - 16px);padding:6px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);box-shadow:0 4px 22px rgb(0 0 0 / .14);overflow-x:auto; }
+.conversation-reaction-picker button { display:flex;align-items:center;justify-content:center;flex:0 0 38px;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:transparent;font-size:25px;line-height:1;cursor:pointer; }
+.conversation-reaction-picker button:hover,.conversation-reaction-picker button[aria-pressed="true"] { background:var(--surface-2); }
+.conversation-reaction-picker button:focus-visible,.conversation-reaction-trigger:focus-visible,.conversation-reaction-badge:focus-visible { outline:2px solid var(--focus-ring,var(--ink));outline-offset:2px; }
+.conversation-reaction-error { font-size:var(--font-size-sm, 13px);color:var(--ink-muted);margin-bottom:6px; }
+@media(hover:none),(pointer:coarse) { .conversation-reaction-trigger { opacity:1;pointer-events:auto; } }
+
+/* Local document previews share native tab controls without borrowing workspace authority. */
+.plugin-view-layout { position: relative; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.plugin-view-content-region { flex: 1; min-width: 0; min-height: 0; height: 100%; overflow: auto; }
+.plugin-view-attachment-panel { display: flex; flex-direction: column; width: clamp(320px, 42%, 640px); min-width: 0; min-height: 0; border-inline-start: 1px solid var(--hairline); background: var(--paper); }
+.plugin-view-attachment-tabs { display: flex; flex: 1; overflow-x: auto; min-width: 0; }
+.plugin-view-attachment-tab { display: flex; align-items: center; min-width: 100px; max-width: 240px; }
+.plugin-view-attachment-tab > [role="tab"] { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink-muted); padding: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+.plugin-view-attachment-tab > [aria-selected="true"] { color: var(--ink); background: var(--selection-surface); }
+.plugin-view-attachment-content { flex: 1; min-height: 0; overflow: auto; }
+.plugin-view-attachment-content > .conversation-attachment-preview { height: 100%; }
+.plugin-view-layout[data-preview-expanded] > .plugin-view-attachment-panel { position: absolute; inset: 0; width: auto; z-index: 10; }

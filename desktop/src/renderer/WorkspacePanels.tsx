@@ -1217,7 +1217,7 @@ function WorkspaceFileResource({
 }: {
   active: boolean;
   onDirtyChange: (tabID: string, dirty: boolean) => void;
-  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
+  onOpenFile: (path: string, sourceContext?: Exclude<RuntimeContext, { kind: "user" }>) => void;
   tab: WorkspaceFileViewTab;
   refreshKey?: string;
 }): JSX.Element {

@@ -39,8 +39,12 @@ func applyPlatform(cmd *exec.Cmd, policy Policy) error {
 	if err != nil {
 		return fmt.Errorf("resolve Keychain cache path: %w", err)
 	}
-	profile := seatbeltProfile(policy) + "\n" + fmt.Sprintf(
-		"(allow file-write* (subpath %s))", seatbeltString(filepath.Join(cacheDir, "mds")))
+	profile := seatbeltProfile(policy)
+	cacheRule := fmt.Sprintf("(subpath %s)", seatbeltString(filepath.Join(cacheDir, "mds")))
+	for _, root := range policy.ProtectedPaths {
+		cacheRule = fmt.Sprintf("(require-all %s (require-not (subpath %s)))", cacheRule, seatbeltString(root))
+	}
+	profile += "\n(allow file-write* " + cacheRule + ")"
 
 	originalPath := cmd.Path
 	originalArgs := append([]string(nil), cmd.Args...)
