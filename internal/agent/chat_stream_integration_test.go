@@ -195,9 +195,10 @@ type chatStreamObservation struct {
 	err                            error
 	requests, effects, toolResults int32
 	reconnects                     int
+	contentEvents                  []string
 }
 
-func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStreamObservation {
+func runChatStream(t *testing.T, body string, failAfterExecution bool, selectedPolicy ...bool) chatStreamObservation {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -268,10 +269,16 @@ func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStrea
 		Client: client, ProviderName: "synthetic-openrouter", Model: "openai/gpt-4o", MaxSteps: 3,
 		Tools: tool, ToolLedger: ledger, StreamingToolExecution: true,
 	}
+	if len(selectedPolicy) > 0 && selectedPolicy[0] {
+		runner.SelectedPolicy = selectedDefaultPolicy(t)
+	}
 	var o chatStreamObservation
 	o.result, o.err = runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Synthetic local test"}}, func(event providers.StreamEvent) {
 		if event.Type == providers.EventReconnect {
 			o.reconnects++
+		}
+		if event.Type == providers.EventContentDelta || event.Type == providers.EventContentReplace {
+			o.contentEvents = append(o.contentEvents, string(event.Type)+":"+event.Content)
 		}
 	})
 	if failAfterExecution && tool.effects.Load() > 0 {
