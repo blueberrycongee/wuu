@@ -983,6 +983,7 @@ export const enUS = {
   "advanced.sourceManualLimit": "From the manual limit",
   "advanced.sourceUnknown": "Unknown; proactive compaction will only recover from provider errors",
   "connector.unavailable": "Connection setup is unavailable in this context",
+  "connector.inactive": "Not enabled in this configuration",
   "connector.title": "Connectors",
   "connector.documentation": "Setup guide",
   "connector.setupRequired": "Provider setup required",

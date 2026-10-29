@@ -152,6 +152,8 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelector('[data-tab="plugins"]'));
       await evaluate(() => document.querySelector('[data-tab="plugins"]').click());
       await until(() => document.querySelector('[data-testid="mcp-services"]'));
+      await until(() => document.querySelector('[data-connector="plugin.account-connectors.notion"] [data-connector-action="connect"]'));
+      assert.equal((await evaluate(() => window.wuu.getMCPAuthStatus("plugin.account-connectors.notion"))).authenticated, false, "The explicitly selected bundled connector stays lazy and locally unauthenticated");
       await capture("mcp-empty-light");
       await click(['[data-testid="mcp-services"]', "添加 MCP"]);
       await until(() => document.querySelector(".mcp-editor"));
@@ -284,12 +286,20 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       let installed;
       try { installed = await evaluate(() => window.wuu.installPluginPackage()); }
       finally { dialog.showOpenDialog = originalPicker; }
+      // Installation grants trust, not membership in this fixture's explicit
+      // composition. Select the installed package through disposable native
+      // configuration, then use the public catalog refresh to apply it.
+      const configPath = path.join(fixture, "wuu-home", "config.json");
+      const selectedConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      selectedConfig.composition.patches.push({ modules: { "mcp-journey": true } });
+      fs.writeFileSync(configPath, JSON.stringify(selectedConfig));
+      installed = await evaluate(() => window.wuu.refreshExtensionCatalog());
       const record = installed.extension_inventory.find(item => item.provenance.plugin_id === "mcp-journey" && item.kind === "plugin");
       assert.ok(record);
       const connectorName = "plugin.mcp-journey.account";
       const connectorRow = '[data-connector="plugin.mcp-journey.account"]';
       const gatedRow = '[data-connector="plugin.mcp-journey.gated"]';
-      await until(selector => document.querySelector(selector), connectorRow);
+      await until(selector => document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
       assert.equal(evidence.connectorRequests, 0, "A declared lazy connector must not contact the provider before Connect");
       assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-action="connect"]`) === null, gatedRow), true);
       await capture("connector-picker-light");

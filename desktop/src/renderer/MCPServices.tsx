@@ -227,7 +227,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
   }, [controls]);
   useEffect(() => {
     let cancelled = false;
-    void Promise.all(servers.filter(server => server.plugin_id && server.connector && !server.configuration_unavailable_reason).map(async server => {
+    void Promise.all(servers.filter(server => server.plugin_id && server.connector && server.plugin_active !== false && !server.configuration_unavailable_reason).map(async server => {
       try { return [server.name, { result: await controls.getMCPAuthStatus(server.name) }] as const; }
       catch (failure) { return [server.name, { error: toastErrorMessage(failure) }] as const; }
     })).then(entries => { if (!cancelled) setAuth(Object.fromEntries(entries)); });
@@ -313,7 +313,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
       const reconnect = connected || authorized || server.auth_status === "oauth";
       const diagnostic = working || login?.server.name === server.name ? "" : failure?.diagnostic || server.error;
       const status = working ? t("mcp.working") : setupRequired ? t("connector.setupRequired")
-        : !active ? t("mcp.enablePlugin")
+        : !active ? t("connector.inactive")
         : !server.configurable ? t("connector.unavailable")
         : failure?.action === "disconnect" ? t("connector.disconnectIncomplete")
         : (failure && failure.action !== "identity") || server.error || ["failed", "error"].includes(server.state) ? t("mcp.connectionFailed")
@@ -356,7 +356,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
           {connector.identity_probe ? <p className="mcp-connector-description">{t("connector.identityHint")}</p> : null}
           <dl className="mcp-connector-details">
             {server.resource_url ? <><dt>{t("connector.endpoint")}</dt><dd data-connector-detail="endpoint">{server.resource_url}</dd></> : null}
-            <dt>{t("connector.authorization")}</dt><dd>{server.configuration_unavailable_reason ? t("connector.unavailable") : authorization?.error ? t("connector.authUnavailable") : authorized === undefined ? t("connector.authLoading") : t(authorized ? "connector.authorized" : "connector.notAuthorized")}</dd>
+            <dt>{t("connector.authorization")}</dt><dd>{!active || server.configuration_unavailable_reason ? t("connector.unavailable") : authorization?.error ? t("connector.authUnavailable") : authorized === undefined ? t("connector.authLoading") : t(authorized ? "connector.authorized" : "connector.notAuthorized")}</dd>
             {authorized ? <><dt>{t("connector.account")}</dt><dd data-connector-detail="account" data-verified={!!account}>{account ? accountLabel : t(identity?.state === "unavailable" ? "connector.identityUnavailable" : "connector.accountUnknown")}</dd></> : null}
             {account ? <>
               <dt>{t("connector.accountID")}</dt><dd data-connector-detail="account-id">{account.id}</dd>

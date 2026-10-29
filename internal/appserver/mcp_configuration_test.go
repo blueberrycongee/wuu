@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -432,4 +433,115 @@ func TestMCPConnectorExplicitEnableActivatesCanonicalPackageDefinition(t *testin
 		t.Fatalf("restart lost package preference: %+v", restored)
 	}
 
+}
+
+// Exercise shipped inert declarations through real discovery, composition,
+// runtime admission and the public protocol, never by assigning ActivePlugins.
+func TestBundledLazyConnectorsHonorRuntimeComposition(t *testing.T) {
+	var bundled pluginpkg.Plugin
+	for _, item := range pluginpkg.Discover(t.TempDir(), t.TempDir()) {
+		if item.ID == "account-connectors" {
+			bundled = item
+			break
+		}
+	}
+	if bundled.ID == "" || !bundled.Official || bundled.Runtime != nil {
+		t.Fatalf("missing bundled declarative connector package: %+v", bundled)
+	}
+	if len(bundled.MCPServers) == 0 {
+		t.Fatal("bundled package has no connector declarations")
+	}
+	// Fail before constructing a runtime if a catalog change would make this
+	// local-only fixture contact an external service during startup.
+	for name, definition := range bundled.MCPServers {
+		if definition.Enabled == nil || *definition.Enabled {
+			t.Fatalf("bundled connector %s is not lazy", name)
+		}
+	}
+	for _, test := range []struct {
+		name                                    string
+		explicit, selected, disabled, untrusted bool
+		wantActive                              bool
+	}{
+		{name: "inferred", wantActive: true},
+		{name: "desktop profile excludes addon", explicit: true},
+		{name: "desktop profile selects addon", explicit: true, selected: true, wantActive: true},
+		{name: "disabled owner", disabled: true},
+		{name: "untrusted same manifest", untrusted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prior := newTestRuntime(t, &fakeClient{})
+			preparePluginRuntimePathsForTest(t, prior)
+			item := bundled
+			if test.untrusted {
+				var err error
+				item, err = pluginpkg.LoadManifest(bundled.ManifestPath, "user")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			prior.Plugins = []pluginpkg.Plugin{item}
+			cfg, _, err := config.LoadPath(prior.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.explicit {
+				cfg.Composition = &composition.Config{Version: 3, Profile: "desktop"}
+				if test.selected {
+					cfg.Composition.Patches = []composition.Patch{{Modules: map[string]bool{bundled.ID: true}}}
+				}
+			}
+			if test.disabled {
+				cfg.Extensions = &extensions.Settings{}
+				cfg.Extensions.SetDisabled(item.SubjectID, true)
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(prior.ConfigPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			rt := newConfigRefreshRuntime(t, prior)
+			out := &lockedBuffer{}
+			srv := newOwnerHandlerFixture(rt, out)
+			callPluginPackageRPC(t, srv, "bundled-list", MethodMCPList, nil)
+			response := responseByID(t, parseOutput(t, out.String()), "bundled-list")
+			if response["error"] != nil {
+				t.Fatal(response)
+			}
+			listed := remarshal[MCPListResult](t, response["result"])
+			if len(listed.Servers) != len(bundled.MCPServers) {
+				t.Fatalf("lazy inventory omitted declarations: %+v", listed)
+			}
+			for _, status := range listed.Servers {
+				if status.PluginActive == nil || *status.PluginActive != test.wantActive || status.Configurable != test.wantActive || status.Connector == nil || status.ConfigurationEnabled == nil || *status.ConfigurationEnabled || status.Connected {
+					t.Fatalf("lazy connector admission: %+v", status)
+				}
+				callPluginPackageRPC(t, srv, "definition-"+status.Name, MethodMCPDefinitionRead, map[string]any{"name": status.Name})
+				definition := responseByID(t, parseOutput(t, out.String()), "definition-"+status.Name)
+				if (definition["error"] == nil) != test.wantActive {
+					t.Fatalf("lazy preference admission: %+v", definition)
+				}
+				if test.wantActive {
+					manager, err := srv.mcpManager()
+					if err != nil {
+						t.Fatal(err)
+					}
+					runtimeConfig, exists := manager.Config(status.Name)
+					if !exists || runtimeConfig.IsEnabled() {
+						t.Fatalf("disabled definition not registered lazily: %+v", runtimeConfig)
+					}
+					callPluginPackageRPC(t, srv, "auth-"+status.Name, MethodMCPAuthStatus, map[string]any{"name": status.Name})
+					auth := responseByID(t, parseOutput(t, out.String()), "auth-"+status.Name)
+					if auth["error"] != nil {
+						t.Fatalf("lazy connector local auth status unavailable: %+v", auth)
+					}
+					if got := remarshal[MCPAuthStatusResult](t, auth["result"]); got.Authenticated || len(got.Scopes) != 0 {
+						t.Fatalf("fresh connector invented authorization: %+v", got)
+					}
+				}
+			}
+		})
+	}
 }
