@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+
 	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
-	"strings"
 )
 
 // The consumer is independent of the native provider, so replacing policy never
@@ -22,6 +24,28 @@ func resourcePolicyProviderFactory() NativeProviderFactory {
 		policy := access.PolicyFunc(func(ctx context.Context, r access.Request) (access.Decision, error) {
 			if r.Owner {
 				return access.Decision{Allow: true}, nil
+			}
+			if r.Delegation != nil {
+				provider, ok := input.Registry.ProviderPluginIDFor(access.NativeModule, executionauth.ServiceName, 1)
+				if !ok || provider != r.Delegation.Provider {
+					return access.Decision{Reason: "execution-provider-unavailable"}, nil
+				}
+				var scope executionauth.Scope
+				if err := json.Unmarshal(r.Delegation.Scope, &scope); err != nil {
+					return access.Decision{Reason: "invalid-execution-scope"}, nil
+				}
+				client := executionauth.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+					result, err := input.Registry.Call(ctx, access.NativeModule, pluginhost.ServiceCallParams{Service: executionauth.ServiceName, Method: method, Params: raw})
+					if err != nil {
+						return nil, err
+					}
+					return result, nil
+				})
+				validation, err := client.Validate(ctx, executionauth.ValidateRequest{Reference: executionauth.Reference{Provider: r.Delegation.Provider, ID: r.Delegation.Grant}, Scope: scope, Action: r.Action, Resources: r.Resources})
+				if err != nil {
+					return access.Decision{}, err
+				}
+				return access.Decision{Allow: validation.Valid && validation.Principal == r.Principal, Reason: "bounded-execution-grant"}, nil
 			}
 			// Projection grants are a dependent service, not host exemptions. Removing
 			// the selected sharing provider removes these decisions immediately.
@@ -42,13 +66,24 @@ func resourcePolicyProviderFactory() NativeProviderFactory {
 			}
 			return access.Decision{Reason: "owner-required"}, nil
 		})
-		return access.NewService(access.NativeModule, policy, pluginhost.ServiceRequirement{Name: "session.sharing", MajorVersion: 1}), nil
+		return access.NewService(access.NativeModule, policy, pluginhost.ServiceRequirement{Name: "session.sharing", MajorVersion: 1}, pluginhost.ServiceRequirement{Name: executionauth.ServiceName, MajorVersion: 1}), nil
 	}}
 }
 
 // AuthorizeResource always resolves the currently active composition. It does not
 // retain a positive decision across calls, policy replacement or revocation.
 func (s *Session) AuthorizeResource(ctx context.Context, r access.Request) (access.Decision, error) {
+	if proof := access.DelegationFromContext(ctx); proof != nil {
+		caller, ok := principal.FromContext(ctx)
+		if !ok || caller.Identity() != r.Principal || caller.IsOwner() {
+			return access.Decision{}, errors.New("delegated resource principal mismatch")
+		}
+		if err := caller.Check(ctx); err != nil {
+			return access.Decision{}, err
+		}
+		r.Owner = false
+		r.Delegation = proof
+	}
 	state, err := s.RetainState()
 	if err != nil {
 		return access.Decision{}, err

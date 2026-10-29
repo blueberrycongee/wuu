@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread, ThreadItem } from "../shared/protocol";
-import type { QueuedComposerMessage } from "./ComposerMessages";
+import { createOptimisticTurn, type QueuedComposerMessage } from "./ComposerMessages";
 import {
   appendPendingComposerMessage,
   applyHeldComposerSnapshot,
@@ -176,6 +176,27 @@ describe("reconcile pending composer messages against thread turns", () => {
       "queue-1",
     ]);
     expect(materializedComposerMessageIDs(undefined).size).toBe(0);
+  });
+
+  it("retains an in-flight fallback until a real turn acknowledges its client identity", () => {
+    const pending = { ...message("queue-fallback", "Restore rejected queue input"), operationState: "sending" as const };
+    const byThread: PendingComposerMessagesByThread = {
+      "thread-a": { queued: [pending], guides: [] },
+    };
+    // A delayed render can still contain the rejected admission's placeholder
+    // when reconciliation observes the new fallback queue entry.
+    const optimistic = createOptimisticTurn(pending, Date.now());
+    const staleThread = { ...threadWithItems("thread-a", []), turns: [optimistic] };
+
+    expect.soft([...materializedComposerMessageIDs(staleThread)]).toEqual([]);
+    expect.soft(reconcilePendingComposerMessagesForThread(byThread, staleThread)).toBe(byThread);
+
+    const acceptedThread = threadWithItems("thread-a", [
+      userItem("server-user-message", pending.id),
+    ]);
+    acceptedThread.turns = [...staleThread.turns, ...acceptedThread.turns];
+    expect([...materializedComposerMessageIDs(acceptedThread)]).toEqual([pending.id]);
+    expect(reconcilePendingComposerMessagesForThread(byThread, acceptedThread)).toEqual({});
   });
 
   it("drops a queued message that already went out (missed removal notification)", () => {

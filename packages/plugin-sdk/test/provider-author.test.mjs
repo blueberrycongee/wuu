@@ -46,20 +46,44 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     let artifactDeleted = false, artifactDeleteCount = 0;
     let indexBatch;
     let appendCount = 0, queryCount = 0, latestContextCount = 0;
-    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload,artifact_thread:artifactThread}}});
+    const stewardship={version:1,authority:'configured-store',provider:'selected-docs',operation:'verify',input_digest:'bound-digest',input_json:'{}',consumer:'verification'};
+    const admission={version:1,principal:{kind:'user',issuer:'selected',tenant:'tenant',subject:'owner'},action:'test/execute',input_digest:'host-bound-digest',input_json:'{"same":"admitted bytes"}',authority:'local-installation'};
+    send({id:'run',method:'service.invoke',params:{admission,storage_stewardship:stewardship,service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload,artifact_thread:artifactThread}}});
     const seen=[];
     let credential=null;
-    let configReads=0;
+    let configReads=0, transferCount=0, grantIssues=0;
+    let issuedGrant;
     let result;
     for (;;) {
       const message=await next();
       if (message.id==='run') { assert.equal(message.error,undefined); result=message.result; break; }
       assert.equal(message.method,'host.service.call');
       const {service,method,params,execution_id}=message.params;
-      assert.equal(execution_id,'execution-one');
+      assert.equal(execution_id,['release-inspection','release-authorization'].includes(method) ? undefined : 'execution-one');
+      if(['release-inspection','release-authorization'].includes(method)) assert.equal(message.params.cleanup,true);
       seen.push(`${service}/${method}`);
       let reply;
-      if (service==='state.credentials') {
+      if (service==='sandbox.process') {
+        assert.equal(method,'confine');
+        assert.deepEqual(params,{argv:['/bin/sh','-c','true'],policy:{mode:'workspace-write',writable_roots:['/workspace'],protected_paths:['/workspace/private']}});
+        reply={argv:['/sandbox','--','/bin/sh','-c','true'],enforcement:'full',protected_paths_enforced:true};
+      } else if (service==='execution.authorization') {
+        if(method==='describe') reply={default_lifetime_seconds:3600,max_lifetime_seconds:7200,authority_kinds:['replacement-authority'],scope_kinds:['exact-run']};
+        else if (method==='issue') {
+          grantIssues++;
+          assert.equal(params.scope.consumer,'author');
+          assert.equal(params.scope.revision,1);
+          assert.equal(params.owner,undefined,'caller JSON must not invent host owner admission');
+          if (grantIssues===2) { send({id:message.id,error:{code:'service_unavailable',message:'grant outcome unknown'}}); continue; }
+          assert.equal(grantIssues,1,'uncertain grants must not be retried by the helper');
+          reply=issuedGrant={reference:{provider:'replacement-authority',id:'opaque-reference'},principal:{kind:'user',issuer:'selected',tenant:'tenant',subject:'owner'},scope:params.scope,capabilities:params.capabilities,expires_at:params.expires_at};
+        } else {
+          assert.deepEqual(params.reference,issuedGrant.reference);
+          assert.deepEqual(params.scope,issuedGrant.scope);
+          if (method==='validate') { assert.equal(params.action,'user/session/send'); assert.deepEqual(params.resources,[{kind:'session',id:'worker'}]); reply={valid:false,reason:'revoked externally'}; }
+          else { assert.equal(method,'revoke'); reply={revoked:true}; }
+        }
+      } else if (service==='state.credentials') {
         if (method==='get') reply={value:credential};
         else if (method==='compare-exchange') { assert.equal(params.expected,null); assert.equal(params.value,''); credential=params.value; reply={exchanged:true}; }
         else if (method==='set') { send({id:message.id,error:{code:'credential_unavailable',message:'write outcome unknown'}}); continue; }
@@ -67,7 +91,26 @@ test('packed provider clients preserve wire values and callback scope', {timeout
       } else if (service==='state.config') {
         reply={source:method==='read' && configReads++ > 0 ? '' : null,revision:'config-1',config:{}};
         if (method==='compare-exchange') { assert.deepEqual(params,{expected_revision:'config-1',source:null}); reply={...reply,committed:true,activation_error:'project_overlay_invalid'}; }
-      } else if (service==='state.plugin-settings') reply={revision:'settings-1',document:{schema_version:1,plugin_id:'author',values:{}}};
+      } else if (service==='state.documents') {
+        assert.deepEqual(params,{id:'guard-one',namespaces:['records']});
+        if(method==='acquire-inspection') reply={id:params.id,namespaces:params.namespaces,revision:'9007199254740993'};
+        else { assert.equal(method,'release-inspection'); reply={}; }
+      } else if (service==='state.plugin-settings') {
+        if (method === 'acquire-inspection' || method === 'release-inspection') {
+          assert.deepEqual(params,{id:'guard-two',subject:'author',scope:'user'});
+          reply=method==='acquire-inspection'?{id:params.id,document:{schema_version:1,plugin_id:'author',values:{'record':'opaque'}},revision:'revision'}:{};
+        } else if (method === 'transfer-state') {
+          transferCount++;
+          assert.deepEqual(params, { id: ['move-1', 'unsupported', 'uncertain'][transferCount - 1], source_subject_id: 'old-owner', target_subject_id: 'author', key_prefix: 'records.', scope: 'user' });
+          if (transferCount > 1) {
+            send({id:message.id,error:{code:transferCount === 2 ? 'method_not_found' : 'service_unavailable',message:'selected transfer unavailable'}}); continue;
+          }
+          reply={};
+        } else {
+          assert.equal(method, 'read', 'a transfer failure must not emulate local read/update');
+          reply={revision:'settings-1',document:{schema_version:1,plugin_id:'author',values:{}}};
+        }
+      }
       else if (service==='state.artifacts') {
         if (method==='delete-thread') {
           artifactDeleteCount++;
@@ -134,7 +177,11 @@ test('packed provider clients preserve wire values and callback scope', {timeout
           }
         }
       }
-      else if (service==='security.authorize') { assert.equal(method,'authorize'); reply={outcome:'allow'}; }
+      else if (service==='security.authorize') {
+        if(method==='acquire-authorization') {assert.equal(params.id,'effect-one');assert.equal(params.request.tool.read_only,false);reply={id:params.id,decision:{outcome:'deny',reason:'bounded policy'}};}
+        else if(method==='release-authorization'){assert.deepEqual(params,{id:'effect-one'});reply={};}
+        else {assert.equal(method,'authorize');reply={outcome:'allow'};}
+      }
       else if (service==='host.managed-session' && method==='create') {
         assert.deepEqual(params.initial_input,{ClientID:'initial-1',SessionID:'worker',Content:'inspect',Wake:true});
         // An authored launch input must survive independently from the brief.
@@ -148,6 +195,18 @@ test('packed provider clients preserve wire values and callback scope', {timeout
       else assert.fail(`unexpected service ${service}/${method}`);
       send({id:message.id,result:reply});
     }
+    assert.deepEqual(result.effectFence,{id:'effect-one',decision:{outcome:'deny',reason:'bounded policy'}});
+    assert.deepEqual(result.stewardship,stewardship);
+    assert.equal(result.grantPolicy.default_lifetime_seconds,3600);
+    assert.deepEqual(result.serviceAdmission,admission);
+    assert.equal(result.inspection.revision,'9007199254740993');
+    assert.equal(result.settingsInspection.document.values.record,'opaque');
+    assert.deepEqual(result.granted,issuedGrant);
+    assert.deepEqual(result.checked,{valid:false,reason:'revoked externally'});
+    assert.deepEqual(result.revoked,{revoked:true});
+    assert.equal(result.grantUncertain,'service_unavailable');
+    assert.equal(grantIssues,2);
+    assert.equal(result.protectedPathsEnforced,true);
     assert.deepEqual(result.absent,{value:null});
     assert.deepEqual(result.empty,{value:''});
     assert.equal(result.swapped.exchanged,true);
@@ -158,6 +217,9 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.changed.source,null);
     assert.equal(result.changed.committed,true);
     assert.equal(result.changed.activation_error,'project_overlay_invalid');
+    assert.equal(transferCount, 3, 'failed or uncertain transfers must not retry');
+    assert.equal(result.transferUnsupported, 'method_not_found');
+    assert.equal(result.transferUncertain, 'service_unavailable');
     assert.equal(result.artifact.data,'AAEC');
     assert.equal(artifactDeleteCount,3);
     assert.deepEqual(result.deleted,{thread_id:artifactThread,deleted:true});

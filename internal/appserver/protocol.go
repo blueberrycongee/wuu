@@ -174,6 +174,7 @@ const (
 	NotificationTurnEvent              = "turn/event"
 	NotificationTurnError              = "turn/error"
 	NotificationTurnCompleted          = "turn/completed"
+	NotificationUserAttention          = "user/attention"
 	NotificationRunStarted             = "run/started"
 	NotificationRunUpdated             = "run/updated"
 	NotificationSideThreadEvent        = "sideThread/event"
@@ -296,7 +297,17 @@ type ReverseRPCCapabilities struct {
 	Methods []string `json:"methods,omitempty"`
 }
 
+// UserHostIsolationSummary reports the activated boundary, not a filesystem
+// sandbox claim. A logical host must report host=unverified.
+type UserHostIsolationSummary struct {
+	Memory string `json:"memory"`
+	Host   string `json:"host"`
+}
+
 type InitializeResult struct {
+	UserHostIsolation   *UserHostIsolationSummary                  `json:"user_host_isolation,omitempty"`
+	UserSpaceID         string                                     `json:"user_space_id,omitempty"`
+	ProductDomain       string                                     `json:"product_domain,omitempty"`
 	ResourceAccess      ResourceAccessCapabilities                 `json:"resource_access"`
 	ApplicationShell    *runtime.ApplicationShellBinding           `json:"application_shell"`
 	ApplicationSurfaces map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
@@ -2335,10 +2346,40 @@ type TurnEventNotification struct {
 	Event    StreamEventPayload `json:"event"`
 }
 
+// UserLocation is content-free navigation to a named agent's persistent main
+// conversation. It is populated only by the immutable user-host authority.
+// Execution session identifiers are never a user navigation target.
+type UserLocation struct {
+	Version       int    `json:"version"`
+	UserSpaceID   string `json:"user_space_id"`
+	ProductDomain string `json:"product_domain"`
+	AgentID       string `json:"agent_id"`
+	MessageSeq    int    `json:"message_seq,omitempty"`
+}
+
+// UserAttentionNotification is emitted only after the current persisted owner
+// admits attention. Raw terminal events are not push authorization.
+type UserAttentionNotification struct {
+	// Process-local provenance is never accepted from a notification payload.
+	authorization *userAttentionEvent
+
+	// ItemCount counts initially admitted results, not a per-item delivery receipt.
+	// Only the latest UserLocation is retained and revalidated at delivery.
+	ItemCount     int          `json:"item_count,omitempty"`
+	UserSpaceID   string       `json:"user_space_id"`
+	ProductDomain string       `json:"product_domain"`
+	UserLocation  UserLocation `json:"user_location"`
+	TurnID        string       `json:"turn_id"`
+	Outcome       string       `json:"outcome"`
+}
+
 type TurnErrorNotification struct {
-	ThreadID string `json:"thread_id"`
-	TurnID   string `json:"turn_id"`
-	Error    string `json:"error"`
+	UserSpaceID   string        `json:"user_space_id,omitempty"`
+	ProductDomain string        `json:"product_domain,omitempty"`
+	UserLocation  *UserLocation `json:"user_location,omitempty"`
+	ThreadID      string        `json:"thread_id"`
+	TurnID        string        `json:"turn_id"`
+	Error         string        `json:"error"`
 	// Structured error fields surface the Go core's typed classification
 	// (StreamError, HTTPError, ClassifyError) directly to the front-end so
 	// the shell can show a concise user-facing status while retaining
@@ -2373,20 +2414,23 @@ type TurnUsageNotification struct {
 }
 
 type TurnCompletedNotification struct {
-	ThreadID                 string `json:"thread_id"`
-	Turn                     Turn   `json:"turn"`
-	Content                  string `json:"content"`
-	InputTokens              int    `json:"input_tokens"`
-	OutputTokens             int    `json:"output_tokens"`
-	ContextTokens            int    `json:"context_tokens,omitempty"`
-	CacheCreationTokens      int    `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens          int    `json:"cache_read_tokens,omitempty"`
-	FinishReason             string `json:"finish_reason,omitempty"`
-	StopReason               string `json:"stop_reason,omitempty"`
-	Truncated                bool   `json:"truncated,omitempty"`
-	TracePath                string `json:"trace_path,omitempty"`
-	IndexError               string `json:"index_error,omitempty"`
-	AwaitingAutoContinuation bool   `json:"awaiting_auto_continuation,omitempty"`
+	UserSpaceID              string        `json:"user_space_id,omitempty"`
+	ProductDomain            string        `json:"product_domain,omitempty"`
+	UserLocation             *UserLocation `json:"user_location,omitempty"`
+	ThreadID                 string        `json:"thread_id"`
+	Turn                     Turn          `json:"turn"`
+	Content                  string        `json:"content"`
+	InputTokens              int           `json:"input_tokens"`
+	OutputTokens             int           `json:"output_tokens"`
+	ContextTokens            int           `json:"context_tokens,omitempty"`
+	CacheCreationTokens      int           `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens          int           `json:"cache_read_tokens,omitempty"`
+	FinishReason             string        `json:"finish_reason,omitempty"`
+	StopReason               string        `json:"stop_reason,omitempty"`
+	Truncated                bool          `json:"truncated,omitempty"`
+	TracePath                string        `json:"trace_path,omitempty"`
+	IndexError               string        `json:"index_error,omitempty"`
+	AwaitingAutoContinuation bool          `json:"awaiting_auto_continuation,omitempty"`
 }
 
 type Agent struct {
@@ -2634,7 +2678,8 @@ const (
 )
 
 type ThreadItem struct {
-	Activity *ConversationActivity `json:"activity,omitempty"`
+	Relation *providers.MessageRelation `json:"relation,omitempty"`
+	Activity *ConversationActivity      `json:"activity,omitempty"`
 	// steered preserves input identity from live messages and the durable display
 	// transcript, independently of compactable provider history. It is host-only.
 	steered          bool

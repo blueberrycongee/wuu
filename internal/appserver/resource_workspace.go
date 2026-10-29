@@ -32,6 +32,31 @@ func (s *Server) requestResources(req Request) ([]access.Resource, error) {
 	if err != nil {
 		return nil, err
 	}
+	if req.Method == MethodPluginClientCancel {
+		var params PluginClientCancelParams
+		if err := decodeParams(req.Params, &params); err != nil {
+			return nil, err
+		}
+		key := pluginClientRequestKey{pluginID: strings.TrimSpace(params.ID), fingerprint: strings.TrimSpace(params.Fingerprint), graphGeneration: strings.TrimSpace(params.GraphGeneration), requestID: strings.TrimSpace(params.RequestID)}
+		s.pluginClientMu.Lock()
+		if pending := s.pluginClientRequests[key]; pending != nil {
+			resources = append([]access.Resource(nil), pending.resources...)
+		}
+		s.pluginClientMu.Unlock()
+	}
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		space := access.Resource{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}
+		found := false
+		for _, resource := range resources {
+			if resource == space {
+				found = true
+				break
+			}
+		}
+		if !found {
+			resources = append(resources, space)
+		}
+	}
 	rule := resourceMethods[req.Method]
 	if rule != "workspace" && req.Method != MethodThreadStart {
 		return resources, nil

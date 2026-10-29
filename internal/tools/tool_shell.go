@@ -271,7 +271,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 		return shellExecutionResult{}, fmt.Errorf("run command: %w", err)
 	}
 	var yield <-chan time.Time
-	if logf != nil && !env.ShellEarlyHandoffDisabled {
+	if logf != nil && !env.ShellEarlyHandoffDisabled && len(env.ProtectedPaths) == 0 {
 		timer := time.NewTimer(maxForegroundShellWait)
 		defer timer.Stop()
 		yield = timer.C
@@ -291,7 +291,7 @@ waitForeground:
 		// Only transfer live work when the caller still owns the turn.
 		// Cancellation stops it; a foreground yield or timeout hands off the
 		// same process, log, ownership and completion notification.
-		if logf != nil && ctx.Err() == nil {
+		if logf != nil && ctx.Err() == nil && len(env.ProtectedPaths) == 0 {
 			adopted, adoptErr := mgr.Adopt(reservedID, cmd, handle, logf, proc.AdoptOptions{
 				Command:        command,
 				CWD:            workDir,
@@ -370,9 +370,12 @@ waitForeground:
 		sandboxResult = &shellSandboxResult{Mode: sandboxPolicy.Mode, Enforcement: "full", Denied: denied}
 		if denied {
 			nextSuggestions = []string{
-				"the filesystem process sandbox blocked a file write outside the current boundary; do not retry the same access through another command",
+				"the filesystem process sandbox blocked access outside the current boundary; do not retry the same access through another command",
 				"use a path inside a registered workspace, ask the user to add the required directory as a workspace, or explain that the user must explicitly switch the session to unconfined mode",
 			}
+		}
+		if denied && len(env.ProtectedPaths) > 0 {
+			nextSuggestions = []string{"protected read/write paths remain inaccessible in every permission mode; use files in this runtime's own domain"}
 		}
 	}
 	if promotedID != "" {
@@ -395,7 +398,7 @@ waitForeground:
 		StderrTail:          stderrTail,
 		StdoutBytes:         len(stdoutText),
 		StderrBytes:         len(stderrText),
-		WorkspaceRevision:   workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
+		WorkspaceRevision:   env.workspaceRevision(ctx, env.RevisionRoot(ctx)),
 		StdoutTailTruncated: stdoutTailTruncated,
 		StderrTailTruncated: stderrTailTruncated,
 		Sandbox:             sandboxResult,

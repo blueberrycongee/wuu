@@ -125,6 +125,9 @@ func redactSensitiveReadContent(env *Env, absPath, content string) string {
 }
 
 func rejectSensitiveReadPath(env *Env, toolName, absPath string) error {
+	if err := env.rejectProtectedPath(absPath, false); err != nil {
+		return err
+	}
 	if isWuuCredentialPath(absPath) {
 		return wuuCredentialRefusal(toolName, "read", absPath)
 	}
@@ -139,6 +142,9 @@ func rejectSensitiveReadPath(env *Env, toolName, absPath string) error {
 }
 
 func rejectSensitiveToolPath(env *Env, toolName, action, absPath string) error {
+	if err := env.rejectProtectedPath(absPath, false); err != nil {
+		return err
+	}
 	if isWuuCredentialPath(absPath) {
 		return wuuCredentialRefusal(toolName, action, absPath)
 	}
@@ -159,6 +165,9 @@ func resolveReadTarget(ctx context.Context, env *Env, toolName, path string, man
 	if err != nil {
 		return "", err
 	}
+	if err := env.rejectProtectedPath(resolved, false); err != nil {
+		return "", err
+	}
 	if !managed {
 		// Hosted worktrees can live under WUU_HOME. Recheck the actual target
 		// against that execution root, not the infrastructure path above it.
@@ -168,7 +177,8 @@ func resolveReadTarget(ctx context.Context, env *Env, toolName, path string, man
 		}
 		boundary := &Env{
 			RootDir: execRoot, FileScopeRoots: append([]string{execRoot}, env.FileScopeRoots...),
-			Unconfined: env.Unconfined, PermissionMode: env.PermissionMode, AllowMutations: env.AllowMutations,
+			ProtectedPaths: append([]string(nil), env.ProtectedPaths...),
+			Unconfined:     env.Unconfined, PermissionMode: env.PermissionMode, AllowMutations: env.AllowMutations,
 		}
 		if _, err := boundary.ResolvePath(resolved); err != nil {
 			return "", err

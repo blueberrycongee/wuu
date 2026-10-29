@@ -104,6 +104,10 @@ interface ThreadItemViewProps {
   ) => void;
   onOpenAgent?: (agentID: string) => void;
   editSummaryCard?: JSX.Element;
+  linkPolicy?: "external-only";
+  /** Independent transports can expose copy/time without Coding fork actions. */
+  messageActions?: "copy-only" | "none";
+  messageAttachments?: React.ReactNode;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
@@ -150,13 +154,16 @@ function BuiltInThreadItemView({
   onSubmitEditMessage,
   onOpenAgent,
   editSummaryCard,
+  linkPolicy,
+  messageActions,
+  messageAttachments,
 }: ThreadItemViewProps): JSX.Element | null {
   const { t } = useI18n();
   const owningThreadId = useContext(ArtifactThreadContext);
   const { application, slots, slotOwner } = useConversationControls();
   const [emptyActions, setEmptyActions] = useState(false);
-  const hasPluginActions = !editing && !emptyActions;
-  const pluginActions = editing ? null : <slots.Slot
+  const hasPluginActions = messageActions === undefined && !editing && !emptyActions;
+  const pluginActions = editing || messageActions !== undefined ? null : <slots.Slot
     name={`${slotOwner}/conversation.message.actions`}
     context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id, snapshot: toConversationItemSnapshot(item) }}
     fallback={<EmptyMessageActions onEmpty={setEmptyActions} />}
@@ -199,7 +206,7 @@ function BuiltInThreadItemView({
       if (isProjectEvent(item)) {
         return <ProjectEventRow item={item} />;
       }
-      const copyable = displayText.trim() !== "";
+      const copyable = messageActions !== "none" && displayText.trim() !== "";
       const editable = Boolean(
         !item.read_only &&
           onEditMessage &&
@@ -259,6 +266,7 @@ function BuiltInThreadItemView({
             />
           ) : (
             <UserMessageContent
+              linkPolicy={linkPolicy}
               anchorID={userMessageAnchorID(turnID, item.id)}
               text={displayText}
               contentParts={item.content_parts}
@@ -269,7 +277,8 @@ function BuiltInThreadItemView({
             />
           )}
           </div>
-          {!editing ? (
+          {messageAttachments}
+          {!editing && messageActions !== "none" ? (
             <div
               style={copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? undefined : { display: "none" }}
               ref={placeUserMessageActions}
@@ -328,14 +337,14 @@ function BuiltInThreadItemView({
       // A completed final item is the user-visible completion boundary. The
       // backend can materialize a fork from the live turn snapshot while
       // provider cleanup and durable turn settlement continue independently.
-      const actionsVisible = forkVisible || hasPluginActions;
+      const actionsVisible = messageActions !== "none" && (forkVisible || hasPluginActions);
       const actionsPersistent =
         actionsVisible &&
         (!isProcessText || item.id === latestAgentMessageID);
       // Without contributed actions, reserve space only for final answers.
       // Live commentary must not gain an empty answer-action gap.
-      const reserveActionSlot = hasPluginActions || (!isProcessText &&
-        (copyable || item.status === "in_progress"));
+      const reserveActionSlot = messageActions !== "none" && (hasPluginActions || (!isProcessText &&
+        (copyable || item.status === "in_progress")));
       return (
         <AssistantResponseArticle
           id={messageAnchorID(turnID, item.id)}
@@ -351,6 +360,7 @@ function BuiltInThreadItemView({
         >
           <div className="agent-text">
             <AgentMessageContent
+              linkPolicy={linkPolicy}
               turnID={turnID}
               item={item}
               cwd={cwd}
@@ -361,8 +371,9 @@ function BuiltInThreadItemView({
             />
             {(item.images?.length ?? 0) > 0 ? <MessageImageGrid images={item.images ?? []} collapsedLimit={4} /> : null}
           </div>
+          {messageAttachments}
           {editSummaryCard}
-          <AgentMessageActions
+          {messageActions !== "none" && <AgentMessageActions
               hidden={!actionsVisible && !reserveActionSlot}
               reserved={!actionsVisible}
               getText={() => owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? ""}
@@ -371,7 +382,7 @@ function BuiltInThreadItemView({
               trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
                 ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={actionsVisible && copyable}
-              showFork={forkVisible}
+              showFork={forkVisible && messageActions !== "copy-only"}
               onFork={
                 forkVisible && onForkMessage
                   ? () => onForkMessage(turnID, item.id)
@@ -379,7 +390,7 @@ function BuiltInThreadItemView({
               }
             >
               {pluginActions}
-            </AgentMessageActions>
+            </AgentMessageActions>}
         </AssistantResponseArticle>
       );
     }
@@ -419,6 +430,7 @@ function BuiltInThreadItemView({
 }
 
 function UserMessageContent({
+  linkPolicy,
   anchorID,
   text,
   contentParts,
@@ -427,6 +439,7 @@ function UserMessageContent({
   cwd,
   onOpenFile,
 }: {
+  linkPolicy?: "external-only";
   anchorID: string;
   text: string;
   contentParts?: MessageContentPart[];
@@ -501,7 +514,7 @@ function UserMessageContent({
               {textParts.map((part, index) =>
                 part.text ? (
                   <div className="user-message-text-part" key={`${part.type}-${index}`}>
-                    <RichContent text={part.text} cwd={cwd} onOpenFile={onOpenFile} />
+                    <RichContent linkPolicy={linkPolicy} text={part.text} cwd={cwd} onOpenFile={onOpenFile} />
                   </div>
                 ) : null,
               )}
@@ -509,7 +522,7 @@ function UserMessageContent({
           ) : collapsible ? (
             <div className="user-message-raw-query">{displayedText}</div>
           ) : (
-            <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />
+            <RichContent linkPolicy={linkPolicy} text={text} cwd={cwd} onOpenFile={onOpenFile} />
           )}
           {collapsible ? (
             <button
@@ -854,6 +867,7 @@ function UserMessageInlineEditor({
 }
 
 function AgentMessageContent({
+  linkPolicy,
   turnID,
   item,
   cwd,
@@ -862,6 +876,7 @@ function AgentMessageContent({
   pendingCompanionReasoning,
   onStreamFrame,
 }: {
+  linkPolicy?: "external-only";
   turnID: string;
   item: ThreadItem;
   cwd?: string;
@@ -907,6 +922,7 @@ function AgentMessageContent({
 
   return (
     <ApplicationStreamingMarkdown
+      linkPolicy={linkPolicy}
       threadId={threadId} turnId={turnID} itemId={item.id}
       initialText={item.text}
       cwd={cwd}

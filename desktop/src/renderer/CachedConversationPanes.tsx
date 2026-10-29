@@ -19,6 +19,7 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import type { TurnStreamStatus } from "./AppState";
+import { ConversationFlow } from "./ConversationFlow";
 import { ConversationTurnList } from "./ConversationTurnList";
 import {
   ContextCompositionCard,
@@ -338,7 +339,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
           data-thread-id={thread.id}
           inert={isActive ? undefined : true}
         >
-          <div className="conversation-width session-flow">
+          <ConversationFlow>
             <ConversationTurnList
               historyCursor={thread.history_cursor}
               threadID={thread.id}
@@ -400,7 +401,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                 />
               )}
             />
-          </div>
+          </ConversationFlow>
         </div>
       </SessionSwitchProfiler>
     </ConversationRenderActivityProvider>

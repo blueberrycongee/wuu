@@ -33,6 +33,7 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
 | `wuu.default-composer/composer.above`、`wuu.default-composer/composer.toolbar` | 输入框上方或工具栏中 |
+| `wuu.default-preview/workspace.rail` | 展开的右侧竖条中的紧凑控件和读数；宽度固定为一个工具栏控件 |
 
 通过带所有者前缀的 Slot 目标组合区域。默认会话 provider 声明 `wuu.default-conversation/conversation.turn` 和 `wuu.default-conversation/conversation.message`；预览 provider 在 `wuu.default-preview` 下声明自己的消息 Slot。轮次边界包含该轮的消息与过程组，不是整个滚动容器。
 
@@ -62,6 +63,12 @@ api.registerUIContribution({
 Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接收排序后的 `items`（`key`、`pluginId`、`id`、`title`、`node`）及 `context`；使用各项的 `key` 渲染选中的 `node`。贡献可选的 `title` 默认使用 ID。布局可以分组或过滤内容，无需另一套注册表。包装位于布局结果外层，空 Slot 使用 `fallback`。服务图选择的 Slot 直接渲染选中的 provider，忽略自定义布局。
 
 默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal、Monitor 已改用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
+
+`workspace.rail` Slot 由默认预览 provider 提供，在右侧工具栏展开时显示。贡献按垂直方向排列，共享一个工具栏控件的宽度。使用紧凑的读数或控件，并通过无障碍标签提供完整含义。贡献可通过 `application` 观察活动标签，再通过 `application.composerPresentation` 读取对应的会话、轮次和运行状态。
+
+[Token Speed](../../../examples/plugins/token-speed/README.md) 是使用该 Slot 的独立可安装示范插件。它以两秒滑动窗口估算流式文字、推理和工具调用参数的可观察输出速度；不计入隐藏输出，也不等同于模型实际分词。读数使用固定宽度，单位缩写单独占一行，数值以 320 毫秒动画过渡并遵循减少动态效果设置。尚无输出或轮次结束时显示横线，活动输出流暂停后回落到零。无障碍标签和悬停说明会解释估算含义。
+
+在包含此 Slot 的仓库版本中运行 `wuu plugin install ./examples/plugins/token-speed` 安装示例，或运行 `wuu plugin dev ./examples/plugins/token-speed` 启用热更新。禁用插件会移除读数。
 
 ## Presenter 和动作
 
@@ -108,6 +115,21 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 当提供者不支持关闭某个工作区标题栏标签时，该标签可报告 `closable: false`；旧版宿主不提供此字段。支持关闭展开工作区中会话的应用提供者会发布 `previewWorkspace.conversationOpen`，并实现 `preview.open-conversation` 和 `preview.close-conversation`；旧版 V1 提供者省略该字段，会话入口保持打开。调用这些动作前应检查该字段。
 
 会话卡片用于临时交互，不是保存的历史或持久页面；卡片句柄可以更新状态或关闭卡片。输入框状态源通过 `getSnapshot(context)` 返回结构化条目，通过 `subscribe` 通知变化，数据未变时应保持快照引用稳定。状态行、溢出和可选的 `open-session` 动作由 Wuu 渲染处理，不接收每个条目的任意 React 内容。
+
+
+### 独立会话
+
+主视图可使用 `layout: "user-space"` 隐藏 Coding 工作区面板，同时保留 Wuu 原有导航。此展示提示不授予运行时权限。激活已打开视图时，宿主发布 `workbench.view.activated` 事件，包含 `pluginId` 和 `viewTypeId`；处理器应同时匹配两个标识。
+
+桌面宿主通过 `api.ui.ConversationMessage` 和 `api.ui.ConversationComposer` 复用 Wuu 原生消息渲染器和输入框，包括原有附件选择、粘贴/拖放、预览与发送/停止控件。调用方提供会话标识、受控草稿、附件与传输回调，并负责请求接纳、错误处理及成功接纳后的草稿清理。发送失败应保留原始文本和附件。未提供原生组件的宿主会明确报告输入框不可用，不会悄悄替换成另一套输入框。
+
+`api.ui.ConversationView` 提供相同的阅读列、原生标题栏和搜索对话框、输入框停靠、滚动跟随及按会话恢复阅读位置。调用方提供标题、可选头像/状态、搜索内容、消息和输入框。`ConversationMessage` 接受稳定的 `id`、可选时间、最新回复标记和附件内容；独立会话提供复制/时间，不显示不受支持的 Coding 动作。`api.ui.ConversationAttachment` 使用原生结果卡，加载和已核验的本地 Blob URL 由调用方负责。这些呈现组件不会加载 Coding 历史、选择工作区或读取附件路径，调用方仍须保留范围限定的传输及授权检查。
+
+`ConversationView` 可接收 `sessionId` 和 `sessionScope`，让问题列表、回答、取消和延长处理时间都走同一条经过验证的用户空间/产品域路由。非工具 offer 的 `onQuestionReply(requestId, prompt)` 必须使用稳定请求标识，先把回答接纳进该会话，再解决 offer，同时保留输入框中无关的草稿和附件。hold 仍保留问题待回答，不等于回答。
+
+流式消息应使用稳定条目标识及终态 turn 快照的最终序号与持久历史对账，不按文本去重。停止回复及其重试必须保留选定的 turn ID，避免迟到停止误取消下一条回复。
+
+独立会话不会把草稿、消息或工作区选区交给 Coding 范围的 Presenter 或补全 Provider。不应解析 Coding 工作区路径的消息应使用 `linkPolicy: "external-only"`。这层 UI 边界不能替代运行时范围检查。Personal 默认提供记忆域逻辑隔离，经过验证的操作系统/宿主隔离是独立可选的嵌入模式。
 
 ## 输入框行内补全
 
@@ -164,6 +186,12 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
 
+桌面上的 `api.ui.Avatar` 和公开图标 `mascot` 共用 Wuu 的圆球耳机形象。Avatar 接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留圆球、面部和耳机，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 
 注册项属于插件 generation，卸载时一起移除。原生桌面退出时，Wuu 先卸载 React 消费者、取消待完成的激活、按依赖反序清理插件并发送完激活报告，然后断开 renderer 并停止后端进程。renderer 若在十秒内无法确认清理完成，会被关闭，失败会记录到日志。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。
+
+### 运行时导航显示名称
+
+`api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。入口未声明时返回 `false`；无效标题及已卸载代次的调用会报错。这只是显示覆盖，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。

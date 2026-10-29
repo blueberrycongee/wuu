@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -52,6 +53,9 @@ type StateAuthority struct {
 }
 
 type authorityPending struct {
+	Caller      string                  `json:"caller,omitempty"`
+	Method      string                  `json:"method,omitempty"`
+	Params      json.RawMessage         `json:"params,omitempty"`
 	Transaction persistence.Transaction `json:"transaction"`
 	Before      persistence.Checkpoint  `json:"before"`
 	After       persistence.Checkpoint  `json:"after"`
@@ -74,6 +78,9 @@ type authorityLockKey struct{}
 type authorityPreflightKey struct{}
 type authorityActivationKey struct{}
 type authorityRawKey struct{}
+type authorityStewardKey struct{}
+type authorityRecoveryKey struct{}
+type authorityMigrationKey struct{}
 type authorityRequest struct {
 	ID    string `json:"id"`
 	Owner string `json:"owner"`
@@ -272,6 +279,38 @@ func (a *StateAuthority) rawClient(params pluginhost.ServiceInvokeParams) *persi
 	})
 }
 func (a *StateAuthority) invokeSelectedProvider(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	// Never forward a consumer-provided attestation. The opaque context key is
+	// scoped to this captured authority and exists only around host coordination.
+	params.StorageStewardship = nil
+	if owner, _ := ctx.Value(authorityStewardKey{}).(*StateAuthority); owner == a && (params.Method == "read" || params.Method == "export" || params.Method == "checkpoint") {
+		digest := sha256.Sum256(params.Params)
+		params.StorageStewardship = &pluginhost.StorageStewardship{Version: 1, Authority: a.id, Provider: a.provider.ID(), Operation: "verify", InputDigest: hex.EncodeToString(digest[:]), InputJSON: string(params.Params)}
+	}
+	if pending, ok := ctx.Value(authorityRecoveryKey{}).(*authorityPending); ok && pending.Caller != "" {
+		method := pending.Method
+		if method == "" {
+			method = "commit"
+		}
+		valid := params.Method == method
+		if method == "commit" {
+			match := authorityWireMatch{remaining: params.Params}
+			valid = valid && persistence.WriteTransactionJSON(&match, pending.Transaction) == nil && len(match.remaining) == 0
+		} else {
+			valid = valid && method == "claim-namespaces" && bytes.Equal(params.Params, pending.Params)
+		}
+		if !valid {
+			return nil, persistence.ErrCorrupt
+		}
+		digest := sha256.Sum256(params.Params)
+		params.StorageStewardship = &pluginhost.StorageStewardship{Version: 1, Authority: a.id, Provider: a.provider.ID(), Operation: "recover", Consumer: pending.Caller, InputDigest: hex.EncodeToString(digest[:]), InputJSON: string(params.Params)}
+	}
+	if owner, _ := ctx.Value(authorityMigrationKey{}).(*StateAuthority); owner == a && (params.Method == "export" || params.Method == "checkpoint" || params.Method == "read") {
+		digest := sha256.Sum256(params.Params)
+		params.StorageStewardship = &pluginhost.StorageStewardship{Version: 1, Authority: a.id, Provider: a.provider.ID(), Operation: "migration", InputDigest: hex.EncodeToString(digest[:]), InputJSON: string(params.Params)}
+	}
+	ctx = context.WithValue(ctx, authorityMigrationKey{}, nil)
+	ctx = context.WithValue(ctx, authorityRecoveryKey{}, nil)
+	ctx = context.WithValue(ctx, authorityStewardKey{}, nil)
 	// Only host coordination may reuse a held lock. Never pass it into provider
 	// callbacks, which could otherwise bypass serialization recursively.
 	ctx = context.WithValue(ctx, authorityLockKey{}, nil)
@@ -290,6 +329,13 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	}
 	if ctx.Value(authorityRawKey{}) == a.dir {
 		return nil, errors.New("state provider recursively called its own authority")
+	}
+	if params.Method == "export" && params.Admission != nil {
+		proof := params.Admission
+		digest := sha256.Sum256(params.Params)
+		if proof.Version == 1 && proof.Principal.Validate() == nil && proof.Action == "state/authority/export" && proof.InputJSON == string(params.Params) && proof.InputDigest == hex.EncodeToString(digest[:]) && ctx.Err() == nil {
+			ctx = context.WithValue(ctx, authorityMigrationKey{}, a)
+		}
 	}
 	client := a.rawClient(params)
 	if ctx.Value(authorityPreflightKey{}) == a {
@@ -329,7 +375,8 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	}
 	locked, _ := ctx.Value(authorityLockKey{}).(*authorityLocked)
 	a.mu.Lock()
-	allowed := a.admitted && !a.closed && (!a.closing || locked != nil)
+	cleanup := params.Method == "release-inspection" && pluginhost.InShutdownCleanup(ctx)
+	allowed := a.admitted && !a.closed && (!a.closing || locked != nil || cleanup)
 	lazyAdmission := !a.admitted && !a.closed && !a.closing && a.prepared && a.documents != nil && !pluginhost.IsServicePreparation(ctx)
 	readOnly := !a.admitted && !a.closed && !a.closing && (params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")
 	a.mu.Unlock()
@@ -466,20 +513,25 @@ func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Clien
 	}
 	head := locked.record.Checkpoint
 	switch params.Method {
+	case "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-topology":
+		// Provider-owned guards are metadata, not a business mutation or journal entry.
+		return a.invokeSelectedProvider(ctx, params)
 	case "read", "export", "checkpoint":
 		return readAuthority(ctx, client, head, params)
+	case "claim-namespaces":
+		return a.claimNamespaces(ctx, client, locked.record, params)
 	case "commit":
 		tx, err := persistence.DecodeTransaction(params.Params)
 		if err != nil {
 			return nil, err
 		}
-		receipt, err := a.commit(ctx, client, locked.record, tx, params.Params)
+		receipt, err := a.commit(ctx, client, locked.record, tx, params.Params, params.Caller)
 		if err != nil {
 			return nil, err
 		}
 		return json.Marshal(receipt)
 	case "compact":
-		if err := persistence.VerifyCheckpoint(ctx, client, head); err != nil {
+		if err := persistence.VerifyCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, head); err != nil {
 			return nil, err
 		}
 		result, err := client.Compact(ctx)
@@ -489,7 +541,7 @@ func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Clien
 		if result.Revision != head.Revision {
 			return nil, persistence.ErrBindingChanged
 		}
-		if err := persistence.VerifyCheckpoint(ctx, client, head); err != nil {
+		if err := persistence.VerifyCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, head); err != nil {
 			return nil, err
 		}
 		return json.Marshal(result)
@@ -566,7 +618,7 @@ func authorityRevision(ctx context.Context, documents persistence.Documents, rev
 	}
 	return nil
 }
-func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client, record *authorityRecord, tx persistence.Transaction, encoded json.RawMessage) (persistence.Receipt, error) {
+func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client, record *authorityRecord, tx persistence.Transaction, encoded json.RawMessage, caller string) (persistence.Receipt, error) {
 	if encoded != nil {
 		match := authorityWireMatch{remaining: encoded}
 		if err := persistence.WriteTransactionJSON(&match, tx); err != nil || len(match.remaining) != 0 {
@@ -594,17 +646,17 @@ func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client,
 		}
 		return receipt, nil
 	}
-	after, err := persistence.NextCheckpoint(ctx, client, record.Checkpoint, tx)
+	after, err := persistence.NextCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, record.Checkpoint, tx)
 	if err != nil {
 		return persistence.Receipt{}, err
 	}
-	record.Pending = &authorityPending{Transaction: tx, Before: record.Checkpoint, After: after}
+	record.Pending = &authorityPending{Caller: caller, Transaction: tx, Before: record.Checkpoint, After: after}
 	if err := a.writeRecord(record); err != nil {
 		return persistence.Receipt{}, err
 	}
 	receipt, err := commit()
 	if err != nil {
-		if errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrOperationConflict) || errors.Is(err, persistence.ErrInvalid) {
+		if errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrOperationConflict) || errors.Is(err, persistence.ErrInvalid) || authorityKnownRejection(err) {
 			record.Pending = nil
 			err = errors.Join(err, a.writeRecord(record))
 		}
@@ -630,19 +682,32 @@ func (a *StateAuthority) recoverPending(ctx context.Context, client *persistence
 		return err
 	}
 	if actual == pending.Before {
-		predicted, err := persistence.NextCheckpoint(ctx, client, pending.Before, pending.Transaction)
+		predicted, err := persistence.NextCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, pending.Before, pending.Transaction)
 		if err != nil {
 			return err
 		}
 		if predicted != pending.After {
 			return persistence.ErrCorrupt
 		}
-		receipt, err := client.Commit(ctx, pending.Transaction)
-		if err != nil {
-			return err
-		}
-		if receipt.ID != pending.Transaction.ID || receipt.Revision != pending.After.Revision {
-			return persistence.ErrCorrupt
+		recovery := context.WithValue(ctx, authorityRecoveryKey{}, pending)
+		if pending.Method == "claim-namespaces" {
+			var request struct {
+				Namespaces []string `json:"namespaces"`
+			}
+			if decodeAuthorityRequest(pending.Params, &request) != nil {
+				return persistence.ErrCorrupt
+			}
+			if err := client.ClaimNamespaces(recovery, request.Namespaces); err != nil {
+				return err
+			}
+		} else {
+			receipt, err := client.Commit(recovery, pending.Transaction)
+			if err != nil {
+				return err
+			}
+			if receipt.ID != pending.Transaction.ID || receipt.Revision != pending.After.Revision {
+				return persistence.ErrCorrupt
+			}
 		}
 		actual, err = a.captureCheckpoint(ctx, client)
 		if err != nil {
@@ -827,7 +892,7 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		// The initial anchor makes a lost first business commit distinguishable
 		// from a different empty backend. No candidate data is written in Prepare.
 		raw, _ := json.Marshal(a.id)
-		_, err = a.commit(ctx, client, record, persistence.Transaction{ID: "state-authority-anchor:" + a.id, ExpectedRevision: checkpoint.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: "anchor", Value: raw}}}, nil)
+		_, err = a.commit(ctx, client, record, persistence.Transaction{ID: "state-authority-anchor:" + a.id, ExpectedRevision: checkpoint.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: "anchor", Value: raw}}}, nil, "")
 		if err != nil {
 			return 0, err
 		}
@@ -1240,6 +1305,7 @@ func authorityServiceError(err error) error {
 // capability is shared by native and external providers; full export remains
 // available for explicit migration/audit and providers without the capability.
 func (a *StateAuthority) captureCheckpoint(ctx context.Context, client *persistence.Client) (persistence.Checkpoint, error) {
+	ctx = context.WithValue(ctx, authorityStewardKey{}, a)
 	if a.checkpointCapability {
 		return client.Checkpoint(ctx)
 	}
@@ -1255,4 +1321,50 @@ func (a *StateAuthority) verifyCheckpoint(ctx context.Context, client *persisten
 		return fmt.Errorf("%w: candidate checkpoint differs from the durable authority", persistence.ErrMigrationRequired)
 	}
 	return nil
+}
+
+func authorityKnownRejection(err error) bool {
+	var service *pluginhost.HostServiceError
+	return errors.As(err, &service) && (service.Code == "namespace_ownership" || service.Code == "inspection_active" || service.Code == "inspection_conflict" || service.Code == "permission_denied" || service.Code == "method_not_found")
+}
+func (a *StateAuthority) claimNamespaces(ctx context.Context, client *persistence.Client, record *authorityRecord, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	var request struct {
+		Namespaces []string `json:"namespaces"`
+	}
+	if err := decodeAuthorityRequest(params.Params, &request); err != nil {
+		return nil, err
+	}
+	tx, err := persistence.PrepareNamespaceClaim(context.WithValue(ctx, authorityStewardKey{}, a), client, params.Caller, request.Namespaces)
+	if err != nil {
+		return nil, err
+	}
+	if tx.ExpectedRevision != record.Checkpoint.Revision {
+		return nil, persistence.ErrBindingChanged
+	}
+	if len(tx.Writes) == 0 {
+		return a.invokeSelectedProvider(ctx, params)
+	}
+	after, err := persistence.NextCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, record.Checkpoint, tx)
+	if err != nil {
+		return nil, err
+	}
+	canonical, _ := json.Marshal(request)
+	record.Pending = &authorityPending{Caller: params.Caller, Method: "claim-namespaces", Params: canonical, Transaction: tx, Before: record.Checkpoint, After: after}
+	if err = a.writeRecord(record); err != nil {
+		return nil, err
+	}
+	result, err := a.invokeSelectedProvider(ctx, params)
+	if err != nil {
+		if authorityKnownRejection(err) || errors.Is(err, persistence.ErrInvalid) || errors.Is(err, persistence.ErrConflict) {
+			record.Pending = nil
+			err = errors.Join(err, a.writeRecord(record))
+		}
+		return nil, err
+	}
+	if err = a.verifyCheckpoint(ctx, client, after); err != nil {
+		return nil, err
+	}
+	record.Checkpoint = after
+	record.Pending = nil
+	return result, a.writeRecord(record)
 }

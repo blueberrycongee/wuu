@@ -92,7 +92,13 @@ func TestStateMethodsRequireAdmissionButShutdownCanPersist(t *testing.T) {
 		for _, service := range provider.ProvidedServices() {
 			for _, method := range service.Methods {
 				_, err := registry.Call(ctx, consumer.ID(), pluginhost.ServiceCallParams{Service: service.Name, Method: method.Name, Params: json.RawMessage(`{}`)})
-				if err == nil || err.Code != "generation_closed" {
+				if method.Cleanup {
+					// Declared cleanup is routable after retirement, but an empty
+					// request cannot forge a held handle or maintenance admission.
+					if err == nil {
+						t.Errorf("retired %s/%s accepted missing cleanup authority", service.Name, method.Name)
+					}
+				} else if err == nil || err.Code != "generation_closed" {
 					t.Errorf("retired %s/%s admitted: %v", service.Name, method.Name, err)
 				}
 			}

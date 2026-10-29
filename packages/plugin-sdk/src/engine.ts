@@ -271,6 +271,13 @@ export interface EngineDescriptor {
  readonly enabled: boolean;
  readonly id: string;
  readonly version: string;
+ /** Advertised behavior, not an engine-ID allowlist. `explicit-context` promises
+  * that execution uses only explicit host context, supplied history and tools:
+  * no ambient home/workspace instructions, skills or memory are discovered or
+  * injected. An isolated-context consumer rejects engines without this promise;
+  * absence or failure never selects another engine implicitly. This is a logical
+  * context guarantee, not an OS/filesystem confidentiality or sandbox claim.
+  */
  readonly capabilities?: readonly string[];
  /** Client readiness/model-source metadata: true selects configured host models
   * and requires their credentials in the default UI; false uses engine-owned
