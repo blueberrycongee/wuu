@@ -37,6 +37,7 @@ After resolving the target, read the matching reference before acting:
 
 | Target or observed editor | Reference |
 | --- | --- |
+| iPhone Mirroring / iPhone镜像 (`com.apple.ScreenContinuity`) | [iPhone Mirroring](references/iphone-mirroring.md) |
 | Notion desktop pages and blocks | [Notion](references/notion.md) |
 | Spotify playback, search, and library | [Spotify](references/spotify.md) |
 | TextEdit or another AppKit document editor | [Native editors](references/native-editors.md) |

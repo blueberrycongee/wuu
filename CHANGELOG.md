@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Documentation
+
+- Guide Computer Use through iPhone Mirroring connection checks, phone-screen verification, and built-in foreground input when background interaction fails, avoiding ad hoc mouse scripts without promising background-only phone control.
+
 ### Added
 
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
