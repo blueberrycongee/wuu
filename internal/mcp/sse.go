@@ -75,6 +75,9 @@ func newSSETransportWithAuth(ctx context.Context, endpoint string, headers map[s
 		stopCallerCancel()
 		cancel()
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("sse connect GET %s: %s: %w", endpoint, resp.Status, ErrOAuthRequired)
+		}
 		return nil, fmt.Errorf("sse connect GET %s: %s", endpoint, resp.Status)
 	}
 	if !stopCallerCancel() {
@@ -174,6 +177,9 @@ func (t *SSETransport) Send(ctx context.Context, req Request) error {
 			continue
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("sse post %d: %s: %w", resp.StatusCode, readBodyExcerpt(resp.Body), ErrOAuthRequired)
+		}
 		if resp.StatusCode >= 300 {
 			return fmt.Errorf("sse post %d: %s", resp.StatusCode, readBodyExcerpt(resp.Body))
 		}

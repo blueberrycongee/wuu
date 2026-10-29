@@ -545,3 +545,100 @@ func TestBundledLazyConnectorsHonorRuntimeComposition(t *testing.T) {
 		})
 	}
 }
+
+func TestLazyConnectorSurvivesCatalogAndConfigReload(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+"http://"+r.Host+`/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(endpoint.Close)
+	prior := newTestRuntime(t, &fakeClient{})
+	preparePluginRuntimePathsForTest(t, prior)
+	cfg, _, err := config.LoadPath(prior.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Composition = &composition.Config{Version: 3, Profile: "desktop"}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prior.ConfigPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt := newConfigRefreshRuntime(t, prior)
+	out := &lockedBuffer{}
+	srv := newOwnerHandlerFixture(rt, out)
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	manifest := fmt.Sprintf(`{"id":"reload-connector","mcp_servers":{"docs":{"url":%q},"account":{"url":%q,"enabled":false,"connector":{"title":"Fixture"}}}}`, endpoint.URL, endpoint.URL)
+	if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "install-reload", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	if response := responseByID(t, parseOutput(t, out.String()), "install-reload"); response["error"] != nil {
+		t.Fatal(response["error"])
+	}
+	cfg, _, err = config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Composition.Patches = append(cfg.Composition.Patches, composition.Patch{Modules: map[string]bool{"reload-connector": true}})
+	raw, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "refresh-reload", MethodExtensionCatalogRefresh, nil)
+	if response := responseByID(t, parseOutput(t, out.String()), "refresh-reload"); response["error"] != nil {
+		t.Fatal(response["error"])
+	}
+	for index := range 3 {
+		name := "plugin.reload-connector.account"
+		callPluginPackageRPC(t, srv, fmt.Sprintf("reload-auth-%d", index), MethodMCPAuthStatus, map[string]any{"name": name})
+		response := responseByID(t, parseOutput(t, out.String()), fmt.Sprintf("reload-auth-%d", index))
+		if response["error"] != nil {
+			t.Fatalf("lazy connector lost its manager after reload %d: %+v", index, response)
+		}
+		if err := srv.refreshConfigIfChanged(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Enabling a lazy connector must retain the local manager that owns its
+	// upcoming OAuth flow, even though that server cannot be ready yet.
+	callPluginPackageRPC(t, srv, "reload-read", MethodMCPDefinitionRead, map[string]any{"name": "plugin.reload-connector.account"})
+	read := responseByID(t, parseOutput(t, out.String()), "reload-read")
+	if read["error"] != nil {
+		t.Fatal(read["error"])
+	}
+	definition := remarshal[MCPDefinitionResult](t, read["result"])
+	callPluginPackageRPC(t, srv, "reload-enable", MethodMCPConfigure, map[string]any{"servers": map[string]any{"plugin.reload-connector.account": map[string]any{"enabled": true}}, "revision": definition.Revision})
+	if response := responseByID(t, parseOutput(t, out.String()), "reload-enable"); response["error"] != nil {
+		t.Fatal(response["error"])
+	}
+	callPluginPackageRPC(t, srv, "reload-connect", MethodMCPConnect, map[string]any{"name": "plugin.reload-connector.account"})
+	if response := responseByID(t, parseOutput(t, out.String()), "reload-connect"); response["error"] == nil {
+		t.Fatal("unauthorized server connected without login")
+	}
+	callPluginPackageRPC(t, srv, "reload-signout", MethodMCPAuthRemove, map[string]any{"name": "plugin.reload-connector.account"})
+	if response := responseByID(t, parseOutput(t, out.String()), "reload-signout"); response["error"] != nil {
+		t.Fatal(response["error"])
+	}
+	callPluginPackageRPC(t, srv, "refresh-signout", MethodExtensionCatalogRefresh, nil)
+	if response := responseByID(t, parseOutput(t, out.String()), "refresh-signout"); response["error"] != nil {
+		t.Fatal(response["error"])
+	}
+	manager, err := srv.mcpManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"plugin.reload-connector.docs", "plugin.reload-connector.account"} {
+		if status := manager.Status()[name]; status.State != mcp.MCPServerStateAuthRequired || status.Connected || status.ToolCount != 0 {
+			t.Fatalf("unauthorized server must remain available for explicit login, not tool use: %+v", status)
+		}
+	}
+}

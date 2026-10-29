@@ -2783,6 +2783,12 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 			continue
 		}
 		if err := mcpMgr.Add(context.Background(), serverCfg); err != nil {
+			// A selected server awaiting login must retain its local manager:
+			// OAuth completion needs that registration before any tools exist.
+			// Only typed authentication failures qualify, never diagnostic text.
+			if serverCfg.URL != "" && errors.Is(err, mcp.ErrOAuthRequired) {
+				continue
+			}
 			_ = mcpMgr.Close()
 			return nil, fmt.Errorf("start required MCP server %q: %w", name, err)
 		}
