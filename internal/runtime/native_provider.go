@@ -4,6 +4,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // NativeProviderFactory assembles an embedding application's provider through
@@ -17,6 +18,8 @@ type NativeProviderFactory struct {
 }
 
 type NativeProviderContext struct {
+	DataRoot                      string
+	UserBinding                   userspace.Binding
 	RetainState                   func() (*State, error)
 	Registry                      *pluginhost.ServiceRegistry
 	Host                          *pluginhost.Host

@@ -211,7 +211,11 @@ type legacySessionConversion struct {
 
 func (c *legacySessionConversion) table(table string, rows []map[string]any) (bool, error) {
 	switch table {
-	case "sessions", "session_messages", "session_folders", "session_controls", "project_work", "project_work_operations", "session_inbox", "plugin_turn_lifecycle_outbox", "plugin_turn_lifecycle", "held_user_work", "session_history_retractions", "session_history_checkpoints", "session_driver_bindings", "session_driver_checkpoints", "session_compaction_notes", "session_model_input_receipts", "participants", "participant_runs", "thread_execution_resets", "session_plugin_generation_snapshots", "context_seeds", "session_launches":
+	case "fusion_dispatches", "fusion_tasks":
+		// Fusion's retired coordination state has no live consumer; the migration
+		// archives its schema and raw rows alongside the converted session data.
+		return true, nil
+	case "sessions", "session_messages", "session_folders", "session_controls", "project_work", "project_work_operations", "session_inbox", "plugin_turn_lifecycle_outbox", "plugin_turn_lifecycle", "held_user_work", "session_history_retractions", "session_history_checkpoints", "session_driver_bindings", "session_driver_checkpoints", "session_compaction_notes", "session_model_input_receipts", "participants", "participant_runs", "thread_execution_resets", "session_plugin_generation_snapshots", "context_seeds", "session_launches", "client_input_receipts":
 	default:
 		return false, nil
 	}
@@ -264,6 +268,25 @@ func (c *legacySessionConversion) table(table string, rows []map[string]any) (bo
 					c.terminal[sessionID] = record
 				}
 			}
+		case "client_input_receipts":
+			var receipt clientInputDocument
+			if err := json.Unmarshal(legacyBytes(row["summary_json"]), &receipt.Receipt); err != nil {
+				return true, fmt.Errorf("invalid accepted client input summary: %w", err)
+			}
+			// Keep durable host identities exact: a mismatched legacy row cannot
+			// become another session's admissible envelope during conversion.
+			if receipt.Receipt.SessionID != sessionID || receipt.Receipt.ClientID != legacyText(row["client_id"]) || receipt.Receipt.PluginID != legacyText(row["plugin_id"]) || receipt.Receipt.HostRequestID != legacyText(row["host_request_id"]) || receipt.Receipt.RequestID != legacyText(row["request_id"]) || receipt.Receipt.QueueID != legacyText(row["queue_id"]) {
+				return true, fmt.Errorf("accepted client input identity does not match legacy row")
+			}
+			receipt.Fingerprint = legacyText(row["fingerprint"])
+			receipt.LiveOwner = legacyText(row["live_owner"])
+			receipt.Order, _ = row["__wuu_legacy_rowid"].(int64)
+			key = clientInputDocumentKey(sessionID, receipt.Receipt.ClientID)
+			payload := clientInputPayload{MessageJSON: legacyBytes(row["message_json"]), RuntimeJSON: legacyBytes(row["runtime_json"]), SelectionJSON: legacyBytes(row["selection_json"])}
+			if err := c.put("client_input_payloads", key, payload); err != nil {
+				return true, err
+			}
+			value = receipt
 		case "session_folders":
 			value = &OrganizationGroup{}
 		case "session_controls":
@@ -398,14 +421,18 @@ func (c *legacySessionConversion) table(table string, rows []map[string]any) (bo
 			return true, err
 		}
 	}
-	if table == "session_inbox" {
+	if table == "session_inbox" || table == "client_input_receipts" {
 		var maxOrder int64
 		for _, row := range rows {
 			if n, ok := row["__wuu_legacy_rowid"].(int64); ok {
 				maxOrder = max(maxOrder, n)
 			}
 		}
-		if err := c.put("sequences", "inbox", maxOrder); err != nil {
+		sequence := "inbox"
+		if table == "client_input_receipts" {
+			sequence = "client_inputs"
+		}
+		if err := c.put("sequences", sequence, maxOrder); err != nil {
 			return true, err
 		}
 	}
@@ -506,6 +533,12 @@ func decodeLegacyRow(row map[string]any, target any, aliases map[string]string) 
 			raw := row[column]
 			dest := field
 			if dest.Kind() == reflect.Pointer {
+				// Empty legacy optional JSON/time columns represent absence,
+				// not a populated zero-value pointer in the converted record.
+				payload := strings.TrimSpace(legacyText(raw))
+				if payload == "" || payload == "null" {
+					continue
+				}
 				dest.Set(reflect.New(dest.Type().Elem()))
 				dest = dest.Elem()
 			}

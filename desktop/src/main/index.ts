@@ -1,3 +1,4 @@
+import { resolveUserHostContext } from "./userHost";
 import { PresentationFrameCapture } from "./presentationFrame";
 import { createDesktopRecovery } from "./desktopRecovery";
 import { randomUUID } from "node:crypto";
@@ -693,11 +694,20 @@ function appServerRequest<T>(
   targetContext?: RuntimeContext,
 ): Promise<T> {
   const context = targetContext
-    ? projectManager.resolveSubmissionContext(targetContext)
+    ? targetContext.kind === "user"
+      ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+      : projectManager.resolveSubmissionContext(targetContext)
     : windowRegistry.runtimeContextForWindow(event.sender.id);
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
     : appServerClientPool.request<T>(method, params);
+}
+
+async function bindScopedUserRuntime(owner: PluginDesktopActivations, params: PluginClientRequestParams) {
+  const context = resolveUserHostContext(params.user_space_id ?? "", params.product_domain ?? "", params.composition_profile);
+  return owner.scopedRuntimeRequest(params,
+    JSON.stringify([context.user_space_id, context.product_domain, context.composition_profile]),
+    async () => ({ workdir: context.cwd, request: appServerClientPool.bindContextRequest(context), params: desktopInitializeParams() }));
 }
 
 function desktopInitializeParams() {
@@ -903,6 +913,16 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
+  if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
+  if (method === "plugin/client/request") {
+    const request = params as PluginClientRequestParams;
+    if (request.user_space_id || request.product_domain || request.composition_profile) {
+      if (request.workspace_id || request.workspace_root) throw new Error("User host and workspace routes cannot be combined");
+      if (!peer.owner) throw new Error("Scoped plugin routing required");
+      const bound = await bindScopedUserRuntime(activations, request);
+      return pluginRuntimeRequests.request(pluginOwner, bound, request, reply);
+    }
+  }
   return requestRemoteWorkspace(projectManager, appServerClientPool, remoteTerminals, workdir, method, params, reply, peerID,
     (context, method, params) => {
       if (peer.owner && method === "initialize") return activations.initialize(context.cwd, appServerClientPool.bindContextRequest(context), params);
@@ -1979,26 +1999,26 @@ app.whenReady().then(async () => {
     }
     return result;
   });
-  ipcMain.handle("wuu:user-question-list", (event, threadId?: string) =>
+  ipcMain.handle("wuu:user-question-list", (event, threadId?: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionListResult>(event, "user-question/list", {
       thread_id: threadId,
-    }));
+    }, context));
   ipcMain.handle(
     "wuu:user-question-answer",
-    (event, requestId: string, answer: UserQuestionAnswer) =>
+    (event, requestId: string, answer: UserQuestionAnswer, context?: RuntimeContext) =>
       appServerRequest<UserQuestionResolveResult>(event, "user-question/respond", {
         request_id: requestId,
         answer,
-      }),
+      }, context),
   );
-  ipcMain.handle("wuu:user-question-cancel", (event, requestId: string) =>
+  ipcMain.handle("wuu:user-question-cancel", (event, requestId: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionResolveResult>(event, "user-question/cancel", {
       request_id: requestId,
-    }));
-  ipcMain.handle("wuu:user-question-hold", (event, requestId: string) =>
+    }, context));
+  ipcMain.handle("wuu:user-question-hold", (event, requestId: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionResolveResult>(event, "user-question/hold", {
       request_id: requestId,
-    }));
+    }, context));
   ipcMain.handle(
     "wuu:system-notification",
     (event, params: SystemNotificationParams): SystemNotificationResult => {
@@ -2327,8 +2347,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
-    // Only explicit workspace requests need resolution. Implicit requests follow
-    // the graph's captured process, not the project's mutable current selection.
+    if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
+      throw new Error("User host and workspace routes cannot be combined");
+    }
+    // Explicit user scopes are bound after authenticating the source graph.
     const context = params.workspace_id || params.workspace_root
       ? runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root) : undefined;
     if (params.workspace_root && context && resolve(params.workspace_root) !== resolve(context.cwd)) {
@@ -2342,6 +2364,9 @@ app.whenReady().then(async () => {
       if (!(error instanceof DesktopGraphOwnershipError)) throw error;
       request = await activationOwner.recoverRuntimeRequest(params.graph_generation, context?.cwd,
         () => initializeDesktopGraph(event, activationOwner));
+    }
+    if (params.user_space_id || params.product_domain || params.composition_profile) {
+      request = await bindScopedUserRuntime(activationOwner, params);
     }
     // Revalidate this caller after an awaited admission, even when another ACK
     // owns the singleflight handshake. Never dispatch into a replacement document.

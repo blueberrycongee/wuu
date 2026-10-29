@@ -1,14 +1,15 @@
 import {
   type RuntimePlugin, credentialStore, configurationStore, pluginSettingsStore,
-  artifactStore, dataIndex, queryData, authorize, managedSessions, projectCoordination,
-  CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR,
+  artifactStore, dataIndex, queryData, authorize, acquireAuthorization, releaseAuthorization, authorizationServiceDescriptor, managedSessions, projectCoordination,
+  CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR, PROCESS_SANDBOX_SERVICE_DESCRIPTOR, type ProcessSandboxRequest, type ProcessSandboxResult,
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
   type StateExportPage, type StateExportPageRequest,
   type PluginGenerationApi, type DataLatestContextResult, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
-  type ArtifactDeleteThreadRequest, type ArtifactDeleteThreadResult,
+  executionAuthorization, EXECUTION_AUTHORIZATION_DESCRIPTOR, type ExecutionAuthorizationScope,
+  type ArtifactDeleteThreadRequest, type ArtifactDeleteThreadResult, type StateTransfer,
 } from '@wuu/plugin-sdk';
 
 // The document owner adds these to persistence.ts; the public barrel must
@@ -30,15 +31,18 @@ void maintain;
 async function desktopConsumer(api: PluginGenerationApi) {
   const facts = await api.invokeService<DataQueryResult>({
     service: 'host.data.query', method: 'call', params: {thread_id: 'worker'},
-  }, {workspaceId: 'workspace', signal: api.signal});
+  }, {workspaceId: 'workspace', compositionProfile: 'independent-profile', signal: api.signal});
+  void api.invokeRuntime('refresh', {}, {userSpaceId: 'chosen-space', productDomain: 'personal', compositionProfile: 'independent-profile', signal: api.signal});
   // @ts-expect-error The host supplies execution identity, never the renderer.
   api.invokeService({service:'host.data.query',method:'call',execution_id:'another-owner'});
+  // @ts-expect-error Host admission cannot be supplied in renderer request JSON.
+  api.invokeService({service:'execution.authorization',method:'issue',admission:{version:1}});
   return facts.events?.map(event => event.type);
 }
 void desktopConsumer;
 
 // Compile against the package entry, including descriptors needed by providers.
-const descriptors = [CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR,
+const descriptors = [authorizationServiceDescriptor({effect_fence:true}), EXECUTION_AUTHORIZATION_DESCRIPTOR, CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR, PROCESS_SANDBOX_SERVICE_DESCRIPTOR,
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR];
 const create: ManagedSessionCreate = {
@@ -63,6 +67,18 @@ export default {
     name, major_version: Number(version.split('.')[0]), required: true,
   })) }; },
   async invokeService(params, host) {
+    const confinement: ProcessSandboxRequest = {argv:['/bin/sh','-c','true'],policy:{mode:'workspace-write',writable_roots:['/workspace'],protected_paths:['/workspace/private']}};
+    const confined = await host.call('host.service.call', {service:'sandbox.process',method:'confine',params:confinement}) as ProcessSandboxResult;
+    const protectedPathsEnforced: boolean | undefined = confined.protected_paths_enforced;
+    const grants = executionAuthorization(host);
+    const policy = await grants.describe();
+    const scope: ExecutionAuthorizationScope = {kind:'exact-run',authority:{service:'task.authority',major:1,provider:'task-provider',subject:'task-subject',fingerprint:'task-fingerprint'},bounds:{model_providers:['model-provider'],models:['model'],permission_modes:['read_only'],max_depth:1},depth:0,consumer:'author',user_space_id:'user',product_domain:'personal',task_id:'task',run_id:'run',session_id:'worker',context_digest:'digest',revision:1};
+    const granted = await grants.issue({request_id:'grant-once',scope,capabilities:[{action:'user/session/send',resources:[{kind:'session',id:'worker'}]}],expires_at:'2099-01-01T00:00:00Z'});
+    const checked = await grants.validate({reference:granted.reference,scope,action:'user/session/send',resources:[{kind:'session',id:'worker'}]});
+    const revoked = await grants.revoke({reference:granted.reference,scope});
+    let grantUncertain: unknown;
+    try { await grants.issue({request_id:'grant-uncertain',scope,capabilities:granted.capabilities,expires_at:granted.expires_at}); }
+    catch (error) { grantUncertain = (error as {code:string}).code; }
     const credentials = credentialStore(host);
     const absent = await credentials.get({namespace:'auth',key:'token'});
     const swapped = await credentials.compareExchange({namespace:'auth',key:'token',expected:absent.value,value:''});
@@ -79,7 +95,20 @@ export default {
     const changed = await configurationStore(host).compareExchange({expected_revision:config.revision,source:config.source});
     const emptyConfig = await configurationStore(host).read();
     const emptySource = emptyConfig.source === null ? null : atob(emptyConfig.source);
-    const settings = await pluginSettingsStore(host).read({subject:'author',scope:'workspace'});
+    const documents = documentStore(host);
+    const inspection = await documents.acquireInspection({id:'guard-one',namespaces:['records']});
+    await documents.releaseInspection({id:inspection.id,namespaces:inspection.namespaces});
+    const settingsStore = pluginSettingsStore(host);
+    const settingsInspection = await settingsStore.acquireInspection({id:'guard-two',subject:'author',scope:'user'});
+    await settingsStore.releaseInspection({id:settingsInspection.id,subject:'author',scope:'user'});
+    const settings = await settingsStore.read({subject:'author',scope:'workspace'});
+    const transfer: StateTransfer = { id: 'move-1', source_subject_id: 'old-owner', target_subject_id: 'author', key_prefix: 'records.', scope: 'user' };
+    await settingsStore.transferState(transfer);
+    let transferUnsupported: unknown, transferUncertain: unknown;
+    try { await settingsStore.transferState({...transfer, id: 'unsupported'}); }
+    catch (error) { transferUnsupported = (error as {code:string}).code; }
+    try { await settingsStore.transferState({...transfer, id: 'uncertain'}); }
+    catch (error) { transferUncertain = (error as {code:string}).code; }
     const artifacts = artifactStore(host);
     const artifactInput = params.params as { artifact_thread: string };
     const artifactAddress = {thread_id:artifactInput.artifact_thread,uri:'artifact:one',max_bytes:8};
@@ -115,6 +144,8 @@ export default {
     try { await index.latestContext({thread_id:'oversized-context'}); }
     catch(error) { contextLimit = (error as {code:string}).code; }
     const permission = await authorize(host, {cwd:'/workspace',permission_mode:'read_only',tool:{name:'read',kind:'file',read_only:true,concurrency_safe:true,destructive:false}});
+    const effectFence=await acquireAuthorization(host,{id:'effect-one',request:{cwd:'/workspace',permission_mode:'read_only',tool:{name:'write',kind:'file',read_only:false,concurrency_safe:false,destructive:false}}});
+    await releaseAuthorization(host,{id:effectFence.id});
     const sessions = managedSessions(host);
     const launch = params.params as { launch_prompt: string; launch_intent: string };
     const created = await sessions.create({...create, launch: {
@@ -122,6 +153,6 @@ export default {
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {effectFence,stewardship:params.storage_stewardship,grantPolicy:policy,serviceAdmission:params.admission,inspection,settingsInspection,granted,checked,revoked,grantUncertain,protectedPathsEnforced,absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,transferUnsupported,transferUncertain,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;

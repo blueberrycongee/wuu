@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"strings"
 )
 
@@ -49,4 +50,26 @@ func reviewBlocked(toolName, kind, reason, next string) error {
 
 func reviewFailed(toolName, reason string) error {
 	return reviewBlocked(toolName, "review_failed", reason, "automatic review could not be completed; this is not a determination that the action is unsafe or that the user denied permission; do not bypass the check or repeatedly retry; explain the failure in the conversation and resolve it or ask the user for guidance before a fresh review")
+}
+
+// AtomicAuthorizer fences its exact selected policy decision through the effect.
+// Snapshot-only providers remain usable for ordinary calls, but cannot dispatch
+// a retained reviewed action. Unsupported fencing must not call use.
+type AtomicAuthorizer interface {
+	Authorizer
+	SupportsAtomicAuthorization() bool
+	WithAuthorization(context.Context, AuthorizationRequest, func(context.Context) error) error
+}
+type fileAuthorizationContextKey struct{}
+type fileAuthorization struct {
+	toolkit *Toolkit
+	request AuthorizationRequest
+}
+
+func (t *Toolkit) authorizationRequest(info ToolInfo, call providers.ToolCall) AuthorizationRequest {
+	return AuthorizationRequest{SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir, PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments}
+}
+func (t *Toolkit) hasFileAuthorization(ctx context.Context, info ToolInfo, call providers.ToolCall) bool {
+	proof, ok := ctx.Value(fileAuthorizationContextKey{}).(fileAuthorization)
+	return ok && proof.toolkit == t && proof.request == t.authorizationRequest(info, call) && ctx.Err() == nil
 }

@@ -123,6 +123,9 @@ func (f *selectedEngineFactory) SessionForThread(ctx context.Context, binding ag
 	if descriptor.ID != f.id || !descriptor.Enabled {
 		return nil, errors.New("selected engine is unavailable")
 	}
+	if f.owner.UserBinding().IsUser() && !slices.Contains(descriptor.Capabilities, userHostContextCapability) {
+		return nil, errors.New("engine does not enforce explicit user-host context")
+	}
 	selection := ThreadModelSelection{Model: binding.Model, Effort: binding.Effort, Speed: binding.Speed, PermissionMode: binding.PermissionMode}
 	var rt *ThreadRuntime
 	if slices.Contains(descriptor.Capabilities, "host-managed-continuation") {
@@ -147,6 +150,15 @@ func (s *Session) bindSelectedEngine(ctx context.Context, rt *ThreadRuntime, bin
 	generation := rt.PluginGeneration
 	if generation == nil || generation.engineGateways == nil {
 		return nil, errors.New("engine callback generation is unavailable")
+	}
+	if s.UserBinding().IsUser() {
+		var descriptor selectedEngineDescriptor
+		if err := callSelectedEngine(ctx, generation.host, id, "descriptor", struct{}{}, &descriptor); err != nil {
+			return nil, err
+		}
+		if descriptor.ID != id || !descriptor.Enabled || !slices.Contains(descriptor.Capabilities, userHostContextCapability) {
+			return nil, errors.New("engine does not enforce explicit user-host context")
+		}
 	}
 	owner, ok := generation.host.ServiceRegistry().ProviderPluginIDFor(engineExecutionConsumer, "engine."+string(id), 1)
 	if !ok {

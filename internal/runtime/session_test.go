@@ -3611,3 +3611,27 @@ func (f *workerRecordingAdapter) InvokeCapability(ctx context.Context, p pluginh
 	}
 	return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 }
+
+// Process-scoped product selection must survive reload without rewriting shared
+// configuration or discarding explicit modules/bindings from another caller.
+func TestRuntimeCompositionProfileOverridePreservesExplicitChoices(t *testing.T) {
+	original := composition.DefaultConfig("headless")
+	original.Modules = &[]string{"example.provider"}
+	original.Services = []composition.Binding{{Service: "agent.prompt", Major: 1, Provider: "example.provider"}}
+	cfg := config.Config{Composition: original}
+	if err := (ConfigOverrides{}).Apply(&cfg); err != nil || cfg.Composition != original {
+		t.Fatal("absent process override changed explicit composition")
+	}
+	override := ConfigOverrides{CompositionProfile: " personal "}
+	if err := override.Apply(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if original.Profile != "headless" || cfg.Composition == original || cfg.Composition.Profile != "personal" || len(*cfg.Composition.Modules) != 1 || (*cfg.Composition.Modules)[0] != "example.provider" || cfg.Composition.Services[0].Provider != "example.provider" {
+		t.Fatal("process profile mutated shared configuration or replaced explicit choices")
+	}
+	owner := &Session{configOverrides: override}
+	reloaded, err := owner.applyRuntimeConfig(config.Config{})
+	if err != nil || reloaded.Composition == nil || reloaded.Composition.Profile != "personal" {
+		t.Fatalf("reload lost process-scoped profile: %+v %v", reloaded.Composition, err)
+	}
+}

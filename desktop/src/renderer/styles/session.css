@@ -63,3 +63,10 @@
   column-gap: var(--wuu-grid-gutter);
   margin-inline: auto;
 }
+
+/* The opt-in messaging transport uses a compact reading measure; Coding keeps
+   the shared session geometry and saved typography preferences. */
+.plugin-conversation[data-presentation="bubbles"] {
+  --session-composer-width: 640px;
+  --session-outer-width: calc(640px + var(--session-outer-padding-inline) * 2);
+}

@@ -153,6 +153,21 @@ describe("UserQuestionCard", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("holds a single multi-select offer and submits all selected choices together", async () => {
+    const onAnswer = vi.fn(async () => undefined), onHold = vi.fn(async () => undefined);
+    const request = offerRequest({ questions: [{ id: "files", question: "Which files?", multi_select: true, options: [{ label: "Notes" }, { label: "Plan" }] }] });
+    const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root?.render(<I18nProvider><UserQuestionCard request={request} onAnswer={onAnswer} onCancel={async () => undefined} onHold={onHold} /></I18nProvider>));
+    const choices = container.querySelectorAll<HTMLButtonElement>('[role="checkbox"]');
+    await act(async () => choices[0].click());
+    expect(onHold).toHaveBeenCalledTimes(1); expect(onAnswer).not.toHaveBeenCalled();
+    await act(async () => choices[1].click());
+    const submit = container.querySelector<HTMLButtonElement>('.user-question-submit');
+    expect(submit).not.toBeNull(); expect(submit!.disabled).toBe(false);
+    await act(async () => submit!.click());
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ answers: [{ id: "files", selected: ["Notes", "Plan"] }] });
+  });
+
   it("collects every offer answer before submitting, including free text", async () => {
     const onAnswer = vi.fn(async () => undefined);
     const onHold = vi.fn(async () => undefined);

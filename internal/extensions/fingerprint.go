@@ -117,7 +117,23 @@ type PackageDependency struct {
 	Optional bool   `json:"optional,omitempty"`
 }
 
+// StorageTransferDeclaration authorizes a one-time private storage ownership move.
+// Both independently trusted packages must declare the same transfer reciprocally.
+type StorageTransferDeclaration struct {
+	ID        string `json:"id"`
+	Plugin    string `json:"plugin"`
+	Scope     string `json:"scope"`
+	Domain    string `json:"domain"`
+	KeyPrefix string `json:"keyPrefix"`
+}
+
+type StorageTransfers struct {
+	Exports []StorageTransferDeclaration `json:"exports,omitempty"`
+	Imports []StorageTransferDeclaration `json:"imports,omitempty"`
+}
+
 type PackageSpec struct {
+	StorageTransfers     *StorageTransfers        `json:"storage_transfers,omitempty"`
 	ID                   string                   `json:"id"`
 	Source               string                   `json:"source"`
 	Scope                string                   `json:"scope"`
@@ -164,6 +180,7 @@ func RequestedPermissionUnion(spec PackageSpec) []string {
 
 func normalizePackageSpec(spec PackageSpec) PackageSpec {
 	normalized := PackageSpec{
+		StorageTransfers:     spec.StorageTransfers,
 		ID:                   strings.TrimSpace(spec.ID),
 		Source:               strings.TrimSpace(spec.Source),
 		Scope:                strings.TrimSpace(spec.Scope),

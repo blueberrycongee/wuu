@@ -7,10 +7,13 @@ import (
 
 func TestNormalizedPolicyCanonicalizesAndDeduplicatesWritableRoots(t *testing.T) {
 	root := t.TempDir()
-	policy := normalizedPolicy(Policy{
+	policy, err := normalizedPolicy(Policy{
 		Mode:          ModeWorkspaceWrite,
 		WritableRoots: []string{root, filepath.Join(root, "."), ""},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(policy.WritableRoots) != 1 {
 		t.Fatalf("writable roots = %#v, want one canonical root", policy.WritableRoots)
 	}

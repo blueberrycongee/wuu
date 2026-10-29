@@ -100,6 +100,12 @@ func (c *Client) callEncoded(ctx context.Context, method string, raw json.RawMes
 		}
 		var cause error
 		switch serviceErr.Code {
+		case "namespace_ownership":
+			cause = ErrNamespaceOwnership
+		case "inspection_active":
+			cause = ErrInspectionActive
+		case "inspection_released":
+			cause = ErrInspectionReleased
 		case "state_conflict":
 			cause = ErrConflict
 		case "state_operation_conflict":

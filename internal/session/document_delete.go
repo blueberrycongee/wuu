@@ -31,7 +31,7 @@ func (s *documentStore) deleteSession(id string, onlyIfArchived bool) (Session, 
 				return err
 			}
 		}
-		for _, table := range []string{"session_messages", "session_activity", "held_user_work", "session_compaction_notes", "session_model_input_receipts"} {
+		for _, table := range []string{"session_messages", "session_activity", "held_user_work", "session_compaction_notes", "session_model_input_receipts", "client_input_receipts", "client_input_payloads"} {
 			if err := deleteDocumentPrefix(tx, table, documentPrefix(id)); err != nil {
 				return err
 			}

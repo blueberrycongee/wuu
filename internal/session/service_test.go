@@ -2,9 +2,13 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -419,6 +423,181 @@ func TestSessionServiceStreamingKeepsDurableWritesAtBoundaries(t *testing.T) {
 		}
 		if upserts != 3 {
 			t.Fatalf("checkpoint writes=%d, want initial, terminal observation, and completion barrier", upserts)
+		}
+	})
+}
+
+// Personal receipt admission crosses the selected serialized domain just like
+// ordinary history. A stale envelope cannot append, and lost replies never replay.
+func TestSessionServicePersonalReceiptAdmission(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		client := NewStore(context.Background(), native.documents)
+		sess := Session{ID: "personal", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin"}
+		if _, err := client.CreateInitialized(sess, nil); err != nil {
+			t.Fatal(err)
+		}
+		baseline := Control{SessionID: sess.ID}
+		runtime, _ := json.Marshal(struct{ ExecutionControlBaseline *Control }{&baseline})
+		input := AcceptedClientInput{Receipt: providers.ClientInputReceipt{SessionID: sess.ID, UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin", PluginID: "plugin", HostRequestID: "host", RequestID: "request", ClientID: "client", ReceiptID: "receipt", QueueID: "queue"}, Fingerprint: "fingerprint", MessageJSON: []byte(`{"text":"hello"}`), RuntimeJSON: runtime, SelectionJSON: []byte(`{"files":["original"]}`), LiveOwner: "owner"}
+		accepted, fresh, err := client.AcceptClientInput(input, nil, &baseline)
+		if err != nil || !fresh || accepted.Receipt.Revision != 1 {
+			t.Fatalf("accept: %+v %v %v", accepted, fresh, err)
+		}
+		repeated, fresh, err := client.AcceptClientInput(input, nil, &baseline)
+		if err != nil || fresh || repeated.Receipt.ReceiptID != accepted.Receipt.ReceiptID {
+			t.Fatalf("repeated accept: %+v %v %v", repeated, fresh, err)
+		}
+		input.Fingerprint = "different"
+		if _, _, err := client.AcceptClientInput(input, nil, &baseline); !errors.Is(err, ErrClientInputConflict) {
+			t.Fatalf("changed request: %v", err)
+		}
+		held, err := client.ChangeClientInput(accepted, "held", "", nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := HistoryRecord{Role: "user", Origin: "user", Content: "hello", ClientID: "client"}
+		if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, accepted, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
+			t.Fatalf("stale append: %v", err)
+		}
+		queued, err := client.ChangeClientInput(held, "queued", "new-owner", runtime, nil, &baseline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seq, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline)
+		if err != nil || seq != 1 {
+			t.Fatalf("append: %d %v", seq, err)
+		}
+		if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
+			t.Fatalf("replayed append: %v", err)
+		}
+		scope := ClientInputScope{Binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, SessionID: sess.ID, PluginID: "plugin"}
+		stored, found, err := client.ReadClientInput(scope, "host")
+		if err != nil || !found || stored.Receipt.MessageSeq != seq || stored.Receipt.HostTurnID != "turn" || len(stored.MessageJSON) != 0 || string(stored.SelectionJSON) != string(queued.SelectionJSON) {
+			t.Fatalf("settled receipt: %+v %v %v", stored, found, err)
+		}
+		if err := client.SettleClientInputExecution(scope, "host", "other-turn", "completed", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.RecoverClientInputs(t.TempDir(), scope); err != nil {
+			t.Fatal(err)
+		}
+		stored, _, err = client.ReadClientInput(scope, "host")
+		if err != nil || stored.Receipt.ExecutionState != "unconfirmed" {
+			t.Fatalf("unknown execution replayed: %+v %v", stored, err)
+		}
+		summaries, err := client.ClientInputHistoryReceipts(scope)
+		if err != nil || summaries["client"].MessageSeq != 1 {
+			t.Fatalf("history receipt: %+v %v", summaries, err)
+		}
+		foreign := scope
+		foreign.Binding.UserSpaceID = "other"
+		if _, found, err := client.ReadClientInput(foreign, "host"); err != nil || found {
+			t.Fatalf("foreign binding read: %v %v", found, err)
+		}
+	})
+}
+
+// The serialized admission envelope cannot replace canonical receipt identity
+// or original attachment bytes while consuming an otherwise current revision.
+func TestSessionServicePersonalReceiptEnvelopeImmutable(t *testing.T) {
+	for _, change := range []struct {
+		name   string
+		mutate func(*AcceptedClientInput)
+	}{
+		{"attachments", func(r *AcceptedClientInput) { r.SelectionJSON = []byte(`{"files":["replaced"]}`) }},
+		{"receipt identity", func(r *AcceptedClientInput) { r.Receipt.HostRequestID = "other-host-request" }},
+		{"fingerprint", func(r *AcceptedClientInput) { r.Fingerprint = "other-fingerprint" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+				client := NewStore(context.Background(), native.documents)
+				sess := Session{ID: "personal", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin"}
+				if _, err := client.CreateInitialized(sess, nil); err != nil {
+					t.Fatal(err)
+				}
+				baseline := Control{SessionID: sess.ID}
+				runtime, _ := json.Marshal(struct{ ExecutionControlBaseline *Control }{&baseline})
+				input := AcceptedClientInput{Receipt: providers.ClientInputReceipt{SessionID: sess.ID, UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin", PluginID: "plugin", HostRequestID: "host", RequestID: "request", ClientID: "client", ReceiptID: "receipt", QueueID: "queue"}, Fingerprint: "fingerprint", MessageJSON: []byte(`{"text":"hello"}`), RuntimeJSON: runtime, SelectionJSON: []byte(`{"files":["original"]}`), LiveOwner: "owner"}
+				accepted, _, err := client.AcceptClientInput(input, nil, &baseline)
+				if err != nil {
+					t.Fatal(err)
+				}
+				altered := accepted
+				change.mutate(&altered)
+				record := HistoryRecord{Role: "user", Origin: "user", Content: "hello", ClientID: "client"}
+				if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, altered, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
+					t.Fatalf("altered admission was not rejected: %v", err)
+				}
+				scope := ClientInputScope{Binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, SessionID: sess.ID, PluginID: "plugin"}
+				stored, found, err := client.ReadClientInput(scope, "host")
+				if err != nil || !found || stored.Receipt != accepted.Receipt || stored.Fingerprint != accepted.Fingerprint || string(stored.SelectionJSON) != string(accepted.SelectionJSON) {
+					t.Fatalf("canonical admission changed: %+v %v %v", stored, found, err)
+				}
+				if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, accepted, "turn", nil, &baseline); err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
+func TestSessionServiceInspectionFencesAuthorityAndSupportsRecovery(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		ctx := context.Background()
+		service := NewService("inspection-session", native.documents)
+		if err := service.Activate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		defer service.Close(ctx)
+		allowMaintenance := false
+		client := NewClient(ctx, func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+			p := pluginhost.ServiceInvokeParams{Caller: "host", Method: method, Params: raw}
+			if allowMaintenance && (method == "ListInspections" || method == "ReconcileInspection") {
+				action := "state/inspections/list"
+				if method == "ReconcileInspection" {
+					action = "state/inspections/reconcile"
+				}
+				digest := sha256.Sum256(raw)
+				p.Admission = &pluginhost.ServiceAdmission{Version: 1, Principal: principal.LocalOwner().Identity(), Action: action, InputJSON: string(raw), InputDigest: hex.EncodeToString(digest[:])}
+			}
+			return service.InvokeService(ctx, p)
+		})
+		if _, err := client.ListInspections(ctx); err == nil {
+			t.Fatal("ordinary session caller reached maintenance")
+		}
+		allowMaintenance = true
+		if _, err := client.Create("fenced"); err != nil {
+			t.Fatal(err)
+		}
+		entered := false
+		if err := client.WithInspection(ctx, func() error {
+			entered = true
+			if _, err := client.UpdateArchived("fenced", true); !errors.Is(err, persistence.ErrInspectionActive) {
+				t.Fatalf("archive escaped or lost definite fence rejection: %v", err)
+			}
+			if err := client.AppendHistoryRecord("fenced", HistoryRecord{Role: "user", Origin: "user", Content: "new authority"}); !errors.Is(err, persistence.ErrInspectionActive) {
+				t.Fatalf("newer turn escaped: %v", err)
+			}
+			return nil
+		}); err != nil || !entered {
+			t.Fatalf("inspection: %v %v", entered, err)
+		}
+		if _, err := client.UpdateArchived("fenced", true); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate a holder that lost the acquire response and cannot run cleanup.
+		var guard persistence.InspectionGuard
+		if err := client.invoke("AcquireInspection", []any{"lost-holder"}, []any{&guard}); err != nil {
+			t.Fatal(err)
+		}
+		list, err := client.ListInspections(ctx)
+		if err != nil || len(list.Inspections) != 1 {
+			t.Fatalf("session guard is not discoverable: %+v %v", list, err)
+		}
+		status := list.Inspections[0]
+		receipt, err := client.ReconcileInspection(ctx, persistence.InspectionResolution{InspectionRequest: persistence.InspectionRequest{ID: status.ID, Namespaces: status.Namespaces}, ExpectedOwner: status.Owner, Outcome: "not-dispatched", Reason: "confirmed callback never entered"})
+		if err != nil || receipt.Reason == "" {
+			t.Fatalf("reconciliation failed: %+v %v", receipt, err)
 		}
 	})
 }
