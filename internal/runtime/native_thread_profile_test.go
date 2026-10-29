@@ -8,11 +8,14 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/workingnotes"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +38,7 @@ func TestDelegatedNativeToolkitKeepsUserHostBoundary(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(protected), 0700))
 	require.NoError(t, os.WriteFile(protected, []byte("coding-secret"), 0600))
 	plugin := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "mcp-forbidden", MCPServers: map[string]config.MCPServerConfig{"required": {Command: "/nonexistent/forbidden-mcp"}}}}
-	generation := &PluginGeneration{active: []pluginpkg.Plugin{plugin}, requiredPlugins: map[string]bool{plugin.ID: true}}
+	generation := &PluginGeneration{userBinding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, active: []pluginpkg.Plugin{plugin}, requiredPlugins: map[string]bool{plugin.ID: true}}
 	owner := &Session{RootDir: root, WuuHome: home, DataRoot: data, UserSpaceID: "local", ProductDomain: "personal", ProviderName: "openai", Model: "gpt-5"}
 	kit, cleanup, err := owner.newThreadNativeToolkit(context.Background(), generation, root)
 	require.NoError(t, err)
@@ -76,4 +79,63 @@ func TestDelegatedNativeToolkitKeepsUserHostBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError, result.TextProjection())
 	require.Contains(t, result.TextProjection(), "personal-only")
+}
+
+func TestColdNativeGenerationRejectsCrossDomainBeforeInitialization(t *testing.T) {
+	personal := userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}
+	coding := userspace.Binding{}
+	otherUser := userspace.Binding{UserSpaceID: "bob", ProductDomain: "personal"}
+	otherProduct := userspace.Binding{UserSpaceID: "alice", ProductDomain: "coding"}
+	for _, tc := range []struct {
+		name          string
+		owner, caller userspace.Binding
+	}{
+		{"personal-to-coding", personal, coding}, {"coding-to-personal", coding, personal}, {"other-user", personal, otherUser}, {"other-product", personal, otherProduct},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			home := t.TempDir()
+			g := &PluginGeneration{userBinding: tc.owner}
+			caller := &Session{RootDir: root, WuuHome: home, UserSpaceID: tc.caller.UserSpaceID, ProductDomain: tc.caller.ProductDomain}
+			_, _, err := caller.newThreadNativeToolkit(context.Background(), g, root)
+			require.ErrorContains(t, err, "native generation domain changed")
+			require.False(t, g.nativeDependencies.initialized, "cross-domain call initialized the generation")
+			owner := &Session{RootDir: root, WuuHome: home, UserSpaceID: tc.owner.UserSpaceID, ProductDomain: tc.owner.ProductDomain}
+			_, cleanup, err := owner.newThreadNativeToolkit(context.Background(), g, root)
+			require.NoError(t, err)
+			_ = cleanup(context.Background())
+			_, _ = g.nativeDependencies.close()
+		})
+	}
+}
+
+func TestCrossDomainGenerationActivationHasNoEffects(t *testing.T) {
+	personal := userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}
+	for _, tc := range []struct {
+		name           string
+		source, target userspace.Binding
+	}{
+		{"personal-to-coding", personal, userspace.Binding{}}, {"coding-to-personal", userspace.Binding{}, personal}, {"other-user", personal, userspace.Binding{UserSpaceID: "bob", ProductDomain: "personal"}}, {"other-product", personal, userspace.Binding{UserSpaceID: "alice", ProductDomain: "coding"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := &Session{UserSpaceID: tc.target.UserSpaceID, ProductDomain: tc.target.ProductDomain}
+			candidate := &PluginGeneration{userBinding: tc.source, host: pluginhost.New(), hooks: hooks.NewDispatcher(nil)}
+			committed := false
+			err := owner.ActivatePluginGeneration(candidate, func() error { committed = true; return nil })
+			require.ErrorContains(t, err, "plugin generation domain changed")
+			require.False(t, committed)
+			require.Nil(t, owner.pluginGeneration)
+			require.False(t, candidate.nativeDependencies.initialized)
+			owner.pluginGeneration = candidate
+			_, err = owner.cloneForThreadModel()
+			require.ErrorContains(t, err, "plugin generation domain changed")
+		})
+	}
+}
+
+func TestCapturedGenerationKeepsUserHostBinding(t *testing.T) {
+	owner := &Session{UserSpaceID: "alice", ProductDomain: "personal", PluginHost: pluginhost.New(), HookDispatcher: hooks.NewDispatcher(nil)}
+	captured := owner.capturePluginGeneration()
+	require.True(t, captured.userBinding.Matches(owner.UserBinding()))
+	require.NoError(t, owner.releasePluginGeneration(captured))
 }
