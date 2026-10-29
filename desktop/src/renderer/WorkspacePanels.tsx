@@ -769,6 +769,9 @@ function WorkspacePanelContent({
           </Tooltip>
         ))}
         <div className="workspace-composer-controls" ref={runtimeControlsRef} />
+        <div className="workspace-tool-rail-contributions">
+          <slots.Slot name="wuu.default-preview/workspace.rail" />
+        </div>
         </> : null}
       </nav>
     ) : null}
