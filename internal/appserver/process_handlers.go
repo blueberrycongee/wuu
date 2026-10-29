@@ -248,7 +248,7 @@ func (s *Server) processBelongsToThread(threadID string, p process.Process) bool
 		th.mu.Unlock()
 		return false
 	}
-	control := th.execRuntime.AgentControl
+	control := th.execRuntime.NativeAgentControl()
 	th.mu.Unlock()
 	return processEventBelongsToThread(threadID, control, process.Event{Process: p})
 }

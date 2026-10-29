@@ -297,7 +297,7 @@ func (s *selectedEngineSession) Close(ctx context.Context) error {
 
 func closeEngineRuntime(owner *Session, rt *ThreadRuntime) error {
 	var err error
-	if control := rt.AgentControl; control != nil {
+	if control := rt.NativeAgentControl(); control != nil {
 		control.BeginShutdown()
 		control.StopAll()
 		control.YieldWorkerTerminalFinalizations()

@@ -460,7 +460,7 @@ func (c *compositionService) run(ctx context.Context, caller compositionOwner, i
 		return nil, err
 	}
 	defer func() {
-		if control := thread.AgentControl; control != nil {
+		if control := thread.NativeAgentControl(); control != nil {
 			control.BeginShutdown()
 			control.StopAll()
 			control.YieldWorkerTerminalFinalizations()

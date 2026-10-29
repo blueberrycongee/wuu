@@ -2256,17 +2256,17 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 	}
 	// The external host toolkit describes only browser/CUA capabilities, not
 	// the engine's native tools or its ability to use explicitly selected skills.
-	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
-		root = threadRuntime.Toolkit.RootDir()
+	if threadRuntime.NativeToolkit() != nil && engineID == agentengine.EngineWuu {
+		root = threadRuntime.NativeToolkit().RootDir()
 		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
 			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
 			root = ""
 		}
-		items, err := threadRuntime.Toolkit.CurrentSkills(ctx, force)
+		items, err := threadRuntime.NativeToolkit().CurrentSkills(ctx, force)
 		if err != nil {
 			return nil, root, err
 		}
-		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
+		return tools.FilterSkillsForSurface(items, threadRuntime.NativeToolkit().ActiveSurface()), root, nil
 	}
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
@@ -2670,8 +2670,8 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 		}
 		th.execRuntime.ModelBudget = derivation.ModelBudget
 		th.execRuntime.WorkerModelBudget = derivation.WorkerModelBudget
-		if th.execRuntime.AgentControl != nil {
-			th.execRuntime.AgentControl.UpdateWorkerDefaults(
+		if th.execRuntime.NativeAgentControl() != nil {
+			th.execRuntime.NativeAgentControl().UpdateWorkerDefaults(
 				derivation.WorkerClient,
 				derivation.WorkerAPIModel,
 				s.workerManagerOptionsForDerivation(derivation),

@@ -367,10 +367,10 @@ func threadHasActiveAgents(th *threadState) bool {
 	th.mu.Lock()
 	threadRuntime := th.execRuntime
 	th.mu.Unlock()
-	if threadRuntime == nil || threadRuntime.AgentControl == nil {
+	if threadRuntime == nil || threadRuntime.NativeAgentControl() == nil {
 		return false
 	}
-	for _, snapshot := range threadRuntime.AgentControl.List() {
+	for _, snapshot := range threadRuntime.NativeAgentControl().List() {
 		if isRunningSubAgentStatus(snapshot.Status) {
 			return true
 		}

@@ -2489,7 +2489,7 @@ func (s *Server) liveAgentControl(rootID string) *agentcontrol.AgentControl {
 	if threadRuntime == nil {
 		return nil
 	}
-	return threadRuntime.AgentControl
+	return threadRuntime.NativeAgentControl()
 }
 
 func (s *Server) agentHistoryPath(rootID, agentID string) (string, error) {

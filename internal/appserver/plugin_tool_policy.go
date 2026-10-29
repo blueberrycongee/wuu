@@ -57,8 +57,8 @@ func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID st
 		}
 	}
 	threadRuntime.StreamRunner.Tools = guarded
-	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
-		threadRuntime.Toolkit.SetToolPolicy(guard.allowed)
+	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.NativeToolkit() != nil {
+		threadRuntime.NativeToolkit().SetToolPolicy(guard.allowed)
 	}
 	return nil
 }

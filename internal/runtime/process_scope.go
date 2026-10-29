@@ -42,13 +42,13 @@ func (t *ThreadRuntime) ConfigureExecutionPermissions(permissions config.Resolve
 	if t == nil {
 		return
 	}
-	if t.Toolkit != nil {
-		ConfigureToolkitPermissions(t.Toolkit, permissions)
-		t.Toolkit.SetApproveForMe(approve)
+	if t.NativeToolkit() != nil {
+		ConfigureToolkitPermissions(t.NativeToolkit(), permissions)
+		t.NativeToolkit().SetApproveForMe(approve)
 		if !approve {
 			reviewer = nil
 		}
-		t.Toolkit.SetReviewer(reviewer)
+		t.NativeToolkit().SetReviewer(reviewer)
 		return
 	}
 	cfg := t.processScopeConfig
