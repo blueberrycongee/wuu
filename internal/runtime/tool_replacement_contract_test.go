@@ -44,6 +44,41 @@ func TestReplacementSearchResultStructuredContent(t *testing.T) {
 	}
 }
 
+func TestReplacementSearchExtraFieldsPreserveEvidence(t *testing.T) {
+	for _, outcome := range []struct {
+		name, payload, want string
+	}{
+		{"results", `"results":[{"url":"https://example.test/result"}]`, "result_count=1"},
+		{"error", `"error":"search unavailable"`, "error=search unavailable"},
+	} {
+		text := strings.Replace(validSearch, `"results":[]`, outcome.payload+`,"status_code":"200","content_type":{},"size":"unknown","truncated":"unknown"`, 1)
+		for _, view := range []string{"text", "structured", "both"} {
+			t.Run(outcome.name+"/"+view, func(t *testing.T) {
+				result := toolresult.Result{}
+				if view != "structured" {
+					result = toolresult.FromText(text)
+				}
+				if view != "text" {
+					result.StructuredContent = json.RawMessage(text)
+				}
+				evidence, err := validateSearchReplacement(result, `{"query":"hello"}`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				kit, err := tools.New(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				kit.RecordWebSearchEvidence(evidence)
+				block, ok := kit.WebEvidenceContextBlock()
+				if !ok || !strings.Contains(block.Content, "id=web_123 tool=web_search") || !strings.Contains(block.Content, outcome.want) {
+					t.Fatalf("accepted replacement result lost evidence: %+v", block)
+				}
+			})
+		}
+	}
+}
+
 func TestReplacementSearchRejectsMalformedEntries(t *testing.T) {
 	for _, replacement := range []string{`"results":[1]`, `"results":[{"url":""}]`, `"results":[],"error":"failed"`} {
 		text := strings.Replace(validSearch, `"results":[]`, replacement, 1)

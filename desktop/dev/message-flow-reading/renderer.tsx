@@ -151,6 +151,20 @@ const conversationTurns: Turn[] = [
   ] },
 ];
 
+const currencyTurns: Turn[] = [{
+  id: "currency-turn", status: "completed", items_view: "full", duration_ms: 1000,
+  items: [
+    { id: "currency-request", type: "user_message", status: "completed", text:
+      "**最高 $500/月 API 额度**\n套餐对应 $100/$200/$500，月上限 $500。\nhttps://example.com/docs/a-very-long-address-for-checking-that-links-wrap-inside-the-user-message\n\n这个内容可以正常显示吗？" },
+    { id: "formula-request", type: "user_message", status: "completed", text:
+      String.raw`长行内公式 $a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8+a_9+a_{10}+a_{11}+a_{12}+a_{13}+a_{14}+a_{15}+a_{16}+a_{17}+a_{18}+a_{19}+a_{20}$ 应保留完整。` },
+    { id: "unbreakable-formula-request", type: "user_message", status: "completed", text:
+      String.raw`不可分割的公式 $\underbrace{a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8+a_9+a_{10}+a_{11}+a_{12}+a_{13}+a_{14}+a_{15}+a_{16}+a_{17}+a_{18}+a_{19}+a_{20}}_{\text{sum}}$ 应保留完整。` },
+    { id: "numeric-formula-request", type: "user_message", status: "completed", text: "相邻数字 $2x+1$3。" },
+    { id: "currency-answer", type: "agent_message", status: "completed", terminal: true, text: "金额、链接和公式都应保持在阅读区域内。" },
+  ],
+}];
+
 const mediaAnswer = `图片使用独立的阅读空间，前后的文字保持清楚的分组。
 
 ![示例插画](${new URL(mediaURL, location.origin).href})
@@ -233,7 +247,7 @@ function Fixture(): JSX.Element {
   const [size, setSize] = useState<number>(Number(params.get("size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default);
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
-  const turns = surface === "images" ? mediaTurns : conversationTurns;
+  const turns = surface === "images" ? mediaTurns : params.get("content") === "currency" ? currencyTurns : conversationTurns;
   const [live, setLive] = useState(params.has("lateTerminal") || params.has("live"));
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);

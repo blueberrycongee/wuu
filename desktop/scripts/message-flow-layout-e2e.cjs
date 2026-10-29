@@ -120,6 +120,66 @@ async function run() {
       }
     }
   }
+  for (const width of [1280, 420]) {
+    for (const size of [15, 20]) {
+      for (const theme of ["light", "dark"]) {
+        win.setContentSize(width, 900);
+        win.webContents.setZoomLevel(0);
+        await win.loadURL(`${origin}/dev/message-flow-reading/?surface=conversation&content=currency&size=${size}&theme=${theme}`);
+        await waitFor(win, () => document.querySelectorAll(".user-message-block").length === 4);
+        for (const messageStyle of ["bubble", "im"]) {
+          await evaluate(win, () => document.documentElement.dataset.messageStyle = "bubble");
+          if (messageStyle === "im") await evaluate(win, () => document.documentElement.dataset.messageStyle = "im");
+          const geometry = await evaluate(win, async () => {
+            await document.fonts.ready;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const column = document.querySelector(".fixture-column");
+            const messages = [...document.querySelectorAll(".user-message-block")];
+            const rect = element => {
+              const { left, right, width } = element.getBoundingClientRect();
+              return { left, right, width };
+            };
+            const amount = messages[0].querySelector(".user-message");
+            const formula = messages[1].querySelector(".katex");
+            const unbreakable = messages[2].querySelector(".katex");
+            unbreakable.focus();
+            return {
+              column: rect(column), bubbles: messages.map(message => rect(message.querySelector(".user-message"))),
+              amountText: amount.textContent, amountMath: amount.querySelectorAll(".katex").length,
+              link: rect(amount.querySelector("a.rich-web-link")),
+              formula: { ...rect(formula), scrollWidth: formula.scrollWidth, clientWidth: formula.clientWidth,
+                lineTops: [...new Set([...formula.querySelectorAll(".katex-html > .base")]
+                  .map(element => Math.round(element.getBoundingClientRect().top)))].length },
+              unbreakable: { ...rect(unbreakable), scrollWidth: unbreakable.scrollWidth, clientWidth: unbreakable.clientWidth,
+                focused: document.activeElement === unbreakable },
+              numericMath: messages[3].querySelector(".katex annotation")?.textContent,
+            };
+          });
+          assert.equal(geometry.amountMath, 0, "Dollar amounts must remain text");
+          assert.equal(geometry.numericMath, "2x+1", "A numeric formula remains math even when text follows its closing dollar");
+          assert.ok(geometry.amountText.includes("$500/月") && geometry.amountText.includes("$100/$200/$500"),
+            "All dollar amounts must remain visible in the message");
+          for (const bubble of geometry.bubbles) {
+            assert.ok(bubble.left >= -1 && bubble.right <= width + 1,
+              `Message must remain within the viewport: ${JSON.stringify(geometry)}`);
+          }
+          assert.ok(geometry.link.right <= geometry.bubbles[0].right + 1,
+            `The long URL must wrap inside its message: ${JSON.stringify(geometry)}`);
+          assert.ok(geometry.formula.right <= geometry.bubbles[1].right + 1
+            && geometry.formula.lineTops > 1 && geometry.formula.scrollWidth <= geometry.formula.clientWidth + 1,
+            `A breakable inline formula must wrap inside its message: ${JSON.stringify(geometry)}`);
+          assert.ok(geometry.unbreakable.right <= geometry.bubbles[2].right + 1
+            && geometry.unbreakable.scrollWidth > geometry.unbreakable.clientWidth && geometry.unbreakable.focused,
+            `An unbreakable formula must be keyboard-scrollable inside its message: ${JSON.stringify(geometry)}`);
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Right" });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Right" });
+          await waitFor(win, () => document.querySelectorAll(".user-message-block")[2].querySelector(".katex").scrollLeft > 0);
+          report.push({ width, size, theme, messageStyle, currency: geometry });
+          fs.writeFileSync(path.join(output, `currency-${messageStyle}-${width}-${size}-${theme}.png`), (await win.webContents.capturePage()).toPNG());
+        }
+      }
+    }
+  }
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
   clearTimeout(timeout);
   win.close();

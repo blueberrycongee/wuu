@@ -413,6 +413,60 @@ func TestThreadStateDiscardsToolDraftsOnInferenceReplay(t *testing.T) {
 	}
 }
 
+func TestThreadStateDiscardsOnlyRetriedOperationReasoning(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
+	th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+	connect := func(operation string) {
+		th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnecting, OperationID: operation}}, now)
+	}
+	think := func(text string, done bool) {
+		th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventThinkingDelta, Content: text}, now)
+		if done {
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventThinkingDone}, now)
+		}
+	}
+	connect("prior")
+	// A provider can move to another operation without a separate thinking_done.
+	think("previous operation", false)
+	connect("retried")
+	think("completed failed reasoning", true)
+	think("active failed reasoning", false)
+	th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseReconnecting, OperationID: "retried"}}, now)
+	var beforeReset int
+	for _, item := range th.ensureTurnLocked("turn", now).Items {
+		if item.Type == ThreadItemReasoning {
+			beforeReset++
+		}
+	}
+	if beforeReset != 3 {
+		t.Fatalf("reconnect without reset removed reasoning: %d", beforeReset)
+	}
+	// This empty replacement is emitted by the stream runner before its
+	// reconnect event; it must not leave the earlier completed row behind.
+	th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventThinkingReplace}, now)
+	out := th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseReconnecting, OperationID: "retried", ResetPartial: true}}, now)
+	var removed int
+	for _, notification := range out {
+		if notification.method == NotificationItemRemoved {
+			removed++
+		}
+	}
+	if removed != 2 {
+		t.Fatalf("expected two failed reasoning rows removed, got %d: %+v", removed, out)
+	}
+	think("successful reasoning", true)
+	var reasoning []string
+	for _, item := range th.ensureTurnLocked("turn", now).Items {
+		if item.Type == ThreadItemReasoning {
+			reasoning = append(reasoning, item.Text)
+		}
+	}
+	if len(reasoning) != 2 || reasoning[0] != "previous operation" || reasoning[1] != "successful reasoning" {
+		t.Fatalf("unexpected reasoning after retry: %v", reasoning)
+	}
+}
+
 func TestThreadStateRetryTerminalFailureDoesNotRestoreDiscardedToolDraft(t *testing.T) {
 	now := time.Unix(0, 0).UTC()
 	th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)

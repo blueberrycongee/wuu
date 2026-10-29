@@ -4,6 +4,9 @@ import {randomUUID} from 'node:crypto';
 import {runJSONLRuntime, type RuntimePlugin} from '@wuu/plugin-sdk';
 import {pathToFileURL} from 'node:url';
 
+// Match the host's Unicode White_Space rules, including NEL but excluding BOM.
+const trimSpace = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+
 const plugin: RuntimePlugin = {
   initialize() {
     return {protocol_version: 3, lifecycle_version: 2, tools: [{
@@ -29,13 +32,16 @@ const plugin: RuntimePlugin = {
   },
   executeTool(input) {
     const args = input.arguments as {query?: unknown; version_hint?: string; package_context?: {name?: string; version?: string; ecosystem?: string}};
-    if (input.tool_id !== 'search' || typeof args.query !== 'string' || !args.query.trim()) throw new Error('query is required');
+    if (input.tool_id !== 'search' || typeof args.query !== 'string' || !trimSpace(args.query)) throw new Error('query is required');
     const pkg = args.package_context ?? {};
-    const label = pkg.name ? `${pkg.name}${pkg.version ? `@${pkg.version}` : ''}` : (pkg.version ?? '');
-    const requestedVersion = args.version_hint?.trim() || [pkg.ecosystem, label].filter(Boolean).join(' ');
-    const compact = requestedVersion.trim().split(/\s+/).join(' ');
+    const name = trimSpace(pkg.name ?? '');
+    const packageVersion = trimSpace(pkg.version ?? '');
+    const ecosystem = trimSpace(pkg.ecosystem ?? '');
+    const label = name ? `${name}${packageVersion ? `@${packageVersion}` : ''}` : packageVersion;
+    const requestedVersion = trimSpace(args.version_hint ?? '') || [ecosystem, label].filter(Boolean).join(' ');
+    const compact = trimSpace(requestedVersion).replace(/\p{White_Space}+/gu, ' ');
     const version = Array.from(compact);
-    const matched = version.length > 160 ? `${version.slice(0, 160).join('').trimEnd()}...` : compact;
+    const matched = version.length > 160 ? `${trimSpace(version.slice(0, 160).join(''))}...` : compact;
     const value = {
       action: 'web_search', query: args.query,
       evidence: {id: `example_${randomUUID()}`, kind: 'search', source: 'https://example.com/', source_tier: 'search_index', retrieved_at: new Date().toISOString(), version_matched_to_repo: matched || 'unknown'},
