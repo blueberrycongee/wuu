@@ -375,8 +375,8 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "no-local-fallback", Name: "read_file", Arguments: makeCursor(archiveCursor)})
 	require.Error(t, err, "missing remote paths cannot fall back to local files")
 
-	// A native line continuation is read by the original worker and records its
-	// usual freshness observation; it is not an extension transaction.
+	// Native line continuations remain unavailable: unlike byte windows, native
+	// line reads publish freshness observations before post-read authorization.
 	lineContent := []byte("one\ntwo\nthree\n")
 	require.NoError(t, os.WriteFile(filepath.Join(remote, "lines.txt"), lineContent, 0600))
 	lineSHA := sha256.Sum256(lineContent)
@@ -384,16 +384,15 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	require.NoError(t, err)
 	lineArgs, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(lineCursor)})
 	require.NoError(t, err)
-	line, err := rich.ExecuteResult(ctx, providers.ToolCall{ID: "legacy-line", Name: "read_file", Arguments: string(lineArgs)})
-	require.NoError(t, err)
-	require.Contains(t, line.TextProjection(), "two")
+	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "legacy-line", Name: "read_file", Arguments: string(lineArgs)})
+	require.ErrorContains(t, err, "native line continuations are unsupported")
 	lineReq := prior
 	lineReq.Call.Arguments = `{"path":"lines.txt"}`
 	lineTicket, err := original.(executionenv.PreparedReadExecutor).PrepareUnobservedRead(ctx, lineReq)
 	require.NoError(t, err)
 	lineChanged, err := lineTicket.Commit(ctx)
 	require.NoError(t, err)
-	require.True(t, lineChanged, "native line continuation records its normal observation")
+	require.False(t, lineChanged, "rejected line continuation must not publish an observation")
 
 	// The host-owned native continuation remains available when its replacement
 	// retires, but still cannot bypass native tool disablement or authorization.

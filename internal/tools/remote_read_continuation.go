@@ -65,10 +65,7 @@ func (t *Toolkit) RestoreRemoteNativeRead(call providers.ToolCall) (providers.To
 		}
 		args["byte_range"] = window
 	} else {
-		if cursor.Offset <= 0 || cursor.Limit <= 0 {
-			return providers.ToolCall{}, false, errors.New("invalid native line continuation")
-		}
-		args["offset"], args["limit"] = cursor.Offset, cursor.Limit
+		return providers.ToolCall{}, false, errors.New("remote native line continuations are unsupported")
 	}
 	raw, err := json.Marshal(args)
 	if err != nil {
