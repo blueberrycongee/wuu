@@ -1,9 +1,13 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -114,6 +118,27 @@ func TestExtensionReadProcess(t *testing.T) {
 	if foundNative {
 		require.NotContains(t, blockAfter.Content, "legacy.txt", "unverified replacement must not retain native observation")
 	}
+	_, err = nextThread.StreamRunner.Tools.Execute(newCtx, providers.ToolCall{ID: "legacy-line-again", Name: "read_file", Arguments: string(legacyArgs)})
+	require.NoError(t, err)
+	blockBeforeImage, foundNative := nextThread.Toolkit.ActiveFilesContextBlock()
+	require.True(t, foundNative)
+	require.Contains(t, blockBeforeImage.Content, "legacy.txt")
+	legacyPath := filepath.Join(root, "legacy.txt")
+	legacyBytes, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+	var switched bytes.Buffer
+	require.NoError(t, png.Encode(&switched, image.NewNRGBA(image.Rect(0, 0, 3, 3))))
+	require.NoError(t, os.WriteFile(legacyPath, switched.Bytes(), 0600))
+	t.Cleanup(func() { _ = os.WriteFile(legacyPath, legacyBytes, 0600) })
+	require.NoError(t, os.WriteFile(filepath.Join(fixture, "external.png"), switched.Bytes(), 0600))
+	imageResult, err := rich.ExecuteResult(newCtx, providers.ToolCall{ID: "external-image-after-text", Name: "read_file", Arguments: `{"path":"legacy.txt"}`})
+	require.NoError(t, err)
+	require.Len(t, providers.ProjectToolResult(imageResult).ObservationImages, 1)
+	blockAfterImage, foundNative := nextThread.Toolkit.ActiveFilesContextBlock()
+	if foundNative {
+		require.NotContains(t, blockAfterImage.Content, "legacy.txt", "image result must invalidate the prior text observation")
+	}
+	require.NoError(t, os.WriteFile(legacyPath, legacyBytes, 0600))
 	recovered, err := nextThread.StreamRunner.Tools.Execute(newCtx, providers.ToolCall{ID: "legacy-cursor", Name: "read_file", Arguments: string(cursorArgs)})
 	require.NoError(t, err)
 	require.Contains(t, recovered, "archived")
@@ -272,6 +297,9 @@ func TestExtensionReadExampleProcess(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "real.txt"), []byte("\ufefffirst\r\nsecond🙂\nthird"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "large.txt"), []byte(strings.Repeat("x", 256*1024+1)), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "invalid.txt"), []byte{0xff, 0xfe}, 0600))
+	var exampleImage bytes.Buffer
+	require.NoError(t, png.Encode(&exampleImage, image.NewNRGBA(image.Rect(0, 0, 2, 3))))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "real-image.png"), exampleImage.Bytes(), 0600))
 	plugin := testRuntimePlugin("local-text-reader")
 	plugin.Root, plugin.Runtime.Command, plugin.Runtime.Args = fixture, node, []string{"local-text-reader.js"}
 	plugins := []pluginpkg.Plugin{plugin}
@@ -298,6 +326,11 @@ func TestExtensionReadExampleProcess(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(result.StructuredContent, &got))
 	require.Equal(t, "\ufefffirst\r\n", got["text"], "UTF-8 BOM and line endings must be preserved")
+	result, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "read-image", Name: "read_file", Arguments: `{"path":"real-image.png"}`})
+	require.NoError(t, err)
+	projected := providers.ProjectToolResult(result)
+	require.Len(t, projected.ObservationImages, 1)
+	require.Equal(t, base64.StdEncoding.EncodeToString(exampleImage.Bytes()), projected.ObservationImages[0].Data)
 	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "read-large", Name: "read_file", Arguments: `{"path":"large.txt","offset":1,"limit":1}`})
 	require.Error(t, err, "example rejects inputs above its documented bound")
 	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "read-invalid", Name: "read_file", Arguments: `{"path":"invalid.txt"}`})

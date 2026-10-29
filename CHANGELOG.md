@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let trusted `read_file` replacements opt in to bounded image responses that use the native image processing and model projection paths.
+
 - Select a trusted text provider for `read_file` while preserving host-owned historical continuations and native read authorization.
 
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.

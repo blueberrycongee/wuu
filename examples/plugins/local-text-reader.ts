@@ -11,8 +11,8 @@ const maxBytes = 256 * 1024;
 const plugin: RuntimePlugin = {
   initialize() {
     return {protocol_version: 3, lifecycle_version: 2, tools: [{
-      id: 'read', replacement_contracts: ['read_file.text.v1'],
-      description: 'Read local UTF-8 text up to 256 KiB via a trusted local extension. Images, remote reads and extension continuations are unavailable. The content does not establish a native active-file freshness record.',
+      id: 'read', replacement_contracts: ['read_file.text.v1', 'read_file.image.v1'],
+      description: 'Read local UTF-8 text or PNG, JPEG, static GIF and WebP images up to 256 KiB via a trusted local extension. Remote reads and extension continuations are unavailable. The content does not establish a native active-file freshness record.',
       activity: {read_only: true, concurrency_safe: true, risk: 'low'},
       input_schema: {
         type: 'object', properties: {
@@ -41,7 +41,17 @@ const plugin: RuntimePlugin = {
         used += bytesRead;
       }
       if (used > maxBytes) throw new Error('file exceeds 256 KiB');
-      const text = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(buffer.subarray(0, used));
+      const data = buffer.subarray(0, used);
+      let mime = '';
+      if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) mime = 'image/png';
+      else if (data.subarray(0, 3).equals(Buffer.from([255, 216, 255]))) mime = 'image/jpeg';
+      else if (data.subarray(0, 6).toString('ascii') === 'GIF87a' || data.subarray(0, 6).toString('ascii') === 'GIF89a') mime = 'image/gif';
+      else if (data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp';
+      if (mime) {
+        if (((args.offset as number | undefined) ?? 0) > 1 || args.limit !== undefined) throw new Error('image ranges are not supported');
+        return {result: {content: [{type: 'image', mime_type: mime, data: data.toString('base64')}]}};
+      }
+      const text = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(data);
       if (text.includes('\0')) throw new Error('binary text is not supported');
       const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
       const offset = Math.max(1, (args.offset as number | undefined) ?? 1);

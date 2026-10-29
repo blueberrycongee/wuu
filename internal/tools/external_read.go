@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ type ExternalReadScope struct {
 	offset   int
 	limit    int
 	native   bool
+	image    bool
 	previous map[string]readFileObservation
 }
 
@@ -54,7 +56,7 @@ func (t *Toolkit) IsNativeReadRequest(raw string) bool {
 // before the trusted extension sees a fresh text request. Old host cursors and
 // session-managed artifacts stay on the native path. Remote environments and
 // non-text files are not supported by this contract.
-func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string) (*ExternalReadScope, error) {
+func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string, allowImage bool) (*ExternalReadScope, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -118,7 +120,26 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string) (*Externa
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(http.DetectContentType(sample), "image/") || bytes.IndexByte(sample, 0) >= 0 {
+	isImage := strings.HasPrefix(http.DetectContentType(sample), "image/")
+	previous := make(map[string]readFileObservation)
+	for path, entry := range t.env.readState.observationSnapshot() {
+		if canonical, err := filepath.EvalSymlinks(path); err == nil && canonical == resolved {
+			previous[path] = entry
+		}
+	}
+	if isImage {
+		if !allowImage {
+			return nil, errors.New("external read_file supports text only; images and binary files are unavailable")
+		}
+		if info.Size() > maxReadImageBytes {
+			return nil, fmt.Errorf("image too large (%d bytes, max %d)", info.Size(), maxReadImageBytes)
+		}
+		if args.Offset > 1 || args.Limit != nil {
+			return nil, errors.New("image reads do not support text ranges")
+		}
+		return &ExternalReadScope{env: t.env, path: display, resolved: resolved, image: true, previous: previous}, nil
+	}
+	if bytes.IndexByte(sample, 0) >= 0 {
 		return nil, errors.New("external read_file supports text only; images and binary files are unavailable")
 	}
 	offset := args.Offset
@@ -132,20 +153,40 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string) (*Externa
 		}
 		limit = *args.Limit
 	}
-	previous := make(map[string]readFileObservation)
-	for path, entry := range t.env.readState.observationSnapshot() {
-		if canonical, err := filepath.EvalSymlinks(path); err == nil && canonical == resolved {
-			previous[path] = entry
-		}
-	}
 	return &ExternalReadScope{env: t.env, path: display, resolved: resolved, offset: offset, limit: limit, previous: previous}, nil
 }
 
 // Render validates the extension's bounded text contract and builds the usual
 // line view and raw PTC text. Neither content nor line facts are host-verified.
-func (s *ExternalReadScope) Render(result toolresult.Result) (toolresult.Result, error) {
+func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result) (toolresult.Result, error) {
 	if s == nil || s.native || s.env == nil {
 		return toolresult.Result{}, errors.New("external read scope is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
+	if s.image {
+		if result.IsError || result.ModelText != nil || result.Activity != nil || len(result.StructuredContent) != 0 || len(result.Meta) != 0 || len(result.Content) != 1 {
+			return toolresult.Result{}, errors.New("external image requires exactly one inline image")
+		}
+		part := result.Content[0]
+		if part.Type != toolresult.ContentTypeImage || part.URI != "" || part.RemoteRef != "" || part.Data == "" || part.Text != "" || part.Artifact != nil || len(part.Resource) != 0 {
+			return toolresult.Result{}, errors.New("external image requires exactly one inline image")
+		}
+		if len(part.Data) > base64.StdEncoding.EncodedLen(toolresult.MaxInlineDataBytes) {
+			return toolresult.Result{}, errors.New("external image exceeds the inline limit")
+		}
+		data, err := base64.StdEncoding.Strict().DecodeString(part.Data)
+		if err != nil || len(data) > toolresult.MaxInlineDataBytes {
+			return toolresult.Result{}, errors.New("invalid external image data")
+		}
+		rendered, err := renderReadFileImage(ctx, data, s.path, true, part.MIMEType)
+		if err == nil {
+			for path, entry := range s.previous {
+				s.env.readState.deleteIfUnchanged(path, entry)
+			}
+		}
+		return rendered, err
 	}
 	if result.ModelText != nil || len(result.Content) != 0 || len(result.StructuredContent) == 0 || result.Activity != nil {
 		return toolresult.Result{}, errors.New("external read_file requires structured text only")

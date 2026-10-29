@@ -63,10 +63,10 @@ func TestExternalReadArchivedPagesKeepUnverifiedSource(t *testing.T) {
 	require.NoError(t, kit.SetSessionDir(t.TempDir()))
 	defer kit.CloseSessionArtifacts()
 	require.NoError(t, kit.SetNativeToolReplacements(map[string]func(Tool) Tool{"read_file": func(native Tool) Tool { return attributionReplacement{Tool: native} }}))
-	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"source.txt"}`)
+	scope, err := kit.PrepareExternalRead(context.Background(), `{"path":"source.txt"}`, false)
 	require.NoError(t, err)
 	payload, _ := json.Marshal(map[string]any{"text": strings.Repeat("外部内容🙂", 16000), "total_lines": 1})
-	result, err := scope.Render(toolresult.Result{StructuredContent: payload})
+	result, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: payload})
 	require.NoError(t, err)
 	call := providers.ToolCall{ID: "external", Name: "read_file", Arguments: `{"path":"source.txt"}`}
 	settled := kit.FinalizeToolResult(call, result)
