@@ -638,9 +638,10 @@ const rendererRun = app.whenReady().then(async () => {
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="mixedV2"] .plugin-genui-legend button').getAttribute('aria-pressed')`), 'false');
   await click(win, '[data-genui-node="mixedV2"] .plugin-genui-legend button:nth-child(1)');
   await click(win, '[data-genui-node="areaV2"] svg');
+  await evaluate(win, `window.nextNativeArrow = new Promise(resolve => document.addEventListener('keydown', event => resolve({ key: event.key, trusted: event.isTrusted, target: event.target.closest('[data-genui-node]')?.dataset.genuiNode }), { once: true, capture: true })); undefined`);
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
-  assert.ok(await evaluate(win, `window.nativeEvents.some(event=>event.type==='keydown'&&event.key==='ArrowRight')`),'Native accelerator produces the expected DOM arrow key');
+  assert.deepEqual(await evaluate(win, 'window.nextNativeArrow', 'Receive native chart arrow'), { key: 'ArrowRight', trusted: true, target: 'areaV2' }, 'Native accelerator reaches the chart before its result is checked');
   await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] .plugin-genui-chart-caption').textContent.includes('Week')`);
   assert.equal(await evaluate(win, `document.querySelectorAll('[data-genui-node="scatterV2"] svg circle').length`), 3);
   assert.equal(await evaluate(win, `document.querySelectorAll('[data-genui-node="stackedV2"] svg rect').length`), 6);

@@ -567,8 +567,11 @@ async function run() {
     await until(() => followupResponse, `native form ${method} reaches inference`);
     assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, before + 1);
     assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').at(-1).args[0], actionOrigin);
+    const responseTurn = await evaluate(async id => (await window.wuu.resumeThread(id)).thread.turns.at(-1).id, actionOrigin);
     followupResponse();
-    await wait(() => !document.querySelector('.composer-stop-button'));
+    // A hidden composer stop button is not a completion acknowledgement. Wait
+    // for this exact turn before asking its artifact to continue once more.
+    await wait(id => document.querySelector(`[data-turn-id="${CSS.escape(id)}"]`)?.dataset.turnStatus === 'completed', responseTurn);
     await wait(selector => !document.querySelector(selector).matches(':disabled'), formButton);
   }
   await capture('10-app-native-form.png', form);
