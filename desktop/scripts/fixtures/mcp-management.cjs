@@ -104,7 +104,13 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   } }));
 
   return {
-    async run({ evaluate, until, capture, win }) {
+    async run({ evaluate, until, snapshot, capture, win }) {
+      await evaluate(() => {
+        window.__mcpFixtureHandoff = [];
+        window.addEventListener("wuu:mcp-connector-handoff", event => {
+          if (window.__mcpFixtureHandoff.length < 64) window.__mcpFixtureHandoff.push(event.detail);
+        });
+      });
       const clickElement = selector => until(clickReady, { selector });
       const click = async ([selector, label], keyboard = false) => {
         const menuAction = selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label);
@@ -157,8 +163,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await input('.mcp-editor input[type="url"]', `${endpoint}/mcp`);
       await capture("mcp-add-url");
       await click([".mcp-editor", "保存"]);
-      await until(() => !document.querySelector(".mcp-editor") && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("需要认证"));
-      assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("HTTP 401")), false, "Authentication diagnostics stay out of the collapsed service row");
+      const authRow = await snapshot(() => {
+        const row = document.querySelector('[data-mcp="journey-docs"]');
+        return !document.querySelector(".mcp-editor") && row?.textContent.includes("需要认证") ? { text: row.textContent } : false;
+      });
+      assert.equal(authRow.text.includes("HTTP 401"), false, "Authentication diagnostics stay out of the collapsed service row");
       await capture("mcp-auth-required");
       evidence.checks.push("URL definition added and activated through the catalog");
 
@@ -366,6 +375,12 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]'));
       await capture("mcp-plugin-owned");
       assert.equal(await evaluate(() => [...document.querySelectorAll('[data-mcp="plugin.mcp-journey.docs"] button')].some(button => button.textContent === "编辑")), false);
+      // An explicitly selected module is required by composition. Remove this
+      // fixture's selection before disabling its package; never weaken that rule.
+      const disableConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      disableConfig.composition.patches.push({ modules: { "mcp-journey": false } });
+      fs.writeFileSync(configPath, JSON.stringify(disableConfig));
+      await evaluate(() => window.wuu.refreshExtensionCatalog());
       await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, action: "disable" }), record);
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]') && document.querySelector('[data-mcp="plugin.mcp-journey.docs"] button') === null);
       assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-action="connect"]`) === null, connectorRow), true, "Disabling a plugin disables its connector contribution");
@@ -380,7 +395,16 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       const remaining = await evaluate(() => window.wuu.listMCPServers());
       assert.ok(remaining.servers.some(server => server.name === "journey-local"));
       evidence.checks.push("Deleting a definition preserves unrelated MCP services");
-      fs.writeFileSync(path.join(output, "mcp-result.json"), JSON.stringify({ passed: true, ...evidence, browser: "Authorization provider and browser redirect simulated over real HTTP; production main/preload/core used with the selected file credential provider in disposable state." }, null, 2));
+      const handoff = await evaluate(() => window.__mcpFixtureHandoff || []);
+      fs.writeFileSync(path.join(output, "mcp-result.json"), JSON.stringify({ passed: true, ...evidence, handoff, browser: "Authorization provider and browser redirect simulated over real HTTP; production main/preload/core used with the selected file credential provider in disposable state." }, null, 2));
+    },
+    async diagnostics({ evaluate }) {
+      await evaluate(() => {
+        for (const button of document.querySelectorAll('[data-connector] .settings-mcp-details-toggle[aria-expanded="false"]')) button.click();
+      });
+      return evaluate(() => ({ phases: window.__mcpFixtureHandoff || [], rows: [...document.querySelectorAll('[data-connector]')].slice(0, 10).map(row => ({
+        name: row.getAttribute("data-connector"), diagnostic: [...row.querySelectorAll("pre")].map(element => element.textContent.replace(/https?:\/\/\S+/g, "[URL]").slice(0, 512)),
+      })) }));
     },
     close() { shell.openExternal = originalOpen; peer.closeAllConnections(); peer.close(); },
   };

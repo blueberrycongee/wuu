@@ -11,34 +11,40 @@ import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
 import { AlertCircle, AlertTriangle, ChevronRight, MoreHorizontal, Plug } from "./WuuIcons";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 type MCPAction = "connect" | "disconnect" | "refresh" | "identity" | "login" | "logout" | "edit" | "remove";
 type MCPActionFailure = { action: MCPAction; diagnostic: string };
 
-const MCPContext = createContext<{ servers: MCPServerStatus[]; error: string; contextGeneration: number; refresh(): Promise<void> } | null>(null);
+const MCPContext = createContext<{ servers: MCPServerStatus[]; retainedConnectors: MCPServerStatus[]; error: string; contextGeneration: number; refresh(): Promise<void> } | null>(null);
 export function useMCPServices() {
   const value = useContext(MCPContext);
   if (!value) throw new Error("MCP services require a catalog provider");
   return value;
 }
 
-export function MCPServicesProvider({ children }: { children: ReactNode }): JSX.Element {
+export function MCPServicesProvider({ children, contextKey }: { children: ReactNode; contextKey?: string }): JSX.Element {
   const controls = useSettingsControls();
   const [servers, setServers] = useState<MCPServerStatus[]>([]);
   const [contextGeneration, setContextGeneration] = useState(0);
   const [error, setError] = useState("");
   const generation = useRef(0);
+  const owner = useRef({ controls, contextKey });
+  const snapshot = useRef<{ controls: ApplicationSettingsControlsV1; contextKey?: string; servers: MCPServerStatus[] } | undefined>(undefined);
+  if (owner.current.contextKey !== contextKey) snapshot.current = undefined;
+  owner.current = { controls, contextKey };
   const refresh = useCallback(async () => {
     const current = ++generation.current;
     try {
       const result = await controls.listMCPServers();
-      if (current !== generation.current) return;
+      if (current !== generation.current || owner.current.controls !== controls || owner.current.contextKey !== contextKey) return;
+      snapshot.current = { controls, contextKey, servers: result.servers };
       setServers(result.servers);
       setError("");
     } catch (failure) {
-      if (current === generation.current) setError(toastErrorMessage(failure));
+      if (current === generation.current && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure));
     }
-  }, [controls]);
+  }, [controls, contextKey]);
   useEffect(() => {
     generation.current++;
     setServers([]);
@@ -48,13 +54,22 @@ export function MCPServicesProvider({ children }: { children: ReactNode }): JSX.
     const unsubscribe = controls.subscribe(() => { void refresh(); });
     const remote = controls.subscribeRemote(() => {
       generation.current++;
+      snapshot.current = undefined;
       setServers([]);
       setContextGeneration(value => value + 1);
       void refresh();
     });
     return () => { generation.current++; clearInterval(timer); unsubscribe(); remote(); };
   }, [controls, refresh]);
-  return <MCPContext.Provider value={{ servers, error, contextGeneration, refresh }}>{children}</MCPContext.Provider>;
+  const fresh = snapshot.current?.controls === controls && snapshot.current.contextKey === contextKey;
+  // A pinned context may retain card labels across a writer gap, never action
+  // authority, credentials, identity, or generic MCP editor state.
+  const retainedConnectors = !fresh && contextKey && snapshot.current?.contextKey === contextKey
+    ? snapshot.current.servers.filter(server => server.plugin_id && server.connector).map(server => ({
+      name: server.name, plugin_id: server.plugin_id, connector: { title: server.connector!.title },
+      state: "reconnecting", connected: false, tool_count: 0, plugin_active: false, configurable: false,
+    })) : [];
+  return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, refresh }}>{children}</MCPContext.Provider>;
 }
 
 type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string };
@@ -201,7 +216,8 @@ type ConnectorAuth = { result?: Awaited<ReturnType<ApplicationSettingsControlsV1
 
 function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
-  const { servers, refresh } = useMCPServices();
+  const { servers, retainedConnectors, refresh } = useMCPServices();
+  const retained = !servers.length && retainedConnectors.length > 0;
   const { t } = useI18n();
   const scope = useMemo(() => ({}), [controls]);
   const currentScope = useRef(scope);
@@ -220,7 +236,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
   const mounted = useRef(true);
   const currentControls = useRef(controls);
   currentControls.current = controls;
-  const visible = servers.filter(server => server.plugin_id && server.connector && (!pluginID || server.plugin_id === pluginID)
+  const visible = (retained ? retainedConnectors : servers).filter(server => server.plugin_id && server.connector && (!pluginID || server.plugin_id === pluginID)
     && `${server.connector.title} ${server.connector.description || ""} ${server.name}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()));
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -229,24 +245,27 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     return () => { confirmation.current?.abort(); };
   }, [controls]);
   useEffect(() => {
-    if (claimedScope.current === scope || !enabled || !controls.takeMCPConnectorLogin) return;
-    const name = controls.getPendingMCPConnectorLogin?.();
+    if (retained || claimedScope.current === scope || !enabled) return;
+    let name: string | undefined, take: ApplicationSettingsControlsV1["takeMCPConnectorLogin"];
+    try { take = controls.takeMCPConnectorLogin; name = controls.getPendingMCPConnectorLogin?.(); }
+    catch (error) { if (isPluginLifecycleCancellation(error)) return; throw error; }
+    if (!take) return;
     if (!name || !visible.some(server => server.name === name)) return;
     claimedScope.current = scope;
     const revision = loginIntentRevision.current;
     setPreparing(name);
-    void controls.takeMCPConnectorLogin().then(server => {
+    void take().then(server => {
       if (!current() || revision !== loginIntentRevision.current) return;
       setPreparing(undefined);
       if (server) setLogin({ server, controls });
     }).catch(failure => {
-      if (!current() || revision !== loginIntentRevision.current) return;
+      if (!current() || revision !== loginIntentRevision.current || isPluginLifecycleCancellation(failure)) return;
       setPreparing(undefined);
       setErrors(previous => ({ ...previous, [name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
     });
     // Server refreshes must not retire an already claimed receipt. The current
     // scope and explicit-cancel revision fence its eventual result instead.
-  }, [controls, servers, enabled, scope]);
+  }, [controls, servers, enabled, scope, retained]);
   useEffect(() => {
     let cancelled = false;
     void Promise.all(servers.filter(server => server.plugin_id && server.connector && server.plugin_active !== false && !server.configuration_unavailable_reason).map(async server => {
@@ -276,7 +295,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     setBusy(name);
     clearError(name);
     try { await operation(); }
-    catch (failure) { if (current()) setErrors(previous => ({ ...previous, [name]: { action, diagnostic: toastErrorMessage(failure) } })); }
+    catch (failure) { if (current() && !isPluginLifecycleCancellation(failure)) setErrors(previous => ({ ...previous, [name]: { action, diagnostic: toastErrorMessage(failure) } })); }
     finally {
       if (current()) {
         try { await refresh(); }
@@ -334,17 +353,19 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
       const setupRequired = connector.setup_required?.trim();
       const detailsOpen = !!expanded[server.name];
       const detailsTarget = `${detailsID}-${server.name}`;
-      const authorization = auth[server.name];
+      const authorization = retained ? undefined : auth[server.name];
       const authorized = authorization?.result?.authenticated;
       const identity = authorized ? authorization.result?.identity : undefined;
       const account = identity?.state === "verified" ? identity.account : undefined;
       const workspace = account ? identity?.workspace : undefined;
       const accountLabel = account ? `${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}` : "";
-      const active = enabled && server.plugin_active !== false;
+      const active = !retained && enabled && server.plugin_active !== false;
       const available = active && server.configurable && !setupRequired;
       const connected = server.connected && ["ready", "connected"].includes(server.state) && !server.error;
       const failure = errors[server.name];
-      const working = busy === server.name;
+      const working = retained || busy === server.name || preparing === server.name || login?.server.name === server.name;
+      const needsAuth = ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state);
+      const attention = !working && (failure || !needsAuth && server.error);
       const saved = server.configuration_enabled || server.connected || authorized || server.auth_status === "oauth" || failure?.action === "disconnect";
       const reconnect = connected || authorized || server.auth_status === "oauth";
       const diagnostic = working || login?.server.name === server.name ? "" : failure?.diagnostic || server.error;
@@ -352,6 +373,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
         : !active ? t("connector.inactive")
         : !server.configurable ? t("connector.unavailable")
         : failure?.action === "disconnect" ? t("connector.disconnectIncomplete")
+        : (!failure || failure.action === "identity") && needsAuth ? t("mcp.needsAuth")
         : (failure && failure.action !== "identity") || server.error || ["failed", "error"].includes(server.state) ? t("mcp.connectionFailed")
         : connected ? `${t("mcp.connected")} · ${t("mcp.toolCount", { count: server.tool_count })}`
         : ["starting", "connecting", "reconnecting"].includes(server.state) ? t("mcp.connecting")
@@ -366,8 +388,8 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
         <Plug className="icon mcp-service-icon" aria-hidden="true" />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{connector.title}</div>
-          <div className="mcp-service-status" data-attention={failure || server.error ? "error" : undefined} role={failure || working ? "status" : undefined}>
-            {failure || server.error ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}<span>{status}</span>
+          <div className="mcp-service-status" data-attention={attention ? "error" : undefined} role={failure || working || needsAuth ? "status" : undefined}>
+            {attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}<span>{status}</span>
           </div>
           {account ? <div className="mcp-service-status" data-connector-identity>{accountLabel}{workspace ? ` · ${workspace.label || workspace.id}` : ""}</div> : null}
           {diagnostic ? <MCPDiagnostic message={diagnostic} /> : null}
@@ -377,9 +399,9 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
             onClick={() => void act(server.name, "connect", () => connect(server, !!reconnect))}>{t(reconnect ? "connector.reconnect" : "mcp.connect")}</button> : null}
           {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login || !!preparing}
             onClick={() => void act(server.name, "disconnect", () => disconnect(server))}>{t("mcp.disconnect")}</button> : null}
-          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={!!busy || !!login || !!preparing}
+          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={retained || !!busy || !!login || !!preparing}
             onClick={() => void act(server.name, "edit", () => controls.openExternal(documentationURL!))}>{t("connector.documentation")}</button> : null}
-          <button type="button" className="settings-button settings-button-ghost" data-connector-details-toggle aria-expanded={detailsOpen} aria-controls={detailsTarget}
+          <button type="button" className="settings-button settings-button-ghost" disabled={retained} data-connector-details-toggle aria-expanded={detailsOpen} aria-controls={detailsTarget}
             onClick={() => setExpanded(previous => ({ ...previous, [server.name]: !detailsOpen }))}>
             <ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("mcp.connectionDetails")}
           </button>

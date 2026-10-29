@@ -24,6 +24,12 @@ export class ApplicationMCPConnectorLogin {
     workbench(): ApplicationWorkbenchV1;
   }) {}
 
+  private trace(phase: string, flags: Record<string, boolean> = {}): void {
+    // Observational lifecycle facts only; never paths, names, provider URLs,
+    // credentials or callback material. Receivers cannot alter the intent.
+    window.dispatchEvent(new CustomEvent("wuu:mcp-connector-handoff", { detail: { phase, ...flags } }));
+  }
+
   private view(): string {
     const snapshot = this.host.workbench().getSnapshot();
     const active = snapshot.views.find(view => view.id === snapshot.activeViewByRegion.primary);
@@ -36,6 +42,10 @@ export class ApplicationMCPConnectorLogin {
     return { source: JSON.stringify([plugin.id, plugin.fingerprint, plugin.provenance, plugin.package_source]), graph: plugin.graph_generation };
   }
   reconcile(): void {
+    const owner = this.pending ?? this.requestOwner;
+    if (owner && (owner.context !== this.host.context() || owner.view !== this.view() || !!this.pending && this.pending.expires <= Date.now())) {
+      this.trace("invalidated", { contextChanged: owner.context !== this.host.context(), viewChanged: owner.view !== this.view(), expired: !!this.pending && this.pending.expires <= Date.now() });
+    }
     if (this.requestOwner && (this.requestOwner.context !== this.host.context() || this.requestOwner.view !== this.view())) this.cancel();
     if (this.pending && (this.pending.expires <= Date.now() || this.pending.context !== this.host.context() || this.pending.view !== this.view())) this.cancel();
   }
@@ -49,17 +59,20 @@ export class ApplicationMCPConnectorLogin {
     this.reconcile();
     return this.pending?.disposition.value === "pending" ? this.pending.name : undefined;
   }
-  suspend(): void { this.stopped.abort(); }
+  suspend(): void { this.trace("suspend", { pending: !!this.pending }); this.stopped.abort(); }
   checkpoint(): MCPConnectorLoginIntent | undefined {
     this.reconcile();
+    this.trace("checkpoint", { pending: this.pending?.disposition.value === "pending" });
     return this.pending?.disposition.value === "pending" ? this.pending : undefined;
   }
   restore(intent?: MCPConnectorLoginIntent): void {
     this.pending = intent;
+    this.trace("restore", { pending: intent?.disposition.value === "pending" });
     this.reconcile();
   }
 
   async request(name: string): Promise<void> {
+    this.trace("request");
     this.stopped.signal.throwIfAborted();
     this.reconcile();
     if (this.requesting || this.pending?.disposition.value === "pending") throw new Error("Finish or cancel the current connector sign-in first.");
@@ -83,10 +96,13 @@ export class ApplicationMCPConnectorLogin {
       const requiresPublication = server.configuration_enabled !== true || definition.config.enabled !== true;
       this.pending = { name, context, view, ...owner, resource: server.resource_url, expires: Date.now() + 60_000,
         requiresPublication, committed, disposition: { value: "pending" } };
+      this.trace("admitted", { requiresPublication });
       try {
         if (requiresPublication) await window.wuu.configureMCPServers({ servers: { [name]: { enabled: true } }, revision: definition.revision });
         settle(true);
+        this.trace("receipt", { committed: true });
       } catch (error) {
+        this.trace("receipt", { committed: false });
         this.cancel();
         settle(false);
         throw error;
@@ -98,6 +114,7 @@ export class ApplicationMCPConnectorLogin {
   async take(): Promise<MCPServerStatus | undefined> {
     this.reconcile();
     const intent = this.pending;
+    this.trace("take", { pending: intent?.disposition.value === "pending", stopped: this.stopped.signal.aborted });
     if (!intent || intent.disposition.value !== "pending" || this.stopped.signal.aborted) return;
     if (Date.now() >= intent.expires) { this.cancel(); return; }
     const committed = await new Promise<boolean>(resolve => {
@@ -118,10 +135,14 @@ export class ApplicationMCPConnectorLogin {
     if (this.pending !== intent || intent.disposition.value !== "pending") return;
     const server = list.servers.find(server => server.name === intent.name);
     const owner = server && this.owner(server);
+    this.trace("validated", { server: !!server, enabled: server?.configuration_enabled === true, owner: !!owner,
+      sameSource: owner?.source === intent.source, sameResource: server?.resource_url === intent.resource,
+      sameGraph: owner?.graph === intent.graph, requiresPublication: intent.requiresPublication });
     if (!server?.configuration_enabled || !owner || owner.source !== intent.source || server.resource_url !== intent.resource) { this.cancel(); return; }
     if (intent.requiresPublication && owner.graph === intent.graph) return; // A changed preference requires a published successor.
     intent.disposition.value = "consumed";
     this.pending = undefined;
+    this.trace("consumed");
     return server;
   }
 }
