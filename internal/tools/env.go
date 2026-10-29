@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,17 +46,29 @@ type ReadFileEntry struct {
 
 // readFileState is a thread-safe record of read_file calls.
 type readFileState struct {
-	mu    sync.RWMutex
-	state map[string]ReadFileEntry
+	mu       sync.RWMutex
+	state    map[string]readFileObservation
+	revision uint64
+}
+
+type readFileObservation struct {
+	entry    ReadFileEntry
+	revision uint64
 }
 
 func (r *readFileState) record(absPath string, entry ReadFileEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.state == nil {
-		r.state = make(map[string]ReadFileEntry)
+		r.state = make(map[string]readFileObservation)
 	}
-	r.state[absPath] = entry
+	// Saturation fails closed: zero revisions are never conditionally deleted.
+	var revision uint64
+	if r.revision < math.MaxUint64 {
+		r.revision++
+		revision = r.revision
+	}
+	r.state[absPath] = readFileObservation{entry: entry, revision: revision}
 }
 
 func (r *readFileState) delete(absPath string) {
@@ -64,10 +77,10 @@ func (r *readFileState) delete(absPath string) {
 	delete(r.state, absPath)
 }
 
-func (r *readFileState) deleteIfUnchanged(absPath string, entry ReadFileEntry) {
+func (r *readFileState) deleteIfUnchanged(absPath string, observation readFileObservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if current, ok := r.state[absPath]; ok && current == entry {
+	if current, ok := r.state[absPath]; ok && observation.revision != 0 && current.revision == observation.revision {
 		delete(r.state, absPath)
 	}
 }
@@ -86,8 +99,18 @@ func (r *readFileState) snapshot() map[string]ReadFileEntry {
 		return nil
 	}
 	out := make(map[string]ReadFileEntry, len(r.state))
-	for path, entry := range r.state {
-		out[path] = entry
+	for path, observation := range r.state {
+		out[path] = observation.entry
+	}
+	return out
+}
+
+func (r *readFileState) observationSnapshot() map[string]readFileObservation {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]readFileObservation, len(r.state))
+	for path, observation := range r.state {
+		out[path] = observation
 	}
 	return out
 }

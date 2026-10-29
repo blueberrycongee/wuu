@@ -63,9 +63,11 @@ func TestCodeModeReadFileProjectedContinuation(t *testing.T) {
  console.log("READ_CONTINUATION_OK");`
 	args, _ := json.Marshal(map[string]any{"code": source, "description": "Read continuation"})
 	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "read-run", Name: "run_code", Arguments: string(args)}}, nil)
-	if err != nil || len(messages) != 1 || messages[0].Content != "READ_CONTINUATION_OK" {
+	if err != nil || len(messages) != 1 {
 		t.Fatalf("read continuation: %+v %v", messages, err)
 	}
+	require.Contains(t, messages[0].Content, "Unverified tool content may appear in this result.")
+	require.Contains(t, messages[0].Content, "READ_CONTINUATION_OK")
 
 }
 
