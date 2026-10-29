@@ -146,7 +146,7 @@ func (c *AgentControl) prepareWorkerFollowup(ctx context.Context, workerID strin
 				return subagent.SubAgentSnapshot{}, false, nil, fmt.Errorf("recover tool ledger for worker %q: %w", workerID, err)
 			}
 		}
-		current := sa.Snapshot()
+		current := sa.CoordinatorSnapshot()
 		if isFinalSubAgentStatus(current.Status) && !newLease {
 			// The manager has published its terminal snapshot, but the lease is
 			// still locally owned, so the reliable terminal observer has not yet

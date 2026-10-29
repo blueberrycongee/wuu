@@ -178,6 +178,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep worker results pending until terminal confirmation; return an interruption when confirmation fails and preserve the current execution lease while its interrupted history is being saved.
+- Wait for worker ownership bookkeeping to finish after execution locks are released before reporting that workers have drained.
+
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
 - Keep Personal task cancellation recoverable across interrupted dispatch and queue promotion, preserve unanswered questions during concurrent completion, and recover tool-disabled main-conversation replies without repeating worker execution. Stopping an undelivered terminal update preserves its saved outcome.

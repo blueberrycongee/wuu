@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,33 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/structuredoutput"
 )
+
+// runUpdateBarrier makes the ordering between a completed turn and its run
+// update explicit, without imposing timing assumptions on the scheduler.
+type runUpdateBarrier struct {
+	lockedBuffer
+	held    chan struct{}
+	release chan struct{}
+	done    chan Run
+	once    sync.Once
+}
+
+func (b *runUpdateBarrier) Write(p []byte) (int, error) {
+	var msg struct {
+		Method string                 `json:"method"`
+		Params RunUpdatedNotification `json:"params"`
+	}
+	if json.Unmarshal(p, &msg) == nil && msg.Method == NotificationRunUpdated && msg.Params.Run.Status.Terminal() {
+		close(b.held)
+		<-b.release
+		n, err := b.lockedBuffer.Write(p)
+		b.done <- msg.Params.Run
+		return n, err
+	}
+	return b.lockedBuffer.Write(p)
+}
+
+func (b *runUpdateBarrier) unblock() { b.once.Do(func() { close(b.release) }) }
 
 func TestRunStartSettlesManifest(t *testing.T) {
 	client := &fakeClient{response: providersResponse("run-protocol-ok")}
@@ -35,9 +63,10 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	}
 	rt.HookDispatcher = hooks.NewDispatcher(nil)
 
-	out := &lockedBuffer{}
+	out := &runUpdateBarrier{held: make(chan struct{}), release: make(chan struct{}), done: make(chan Run, 1)}
 	srv := New(rt, out)
 	defer srv.Close()
+	defer out.unblock()
 	thread := newThreadState("ephemeral-run-thread", []providers.ChatMessage{{Role: "system", Content: "system"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	thread.Ephemeral = true
 	thread.state = testRuntimeState(t, rt)
@@ -70,14 +99,21 @@ func TestRunStartSettlesManifest(t *testing.T) {
 		t.Fatalf("text-only run should leave browser ready but idle: %+v", current)
 	}
 
-	waitForTurnCompletedForThread(t, out, thread.ID)
-	for _, message := range parseOutput(t, out.String()) {
-		if message["method"] == NotificationRunUpdated {
-			updated := remarshal[RunUpdatedNotification](t, message["params"])
-			if updated.Run.ID == run.ID && updated.Run.Status.Terminal() {
-				run = updated.Run
-			}
+	waitForTurnCompletedForThread(t, &out.lockedBuffer, thread.ID)
+	select {
+	case <-out.held:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run update was not produced")
+	}
+	out.unblock()
+	select {
+	case settled := <-out.done:
+		if settled.ID != run.ID {
+			t.Fatalf("terminal update belongs to run %q, want %q", settled.ID, run.ID)
 		}
+		run = settled
+	case <-time.After(10 * time.Second):
+		t.Fatal("terminal run update was not delivered")
 	}
 
 	if run.ID == "" {

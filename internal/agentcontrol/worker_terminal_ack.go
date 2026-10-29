@@ -376,6 +376,9 @@ func (c *AgentControl) finalizeWorkerTerminalWithAck(n subagent.Notification) wo
 	if notificationOutcome == workerNotificationDeferred {
 		return workerTerminalDeferred
 	}
+	// The terminal intent is durable and internal delivery did not continue
+	// the worker. Expose it while external finalizers retain the execution lease.
+	c.manager.MarkTerminalPublished(n)
 	if c.hasWorkerTerminalFinalizers() {
 		if !c.retryWorkerTerminalStep(workerID, "external finalize", durable, func() error {
 			return c.runWorkerTerminalFinalizers(n)
