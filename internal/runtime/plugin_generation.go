@@ -712,6 +712,10 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
 	}
+	if err := validateToolReplacements(s.RootDir, host, cfg.Agent.ToolReplacements); err != nil {
+		closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
+		return nil, errors.Join(err, closeErr)
+	}
 	kernel.bindModelSession(s, host)
 	// Service negotiation can reject a prepared runtime after process startup.
 	// Treat that exactly like startup failure for required replacements.

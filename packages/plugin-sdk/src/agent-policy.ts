@@ -17,6 +17,8 @@ export interface AgentPolicyInput {
  readonly attempt: number;
  readonly failure?: DriverFailure;
  readonly partial_output?: boolean;
+ /** The guarded transport consumer can discard the failed attempt before retry. */
+ readonly partial_output_resettable?: boolean;
  readonly tool_work_started?: boolean;
  readonly finish_reason?: string;
  readonly truncated?: boolean;
@@ -48,7 +50,7 @@ export function validateAgentPolicyDecision(input: AgentPolicyInput, decision: A
  if(input.phase==="checkpoint_resume"&&decision.action==="resume"&&((input.completed_messages??0)<1||input.tool_work_started||(input.tool_calls?.length??0)>0||input.failure?.category!=="replay_unsafe"||recovery?.stop_reason!=="replay_unsafe"||(input.max_attempts??0)<2||input.attempt>=(input.max_attempts??0)-1)) throw new Error("checkpoint resume requires completed progress and an unexhausted receipt budget without tool effects");
  if(input.phase==="retry"&&decision.action==="retry"&&recovery&&(recovery.stop_reason==="retry_limit"||recovery.stop_reason==="workflow_budget_exceeded"||recovery.budget_dimension)) throw new Error("policy cannot renew an exhausted inference budget");
  if(decision.action==="retry"&&(!recovery||recovery.submission_count!==0)) throw new Error("policy cannot retry an unknown or submitted model operation");
- if((input.phase==="retry"||input.phase==="transport_retry")&&decision.action!=="fail"&&(input.partial_output||input.tool_work_started)) throw new Error("policy cannot replay partial output or accepted tool effects");
+ if((input.phase==="retry"||input.phase==="transport_retry")&&decision.action!=="fail"&&(input.tool_work_started||(input.partial_output&&(input.phase!=="transport_retry"||!input.partial_output_resettable)))) throw new Error("policy cannot replay partial output or accepted tool effects");
  if(input.phase==="transport_retry"&&decision.action==="recover") {
   if(!decision.recovery_action||!["replay_same_payload","wait_then_replay","refresh_credential","switch_transport"].includes(decision.recovery_action)) throw new Error("invalid transport recovery action");
   if(!recovery) throw new Error("transport recovery requires a submission receipt");

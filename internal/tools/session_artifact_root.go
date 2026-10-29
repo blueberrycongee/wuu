@@ -38,7 +38,9 @@ func NewSessionArtifactManager() *SessionArtifactManager {
 }
 
 func (m *SessionArtifactManager) acquire(path string) (*SessionArtifactLease, error) {
-	if strings.TrimSpace(path) == "" { return nil, errors.New("empty session artifact path") }
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("empty session artifact path")
+	}
 	key, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err

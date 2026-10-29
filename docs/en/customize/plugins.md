@@ -55,6 +55,27 @@ Agent runtimes can register tools, contribute context, observe supported lifecyc
 
 Bundled features use these mechanisms too. Guides cover [subagents](../desktop/subagents.md), [automations](../automation/scheduled-tasks.md), and [memory](memory.md). The Peers plugin lets an agent contact existing conversations in the same workspace; it is separate from creating a child subagent.
 
+## OpenDesign presets
+
+The optional **OpenDesign Presets** plugin contributes one `opendesign` skill.
+Use it to choose a design system, start from an artifact template, or apply craft
+rules while building a website, dashboard, mobile interface, or HTML presentation.
+For example: “Use OpenDesign to make a Linear-inspired dashboard.” The skill
+searches its local catalog and reads selected resources on demand.
+
+Install a built `opendesign-presets` directory or zip through **Skills & Plugins**
+or `wuu plugin install`. To build it from source, follow the
+[package instructions](../../../plugins/opendesign-presets/README.md). The package
+pins its upstream revision, preserves attribution and licenses, and works without
+an OpenDesign installation. Disable `opendesign-presets` to remove its skill from
+the available catalog.
+
+This package provides presets and a Wuu workflow. OpenDesign's canvas, element
+comments, direct editing, and media providers are separate application features.
+Media entries supply prompt recipes; generation still requires an available tool.
+Templates may reference optional libraries or remote assets. The skill adapts
+upstream preview and output conventions to the current project and Wuu tools.
+
 ## Monitor background events
 
 The bundled Monitor plugin runs a shell script while the agent continues working.

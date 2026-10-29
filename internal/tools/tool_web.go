@@ -181,3 +181,26 @@ func recordWebEvidenceResult(env *Env, toolName, result string) {
 		Truncated:   payload.Truncated,
 	})
 }
+
+// RecordWebSearchEvidence preserves the native evidence context for a selected
+// replacement after its result has passed the host's contract validation.
+func (t *Toolkit) RecordWebSearchEvidence(result string) {
+	recordWebEvidenceResult(t.env, "web_search", result)
+}
+
+// WebSearchEvidenceVersion returns the same version context the native search
+// records, without trusting a replacement to invent a repository match.
+func WebSearchEvidenceVersion(argsJSON string) (string, error) {
+	var args struct {
+		VersionHint    string            `json:"version_hint"`
+		PackageContext webPackageContext `json:"package_context"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	version := webVersionMatchedToRepo(args.VersionHint, args.PackageContext)
+	if version == "" {
+		return "unknown", nil
+	}
+	return version, nil
+}
