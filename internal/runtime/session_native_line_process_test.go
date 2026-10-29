@@ -23,6 +23,7 @@ import (
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/toolstate"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,38 @@ type sessionStageCancel struct {
 	persistence.Documents
 	cancel context.CancelFunc
 	fired  atomic.Bool
+}
+
+type sessionParticipantPolicy struct {
+	revoked atomic.Bool
+	denials atomic.Int32
+}
+
+func (p *sessionParticipantPolicy) Authorize(_ context.Context, req tools.AuthorizationRequest) (tools.AuthorizationDecision, error) {
+	if strings.Contains(req.Arguments, "multi-b.txt") && p.revoked.Load() {
+		p.denials.Add(1)
+		return tools.AuthorizationDecision{Outcome: "deny", Reason: "second participant revoked"}, nil
+	}
+	return tools.AuthorizationDecision{Outcome: "allow"}, nil
+}
+
+type revokeSecondAfterCommit struct {
+	persistence.Documents
+	policy *sessionParticipantPolicy
+}
+
+func (d revokeSecondAfterCommit) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	receipt, err := d.Documents.Commit(ctx, tx)
+	if err != nil {
+		return receipt, err
+	}
+	for _, w := range tx.Writes {
+		var inv toolstate.Invocation
+		if w.Namespace == toolstate.Invocations && json.Unmarshal(w.Value, &inv) == nil && inv.Observation != nil && inv.Observation.Outcome == "committed" {
+			d.policy.revoked.Store(true)
+		}
+	}
+	return receipt, nil
 }
 
 func (d *sessionStageCancel) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
@@ -337,4 +370,176 @@ func TestRemoteSessionLineTransactionsProcess(t *testing.T) {
 	require.False(t, archive.ToolResult.IsError, archive.Content)
 	require.Contains(t, archive.Content, "tool_result_archive false")
 	require.NotContains(t, archive.Content, "extension true")
+	makeFile("multi-a.txt")
+	makeFile("multi-b.txt")
+	multiPolicy := &sessionParticipantPolicy{}
+	thread.Toolkit.SetAuthorizer(multiPolicy)
+	multiLedger, err := toolledger.New(revokeSecondAfterCommit{Documents: testSessionDocuments(t, t.TempDir()), policy: multiPolicy}, "remote-pages")
+	require.NoError(t, err)
+	multiArgs, err := json.Marshal(map[string]string{"code": codeFor("multi-a.txt") + codeFor("multi-b.txt"), "description": "second participant revoked"})
+	require.NoError(t, err)
+	multiRun := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: multiLedger, OperationID: "session-multi-revoke", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	var multiDelivered atomic.Bool
+	multiRun.SetResultCallback(func(providers.ToolCall, toolresult.Result) { multiDelivered.Store(true) })
+	multiMessages, multiErr := multiRun.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "multi", Name: "run_code", Arguments: string(multiArgs)}}, nil)
+	multiRun.Close()
+	require.ErrorContains(t, multiErr, "observation output authorization failed")
+	require.Empty(t, multiMessages)
+	require.False(t, multiDelivered.Load())
+	require.Greater(t, multiPolicy.denials.Load(), int32(0))
+	for _, name := range []string{"multi-a.txt", "multi-b.txt"} {
+		_, err := os.Stat(filepath.Join(remote, "witness-"+name))
+		require.NoError(t, err)
+	}
+	pendingMulti, err := multiLedger.PendingProjection(ctx)
+	require.Error(t, err)
+	require.Empty(t, pendingMulti)
+	multiPolicy.revoked.Store(false)
+	pendingMulti, err = multiLedger.PendingProjection(ctx)
+	require.NoError(t, err)
+	require.Len(t, pendingMulti, 1)
+	thread.Toolkit.SetAuthorizer(nil)
+	// Legacy cursors are not session-authenticated: the current session root
+	// and its current authority decide what the restored path can access.
+	require.NoError(t, owner.PinExecutionEnvironment("other-session", ""))
+	other, err := owner.NewThreadRuntime("other-session")
+	require.NoError(t, err)
+	defer owner.ReleasePluginGeneration(other.PluginGeneration)
+	defer other.AgentControl.Close()
+	other.Toolkit.SetPermissionMode("standard")
+	otherCtx := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "other-session", ExecutionID: "turn"})
+	otherCode := func(id string) providers.ChatMessage {
+		t.Helper()
+		args, err := json.Marshal(map[string]string{"code": codeFor("success.txt"), "description": "other session"})
+		require.NoError(t, err)
+		run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: other.StreamRunner.Tools, Ledger: other.StreamRunner.ToolLedger, OperationID: id, RunContext: otherCtx, Gate: agent.NewToolExecutionGate(1)})
+		messages, err := run.ExecuteFinalCalls(otherCtx, []providers.ToolCall{{ID: id, Name: "run_code", Arguments: string(args)}}, nil)
+		run.Close()
+		require.NoError(t, err)
+		require.Len(t, messages, 1)
+		return messages[0]
+	}
+	foreign := otherCode("foreign-missing")
+	require.True(t, foreign.ToolResult.IsError)
+	require.NotContains(t, foreign.Content, "second")
+	require.NoError(t, os.WriteFile(filepath.Join(other.Toolkit.SessionDir(), "success.txt"), content, 0600))
+	foreign = otherCode("foreign-present")
+	require.False(t, foreign.ToolResult.IsError, foreign.Content)
+	require.Contains(t, foreign.Content, "second")
+	for _, managed := range []bool{false, true} {
+		for _, ptc := range []bool{false, true} {
+			t.Run(fmt.Sprintf("byte-managed=%v-ptc=%v", managed, ptc), func(t *testing.T) {
+				name := fmt.Sprintf("byte-%v-%v.txt", managed, ptc)
+				path := name
+				if managed {
+					path = "$SESSION_DIR/" + name
+					require.NoError(t, os.WriteFile(filepath.Join(thread.Toolkit.SessionDir(), name), content, 0600))
+				} else {
+					require.NoError(t, os.WriteFile(filepath.Join(remote, name), content, 0600))
+				}
+				raw, err := json.Marshal(map[string]any{"path": path, "byte_offset": 0, "byte_end_offset": len(content), "limit": len(content), "expected_sha256": fmt.Sprintf("%x", sum)})
+				require.NoError(t, err)
+				args, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(raw)})
+				require.NoError(t, err)
+				ledger, err := toolledger.New(testSessionDocuments(t, t.TempDir()), "remote-pages")
+				require.NoError(t, err)
+				policy := &projectionPolicy{}
+				thread.Toolkit.SetAuthorizer(policy)
+				defer thread.Toolkit.SetAuthorizer(nil)
+				call := providers.ToolCall{ID: name, Name: "read_file", Arguments: string(args)}
+				if ptc {
+					quoted, _ := json.Marshal(string(args))
+					code := fmt.Sprintf(`const r=await tools.read_file(JSON.parse(%s));console.log("BYTE_VALUE",r.content[0].text);`, quoted)
+					encoded, err := json.Marshal(map[string]string{"code": code, "description": "native byte"})
+					require.NoError(t, err)
+					call = providers.ToolCall{ID: name, Name: "run_code", Arguments: string(encoded)}
+				}
+				run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: ledger, OperationID: name, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+				messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{call}, nil)
+				run.Close()
+				require.NoError(t, err)
+				require.Len(t, messages, 1)
+				require.False(t, messages[0].ToolResult.IsError)
+				require.Contains(t, messages[0].Content, "first")
+				policy.denied.Store(true)
+				pending, err := ledger.PendingProjection(ctx)
+				require.Error(t, err, "current native permission must gate unprojected byte content")
+				require.Empty(t, pending)
+				policy.denied.Store(false)
+				pending, err = ledger.PendingProjection(ctx)
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
+			})
+		}
+	}
+	// Authorization-only byte reads can share a host batch with session line
+	// observations. A remote native line has a separate durable owner and is
+	// rejected before either observation can commit.
+	makeFile("byte-mixed-session.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(remote, "byte-mixed-workspace.txt"), content, 0600))
+	byteCode := func(path string) string {
+		raw, err := json.Marshal(map[string]any{"path": path, "byte_offset": 0, "byte_end_offset": len(content), "limit": len(content), "expected_sha256": fmt.Sprintf("%x", sum)})
+		require.NoError(t, err)
+		args, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(raw)})
+		require.NoError(t, err)
+		quoted, _ := json.Marshal(string(args))
+		return fmt.Sprintf(`{const r=await tools.read_file(JSON.parse(%s));console.log("mixed-byte",r.content[0].text);}`, quoted)
+	}
+	for _, after := range []bool{false, true} {
+		docs := &sessionResolutionFailure{Documents: testSessionDocuments(t, t.TempDir()), after: after}
+		ledger, err := toolledger.New(docs, "remote-pages")
+		require.NoError(t, err)
+		policy := &projectionPolicy{}
+		thread.Toolkit.SetAuthorizer(policy)
+		args, err := json.Marshal(map[string]string{"code": byteCode("byte-mixed-workspace.txt"), "description": "byte resolution acknowledgement"})
+		require.NoError(t, err)
+		id := fmt.Sprintf("byte-resolution-%v", after)
+		run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: ledger, OperationID: id, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+		messages, runErr := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: id, Name: "run_code", Arguments: string(args)}}, nil)
+		run.Close()
+		require.ErrorContains(t, runErr, "observation settlement outcome unknown")
+		require.Empty(t, messages)
+		require.True(t, docs.fired.Load())
+		require.NoError(t, ledger.Reconcile(ctx))
+		require.NoError(t, executionenv.RecoverLedgerObservations(ctx, ledger, thread.Toolkit.ObservationRecoverer()))
+		policy.denied.Store(true)
+		projection, err := ledger.PendingProjection(ctx)
+		require.Error(t, err)
+		require.Empty(t, projection)
+		policy.denied.Store(false)
+		projection, err = ledger.PendingProjection(ctx)
+		require.NoError(t, err)
+		require.Len(t, projection, 1)
+		require.Contains(t, projection[0].Result.TextProjection(), "mixed-byte")
+		thread.Toolkit.SetAuthorizer(nil)
+	}
+	beforeMixed, _ := thread.Toolkit.ActiveFilesContextBlock()
+	byteOnly := runCode("byte-only-combined", byteCode("byte-mixed-workspace.txt")+byteCode("$SESSION_DIR/byte-mixed-session.txt"), thread.StreamRunner.Tools)
+	require.False(t, byteOnly.ToolResult.IsError, byteOnly.Content)
+	unchanged, _ := thread.Toolkit.ActiveFilesContextBlock()
+	require.Equal(t, beforeMixed.Content, unchanged.Content, "byte reads must not modify freshness")
+	byteFailure := runCode("byte-parent-failure", byteCode("byte-mixed-workspace.txt")+`throw Error("parent failed");`, thread.StreamRunner.Tools)
+	require.True(t, byteFailure.ToolResult.IsError)
+	require.NotContains(t, byteFailure.Content, "mixed-byte")
+	unchanged, _ = thread.Toolkit.ActiveFilesContextBlock()
+	require.Equal(t, beforeMixed.Content, unchanged.Content)
+	combined := runCode("byte-session-combined", byteCode("byte-mixed-workspace.txt")+byteCode("$SESSION_DIR/byte-mixed-session.txt")+codeFor("byte-mixed-session.txt"), thread.StreamRunner.Tools)
+	require.False(t, combined.ToolResult.IsError, combined.Content)
+	require.Contains(t, combined.Content, "mixed-byte")
+	afterMixed, _ := thread.Toolkit.ActiveFilesContextBlock()
+	require.NotEqual(t, beforeMixed.Content, afterMixed.Content, "session line must commit")
+	require.NotContains(t, afterMixed.Content, "byte-mixed-workspace.txt", "byte read must not create freshness")
+	remoteLineRaw, err := json.Marshal(map[string]any{"path": "byte-mixed-workspace.txt", "offset": 2, "limit": 1, "expected_sha256": fmt.Sprintf("%x", sum)})
+	require.NoError(t, err)
+	remoteLineArgs, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(remoteLineRaw)})
+	require.NoError(t, err)
+	remoteLineQuoted, _ := json.Marshal(string(remoteLineArgs))
+	remoteLineCode := fmt.Sprintf(`{const r=await tools.read_file(JSON.parse(%s));console.log("remote-line",r.content[0].text);}`, remoteLineQuoted)
+	conflicting := runCode("byte-remote-combined", byteCode("byte-mixed-workspace.txt")+remoteLineCode, thread.StreamRunner.Tools)
+	require.True(t, conflicting.ToolResult.IsError)
+	require.NotContains(t, conflicting.Content, "mixed-byte")
+	require.NotContains(t, conflicting.Content, "remote-line")
+	afterConflict, _ := thread.Toolkit.ActiveFilesContextBlock()
+	require.Equal(t, afterMixed.Content, afterConflict.Content)
+
 }

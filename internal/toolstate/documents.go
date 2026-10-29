@@ -52,12 +52,66 @@ type Invocation struct {
 // Observation stores recovery identifiers and a validated result, never the
 // worker transport credential or individual prepared-read receipts.
 type Observation struct {
+	OwnerKind           string `json:",omitempty"`
 	OperationID         string
 	WorkerInstance      string
 	Actor               string
 	EnvironmentIdentity string
 	Outcome             string             `json:",omitempty"`
 	Result              *toolresult.Result `json:",omitempty"`
+}
+
+// Session-owned receipts deliberately encode WorkerInstance as an object.
+// Older binaries expect a string and therefore cannot misroute a new host
+// receipt to an external worker during a downgrade.
+func (o Observation) MarshalJSON() ([]byte, error) {
+	type plain Observation
+	var instance any = o.WorkerInstance
+	switch o.OwnerKind {
+	case "":
+	case "session":
+		instance = struct {
+			Kind     string `json:"kind"`
+			Instance string `json:"instance"`
+		}{"session", o.WorkerInstance}
+	default:
+		return nil, fmt.Errorf("unknown observation owner %q", o.OwnerKind)
+	}
+	return json.Marshal(struct {
+		plain
+		WorkerInstance any
+	}{plain(o), instance})
+}
+
+func (o *Observation) UnmarshalJSON(data []byte) error {
+	type plain Observation
+	var wire struct {
+		plain
+		WorkerInstance json.RawMessage
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var instance string
+	if wire.OwnerKind == "" {
+		if err := json.Unmarshal(wire.WorkerInstance, &instance); err != nil {
+			return fmt.Errorf("invalid remote observation instance: %w", err)
+		}
+	} else if wire.OwnerKind == "session" {
+		var owner struct {
+			Kind     string `json:"kind"`
+			Instance string `json:"instance"`
+		}
+		if err := json.Unmarshal(wire.WorkerInstance, &owner); err != nil || owner.Kind != "session" || owner.Instance == "" {
+			return fmt.Errorf("invalid session observation instance")
+		}
+		instance = owner.Instance
+	} else {
+		return fmt.Errorf("unknown observation owner %q", wire.OwnerKind)
+	}
+	*o = Observation(wire.plain)
+	o.WorkerInstance = instance
+	return nil
 }
 
 // Project joins history admission and result disposal in the caller's atomic

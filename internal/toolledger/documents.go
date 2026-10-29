@@ -343,7 +343,7 @@ func (l *Ledger) MarkProjected(ctx context.Context, invocationIDs []string) erro
 		return err
 	}
 	for _, i := range observations {
-		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity}, l)
+		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity, OwnerKind: i.OwnerKind}, l)
 	}
 	return nil
 }

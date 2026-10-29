@@ -35,6 +35,7 @@ func (p PreparedRead) GroupKey() any {
 // ReadBatchIdentity contains no bearer receipt or worker transport credential.
 // It may be persisted in the invocation ledger before the commit decision.
 type ReadBatchIdentity struct {
+	OwnerKind           string `json:"owner_kind,omitempty"`
 	OperationID         string `json:"operation_id"`
 	WorkerInstance      string `json:"worker_instance"`
 	Actor               string `json:"actor"`
@@ -208,7 +209,7 @@ func CommitPreparedReadBatch(ctx context.Context, values []PreparedRead) error {
 
 // RecoverReadBatch binds a non-bearer identity to the original worker instance.
 func (e *Environment) RecoverReadBatch(ctx context.Context, identity ReadBatchIdentity) (*PreparedReadBatch, error) {
-	if identity.EnvironmentIdentity != e.identity || identity.WorkerInstance == "" || identity.Actor == "" || identity.OperationID == "" {
+	if identity.OwnerKind != "" || identity.EnvironmentIdentity != e.identity || identity.WorkerInstance == "" || identity.Actor == "" || identity.OperationID == "" {
 		return nil, ErrReadObservationCommitUnknown
 	}
 	client, err := e.connect(ctx)

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -129,4 +131,54 @@ func TestSessionLineRootCloseWaitsForAdmittedCommit(t *testing.T) {
 	state.mu.Unlock()
 	require.NoError(t, <-committed)
 	require.NoError(t, <-closed)
+}
+
+type misleadingRemoteRecoverer struct{ calls int }
+
+func (r *misleadingRemoteRecoverer) RecoverReadBatch(_ context.Context, _ executionenv.ReadBatchIdentity) (*executionenv.PreparedReadBatch, error) {
+	r.calls++
+	return executionenv.NewLocalReadBatch(executionenv.ReadBatchIdentity{}, executionenv.LocalReadBatchOperations{}), nil
+}
+
+func TestHostObservationOwnerNeverFallsBackToRemote(t *testing.T) {
+	kit, err := New(t.TempDir())
+	require.NoError(t, err)
+	kit.SetSessionID("session")
+	kit.SetAgentIdentity("session", "root")
+	require.NoError(t, kit.SetSessionDir(filepath.Join(t.TempDir(), "session")))
+	defer kit.CloseSessionArtifacts()
+	remote := &misleadingRemoteRecoverer{}
+	actor, path := kit.ExecutionActor()
+	r := sessionReadRecoverer{state: kit.env.readStateStore(), remote: remote, actor: actor, actorPath: path, session: kit.env.SessionID, root: kit.env.sessionArtifactRoot}
+	local := r.state.coordinator().instance
+	for _, id := range []executionenv.ReadBatchIdentity{
+		{OwnerKind: "session", WorkerInstance: "other", Actor: actor, EnvironmentIdentity: "session"},
+		{OwnerKind: "session", WorkerInstance: local, Actor: "other", EnvironmentIdentity: "session"},
+		{OwnerKind: "session", WorkerInstance: local, Actor: actor, EnvironmentIdentity: "other"},
+		{OwnerKind: "session", WorkerInstance: local, Actor: actor, EnvironmentIdentity: "session", OperationID: "missing"},
+		{OwnerKind: "unknown", WorkerInstance: local},
+	} {
+		_, err := r.RecoverReadBatch(context.Background(), id)
+		require.Error(t, err)
+	}
+	require.Zero(t, remote.calls)
+	_, err = r.RecoverReadBatch(context.Background(), executionenv.ReadBatchIdentity{WorkerInstance: "host-read-third-party"})
+	require.NoError(t, err)
+	require.Equal(t, 1, remote.calls)
+}
+
+func TestNativeByteRevalidationIgnoresOnlyWorkspaceRevision(t *testing.T) {
+	initial := toolresult.FromText(`{"action":"read_bytes","path":"a","content_sha256":"abc","content":"secret","offset":0,"workspace_revision":"one"}`)
+	same := toolresult.FromText(`{"action":"read_bytes","path":"a","content_sha256":"abc","content":"secret","offset":0,"workspace_revision":"two"}`)
+	require.True(t, sameNativeByteSnapshot(initial, same))
+	for _, text := range []string{
+		`{"action":"read_bytes","path":"b","content_sha256":"abc","content":"secret","offset":0}`,
+		`{"action":"read_bytes","path":"a","content_sha256":"other","content":"secret","offset":0}`,
+		`{"action":"read_bytes","path":"a","content_sha256":"abc","content":"other","offset":0}`,
+		`{"action":"read_bytes","path":"a","content_sha256":"abc","content":"secret","offset":1}`,
+		`{"action":"read_file","path":"a","content_sha256":"abc","content":"secret","offset":0}`,
+		`malformed`,
+	} {
+		require.False(t, sameNativeByteSnapshot(initial, toolresult.FromText(text)), text)
+	}
 }

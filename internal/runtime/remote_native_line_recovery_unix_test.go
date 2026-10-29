@@ -126,9 +126,8 @@ func TestRemoteNativeLineRecoversSameWorkerAfterReconnect(t *testing.T) {
 	require.NoError(t, executionenv.RecoverLedgerObservations(ctx, ledger2, third))
 	require.NoError(t, ledger2.ValidateContinuation(ctx))
 	projected, err = ledger2.PendingProjection(ctx)
-	require.NoError(t, err)
-	require.Len(t, projected, 1)
-	require.Equal(t, "final result", projected[0].Result.TextProjection())
+	require.ErrorContains(t, err, "original observation authorization is unavailable")
+	require.Empty(t, projected)
 
 	probe, err = third.PrepareUnobservedRead(ctx, req)
 	require.NoError(t, err)

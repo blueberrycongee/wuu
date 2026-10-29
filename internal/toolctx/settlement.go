@@ -11,7 +11,7 @@ import (
 
 var ErrSettlementOutcomeUnknown = errors.New("tool settlement outcome unknown")
 
-type SettlementIdentity struct{ OperationID, WorkerInstance, Actor, EnvironmentIdentity string }
+type SettlementIdentity struct{ OperationID, WorkerInstance, Actor, EnvironmentIdentity, OwnerKind string }
 type PreparedSettlement struct {
 	Identity  *SettlementIdentity
 	Authorize func(context.Context) error

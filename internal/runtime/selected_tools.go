@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -29,15 +30,16 @@ type selectedToolIdentity struct {
 type selectedToolCallKey struct{}
 
 type selectedToolExecutor struct {
-	client           *toolservice.Client
-	host             *pluginhost.Host
-	scope            *toolservice.Scope
-	identity         selectedToolIdentity
-	rebind           func(*pluginhost.Host, *hooks.Dispatcher, string, string) *selectedToolExecutor
-	mu               sync.Mutex
-	lifecycleErr     error
-	refreshAuthority func(*tools.Toolkit)
-	results          map[string]toolservice.ExecutionResult
+	client               *toolservice.Client
+	host                 *pluginhost.Host
+	scope                *toolservice.Scope
+	identity             selectedToolIdentity
+	rebind               func(*pluginhost.Host, *hooks.Dispatcher, string, string) *selectedToolExecutor
+	mu                   sync.Mutex
+	lifecycleErr         error
+	refreshAuthority     func(*tools.Toolkit)
+	observationRecoverer func() executionenv.ReadBatchRecoverer
+	results              map[string]toolservice.ExecutionResult
 }
 
 func newSelectedToolExecutor(host *pluginhost.Host, scope *toolservice.Scope, identities ...selectedToolIdentity) *selectedToolExecutor {

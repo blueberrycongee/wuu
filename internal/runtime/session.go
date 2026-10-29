@@ -1700,8 +1700,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
 					return toolledger.New(s.Documents, ownerID)
 				},
-				RecoverToolObservations: func(ctx context.Context, ledger *toolledger.Ledger) error {
-					return executionenv.RecoverLedgerObservations(ctx, ledger, kit.ObservationRecoverer())
+				RecoverToolObservations: func(ctx context.Context, ledger *toolledger.Ledger, worker agent.ToolExecutor) error {
+					return executionenv.RecoverLedgerObservations(ctx, ledger, workerObservationRecoverer(worker))
 				},
 			})
 			if controlErr != nil {
@@ -3220,4 +3220,27 @@ func (store sessionRequestContextStore) Save(ctx context.Context, checkpoint age
 		return nil
 	}
 	return err
+}
+
+// workerObservationRecoverer retains the exact worker-owned state and actor.
+// An unfamiliar or rebound executor cannot safely recover a host receipt.
+func workerObservationRecoverer(executor agent.ToolExecutor) executionenv.ReadBatchRecoverer {
+	for executor != nil {
+		switch e := executor.(type) {
+		case *hooks.HookedExecutor:
+			executor = e.Inner()
+		case *pluginToolExecutor:
+			executor = e.inner
+		case *selectedToolExecutor:
+			if e.observationRecoverer != nil {
+				return e.observationRecoverer()
+			}
+			return nil
+		case *tools.Toolkit:
+			return e.ObservationRecoverer()
+		default:
+			return nil
+		}
+	}
+	return nil
 }

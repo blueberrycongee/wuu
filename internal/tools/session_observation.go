@@ -41,8 +41,10 @@ func (c *sessionReadCoordinator) prepare(ctx context.Context, state *readFileSta
 	if actor == "" || session == "" || root == nil {
 		return nil, errors.New("session observation authority unavailable")
 	}
-	if err := ValidateReadObservationBatch(tickets); err != nil {
-		return nil, err
+	if len(tickets) > 0 {
+		if err := ValidateReadObservationBatch(tickets); err != nil {
+			return nil, err
+		}
 	}
 	for _, t := range tickets {
 		if t.state != state || !t.HasNativeRead() {
@@ -60,7 +62,7 @@ func (c *sessionReadCoordinator) prepare(ctx context.Context, state *readFileSta
 	if len(c.batches) >= 1024 {
 		return nil, errors.New("session observation receipt capacity reached")
 	}
-	id := executionenv.ReadBatchIdentity{OperationID: rand.Text(), WorkerInstance: c.instance, Actor: actor, EnvironmentIdentity: session}
+	id := executionenv.ReadBatchIdentity{OperationID: rand.Text(), WorkerInstance: c.instance, Actor: actor, EnvironmentIdentity: session, OwnerKind: "session"}
 	if _, exists := c.batches[id.OperationID]; exists {
 		return nil, errors.New("session observation identity collision")
 	}
@@ -94,8 +96,10 @@ func (c *sessionReadCoordinator) handle(id executionenv.ReadBatchIdentity) *exec
 			if b.root.closed {
 				return "", errors.New("session artifact root is unavailable")
 			}
-			if _, err := CommitReadObservationBatch(ctx, b.tickets); err != nil {
-				return "", err
+			if len(b.tickets) > 0 {
+				if _, err := CommitReadObservationBatch(ctx, b.tickets); err != nil {
+					return "", err
+				}
 			}
 			b.status = "committed"
 			b.expires = time.Now().Add(10 * time.Minute)
@@ -127,7 +131,10 @@ type sessionReadRecoverer struct {
 }
 
 func (r sessionReadRecoverer) RecoverReadBatch(ctx context.Context, id executionenv.ReadBatchIdentity) (*executionenv.PreparedReadBatch, error) {
-	if id.WorkerInstance == r.state.coordinator().instance {
+	if id.OwnerKind == "session" {
+		if id.WorkerInstance != r.state.coordinator().instance {
+			return nil, errors.New("original session observation owner unavailable")
+		}
 		if id.Actor != r.actor || id.EnvironmentIdentity != r.session {
 			return nil, errors.New("session observation authority changed")
 		}
@@ -147,6 +154,9 @@ func (r sessionReadRecoverer) RecoverReadBatch(ctx context.Context, id execution
 			return nil, err
 		}
 		return batch, nil
+	}
+	if id.OwnerKind != "" {
+		return nil, errors.New("unsupported observation owner")
 	}
 	if r.remote == nil {
 		return nil, errors.New("original observation owner unavailable")

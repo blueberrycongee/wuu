@@ -160,6 +160,18 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 				return toolresult.Result{}, err
 			}
 			if !line {
+				if toolctx.HasSettlement(ctx) {
+					toolctx.MarkRemoteReadExposure(ctx)
+					prepared, err := r.toolkit.PrepareNativeByteRead(ctx, remoteEnv, actor, actorPath, r.original, call, restored, managed)
+					if err != nil {
+						return toolresult.Result{}, err
+					}
+					participant := &sessionReadSettlement{prepared: prepared, authorize: prepared.Authorize}
+					if err := toolctx.RegisterGroupedSettlement(ctx, prepared.GroupKey(), participant, prepareSessionReadSettlements, func() {}); err != nil {
+						return toolresult.Result{}, err
+					}
+					return prepared.Result, nil
+				}
 				if managed {
 					return r.toolkit.ExecuteNativeSessionRead(ctx, actor, actorPath, r.original, call, restored)
 				}
@@ -685,7 +697,14 @@ func prepareSessionReadSettlements(ctx context.Context, values []any) (*toolctx.
 		return nil, err
 	}
 	id := batch.Identity
-	return &toolctx.PreparedSettlement{Identity: &toolctx.SettlementIdentity{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity}, Commit: func(ctx context.Context) error {
+	return &toolctx.PreparedSettlement{Identity: &toolctx.SettlementIdentity{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity, OwnerKind: id.OwnerKind}, Authorize: func(ctx context.Context) error {
+		for _, p := range participants {
+			if err := p.authorize(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, Commit: func(ctx context.Context) error {
 		for _, p := range participants {
 			if err := p.authorize(ctx); err != nil {
 				return err

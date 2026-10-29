@@ -61,7 +61,7 @@ func TestSessionNativeLineRecovery(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, ledger.FinalizeBatch(ctx, group))
 		require.NoError(t, ledger.Start(ctx, call.ID))
-		intent := toolledger.ObservationIntent{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity}
+		intent := toolledger.ObservationIntent{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity, OwnerKind: id.OwnerKind}
 		require.NoError(t, ledger.StageObservation(ctx, call.ID, intent, toolresult.FromText("final result")))
 		return ledger
 	}
@@ -81,9 +81,8 @@ func TestSessionNativeLineRecovery(t *testing.T) {
 	require.True(t, exists)
 	require.Contains(t, block.Content, "current=1")
 	projection, err := committedLedger.PendingProjection(ctx)
-	require.NoError(t, err)
-	require.Len(t, projection, 1)
-	require.Equal(t, "final result", projection[0].Result.TextProjection())
+	require.ErrorContains(t, err, "original observation authorization is unavailable")
+	require.Empty(t, projection)
 	unknown := makeBatch("unknown.txt")
 	unknownLedger := stage(unknown.Identity)
 	require.NoError(t, unknown.Commit(ctx))
@@ -175,7 +174,7 @@ func TestSessionNativeLineReceiptHelper(t *testing.T) {
 	require.NoError(t, ledger.FinalizeBatch(ctx, group))
 	require.NoError(t, ledger.Start(ctx, inv.ID))
 	id := batch.Identity
-	require.NoError(t, ledger.StageObservation(ctx, inv.ID, toolledger.ObservationIntent{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity}, toolresult.FromText("secret result")))
+	require.NoError(t, ledger.StageObservation(ctx, inv.ID, toolledger.ObservationIntent{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity, OwnerKind: id.OwnerKind}, toolresult.FromText("secret result")))
 	if state == "committed" {
 		require.NoError(t, batch.Commit(ctx))
 		_, exists := kit.ActiveFilesContextBlock()

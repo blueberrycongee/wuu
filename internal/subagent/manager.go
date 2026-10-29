@@ -45,7 +45,7 @@ type Manager struct {
 	defaultJournal          providers.InferenceJournal
 	BeginModelReceipts      agent.BeginModelReceiptsFunc
 	toolLedgerFactory       func(string) (*toolledger.Ledger, error)
-	recoverToolObservations func(context.Context, *toolledger.Ledger) error
+	recoverToolObservations func(context.Context, *toolledger.Ledger, agent.ToolExecutor) error
 
 	mu        sync.Mutex
 	agents    map[string]*SubAgent
@@ -94,7 +94,7 @@ type ManagerOptions struct {
 	InferenceJournal        providers.InferenceJournal
 	BeginModelReceipts      agent.BeginModelReceiptsFunc
 	ToolLedgerFactory       func(ownerID string) (*toolledger.Ledger, error)
-	RecoverToolObservations func(context.Context, *toolledger.Ledger) error
+	RecoverToolObservations func(context.Context, *toolledger.Ledger, agent.ToolExecutor) error
 	// AcquireLoopDriver is required for execution. Missing configuration
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	SelectedCompaction *compactionservice.Client
@@ -1100,7 +1100,7 @@ func (m *Manager) ReconcileToolLedger(ctx context.Context, id string) error {
 		return err
 	}
 	if m.recoverToolObservations != nil {
-		return m.recoverToolObservations(ctx, ledger)
+		return m.recoverToolObservations(ctx, ledger, kit)
 	}
 	return executionenv.RecoverLedgerObservations(ctx, ledger, nil)
 }

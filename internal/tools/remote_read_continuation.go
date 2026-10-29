@@ -154,18 +154,128 @@ func (t *Toolkit) PrepareSessionNativeRead(ctx context.Context, actor, actorPath
 }
 
 func PrepareSessionReadBatch(ctx context.Context, reads []PreparedSessionRead) (*executionenv.PreparedReadBatch, error) {
-	if len(reads) == 0 || reads[0].state == nil || reads[0].root == nil {
+	if len(reads) == 0 || len(reads) > 128 || reads[0].state == nil || reads[0].root == nil {
 		return nil, errors.New("invalid session read batch")
 	}
 	group := reads[0].GroupKey()
 	tickets := make([]*ReadObservationTicket, 0, len(reads))
 	for _, read := range reads {
-		if read.GroupKey() != group || read.ticket == nil {
+		if read.GroupKey() != group {
 			return nil, errors.New("session read batch authority mismatch")
 		}
-		tickets = append(tickets, read.ticket)
+		if read.ticket != nil {
+			tickets = append(tickets, read.ticket)
+		}
 	}
 	return reads[0].state.coordinator().prepare(ctx, reads[0].state, reads[0].root, reads[0].actor, reads[0].actorPath, reads[0].session, tickets)
+}
+
+// PrepareNativeByteRead captures an authorization-only participant. Native
+// byte reads do not mutate freshness; the host receipt therefore commits no
+// read state but binds all output admission checks to the original authority.
+func (t *Toolkit) PrepareNativeByteRead(ctx context.Context, remote executionenv.Executor, actor, actorPath string, original Tool, originalCall, restored providers.ToolCall, managed bool) (PreparedSessionRead, error) {
+	if t == nil || t.env == nil || original == nil {
+		return PreparedSessionRead{}, errors.New("native byte read unavailable")
+	}
+	verified, actualManaged, line, err := t.RestoreRemoteNativeRead(originalCall)
+	if err != nil || line || actualManaged != managed || verified != restored {
+		return PreparedSessionRead{}, errors.New("invalid native byte continuation")
+	}
+	mode, sessionID, session, root, state := t.env.PermissionMode, t.env.SessionID, t.env.SessionDir, t.env.sessionArtifactRoot, t.env.readStateStore()
+	var captured *toolresult.Result
+	check := func(checkCtx context.Context) error {
+		a, p := t.ExecutionActor()
+		if a != actor || p != actorPath || actor == "" || t.env.PermissionMode != mode || t.env.SessionID != sessionID || t.env.SessionDir != session || t.env.sessionArtifactRoot != root || t.env.readStateStore() != state || root == nil || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden || !t.MatchesRemoteNativeReadAuthority(remote, actor, actorPath, sessionID, mode) {
+			return errors.New("native byte read authority changed")
+		}
+		if _, err := root.root.Stat("."); err != nil {
+			return errors.New("session artifact root is unavailable")
+		}
+		if managed {
+			if err := t.checkPermission(checkCtx, t.toolInfoForCall(original, restored.Arguments), restored); err != nil {
+				return err
+			}
+		} else {
+			current, err := t.RecheckRemoteReadOnlyOn(checkCtx, remote, actor, actorPath, original, restored)
+			if err != nil {
+				return err
+			}
+			if current != mode {
+				return errors.New("native byte read authority changed")
+			}
+			if captured != nil {
+				// An Environment can reconnect to a different worker. Re-read the
+				// exact authorized range and digest before admitting saved bytes.
+				revalidated, err := t.ExecuteRemoteNativeReadOn(checkCtx, remote, actor, actorPath, original, restored)
+				if err != nil {
+					return err
+				}
+				if !sameNativeByteSnapshot(*captured, revalidated) {
+					return errors.New("native byte snapshot changed")
+				}
+			}
+		}
+		a, p = t.ExecutionActor()
+		if a != actor || p != actorPath || t.env.PermissionMode != mode || t.env.SessionID != sessionID || t.env.SessionDir != session || t.env.sessionArtifactRoot != root || t.env.readStateStore() != state || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden || !t.MatchesRemoteNativeReadAuthority(remote, actor, actorPath, sessionID, mode) {
+			return errors.New("native byte read authority changed")
+		}
+		if _, err := root.root.Stat("."); err != nil {
+			return errors.New("session artifact root is unavailable")
+		}
+		return checkCtx.Err()
+	}
+	if err := check(ctx); err != nil {
+		return PreparedSessionRead{}, err
+	}
+	var result toolresult.Result
+	if managed {
+		result, err = t.ExecuteNativeSessionRead(ctx, actor, actorPath, original, originalCall, restored)
+	} else {
+		result, err = t.ExecuteRemoteNativeReadOn(ctx, remote, actor, actorPath, original, restored)
+	}
+	if err != nil {
+		return PreparedSessionRead{}, err
+	}
+	if result.IsError {
+		return PreparedSessionRead{}, errors.New("native byte read failed")
+	}
+	captured = &result
+	if err := check(ctx); err != nil {
+		return PreparedSessionRead{}, err
+	}
+	return PreparedSessionRead{Result: result, PermissionMode: mode, state: state, root: root, actor: actor, actorPath: actorPath, session: sessionID, Authorize: check}, nil
+}
+
+// Workspace revision describes the whole workspace, so an unrelated write may
+// change it even when the authorized file snapshot and byte result match.
+func sameNativeByteSnapshot(a, b toolresult.Result) bool {
+	normalize := func(r toolresult.Result) (toolresult.Result, bool) {
+		if r.IsError || len(r.Content) != 1 || r.Content[0].Type != toolresult.ContentTypeText {
+			return toolresult.Result{}, false
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal([]byte(r.Content[0].Text), &fields) != nil {
+			return toolresult.Result{}, false
+		}
+		var action string
+		if json.Unmarshal(fields["action"], &action) != nil || action != "read_bytes" {
+			return toolresult.Result{}, false
+		}
+		delete(fields, "workspace_revision")
+		canonical, err := json.Marshal(fields)
+		if err != nil {
+			return toolresult.Result{}, false
+		}
+		r.Content = append([]toolresult.ContentPart(nil), r.Content...)
+		r.Content[0].Text = string(canonical)
+		return r, true
+	}
+	left, ok := normalize(a)
+	if !ok {
+		return false
+	}
+	right, ok := normalize(b)
+	return ok && reflect.DeepEqual(left, right)
 }
 
 // MatchesRemoteNativeReadAuthority rejects changes to the captured authority.

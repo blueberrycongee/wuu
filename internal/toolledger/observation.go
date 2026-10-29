@@ -17,7 +17,7 @@ import (
 // ObservationIntent identifies a worker-side operation. Transport credentials
 // and individual prepared-read receipts must never be stored here.
 type ObservationIntent struct {
-	OperationID, WorkerInstance, Actor, EnvironmentIdentity string
+	OperationID, WorkerInstance, Actor, EnvironmentIdentity, OwnerKind string
 }
 
 type PendingObservation struct {
@@ -26,6 +26,9 @@ type PendingObservation struct {
 }
 
 func (i ObservationIntent) valid() bool {
+	if i.OwnerKind != "" && i.OwnerKind != "session" {
+		return false
+	}
 	for _, field := range []string{i.OperationID, i.WorkerInstance, i.Actor, i.EnvironmentIdentity} {
 		if strings.TrimSpace(field) != field || field == "" || len(field) > 512 {
 			return false
@@ -35,14 +38,14 @@ func (i ObservationIntent) valid() bool {
 }
 
 func observationIntent(o *toolstate.Observation) ObservationIntent {
-	return ObservationIntent{o.OperationID, o.WorkerInstance, o.Actor, o.EnvironmentIdentity}
+	return ObservationIntent{OperationID: o.OperationID, WorkerInstance: o.WorkerInstance, Actor: o.Actor, EnvironmentIdentity: o.EnvironmentIdentity, OwnerKind: o.OwnerKind}
 }
 
 func (l *Ledger) AuthorizeObservation(ctx context.Context, intent ObservationIntent) error {
 	if l == nil || !intent.valid() || intent.Actor != l.ownerID {
 		return errors.New("invalid observation authorization identity")
 	}
-	id := toolctx.SettlementIdentity{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity}
+	id := toolctx.SettlementIdentity{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity, OwnerKind: intent.OwnerKind}
 	if err := toolctx.AuthorizeObservation(ctx, id, l); err != nil {
 		return fmt.Errorf("observation result unavailable: %w", err)
 	}
@@ -110,7 +113,7 @@ func (l *Ledger) ForgetProjectedObservationBindings(ctx context.Context, ids []s
 		return err
 	}
 	for _, i := range done {
-		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity}, l)
+		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity, OwnerKind: i.OwnerKind}, l)
 	}
 	return nil
 }
@@ -151,7 +154,7 @@ func (l *Ledger) StageObservation(ctx context.Context, invocationID string, inte
 			return errors.New("observation staging requires a running top-level at-most-once invocation")
 		}
 		copy := result.Clone()
-		invocation.Observation = &toolstate.Observation{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity, Result: &copy}
+		invocation.Observation = &toolstate.Observation{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity, OwnerKind: intent.OwnerKind, Result: &copy}
 		return tx.Put(toolstate.Invocations, invocationID, invocation)
 	})
 }

@@ -476,7 +476,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					return fn(ctx)
 				}
 				identity := prepared.Identity
-				intent := toolledger.ObservationIntent{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity}
+				intent := toolledger.ObservationIntent{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity, OwnerKind: identity.OwnerKind}
 				if err := toolctx.RegisterObservationAuthorization(*identity, r.ledger, prepared.Authorize); err != nil {
 					_ = cleanup(prepared.Abort)
 					_ = cleanup(prepared.Release)

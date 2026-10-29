@@ -459,7 +459,11 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, messages, 1)
 			require.Equal(t, fail, messages[0].ToolResult.IsError)
-			require.Contains(t, messages[0].Content, "NATIVE_OK read_bytes")
+			if fail {
+				require.NotContains(t, messages[0].Content, "NATIVE_OK read_bytes")
+			} else {
+				require.Contains(t, messages[0].Content, "NATIVE_OK read_bytes")
+			}
 		}
 	}
 
