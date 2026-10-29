@@ -67,7 +67,7 @@ func (b *batchResources) Execute(ctx context.Context, index int) (toolbatch.Outc
 	b.mu.Unlock()
 	// The callback must retain its provider generation until the physical effect
 	// and durable settlement finish, even if its transport cancels first.
-	result, err := b.runtime.awaitRunResult(context.WithoutCancel(ctx), run)
+	result, err := b.runtime.awaitRunResultWithContexts(context.WithoutCancel(ctx), ctx, run)
 	return toolbatch.Outcome{Result: result.Clone(), InvocationID: run.invocationID}, err
 }
 func (b *batchResources) Settle(ctx context.Context, index int, result toolresult.Result) (toolbatch.Outcome, error) {
@@ -89,7 +89,7 @@ func (b *batchResources) Settle(ctx context.Context, index int, result toolresul
 	}
 	b.claimSettlement(run, result.Clone(), context.WithoutCancel(ctx))
 	b.mu.Unlock()
-	value, err := b.runtime.awaitRunResult(context.WithoutCancel(ctx), run)
+	value, err := b.runtime.awaitRunResultWithContexts(context.WithoutCancel(ctx), ctx, run)
 	return toolbatch.Outcome{Result: value.Clone(), InvocationID: run.invocationID}, err
 }
 func (b *batchResources) claimSettlement(run *toolRun, result toolresult.Result, ctx context.Context) {
@@ -140,7 +140,7 @@ func (b *batchResources) Cancel(ctx context.Context, index int) (toolbatch.Outco
 		cancel()
 	}
 	b.mu.Unlock()
-	value, err := b.runtime.awaitRunResult(context.WithoutCancel(ctx), run)
+	value, err := b.runtime.awaitRunResultWithContexts(context.WithoutCancel(ctx), ctx, run)
 	return toolbatch.Outcome{Result: value.Clone(), InvocationID: run.invocationID}, err
 }
 
@@ -210,7 +210,7 @@ func executeSelectedToolBatch(ctx context.Context, executor toolbatch.Executor, 
 			}
 			resources.claimSettlement(run, toolresult.FromErrorText(errorJSON(reason)), settleCtx)
 		}
-		result, err := runtime.awaitRunResult(settleCtx, run)
+		result, err := runtime.awaitRunResultWithContexts(settleCtx, ctx, run)
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 			continue

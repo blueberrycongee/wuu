@@ -1111,10 +1111,19 @@ func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
 }
 
 func (r *TurnToolRuntime) awaitRunResult(ctx context.Context, run *toolRun) (toolresult.Result, error) {
-	result, err := run.wait(ctx)
+	return r.awaitRunResultWithContexts(ctx, ctx, run)
+}
+
+// The physical tool must drain even after cancellation, but authorization of
+// its result remains cancellable and never inherits the detached wait context.
+func (r *TurnToolRuntime) awaitRunResultWithContexts(waitCtx, authCtx context.Context, run *toolRun) (toolresult.Result, error) {
+	result, err := run.wait(waitCtx)
 	if err == nil {
-		if run.parent == nil && r.ledger != nil && run.invocationID != "" {
-			if authErr := r.ledger.AuthorizeInvocations(ctx, []string{run.invocationID}); authErr != nil {
+		run.mu.Lock()
+		needsAuthorization := run.hadParticipants && !result.IsError
+		run.mu.Unlock()
+		if run.parent == nil && needsAuthorization && r.ledger != nil && run.invocationID != "" {
+			if authErr := r.ledger.AuthorizeInvocations(authCtx, []string{run.invocationID}); authErr != nil {
 				run.mu.Lock()
 				run.suppressNested = true
 				run.mu.Unlock()
