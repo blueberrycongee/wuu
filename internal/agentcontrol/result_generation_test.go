@@ -2,7 +2,9 @@ package agentcontrol
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -307,5 +310,112 @@ func TestOversizedCorruptArtifactsDoNotCauseUnboundedAllocation(t *testing.T) {
 				t.Fatalf("returned corrupted report: %+v", msg)
 			}
 		})
+	}
+}
+
+// A terminal record may be replayed after the report index is lost while its
+// derived file and task artifacts survive. Changed workspace metadata must
+// produce a new handoff without adopting or overwriting the old reference.
+func TestGeneratedReportRecoveryWithLostIndexAndChangedMetadata(t *testing.T) {
+	for _, backend := range []string{"files", "documents"} {
+		for _, scenario := range []struct {
+			name            string
+			changed, tamper bool
+		}{{"unchanged", false, false}, {"changed", true, false}, {"tampered", false, true}} {
+			t.Run(fmt.Sprintf("%s/%s", backend, scenario.name), func(t *testing.T) {
+				root := t.TempDir()
+				worktree := filepath.Join(root, "worktree")
+				if err := os.MkdirAll(worktree, 0700); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("git", "init", "-q", worktree)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git init: %s %v", output, err)
+				}
+				if err := os.WriteFile(filepath.Join(worktree, "before.txt"), []byte("before"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				dir := filepath.Join(root, "harness")
+				store := harness.NewStore(dir)
+				var docs persistence.Documents
+				if backend == "documents" {
+					opened, err := persistence.Open(context.Background(), filepath.Join(root, "documents"), "sqlite")
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer opened.Close()
+					docs = opened
+					store = harness.NewDocumentStore(docs, "session", dir)
+				}
+				c := &AgentControl{harnessDir: dir, harnessStore: store}
+				task := harness.Task{ID: "worker", Workspace: harness.WorkspaceLease{Mode: harness.WorkspaceWorktree, Root: worktree}}
+				if err := store.UpsertTask(task); err != nil {
+					t.Fatal(err)
+				}
+				snap := subagent.SubAgentSnapshot{ID: "worker", Status: subagent.StatusCompleted, Result: "finished", CompletedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+				c.recordAgentResultArtifact(snap)
+				c.synthesizeFinalTextReport(snap)
+				first, ok, err := store.ReportForTask("worker")
+				if err != nil || !ok {
+					t.Fatalf("first report: %+v %v", first, err)
+				}
+				original, err := os.ReadFile(first.ReportPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if backend == "files" {
+					if err := os.Remove(filepath.Join(dir, "reports.json")); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					err := persistence.AccessDocumentImage(context.Background(), docs, harness.DocumentNamespace, "session", nil, func(image *persistence.DocumentImage) error { return image.Put("reports", []harness.Report{}) })
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if scenario.tamper {
+					// An unindexed file may have been altered by another writer.
+					original = []byte("untrusted existing report")
+					if err := os.WriteFile(first.ReportPath, original, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if scenario.changed {
+					if err := os.WriteFile(filepath.Join(worktree, "after.txt"), []byte("after"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					tasks, err := store.ListTasks()
+					if err != nil || len(tasks) != 1 {
+						t.Fatalf("tasks: %+v %v", tasks, err)
+					}
+					tasks[0].ArtifactPaths = append(tasks[0].ArtifactPaths, "new-artifact")
+					if err := store.UpsertTask(tasks[0]); err != nil {
+						t.Fatal(err)
+					}
+				}
+				c.synthesizeFinalTextReport(snap)
+				recovered, ok, err := store.ReportForTask("worker")
+				if err != nil || !ok {
+					t.Fatalf("recovered report: %+v %v", recovered, err)
+				}
+				if recovered.ReportPath == first.ReportPath {
+					t.Fatal("recovery adopted the unindexed path")
+				}
+				after, err := os.ReadFile(first.ReportPath)
+				if err != nil || string(after) != string(original) {
+					t.Fatalf("old report changed: %v", err)
+				}
+				data, err := os.ReadFile(recovered.ReportPath)
+				if err != nil || !harness.GeneratedReportReady(recovered) {
+					t.Fatalf("recovered artifact unavailable: %v", err)
+				}
+				if strings.Contains(string(data), first.ReportPath) || strings.Contains(string(data), "untrusted existing report") {
+					t.Fatal("recovered report adopted its unindexed predecessor")
+				}
+				if scenario.changed && (!strings.Contains(string(data), "new-artifact") || !strings.Contains(string(data), "after.txt")) {
+					t.Fatalf("recovered metadata missing: %s", data)
+				}
+			})
+		}
 	}
 }

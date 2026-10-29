@@ -3,6 +3,7 @@ package harness
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -886,6 +887,13 @@ func (s *Store) ListReports() ([]Report, error) {
 		return nil, nil
 	}
 	return s.loadReports()
+}
+
+// GeneratedReportDigest names the exact rendered contents, so recovery can
+// publish a new immutable artifact when mutable task metadata has changed.
+func GeneratedReportDigest(report Report) string {
+	sum := sha256.Sum256([]byte(renderReportMarkdown(report)))
+	return hex.EncodeToString(sum[:])
 }
 
 // GeneratedReportReady verifies that a derived report still represents its

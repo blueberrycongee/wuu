@@ -3607,9 +3607,19 @@ func (c *AgentControl) synthesizeFinalTextReport(snap subagent.SubAgentSnapshot)
 	task, _ := c.harnessTask(taskID)
 	changed := c.worktreeChangedFiles(task)
 	_, artifacts := c.harnessReportForTask(taskID)
+	generationDir := filepath.Join(c.harnessDir, "reports", taskID, generation)
+	// A previous materialization may still be listed on the task even if its
+	// report index was lost. Never include a report as its own input.
+	filtered := artifacts[:0]
+	for _, artifact := range artifacts {
+		rel, err := filepath.Rel(generationDir, artifact)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			continue
+		}
+		filtered = append(filtered, artifact)
+	}
 	report := harness.Report{
 		ID:           taskID + "-final-text-" + generation,
-		ReportPath:   filepath.Join(c.harnessDir, "reports", taskID, generation, "report.md"),
 		TaskID:       taskID,
 		RunID:        harnessRunID(taskID),
 		AgentID:      taskID,
@@ -3618,9 +3628,31 @@ func (c *AgentControl) synthesizeFinalTextReport(snap subagent.SubAgentSnapshot)
 		Outcome:      "completed",
 		Summary:      summary,
 		ChangedFiles: changed,
-		Artifacts:    artifacts,
+		Artifacts:    filtered,
 		RawResult:    snap.Result,
 		SubmittedAt:  snap.CompletedAt,
+	}
+	if report.SubmittedAt.IsZero() {
+		report.SubmittedAt = time.Now().UTC()
+	}
+	// If the index was lost, a file at the expected path is no longer
+	// authoritative. Leave it untouched and choose another immutable path.
+	digest := harness.GeneratedReportDigest(report)
+	for attempt := 0; attempt < 1024; attempt++ {
+		name := digest
+		if attempt > 0 {
+			name = fmt.Sprintf("%s-%d", digest, attempt)
+		}
+		candidate := filepath.Join(generationDir, name, "report.md")
+		if _, err := os.Lstat(candidate); errors.Is(err, os.ErrNotExist) {
+			report.ReportPath = candidate
+			break
+		} else if err != nil {
+			return
+		}
+	}
+	if report.ReportPath == "" {
+		return
 	}
 	if _, err := c.harnessStore.SubmitGeneratedReport(report); err != nil {
 		return

@@ -29,7 +29,7 @@ The plugin's `spawn_agent` tool defaults to background execution. The parent can
 
 When the next step needs the result immediately, the parent can set `run_in_background: false`. The tool then waits and returns the terminal state, output, and error directly. After ten minutes, an unfinished foreground wait becomes background work; it does not cancel the child.
 
-Result and automatically generated report links remain tied to their original content when the worker receives a follow-up. Explicit structured reports remain authoritative. These files stay with the session and are removed when its artifacts are deleted.
+Result and automatically generated report links remain tied to their original content when the worker receives a follow-up. Explicit structured reports remain authoritative. If a report index is lost during recovery, Wuu creates a new report reference and leaves the earlier file untouched. These files stay with the session and are removed when its artifacts are deleted.
 
 ## Correct or stop a subtask
 
