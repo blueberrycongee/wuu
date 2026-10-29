@@ -1208,7 +1208,7 @@ ${personalReviewStyles}
         flights.current.delete(flight.requestID);
         return;
       }
-      const zoom = viewRect.width / flight.view.offsetWidth;
+      const zoom = flight.view.currentCSSZoom;
       const width = destination.width / zoom, height = destination.height / zoom;
       const x = (flight.origin.right - destination.right) / zoom;
       const y = (flight.origin.top - destination.top) / zoom;

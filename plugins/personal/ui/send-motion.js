@@ -40,7 +40,9 @@ export function useSendMotion(React, rootRef) {
     if (!destination.width || !body.animate || destination.bottom <= viewport.top || destination.top >= viewport.bottom) {
       body.removeAttribute("data-personal-send-source"); flights.current.delete(flight.requestID); return;
     }
-    const zoom = viewRect.width / flight.view.offsetWidth;
+    // offsetWidth rounds to whole pixels. That error can narrow a cloned bubble
+    // just enough to wrap its last word, then unwrap when the real row returns.
+    const zoom = flight.view.currentCSSZoom;
     const width = destination.width / zoom, height = destination.height / zoom;
     const x = (flight.origin.right - destination.right) / zoom;
     const y = (flight.origin.top - destination.top) / zoom;
