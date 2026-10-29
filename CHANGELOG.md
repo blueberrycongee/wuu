@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let a selected web search replacement continue its original native search once with the same arguments and authorization, then publish its validated final evidence.
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
 - Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.

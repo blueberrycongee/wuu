@@ -604,6 +604,7 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 			Descriptor: pluginhost.KernelExecutionUpdateDescriptor(),
 			Invoker:    &executionUpdateInvoker{parent: k},
 		},
+		nativeServiceRegistration{Descriptor: pluginhost.KernelNativeToolContinuationDescriptor(), Invoker: &nativeToolContinuationInvoker{parent: k}},
 		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelInvokeToolDescriptor(),
 			Invoker:    &nestedToolInvoker{parent: k},
