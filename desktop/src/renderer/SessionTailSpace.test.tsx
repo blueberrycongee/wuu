@@ -810,18 +810,17 @@ it("keeps a short draft bubble in place when it is adopted by the new thread", (
   expect(scrollTop()).toBe(0);
 });
 
-it("settles a short first bubble into its final layout instead of crossing from the composer", () => {
+it("keeps the first-send layout fixed while the bubble flight owns placement", () => {
   naturalHeight = 220;
   messageBottom = 100;
   render({ id: null, composer: true });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true, composer: true });
   const content = api.scrollContentRef.current!;
-  // The layout is already final; only a short painted rise remains.
+  // The first send has no history to move; its bubble owns the visible flight.
   expect(scrollTop()).toBe(0);
   expect(placements).toHaveLength(1);
-  expect(shift()).toBeGreaterThan(0);
-  expect(shift()).toBeLessThan(viewportHeight / 10);
+  expect(shift()).toBe(0);
   expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(true);
   expect(content.hasAttribute("data-submit-placing")).toBe(true);
   land();
@@ -855,7 +854,7 @@ it("does not feed fractional layout noise back into the submission reservation",
   expect(tailSpace()).toBe(0);
 });
 
-it("keeps a short first-bubble lift through thread adoption", () => {
+it("keeps first-send placement through thread adoption", () => {
   naturalHeight = 220;
   messageBottom = 100;
   render({ id: null });
@@ -883,7 +882,7 @@ it("places a short first bubble without a composer lift with reduced motion", ()
   expect(animations).toHaveLength(0);
 });
 
-it("leaves an in-flight first-bubble lift where it is when the user scrolls", () => {
+it("ends first-send placement when the user scrolls", () => {
   naturalHeight = 220;
   messageBottom = 100;
   render({ id: null });
@@ -896,7 +895,7 @@ it("leaves an in-flight first-bubble lift where it is when the user scrolls", ()
   expect(api.scrollContentRef.current!.hasAttribute("data-submit-placing")).toBe(false);
 });
 
-it("clears an in-flight first-bubble lift when switching sessions", () => {
+it("clears first-send placement when switching sessions", () => {
   naturalHeight = 220;
   messageBottom = 100;
   render({ id: null });
