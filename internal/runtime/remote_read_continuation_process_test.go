@@ -69,7 +69,7 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	require.NoError(t, err)
 	local, remote := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(local, "shared.txt"), []byte("LOCAL-ONLY\n"), 0600))
-	for _, name := range []string{"shared.txt", "forgery.txt", "duplicate.txt", "skip.txt", "pause.txt", "envpause.txt", "fail-after.txt", "bad-after.txt", "after-pause.txt", "cancel-after.txt"} {
+	for _, name := range []string{"shared.txt", "forgery.txt", "duplicate.txt", "skip.txt", "pause.txt", "envpause.txt", "fail-after.txt", "bad-after.txt", "after-pause.txt", "cancel-after.txt", "error-immediate.txt"} {
 		require.NoError(t, os.WriteFile(filepath.Join(remote, name), []byte("REMOTE-ONLY\n"), 0600))
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(remote, "image.bin"), []byte{137, 80, 78, 71, 13, 10, 26, 10, 0}, 0600))
@@ -167,6 +167,12 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, changed, "failed replacement must preserve native observation")
 	}
+	_ = os.Remove(filepath.Join(fixture, "observed-error"))
+	errorText, err := executeSettled(ctx, providers.ToolCall{ID: "error-immediate", Name: "read_file", Arguments: `{"path":"error-immediate.txt"}`})
+	require.Error(t, err)
+	require.NotContains(t, errorText, "REMOTE-ONLY")
+	_, err = os.Stat(filepath.Join(fixture, "observed-error"))
+	require.NoError(t, err, "fixture must actually have received native content")
 	_, err = thread.StreamRunner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Read the file"}}, nil)
 	require.NoError(t, err)
 	<-modelRequests

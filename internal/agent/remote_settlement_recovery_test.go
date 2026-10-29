@@ -88,10 +88,11 @@ func (abortFailureExecutor) Definitions() []providers.ToolDefinition {
 func (abortFailureExecutor) Execute(ctx context.Context, _ providers.ToolCall) (string, error) {
 	err := toolctx.RegisterGroupedSettlement(ctx, "worker", nil, func(context.Context, []any) (*toolctx.PreparedSettlement, error) {
 		return &toolctx.PreparedSettlement{
-			Identity: &toolctx.SettlementIdentity{OperationID: "operation", WorkerInstance: "instance", Actor: "thread", EnvironmentIdentity: "environment"},
-			Commit:   func(context.Context) error { return errors.New("commit rejected") },
-			Abort:    func(context.Context) error { return errors.New("abort acknowledgement lost") },
-			Release:  func(context.Context) error { return nil },
+			Identity:  &toolctx.SettlementIdentity{OperationID: "operation", WorkerInstance: "instance", Actor: "thread", EnvironmentIdentity: "environment"},
+			Authorize: func(context.Context) error { return nil },
+			Commit:    func(context.Context) error { return errors.New("commit rejected") },
+			Abort:     func(context.Context) error { return errors.New("abort acknowledgement lost") },
+			Release:   func(context.Context) error { return nil },
 		}, nil
 	}, func() {})
 	if err != nil {

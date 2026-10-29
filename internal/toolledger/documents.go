@@ -11,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
@@ -230,6 +231,16 @@ func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 }
 
 func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
+	return l.settle(ctx, invocationID, result, false)
+}
+
+// SettleOrdinary records an invocation whose closed root execution scope proved
+// it had no provisional remote reads or unfinished descendants.
+func (l *Ledger) SettleOrdinary(ctx context.Context, invocationID string, result toolresult.Result) error {
+	return l.settle(ctx, invocationID, result, true)
+}
+
+func (l *Ledger) settle(ctx context.Context, invocationID string, result toolresult.Result, ordinary bool) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -270,6 +281,9 @@ func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolres
 			return fmt.Errorf("tool invocation %q cannot settle from %s", invocationID, invocation.State)
 		}
 		invocation.State, invocation.Result, invocation.SettledAt = string(state), &result, now
+		if ordinary && invocation.ParentInvocationID == "" {
+			invocation.ProjectionSafetyVersion = 1
+		}
 		if err := tx.Put(toolstate.Invocations, invocationID, invocation); err != nil {
 			return err
 		}
@@ -305,17 +319,33 @@ func (l *Ledger) MarkProjected(ctx context.Context, invocationIDs []string) erro
 		return nil
 	}
 	now := time.Now().UTC().UnixMilli()
-	return l.write(ctx, func(tx *persistence.Tx) error {
+	var observations []ObservationIntent
+	err := l.write(ctx, func(tx *persistence.Tx) error {
+		observations = nil
 		for _, id := range invocationIDs {
 			id = strings.TrimSpace(id)
 			if id != "" {
+				invocation, err := l.invocation(tx, id)
+				if err != nil {
+					return err
+				}
 				if err := toolstate.Project(tx, l.ownerID, id, now); err != nil {
 					return err
+				}
+				if invocation.Observation != nil {
+					observations = append(observations, observationIntent(invocation.Observation))
 				}
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, i := range observations {
+		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity}, l)
+	}
+	return nil
 }
 
 func (l *Ledger) PendingProjection(ctx context.Context) ([]Invocation, error) {
@@ -323,29 +353,76 @@ func (l *Ledger) PendingProjection(ctx context.Context) ([]Invocation, error) {
 		return nil, nil
 	}
 	var out []Invocation
+	var observations []ObservationIntent
 	err := l.write(ctx, func(tx *persistence.Tx) error {
 		out = nil
+		observations = nil
 		batches, err := toolstate.ReadOwnerBatches(tx, l.ownerID)
 		if err != nil {
 			return err
 		}
+		children := make(map[string][]toolstate.Invocation)
+		var candidates []toolstate.Invocation
 		for _, batch := range batches {
 			invocations, err := batchInvocations(tx, batch)
 			if err != nil {
 				return err
 			}
 			for _, invocation := range invocations {
+				if invocation.ParentInvocationID != "" {
+					children[invocation.ParentInvocationID] = append(children[invocation.ParentInvocationID], invocation)
+				}
 				if (invocation.State == string(InvocationSucceeded) || invocation.State == string(InvocationFailed)) && invocation.ProjectedAt == 0 && invocation.ParentInvocationID == "" {
 					if invocation.Result == nil {
 						return fmt.Errorf("%w: settled tool invocation %q has no result", persistence.ErrCorrupt, invocation.ID)
 					}
-					out = append(out, publicInvocation(invocation))
+					candidates = append(candidates, invocation)
 				}
+			}
+		}
+		for _, invocation := range candidates {
+			if invocation.Observation != nil && ((invocation.State == string(InvocationSucceeded) && invocation.Observation.Outcome != "committed") || (invocation.State == string(InvocationFailed) && invocation.Observation.Outcome != "aborted")) {
+				return fmt.Errorf("%w: inconsistent observation outcome", persistence.ErrCorrupt)
+			}
+			if invocation.ProjectionSafetyVersion != 1 && invocation.Observation == nil {
+				unsafe := invocation.ToolName == "read_file"
+				seen := map[string]bool{}
+				queue := []string{invocation.ID}
+				for len(queue) > 0 && !unsafe {
+					id := queue[len(queue)-1]
+					queue = queue[:len(queue)-1]
+					if seen[id] {
+						continue
+					}
+					seen[id] = true
+					for _, child := range children[id] {
+						if child.ToolName == "read_file" {
+							unsafe = true
+							break
+						}
+						queue = append(queue, child.ID)
+					}
+				}
+				if unsafe {
+					return errors.New("legacy read result lacks a recoverable authorization binding")
+				}
+			}
+			out = append(out, publicInvocation(invocation))
+			if invocation.Observation != nil && invocation.Observation.Outcome == "committed" {
+				observations = append(observations, observationIntent(invocation.Observation))
 			}
 		}
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	for _, intent := range observations {
+		if err = l.AuthorizeObservation(ctx, intent); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (l *Ledger) DecideReplay(ctx context.Context, batchID string) (ReplayDecision, error) {
