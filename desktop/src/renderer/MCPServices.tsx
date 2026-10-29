@@ -347,6 +347,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
           {connector.description ? <p className="mcp-connector-description">{connector.description}</p> : null}
           {setupRequired ? <p className="mcp-connector-description">{setupRequired}</p> : null}
           {server.configuration_unavailable_reason ? <p className="mcp-connector-description">{server.configuration_unavailable_reason}</p> : null}
+          <p className="mcp-connector-description">{t("connector.accountScope")}</p>
           <dl className="mcp-connector-details">
             {server.resource_url ? <><dt>{t("connector.endpoint")}</dt><dd data-connector-detail="endpoint">{server.resource_url}</dd></> : null}
             <dt>{t("connector.authorization")}</dt><dd>{server.configuration_unavailable_reason ? t("connector.unavailable") : authorization?.error ? t("connector.authUnavailable") : authorized === undefined ? t("connector.authLoading") : t(authorized ? "connector.authorized" : "connector.notAuthorized")}</dd>
