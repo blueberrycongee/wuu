@@ -31,6 +31,7 @@ type ExternalReadScope struct {
 	limit    int
 	native   bool
 	image    bool
+	remote   bool
 	previous map[string]readFileObservation
 }
 
@@ -207,7 +208,44 @@ func (t *Toolkit) PrepareRemoteExternalRead(ctx context.Context, env executionen
 		}
 		limit = *args.Limit
 	}
-	return &ExternalReadScope{env: t.env, path: args.Path, resolved: path.Join(remote.Root(), clean), offset: offset, limit: limit}, remote.Root(), nil
+	return &ExternalReadScope{env: t.env, path: args.Path, resolved: path.Join(remote.Root(), clean), offset: offset, limit: limit, remote: true}, remote.Root(), nil
+}
+
+// AcceptRemoteNativeImage validates the captured worker's original image before
+// admitting a plugin's image result. An extension cannot change a text read
+// into an image, and unsupported providers never receive remote media.
+func (s *ExternalReadScope) AcceptRemoteNativeImage(ctx context.Context, result toolresult.Result, allowed bool) (toolresult.Result, error) {
+	if s == nil || !s.remote || !allowed || s.env == nil {
+		return toolresult.Result{}, errors.New("remote external image is unavailable")
+	}
+	if result.IsError || result.ModelText != nil || result.Activity != nil || len(result.StructuredContent) != 0 || len(result.Meta) != 0 || len(result.Content) != 2 || result.Validate() != nil {
+		return toolresult.Result{}, errors.New("invalid remote native image")
+	}
+	meta, image := result.Content[0], result.Content[1]
+	if meta.Type != toolresult.ContentTypeText || meta.Data != "" || meta.URI != "" || meta.RemoteRef != "" || meta.Artifact != nil || len(meta.Resource) != 0 || image.Type != toolresult.ContentTypeImage || image.URI != "" || image.RemoteRef != "" || image.Data == "" || image.Text != "" || image.Artifact != nil || len(image.Resource) != 0 {
+		return toolresult.Result{}, errors.New("invalid remote native image")
+	}
+	var view struct {
+		Action    string `json:"action"`
+		Path      string `json:"path"`
+		MediaType string `json:"media_type"`
+	}
+	if json.Unmarshal([]byte(meta.Text), &view) != nil || view.Action != "read_image" || path.Clean(strings.ReplaceAll(view.Path, "\\", "/")) != path.Clean(strings.TrimSpace(s.path)) || view.MediaType != image.MIMEType {
+		return toolresult.Result{}, errors.New("invalid remote native image metadata")
+	}
+	if len(image.Data) > base64.StdEncoding.EncodedLen(toolresult.MaxInlineDataBytes) {
+		return toolresult.Result{}, errors.New("remote image exceeds the inline limit")
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(image.Data)
+	if err != nil || len(data) > toolresult.MaxInlineDataBytes {
+		return toolresult.Result{}, errors.New("invalid remote image data")
+	}
+	normalized, err := renderReadFileImage(ctx, data, s.path, true, image.MIMEType)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	s.image = true
+	return toolresult.Result{Content: []toolresult.ContentPart{normalized.Content[1]}}, nil
 }
 
 // Render validates the extension's bounded text contract and builds the usual

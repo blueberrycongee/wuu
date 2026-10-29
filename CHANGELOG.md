@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Allow opted-in remote reader replacements to return validated images from an authorized worker continuation.
+
 - Preserve newer remote file observations while allowing trusted text replacements to run after earlier native reads, with durable recovery of uncertain settlements.
 
 - Allow trusted text readers to transform reads from a pinned remote workspace using an authorized, one-use native continuation.
