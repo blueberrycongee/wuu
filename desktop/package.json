@@ -59,6 +59,7 @@
     "test:e2e:conversation-search": "npm run build:core && npm run build && electron scripts/conversation-search-e2e.cjs",
     "test:e2e:artifact-preview": "npm run build && electron scripts/artifact-preview-e2e.cjs",
     "test:e2e:workspace-new-tab": "npm run build && electron scripts/workspace-new-tab-e2e.cjs",
+    "test:e2e:workspace-conversation-close": "electron scripts/workspace-conversation-close-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
     "test:e2e:process-mascot-clip": "npm run build && electron scripts/process-mascot-clip-e2e.cjs",
     "test:e2e:process-compaction-summary": "npm run build && electron scripts/process-compaction-summary-e2e.cjs",
