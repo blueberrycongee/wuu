@@ -16,13 +16,18 @@ func (s *Server) handleMCPAuthStart(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	result, err := mgr.StartOAuthWithRedirect(ctx, params.Name, params.RedirectURI)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		_ = mgr.CancelOAuth(ctx, params.Name, result.State)
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	return s.writeResponse(req.ID, MCPAuthStartResult{
 		AuthorizationURL: result.AuthorizationURL,
@@ -36,13 +41,17 @@ func (s *Server) handleMCPAuthStatus(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	status, err := mgr.OAuthStatus(ctx, params.Name)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	return s.writeResponse(req.ID, mcpAuthStatusResult(status), nil)
 }
@@ -52,10 +61,11 @@ func (s *Server) handleMCPAuthFinish(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	serverStatus, err := mgr.FinishOAuth(ctx, params.Name, params.State, params.Code)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -63,6 +73,9 @@ func (s *Server) handleMCPAuthFinish(ctx context.Context, req Request) error {
 	authStatus, err := mgr.OAuthStatus(ctx, params.Name)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	server := mcpStatusFromRuntime(serverStatus)
 	s.notifyMCPStatus(server)
@@ -74,16 +87,20 @@ func (s *Server) handleMCPAuthRemove(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	if err := mgr.RemoveOAuth(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	authStatus, err := mgr.OAuthStatus(ctx, params.Name)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	server := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(server)
@@ -95,11 +112,16 @@ func (s *Server) handleMCPAuthCancel(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, map[string]bool{"ok": true}, mgr.CancelOAuth(ctx, params.Name, params.State))
+	defer release()
+	err = mgr.CancelOAuth(ctx, params.Name, params.State)
+	if err == nil && !current() {
+		err = mcpGenerationChanged()
+	}
+	return s.writeResponse(req.ID, map[string]bool{"ok": true}, err)
 }
 
 func parseMCPAuthFinishParams(req Request) (MCPAuthFinishParams, error) {

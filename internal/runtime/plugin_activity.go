@@ -4,18 +4,24 @@ import (
 	"sort"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 )
 
 // bindActivityOwnership keeps local control tied to the exact provider
 // generation, including declarative MCP plugins without a runtime process.
 func (g *PluginGeneration) bindActivityOwnership(registry *activity.Registry) {
 	g.activityRegistry = registry
-	if registry == nil || g.mcp == nil || len(g.mcpBinding) == 0 {
+	g.bindMCPActivityManager(g.mcp)
+}
+
+func (g *PluginGeneration) bindMCPActivityManager(manager *mcp.Manager) {
+	registry := g.activityRegistry
+	if registry == nil || manager == nil || len(g.mcpBinding) == 0 {
 		return
 	}
 	bindings := g.mcpBinding
 	generationID := g.id
-	g.mcp.SetConnectionRetiredCallback(func(serverName, connectionID string) {
+	manager.SetConnectionRetiredCallback(func(serverName, connectionID string) {
 		if binding, ok := bindings[serverName]; ok {
 			registry.RevokeConnection(binding.PluginID, generationID, connectionID)
 		}

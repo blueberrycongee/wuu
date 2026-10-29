@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let selected tool-service providers choose native tools during thread or side-thread admission, including when the workspace initially uses an external provider.
+
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
@@ -283,6 +285,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Let a canceled tool-service caller stop waiting for shared native initialization without canceling other conversations, and retire the initialization when its generation closes.
 
 - Keep each conversation's toolkit and worker control bound together through retirement, and remove worker subscriptions from the control that created them.
 - Release each conversation's native tool scopes after its admitted main, worker, and side work drains, while rejecting calls after retirement and retaining in-flight cleanup.

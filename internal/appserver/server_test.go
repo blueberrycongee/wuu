@@ -4800,6 +4800,8 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
+		// The request can include the full native tool surface.
+		conn.SetReadLimit(1 << 20)
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()

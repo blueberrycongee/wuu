@@ -114,6 +114,21 @@ func (h *HookedExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetada
 	return agent.ToolMetadata{}, false
 }
 
+func (h *HookedExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
+	if mp, ok := h.inner.(agent.ToolMetadataContextProvider); ok {
+		meta, found, err := mp.ToolMetadataContext(ctx, call)
+		if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
+			meta.ReadOnly, meta.ConcurrencySafe = false, false
+		}
+		return meta, found, err
+	}
+	if err := ctx.Err(); err != nil {
+		return agent.ToolMetadata{}, false, err
+	}
+	meta, found := h.ToolMetadata(call)
+	return meta, found, nil
+}
+
 func (h *HookedExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
 	if dp, ok := h.inner.(agent.ToolDisplayProvider); ok {
 		return dp.ToolDisplay(call)

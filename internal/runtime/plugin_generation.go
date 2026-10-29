@@ -31,6 +31,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
@@ -42,6 +43,7 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	userBinding       userspace.Binding
 	productParent     *kernelHostServices
 	composition       productCompositionBinding
 	systemPrompt      string
@@ -66,16 +68,19 @@ type PluginGeneration struct {
 	host              *pluginhost.Host
 	hooks             *hooks.Dispatcher
 	skills            []skills.Skill
-	pluginSkills      pluginSkillSnapshot
-	mcp               *mcp.Manager
-	mcpBinding        map[string]tools.MCPActivityBinding
-	activityRegistry  *activity.Registry
-	requestTransforms *agent.RequestTransformChain
-	systemPrompts     *agent.SystemPromptAssembler
-	compactions       *agent.CompactionRegistry
-	ownedRoots        []string
-	revocation        *GenerationRevocationReport
-	closeErr          error
+	// managedSkillDiscovery is set only when this generation discovered its
+	// own local catalog. Captured embedded sessions supply an explicit snapshot.
+	managedSkillDiscovery bool
+	pluginSkills          pluginSkillSnapshot
+	mcp                   *mcp.Manager
+	mcpBinding            map[string]tools.MCPActivityBinding
+	activityRegistry      *activity.Registry
+	requestTransforms     *agent.RequestTransformChain
+	systemPrompts         *agent.SystemPromptAssembler
+	compactions           *agent.CompactionRegistry
+	ownedRoots            []string
+	revocation            *GenerationRevocationReport
+	closeErr              error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
@@ -87,8 +92,9 @@ type PluginGeneration struct {
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released. A negative count seals retirement;
 	// zero is reserved for a prepared candidate that has not been published.
-	refs         atomic.Int32
-	revocationMu sync.Mutex
+	refs               atomic.Int32
+	nativeDependencies nativeGenerationDependencies
+	revocationMu       sync.Mutex
 	// Admission closes under modelMu before root shutdown starts Wait.
 	modelMu            sync.Mutex
 	modelStopped       bool
@@ -748,24 +754,26 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                generationID,
-		state:             kernel.state,
-		settings:          cfg,
-		requiredPlugins:   kernel.requiredPlugins,
-		selectedPluginIDs: p.selectedPluginIDs,
-		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
-		active:            append([]pluginpkg.Plugin(nil), active...),
-		host:              host,
-		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoveredSkills,
-		pluginSkills:      pluginSkills,
-		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
-		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
-		systemPrompts:     systemPrompts,
-		compactions:       compactions,
-		ownedRoots:        append([]string(nil), ownedRoots...),
-		engineGateways:    kernel.engineGateways,
-		driverGateways:    kernel.driverGateways,
+		userBinding:           s.UserBinding(),
+		managedSkillDiscovery: true,
+		id:                    generationID,
+		state:                 kernel.state,
+		settings:              cfg,
+		requiredPlugins:       kernel.requiredPlugins,
+		selectedPluginIDs:     p.selectedPluginIDs,
+		plugins:               append([]pluginpkg.Plugin(nil), discovered...),
+		active:                append([]pluginpkg.Plugin(nil), active...),
+		host:                  host,
+		hooks:                 buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
+		skills:                discoveredSkills,
+		pluginSkills:          pluginSkills,
+		mcpBinding:            mcpActivityBindingsFromPlugins(active, generationID),
+		requestTransforms:     buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
+		systemPrompts:         systemPrompts,
+		compactions:           compactions,
+		ownedRoots:            append([]string(nil), ownedRoots...),
+		engineGateways:        kernel.engineGateways,
+		driverGateways:        kernel.driverGateways,
 	}
 	kernel.bindStateGeneration(generation, s)
 	if kernel.selectedServices != nil {
@@ -786,15 +794,17 @@ func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 	host := generation.host
 	surface := activeSurface(nil)
 	if selectsRuntimeModule(host, toolExecutionConsumer) {
-		executor := newSelectedToolExecutor(host, s.candidateToolScope(generation, generation.requiredPlugins), selectedToolIdentity{cwd: s.RootDir})
+		scope, seal := s.candidateToolScope(generation, generation.requiredPlugins)
+		executor := newSelectedToolExecutor(host, scope, selectedToolIdentity{cwd: s.RootDir})
 		generation.tools = executor
 		if generation.hooks != nil {
 			generation.tools = hooks.NewHookedExecutor(executor, generation.hooks, "", s.RootDir)
 		}
 		var err error
 		surface, err = executor.surface(context.Background())
-		if err != nil {
-			return err
+		sealErr := seal()
+		if err != nil || sealErr != nil {
+			return errors.Join(err, sealErr)
 		}
 	}
 	if selectsRuntimeModule(host, sessionExecutionConsumer) {
@@ -862,6 +872,9 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	}
 	if candidate == nil || candidate.host == nil || candidate.hooks == nil {
 		return errors.New("plugin candidate generation is not initialized")
+	}
+	if !candidate.userBinding.Matches(s.UserBinding()) {
+		return errors.New("plugin generation domain changed")
 	}
 	s.pluginTransitionMu.Lock()
 	defer s.pluginTransitionMu.Unlock()
@@ -1100,6 +1113,9 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 	}
 	for _, id := range retiring {
 		g.revokeActivities(id)
+		if err := g.nativeDependencies.revoke(packages[id]); err != nil {
+			providers.DebugLogf("revoke disabled lazy native MCP for %q: %v", id, err)
+		}
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			cause := &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "module was removed or disabled"}
@@ -1252,6 +1268,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	hookSnapshot.Replace(s.HookDispatcher)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		userBinding: s.UserBinding(),
 		models:      captureGenerationModelBindings(s),
 		id:          generationID,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient, mcpOAuth: s.mcpOAuth,
@@ -1428,6 +1445,10 @@ func (g *PluginGeneration) finalizeShutdownLocked() bool {
 		g.revokedMu.Lock()
 		g.host = nil
 		g.revokedMu.Unlock()
+	}
+	if used, dependencyErr := g.nativeDependencies.close(); used {
+		g.revocation.record("", "native-generation-dependencies", RevocationPhaseShutdown, dependencyErr)
+		g.closeErr = errors.Join(g.closeErr, dependencyErr)
 	}
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
 		rootErr := os.RemoveAll(g.ownedRoots[index])

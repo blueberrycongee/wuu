@@ -162,6 +162,16 @@ func (e *selectedToolExecutor) ToolMetadata(call providers.ToolCall) (agent.Tool
 	}
 	return result.Metadata.AgentMetadata(), true
 }
+func (e *selectedToolExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
+	result, err := e.client.Resolve(ctx, call)
+	if err != nil {
+		return agent.ToolMetadata{}, false, err
+	}
+	if !result.Found || result.Metadata == nil {
+		return agent.ToolMetadata{}, false, nil
+	}
+	return result.Metadata.AgentMetadata(), true, nil
+}
 func (e *selectedToolExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
 	result, err := e.client.Resolve(context.Background(), call)
 	if err != nil || result.Display == nil {

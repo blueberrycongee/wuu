@@ -31,6 +31,8 @@ type toolRun struct {
 	finalized              bool
 	concurrencySafe        bool
 	streamSafe             bool
+	orchestratorKnown      bool
+	orchestrator           bool
 	streamStarted          bool
 	streamAdmissionChecked bool
 	streamAdmitted         bool
@@ -380,7 +382,10 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	// Final-call registration can refresh metadata while this streamed run is
 	// already starting. Use the scheduling decision made under the runtime lock.
 	concurrencySafe := run.concurrencySafe
-	orchestrator := toolIsOrchestrator(r.executor, call)
+	orchestrator := run.orchestrator
+	if !run.orchestratorKnown {
+		orchestrator = toolIsOrchestrator(r.executor, call)
+	}
 	run.mu.Unlock()
 	r.started = true
 	r.legacyContextUnsafe = r.legacyContextUnsafe || streamStarted || orchestrator
@@ -861,6 +866,10 @@ func postToolAdditionalContextSegment(toolName, content string) ContextSegment {
 }
 
 func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
+	return r.runForCallWithMetadataLocked(call, nil)
+}
+
+func (r *TurnToolRuntime) runForCallWithMetadataLocked(call providers.ToolCall, metadata *ToolMetadata) *toolRun {
 	if r.byID == nil {
 		r.byID = map[string]*toolRun{}
 	}
@@ -875,8 +884,15 @@ func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
 		finalized: true,
 		done:      make(chan struct{}),
 	}
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+	if metadata != nil {
+		run.concurrencySafe = metadata.ConcurrencySafe
+		run.streamSafe = metadata.ReadOnly && metadata.ConcurrencySafe
+		run.orchestratorKnown = true
+		run.orchestrator = metadata.Orchestrator
+	} else {
+		run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
+		run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+	}
 	r.runs = append(r.runs, run)
 	if call.ID != "" {
 		r.byID[call.ID] = run
