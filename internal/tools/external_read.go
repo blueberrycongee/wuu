@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/readcursor"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -40,6 +42,9 @@ func (t *Toolkit) IsNativeReadRequest(raw string) bool {
 		Continuation string `json:"continuation"`
 	}
 	if decodeArgs(raw, &args) != nil {
+		return false
+	}
+	if strings.HasPrefix(args.Continuation, readcursor.Prefix) {
 		return false
 	}
 	if strings.TrimSpace(args.Continuation) != "" {
@@ -159,6 +164,17 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string, allowImag
 // Render validates the extension's bounded text contract and builds the usual
 // line view and raw PTC text. Neither content nor line facts are host-verified.
 func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result) (toolresult.Result, error) {
+	return s.render(ctx, result, nil, nil)
+}
+
+func (s *ExternalReadScope) RenderPaginated(ctx context.Context, result toolresult.Result, expectedTotal *int, issue func(string, int, int, int) (string, error)) (toolresult.Result, error) {
+	if issue == nil {
+		return toolresult.Result{}, errors.New("external pagination is unavailable")
+	}
+	return s.render(ctx, result, expectedTotal, issue)
+}
+
+func (s *ExternalReadScope) render(ctx context.Context, result toolresult.Result, expectedTotal *int, issue func(string, int, int, int) (string, error)) (toolresult.Result, error) {
 	if s == nil || s.native || s.env == nil {
 		return toolresult.Result{}, errors.New("external read scope is unavailable")
 	}
@@ -166,6 +182,9 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 		return toolresult.Result{}, err
 	}
 	if s.image {
+		if expectedTotal != nil {
+			return toolresult.Result{}, errors.New("external read_file source changed during pagination")
+		}
 		if result.IsError || result.ModelText != nil || result.Activity != nil || len(result.StructuredContent) != 0 || len(result.Meta) != 0 || len(result.Content) != 1 {
 			return toolresult.Result{}, errors.New("external image requires exactly one inline image")
 		}
@@ -194,6 +213,7 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 	var data struct {
 		Text       *string `json:"text"`
 		TotalLines *int    `json:"total_lines"`
+		NextCursor *string `json:"next_cursor"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(result.StructuredContent))
 	dec.DisallowUnknownFields()
@@ -203,6 +223,9 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 	var trailing any
 	if err := dec.Decode(&trailing); err != io.EOF {
 		return toolresult.Result{}, errors.New("invalid external read_file result")
+	}
+	if expectedTotal != nil && *expectedTotal != *data.TotalLines {
+		return toolresult.Result{}, errors.New("external read_file source changed during pagination")
 	}
 	text := *data.Text
 	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 || len(text) > defaultMaxFileBytes {
@@ -221,8 +244,11 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 	if s.limit > 0 {
 		expected = min(expected, s.limit)
 	}
-	if len(lines) != expected {
+	if data.NextCursor == nil && len(lines) != expected {
 		return toolresult.Result{}, errors.New("external read_file line range is inconsistent")
+	}
+	if data.NextCursor != nil && (issue == nil || *data.NextCursor == "" || len(lines) == 0 || len(lines) >= expected) {
+		return toolresult.Result{}, errors.New("invalid external read_file continuation")
 	}
 	var formatted strings.Builder
 	for i, line := range lines {
@@ -238,7 +264,23 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 	}
 	view := map[string]any{"action": "read", "path": s.path, "content": formatted.String(), "num_lines": len(lines), "start_line": s.offset, "total_lines": *data.TotalLines, "range": readFileRangeMetadata(s.offset, len(lines)), "omitted_ranges": readFileOmittedRanges(*data.TotalLines, s.offset, len(lines)), "truncated": s.offset <= *data.TotalLines && s.offset-1+len(lines) < *data.TotalLines, "source": "extension", "content_verified": false}
 	structured := map[string]any{"text": text, "path": s.path, "start_line": s.offset, "num_lines": len(lines), "total_lines": *data.TotalLines, "source": "extension", "content_verified": false}
+	if data.NextCursor != nil {
+		remainingLimit := 0
+		if s.limit > 0 {
+			remainingLimit = s.limit - len(lines)
+		}
+		token, err := issue(*data.NextCursor, s.offset+len(lines), remainingLimit, *data.TotalLines)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		continuation := map[string]any{"has_more": true, "next": map[string]any{"continuation": token}}
+		view["continuation"] = continuation
+		structured["continuation"] = continuation
+	}
 	view["next_suggestions"] = []string{"The extension's content is unverified; inspect the relevant range before relying on it."}
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
 	rendered, err := toolResultWithData(view, structured)
 	if err == nil {
 		for path, entry := range s.previous {
@@ -246,4 +288,17 @@ func (s *ExternalReadScope) Render(ctx context.Context, result toolresult.Result
 		}
 	}
 	return rendered, err
+}
+
+// AuthorizeExternalReadContinuation rechecks the native policy against the
+// host-resolved path and range, rather than the opaque model-facing token.
+func (t *Toolkit) AuthorizeExternalReadContinuation(ctx context.Context, call providers.ToolCall) error {
+	if t.IsToolDisabled("read_file") {
+		return errors.New("read_file is disabled")
+	}
+	tool := t.registry.Lookup("read_file")
+	if tool == nil {
+		return errors.New("read_file is unavailable")
+	}
+	return t.checkPermission(ctx, t.toolInfoForCall(tool, call.Arguments), call)
 }
