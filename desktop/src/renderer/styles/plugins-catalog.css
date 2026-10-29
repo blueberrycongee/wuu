@@ -6,23 +6,44 @@
   background: var(--paper);
 }
 
-/* The catalog shares the settings column and section rhythm. Its heading
- * names the selected category; search and catalog actions follow below. */
+/* The title identifies the page; search and actions form a compact toolbar
+ * on the same line when the reading column has room. */
+.catalog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+}
+
 .catalog-toolbar {
   display: flex;
   min-width: 0;
   align-items: center;
+  flex: 1 1 calc(var(--font-ui) * 30);
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
 .catalog-toolbar > .catalog-search {
-  flex: 1 1 18rem;
-  min-width: 0;
+  flex: 0 1 calc(var(--font-ui) * 16);
+  min-width: calc(var(--font-ui) * 9);
 }
 
 .catalog-toolbar > .catalog-refresh {
   flex: none;
+}
+
+@container settings-page (max-width: 42em) {
+  .catalog-toolbar {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .catalog-toolbar > .catalog-search {
+    flex-grow: 1;
+  }
 }
 
 @container settings-page (max-width: 32em) {
@@ -48,6 +69,22 @@
   margin-block: 0;
 }
 
+/* Catalog sections read as lists. Hairlines and whitespace group peers
+ * without framing every category as a separate settings card. */
+.skills-catalog:not(.plugin-page) .settings-group:has(> .catalog-row),
+.skills-catalog:not(.plugin-page) [data-testid="mcp-services"] .settings-group {
+  border: 0;
+  border-radius: 0;
+  padding-inline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.skills-catalog:not(.plugin-page) .settings-section-header {
+  border-bottom: 1px solid var(--hairline-soft);
+  padding-bottom: var(--space-2);
+}
+
 /* Plugin and skill rows share the settings row grammar: the mark, the name
  * over a tagline (or the reason a plugin needs a look), a trailing control,
  * and a chevron. Columns: mark, copy, trailing control, chevron; the
@@ -59,7 +96,7 @@
   width: 100%;
   min-width: 0;
   grid-template-columns:
-    var(--icon-size-lg) minmax(0, 1fr) var(--catalog-row-trailing, auto)
+    calc(var(--font-ui) * 2.5) minmax(0, 1fr) var(--catalog-row-trailing, auto)
     calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
   align-items: center;
   column-gap: var(--space-3);
@@ -84,11 +121,13 @@ button.catalog-row,
 
 .catalog-row-mark {
   display: grid;
-  width: var(--icon-size-lg);
-  height: var(--icon-size-lg);
+  width: calc(var(--font-ui) * 2.5);
+  height: calc(var(--font-ui) * 2.5);
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 1 / span 2;
   place-items: center;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
   color: var(--ink-soft);
 }
 
@@ -99,8 +138,8 @@ button.catalog-row,
 }
 
 .catalog-row-mark .plugin-icon-asset {
-  width: 100%;
-  height: 100%;
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
   object-fit: contain;
 }
 
@@ -504,7 +543,7 @@ button.catalog-row,
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr) var(--icon-size);
+  grid-template-columns: calc(var(--font-ui) * 2.5) minmax(0, 1fr) var(--icon-size);
   align-items: center;
   gap: var(--space-3);
   border: 0;

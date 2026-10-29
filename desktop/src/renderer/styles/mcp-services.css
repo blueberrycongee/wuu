@@ -11,8 +11,13 @@
 }
 
 .mcp-service-icon {
-  align-self: flex-start;
-  margin-top: 0.2em;
+  box-sizing: border-box;
+  width: calc(var(--font-ui) * 2.5);
+  height: calc(var(--font-ui) * 2.5);
+  flex: 0 0 auto;
+  padding: calc((var(--font-ui) * 2.5 - var(--icon-size-lg)) / 2);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
   color: var(--ink-soft);
 }
 
