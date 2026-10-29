@@ -112,6 +112,78 @@ function resolvedFileReference(
 }
 
 describe("RichContent code block", () => {
+  it.each([
+    "价格 $100，$200。",
+    "价格 $100、$200。",
+    "价格 $100；$200。",
+    "Prices: $100; $200",
+    "Prices: $100 & $200",
+    "Prices: $100 vs. $200",
+    "Total: $100 + $200",
+  ])("preserves amounts separated by punctuation (%#)", text => {
+    render(<RichContent text={text} />);
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.querySelector(".rich-paragraph")?.textContent).toBe(text);
+  });
+
+  it("preserves numeric math expressions adjacent to a following number", () => {
+    render(<RichContent text={String.raw`$2x+1$3 and $2\text{ dogs}$4`} />);
+    expect(Array.from(container.querySelectorAll(".katex annotation"), node => node.textContent)).toEqual([
+      "2x+1", String.raw`2\text{ dogs}`,
+    ]);
+  });
+
+  it.each(["message", "markdown"])("keeps dollar amounts as text without swallowing surrounding Markdown in %s", (mode) => {
+    const text = "**最高 $500/月 API 额度**\n套餐对应 $100/$200/$500，月上限 $500。";
+    const element = mode === "message" ? <RichContent text={text} /> : <MarkdownContent text={text} />;
+    render(element);
+
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.querySelector("strong")?.textContent).toBe("最高 $500/月 API 额度");
+    expect(container.querySelector(".rich-paragraph")?.textContent).toBe(
+      "最高 $500/月 API 额度\n套餐对应 $100/$200/$500，月上限 $500。",
+    );
+  });
+
+  it("distinguishes dollar amounts from adjacent mathematical expressions and code", () => {
+    const text = String.raw`Price $5 and formula $x+1$, then $2x+1$, $5$ and \(x+1\). Code: ` + "`$5 and $10`.";
+    render(<RichContent text={text} />);
+
+    expect(container.querySelector(".rich-paragraph")?.textContent).toContain("Price $5 and formula ");
+    expect(Array.from(container.querySelectorAll(".katex annotation"), node => node.textContent)).toEqual([
+      "x+1", "2x+1", "5", "x+1",
+    ]);
+    expect(container.querySelector("code")?.textContent).toBe("$5 and $10");
+  });
+
+  it("keeps numeric math containing text when its closing delimiter ends the expression", () => {
+    render(<RichContent text={String.raw`$2中文$，$5 \text{ dogs}$。`} />);
+
+    expect(Array.from(container.querySelectorAll(".katex annotation"), node => node.textContent)).toEqual([
+      "2中文", String.raw`5 \text{ dogs}`,
+    ]);
+  });
+
+  it("renders display math alongside dollar amounts", () => {
+    render(<RichContent text={"成本 $100 和 $200。\n\n$$\nx^2 + y^2 = z^2\n$$"} />);
+
+    expect(container.querySelector(".rich-paragraph")?.textContent).toBe("成本 $100 和 $200。");
+    expect(container.querySelector(".katex-display annotation")?.textContent).toBe("x^2 + y^2 = z^2");
+  });
+
+  it("preserves dollar amounts in streamed answers and escaped dollar signs", () => {
+    render(<StreamingMarkdown
+      streamKey="currency-test"
+      initialText={String.raw`从 $100 到 $200，另有 \$5。公式 $x+1$。`}
+      isLive={false}
+      phase="final_answer"
+    />);
+
+    expect(container.querySelector(".rich-paragraph")?.textContent).toContain("从 $100 到 $200，另有 $5。公式 ");
+    expect(container.querySelector(".katex annotation")?.textContent).toBe("x+1");
+    expect(container.querySelectorAll(".katex")).toHaveLength(1);
+  });
+
   it.each(["message", "markdown"])("uses the same link rules in %s rendering", (mode) => {
     const openFile = vi.fn();
     const text = [
