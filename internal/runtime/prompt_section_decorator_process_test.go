@@ -2,15 +2,25 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,4 +79,72 @@ func TestPromptSectionDecoratorProcess(t *testing.T) {
 	_, err = assembleSelectedPrompt(ctx, host, promptservice.Request{Role: "main"}, nil)
 	require.Error(t, err)
 	require.False(t, strings.TrimSpace(err.Error()) == "")
+}
+
+// The selected decorator is exercised through main and worker model requests.
+func TestPromptSectionDecoratorModelInputs(t *testing.T) {
+	fixture := os.Getenv("WUU_PROMPT_SECTION_FIXTURE")
+	if fixture == "" {
+		t.Skip("run node scripts/prompt-section-e2e.mjs")
+	}
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	requests := make(chan []providers.ChatMessage, 4)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []providers.ChatMessage `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		requests <- request.Messages
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer endpoint.Close()
+	plugin := testRuntimePlugin("independent.prompt-section")
+	plugin.Root, plugin.Runtime.Command, plugin.Runtime.Args = fixture, node, []string{"prompt-section-decorator.js"}
+	catalog := []pluginpkg.Plugin{plugin}
+	cfg := config.Default()
+	disabledSkills := false
+	cfg.Skills.Enabled = &disabledSkills
+	cfg.DefaultProvider = "fixture"
+	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", WireAPI: "chat", BaseURL: endpoint.URL, APIKey: "synthetic", Model: "gpt-4o"}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{plugin.ID: true, credentialstore.OSModule: false, credentialstore.FileModule: true}, Services: []composition.Binding{{Service: promptservice.ServiceName, Major: 1, Provider: plugin.ID}, {Consumer: plugin.ID, Service: promptservice.ServiceName, Major: 1, Provider: promptservice.NativeModule}}}}}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	owner, err := NewSession(Options{RootDir: root, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &catalog, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	_, err = owner.Sessions.Create("prompt-model-input")
+	require.NoError(t, err)
+	thread, err := owner.NewThreadRuntime("prompt-model-input")
+	require.NoError(t, err)
+	defer owner.ReleasePluginGeneration(thread.PluginGeneration)
+	defer thread.AgentControl.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = thread.StreamRunner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "system", Content: thread.StreamRunner.SystemPrompt}, {Role: "user", Content: "Answer briefly."}}, nil)
+	require.NoError(t, err)
+	check := func(role string) {
+		t.Helper()
+		select {
+		case messages := <-requests:
+			var content string
+			for _, message := range messages {
+				if message.Role == "system" {
+					content += message.Content
+				}
+			}
+			require.Contains(t, content, "# Environment\n- Current working directory: "+root+"\n- Current date:", role)
+			require.NotContains(t, content, "# Environment\n\n- Current working directory:", role)
+		case <-ctx.Done():
+			t.Fatalf("%s model request not received: %v", role, ctx.Err())
+		}
+	}
+	check("main")
+	_, err = thread.AgentControl.Spawn(ctx, agentcontrol.SpawnRequest{Type: agentcontrol.DefaultSubagentType, TaskName: "check", Prompt: "Answer briefly.", Synchronous: true})
+	require.NoError(t, err)
+	check("worker")
 }
