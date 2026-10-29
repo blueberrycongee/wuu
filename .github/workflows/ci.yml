@@ -239,6 +239,7 @@ jobs:
         timeout-minutes: 10
         run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
+
   architecture-conformance:
     name: Public provider conformance
     needs: changes
@@ -396,6 +397,42 @@ jobs:
         run: |
           set -o pipefail
           node desktop/scripts/trusted-desktop-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/trusted-desktop.log
+
+      - name: Guard Personal desktop handoff with the real bundled runtime
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        env:
+          WUU_SESSION_HANDOFF_E2E: '1'
+        run: |
+          mkdir -p .tmp/e2e/personal-session-handoff
+          git rev-parse HEAD > .tmp/e2e/personal-session-handoff/source-commit.txt
+          set -o pipefail
+          go test -race -p 1 -count=1 -timeout 5m -json \
+            -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=$(make -s print-version)" \
+            ./internal/appserver -run '^TestPersonalRealBundleSessionHandoffAcrossTwoHosts$' \
+            2>&1 | tee .tmp/e2e/personal-session-handoff/go-test.jsonl
+          node --input-type=module - ".tmp/e2e/personal-session-handoff/go-test.jsonl" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const events = readFileSync(process.argv[2], 'utf8').trim().split('\n').map(line => JSON.parse(line));
+          const packageName = 'github.com/blueberrycongee/wuu/internal/appserver';
+          const root = 'TestPersonalRealBundleSessionHandoffAcrossTwoHosts';
+          for (const name of [root, `${root}/caption-and-file`, `${root}/attachment-only`, undefined]) {
+            const terminal = events.filter(event => event.Package === packageName && event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)).at(-1);
+            assert.equal(terminal?.Action, 'pass', `${name ?? packageName} did not execute and pass`);
+          }
+          console.log('Both real-bundle Personal desktop handoff cases executed and passed.');
+          NODE
+
+      - name: Preserve Personal desktop handoff evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-session-handoff-evidence
+          path: .tmp/e2e/personal-session-handoff/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Verify independent additive packages across process and renderer
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}

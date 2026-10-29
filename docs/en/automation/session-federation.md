@@ -270,3 +270,8 @@ original text, and target-local byte-identical attachments. The desktop pool and
 coordinator tests separately cover registered target resolution, more than four
 projects, replacement, cancellation, and renderer/remote forgery. These are not
 physical desktop or real-account acceptance tests.
+
+The required **Public provider conformance** CI job explicitly enables this real-bundle test
+and requires both captioned and captionless attachment cases to execute and pass;
+a skipped fixture cannot satisfy the gate. Its `personal-session-handoff-evidence`
+artifact records the checked-out source commit and JSON test events.
