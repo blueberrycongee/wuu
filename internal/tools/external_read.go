@@ -31,7 +31,7 @@ type ExternalReadScope struct {
 	limit    int
 	native   bool
 	image    bool
-	previous map[string]ReadFileEntry
+	previous map[string]readFileObservation
 }
 
 func (s *ExternalReadScope) UseNative() bool { return s.native }
@@ -128,8 +128,8 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string, allowImag
 		return nil, err
 	}
 	isImage := strings.HasPrefix(http.DetectContentType(sample), "image/")
-	previous := make(map[string]ReadFileEntry)
-	for path, entry := range t.env.ReadEntries() {
+	previous := make(map[string]readFileObservation)
+	for path, entry := range t.env.readState.observationSnapshot() {
 		if canonical, err := filepath.EvalSymlinks(path); err == nil && canonical == resolved {
 			previous[path] = entry
 		}

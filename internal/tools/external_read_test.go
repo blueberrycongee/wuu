@@ -171,6 +171,57 @@ func TestExternalReadDoesNotClaimPriorNativeObservation(t *testing.T) {
 	}
 }
 
+func TestExternalReadPreservesIdenticalNewNativeObservation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("original\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := providers.ToolCall{Name: "read_file", Arguments: `{"path":"file.txt"}`}
+	if _, err := kit.ExecuteResult(context.Background(), call); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := kit.PrepareExternalRead(context.Background(), call.Arguments, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This read represents a newer observation even though all its public
+	// fields are identical to the one captured by the extension call.
+	if _, err := kit.ExecuteResult(context.Background(), call); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scope.Render(context.Background(), toolresult.Result{StructuredContent: json.RawMessage(`{"text":"extension\n","total_lines":1}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(kit.env.ReadEntries()) != 1 {
+		t.Fatal("newer identical native observation was removed")
+	}
+}
+
+func TestReadObservationRevisionSurvivesDeletionAndSaturation(t *testing.T) {
+	var state readFileState
+	entry := ReadFileEntry{Size: 1}
+	state.record("file", entry)
+	previous := state.observationSnapshot()["file"]
+	state.delete("file")
+	state.record("file", entry)
+	state.deleteIfUnchanged("file", previous)
+	if !state.hasBeenRead("file") {
+		t.Fatal("a deleted and re-recorded observation was removed")
+	}
+	state.revision = ^uint64(0)
+	state.record("file", entry)
+	saturated := state.observationSnapshot()["file"]
+	state.record("file", entry)
+	state.deleteIfUnchanged("file", saturated)
+	if !state.hasBeenRead("file") {
+		t.Fatal("a saturated revision must not delete a newer observation")
+	}
+}
+
 func TestNativeRecoverySurvivesUnavailableExternalReader(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {

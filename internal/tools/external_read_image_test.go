@@ -116,9 +116,8 @@ func TestExternalImageInvalidatesOnlyPriorNativeObservation(t *testing.T) {
 	kit.env.RecordRead(path, old)
 	scope, err = kit.PrepareExternalRead(context.Background(), `{"path":"file"}`, true)
 	require.NoError(t, err)
-	newer := old
-	newer.ContentSHA256 = "new"
-	kit.env.RecordRead(path, newer)
+	// An identical later observation is still a new observation.
+	kit.env.RecordRead(path, old)
 	_, err = scope.Render(context.Background(), valid)
 	require.NoError(t, err)
 	require.Len(t, kit.env.ReadEntries(), 1, "a concurrent newer observation must survive")
