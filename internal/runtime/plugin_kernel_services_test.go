@@ -20,6 +20,9 @@ import (
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 func activateServiceTestHost(t *testing.T, native *kernelHostServices, registry *pluginhost.ServiceRegistry, clients ...pluginhost.Client) {
@@ -604,4 +607,64 @@ func (c *kernelConsumer) RequiredServices() []pluginhost.ServiceRequirement {
 
 func serviceTestPlugin(id, subject, fingerprint string) pluginpkg.Plugin {
 	return pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: id}, SubjectID: subject, Fingerprint: fingerprint}
+}
+
+// Memory providers derive authority through this host context service. A session
+// ID or a caller-supplied domain must never replace the host's trusted binding.
+func TestKernelSessionContextRejectsCrossDomainAndSpoofedBindings(t *testing.T) {
+	for _, hostBinding := range []userspace.Binding{{UserSpaceID: "local", ProductDomain: "personal"}, {}} {
+		t.Run(hostBinding.Domain(), func(t *testing.T) {
+			home := t.TempDir()
+			dir := statepath.SessionsDir(home)
+			handler := newPluginHostServices(serviceTestPlugin("memory", "plugin:user:memory", "generation"), t.TempDir(), home, nil)
+			handler.binding, handler.sessions = hostBinding, testSessionStore(t, dir)
+			handler.turnRouter = NewPluginSessionRouter()
+			unbind := handler.turnRouter.BindSessionResourceAccess(func(ctx context.Context, _ string, _ string, _ *pluginhost.ExecutionAuthorizationReference, _ string) (context.Context, error) {
+				return ctx, nil
+			})
+			defer unbind()
+			defer handler.close()
+			for _, target := range []struct {
+				id      string
+				binding userspace.Binding
+			}{
+				{id: "personal", binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}},
+				{id: "other-user", binding: userspace.Binding{UserSpaceID: "other", ProductDomain: "personal"}},
+				{id: "user-coding", binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "coding"}},
+				{id: "legacy-coding"},
+			} {
+				_, err := handler.sessions.CreateInitialized(session.Session{ID: target.id, UserSpaceID: target.binding.UserSpaceID, ProductDomain: target.binding.ProductDomain, CWD: home, CreatedAt: time.Now().UTC()}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(map[string]string{"session_id": target.id})
+				result, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionContext, raw)
+				if !hostBinding.Matches(target.binding) {
+					var serviceErr *pluginhost.HostServiceError
+					if !errors.As(err, &serviceErr) || serviceErr.Code != "domain_denied" {
+						t.Fatalf("foreign context %s returned %s, %v", target.id, result, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got map[string]string
+				if err := json.Unmarshal(result, &got); err != nil {
+					t.Fatal(err)
+				}
+				if got["product_domain"] != hostBinding.Domain() || got["user_space_id"] != hostBinding.UserSpaceID {
+					t.Fatalf("untrusted memory context: %s", result)
+				}
+			}
+			for _, raw := range []json.RawMessage{json.RawMessage(`{}`), json.RawMessage(`{"session_id":"personal","product_domain":"coding"}`), json.RawMessage(`{"session_id":"personal","user_space_id":"other"}`)} {
+				if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionContext, raw); err == nil {
+					t.Fatalf("accepted incomplete or spoofed context: %s", raw)
+				}
+			}
+			if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionContext, json.RawMessage(`{"session_id":"missing"}`)); !errors.Is(err, session.ErrSessionNotFound) {
+				t.Fatalf("missing session context: %v", err)
+			}
+		})
+	}
 }

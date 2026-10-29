@@ -32,16 +32,21 @@ func (i Identity) Validate() error {
 }
 
 type Verified struct {
-	identity   Identity
-	owner      bool
-	valid      bool
-	check      func() bool
-	expiresAt  time.Time
-	revalidate func(context.Context) error
+	durableAuthority string
+	identity         Identity
+	owner            bool
+	valid            bool
+	check            func() bool
+	expiresAt        time.Time
+	revalidate       func(context.Context) error
 }
 
 func (v Verified) Identity() Identity { return v.identity }
-func (v Verified) IsOwner() bool      { return v.valid && v.owner }
+
+// DurableAuthority identifies provider-owned validity independent of a GUI
+// connection. Empty means unsupported; identity and owner flags cannot infer it.
+func (v Verified) DurableAuthority() string { return v.durableAuthority }
+func (v Verified) IsOwner() bool            { return v.valid && v.owner }
 func (v Verified) Valid() bool {
 	return v.valid && v.identity.Validate() == nil && (v.expiresAt.IsZero() || time.Now().Before(v.expiresAt))
 }
@@ -93,7 +98,7 @@ func AuthenticatedWithValidity(identity Identity, valid func() bool) (Verified, 
 
 // LocalOwner is for an embedding's trusted local pipe, not network ingress.
 func LocalOwner() Verified {
-	return Verified{identity: Identity{Kind: "user", Issuer: "wuu:local", Tenant: "local", Subject: "owner"}, owner: true, valid: true}
+	return Verified{identity: Identity{Kind: "user", Issuer: "wuu:local", Tenant: "local", Subject: "owner"}, owner: true, valid: true, durableAuthority: "local-installation"}
 }
 
 // OwnerConnection is reserved for trusted transports that already verified an

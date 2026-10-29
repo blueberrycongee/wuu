@@ -615,6 +615,29 @@ describe("PluginHost", () => {
     );
   });
 
+  it("scopes navigation display names to the owning generation and restores manifest titles on reload", async () => {
+    const host = new PluginHost({ react: React });
+    let api!: PluginGenerationApi;
+    const install = (generation: string) => host.activateGeneration({ pluginId: "named", generation,
+      contributions: { navigation: [{ id: "home", view: "home", title: "twin" }], settings_pages: [{ id: "preferences", view: "home", title: "twin" }] },
+      register(value) { api = value; value.registerViewType({ id: "home", title: "twin", render: () => null }); },
+    });
+    await install("one");
+    await host.activateGeneration({ pluginId: "coding", generation: "one", contributions: { navigation: [{ id: "code", view: "code", title: "Coding" }] }, register(value) { value.registerViewType({ id: "code", title: "Coding", render: () => null }); } });
+    api.setNavigationTitle("home", "  <MushrooM>  ");
+    expect(host.getNavigationEntries().find(entry => entry.pluginId === "named")?.title).toBe("<MushrooM>");
+    expect(host.getNavigationEntries().find(entry => entry.pluginId === "coding")?.title).toBe("Coding");
+    expect(host.getSettingsPages()[0].title).toBe("twin");
+    expect(api.setNavigationTitle("code", "Other")).toBe(false);
+    expect(() => api.setNavigationTitle("home", "  ")).toThrow();
+    expect(() => api.setNavigationTitle("home", "🙂".repeat(65))).toThrow();
+    const old = api; await install("two");
+    expect(host.getNavigationEntries().find(entry => entry.pluginId === "named")?.title).toBe("twin");
+    expect(() => old.setNavigationTitle("home", "stale")).toThrow();
+    host.unload("named");
+    expect(host.getNavigationEntries().some(entry => entry.pluginId === "named")).toBe(false);
+  });
+
   it("publishes manifest View entries only after their View is registered", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({

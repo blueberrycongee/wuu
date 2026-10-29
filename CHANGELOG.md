@@ -11,6 +11,17 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
+- Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
+
+- Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
+- Add explicit browser current-page capture and native share intake into the existing Personal main conversation. Native compilation, signing and device acceptance remain separate from source-level integration.
+
+- Add native Personal message menus for copying, text selection, and plain-text quotation, with bounded previews and reduced-motion support. Formal reply bindings and reactions remain unavailable in these menus.
+
+- Add Personal interactive answer forms with durable submission receipts and read-only Google Calendar connection settings. Calendar remains unavailable until configured; Personal action review remains unavailable pending its production policy and authorization adapters.
+
+- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
+- Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
 - Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
 
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
@@ -160,6 +171,43 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
+
+- Render Markdown conversation attachments with the shared document reading presentation while keeping HTML and other executable text inert.
+- Give Personal a persistent renameable identity label, visible status, wider bubble flow, and compact conversation composer without changing Coding conversation presentation.
+- Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
+
+### Fixed
+
+- Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
+
+- Keep Personal task cancellation recoverable across interrupted dispatch and queue promotion, preserve unanswered questions during concurrent completion, and recover tool-disabled main-conversation replies without repeating worker execution. Stopping an undelivered terminal update preserves its saved outcome.
+
+- Automatically synchronize Personal interactive answers and include current field values in the next ordinary message. Remove redundant save and explanation buttons, preserve retry snapshots, and fix surface storage keys and direct tool-result projection.
+
+- Forward Electron launch arguments, including isolated user-data directories, through the desktop development launcher.
+
+- Interrupt desktop owner admission when the bootstrap pipe times out or its context is cancelled.
+
+- Recover Personal drafts and uncertain sends across restarts, retry unavailable quote sources, and keep reply panels compact. Preserve stale calendar warnings and associate delayed authorization cleanup diagnostics with their original attempt.
+
+- Check for desktop updates every 30 minutes instead of every six hours.
+
+- Reserve a font-scaled timestamp column in Personal conversations so revealing times does not overlap message bubbles; attachments and reactions move with their message.
+
+- Keep Personal pages and their composer visible when a retained Coding conversation is open underneath them; hidden Coding content no longer occupies grid rows or paints through the page.
+- Preserve Personal background recovery across transient host failures and retry durable pending work on later ticks.
+
+- Keep retried Personal task updates and resumes responsive while question or result delivery is being reconciled.
+
+- Restore twin conversation history automatically when recent background context fills the first history pages, including tab reentry and interrupted reads.
+- Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
+
+- Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.
+- Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
+- Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
+- Continue checking for newer desktop releases while an update is available,
+  and refresh the latest version before downloading from either update entry point.
 - Keep the main conversation input centered across the full canvas regardless of the right tool rail. Let the rail scroll above the input in short windows and when drafts expand.
 
 - Reduce redundant desktop hover labels, reveal clipped names only when needed, and unify useful hints at the saved UI text size with readable wrapping. Keep hints next to their controls, prevent nested duplicates, and preserve control layout and click targets.
@@ -239,6 +287,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Preserve the root thread's original identity and creation time when recovery retries an uncertain registration.
 
 - Release each conversation's native tool scopes after its admitted main, worker, and side work drains, while rejecting calls after retirement and retaining in-flight cleanup.
+- Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
+
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.

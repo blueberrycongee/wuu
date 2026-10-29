@@ -2,6 +2,15 @@ import XCTest
 @testable import WuuCore
 
 final class NavigationLocationTests: XCTestCase {
+    func testPersonalAreaRestoresWithoutChangingLegacyProjectsDefault() throws {
+        let account = AccountSession(server: "https://example.test", token: "token", username: "alice", pub: "phone", deviceSeed: "seed")
+        let devices = [AccountDevice(pub: "host", name: "Host", role: "host", online: false)]
+        let personal = try NavigationLocation(account: account, host: "host", personal: true)
+        let restored = try JSONDecoder().decode(NavigationLocation.self, from: JSONEncoder().encode(personal)).restore(account: account, devices: devices)
+        XCTAssertEqual(restored?.personal, true)
+        let legacy = try NavigationLocation(account: account, host: "host")
+        XCTAssertNotEqual(legacy.personal, true)
+    }
     func testColdBookmarkRestoresOnlyForAuthorizedHostAndLogin() throws {
         let account = AccountSession(server: "https://example.test", token: "token", username: "alice", pub: "phone", deviceSeed: "seed")
         let devices = [AccountDevice(pub: "host", name: "Computer", role: "host", online: false)]

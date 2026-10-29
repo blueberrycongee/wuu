@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -19,9 +20,10 @@ const parentStateModule = "wuu.composition.parent-state"
 // edges keep both state services alive until child scopes finish cleanup.
 // No permanent generation retain is taken: that would form an ownership cycle.
 type compositionStateImport struct {
-	parent *pluginhost.Host
-	mu     sync.Mutex
-	state  pluginhost.State
+	parent              *pluginhost.Host
+	mu                  sync.Mutex
+	state               pluginhost.State
+	executionDescriptor *pluginhost.ServiceDescriptor
 }
 
 func (p *compositionStateImport) ID() string { return parentStateModule }
@@ -32,7 +34,11 @@ func (p *compositionStateImport) Status() pluginhost.Status {
 }
 func (p *compositionStateImport) ProvidedServices() []pluginhost.ServiceDescriptor {
 	services := append((&persistence.Service{}).ProvidedServices(), (&session.Service{}).ProvidedServices()...)
-	return append(services, (&artifactService{}).ProvidedServices()...)
+	services = append(services, (&artifactService{}).ProvidedServices()...)
+	if p.executionDescriptor != nil {
+		services = append(services, *p.executionDescriptor)
+	}
+	return services
 }
 func (p *compositionStateImport) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (p *compositionStateImport) Prepare(ctx context.Context) error                 { return ctx.Err() }
@@ -55,6 +61,8 @@ func (p *compositionStateImport) InvokeService(ctx context.Context, input plugin
 	consumer := sessionStateConsumer
 	if input.Service == ArtifactServiceName {
 		consumer = kernelHostModule
+	} else if input.Service == executionauth.ServiceName {
+		consumer = executionauth.ConsumerModule
 	}
 	result, err := p.parent.CallService(ctx, consumer, input.Service, input.Method, input.Params)
 	if err != nil {
@@ -306,7 +314,7 @@ func (s *Session) productThreadRuntime(binding *State, sessionID, root string, s
 		return nil, true, errors.Join(err, release())
 	}
 	defer scope.runtime.releasePluginGeneration(shadow.pluginGeneration)
-	shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
+	shadow.StateDir, shadow.SessionDir, shadow.WuuHome, shadow.DataRoot = s.StateDir, s.SessionDir, s.WuuHome, s.ProductDataRoot()
 	shadow.artifactRoots = s.sessionArtifactManager()
 	var thread *ThreadRuntime
 	if len(capabilityOnly) > 0 && capabilityOnly[0] {

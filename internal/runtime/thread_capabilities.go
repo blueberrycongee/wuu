@@ -12,7 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/tools"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // NewThreadCapabilityRuntime binds host browser and CUA capabilities to an
@@ -106,7 +105,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			manager = remote.ProcessManager()
 		}
 		result.ProcessManager = manager
-		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, ExecutionEnvironment: environment, GitAttributionEnabled: processGitAttribution(generation), RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(root, wuuHome, artifactDir)}
+		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, ExecutionEnvironment: environment, GitAttributionEnabled: processGitAttribution(generation), RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(root, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())}
 		result.processHooks = dispatcher
 		if host != nil && selectsRuntimeModule(host, toolExecutionConsumer) {
 			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
@@ -130,7 +129,8 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	}
 	result.closeArtifacts = resultRelease
 	kit.SetSessionStore(sessions)
-	kit.SetWorkingNotesHome(wuuHome)
+	kit.SetWorkingNotesHome(s.ProductDataRoot())
+	kit.SetProtectedPaths(memoryProtectedPaths(wuuHome, s.UserBinding()))
 	browserTabs, err := selectedBrowserTabStore(documents, wuuHome, s.SessionDir, stateDir, id)
 	if err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetBrowserTabs(browserTabs)
 	kit.SetImageInputSupported(true)
 	kit.SetAgentIdentity(id, agentthread.RootPath)
-	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, artifactDir))
+	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), artifactDir))
 	if dispatcher != nil {
 		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
 			_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
@@ -146,7 +146,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 				ToolInput: json.RawMessage(call.Arguments),
 			})
 			return err
-		})
+		}, func() bool { return !dispatcher.HasHooks(hooks.PermissionRequest) })
 	}
 	// The selected registry owns the capability surface for external engines too.
 	result.CapabilityTools = newPluginAwareToolExecutor(kit, host, dispatcher, id, id, kit.RootDir())

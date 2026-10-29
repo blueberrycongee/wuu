@@ -1,3 +1,4 @@
+import { buildPersonalDesktop } from "./build-personal-desktop.mjs";
 import { createRequire } from "node:module";
 import { readdir, readFile, mkdir, writeFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -23,6 +24,7 @@ const pluginIDs = sourceIDs.filter((id) => bundledIDs.includes(id));
 if (selected && !sourceIDs.includes(selected)) throw new Error(`unknown plugin: ${selected}`);
 
 for (const id of selected ? [selected] : pluginIDs) {
+  if (id === "personal") await buildPersonalDesktop(check);
   // Optional packages are built only when explicitly selected, never embedded.
   const packageRoot = bundledIDs.includes(id) ? join(bundledRoot, id) : join(pluginsRoot, id, "package");
   const manifest = JSON.parse(await readFile(join(packageRoot, "plugin.json"), "utf8"));
