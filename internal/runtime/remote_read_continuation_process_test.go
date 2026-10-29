@@ -251,6 +251,26 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	require.Len(t, messages, 1)
 	require.Contains(t, messages[0].Content, "REMOTE_PTC_OK")
 
+	example := plugin
+	exampleRuntime := *plugin.Runtime
+	example.Runtime = &exampleRuntime
+	example.Runtime.Args = []string{"remote-text-reader.js"}
+	examplePlugins := []pluginpkg.Plugin{example}
+	exampleCfg := cfg
+	exampleCfg.PTC.Enabled = false
+	exampleOwner, err := NewSession(Options{RootDir: local, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: exampleCfg, DiscoveredPlugins: &examplePlugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer exampleOwner.Cleanup()
+	require.NoError(t, exampleOwner.PinExecutionEnvironment("example", ""))
+	exampleThread, err := exampleOwner.NewThreadRuntime("example")
+	require.NoError(t, err)
+	defer exampleOwner.ReleasePluginGeneration(exampleThread.PluginGeneration)
+	defer exampleThread.AgentControl.Close()
+	exampleCtx := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "example", ExecutionID: "turn"})
+	exampleResult, err := exampleThread.StreamRunner.Tools.Execute(exampleCtx, providers.ToolCall{ID: "example", Name: "read_file", Arguments: `{"path":"shared.txt"}`})
+	require.NoError(t, err)
+	require.Contains(t, exampleResult, "[remote] REMOTE-ONLY")
+
 	require.NoError(t, os.WriteFile(filepath.Join(fixture, "disable-remote"), []byte("1"), 0600))
 	defer os.Remove(filepath.Join(fixture, "disable-remote"))
 	unsupported, err := NewSession(Options{RootDir: local, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})

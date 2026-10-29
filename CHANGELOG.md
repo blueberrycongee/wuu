@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Allow trusted text readers to transform reads from a pinned remote workspace using an authorized, one-use native continuation.
+
 - Allow trusted text reader replacements to paginate using authenticated, generation-bound continuation tokens.
 
 - Let trusted `read_file` replacements opt in to bounded image responses that use the native image processing and model projection paths.
