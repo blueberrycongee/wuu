@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -325,5 +326,321 @@ func TestOrphanStreamingParentClosesNestedAdmissionBeforeReconciliationUnlocks(t
 	}
 	if len(runtime.TakeRequestContextSegments()) != 0 {
 		t.Fatal("orphan child context entered the next model request")
+	}
+}
+
+type contextualMetadataTools struct {
+	orchestrationTestTools
+	resolve func(context.Context, providers.ToolCall) (ToolMetadata, bool, error)
+}
+
+func (e contextualMetadataTools) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (ToolMetadata, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ToolMetadata{}, false, err
+	}
+	if e.resolve != nil {
+		return e.resolve(ctx, call)
+	}
+	// A selected provider may support a tool without returning classification.
+	return ToolMetadata{}, false, nil
+}
+
+func TestNestedMissingMetadataAndCanceledDuplicateWaiter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var leaves atomic.Int32
+	executor := contextualMetadataTools{orchestrationTestTools: orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+		if call.Name != "orchestrate" {
+			leaves.Add(1)
+			close(entered)
+			select {
+			case <-release:
+				return "done", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		scope, ok := toolctx.Nested(ctx)
+		if !ok {
+			return "", errors.New("no nested scope")
+		}
+		call = providers.ToolCall{ID: "same", Name: "read", Arguments: `{}`}
+		first := make(chan error, 1)
+		go func() { _, err := scope.Invoke(ctx, call); first <- err }()
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		waiter, cancelWaiter := context.WithCancel(ctx)
+		cancelWaiter()
+		if _, err := scope.Invoke(waiter, call); !errors.Is(err, context.Canceled) {
+			return "", fmt.Errorf("canceled duplicate: %v", err)
+		}
+		close(release)
+		if err := <-first; err != nil {
+			return "", err
+		}
+		replay, err := scope.Invoke(ctx, call)
+		if err != nil {
+			return "", err
+		}
+		return replay.TextProjection(), nil
+	}}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(1)})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "done" {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	if leaves.Load() != 1 {
+		t.Fatalf("leaf executions=%d, want 1", leaves.Load())
+	}
+}
+
+func TestNestedMetadataLookupHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	entered := make(chan struct{})
+	var leaves atomic.Int32
+	executor := contextualMetadataTools{orchestrationTestTools: orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+		if call.Name != "orchestrate" {
+			leaves.Add(1)
+			return "unexpected", nil
+		}
+		scope, ok := toolctx.Nested(ctx)
+		if !ok {
+			return "", errors.New("no nested scope")
+		}
+		child, cancelChild := context.WithCancel(ctx)
+		defer cancelChild()
+		done := make(chan error, 1)
+		go func() { _, err := scope.Invoke(child, providers.ToolCall{ID: "child", Name: "read"}); done <- err }()
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		cancelChild()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				return "", fmt.Errorf("metadata cancellation: %v", err)
+			}
+			return "canceled", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}}, resolve: func(ctx context.Context, _ providers.ToolCall) (ToolMetadata, bool, error) {
+		close(entered)
+		<-ctx.Done()
+		return ToolMetadata{}, false, ctx.Err()
+	}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(1)})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "canceled" {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	if leaves.Load() != 0 {
+		t.Fatalf("canceled lookup started %d leaf calls", leaves.Load())
+	}
+}
+
+func TestNestedPendingMetadataCountsTowardCallLimit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{}, 1024)
+	executor := contextualMetadataTools{orchestrationTestTools: orchestrationTestTools{run: func(context.Context, providers.ToolCall) (string, error) { return "unexpected", nil }}, resolve: func(ctx context.Context, _ providers.ToolCall) (ToolMetadata, bool, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		return ToolMetadata{}, false, ctx.Err()
+	}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(1)})
+	scope := &nestedToolScope{runtime: runtime, parent: &toolRun{}, ctx: ctx, calls: make(map[string]*toolRun)}
+	var wg sync.WaitGroup
+	for i := 0; i < 1024; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _ = scope.Invoke(ctx, providers.ToolCall{ID: fmt.Sprintf("id-%d", i), Name: "read"})
+		}(i)
+	}
+	for i := 0; i < 1024; i++ {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("metadata lookup did not start")
+		}
+	}
+	_, err := scope.Invoke(ctx, providers.ToolCall{ID: "over-limit", Name: "read"})
+	if err == nil || !strings.Contains(err.Error(), "limit reached") {
+		t.Fatalf("overflow error=%v", err)
+	}
+	waiter, stopWaiter := context.WithCancel(ctx)
+	stopWaiter()
+	_, err = scope.Invoke(waiter, providers.ToolCall{ID: "id-0", Name: "read"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("duplicate waiter error=%v", err)
+	}
+	cancel()
+	wg.Wait()
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if len(scope.pending) != 0 {
+		t.Fatalf("pending lookups leaked: %d", len(scope.pending))
+	}
+}
+
+func TestNestedPendingDuplicateSharesLookupAndWaiterCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var lookups, leaves atomic.Int32
+	executor := contextualMetadataTools{orchestrationTestTools: orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+		if call.Name != "orchestrate" {
+			leaves.Add(1)
+			return "done", nil
+		}
+		scope, ok := toolctx.Nested(ctx)
+		if !ok {
+			return "", errors.New("no nested scope")
+		}
+		call = providers.ToolCall{ID: "same", Name: "read", Arguments: `{}`}
+		first := make(chan error, 1)
+		go func() { _, err := scope.Invoke(ctx, call); first <- err }()
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		waiting, stopWaiting := context.WithCancel(ctx)
+		duplicate := make(chan error, 1)
+		go func() { _, err := scope.Invoke(waiting, call); duplicate <- err }()
+		stopWaiting()
+		if err := <-duplicate; !errors.Is(err, context.Canceled) {
+			return "", fmt.Errorf("duplicate cancellation: %v", err)
+		}
+		close(release)
+		if err := <-first; err != nil {
+			return "", err
+		}
+		result, err := scope.Invoke(ctx, call)
+		if err != nil {
+			return "", err
+		}
+		return result.TextProjection(), nil
+	}}, resolve: func(ctx context.Context, _ providers.ToolCall) (ToolMetadata, bool, error) {
+		lookups.Add(1)
+		close(entered)
+		select {
+		case <-release:
+			return ToolMetadata{}, false, nil
+		case <-ctx.Done():
+			return ToolMetadata{}, false, ctx.Err()
+		}
+	}}
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(1)})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "done" {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	if lookups.Load() != 1 || leaves.Load() != 1 {
+		t.Fatalf("lookups=%d leaves=%d, want one each", lookups.Load(), leaves.Load())
+	}
+}
+
+// observePendingContext signals when Invoke begins waiting on this context.
+// AfterFunc is forwarded separately so only the actual wait calls Done.
+type observePendingContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *observePendingContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+func (c *observePendingContext) AfterFunc(f func()) func() bool {
+	return context.AfterFunc(c.Context, f)
+}
+
+func TestNestedPendingFirstCallerOwnsCancellation(t *testing.T) {
+	for _, cancelOwner := range []bool{false, true} {
+		name := "duplicate-canceled"
+		if cancelOwner {
+			name = "owner-canceled"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			entered, release := make(chan struct{}), make(chan struct{})
+			var lookups, leaves atomic.Int32
+			executor := contextualMetadataTools{orchestrationTestTools: orchestrationTestTools{run: func(context.Context, providers.ToolCall) (string, error) { leaves.Add(1); return "done", nil }}, resolve: func(ctx context.Context, _ providers.ToolCall) (ToolMetadata, bool, error) {
+				lookups.Add(1)
+				close(entered)
+				select {
+				case <-ctx.Done():
+					return ToolMetadata{}, false, ctx.Err()
+				case <-release:
+					return ToolMetadata{}, false, nil
+				}
+			}}
+			rt := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(1)})
+			scope := &nestedToolScope{runtime: rt, parent: &toolRun{}, ctx: ctx, calls: make(map[string]*toolRun)}
+			call := providers.ToolCall{ID: "same", Name: "read", Arguments: `{}`}
+			firstCtx, cancelFirst := context.WithCancel(ctx)
+			defer cancelFirst()
+			duplicateBase, cancelDuplicate := context.WithCancel(ctx)
+			defer cancelDuplicate()
+			duplicateCtx := &observePendingContext{Context: duplicateBase, waiting: make(chan struct{})}
+			first, duplicate := make(chan error, 1), make(chan error, 1)
+			go func() { _, err := scope.Invoke(firstCtx, call); first <- err }()
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			go func() { _, err := scope.Invoke(duplicateCtx, call); duplicate <- err }()
+			select {
+			case <-duplicateCtx.waiting:
+			case <-ctx.Done():
+				t.Fatal("duplicate did not enter shared lookup")
+			}
+			if cancelOwner {
+				cancelFirst()
+				if err := <-first; !errors.Is(err, context.Canceled) {
+					t.Fatalf("first error: %v", err)
+				}
+				if err := <-duplicate; !errors.Is(err, context.Canceled) {
+					t.Fatalf("duplicate error: %v", err)
+				}
+				if leaves.Load() != 0 {
+					t.Fatalf("canceled lookup executed %d leaves", leaves.Load())
+				}
+				scope.mu.Lock()
+				pending, calls := len(scope.pending), len(scope.calls)
+				scope.mu.Unlock()
+				if pending != 0 || calls != 0 {
+					t.Fatalf("canceled lookup retained pending=%d calls=%d", pending, calls)
+				}
+			} else {
+				cancelDuplicate()
+				if err := <-duplicate; !errors.Is(err, context.Canceled) {
+					t.Fatalf("duplicate error: %v", err)
+				}
+				close(release)
+				if err := <-first; err != nil {
+					t.Fatalf("first error: %v", err)
+				}
+				if leaves.Load() != 1 {
+					t.Fatalf("first caller executed %d leaves", leaves.Load())
+				}
+			}
+			if lookups.Load() != 1 {
+				t.Fatalf("metadata lookups=%d, want 1", lookups.Load())
+			}
+		})
 	}
 }

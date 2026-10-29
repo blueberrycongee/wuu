@@ -756,6 +756,10 @@ const plugin: RuntimePlugin = {
 
 Use this only for reentrant handlers: protect shared mutable state and propagate cancellation. In an A → B → A service call chain, A's callback service must be able to run while its original handler awaits B. Opt-in applies to incoming `service.invoke` requests for the listed names; it does not make every tool or capability concurrent, grant service authority, or resolve package dependency cycles. `RuntimePlugin.concurrentCapabilities` provides the same opt-in for listed capability IDs, for example a read-only status request while a foreground task waits. Protect the state each concurrent handler reads or writes. Initialization and activation remain barriers. Shutdown stops new admission and waits for admitted work before cleanup. This is asynchronous overlap in one JavaScript process, not worker-thread execution.
 
+An external `agent.tools` provider can delegate its initial `list` for a workspace, thread, or side thread to the native provider. Each scope makes that choice during admission: if its initial list does not delegate, its first later attempt to initialize the native backend fails explicitly. An unfinished background initialization also fails admission, and its resources are retired after it settles. Delegating during thread admission initializes the native backend for that thread even when the workspace provider did not select it.
+
+An `agent.tools` provider that delegates `run_code` to the native backend must allow its own service to re-enter while the program invokes nested tools, for example `concurrentServices: [TOOL_SERVICE]`. A nested metadata lookup through the selected `agent.tools` provider that does not complete within five seconds fails the nested call; the host does not fall back to another provider. A provider may still support a tool without metadata, in which case scheduling remains conservative.
+
 ## Execution and cancellation
 
 Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. The `host` passed to tool, service, and capability handlers automatically binds

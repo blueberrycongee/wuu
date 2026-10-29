@@ -771,8 +771,18 @@ func NewSession(opts Options) (*Session, error) {
 	toolLoadingPreference := cfg.Agent.ToolLoadingPreference()
 	toolLoadingMode, toolSearchEnabled, nativeDeferredDiscovery := resolveToolLoadingModeForProvider(toolLoadingPreference, ruleProviderCfg, toolModeModel, mainRole.ProviderOptions)
 	var codeModeService *codemode.Service
+	var workspaceAdmissionMu sync.Mutex
+	var workspaceAdmissionClosed, workspaceAdmissionInFlight bool
 	if !opts.NoTools && !safeMode && selectsRuntimeModule(pluginHost, toolExecutionConsumer) {
 		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			workspaceAdmissionMu.Lock()
+			if workspaceAdmissionClosed {
+				workspaceAdmissionMu.Unlock()
+				return toolservice.Backend{}, errors.New("native tool backend was not initialized during workspace admission")
+			}
+			workspaceAdmissionInFlight = true
+			workspaceAdmissionMu.Unlock()
+			defer func() { workspaceAdmissionMu.Lock(); workspaceAdmissionInFlight = false; workspaceAdmissionMu.Unlock() }()
 			kit, newErr := tools.New(rootDir)
 			if newErr != nil {
 				return toolservice.Backend{}, newErr
@@ -830,6 +840,13 @@ func NewSession(opts Options) (*Session, error) {
 	// rebuild or the wall clock crosses midnight during a long session.
 	sessionDate := wuucontext.Snapshot(rootDir).Date
 	mainSurface, err := selectedToolSurface(context.Background(), toolExecutor)
+	workspaceAdmissionMu.Lock()
+	workspaceAdmissionClosed = true
+	workspaceInitializationPending := workspaceAdmissionInFlight
+	workspaceAdmissionMu.Unlock()
+	if workspaceInitializationPending {
+		return nil, errors.New("native tool backend initialization did not finish during workspace admission")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1379,8 +1396,23 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		shadow.DeferredToolCatalogPrompt = catalog
 	}
 	if shadow.Toolkit == nil && shadow.PluginHost != nil && shadow.StreamRunner.Tools != nil {
-		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(nil, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
-		temporaryToolScope = selectedNativeToolScope(shadow.StreamRunner.Tools)
+		generation := shadow.pluginGeneration
+		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			kit, closeResources, err := shadow.newThreadNativeToolkit(generation, threadRoot)
+			if err != nil {
+				return toolservice.Backend{}, err
+			}
+			executor := newPluginToolExecutor(kit, shadow.PluginHost, sessionID, threadRoot)
+			if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
+				return toolservice.Backend{Close: closeResources}, err
+			}
+			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: closeResources}, nil
+		})
+		shadow.StreamRunner.Tools = newSelectedToolExecutor(shadow.PluginHost, scope, selectedToolIdentity{threadID: sessionID, cwd: threadRoot, actorID: sessionID})
+		if shadow.HookDispatcher != nil {
+			shadow.StreamRunner.Tools = hooks.NewHookedExecutor(shadow.StreamRunner.Tools, shadow.HookDispatcher, "", threadRoot)
+		}
+		temporaryToolScope = scope
 	}
 	selectedSurface, surfaceErr := selectedToolSurface(context.Background(), shadow.StreamRunner.Tools)
 	if surfaceErr != nil {
@@ -1493,11 +1525,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit                   *tools.Toolkit
-		agentControl          *agentcontrol.AgentControl
-		toolExecutor          = s.StreamRunner.Tools
-		nativeAdmissionClosed bool
-		nativeAdmissionMu     sync.Mutex
+		kit                     *tools.Toolkit
+		agentControl            *agentcontrol.AgentControl
+		toolExecutor            = s.StreamRunner.Tools
+		nativeAdmissionClosed   bool
+		nativeAdmissionInFlight bool
+		nativeAdmissionMu       sync.Mutex
+		nativeBackendClose      func(context.Context) error
 	)
 	artifactOwner := &artifactLeaseOwner{}
 	nativeToolScopes := newNativeToolScopeOwner()
@@ -1521,13 +1555,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// control restores queue metadata here but remains dormant until app-server
 	// installs its model resolver and reliable terminal finalizer, then calls
 	// StartQueuedWork.
-	if s.Toolkit != nil {
+	if s.Toolkit != nil || (s.PluginHost != nil && generation != nil) {
 		initialize := func() error {
-			nativeAdmissionMu.Lock()
-			defer nativeAdmissionMu.Unlock()
-			if nativeAdmissionClosed {
-				return errors.New("native tool backend was not initialized during thread admission")
-			}
 			artifactOwner.mu.Lock()
 			defer artifactOwner.mu.Unlock()
 			if artifactOwner.closed || artifactOwner.release != nil {
@@ -1541,11 +1570,19 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						_ = artifactOwner.release()
 						artifactOwner.release = nil
 					}
+					if nativeBackendClose != nil {
+						_ = nativeBackendClose(context.Background())
+						nativeBackendClose = nil
+					}
 				}
 			}()
 
 			var err error
-			kit, err = s.Toolkit.CloneForRoot(threadRoot)
+			if s.Toolkit != nil {
+				kit, err = s.Toolkit.CloneForRoot(threadRoot)
+			} else {
+				kit, nativeBackendClose, err = s.newThreadNativeToolkit(generation, threadRoot)
+			}
 			if err != nil {
 				return err
 			}
@@ -1594,16 +1631,24 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			}
 		} else {
 			scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+				nativeAdmissionMu.Lock()
+				if nativeAdmissionClosed {
+					nativeAdmissionMu.Unlock()
+					return toolservice.Backend{}, errors.New("native tool backend was not initialized during thread admission")
+				}
+				nativeAdmissionInFlight = true
+				nativeAdmissionMu.Unlock()
+				defer func() { nativeAdmissionMu.Lock(); nativeAdmissionInFlight = false; nativeAdmissionMu.Unlock() }()
 				if err := initialize(); err != nil {
 					return toolservice.Backend{}, err
 				}
 				executor := newPluginToolExecutor(kit, s.PluginHost, id, threadRoot)
 				if generation != nil {
 					if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
-						return toolservice.Backend{}, err
+						return toolservice.Backend{Close: nativeBackendClose}, err
 					}
 				}
-				return toolservice.Backend{Executor: executor, Toolkit: kit}, nil
+				return toolservice.Backend{Executor: executor, Toolkit: kit, Close: nativeBackendClose}, nil
 			})
 			if err := nativeToolScopes.add(scope); err != nil {
 				return nil, err
@@ -1612,14 +1657,17 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if s.HookDispatcher != nil {
 				toolExecutor = hooks.NewHookedExecutor(toolExecutor, s.HookDispatcher, "", threadRoot)
 			}
-			if _, err := selectedToolSurface(context.Background(), toolExecutor); err != nil {
-				return nil, err
-			}
+			_, surfaceErr := selectedToolSurface(context.Background(), toolExecutor)
 			nativeAdmissionMu.Lock()
-			if kit == nil {
-				nativeAdmissionClosed = true
-			}
+			nativeAdmissionClosed = true
+			inFlight := nativeAdmissionInFlight
 			nativeAdmissionMu.Unlock()
+			if surfaceErr != nil {
+				return nil, surfaceErr
+			}
+			if inFlight {
+				return nil, errors.New("native tool backend initialization did not finish during thread admission")
+			}
 		}
 	}
 
@@ -1628,7 +1676,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
 
-	if s.Toolkit != nil && kit != nil {
+	if kit != nil {
 		workerClient := s.WorkerClient
 		workerClientProvider := strings.TrimSpace(s.ModelRoles.Worker.Provider)
 		if workerClient == nil {
@@ -1799,7 +1847,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 
-	if kit == nil && s.Toolkit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
+	if kit == nil && s.Toolkit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil && generation == nil {
 		toolExecutor = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
 		if err := nativeToolScopes.add(selectedNativeToolScope(toolExecutor)); err != nil {
 			return nil, err

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let selected tool-service providers choose native tools during thread or side-thread admission, including when the workspace initially uses an external provider.
+
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
 - Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
 

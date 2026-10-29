@@ -42,12 +42,25 @@ func (s *Server) mcpConfiguration(ctx context.Context) (config.SourceView, map[s
 }
 
 func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
-	view, definitions, err := s.mcpConfiguration(ctx)
+	return s.mcpServerListWithConfiguration(ctx, s.mcpConfiguration)
+}
+
+func (s *Server) mcpServerListWithConfiguration(ctx context.Context, read func(context.Context) (config.SourceView, map[string]config.MCPServerConfig, error)) (MCPListResult, error) {
+	if s == nil || s.rt == nil {
+		return MCPListResult{}, errors.New("mcp manager is unavailable")
+	}
+	generation := s.rt.RetainPluginGeneration()
+	if generation != nil {
+		defer s.rt.ReleasePluginGeneration(generation)
+	}
+	view, definitions, err := read(ctx)
 	if err != nil {
 		return MCPListResult{}, err
 	}
 	statuses := map[string]mcp.ServerStatus{}
-	if mgr, err := s.mcpManager(); err == nil {
+	mgr, current, release, managerErr := s.mcpManager()
+	if managerErr == nil {
+		defer release()
 		statuses = mgr.Status()
 	}
 	for name, definition := range view.Config.MCPServers {
@@ -79,11 +92,14 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 		server.PluginID, server.DisplayName = owners[server.Name], labels[server.Name]
 		definition, exists := definitions[server.Name]
 		server.Editable = exists && server.PluginID == "" && (definition.Command != "" || definition.URL != "")
-		if mgr, err := s.mcpManager(); err == nil {
+		if managerErr == nil {
 			if cfg, ok := mgr.Config(server.Name); ok && cfg.OAuth != nil {
 				server.OAuthRedirectURI = cfg.OAuth.RedirectURI
 			}
 		}
+	}
+	if !s.rt.IsCurrentPluginGeneration(generation) || (managerErr == nil && !current()) {
+		return MCPListResult{}, mcpGenerationChanged()
 	}
 	return result, nil
 }

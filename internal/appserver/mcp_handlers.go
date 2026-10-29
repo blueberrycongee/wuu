@@ -21,12 +21,16 @@ func (s *Server) handleMCPConnect(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	if err := mgr.Connect(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	status := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(status)
@@ -38,12 +42,16 @@ func (s *Server) handleMCPDisconnect(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	if err := mgr.Disconnect(params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	status := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(status)
@@ -55,12 +63,16 @@ func (s *Server) handleMCPRefresh(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
+	mgr, current, release, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	if err := mgr.Refresh(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if !current() {
+		return s.writeResponse(req.ID, nil, mcpGenerationChanged())
 	}
 	status := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(status)
@@ -81,11 +93,20 @@ func parseMCPServerActionParams(req Request) (MCPServerActionParams, error) {
 	return params, nil
 }
 
-func (s *Server) mcpManager() (*mcp.Manager, error) {
-	if s == nil || s.rt == nil || s.rt.Toolkit == nil || s.rt.Toolkit.MCPManager() == nil {
-		return nil, errors.New("mcp manager is unavailable")
+func (s *Server) mcpManager() (*mcp.Manager, func() bool, func(), error) {
+	if s == nil || s.rt == nil {
+		return nil, nil, nil, errors.New("mcp manager is unavailable")
 	}
-	return s.rt.Toolkit.MCPManager(), nil
+	manager, current, release := s.rt.RetainActiveMCPManager()
+	if manager == nil {
+		release()
+		return nil, nil, nil, errors.New("mcp manager is unavailable")
+	}
+	return manager, current, release, nil
+}
+
+func mcpGenerationChanged() error {
+	return errors.New("MCP configuration changed during the operation; retry against the current configuration")
 }
 
 func mcpStatusList(statuses map[string]mcp.ServerStatus) []MCPServerStatus {

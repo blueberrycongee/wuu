@@ -5,15 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
@@ -131,10 +134,83 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 		promptParts = append(promptParts, strings.TrimSpace(surface.DeferredToolCatalog))
 		runner.SystemPrompt = joinNonEmptyPromptParts(promptParts...)
 	} else if s.PluginHost != nil && s.StreamRunner.Tools != nil {
-		runner.Tools = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", root)
+		generation := s.pluginGeneration
+		var admissionMu sync.Mutex
+		var inFlight, admissionClosed bool
+		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			admissionMu.Lock()
+			if admissionClosed {
+				admissionMu.Unlock()
+				return toolservice.Backend{}, errors.New("native tool backend was not initialized during side thread admission")
+			}
+			inFlight = true
+			admissionMu.Unlock()
+			defer func() { admissionMu.Lock(); inFlight = false; admissionMu.Unlock() }()
+			kit, closeResources, err := s.newThreadNativeToolkit(generation, root)
+			if err != nil {
+				return toolservice.Backend{}, err
+			}
+			ok := false
+			defer func() {
+				if !ok {
+					if acquired != nil {
+						_ = acquired()
+						acquired = nil
+					}
+					_ = closeResources(context.Background())
+				}
+			}()
+			_, threadSkills, skillGeneration := s.skillSnapshotForRoot(kit.RootDir(), nil)
+			kit.SetSkillsWithAvailability(threadSkills, skillGeneration.skillAvailable)
+			s.bindLocalSkillRefresh(kit, kit.RootDir(), skillGeneration)
+			model := strings.TrimSpace(runner.APIModel)
+			if model == "" {
+				model = strings.TrimSpace(runner.Model)
+			}
+			kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
+			ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
+			kit.SetSessionID(id)
+			kit.SetShellEarlyHandoffEnabled(false)
+			kit.SetAgentIdentity(id, agentthread.RootPath)
+			kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
+			if len(parentSession) > 0 {
+				kit.SetCodeModeStateOwner(parentSession[0])
+				stateDir, err := s.executionStateDir()
+				if err != nil {
+					return toolservice.Backend{}, err
+				}
+				artifactDir := statepath.SessionArtifactDir(stateDir, parentSession[0])
+				if release != nil {
+					acquired, err = kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+					if err != nil {
+						return toolservice.Backend{}, err
+					}
+				}
+				if err := s.configureExecutionEnvironment(kit, parentSession[0], artifactDir); err != nil {
+					return toolservice.Backend{}, err
+				}
+			}
+			executor := newPluginToolExecutor(kit, s.PluginHost, id, root)
+			if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
+				return toolservice.Backend{}, err
+			}
+			ok = true
+			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: closeResources}, nil
+		})
+		runner.Tools = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: root, actorID: id})
+		if s.HookDispatcher != nil {
+			runner.Tools = hooks.NewHookedExecutor(runner.Tools, s.HookDispatcher, "", root)
+		}
 		surface, err := selectedToolSurface(context.Background(), runner.Tools)
+		admissionMu.Lock()
+		admissionClosed = true
+		initializing := inFlight
+		admissionMu.Unlock()
 		if err != nil {
 			return nil, err
+		}
+		if initializing {
+			return nil, errors.New("native tool backend initialization did not finish during side thread admission")
 		}
 		runner.SystemPrompt = joinNonEmptyPromptParts(systemPrompt, surface.SystemFragment, surface.DeferredToolCatalog)
 	} else {

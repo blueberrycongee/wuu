@@ -207,6 +207,20 @@ func (e *sessionToolPolicyExecutor) ToolMetadata(call providers.ToolCall) (agent
 	return provider.ToolMetadata(call)
 }
 
+func (e *sessionToolPolicyExecutor) ToolMetadataContext(ctx context.Context, call providers.ToolCall) (agent.ToolMetadata, bool, error) {
+	if !e.allowed(call.Name) {
+		return agent.ToolMetadata{}, false, fmt.Errorf("tool %q is disabled by the session tool policy", call.Name)
+	}
+	if provider, ok := e.base.(agent.ToolMetadataContextProvider); ok {
+		return provider.ToolMetadataContext(ctx, call)
+	}
+	if err := ctx.Err(); err != nil {
+		return agent.ToolMetadata{}, false, err
+	}
+	metadata, found := e.ToolMetadata(call)
+	return metadata, found, nil
+}
+
 func (e *sessionToolPolicyExecutor) AuthorizeTool(ctx context.Context, call providers.ToolCall, metadata agent.ToolMetadata) error {
 	if !e.allowed(call.Name) {
 		return fmt.Errorf("tool %q is disabled by the session tool policy", call.Name)

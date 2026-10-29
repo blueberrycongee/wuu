@@ -87,8 +87,9 @@ type PluginGeneration struct {
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released. A negative count seals retirement;
 	// zero is reserved for a prepared candidate that has not been published.
-	refs         atomic.Int32
-	revocationMu sync.Mutex
+	refs               atomic.Int32
+	nativeDependencies nativeGenerationDependencies
+	revocationMu       sync.Mutex
 	// Admission closes under modelMu before root shutdown starts Wait.
 	modelMu            sync.Mutex
 	modelStopped       bool
@@ -772,15 +773,17 @@ func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 	host := generation.host
 	surface := activeSurface(nil)
 	if selectsRuntimeModule(host, toolExecutionConsumer) {
-		executor := newSelectedToolExecutor(host, s.candidateToolScope(generation, generation.requiredPlugins), selectedToolIdentity{cwd: s.RootDir})
+		scope, seal := s.candidateToolScope(generation, generation.requiredPlugins)
+		executor := newSelectedToolExecutor(host, scope, selectedToolIdentity{cwd: s.RootDir})
 		generation.tools = executor
 		if generation.hooks != nil {
 			generation.tools = hooks.NewHookedExecutor(executor, generation.hooks, "", s.RootDir)
 		}
 		var err error
 		surface, err = executor.surface(context.Background())
-		if err != nil {
-			return err
+		sealErr := seal()
+		if err != nil || sealErr != nil {
+			return errors.Join(err, sealErr)
 		}
 	}
 	if selectsRuntimeModule(host, sessionExecutionConsumer) {
@@ -1082,6 +1085,9 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 	}
 	for _, id := range retiring {
 		g.revokeActivities(id)
+		if err := g.nativeDependencies.revoke(packages[id]); err != nil {
+			providers.DebugLogf("revoke disabled lazy native MCP for %q: %v", id, err)
+		}
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			cause := &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "module was removed or disabled"}
@@ -1410,6 +1416,10 @@ func (g *PluginGeneration) finalizeShutdownLocked() bool {
 		g.revokedMu.Lock()
 		g.host = nil
 		g.revokedMu.Unlock()
+	}
+	if used, dependencyErr := g.nativeDependencies.close(); used {
+		g.revocation.record("", "native-generation-dependencies", RevocationPhaseShutdown, dependencyErr)
+		g.closeErr = errors.Join(g.closeErr, dependencyErr)
 	}
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
 		rootErr := os.RemoveAll(g.ownedRoots[index])

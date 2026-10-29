@@ -109,6 +109,12 @@ type ToolMetadataProvider interface {
 	ToolMetadata(call providers.ToolCall) (ToolMetadata, bool)
 }
 
+// ToolMetadataContextProvider can cancel a nested metadata lookup and report
+// failures instead of silently treating them as missing metadata.
+type ToolMetadataContextProvider interface {
+	ToolMetadataContext(context.Context, providers.ToolCall) (ToolMetadata, bool, error)
+}
+
 // ToolAuthorizationGate lets executor decorators route dynamically provided
 // tools through the same authority check as built-in tools.
 type ToolAuthorizationGate interface {
