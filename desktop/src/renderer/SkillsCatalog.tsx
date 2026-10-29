@@ -84,7 +84,10 @@ function useCatalog(): ApplicationCatalogV1 {
 }
 
 export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={props.application.catalog.getSnapshot().contextKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+ const catalog = props.application.catalog.getSnapshot();
+ const ownerKey = JSON.stringify([catalog.contextKey, catalog.inventory.filter(item => item.kind === "plugin")
+   .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};

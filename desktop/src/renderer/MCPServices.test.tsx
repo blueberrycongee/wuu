@@ -9,6 +9,7 @@ import { createApplicationSettingsControls } from "./plugins/hostApplicationSett
 import { I18nProvider, translateCurrent } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { ConfirmDialogHost } from "./ConfirmDialog";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -45,10 +46,10 @@ function controls(overrides: Partial<Controls> = {}): Controls {
   };
 }
 
-async function render(source: Controls, props: { pluginID?: string; enabled?: boolean; filter?: string } = {}): Promise<void> {
+async function render(source: Controls, props: { pluginID?: string; enabled?: boolean; filter?: string; contextKey?: string } = {}): Promise<void> {
   await act(async () => root.render(
     <I18nProvider preferenceStore={{ get: () => "en-US", set: async () => undefined, subscribe: () => () => {} }}>
-      <WuuUIRoot><SettingsControlsProvider controls={source}><MCPServicesProvider><MCPServices {...props} /></MCPServicesProvider></SettingsControlsProvider><ConfirmDialogHost /></WuuUIRoot>
+      <WuuUIRoot><SettingsControlsProvider controls={source}><MCPServicesProvider contextKey={props.contextKey}><MCPServices {...props} /></MCPServicesProvider></SettingsControlsProvider><ConfirmDialogHost /></WuuUIRoot>
     </I18nProvider>,
   ));
 }
@@ -434,6 +435,58 @@ function connectorControls(overrides: Partial<Controls> = {}): Controls {
     ...overrides,
   });
 }
+
+it("presents an OAuth-required connector as authorization needed, not a failed connection", async () => {
+  await render(connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, state: "auth_required", error: authFailure }] }) }));
+  expect(connectorRow().textContent).toContain(translateCurrent("mcp.needsAuth"));
+  expect(connectorRow().textContent).not.toContain(translateCurrent("mcp.connectionFailed"));
+  expect(connectorRow().getAttribute("data-connected")).toBe("false");
+});
+
+it("does not display a proven retired-scope cancellation as a connector failure", async () => {
+  const source = connectorControls({ configureMCPServers: vi.fn().mockRejectedValue(new PluginLifecycleCancellationError()) });
+  await render(source);
+  await click(button(connectorRow(), "mcp.connect"));
+  expect(connectorRow().textContent).not.toContain(translateCurrent("mcp.connectionFailed"));
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+});
+
+it("does not throw a retired handoff read into the plugin view error boundary", async () => {
+  const source = connectorControls({
+    getPendingMCPConnectorLogin: () => { throw new PluginLifecycleCancellationError(); },
+    takeMCPConnectorLogin: vi.fn(),
+  });
+  await render(source);
+  expect(connectorRow()).not.toBeNull();
+  expect(source.takeMCPConnectorLogin).not.toHaveBeenCalled();
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+});
+
+it("preserves a real active-owner handoff read failure for the plugin view boundary", async () => {
+  const source = connectorControls({
+    getPendingMCPConnectorLogin: () => { throw new Error("active provider read failed"); },
+    takeMCPConnectorLogin: vi.fn(),
+  });
+  await expect(render(source)).rejects.toThrow("active provider read failed");
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+});
+
+it("retains only disabled card presentation during same-context rebind and drops it across context ABA", async () => {
+  const pending = deferred<Awaited<ReturnType<Controls["listMCPServers"]>>>();
+  await render(connectorControls(), { contextKey: "coding:one" });
+  const next = connectorControls({ listMCPServers: vi.fn(() => pending.promise) });
+  await render(next, { contextKey: "coding:one" });
+  expect(connectorRow().textContent).toContain(connector.connector!.title);
+  expect(connectorRow().textContent).toContain(translateCurrent("mcp.working"));
+  expect([...connectorRow().querySelectorAll<HTMLButtonElement>('[data-connector-action]')].every(button => button.disabled)).toBe(true);
+  expect(next.getMCPAuthStatus).not.toHaveBeenCalled();
+  await render(next, { contextKey: "coding:other" });
+  expect(container.querySelector('[data-connector]')).toBeNull();
+  await render(next, { contextKey: "coding:one" });
+  expect(container.querySelector('[data-connector]')).toBeNull();
+  await act(async () => pending.resolve({ servers: [connector] }));
+  expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
+});
 
 it("surfaces plugin-declared lazy connectors separately from generic MCP and in their plugin detail", async () => {
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [connector, stopped] }) });

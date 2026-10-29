@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Present connector authorization-required states without false connection errors, and keep only inert same-context card labels through graph refresh while fresh ownership and authorization are loading.
+
 - Keep an explicit connector sign-in through its own configuration publication without starting OAuth from retired controls. The one-shot, process-local handoff validates the current owner and resource, supports cancellation and navigation invalidation, and avoids redundant preference writes when retrying an already-enabled connector.
 
 - Keep selected remote MCP services registered when they require authorization, so refreshing plugins or signing out does not remove the local login manager or sibling connectors. Hard connection failures still fail required startup.
