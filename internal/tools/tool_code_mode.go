@@ -105,6 +105,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	}
 	return codeModeResponseResult(result), nil
 }
+
 func codeModeResponseResult(response codemode.RunResult) toolresult.Result {
 	parts := append([]string{}, response.Logs...)
 	if len(response.Value) > 0 {

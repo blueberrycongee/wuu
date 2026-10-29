@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type resultRecoveryContextKey struct{}
+type resultArchiveSourceKey struct{}
 
 var archivedResultName = regexp.MustCompile(`^[a-f0-9]{64}\.txt$`)
 
@@ -75,10 +77,12 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 		return toolresult.Result{}, errors.New("result archive is unavailable")
 	}
 	display := kit.env.normalizeSessionDisplayPath(resolved)
+	ctx = context.WithValue(ctx, resultArchiveSourceKey{}, cursor.ResultSource)
 	page, err := readFileByteWindowFromOpen(context.WithValue(ctx, resultRecoveryContextKey{}, true), kit.env, file, display, *cursor.ByteOffset, cursor.Limit, *cursor.ByteEndOffset, strings.TrimSpace(cursor.ExpectedSHA256), info.Size())
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	toolctx.MarkUnverified(ctx, cursor.ResultSource)
 	return toolresult.FromText(page), nil
 }
 
