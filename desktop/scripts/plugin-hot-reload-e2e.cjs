@@ -16,6 +16,8 @@ const project = path.join(fixture, 'project');
 const source = path.join(project, 'token-speed');
 const core = path.join(desktop, 'build/bin/wuu-core');
 const trigger = path.join(project, 'publish-now');
+const runningInput = process.env.WUU_PLUGIN_RELOAD_RUNNING_INPUT || '';
+if (!['', 'guide', 'queue'].includes(runningInput)) throw new Error('WUU_PLUGIN_RELOAD_RUNNING_INPUT must be guide or queue');
 for (const dir of [output, wuuData, project, source]) fs.mkdirSync(dir, { recursive: true });
 fs.writeFileSync(path.join(source, 'plugin.json'), JSON.stringify({ schemaVersion: 1, id: 'token-speed', name: 'Token speed fixture', version: '1.0.0', desktop: { entry: 'desktop.js' } }));
 fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ type: 'module', private: true, scripts: { build: 'node --check desktop.js' } }));
@@ -40,8 +42,9 @@ fs.writeFileSync(path.join(source, 'desktop.js'), plugin);
 app.setPath('userData', path.join(fixture, 'profile'));
 Object.assign(process.env, { WUU_HOME: wuuData, WUU_DESKTOP_CORE: core,
   WUU_SAFE_MODE: '0', WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_ENABLE_CUA_LINUX: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1' });
-delete process.env.ELECTRON_RENDERER_URL;
-const report = { status: 'running', phases: [], errors: [], exceptions: [], activations: [], fixture, limitations: [
+if (process.env.WUU_PLUGIN_RELOAD_RENDERER_URL) process.env.ELECTRON_RENDERER_URL = process.env.WUU_PLUGIN_RELOAD_RENDERER_URL;
+else delete process.env.ELECTRON_RENDERER_URL;
+const report = { status: 'running', phases: [], errors: [], exceptions: [], activations: [], inputs: [], fixture, limitations: [
   'Temporary Wuu data, synthetic model and DOM input events; external CLI publication and the current desktop and Go core.',
 ] };
 let phase = 'setup', win, heldAnswer, heldOther, firstFingerprint, gateArmed = false, gateReached = false, releaseGate, gate;
@@ -55,7 +58,10 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
   if (channel === 'wuu:plugin-desktop-activation') report.activations.push(args[1]);
   const receipt = path.join(wuuData, 'dev/generations/token-speed/receipt.json');
   if (channel === 'wuu:project-list' && gateArmed && fs.existsSync(receipt) && JSON.parse(fs.readFileSync(receipt, 'utf8')).fingerprint !== firstFingerprint) { gateReached = true; await gate; }
-  return handler(...args);
+  if (!['wuu:turn-steer', 'wuu:turn-queue'].includes(channel)) return handler(...args);
+  const result = await handler(...args);
+  report.inputs.push({ channel, threadId: args[1] });
+  return result;
 });
 const streamTimers = new Map();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -96,10 +102,10 @@ const server = http.createServer((req, res) => {
     const userText = messages.filter(message => message.role === 'user').map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '')).join('\n');
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (userText.includes('Generate a title')) return finish(res, 'Fixture conversation');
+    if (userText.includes('Draft edited while reloading')) return finish(res, 'Follow-up works after plugin publication.');
     if (userText.includes('<process_notification>')) return finish(res, 'Background process completed.');
     if (userText.includes('A conversation requested during reload')) return finish(res, 'Deferred conversation works.');
     if (userText.includes('A new conversation after reload')) return finish(res, 'New conversation works after reload.');
-    if (userText.includes('Draft edited while reloading')) return finish(res, 'Follow-up works after plugin publication.');
     if (userText.includes('Keep a parallel conversation active')) { hold(res, 'Parallel conversation is active.'); heldOther = res; return; }
     if (!ids.has('write-speed')) return call(res, 'write_file', 'write-speed', { path: 'token-speed/desktop.js', content: updatedPlugin });
     if (!ids.has('publish-speed')) return call(res, 'bash', 'publish-speed', { command: `while [ ! -f ${shellQuote(trigger)} ]; do sleep 0.05; done; exec ${shellQuote(core)} plugin dev --watch=false ${shellQuote(source)}`, run_in_background: true });
@@ -112,7 +118,7 @@ async function typeDraft(text) {
   await evaluate(({ selector, text }) => { const input = document.querySelector(selector); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); }, { selector: composer, text });
   await until(() => evaluate(() => { const send = document.querySelector('[data-main-conversation-composer] .composer-send-button'); return Boolean(send && !send.disabled); }), 'send enabled after draft', 30000);
 }
-async function submit() { await evaluate(selector => document.querySelector(selector).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })), composer); }
+async function submit(queue = false) { await evaluate(({ selector, queue }) => document.querySelector(selector).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey: queue, bubbles: true, cancelable: true })), { selector: composer, queue }); }
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   fs.writeFileSync(path.join(wuuData, 'config.json'), JSON.stringify({ default_provider: 'fixture', agent: { permission_mode: 'unconfined' }, providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture' } }, engines: { default_engine: 'wuu' }, skills: { enabled: false }, ptc: { enabled: false } }));
@@ -137,8 +143,10 @@ async function run() {
   phase = 'agent-updates'; armGate(firstFingerprint);
   await typeDraft('Update the token speed plugin while this conversation is running.'); await submit();
   await until(() => heldAnswer, 'publishing agent is running', 30000);
-  await evaluate(() => document.querySelector('.primary-nav .nav-item').click());
-  await until(() => evaluate(() => Boolean(document.querySelector('.empty-home'))), 'draft before plugin publication', 30000);
+  if (!runningInput) {
+    await evaluate(() => document.querySelector('.primary-nav .nav-item').click());
+    await until(() => evaluate(() => Boolean(document.querySelector('.empty-home'))), 'draft before plugin publication', 30000);
+  }
   await typeDraft('Before reload');
   await evaluate(selector => { const input = document.querySelector(selector); input.focus(); window.handoffEditor = input; }, composer);
   await until(() => evaluate(() => Object.keys(sessionStorage).some(k => sessionStorage.getItem(k).includes('Before reload'))), 'initial draft persisted', 5000);
@@ -151,6 +159,11 @@ async function run() {
   await evaluate(({ selector, text }) => { const input = document.querySelector(selector); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); }, {selector: composer, text: 'Draft edited while reloading'});
   await evaluate(() => window.dispatchEvent(new Event('focus')));
   await sleep(300);
+  if (runningInput) {
+    await submit(runningInput === 'queue');
+    // Let the retired scope reject the click before releasing the successor.
+    await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  }
   const retired = report.exceptions.filter(entry => JSON.stringify(entry).includes('Plugin scope is no longer active'));
   const before = report.activations.filter(a => a.id.includes('wuu.default-application') && a.phase === 'registration' && a.status === 'active').length;
   gateArmed = false; releaseGate();
@@ -159,9 +172,25 @@ async function run() {
   phase = 'new-draft-after-publication';
   const value = await evaluate(selector => document.querySelector(selector)?.value, composer);
   report.phases.push(`Draft after handoff: ${value}`);
-  assert.equal(value, 'Draft edited while reloading', 'draft retains edits typed during provider handoff');
+  if (!runningInput) assert.equal(value, 'Draft edited while reloading', 'draft retains edits typed during provider handoff');
   assert.equal(await evaluate(selector => document.querySelector(selector) === window.handoffEditor && document.activeElement === window.handoffEditor, composer), true, 'focused editor survives the handoff');
   await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-component=\"token-speed-fixture\"][data-test-generation=\"updated\"]'))), 'updated token-speed is rendered', 60000);
+  if (runningInput) {
+    phase = 'running-conversation-input';
+    await until(() => evaluate(() => document.querySelector('.composer-pending-drawer')?.textContent.includes('Draft edited while reloading')), 'running input admitted', 15000);
+    const expected = runningInput === 'guide' ? 'wuu:turn-steer' : 'wuu:turn-queue';
+    assert.equal(report.inputs.filter(input => input.channel === expected).length, 1, 'input is admitted exactly once');
+    fs.writeFileSync(path.join(output, 'running-input-pending.png'), (await win.webContents.capturePage()).toPNG());
+    if (heldAnswer && !heldAnswer.writableEnded) finish(heldAnswer, 'Plugin update completed.');
+    if (heldOther && !heldOther.writableEnded) finish(heldOther, 'Parallel conversation completed.');
+    await until(() => evaluate(() => document.body.innerText.includes('Follow-up works after plugin publication.')), 'model processes running input', 30000);
+    assert.equal(report.exceptions.some(entry => JSON.stringify(entry).includes('Plugin scope is no longer active')), false, 'no retired-scope exception after the handoff');
+    assert.deepEqual(report.errors, [], 'renderer diagnostics remain available without errors');
+    fs.writeFileSync(path.join(output, 'running-input-completed.png'), (await win.webContents.capturePage()).toPNG());
+    report.phases.push(`${runningInput} clicked during handoff was admitted and processed in the running conversation`);
+    report.status = 'passed'; save(); console.log(`PASS ${runningInput} during plugin reload; evidence ${output}`);
+    server.close(); app.quit(); return;
+  }
   await until(() => evaluate(() => { const b = document.querySelector('[data-main-conversation-composer] .composer-send-button'); return Boolean(b && !b.disabled); }), 'send enabled after handoff', 30000);
   await until(() => evaluate(() => Object.keys(sessionStorage).some(k => sessionStorage.getItem(k).includes('Draft edited while reloading'))), 'handoff draft persisted', 5000);
   report.phases.push('Draft edits persisted after handoff');
