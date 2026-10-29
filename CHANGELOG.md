@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
+
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
 - Select a trusted plugin tool as the replacement for the native `web_search` tool while retaining the remaining tool registry, execution policy and lifecycle.
 
