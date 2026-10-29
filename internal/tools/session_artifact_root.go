@@ -38,7 +38,9 @@ func NewSessionArtifactManager() *SessionArtifactManager {
 }
 
 func (m *SessionArtifactManager) acquire(path string) (*SessionArtifactLease, error) {
-	if strings.TrimSpace(path) == "" { return nil, errors.New("empty session artifact path") }
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("empty session artifact path")
+	}
 	key, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -108,6 +110,21 @@ func newSessionArtifactRoot(path string) (*sessionArtifactRoot, error) {
 }
 
 func (s *sessionArtifactRoot) Close() error { return s.root.Close() }
+
+// openManaged confines managed reads to the pinned session root. Root permits
+// relative links inside that root while rejecting links that escape it.
+func (s *sessionArtifactRoot) openManaged(name string) (*os.File, error) {
+	f, err := s.root.OpenFile(name, os.O_RDONLY|artifactNonblockFlag, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		return nil, errors.New("session artifact is not a regular file")
+	}
+	return f, nil
+}
 
 func (s *sessionArtifactRoot) open(name string) (*os.File, error) {
 	if filepath.Clean(filepath.Dir(name)) != "tool-results" {
