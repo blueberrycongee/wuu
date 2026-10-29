@@ -331,8 +331,8 @@ type Server struct {
 	engineScopes                 map[agentengine.EngineID]engineScope
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
-	nativeHistoryCtx             context.Context
-	nativeHistoryCancel          context.CancelFunc
+	sessionOperationCtx          context.Context
+	sessionOperationCancel       context.CancelFunc
 	packageDownloadCtx           context.Context
 	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
@@ -370,12 +370,12 @@ type Server struct {
 }
 
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
-	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
+	sessionOperationCtx, sessionOperationCancel := context.WithCancel(context.Background())
 	packageDownloadCtx, packageDownloadCancel := context.WithCancel(context.Background())
 	s := &Server{
-		rpcTiming:        newRPCTimingRecorder(),
-		access:           connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
-		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
+		rpcTiming:           newRPCTimingRecorder(),
+		access:              connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
+		sessionOperationCtx: sessionOperationCtx, sessionOperationCancel: sessionOperationCancel,
 		packageDownloadCtx: packageDownloadCtx, packageDownloadCancel: packageDownloadCancel,
 		rt:      rt,
 		out:     out,
@@ -793,8 +793,8 @@ func (s *Server) Close() {
 		s.cancelPluginAdditivePreparation()
 		s.closeRendererClients()
 		s.closeChatGPTLogins()
-		if s.nativeHistoryCancel != nil {
-			s.nativeHistoryCancel()
+		if s.sessionOperationCancel != nil {
+			s.sessionOperationCancel()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
@@ -1288,7 +1288,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 				// per-thread mutation lease still serializes its own conversation.
 				if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
 					operationCtx, cancel := context.WithCancel(ctx)
-					stop := context.AfterFunc(s.nativeHistoryCtx, cancel)
+					stop := context.AfterFunc(s.sessionOperationCtx, cancel)
 					defer stop()
 					defer cancel()
 					if err := handle(binding, operationCtx, req); err != nil {
@@ -1358,7 +1358,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodSessionFolderDelete:
 		return s.handleOrganizationGroupDelete(req)
 	case MethodThreadArchive:
-		return s.handleThreadArchive(req)
+		return s.handleThreadArchive(ctx, req)
 	case MethodThreadCompactStart:
 		return s.handleThreadCompactStart(ctx, req)
 	case MethodThreadRename:

@@ -114,7 +114,7 @@ func TestRunStdioWorkspaceReadDoesNotBlockControlAndDrains(t *testing.T) {
 			t.Log("turn/interrupt acknowledged while workspace provider remained blocked")
 			closed := make(chan struct{})
 			go func() { server.Close(); close(closed) }()
-			<-server.nativeHistoryCtx.Done()
+			<-server.sessionOperationCtx.Done()
 			select {
 			case <-closed:
 				t.Fatal("shutdown abandoned accepted workspace work")

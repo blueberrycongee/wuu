@@ -96,10 +96,10 @@ func TestRunStdioOptionFailureClosesConnectionWork(t *testing.T) {
 			done := make(chan struct{})
 			rejected := errors.New("registration rejected")
 			option := func(s *Server) error {
-				if s.nativeHistoryCtx == nil || s.presenceLease != nil {
+				if s.sessionOperationCtx == nil || s.presenceLease != nil {
 					t.Fatal("connection options must receive a cancellation scope before presence subscriptions")
 				}
-				if !s.startBackground(func() { <-s.nativeHistoryCtx.Done(); close(done) }) {
+				if !s.startBackground(func() { <-s.sessionOperationCtx.Done(); close(done) }) {
 					t.Fatal("startup work was rejected")
 				}
 				return rejected

@@ -784,7 +784,9 @@ export class AppServerClient {
   dispose(): Promise<void> {
     this.disposing = true;
     for (const pending of this.pending.values()) {
-      pending.reject(new Error("app-server stopped"));
+      pending.reject(pending.method === "thread/archive"
+        ? new SessionOutcomeUnknownError("the app-server stopped before archive acknowledgement")
+        : new Error("app-server stopped"));
     }
     this.pending.clear();
     return this.shutdown();
@@ -1035,7 +1037,9 @@ export class AppServerClient {
     }
 
     for (const request of pending) {
-      request.reject(new Error(message));
+      request.reject(request.method === "thread/archive"
+        ? new SessionOutcomeUnknownError(message)
+        : new Error(message));
     }
     if (!this.disposing) {
       this.emit(this, { kind: "server-exit", code, message });

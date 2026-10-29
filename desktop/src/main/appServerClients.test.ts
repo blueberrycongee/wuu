@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppServerResponseError } from "./appServerErrors";
+import { SessionOutcomeUnknownError } from "./sessionRoutes";
 import { requestTrustedRemote, bindRemoteEventAuthorization, type TrustedRemotePeer } from "./trustedRemoteTransport";
 import type { AppServerResponse, ServerEvent } from "../shared/protocol";
 
@@ -1184,4 +1185,18 @@ it("does not restart a disposed core while the desktop is waiting for exit", asy
   expect(spawn).toHaveBeenCalledTimes(1);
   child.emit("exit", 0, null);
   await stopped;
+});
+
+it.each(["exit", "dispose"])("reports unacknowledged archive as unknown on %s without replaying", async outcome => {
+  const child = new FakeAppServerChild();
+  const { client } = makeClient(() => child.asChildProcess());
+  const writes: string[] = [];
+  child.stdin.on("data", chunk => writes.push(String(chunk)));
+  const pending = client.request("thread/archive", { thread_id: "target", archived: true, force: true });
+  const rejected = expect(pending).rejects.toBeInstanceOf(SessionOutcomeUnknownError);
+  if (outcome === "dispose") { void client.dispose(); child.emit("close", 0, null); }
+  else child.emit("exit", 1, null);
+  await rejected;
+  expect(writes.filter(line => JSON.parse(line).method === "thread/archive")).toHaveLength(1);
+  expect(client.isBusy()).toBe(false);
 });

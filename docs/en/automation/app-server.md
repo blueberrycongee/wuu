@@ -72,6 +72,25 @@ for future conversations; add `keep_selection: true` to save a provider's
 connection without making it the default. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Archive a running conversation
+
+`thread/archive` takes `thread_id` and `archived`. A running conversation requires
+explicit confirmation followed by `archived: true, force: true`. The request
+interrupts its captured execution, holds queued input, and remains pending until
+partial history, terminal state, and runner cleanup settle. It does not ask the
+user to repeat confirmation merely because cleanup takes more than two seconds.
+Over stdio, later requests for the same conversation remain ordered behind it;
+other conversations and server shutdown remain responsive.
+
+The desktop has no archive-response timeout. Navigating away retires the old UI
+result owner, not the confirmed request. Server shutdown or an embedding's
+cancelled request context stops archive before its metadata commit; authorization
+is checked again after settlement. If the connection or commit acknowledgement
+is lost, inspect the persisted session before retrying: the outcome may be
+unknown. An error that explicitly reports committed archive metadata with an
+unavailable refreshed view does not mean the mutation failed. A committed change
+is not undone by later cancellation.
+
 ## Page conversation history
 
 For a compact conversation view, send `conversation_history: true` with

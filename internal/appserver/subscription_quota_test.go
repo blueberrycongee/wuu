@@ -29,6 +29,7 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	t.Setenv("GROK_HOME", t.TempDir())
 	root, home := t.TempDir(), t.TempDir()
 	rt := &runtime.Session{RootDir: root, WuuHome: home, ConfigPath: filepath.Join(root, "config.json")}
+	var srv *Server
 	openRuntime := func() *runtime.Session {
 		raw, err := os.ReadFile(rt.ConfigPath)
 		if err != nil {
@@ -77,16 +78,10 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if rt.PluginHost != nil {
-			var selected configpkg.Config
-			if err := json.Unmarshal(data, &selected); err != nil {
-				t.Fatal(err)
-			}
-			candidate, err := rt.PreflightExtensions(selected)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		if srv != nil {
+			// Use the same serialized publication path as the live config watcher.
+			// Direct runtime publication would race that watcher during preflight.
+			if err := srv.refreshConfigIfChanged(); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -94,8 +89,11 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	writeConfig(firstToken)
 	rt = openRuntime()
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv = New(rt, out)
 	t.Cleanup(srv.Close)
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatal(err)
+	}
 	list := func(id string, include bool) EngineListResult {
 		t.Helper()
 		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t}`, include))}); err != nil {
@@ -159,6 +157,9 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	out = &lockedBuffer{}
 	srv = New(rt, out)
 	t.Cleanup(srv.Close)
+	if err := srv.refreshConfigIfChanged(); err != nil {
+		t.Fatal(err)
+	}
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
 		t.Fatalf("restart lost observation: %+v", restarted)
 	}

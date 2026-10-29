@@ -18,7 +18,7 @@ type stdioResumeRequest struct {
 	readOnly bool
 }
 
-// Only resume reads and requests behind those reads leave ordered ingress.
+// Resume reads, confirmed archive settlement, and their successors leave ordered ingress.
 // The dependency graph follows ingress order, so multi-session operations can
 // wait for both predecessors without taking application locks while waiting.
 func (s *Server) deferStdioResume(ctx context.Context, req Request) (bool, error) {
@@ -48,6 +48,8 @@ func (s *Server) deferStdioResume(ctx context.Context, req Request) (bool, error
 		return false, nil
 	}
 	resume := req.Method == MethodThreadResume
+	var archiveParams ThreadArchiveParams
+	archive := req.Method == MethodThreadArchive && json.Unmarshal(req.Params, &archiveParams) == nil && archiveParams.Archived && archiveParams.Force
 	s.stdioResumeMu.Lock()
 	var predecessors []*stdioResumeRequest
 	readOnly := true
@@ -57,7 +59,7 @@ func (s *Server) deferStdioResume(ctx context.Context, req Request) (bool, error
 			readOnly = readOnly && previous.readOnly
 		}
 	}
-	if !resume && len(predecessors) == 0 {
+	if !resume && !archive && len(predecessors) == 0 {
 		s.stdioResumeMu.Unlock()
 		return false, nil
 	}
@@ -73,6 +75,12 @@ func (s *Server) deferStdioResume(ctx context.Context, req Request) (bool, error
 	var params ThreadResumeParams
 	if resume && len(predecessors) == 0 {
 		binding, req, params, err = s.retainThreadResume(req)
+		if err != nil {
+			return true, s.writeResponse(req.ID, nil, err)
+		}
+	}
+	if archive && len(predecessors) == 0 {
+		binding, err = s.rt.RetainState()
 		if err != nil {
 			return true, s.writeResponse(req.ID, nil, err)
 		}
@@ -135,6 +143,15 @@ func (s *Server) deferStdioResume(ctx context.Context, req Request) (bool, error
 				}
 			}
 			err = s.handleThreadResumeForState(binding, req, params)
+		} else if archive {
+			if binding == nil {
+				binding, err = s.rt.RetainState()
+				if err != nil {
+					_ = s.writeResponse(req.ID, nil, err)
+					return
+				}
+			}
+			err = s.handleThreadArchiveForState(ctx, binding, req)
 		} else {
 			err = s.dispatchAuthorizedRequest(ctx, req)
 		}

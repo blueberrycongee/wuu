@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -387,7 +388,7 @@ func TestRunStdioResumeKeepsCapturedAuthorityAndRechecksOrderedSuccessors(t *tes
 				}
 				closed := make(chan struct{})
 				go func() { server.Close(); close(closed) }()
-				<-server.nativeHistoryCtx.Done()
+				<-server.sessionOperationCtx.Done()
 				select {
 				case <-closed:
 					t.Fatal("Close abandoned provider still physically running")
@@ -463,5 +464,196 @@ func TestThreadResumeRetainsReadOnlyHistoryOutsideCache(t *testing.T) {
 	result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, out.String()), "detached")["result"])
 	if len(result.Thread.Turns) != 1 || result.Thread.Turns[0].ID != "captured-turn" {
 		t.Fatal("read-only history disappeared with its cache entry")
+	}
+}
+
+func TestRunStdioForceArchiveKeepsOtherSessionsResponsiveAndSameSessionOrdered(t *testing.T) {
+	for _, outcome := range []string{"completed", "shutdown"} {
+		t.Run(outcome, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			for _, id := range []string{"archive-a", "archive-b"} {
+				if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out := &lockedBuffer{}
+			server := New(rt, out)
+			t.Cleanup(server.Close)
+			th, err := server.ensureThreadLoaded(testRuntimeState(t, rt), "archive-a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { th.mu.Lock(); th.releaseTurnExecutionLocked(th.currentTurn); th.mu.Unlock() })
+			settled, interrupted := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(settled) })
+			t.Cleanup(unblock)
+			th.mu.Lock()
+			acquired, err := server.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			th.startTurnLocked("owned-turn", providers.ChatMessage{}, time.Now().UTC())
+			th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: settled}
+			th.cancel = sync.OnceFunc(func() { close(interrupted) })
+			th.mu.Unlock()
+			if err != nil || !acquired {
+				t.Fatalf("execution admission: acquired=%v err=%v", acquired, err)
+			}
+			wire := `{"id":"archive","method":"thread/archive","params":{"thread_id":"archive-a","archived":true,"force":true}}` + "\n"
+			wire += `{"id":"restore","method":"thread/archive","params":{"thread_id":"archive-a","archived":false}}` + "\n"
+			wire += `{"id":"other","method":"turn/queue","params":{"thread_id":"archive-b","prompt":"independent work","hold":true}}` + "\n"
+			in, writer := io.Pipe()
+			t.Cleanup(func() { _ = writer.Close(); _ = in.Close() })
+			done := make(chan error, 1)
+			go func() { done <- runStdioScanner(context.Background(), server, in) }()
+			if _, err := io.WriteString(writer, wire); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-interrupted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("archive did not interrupt its owner")
+			}
+			// An unrelated response is a deterministic progress witness while the
+			// original runner is still held behind its explicit settlement barrier.
+			waitResumeStdioResponse(t, out, "other")
+			if resumeStdioHasResponse(t, out, "archive") || resumeStdioHasResponse(t, out, "restore") {
+				t.Fatal("archive completed or a same-session mutation overtook physical settlement")
+			}
+			if outcome == "shutdown" {
+				if _, err := io.WriteString(writer, `{"id":"shutdown","method":"shutdown"}`+"\n"); err != nil {
+					t.Fatal(err)
+				}
+				waitResumeStdioResponse(t, out, "archive")
+				if responseByID(t, parseOutput(t, out.String()), "archive")["error"] == nil {
+					t.Fatal("shutdown must cancel pending archive")
+				}
+				th.mu.Lock()
+				leaseHeld := th.executionLease != nil
+				th.mu.Unlock()
+				if !leaseHeld {
+					t.Fatal("cancelled archive released the still-unsettled runner")
+				}
+				th.mu.Lock()
+				th.releaseTurnExecutionLocked(th.currentTurn)
+				th.mu.Unlock()
+				unblock()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("scanner shutdown: %v", err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("server did not join after owned settlement")
+				}
+				metadata, found, err := rt.Sessions.Find("archive-a")
+				if err != nil || !found || metadata.ArchivedAt != nil {
+					t.Fatalf("shutdown archive mutated metadata: %+v %v", metadata, err)
+				}
+				waitResumeStdioDrained(t, server)
+				return
+			}
+			unblock()
+			waitResumeStdioResponse(t, out, "restore")
+			_ = writer.Close()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			messages := parseOutput(t, out.String())
+			for _, id := range []string{"archive", "restore", "other"} {
+				if response := responseByID(t, messages, id); response["error"] != nil {
+					t.Fatalf("%s: %+v", id, response)
+				}
+			}
+			archived := remarshal[ThreadArchiveResult](t, responseByID(t, messages, "archive")["result"])
+			restored := remarshal[ThreadArchiveResult](t, responseByID(t, messages, "restore")["result"])
+			if !archived.Thread.Archived || restored.Thread.Archived {
+				t.Fatal("same-session archive/restore order was not preserved")
+			}
+			waitResumeStdioDrained(t, server)
+		})
+	}
+}
+
+func TestRunStdioArchiveReportsCommittedCancellationButJoinsRefresh(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	provider := session.NewService("archive-refresh", rt.Documents)
+	if err := provider.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = provider.Close(context.Background()) })
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var committed atomic.Bool
+	rt.Sessions = session.NewClient(context.Background(), func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		if method == "ReadControl" && committed.CompareAndSwap(true, false) {
+			close(entered)
+			<-release
+		}
+		result, err := provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "archive-refresh", Method: method, Params: raw})
+		if method == "UpdateArchived" && err == nil {
+			committed.Store(true)
+		}
+		return result, err
+	})
+	if _, err := rt.Sessions.CreateWithMetadata("archived", rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	t.Cleanup(unblock)
+	in, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close(); _ = in.Close() })
+	done := make(chan error, 1)
+	go func() { done <- runStdioScanner(context.Background(), server, in) }()
+	wire := `{"id":"archive","method":"thread/archive","params":{"thread_id":"archived","archived":true,"force":true}}` + "\n"
+	wire += `{"id":"rename","method":"thread/rename","params":{"thread_id":"archived","title":"must not overtake refresh"}}` + "\n"
+	if _, err := io.WriteString(writer, wire); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("archive did not reach committed refresh")
+	}
+	if _, err := io.WriteString(writer, `{"id":"shutdown","method":"shutdown"}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	waitResumeStdioResponse(t, out, "archive")
+	response := responseByID(t, parseOutput(t, out.String()), "archive")
+	errResponse, ok := response["error"].(map[string]any)
+	if !ok || !strings.Contains(fmt.Sprint(errResponse["message"]), "committed") {
+		t.Fatalf("committed archive was presented as an uncommitted cancellation: %+v", response)
+	}
+	if resumeStdioHasResponse(t, out, "rename") {
+		t.Fatal("response released the same-session lane before physical refresh")
+	}
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "archived")
+	if lease != nil {
+		defer lease.Release()
+	}
+	if err != nil || acquired {
+		t.Fatalf("response released the mutation lease before physical refresh: acquired=%v err=%v", acquired, err)
+	}
+	unblock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not join the released refresh")
+	}
+	waitResumeStdioDrained(t, server)
+	metadata, found, err := rt.Sessions.Find("archived")
+	if err != nil || !found || metadata.ArchivedAt == nil || metadata.Title != "" {
+		t.Fatalf("committed archive or successor fence changed: %+v %v", metadata, err)
+	}
+	if responseByID(t, parseOutput(t, out.String()), "rename")["error"] == nil {
+		t.Fatal("shutdown admitted a later mutation")
+	}
+	server.access.mu.Lock()
+	pending := len(server.access.pending)
+	server.access.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("cleanup leaked %d authorized requests", pending)
 	}
 }

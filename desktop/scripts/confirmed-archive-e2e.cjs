@@ -7,7 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { createHash } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
+const childProcess = require('node:child_process');
+const { spawnSync } = childProcess;
+const { syncBuiltinESMExports } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain } = require('electron');
 const fixtureBuildEnv = { ...process.env };
@@ -26,6 +28,36 @@ delete process.env.ELECTRON_RENDERER_URL;
 const report = { status: 'running', mode, source: process.env.WUU_E2E_SOURCE_COMMIT, checks: [], ipc: [], queueIPC: [], modelRequests: [], screenshots: [], errors: [], limitations: ['Linux Electron native input, not physical macOS acceptance.', 'Synthetic local provider; terminal notifications may be delayed to reproduce stale UI, but archive requests and results are real.'] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Keep diagnostics tied to children spawned by this disposable fixture. Never
+// discover or signal a process by name: another Wuu instance may own real data.
+const coreChildren = [];
+const spawn = childProcess.spawn;
+childProcess.spawn = function (command, args, options) {
+  const child = spawn.call(this, command, args, options);
+  if (path.resolve(command) === path.resolve(process.env.WUU_DESKTOP_CORE) && args?.includes('app-server')) {
+    const entry = { pid: child.pid, command, args, stderr: `core-${child.pid}.log` };
+    coreChildren.push({ child, entry });
+    (report.coreProcesses ||= []).push(entry);
+    child.stderr?.on('data', chunk => fs.appendFileSync(path.join(output, entry.stderr), chunk));
+    child.once('exit', (code, signal) => { entry.exit = { code, signal }; save(); });
+    save();
+  }
+  return child;
+};
+syncBuiltinESMExports();
+async function captureCoreFailureStacks() {
+  await Promise.all(coreChildren.map(async ({ child, entry }) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (process.platform === 'win32') { entry.stackDiagnostic = 'SIGQUIT unavailable on Windows'; return; }
+    const closed = new Promise(resolve => child.once('close', resolve));
+    entry.stackSignalSent = child.kill('SIGQUIT');
+    let timeout;
+    await Promise.race([closed, new Promise(resolve => { timeout = setTimeout(resolve, 5000); })]);
+    clearTimeout(timeout);
+  }));
+  save();
+}
+
 let win, response, threadId, holdTerminal = false, held = [], releaseArchive;
 const archiveGate = new Promise(resolve => { releaseArchive = resolve; });
 const register = ipcMain.handle.bind(ipcMain);
@@ -42,11 +74,11 @@ ipcMain.handle = (channel, handler) => register(channel, async (event, ...args) 
     catch (error) { entry.error = String(error); save(); throw error; }
   }
   if (channel !== 'wuu:thread-archive') return handler(event, ...args);
-  const entry = { channel, args }; report.ipc.push(entry); save();
+  const entry = { channel, args, startedAt: new Date().toISOString() }; report.ipc.push(entry); save();
   // Hold admission to make repeated native clicks deterministic.
   if (args[2] === true) await archiveGate;
-  try { const result = await handler(event, ...args); entry.result = result; save(); return result; }
-  catch (error) { entry.error = String(error); save(); throw error; }
+  try { const result = await handler(event, ...args); entry.result = result; entry.finishedAt = new Date().toISOString(); save(); return result; }
+  catch (error) { entry.error = String(error); entry.finishedAt = new Date().toISOString(); save(); throw error; }
 });
 app.on('browser-window-created', (_event, created) => {
   if (win) return; win = created;
@@ -58,7 +90,7 @@ app.on('browser-window-created', (_event, created) => {
     frame.send = (channel, ...args) => {
       const notification = channel === 'wuu:server-event' && args[0]?.kind === 'notification';
       const method = notification ? args[0].message?.method : undefined;
-      if (method && (report.events ||= []).length < 150) report.events.push(method);
+      if (method && (report.events ||= []).length < 150) { report.events.push(method); (report.eventTimeline ||= []).push({ method, at: new Date().toISOString() }); }
       if (method === 'turn/held') (report.heldNotifications ||= []).push(args[0].message.params);
       if (holdTerminal && (method === 'turn/completed' || method === 'thread/updated' || channel === 'wuu:running-threads-changed')) { (report.delayedTerminalMethods ||= []).push(method || channel); held.push(() => send(channel, ...args)); return; }
       send(channel, ...args);
@@ -283,5 +315,5 @@ async function run() {
   report.status = 'passed'; save(); console.log(`PASS confirmed archive ${mode}: ${output}`);
 }
 function finish(code) { releaseArchive(); server.closeAllConnections(); server.close(); app.once('will-quit', () => app.exit(code)); app.quit(); }
-setTimeout(() => { report.status = 'failed'; report.error = 'watchdog expired'; save(); finish(1); }, 150000).unref();
-run().then(() => finish(0), async error => { report.status = 'failed'; report.error = String(error.stack); if (win && !win.isDestroyed()) { report.hitFailures = await evaluate(() => window.archiveHitFailures).catch(() => []); report.nativeClicks = await evaluate(() => window.archiveNativeClicks).catch(() => []); report.finalNotices = await evaluate(() => [...document.querySelectorAll('.archive-tip')].map(node => node.outerHTML)).catch(() => []); await capture('failure').catch(() => {}); } save(); console.error(error); finish(1); });
+setTimeout(async () => { report.status = 'failed'; report.error = 'watchdog expired'; save(); await captureCoreFailureStacks(); finish(1); }, 150000).unref();
+run().then(() => finish(0), async error => { report.status = 'failed'; report.error = String(error.stack); if (win && !win.isDestroyed()) { report.hitFailures = await evaluate(() => window.archiveHitFailures).catch(() => []); report.nativeClicks = await evaluate(() => window.archiveNativeClicks).catch(() => []); report.finalNotices = await evaluate(() => [...document.querySelectorAll('.archive-tip')].map(node => node.outerHTML)).catch(() => []); await capture('failure').catch(() => {}); } save(); console.error(error); await captureCoreFailureStacks(); finish(1); });
