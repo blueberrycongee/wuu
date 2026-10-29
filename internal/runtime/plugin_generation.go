@@ -66,16 +66,19 @@ type PluginGeneration struct {
 	host              *pluginhost.Host
 	hooks             *hooks.Dispatcher
 	skills            []skills.Skill
-	pluginSkills      pluginSkillSnapshot
-	mcp               *mcp.Manager
-	mcpBinding        map[string]tools.MCPActivityBinding
-	activityRegistry  *activity.Registry
-	requestTransforms *agent.RequestTransformChain
-	systemPrompts     *agent.SystemPromptAssembler
-	compactions       *agent.CompactionRegistry
-	ownedRoots        []string
-	revocation        *GenerationRevocationReport
-	closeErr          error
+	// managedSkillDiscovery is set only when this generation discovered its
+	// own local catalog. Captured embedded sessions supply an explicit snapshot.
+	managedSkillDiscovery bool
+	pluginSkills          pluginSkillSnapshot
+	mcp                   *mcp.Manager
+	mcpBinding            map[string]tools.MCPActivityBinding
+	activityRegistry      *activity.Registry
+	requestTransforms     *agent.RequestTransformChain
+	systemPrompts         *agent.SystemPromptAssembler
+	compactions           *agent.CompactionRegistry
+	ownedRoots            []string
+	revocation            *GenerationRevocationReport
+	closeErr              error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
@@ -735,24 +738,25 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	pluginSkills := discoverPluginSkills(active)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                generationID,
-		state:             kernel.state,
-		settings:          cfg,
-		requiredPlugins:   kernel.requiredPlugins,
-		selectedPluginIDs: p.selectedPluginIDs,
-		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
-		active:            append([]pluginpkg.Plugin(nil), active...),
-		host:              host,
-		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
-		pluginSkills:      pluginSkills,
-		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
-		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
-		systemPrompts:     systemPrompts,
-		compactions:       compactions,
-		ownedRoots:        append([]string(nil), ownedRoots...),
-		engineGateways:    kernel.engineGateways,
-		driverGateways:    kernel.driverGateways,
+		managedSkillDiscovery: true,
+		id:                    generationID,
+		state:                 kernel.state,
+		settings:              cfg,
+		requiredPlugins:       kernel.requiredPlugins,
+		selectedPluginIDs:     p.selectedPluginIDs,
+		plugins:               append([]pluginpkg.Plugin(nil), discovered...),
+		active:                append([]pluginpkg.Plugin(nil), active...),
+		host:                  host,
+		hooks:                 buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
+		skills:                discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
+		pluginSkills:          pluginSkills,
+		mcpBinding:            mcpActivityBindingsFromPlugins(active, generationID),
+		requestTransforms:     buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
+		systemPrompts:         systemPrompts,
+		compactions:           compactions,
+		ownedRoots:            append([]string(nil), ownedRoots...),
+		engineGateways:        kernel.engineGateways,
+		driverGateways:        kernel.driverGateways,
 	}
 	kernel.bindStateGeneration(generation, s)
 	if kernel.selectedServices != nil {
