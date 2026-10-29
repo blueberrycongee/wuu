@@ -129,13 +129,14 @@ func (i *defaultDriverInstance) Run(parent context.Context, gateway loopdriver.K
 		cfg.PromptCacheKey = request.CacheHint.PromptCacheKey
 	}
 	var decision loopdriver.StepDecision
+	var current providers.ChatRequest
 	cfg.DecideStep = func(context.Context) (loopdriver.StepDecision, error) { return decision, nil }
 	cfg.BeforeModelStep = func(ctx context.Context, _ int, _ []providers.ChatMessage) ([]providers.ChatMessage, error) {
 		admitted, err := turn.AdmitInput(ctx)
 		if err != nil {
 			return nil, err
 		}
-		current, err := turn.ReadTurn(ctx)
+		current, err = turn.ReadTurn(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -144,10 +145,8 @@ func (i *defaultDriverInstance) Run(parent context.Context, gateway loopdriver.K
 		return admitted.Messages, nil
 	}
 	cfg.ReadModelStep = func(ctx context.Context) (providers.ChatRequest, pluginprotocol.DriverTurnSettings, error) {
-		current, err := turn.ReadTurn(ctx)
-		if err != nil {
-			return current, pluginprotocol.DriverTurnSettings{}, err
-		}
+		// Reuse the admission snapshot so model selection and dynamic tools
+		// describe the same boundary without cloning the turn a second time.
 		settings, err := turn.ReadSettings(ctx)
 		return current, settings, err
 	}
