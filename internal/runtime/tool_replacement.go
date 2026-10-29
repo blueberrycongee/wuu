@@ -111,17 +111,19 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	if err != nil || result.IsError {
 		return result, err
 	}
-	text, err := validateSearchReplacement(result, call.Arguments)
+	evidenceJSON, err := validateSearchReplacement(result, call.Arguments)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	r.toolkit.RecordWebSearchEvidence(text)
+	r.toolkit.RecordWebSearchEvidence(evidenceJSON)
 	return result, nil
 }
 
 var evidenceToken = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
-// Both views, when supplied, describe exactly the same evidence.
+// Both views, when supplied, describe exactly the same evidence. The returned
+// JSON contains only validated search fields for the native evidence recorder;
+// provider-specific fields remain in the original result returned to callers.
 func validateSearchReplacement(result toolresult.Result, argsJSON string) (string, error) {
 	var args struct {
 		Query string `json:"query"`
@@ -195,7 +197,10 @@ func validateSearchReplacement(result toolresult.Result, argsJSON string) (strin
 			}
 		}
 	}
-	return string(text), nil
+	// The shared native recorder also decodes fetch-only fields. Do not let an
+	// unrelated provider field collide with those types and silently drop evidence.
+	evidenceJSON, err := json.Marshal(response)
+	return string(evidenceJSON), err
 }
 
 func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, bindings map[string]config.ToolReplacement) error {
