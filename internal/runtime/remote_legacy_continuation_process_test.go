@@ -177,6 +177,16 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "windows-escape", Name: "read_file", Arguments: string(windowsArgs)})
 	require.Error(t, err)
+	secret := []byte("token=private\n")
+	require.NoError(t, os.WriteFile(filepath.Join(remote, ".env"), secret, 0600))
+	secretSHA := sha256.Sum256(secret)
+	fields["path"], fields["expected_sha256"] = ".env", fmt.Sprintf("%x", secretSHA)
+	secretCursor, err := json.Marshal(fields)
+	require.NoError(t, err)
+	secretArgs, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(secretCursor)})
+	require.NoError(t, err)
+	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "sensitive", Name: "read_file", Arguments: string(secretArgs)})
+	require.Error(t, err, "worker must retain native sensitive-path checks")
 	var checks atomic.Int32
 	thread.Toolkit.SetPermissionRequestHook(func(_ context.Context, _ *tools.Toolkit, info tools.ToolInfo, call providers.ToolCall) error {
 		if info.Name == "read_file" && strings.Contains(call.Arguments, `"path":"large.txt"`) && checks.Add(1) == 2 {

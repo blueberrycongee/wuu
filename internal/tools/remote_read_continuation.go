@@ -91,6 +91,7 @@ func (t *Toolkit) ExecuteRemoteNativeReadOn(ctx context.Context, remote executio
 	if !same() {
 		return toolresult.Result{}, errors.New("remote execution environment changed")
 	}
+	sessionID := t.env.SessionID
 	req, err := t.authorizeRemoteReadOnly(ctx, remote, actor, actorPath, original, call)
 	if err != nil {
 		return toolresult.Result{}, err
@@ -107,7 +108,7 @@ func (t *Toolkit) ExecuteRemoteNativeReadOn(ctx context.Context, remote executio
 		return toolresult.Result{}, err
 	}
 	currentActor, currentPath := t.ExecutionActor()
-	if !same() || currentActor != actor || currentPath != actorPath || req.PermissionMode != rechecked.PermissionMode || t.env.PermissionMode != req.PermissionMode {
+	if !same() || currentActor != actor || currentPath != actorPath || t.env.SessionID != sessionID || req.PermissionMode != rechecked.PermissionMode || t.env.PermissionMode != req.PermissionMode {
 		return toolresult.Result{}, errors.New("remote read authority changed")
 	}
 	if err := ctx.Err(); err != nil {
@@ -123,10 +124,10 @@ func (t *Toolkit) ExecuteNativeSessionRead(ctx context.Context, actor, actorPath
 	if t == nil || t.env == nil || original == nil || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden {
 		return toolresult.Result{}, errors.New("native read unavailable")
 	}
-	mode, session, root := t.env.PermissionMode, t.env.SessionDir, t.env.sessionArtifactRoot
+	mode, sessionID, session, root := t.env.PermissionMode, t.env.SessionID, t.env.SessionDir, t.env.sessionArtifactRoot
 	valid := func() bool {
 		a, p := t.ExecutionActor()
-		return a != "" && a == actor && p == actorPath && t.env.PermissionMode == mode && t.env.SessionDir == session && t.env.sessionArtifactRoot == root
+		return a != "" && a == actor && p == actorPath && t.env.PermissionMode == mode && t.env.SessionID == sessionID && t.env.SessionDir == session && t.env.sessionArtifactRoot == root
 	}
 	check := func() error {
 		if !valid() {
