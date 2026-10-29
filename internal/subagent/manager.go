@@ -959,13 +959,26 @@ func (m *Manager) notifyTerminal(sa *SubAgent, n Notification, prepared bool) er
 		}
 	} else {
 		m.MarkTerminalConfirmed(n)
-		sa.mu.Lock()
-		if sa.Status == n.Status && sa.CompletedAt.Equal(n.Snapshot.CompletedAt) {
-			sa.terminalPending = false
-		}
-		sa.mu.Unlock()
 	}
 	return err
+}
+
+// MarkTerminalPublished exposes a durably confirmed snapshot while downstream
+// finalization still holds the execution lease. Waiters are settled separately,
+// after finalization has decided whether the worker will continue.
+func (m *Manager) MarkTerminalPublished(n Notification) {
+	if m == nil {
+		return
+	}
+	sa := m.Get(n.AgentID)
+	if sa == nil {
+		return
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	if sa.Status == n.Status && sa.CompletedAt.Equal(n.Snapshot.CompletedAt) && sa.waitState != nil && sa.waitState.generation == n.TerminalGeneration {
+		sa.terminalPending = false
+	}
 }
 
 // MarkTerminalConfirmed pins the exact finished turn for its synchronous
@@ -986,6 +999,7 @@ func (m *Manager) MarkTerminalConfirmed(n Notification) {
 	}
 	sa.waitState.snapshot = n.Snapshot
 	sa.waitState.settled = true
+	sa.terminalPending = false
 }
 
 // MarkTerminalUnconfirmed is called before releasing the execution lease when

@@ -2,6 +2,7 @@ package agentcontrol
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -523,5 +524,65 @@ func TestSynchronousFirstTurnKeepsItsOwnConfirmedResult(t *testing.T) {
 				t.Fatalf("initial synchronous outcome=%+v err=%v", got.value, got.err)
 			}
 		})
+	}
+}
+
+func TestConfirmedTerminalVisibleBeforePhysicalLeaseRelease(t *testing.T) {
+	root := t.TempDir()
+	c := newDormantQueuedSpawnConcurrencyControl(t, root, filepath.Join(root, "control"), filepath.Join(root, "harness"), 1, &fakeClient{resp: providers.ChatResponse{Content: "confirmed"}}, nil)
+	finalizerEntered := make(chan struct{})
+	releaseFinalizer := make(chan struct{})
+	leaseReleaseEntered := make(chan string, 1)
+	releaseLease := make(chan struct{})
+	var finalOnce, leaseOnce sync.Once
+	t.Cleanup(func() { finalOnce.Do(func() { close(releaseFinalizer) }); leaseOnce.Do(func() { close(releaseLease) }) })
+	un := c.SubscribeWorkerTerminalFinalizer(func(subagent.Notification) error { close(finalizerEntered); <-releaseFinalizer; return nil })
+	defer un()
+	c.SetWorkerExecutionReleaseHookForTest(func(id string) { leaseReleaseEntered <- id; <-releaseLease })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	got, err := c.Spawn(ctx, SpawnRequest{Type: DefaultSubagentType, TaskName: "finalizer_visibility", Prompt: "finish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finalizerEntered:
+	case <-ctx.Done():
+		t.Fatal("worker did not reach external finalizer")
+	}
+	pending := c.Manager().Get(got.AgentID).Snapshot()
+	if pending.Status != subagent.StatusCompleted || pending.Result != "confirmed" {
+		t.Fatalf("confirmed terminal hidden during finalizer: %+v", pending)
+	}
+	if !c.workerExecutionOwned(got.AgentID) {
+		t.Fatal("physical lease released during finalizer")
+	}
+	listed := c.List()
+	if len(listed) != 1 || listed[0].Status != subagent.StatusCompleted || listed[0].Result != "confirmed" {
+		t.Fatalf("confirmed terminal hidden from list: %+v", listed)
+	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	_, waitErr := c.Wait(waitCtx, got.AgentID)
+	waitCancel()
+	if !errors.Is(waitErr, context.DeadlineExceeded) {
+		t.Fatalf("wait returned before finalizer completed: %v", waitErr)
+	}
+	finalOnce.Do(func() { close(releaseFinalizer) })
+	var id string
+	select {
+	case id = <-leaseReleaseEntered:
+	case <-ctx.Done():
+		t.Fatal("worker did not reach physical release")
+	}
+	confirmed := c.Manager().Get(id).Snapshot()
+	if confirmed.Status != subagent.StatusCompleted || confirmed.Result != "confirmed" {
+		t.Fatalf("terminal hidden after finalizer: %+v", confirmed)
+	}
+	if !c.workerExecutionOwned(id) {
+		t.Fatal("physical lease released before hook")
+	}
+	leaseOnce.Do(func() { close(releaseLease) })
+	if _, err := c.Wait(ctx, id); err != nil {
+		t.Fatal(err)
 	}
 }
