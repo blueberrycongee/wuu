@@ -1572,9 +1572,6 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 && len(*completedMessages) == 0 {
-			return
-		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
 		*completedMessages = nil
@@ -1645,6 +1642,7 @@ func (s *streamStep) runReliableStream(
 			onRetry,
 			providers.WithStreamRecoveryPlanner(s.policy.StreamRecoveryPlanner()),
 			providers.WithStreamReplayGuard(replayGuard),
+			providers.WithStreamPartialReset(),
 			providers.WithStreamEventObserver(eventObserver),
 		)
 		ch, err := client.StreamChat(ctx, req)
@@ -1792,7 +1790,10 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventProviderState:
 				if event.ProviderState != nil {
-					event.ProviderState.StepIndex = req.StepIndex
+					// Providers may retain this state for later transport diagnostics.
+					state := *event.ProviderState
+					state.StepIndex = req.StepIndex
+					event.ProviderState = &state
 				}
 
 			case providers.EventLifecycle:
