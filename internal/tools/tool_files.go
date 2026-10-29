@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -222,7 +223,22 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		if args.Offset > 1 || args.Limit != nil || args.ByteRange != nil || args.Continuation != "" || args.ExpectedSHA256 != "" {
 			return toolresult.Result{}, errors.New("image reads do not support text ranges or continuations; call read_file with only path")
 		}
-		return readFileImage(ctx, file, displayPath, info.Size())
+		result, err := readFileImage(ctx, file, displayPath, info.Size())
+		if err != nil || !isResultArchive {
+			return result, err
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &metadata); err != nil {
+			return toolresult.Result{}, err
+		}
+		metadata["source"] = "tool_result_archive"
+		metadata["content_verified"] = false
+		result.Content[0].Text, err = mustJSON(metadata)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		toolctx.MarkUnverified(ctx, "tool_result_archive")
+		return result, nil
 	}
 
 	if args.ByteRange != nil {
