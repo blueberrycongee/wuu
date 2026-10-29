@@ -596,6 +596,9 @@ const rendererRun = app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector('[data-genui-node="tableV2"] tbody td:nth-child(2)').textContent === '100'`);
   results.checks.push('v2 area/bar/line/scatter/pie/donut, stacked/mixed series, legend toggles, keyboard chart inspection and computed table');
 
+  win.focus();
+  win.webContents.focus();
+  await waitFor(win, 'document.hasFocus()');
   await click(win, '[data-genui-node="noteInput"]');
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
   win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});

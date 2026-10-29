@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Generate interactive views from version 3 source with state declarations, functions,
+  JSX components and themed SVG diagrams. Preview nested content as it arrives,
+  preserve component identity on completion, and restore local values and view
+  preferences. Retain historical version 1/2 rendering and reduce redundant framing.
+
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
 - Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.

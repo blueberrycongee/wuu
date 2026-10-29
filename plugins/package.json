@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@babel/parser": "7.29.7",
     "@types/node": "^22.10.2",
     "@types/react": "19.2.15",
     "esbuild": "0.25.12",

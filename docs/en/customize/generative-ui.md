@@ -19,7 +19,7 @@ use it; merely enabling the plugin does not add tools to an unrelated engine.
   Series legends and accessible data tables expose the underlying values.
 - Forms use native submission and field validation, including required and invalid
   inputs. Submission requires explicit interaction.
-- Copy or reset values locally. A version 2 button or form can explicitly send a follow-up
+- Copy or reset values locally. A source or version 2 button or form can explicitly send a follow-up
   to the result's conversation, with its source and current values as context.
   Sending requires a real user interaction and uses the normal conversation path.
   It does not clear an existing composer draft or its attachments. Previews and
@@ -36,12 +36,64 @@ A storage failure or oversized draft leaves the current view
 usable and reports the persistence failure. State does not sync between devices.
 Treat saved input as local conversation data; do not enter passwords or secrets.
 
-## Version 2 protocol
+## Source format (version 3)
+
+New calls use `{ "spec": { "version": 3, "title": "…", "fallback": "…", "source": "…" } }`.
+The model-facing [schema](../../../plugins/generative-ui/schema.json) describes
+the supported language and components. Put `source` last so the title and text
+fallback arrive before the interface.
+
+Source combines an optional leading `{@body ...}` declaration block with JSX.
+For example, the following is the value of `source`:
+
+```jsx
+{@body
+  const [quantity, setQuantity] = DIL.useState(2);
+  const total = quantity * 12;
+}
+<Stack>
+  <Input label="Quantity" inputType="number"
+    value={quantity} onChange={setQuantity} />
+  <Metric label="Total" value={total} />
+  <Button onClick={() => DIL.sendMessage(`Explain the total of ${total}`)}>
+    Explain this result
+  </Button>
+</Stack>
+```
+
+State setters accept a value or updater function. Ordinary expressions, local
+functions, array mapping/filtering/reduction, and conditional JSX calculate the
+view. Controls receive the new value in `onChange`, rather than a DOM event.
+Mapped components need unique `key` values to preserve their state when reordered.
+Function components can return JSX. Prose belongs in `Text` or `Caption`;
+`strong`, `em`, `code`, and `br` support inline formatting.
+
+Layouts, charts, tables and controls use shared theme-aware components.
+Custom diagrams use an explicit SVG vocabulary, including shapes, paths, text,
+gradients and markers. SVG paint accepts semantic colors such as `accent`,
+`muted`, `surface`, `success`, and `danger`. References stay local to the
+view; external images, scripts, arbitrary styles, and foreign HTML are unavailable.
+
+The plugin parses and interprets a bounded language; it does not run generated
+JavaScript in the desktop realm. There are no imports, DOM APIs, network requests,
+async functions, or unrestricted loops. Limits are 120 KiB of source within
+128 KiB of arguments, 4,096 syntax nodes, 512 rendered components, 200 items per
+collection, 30,000 calculation steps per render or interaction, and 16 KiB of state.
+The runtime and desktop validate the same source and initial view.
+
+Text and complete children appear while their enclosing JSX is still streaming.
+Incomplete expressions retain the previous usable preview. Final source must parse
+completely. Preview and final rendering keep component identity, and newly added
+content fades in briefly unless reduced motion is enabled. Previews remain read-only.
+Failed interactions preserve the last valid values. Values and component preferences
+restore on reopening the same result; only declared values accompany a follow-up.
+
+## Historical version 2 protocol
 
 `render_ui` accepts `{ "spec": { "version": 2, "title": "…", "fallback": "…",
 "state": [], "body": [] } }`. State entries contain an `id` and JSON `value`;
-body nodes have unique IDs and explicit, type-specific properties. The canonical
-schema is [`plugins/generative-ui/schema.json`](../../../plugins/generative-ui/schema.json).
+body nodes have unique IDs and explicit, type-specific properties. Version 2 is retained for historical artifacts and direct runtime compatibility;
+new model calls use version 3.
 
 Version 2 is a bounded data program. Expressions read declared state and support
 arithmetic, comparisons, formatting, conditions, array construction, mapping,
@@ -78,12 +130,11 @@ A small calculator uses the same controls and expression format as a larger form
 }
 ```
 
-## Version 1 protocol
+## Historical version 1 protocol
 
 `render_ui` accepts an object containing `spec`. A spec has `version: 1`, a
 nonblank `title`, a useful nonblank `fallback`, and 1–16 `blocks` with unique IDs.
-The canonical tool schema is
-[`plugins/generative-ui/schema.json`](../../../plugins/generative-ui/schema.json).
+This format is retained for historical artifacts and direct runtime compatibility.
 The tool runtime validates it before publishing a resource with MIME type
 `application/vnd.wuu.ui+json` and `placement: inline`; the desktop validates
 stored content again before rendering it.
@@ -158,7 +209,7 @@ runtime snapshot. A failed replacement preserves the last usable generation.
 Disabling the plugin removes interactive rendering and revokes its tools, including
 retained runtime generations. Existing results keep their versioned data and text
 fallback; re-enabling restores compatible saved input state. Updates must preserve
-v1/v2 result and storage compatibility or provide an explicit migration.
+v1/v2/v3 result and storage compatibility or provide an explicit migration.
 
 ## Developer verification
 
