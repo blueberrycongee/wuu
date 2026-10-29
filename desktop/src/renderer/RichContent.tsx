@@ -12,6 +12,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import remarkMathDelimiters from "./remarkMathDelimiters";
+import remarkCurrencyMath from "./remarkCurrencyMath";
 import { unified } from "unified";
 import { toMarkdown } from "mdast-util-to-markdown";
 import type { Definition, Root as MarkdownRoot } from "mdast";
@@ -43,7 +44,7 @@ import {
   shouldHighlightCode,
 } from "./WorkspaceCodeHighlight";
 
-const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
+const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkCurrencyMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
 
 type RichContentProps = {
   text?: string;

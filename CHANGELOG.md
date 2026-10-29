@@ -17,6 +17,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Select a trusted text provider for `read_file` while preserving host-owned historical continuations and native read authorization.
 
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
+- Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
 
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
 - Select a trusted plugin tool as the replacement for the native `web_search` tool while retaining the remaining tool registry, execution policy and lifecycle.
@@ -242,6 +243,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep managed session file reads and active-file freshness checks inside the session directory admitted for the conversation, even if its path is replaced while work is running. Relative links within that directory remain usable; absolute links are rejected.
+- Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
 - Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.

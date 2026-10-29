@@ -6,21 +6,23 @@ const AgentPolicyService = "agent.policy"
 // effects. Attempt counts retries for the current request, starting at zero.
 type AgentPolicyInput struct {
 	// CompletedMessages counts durable protocol-complete items, including reasoning-only items.
-	CompletedMessages int               `json:"completed_messages,omitempty"`
-	MaxAttempts       int               `json:"max_attempts,omitempty"`
-	InitialDelayMS    int64             `json:"initial_delay_ms,omitempty"`
-	MaxDelayMS        int64             `json:"max_delay_ms,omitempty"`
-	RecoveryHint      string            `json:"recovery_hint,omitempty"`
-	Phase             string            `json:"phase"`
-	ExecutionID       string            `json:"execution_id,omitempty"`
-	StepIndex         int               `json:"step_index"`
-	Attempt           int               `json:"attempt"`
-	Failure           *DriverFailure    `json:"failure,omitempty"`
-	PartialOutput     bool              `json:"partial_output,omitempty"`
-	ToolWorkStarted   bool              `json:"tool_work_started,omitempty"`
-	FinishReason      string            `json:"finish_reason,omitempty"`
-	Truncated         bool              `json:"truncated,omitempty"`
-	ToolCalls         []ModelToolCallV1 `json:"tool_calls,omitempty"`
+	CompletedMessages int            `json:"completed_messages,omitempty"`
+	MaxAttempts       int            `json:"max_attempts,omitempty"`
+	InitialDelayMS    int64          `json:"initial_delay_ms,omitempty"`
+	MaxDelayMS        int64          `json:"max_delay_ms,omitempty"`
+	RecoveryHint      string         `json:"recovery_hint,omitempty"`
+	Phase             string         `json:"phase"`
+	ExecutionID       string         `json:"execution_id,omitempty"`
+	StepIndex         int            `json:"step_index"`
+	Attempt           int            `json:"attempt"`
+	Failure           *DriverFailure `json:"failure,omitempty"`
+	PartialOutput     bool           `json:"partial_output,omitempty"`
+	// PartialOutputResettable is set by a guarded transport whose consumer can discard a failed attempt.
+	PartialOutputResettable bool              `json:"partial_output_resettable,omitempty"`
+	ToolWorkStarted         bool              `json:"tool_work_started,omitempty"`
+	FinishReason            string            `json:"finish_reason,omitempty"`
+	Truncated               bool              `json:"truncated,omitempty"`
+	ToolCalls               []ModelToolCallV1 `json:"tool_calls,omitempty"`
 }
 
 // AgentPolicyDecision is terminal for one evaluation. Composition providers

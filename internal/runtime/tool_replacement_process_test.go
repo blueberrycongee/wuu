@@ -98,6 +98,7 @@ func TestToolReplacementProcess(t *testing.T) {
 				require.NoError(t, err)
 				require.Contains(t, text, "fixture:result")
 				require.NotContains(t, text, "native-content")
+				require.Contains(t, text, `"status_code":"200"`, "provider fields must remain in the returned result")
 				block, ok := thread.Toolkit.WebEvidenceContextBlock()
 				require.True(t, ok)
 				require.Contains(t, block.Content, "fixture-evidence")
@@ -230,6 +231,9 @@ func TestToolReplacementWorkerProcess(t *testing.T) {
 	node, err := exec.LookPath("node")
 	require.NoError(t, err)
 	root, home := t.TempDir(), t.TempDir()
+	skillDir := filepath.Join(root, ".agents", "skills", "replacement-research")
+	require.NoError(t, os.MkdirAll(skillDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: replacement-research\ndescription: Research with the selected search provider.\nallowed-tools: [web_search]\n---\nUse web_search to gather evidence.\n"), 0600))
 	kit, err := tools.New(root)
 	require.NoError(t, err)
 	schema, err := json.Marshal(kit.LookupTool("web_search").Definition().InputSchema)
@@ -263,6 +267,23 @@ func TestToolReplacementWorkerProcess(t *testing.T) {
 	require.Contains(t, result, "fixture:result")
 	require.Contains(t, result, "worker-parent")
 	require.NotEmpty(t, spawned.AgentID)
+	client.mu.Lock()
+	first := client.first
+	client.mu.Unlock()
+	require.NotNil(t, first)
+	var initialPrompt string
+	for _, message := range first.Messages {
+		if message.Role == "system" {
+			initialPrompt += message.Content
+		}
+		require.NotEqual(t, "skill_catalog", message.Cause, "the first skill catalog must already match the executable surface")
+	}
+	require.Contains(t, initialPrompt, "replacement-research", "search-dependent skills must be in the worker's initial prompt")
+	var searchAvailable bool
+	for _, definition := range first.Tools {
+		searchAvailable = searchAvailable || definition.Name == "web_search"
+	}
+	require.True(t, searchAvailable, "initial prompt and tool definitions must agree")
 }
 
 func TestToolReplacementGenerationProcess(t *testing.T) {
@@ -410,8 +431,23 @@ func TestToolReplacementExampleProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "example", ExecutionID: "turn"})
-	result, err := thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "example", Name: "web_search", Arguments: `{"query":"test","version_hint":" react@19 "}`})
-	require.NoError(t, err)
-	require.Contains(t, result, "Synthetic example")
-	require.Contains(t, result, "react@19")
+	for _, input := range []struct {
+		name, arguments, version string
+	}{
+		{"version hint", `{"query":"test","version_hint":" react@19 "}`, "react@19"},
+		{"package fields", `{"query":"test","package_context":{"name":" react ","version":" 19 ","ecosystem":" npm "}}`, "npm react@19"},
+		{"blank name", `{"query":"test","package_context":{"name":" ","version":" 19 ","ecosystem":" npm "}}`, "npm 19"},
+		{"blank version", `{"query":"test","package_context":{"name":" react ","version":" ","ecosystem":" npm "}}`, "npm react"},
+		{"unicode hint whitespace", `{"query":"test","version_hint":"\u0085react@19\u0085"}`, "react@19"},
+		{"unicode package whitespace", `{"query":"test","package_context":{"name":"\u0085react\u0085","version":"\u008519\u0085","ecosystem":"\u0085npm\u0085"}}`, "npm react@19"},
+		{"preserve non-whitespace", `{"query":"test","version_hint":"\ufeffreact@19\ufeff"}`, "\ufeffreact@19\ufeff"},
+		{"non-whitespace query", `{"query":"\ufeff","version_hint":"react@19"}`, "react@19"},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			result, err := thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "example", Name: "web_search", Arguments: input.arguments})
+			require.NoError(t, err)
+			require.Contains(t, result, "Synthetic example")
+			require.Contains(t, result, `"version_matched_to_repo":"`+input.version+`"`)
+		})
+	}
 }
