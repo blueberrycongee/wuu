@@ -1,16 +1,18 @@
 package pluginsettings
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/blueberrycongee/wuu/internal/principal"
+	"os"
 	"sync"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 )
 
 // CAS must preserve settings written by concurrent shells, fingerprints and
@@ -253,6 +255,116 @@ func TestStateInspectionFencesCASAndTransferAcrossServiceRestart(t *testing.T) {
 	}
 	if _, err := call("acquire-inspection", request); err == nil {
 		t.Fatal("released inspection revived")
+	}
+}
+
+// A completed ownership transfer is replayed on every graph activation. A live
+// inspection may reject new transfers, but must not disable the replacement
+// runtime merely for confirming an already committed receipt.
+func TestStateTransferReplayPreservesActiveInspection(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pending", true: "committed"}[completed], func(t *testing.T) {
+			ctx := context.Background()
+			home := t.TempDir()
+			transfer := testStateTransfer()
+			seedState(t, home, transfer.SourceSubjectID, map[string]string{"records.value": "source"})
+			interrupted := errors.New("interrupted before receipt")
+			err := moveStatePrefix(home, "", transfer, func(stage stateTransferStage) error {
+				if !completed && stage == afterStateTransferFence {
+					return interrupted
+				}
+				return nil
+			})
+			if completed && err != nil || !completed && !errors.Is(err, interrupted) {
+				t.Fatal(err)
+			}
+			path, _, err := stateDocumentPath(home, "", transfer.TargetSubjectID, transfer.Scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original []byte
+			var originalFile os.FileInfo
+			if completed {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var record map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &record); err != nil {
+					t.Fatal(err)
+				}
+				record["provider_metadata"] = json.RawMessage(`{"opaque":true}`)
+				original, err = json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := writeStateFile(path, original); err != nil {
+					t.Fatal(err)
+				}
+				originalFile, err = os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := NewService("old.settings", home, "")
+			if err := old.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			oldClient := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				return old.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "host", Service: ServiceName, Method: method, Params: raw})
+			})
+			guard := InspectionRequest{ID: "admitted-memory", ReadRequest: ReadRequest{Subject: transfer.TargetSubjectID, Scope: ScopeUser}}
+			before, err := oldClient.AcquireInspection(ctx, guard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := oldClient.ReleaseInspection(ctx, guard); err != nil {
+					t.Error(err)
+				}
+				if err := old.Close(ctx); err != nil {
+					t.Error(err)
+				}
+			}()
+			next := NewService("next.settings", home, "")
+			if err := next.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer next.Close(ctx)
+			client := settingsServiceClient(next)
+			err = client.MoveStatePrefix(ctx, transfer)
+			if completed && err != nil {
+				t.Fatalf("committed replay disabled replacement under active inspection: %v", err)
+			}
+			if !completed && err == nil {
+				t.Fatal("pending transfer changed inspected state")
+			}
+			if completed {
+				raw, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(raw, original) {
+					t.Fatalf("completed replay rewrote inspected bytes: %v", err)
+				}
+				afterFile, err := os.Stat(path)
+				if err != nil || !os.SameFile(originalFile, afterFile) {
+					t.Fatalf("completed replay replaced inspected file: %v", err)
+				}
+			}
+			var after StateView
+			if err := client.invoke(ctx, "read-state", guard.ReadRequest, &after); err != nil || after.Revision != before.Revision {
+				t.Fatalf("replay changed inspected revision: before=%s after=%s error=%v", before.Revision, after.Revision, err)
+			}
+			if _, err := client.UpdateState(ctx, transfer.TargetSubjectID, ScopeUser, func(values map[string]string) error {
+				values["other.value"] = "changed"
+				return nil
+			}); err == nil {
+				t.Fatal("replay released the active write fence")
+			}
+			other := transfer
+			other.ID, other.KeyPrefix = "another-transfer", "other."
+			if err := client.MoveStatePrefix(ctx, other); err == nil {
+				t.Fatal("new ownership transfer bypassed active inspection")
+			}
+		})
 	}
 }
 

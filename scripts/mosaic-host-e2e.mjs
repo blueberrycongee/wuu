@@ -262,7 +262,19 @@ class Host {
     throw new Error(`Owner config change did not reload ${name}: ${JSON.stringify(this.package(name))}`);
   }
   async settled(sent) {
-    const turnID = sent.turn_id ?? sent.turn?.id, sessionID = sent.session_id ?? sent.thread_id;
+    let turnID = sent.turn_id ?? sent.turn?.id;
+    const sessionID = sent.session_id ?? sent.thread_id;
+    if (!turnID && sent.state === "queued") {
+      // Accepted input can drain after the response, notably during graph
+      // publication. Observe that exact receipt instead of submitting it again.
+      const sourceID = sent.receipt?.client_id;
+      assert(sourceID && sessionID, `queued send has no receipt identity: ${JSON.stringify(sent)}`);
+      const started = await waitFor(this.events, "message", this.transcript, value =>
+        value.method === "turn/started" && value.params?.thread_id === sessionID &&
+        value.params?.turn?.items?.some(item => item.type === "user_message" && item.source_id === sourceID),
+      `${this.label} queued input ${sourceID}`, 45_000);
+      turnID = started.params.turn.id;
+    }
     assert(turnID, `send did not return a turn: ${JSON.stringify(sent)}`);
     const frame = await waitFor(this.events, "message", this.transcript, value =>
       ["turn/completed", "turn/error"].includes(value.method) &&
@@ -803,6 +815,21 @@ try {
     assert.equal(accepted.status, "active"); assert.equal(accepted.evidence, "inferred"); assert.deepEqual(accepted.sources, candidate.sources);
     await personal.client("tasks.stop", { task_id: worker.task_id, expected_revision: (await personal.client("tasks.get", { task_id: worker.task_id })).task.revision });
     return { candidate_id: candidate.id, worker_session: worker.execution.session_id, main_reviewed: true, source_timestamp_preserved: true };
+  });
+  await scenario("Model configuration publishes fresh Personal routes and retires stale handles", async () => {
+    const control = await personalOwnerControl(personal), before = personal.package("personal"), observed = personal.transcript.length;
+    const codingBefore = await readFile(coding.configPath, "utf8"), model = "mosaic-fixture-refreshed";
+    await control.rpc("config/model/update", { model });
+    await waitFor(personal.events, "message", personal.transcript.slice(observed), frame =>
+      frame.method === "config/changed" && frame.params?.model === model, "Personal model configuration publication", 10_000);
+    const current = personal.package("personal");
+    assert.notEqual(current.graph_generation, before.graph_generation, "model acknowledgement left desktop inventory on its old graph");
+    assert.equal(current.fingerprint, before.fingerprint);
+    const listed = await personal.client("agents.list");
+    assert(listed.agents.some(agent => agent.agent_id === main.agent_id));
+    await assert.rejects(personal.client("agents.list", {}, "personal", { graph_generation: before.graph_generation }), /plugin graph generation is no longer active/);
+    assert.equal(await readFile(coding.configPath, "utf8"), codingBefore, "Personal model selection altered Coding configuration");
+    return { model, before_generation: before.graph_generation, after_generation: current.graph_generation, fresh_request_succeeded: true, stale_handle_denied: true };
   });
   await scenario("Enabling optional Memory adds no duplicate Personal tools or records provider", async () => {
     assert.equal(personal.package("memory").enabled, false);

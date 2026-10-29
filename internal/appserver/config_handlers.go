@@ -1827,10 +1827,25 @@ func (s *Server) applyModelSelectionToRuntime(
 	roleSelections modelroles.Set,
 	connectionChanged bool,
 	explicitSelection bool,
-) error {
+) (err error) {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
+	before := s.rt.ExtensionSnapshot().GenerationID
+	defer func() {
+		snapshot := s.rt.ExtensionSnapshot()
+		if snapshot.GenerationID == before {
+			return
+		}
+		// Model publication replaces the complete service graph too. Announce
+		// its new routes even after a committed activation failure; config/changed
+		// carries model fields only and cannot invalidate desktop plugin handles.
+		shell, surfaces := s.rt.ApplicationBindings()
+		err = errors.Join(err, s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+			ApplicationShell: shell, ApplicationSurfaces: surfaces, Epoch: s.pluginGenerationEpoch.Load(),
+			ExtensionInventory: s.extensionInventory(snapshot), Skills: s.skillSummaries(snapshot.Skills, s.rt.RootDir),
+		}))
+	}()
 	if err := s.rt.RefreshModelConfiguration(cfg, resolvedName, model); err != nil {
 		return err
 	}

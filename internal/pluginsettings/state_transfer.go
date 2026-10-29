@@ -67,9 +67,6 @@ func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, 
 		return fmt.Errorf("lock plugin storage transfer: %w", err)
 	}
 	defer lock.Release() //nolint:errcheck -- the commit result is authoritative
-	if err := checkStateInspection(storeDir, transfer.SourceSubjectID, transfer.TargetSubjectID); err != nil {
-		return err
-	}
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -95,13 +92,13 @@ func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, 
 		if !sourceFenced {
 			return errors.New("plugin storage transfer receipt has no matching source fence")
 		}
-		// Reassert the current target, never the backup, in case the previous
-		// caller observed an error after rename but before durability confirmation.
-		data, err := encodeStateRecord(target, transfer.TargetSubjectID)
-		if err != nil {
-			return err
-		}
-		return writeStateFile(targetPath, data)
+		// Confirm durability without rewriting the inspected bytes or replacing
+		// the file. An earlier rename may have succeeded before its durability
+		// confirmation failed; the receipt must never replay source backups.
+		return syncStateFile(targetPath)
+	}
+	if err := checkStateInspection(storeDir, transfer.SourceSubjectID, transfer.TargetSubjectID); err != nil {
+		return err
 	}
 	for key := range target.Values {
 		if strings.HasPrefix(key, transfer.KeyPrefix) {

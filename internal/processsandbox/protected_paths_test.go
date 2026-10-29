@@ -19,6 +19,9 @@ func TestProtectedPathsRejectLegacyProvider(t *testing.T) {
 }
 
 func TestProtectedPathsProcessReadWriteBoundary(t *testing.T) {
+	if !Supported() {
+		t.Skip("host sandbox unavailable; actual OS enforcement remains unverified")
+	}
 	root := t.TempDir()
 	protected := filepath.Join(root, "private")
 	if err := os.Mkdir(protected, 0700); err != nil {
@@ -37,12 +40,14 @@ func TestProtectedPathsProcessReadWriteBoundary(t *testing.T) {
 			cmd := exec.Command("/bin/sh", "-c", command, "sh", target)
 			policy := Policy{Mode: ModeWorkspaceWrite, WritableRoots: []string{root}, ProtectedPaths: []string{protected}}
 			if err := Apply(cmd, policy); err != nil {
-				t.Logf("protected process failed closed before launch: %v", err)
-				continue
+				t.Fatal(err)
 			}
 			out, err := cmd.CombinedOutput()
 			if err == nil {
 				t.Fatalf("protected command succeeded: %q output=%s", command, out)
+			}
+			if cmd.ProcessState == nil || IsRunnerFailure(cmd.ProcessState.ExitCode(), string(out)) {
+				t.Fatalf("sandbox launcher failed instead of enforcing the protected boundary: %s %v", out, err)
 			}
 			if string(out) == "DOMAIN_SECRET" {
 				t.Fatal("protected memory escaped")

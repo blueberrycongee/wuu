@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLinuxFilesystemBoundary(t *testing.T) {
@@ -106,5 +108,110 @@ func TestLinuxProtectedBoundaryPreservesOrdinaryWorkspaceShell(t *testing.T) {
 	}
 	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "ordinary" {
 		t.Fatalf("ordinary workspace shell failed: %s %v", out, err)
+	}
+}
+
+// Other packages can remove their temporary directories after the helper has
+// enumerated ordinary siblings of a protected root, but before grants are added.
+func TestLinuxProtectedGrantSurvivesDisappearingSibling(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "a-workspace")
+	disappearing := filepath.Join(root, "z-disappearing")
+	for _, dir := range []string{workspace, disappearing} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var granted []string
+	err := linuxGrantPaths(root, []string{filepath.Join(root, "private")}, unix.LANDLOCK_ACCESS_FS_READ_DIR, func(path string, _ uint64) error {
+		if path == workspace {
+			if err := os.Remove(disappearing); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{Flags: unix.O_PATH | unix.O_CLOEXEC, Resolve: unix.RESOLVE_NO_SYMLINKS})
+		if err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return &os.PathError{Op: "open sandbox grant", Path: path, Err: err}
+		}
+		defer unix.Close(fd)
+		granted = append(granted, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unrelated temporary directory cleanup aborted protected grants: %v", err)
+	}
+	if len(granted) != 1 || granted[0] != workspace {
+		t.Fatalf("granted %v, want only the surviving workspace", granted)
+	}
+}
+
+func TestLinuxProtectedGrantRejectsSymlinkSubstitution(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "a-workspace")
+	replaced := filepath.Join(root, "z-replaced")
+	protected := filepath.Join(root, "private")
+	for _, dir := range []string{workspace, replaced, protected} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := linuxGrantPaths(root, []string{protected}, unix.LANDLOCK_ACCESS_FS_READ_DIR, func(path string, _ uint64) error {
+		if path == workspace {
+			if err := os.Remove(replaced); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(protected, replaced); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{Flags: unix.O_PATH | unix.O_CLOEXEC, Resolve: unix.RESOLVE_NO_SYMLINKS})
+		if err != nil {
+			return &os.PathError{Op: "open sandbox grant", Path: path, Err: err}
+		}
+		return unix.Close(fd)
+	})
+	if !errors.Is(err, unix.ELOOP) {
+		t.Fatalf("symlink substitution must fail closed, got %v", err)
+	}
+}
+
+func TestLinuxGrantPreservesExplicitRootAndPermissionFailures(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name      string
+		protected []string
+		failure   error
+		explicit  bool
+		openError bool
+	}{
+		{"missing explicit root", []string{filepath.Join(root, "other", "private")}, unix.ENOENT, true, true},
+		{"missing root without protected paths", nil, unix.ENOENT, true, true},
+		{"denied enumerated sibling", []string{filepath.Join(root, "private")}, unix.EACCES, false, true},
+		{"forbidden enumerated sibling", []string{filepath.Join(root, "private")}, unix.EPERM, false, true},
+		{"non-open missing sibling", []string{filepath.Join(root, "private")}, unix.ENOENT, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			grantRoot := filepath.Join(root, "workspace")
+			if !tc.explicit {
+				grantRoot = root
+				if err := os.MkdirAll(filepath.Join(root, "ordinary"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := linuxGrantPaths(grantRoot, tc.protected, unix.LANDLOCK_ACCESS_FS_READ_DIR, func(path string, _ uint64) error {
+				if !tc.openError {
+					return tc.failure
+				}
+				return &os.PathError{Op: "open sandbox grant", Path: path, Err: tc.failure}
+			})
+			if !errors.Is(err, tc.failure) {
+				t.Fatalf("grant failure was ignored: got %v, want %v", err, tc.failure)
+			}
+		})
 	}
 }

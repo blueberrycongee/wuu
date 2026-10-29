@@ -46,3 +46,17 @@ func writeStateFile(path string, data []byte) error {
 	}
 	return nil
 }
+
+// FlushFileBuffers requires a write-capable handle, but does not rewrite the
+// file. It confirms existing data and metadata without replacing a live receipt.
+func syncStateFile(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open plugin storage for sync: %w", err)
+	}
+	defer file.Close() //nolint:errcheck -- the sync result is authoritative
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync plugin storage: %w", err)
+	}
+	return nil
+}

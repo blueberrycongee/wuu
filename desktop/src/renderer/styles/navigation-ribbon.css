@@ -118,8 +118,17 @@
 .app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) {
   grid-template-columns: var(--sidebar-ribbon-width) minmax(0, 1fr) 0;
 }
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) .sidebar {
+  /* Hidden secondary navigation must not retain a drawer-sized hit surface
+     over the conversation. The persistent ribbon enables its own input. */
+  position: relative;
+  inset: auto;
+  width: var(--sidebar-ribbon-width);
+  min-width: var(--sidebar-ribbon-width);
+  pointer-events: none;
+}
 .app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) .sidebar-content,
-.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) > :is(.sidebar-resizer, .section-sidebar-toggle) {
+.app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) > :is(.sidebar-resizer, .section-sidebar-toggle, .sidebar-hover-zone) {
   display: none;
 }
 .app-shell.navigation-ribbon-layout[data-user-space-view]:has([data-plugin-context-navigation] > .sidebar-section-scroll > [data-wuu-component="plugin-context-navigation-item"]:only-child[aria-current="page"]) .conversation-pane {

@@ -5,6 +5,7 @@ package processsandbox
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,7 +94,7 @@ func runLinuxHelper(args []string) error {
 	attr := struct{ Access uint64 }{handledAccess}
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
 	if errno != 0 {
-		return errno
+		return fmt.Errorf("create Landlock ruleset: %w", errno)
 	}
 	defer unix.Close(int(fd))
 	add := func(name string, allowed uint64) error {
@@ -105,12 +106,12 @@ func runLinuxHelper(args []string) error {
 			pathFD, err = unix.Open(name, unix.O_PATH|unix.O_CLOEXEC, 0)
 		}
 		if err != nil {
-			return err
+			return &os.PathError{Op: "open sandbox grant", Path: name, Err: err}
 		}
 		defer unix.Close(pathFD)
 		var info unix.Stat_t
 		if err := unix.Fstat(pathFD, &info); err != nil {
-			return err
+			return fmt.Errorf("inspect sandbox grant %q: %w", name, err)
 		}
 		if info.Mode&unix.S_IFMT != unix.S_IFDIR {
 			allowed &= unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_WRITE_FILE | unix.LANDLOCK_ACCESS_FS_TRUNCATE
@@ -126,48 +127,62 @@ func runLinuxHelper(args []string) error {
 		}{Access: allowed, Parent: int32(pathFD)}
 		_, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, fd, unix.LANDLOCK_RULE_PATH_BENEATH, uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
 		if errno != 0 {
-			return errno
+			return fmt.Errorf("add Landlock grant %q: %w", name, errno)
 		}
 		return nil
 	}
-	grant := func(root string, rights uint64) error {
-		roots := []string{root}
-		if len(policy.ProtectedPaths) > 0 {
-			var err error
-			roots, err = linuxAllowedPaths(root, policy.ProtectedPaths)
-			if err != nil {
-				return err
-			}
-		}
-		for _, candidate := range roots {
-			if err := add(candidate, rights); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
+
 	if len(policy.ProtectedPaths) > 0 {
-		if err := grant("/", readAccess); err != nil {
+		if err := linuxGrantPaths("/", policy.ProtectedPaths, readAccess, add); err != nil {
 			return err
 		}
 	}
 	if policy.Mode == ModeWorkspaceWrite {
 		for _, root := range policy.WritableRoots {
-			if err := grant(root, access); err != nil {
+			if err := linuxGrantPaths(root, policy.ProtectedPaths, access, add); err != nil {
 				return err
 			}
 		}
 	}
-	if err = grant("/dev/null", unix.LANDLOCK_ACCESS_FS_WRITE_FILE|unix.LANDLOCK_ACCESS_FS_TRUNCATE); err != nil {
+	if err = linuxGrantPaths("/dev/null", policy.ProtectedPaths, unix.LANDLOCK_ACCESS_FS_WRITE_FILE|unix.LANDLOCK_ACCESS_FS_TRUNCATE, add); err != nil {
 		return err
 	}
 	if err = unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return err
+		return fmt.Errorf("set no_new_privs for sandbox: %w", err)
 	}
 	if _, _, errno = unix.Syscall(unix.SYS_LANDLOCK_RESTRICT_SELF, fd, 0, 0); errno != 0 {
-		return errno
+		return fmt.Errorf("install Landlock ruleset: %w", errno)
 	}
-	return unix.Exec(args[1], args[1:], os.Environ())
+	if err := unix.Exec(args[1], args[1:], os.Environ()); err != nil {
+		return fmt.Errorf("execute confined command %q: %w", args[1], err)
+	}
+	return nil
+}
+
+func linuxGrantPaths(root string, protected []string, rights uint64, add func(string, uint64) error) error {
+	root = filepath.Clean(root)
+	roots := []string{root}
+	if len(protected) > 0 {
+		var err error
+		roots, err = linuxAllowedPaths(root, protected)
+		if err != nil {
+			return err
+		}
+	}
+	for _, candidate := range roots {
+		if err := add(candidate, rights); err != nil {
+			var pathErr *os.PathError
+			if candidate != root && errors.As(err, &pathErr) && pathErr.Op == "open sandbox grant" && errors.Is(err, unix.ENOENT) {
+				// An enumerated sibling (for example another process's /tmp
+				// directory) can disappear before it is opened. Omitting its
+				// grant stays fail-closed even if the path is recreated later.
+				// Explicit roots and all other grant failures remain errors.
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // linuxAllowedPaths subtracts protected subtrees from a grant. Landlock rights
@@ -195,7 +210,7 @@ func linuxAllowedPaths(root string, protected []string) ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("enumerate protected-path sandbox grants: %w", err)
+		return nil, fmt.Errorf("enumerate protected-path sandbox grants under %q: %w", root, err)
 	}
 	var allowed []string
 	for _, entry := range entries {
