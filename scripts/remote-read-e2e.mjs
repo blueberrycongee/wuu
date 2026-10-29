@@ -13,12 +13,14 @@ try {
  report.commit=(await command('git',['rev-parse','HEAD'])).trim();
  const {project,tsc,packed}=await preparePublicSDK({sdk:join(root,'packages/plugin-sdk'),temporary:run});
  await cp(join(root,'scripts/remote-read-e2e/fixture.ts'),join(project,'fixture.ts'));
+ await cp(join(root,'scripts/remote-read-e2e/image-fixture.ts'),join(project,'image-fixture.ts'));
  await cp(join(root,'examples/plugins/remote-text-reader.ts'),join(project,'remote-text-reader.ts'));
- await command(process.execPath,[tsc,'fixture.ts','remote-text-reader.ts','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','--strict','--skipLibCheck'],{cwd:project});
+ await cp(join(root,'examples/plugins/remote-image-reader.ts'),join(project,'remote-image-reader.ts'));
+ await command(process.execPath,[tsc,'fixture.ts','image-fixture.ts','remote-text-reader.ts','remote-image-reader.ts','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','--strict','--skipLibCheck'],{cwd:project});
  report.sdk_sha256=createHash('sha256').update(await readFile(packed)).digest('hex');
  await command('go',['build','-o',join(run,'wuu'),'./cmd/wuu']);
- const output=await command('go',['test','-race','-count=1','-v','./internal/runtime','-run','^Test(RemoteReadOnlyContinuation|RemoteObservationRealWorkerTransactions|RemoteDirectReadRechecksAuthorizationAfterContinuation)'],{env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project}});
- for(const name of ['TestRemoteReadOnlyContinuationWorkerProcess','TestRemoteReadOnlyContinuationWorkerActorModes','TestRemoteReadOnlyContinuationPluginProcess','TestRemoteObservationRealWorkerTransactions','TestRemoteDirectReadRechecksAuthorizationAfterContinuation']) if(!output.includes(`--- PASS: ${name}`))throw Error(`${name} did not run`);
+ const output=await command('go',['test','-race','-count=1','-v','./internal/runtime','-run','^Test(RemoteReadOnlyContinuation|RemoteObservationRealWorkerTransactions|RemoteDirectReadRechecksAuthorizationAfterContinuation|RemoteImageReaderProcess|RemoteImageReaderExampleProcess)'],{env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project}});
+ for(const name of ['TestRemoteReadOnlyContinuationWorkerProcess','TestRemoteReadOnlyContinuationWorkerActorModes','TestRemoteReadOnlyContinuationPluginProcess','TestRemoteObservationRealWorkerTransactions','TestRemoteDirectReadRechecksAuthorizationAfterContinuation','TestRemoteImageReaderProcess','TestRemoteImageReaderExampleProcess']) if(!output.includes(`--- PASS: ${name}`))throw Error(`${name} did not run`);
  if(output.includes('--- SKIP:'))throw Error('a required process test was skipped');
  if(process.platform!=='win32') {
   const recovery=await command('go',['test','-race','-count=1','-v','./internal/runtime','./internal/appserver','./internal/agentcontrol','-run','^Test(RemoteReplacementCodeModeIsStateless|RemoteErrorBeforeSettlementCannotExposeNativeText|RemoteObservation(DoesNotCommitWhenFinalizationFails|DoesNotCommitWhenPTCParentFails|CommitsWhenPTCParentSucceeds|CommitsTwoPTCChildrenAtomically|RevokedChildAbortsPTCBatch|RevokedAfterStageAbortsPTCBatch|RecoversSameWorkerAfterReconnect|WorkerRestartRejectsOldReceipt)|ThreadAdmissionRecoversRemoteObservationFromOriginalWorker|WorkerFollowupRecoversRemoteObservationUnderExecutionLease)$'],{env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project}});

@@ -115,6 +115,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	var path string
 	var providerArguments = call.Arguments
 	var remoteRoot string
+	var remoteImage bool
 	remoteEnv := r.toolkit.ExecutionEnvironment()
 	remoteRead := r.Name() == "read_file" && remoteEnv != nil
 	var remoteCompleted atomic.Bool
@@ -130,6 +131,9 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		externalRead, remoteRoot, err = r.toolkit.PrepareRemoteExternalRead(ctx, remoteEnv, call.Arguments)
 		if err != nil {
 			return toolresult.Result{}, err
+		}
+		for _, contract := range r.registration.ReplacementContracts {
+			remoteImage = remoteImage || contract == "read_file.image.v1"
 		}
 	} else if r.Name() == "read_file" {
 		var input struct {
@@ -269,7 +273,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			if err != nil {
 				return toolresult.Result{}, err
 			}
-			result, err = sanitizeRemoteReadResult(result)
+			result, err = sanitizeRemoteReadContinuation(nativeCtx, externalRead, result, remoteImage)
 			if err != nil {
 				return toolresult.Result{}, err
 			}
@@ -291,7 +295,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 					releasePrepared(prepared)
 				}
 			}()
-			result, err = sanitizeRemoteReadResult(prepared.Result)
+			result, err = sanitizeRemoteReadContinuation(nativeCtx, externalRead, prepared.Result, remoteImage)
 			if err != nil {
 				return toolresult.Result{}, err
 			}
@@ -465,6 +469,13 @@ func prepareRemoteReadSettlements(ctx context.Context, values []any) (*toolctx.P
 		},
 		Abort: batch.Abort, Release: batch.Release,
 	}, nil
+}
+
+func sanitizeRemoteReadContinuation(ctx context.Context, scope *tools.ExternalReadScope, result toolresult.Result, imageAllowed bool) (toolresult.Result, error) {
+	if len(result.Content) == 2 && result.Content[1].Type == toolresult.ContentTypeImage {
+		return scope.AcceptRemoteNativeImage(ctx, result, imageAllowed)
+	}
+	return sanitizeRemoteReadResult(result)
 }
 
 // Only the bounded structured text is transferred to an extension. Other
