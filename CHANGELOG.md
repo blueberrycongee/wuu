@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Allow a state-bound side conversation to delegate to native tools during its turn while retaining its read-only permissions and execution lease.
+
 - Let selected tool-service providers choose native tools during thread or side-thread admission, including when the workspace initially uses an external provider.
 
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
