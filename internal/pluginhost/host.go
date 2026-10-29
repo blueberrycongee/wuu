@@ -457,6 +457,27 @@ func (h *Host) ToolDefinitions() []providers.ToolDefinition {
 	return definitions
 }
 
+// DeclaredTool returns an initialized tool while its generation is being prepared.
+func (h *Host) DeclaredTool(pluginID, localID string) (RegisteredTool, bool) {
+	if h == nil {
+		return RegisteredTool{}, false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, name := range h.toolOrder {
+		tool := h.tools[name]
+		if tool.PluginID == pluginID && tool.Registration.ID == localID {
+			state := tool.client.Status().State
+			if state == StateFailed || state == StateStopped {
+				return RegisteredTool{}, false
+			}
+			tool.Registration = cloneToolRegistration(tool.Registration)
+			return tool, true
+		}
+	}
+	return RegisteredTool{}, false
+}
+
 // Tool returns a copy of the registration behind a public tool name.
 func (h *Host) Tool(name string) (RegisteredTool, bool) {
 	if h == nil {
