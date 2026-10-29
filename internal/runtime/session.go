@@ -127,6 +127,8 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	nativeCleanupMu          sync.Mutex
+	nativeCleanups           *nativeCleanupTracker
 	artifactRootsMu          sync.Mutex
 	artifactRoots            *tools.SessionArtifactManager
 	rootArtifactRelease      func() error
@@ -259,8 +261,9 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		}
 	}
 	clone := &Session{
-		artifactRoots: s.sessionArtifactManager(),
-		Documents:     s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
+		nativeCleanups: s.nativeCleanupOwner(),
+		artifactRoots:  s.sessionArtifactManager(),
+		Documents:      s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
@@ -1407,10 +1410,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if releaseFailedResources == nil {
 				s.releasePluginGeneration(generation)
 			} else {
-				go func() {
+				s.runNativeCleanup(func() {
 					releaseFailedResources()
 					s.releasePluginGeneration(generation)
-				}()
+				})
 			}
 		}
 	}()
@@ -2350,6 +2353,11 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())
 		}
 	}
+	cleanupCtx, cancelCleanups := context.WithTimeout(context.Background(), ownedWorkerExecutionDrainTimeout)
+	if err := s.waitNativeCleanups(cleanupCtx); err != nil {
+		providers.DebugLogf("session cleanup: native tool cleanup remains active after %s", ownedWorkerExecutionDrainTimeout)
+	}
+	cancelCleanups()
 	s.InferenceJournalRuntime = nil
 	s.Sessions, s.Documents = nil, nil
 	if s.UserQuestions != nil {

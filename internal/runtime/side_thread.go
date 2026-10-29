@@ -44,13 +44,20 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	var constructed *agent.StreamRunner
 	var acquired func() error
 	defer func() {
-		if !runnerOwned {
-			go func() {
+		if !runnerOwned && (constructed != nil || acquired != nil) {
+			generation := s.pluginGeneration
+			if generation != nil {
+				generation.retain()
+			}
+			s.runNativeCleanup(func() {
 				_ = CloseSideThreadTools(context.Background(), constructed)
 				if acquired != nil {
 					_ = acquired()
 				}
-			}()
+				if generation != nil {
+					_ = s.releasePluginGeneration(generation)
+				}
+			})
 		}
 	}()
 	if s == nil || s.StreamRunner == nil {
