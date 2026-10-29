@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -360,6 +361,7 @@ type ThreadRuntime struct {
 	closeArtifacts       func() error
 	artifactsCloseOnce   sync.Once
 	artifactsCloseErr    error
+	processScopeTarget   atomic.Pointer[selectedToolExecutor]
 	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
 	CompositionID        string
 	compositionBinding   productCompositionBinding

@@ -238,6 +238,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Release each conversation's native tool scopes after its admitted main, worker, and side work drains, while rejecting calls after retirement and retaining in-flight cleanup.
 - Keep external tool providers usable when their native backend was not admitted, and reject late native delegation instead of crashing or executing with incomplete thread authority.
+- Apply each conversation’s current process permissions through session tool-policy decorators, including after permission changes.
+
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
