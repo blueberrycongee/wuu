@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -101,6 +102,8 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return toolresult.Result{}, err
 	}
+	var archiveSource string
+	var byteContinuation bool
 	if strings.TrimSpace(args.Continuation) != "" {
 		continuation, err := decodeReadFileContinuation(args.Continuation)
 		if err != nil {
@@ -120,6 +123,10 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 			args.Limit = &continuation.Limit
 		}
 		args.ExpectedSHA256 = continuation.ExpectedSHA256
+		if continuation.ByteOffset != nil {
+			byteContinuation = true
+			archiveSource = continuation.ResultSource
+		}
 	}
 	if strings.TrimSpace(args.Path) == "" {
 		return toolresult.Result{}, errors.New("read_file requires path")
@@ -137,6 +144,10 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	resolved, displayPath, managedArtifact, err := t.env.ResolveReadPath(args.Path)
 	if err != nil {
 		return toolresult.Result{}, err
+	}
+	isResultArchive := managedArtifact && filepath.Clean(filepath.Dir(resolved)) == filepath.Clean(filepath.Join(t.env.SessionDir, "tool-results")) && archivedResultName.MatchString(filepath.Base(resolved))
+	if byteContinuation && isResultArchive {
+		ctx = context.WithValue(ctx, resultArchiveSourceKey{}, archiveSource)
 	}
 	if !managedArtifact {
 		if err := rejectSensitiveReadPath(t.env, "read_file", resolved); err != nil {
@@ -220,6 +231,9 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		}
 		text, err := readFileByteWindowFromOpen(ctx, t.env, file, displayPath, args.ByteRange.Offset, args.ByteRange.Limit, args.ByteRange.EndOffset, strings.TrimSpace(args.ExpectedSHA256), info.Size())
 		if err == nil {
+			if source, ok := ctx.Value(resultArchiveSourceKey{}).(string); ok {
+				toolctx.MarkUnverified(ctx, source)
+			}
 			text = redactSensitiveReadContent(t.env, resolved, text)
 		}
 		return toolresult.FromText(text), err
@@ -300,6 +314,13 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		"omitted_ranges":     readFileOmittedRanges(readResult.TotalLines, args.Offset, len(readResult.Lines)),
 		"truncated":          args.Offset <= readResult.TotalLines && args.Offset-1+len(readResult.Lines) < readResult.TotalLines,
 		"next_suggestions":   readFileNextSuggestions(readResult.TotalLines, args.Offset, len(readResult.Lines)),
+	}
+	if isResultArchive {
+		result["source"] = "tool_result_archive"
+		result["content_verified"] = false
+		data["source"] = "tool_result_archive"
+		data["content_verified"] = false
+		toolctx.MarkUnverified(ctx, "tool_result_archive")
 	}
 	return toolResultWithData(result, data)
 }
@@ -832,7 +853,14 @@ func readFileByteWindowFromOpen(ctx context.Context, env *Env, f *os.File, displ
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
 	}
-	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget, ctx.Value(resultRecoveryContextKey{}) == true)
+	source, hasArchiveSource := ctx.Value(resultArchiveSourceKey{}).(string)
+	var page string
+	var ok bool
+	if hasArchiveSource {
+		page, ok = buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget, ctx.Value(resultRecoveryContextKey{}) == true, source)
+	} else {
+		page, ok = buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget, ctx.Value(resultRecoveryContextKey{}) == true)
+	}
 	if !ok {
 		return "", errors.New("read_file recovery metadata exceeds the page budget; use a shorter path")
 	}

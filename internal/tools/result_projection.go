@@ -3,6 +3,7 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -270,7 +271,23 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 			input.Content = toolresult.FromText(text).Content
 		}
 	}
-	settled, ref, paged := finalizeGenericToolResultWithArchive(t.env.SessionDir, call.ID, input, budget, t.env.persistSessionResult)
+	origin := ""
+	if call.Name == "read_file" && t.nativeReplacements[call.Name] != nil {
+		if routed, ok := t.registry.Lookup(call.Name).(NativeToolForCall); ok {
+			if _, native := routed.NativeToolForCall(call.Arguments); !native {
+				origin = "extension"
+			}
+		}
+	}
+	if len(result.Meta) > 0 {
+		var provenance struct {
+			Unverified string `json:"unverified_tool_source"`
+		}
+		if json.Unmarshal(result.Meta, &provenance) == nil && (provenance.Unverified == "extension" || provenance.Unverified == "tool_result_archive") {
+			origin = provenance.Unverified
+		}
+	}
+	settled, ref, paged := finalizeGenericToolResultWithArchive(t.env.SessionDir, call.ID, input, budget, t.env.persistSessionResult, origin)
 	return settleModelText(result, settled.TextProjection()), ref, paged, nil
 }
 

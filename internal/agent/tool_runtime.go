@@ -399,7 +399,15 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
+			if source := toolctx.UnverifiedSource(runCtx); source != "" {
+				result = toolresult.MarkUnverifiedSource(result, source)
+			}
 			result = run.finalize(r.executor, call, result)
+			// A selected finalizer may transform or replace the result. Preserve
+			// the host-observed marker after that boundary as well.
+			if source := toolctx.UnverifiedSource(runCtx); source != "" {
+				result = toolresult.MarkUnverifiedSource(result, source)
+			}
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
@@ -414,6 +422,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			return
 		default:
 		}
+		runCtx = toolctx.WithProvenance(runCtx)
 		if run.parent != nil {
 			runCtx = toolctx.WithNestedCall(runCtx)
 		}

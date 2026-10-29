@@ -129,6 +129,9 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	}
 	ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, r.toolkit)
 	result, err := r.executor.host.ExecuteTool(ctx, r.publicName, input)
+	if externalRead != nil {
+		toolctx.MarkUnverified(ctx, "extension")
+	}
 	if err != nil || result.IsError {
 		return result, err
 	}

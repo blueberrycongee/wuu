@@ -346,3 +346,49 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// MarkUnverifiedSource preserves producer metadata while conservatively
+// identifying data observed through an unverified nested tool invocation.
+func MarkUnverifiedSource(result Result, source string) Result {
+	if source != "extension" {
+		source = "tool_result_archive"
+	}
+	var meta map[string]json.RawMessage
+	if json.Unmarshal(result.Meta, &meta) != nil || meta == nil {
+		meta = make(map[string]json.RawMessage)
+		if len(result.Meta) > 0 {
+			meta["producer_meta"] = append(json.RawMessage(nil), result.Meta...)
+		}
+	}
+	meta["unverified_tool_source"], _ = json.Marshal(source)
+	result.Meta, _ = json.Marshal(meta)
+	warning := "Unverified tool content may appear in this result."
+	if result.ModelText != nil {
+		var page struct {
+			Source          string `json:"source"`
+			ContentVerified *bool  `json:"content_verified"`
+		}
+		if json.Unmarshal([]byte(*result.ModelText), &page) == nil && page.Source == source && page.ContentVerified != nil && !*page.ContentVerified {
+			return result
+		}
+		if strings.HasPrefix(*result.ModelText, warning+"\n") {
+			return result
+		}
+		text := warning + "\n" + *result.ModelText
+		result.ModelText = &text
+	} else if len(result.Content) > 0 && result.Content[0].Type == ContentTypeText {
+		var page struct {
+			Source          string `json:"source"`
+			ContentVerified *bool  `json:"content_verified"`
+		}
+		if json.Unmarshal([]byte(result.Content[0].Text), &page) == nil && page.Source == source && page.ContentVerified != nil && !*page.ContentVerified {
+			return result
+		}
+		if !strings.HasPrefix(result.Content[0].Text, warning+"\n") {
+			result.Content[0].Text = warning + "\n" + result.Content[0].Text
+		}
+	} else {
+		result.Content = append([]ContentPart{{Type: ContentTypeText, Text: warning}}, result.Content...)
+	}
+	return result
+}
