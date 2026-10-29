@@ -233,6 +233,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound GIF normalization before bitmap allocation: reject animated GIFs without decoding every frame and reject GIF canvases above 40 million pixels. Original-byte passthrough remains unchanged.
+
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
