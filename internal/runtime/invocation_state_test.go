@@ -19,8 +19,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/defaultpolicy"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -954,7 +954,7 @@ func TestModelInvocationRetainsCanceledTerminalAccounting(t *testing.T) {
 				{Name: pluginhost.KernelModelRequestService, MajorVersion: 1, Required: true},
 				{Name: pluginhost.KernelModelInvokeService, MajorVersion: 1, Required: true},
 			}}
-			modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, loopdriver.NativePolicyModule, caller.ID())
+			modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, defaultpolicy.Module, caller.ID())
 			cfg := config.Default()
 			cfg.DefaultProvider = "fixture"
 			cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: server.URL + "/v1", APIKey: "fixture", Model: "gpt-test"}}

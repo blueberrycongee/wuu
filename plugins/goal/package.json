@@ -12,7 +12,6 @@
         "../../packages/plugin-sdk/src",
         "../../scripts/build-bundled-plugins.mjs",
         "../../internal/plugin/bundled/goal/plugin.json",
-        "../../internal/plugin/bundled/goal/desktop.js",
         "../../internal/plugin/bundled/goal/prompts"
       ]
     }

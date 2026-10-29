@@ -11,6 +11,8 @@ func TestSelectionFailsClosed(t *testing.T) {
 		{Default: "box", Profiles: map[string]Profile{"box": {Backend: "typo"}}},
 		{Default: "box", Profiles: map[string]Profile{"box": {Backend: "ssh", Host: "-oProxyCommand=bad", Workspace: "/workspace"}}},
 		{Default: "box", Profiles: map[string]Profile{"box": {Backend: "docker", Image: "-bad"}}},
+		{Default: "box", Profiles: map[string]Profile{"box": {Backend: "command", Command: []string{"worker"}, ShutdownTimeoutMS: -1}}},
+		{Default: "box", Profiles: map[string]Profile{"box": {Backend: "command", Command: []string{"worker"}, ShutdownTimeoutMS: 2147483648}}},
 	} {
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("accepted invalid selection: %+v", cfg)

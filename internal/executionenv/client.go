@@ -37,23 +37,24 @@ type Response struct {
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
-	closeGrace time.Duration
-	event      func(json.RawMessage)
-	handlers   map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
-	contexts   map[string]context.Context
-	token      string
-	argv       []string
-	env        []string
-	mu         sync.Mutex
-	writeMu    sync.Mutex
-	cmd        *exec.Cmd
-	stdin      io.WriteCloser
-	pending    map[string]chan Response
-	retiring   map[string]chan struct{}
-	sequence   uint64
-	failed     error
-	exitErr    error
-	done       chan struct{}
+	processStart bool
+	closeGrace   time.Duration
+	event        func(json.RawMessage)
+	handlers     map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
+	contexts     map[string]context.Context
+	token        string
+	argv         []string
+	env          []string
+	mu           sync.Mutex
+	writeMu      sync.Mutex
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	pending      map[string]chan Response
+	retiring     map[string]chan struct{}
+	sequence     uint64
+	failed       error
+	exitErr      error
+	done         chan struct{}
 }
 
 func NewClient(argv, env []string) *Client {
@@ -275,7 +276,7 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 		c.mu.Lock()
 		if method == "run_code" && c.pending[id] != nil {
 			c.retiring[id] = make(chan struct{})
-		} else {
+		} else if method != "process/start" {
 			delete(c.pending, id)
 		}
 		c.mu.Unlock()
@@ -285,6 +286,25 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 				c.fail(err)
 			}
 		}()
+		if method == "process/start" {
+			// Unlike ordinary tool output, an accepted process receipt is needed to
+			// clean up a launch that raced cancellation. Wait for the addressed
+			// terminal acknowledgement, without preventing other process controls.
+			timer := time.NewTimer(35 * time.Second)
+			defer timer.Stop()
+			select {
+			case response := <-ch:
+				if response.Error != "" {
+					return response.Data, errors.Join(ctx.Err(), errors.New(response.Error))
+				}
+				return response.Data, ctx.Err()
+			case <-timer.C:
+				c.mu.Lock()
+				delete(c.pending, id)
+				c.mu.Unlock()
+				return nil, fmt.Errorf("process start cancellation was not acknowledged; outcome unknown: %w", ctx.Err())
+			}
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -315,7 +335,7 @@ func (c *Client) closeTimeout() time.Duration {
 	if c.closeGrace > 0 {
 		return c.closeGrace
 	}
-	return 3 * time.Second
+	return (Profile{}).shutdownTimeout()
 }
 
 func (c *Client) Failed() bool {

@@ -543,3 +543,43 @@ SDK 替换，并用假 CLI 生命周期测试验证进程和持久化取消行�
 协议完整的条目，包括仅有推理内容的进展。续跑从保存的历史发起新采样，
 不会重放中断前的请求。所选策略必须明确授权；宿主仍拒绝缺少检查点、
 存在工具副作用或回执／工作流预算耗尽的续跑。不认识该阶段的策略会明确失败。
+
+## 独立的目标与自动化呈现
+
+| 包 | 拥有的行为 | 公开依赖或服务 |
+| --- | --- | --- |
+| `goal` | 持久状态、持续执行、目标模型工具与 `/goal` 提示 | 提供 `goal.control@1` |
+| `goal-ui` | 输入区目标控制与显示 | 消费 `goal.control@1` |
+| `automation` | 持久计划、运行记录与后台调度 | 提供 `automation.scheduler@1` |
+| `automation-client` | 模型的 `cron` 工具 | 消费 `automation.scheduler@1` |
+| `automation-ui` | 自动化目录与侧栏 | 消费 `automation.scheduler@1` |
+
+移除 UI 包不会移除运行时的数据、工具或正在进行的工作。替换 UI 只需安装一个
+声明相同服务依赖的独立桌面包，不需要导入旧 UI 或运行时源码。也可以选择兼容
+的运行时而不复制呈现代码。UI 依赖为可选：运行时禁用或不可用时显示明确的
+服务错误并禁用修改，而不是导致应用崩溃或暗中换用内置调度器；后续成功读取
+会恢复控件。cron 工具要求调度服务可用，绝不在本地偷偷调度。
+
+SDK 导出 `GOAL_CONTROL_SERVICE_DESCRIPTOR`、`GoalControlRequestV1`、
+`GoalControlResultV1` 和 `GoalSnapshotV1`。在 `desktop.required_services`
+声明 `goal.control@1` 后调用：
+
+```ts
+const result = await api.invokeService<GoalControlResultV1>({
+  service: 'goal.control', method: 'request',
+  params: { method: 'get_goal', input: { thread_id: threadId } },
+});
+```
+
+请求方法包括 `get_goal`、`create_goal`（还需要 `objective`）、`pause`、`resume`
+与 `clear`，都需要 `thread_id`。返回值包含 `goal`，不存在或已清除时为 `null`。
+创建或继续可启动普通会话回合。完成和受阻仍由模型工具提交，不是 UI 控制方法。
+调用使用经认证的消费者服务图和 execution，UI 不能指定实现提供者。目标存储
+仍归原来的 `goal` 身份所有，拆分呈现不会移动或复制状态。旧的
+`plugin.client.request` 端点仍适配到相同控制逻辑，供旧组合包客户端使用，直到
+该 v1 capability 退役。
+
+显式 composition 可以独立选择 `goal-ui`、`automation-ui`
+及对应运行时。第三方现有组合 manifest 仍受支持。composition 迁移保留拆分前
+的内置桌面选择；新的显式 composition 不会根据运行时选择推断并加入 UI。
+headless composition 不需要任何一个 UI 包。

@@ -63,6 +63,62 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("isolates a selected-target conflict to its slot and recovers after removal", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register(api) {
+      api.registerUISlot({ id: "only", cardinality: "one" });
+      api.registerUIContribution({ id: "surface", target: "root/surface", render: () => null });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <main><span>Unaffected UI</span><slots.Slot name="owner/only" fallback={<span>No implicit fallback</span>} /></main> });
+    } });
+    for (const pluginId of ["one", "two"]) await host.activateGeneration({ pluginId, generation: "one", register(api) {
+      api.registerUIContribution({ id: "control", target: { service: "ui.surface", slot: "only" }, render: () => <span>{pluginId} controls</span> });
+    } });
+    const container = document.createElement("div"), root = createRoot(container);
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "owner", generation: "one", id: "shell" }}
+        surfaceBindings={{ "ui.surface": { pluginId: "owner", generation: "one", id: "surface" } }} />));
+      expect(container.textContent).toBe("Unaffected UI");
+      expect(host.getGenerationDiagnostics("one", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
+      expect(host.getGenerationDiagnostics("two", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
+      await act(async () => host.disable("two"));
+      expect(container.textContent).toBe("Unaffected UIone controls");
+    } finally { act(() => root.unmount()); for (const id of ["owner", "one", "two"]) host.unload(id); }
+  });
+
+  // Selected-service targets must follow a committed provider, not a product ID,
+  // a matching slot in another provider, or a stale generation of the same ID.
+  it("routes feature UI to the selected surface's owned slot without a default fallback", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register(api) {
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <><div data-owner="first"><slots.Slot name="first/composer.above" /></div><div data-owner="second"><slots.Slot name="second/composer.above" /></div></> });
+    } });
+    for (const pluginId of ["first", "second"]) await host.activateGeneration({ pluginId, generation: "one", register(api) {
+      api.registerUISlot({ id: "composer.above", cardinality: "many" });
+      api.registerUIContribution({ id: "composer", target: "custom-shell/composer", render: () => null });
+    } });
+    await host.activateGeneration({ pluginId: "independent-goal-ui", generation: "one", register(api) {
+      api.registerUIContribution({ id: "goal", target: { service: "ui.composer", slot: "composer.above" }, render: () => <span>Goal controls</span> });
+    } });
+    const container = document.createElement("div"), root = createRoot(container);
+    const render = (pluginId?: string, generation = "one", id = "composer") => act(() => root.render(<ApplicationShellOutlet host={host}
+      binding={{ pluginId: "custom-shell", generation: "one", id: "shell" }}
+      surfaceBindings={pluginId ? { "ui.composer": { pluginId, generation, id } } : {}} />));
+    try {
+      render("first"); expect(container.textContent).toBe("Goal controls");
+      expect(container.querySelector('[data-owner="first"]')?.textContent).toBe("Goal controls");
+      render("second"); expect(container.textContent).toBe("Goal controls");
+      expect(container.querySelector('[data-owner="second"]')?.textContent).toBe("Goal controls");
+      render("second", "retired"); expect(container.textContent).toBe("");
+      render("second", "one", "missing-surface"); expect(container.textContent).toBe("");
+      render(); expect(container.textContent).toBe("");
+      render("first");
+      act(() => host.disable("first")); expect(container.textContent).toBe("");
+      render("second"); expect(container.textContent).toBe("Goal controls");
+      act(() => host.disable("independent-goal-ui")); expect(container.textContent).toBe("");
+      expect(host.getUISlot("second/composer.above")).toBeDefined();
+    } finally { act(() => root.unmount()); for (const id of ["custom-shell", "first", "second", "independent-goal-ui"]) host.unload(id); }
+  });
+
   it("rebinds retained settings subscriptions and window actions without replaying retired authority", async () => {
     const base = createApplicationSettingsControls();
     const skins = Object.freeze({ skins: [], selected: "default" });

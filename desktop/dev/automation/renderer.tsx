@@ -15,8 +15,8 @@ import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import { usePrimaryPluginViewCover } from "../../src/renderer/PrimaryPluginViewCover";
-import source from "../../../internal/plugin/bundled/automation-client/desktop.js?raw";
-import manifest from "../../../internal/plugin/bundled/automation-client/plugin.json";
+import source from "../../../internal/plugin/bundled/automation-ui/desktop.js?raw";
+import manifest from "../../../internal/plugin/bundled/automation-ui/plugin.json";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
@@ -65,13 +65,13 @@ const host = new PluginHost({ react: React,
   },
 });
 // The manifest's navigation entry is what makes Automations a sidebar destination.
-await host.activateGeneration({ pluginId: "automation-client", generation: "preview", graphGeneration: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order, icon: { name: "clock" as const } })) }, register: activate });
+await host.activateGeneration({ pluginId: "automation-ui", generation: "preview", graphGeneration: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order, icon: { name: "clock" as const } })) }, register: activate });
 const controller = new WorkbenchController(host, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
 const region = params.get("region") || (params.has("sidebar") ? "primary" : "workspace");
 const portalRegion = region === "primary" || region === "overlay" || region === "auxiliary";
 if (portalRegion) {
-  await controller.openPluginView("automation-client", "automation.catalog", { region });
-  if (params.has("multiple")) await controller.openPluginView("automation-client", "automation.catalog", { region, reveal: false });
+  await controller.openPluginView("automation-ui", "automation.catalog", { region });
+  if (params.has("multiple")) await controller.openPluginView("automation-ui", "automation.catalog", { region, reveal: false });
 }
 const style = document.createElement("style");
 style.textContent = "html,body,#root { width:100%; height:100%; margin:0; } .plugin-view-content {height:100%;} body {background:var(--paper);} ";
@@ -129,7 +129,7 @@ function Sidebar() {
 function Preview() {
   const [value, setValue] = React.useState("daily");
   const pluginPageVisible = usePrimaryPluginViewCover(controller);
-  const content = <PluginViewContent controller={controller} pluginId="automation-client" viewTypeId="automation.catalog" />;
+  const content = <PluginViewContent controller={controller} pluginId="automation-ui" viewTypeId="automation.catalog" />;
   return <><AppBackground />{params.has("reference") ? <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--hairline)" }}>
     <SettingsRow title="Wuu 原生设置行"><SelectMenu ariaLabel="原生计划" value={value} onChange={setValue} options={[{ value: "daily", label: "每天" }, { value: "weekdays", label: "工作日" }]} /></SettingsRow>
   </div> : null}{portalRegion ? <>

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -51,7 +52,7 @@ func fixture(t *testing.T) (string, func() *selectedClient) {
 	if err := os.WriteFile(filepath.Join(home, markerName), []byte(markerContent), 0600); err != nil {
 		t.Fatal(err)
 	}
-	raw := []byte(`{"agent":{"max_steps":17},"composition":{"version":2,"modules":["wuu.session-state","wuu.state.sqlite"]}}`)
+	raw := []byte(`{"agent":{"max_steps":17},"composition":{"version":2,"modules":["wuu.session-state","wuu.state.sqlite","wuu.session.default"]}}`)
 	if err := os.WriteFile(filepath.Join(home, "config.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +66,10 @@ func fixture(t *testing.T) (string, func() *selectedClient) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(saved, &fields); err != nil {
 		t.Fatal(err)
+	}
+	var installedSelection composition.Config
+	if err := json.Unmarshal(fields["composition"], &installedSelection); err != nil || installedSelection.Version != 2 {
+		t.Fatalf("install upgraded composition without its catalog metadata: %s %v", saved, err)
 	}
 	var keep map[string]int
 	if err := json.Unmarshal(fields["agent"], &keep); err != nil || keep["max_steps"] != 17 {
@@ -275,5 +280,77 @@ func TestFixtureRequiresSyntheticMarker(t *testing.T) {
 	entries, err := os.ReadDir(home)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("ordinary home changed: %v %v", entries, err)
+	}
+}
+
+// Installing the fixture edits the selected storage provider, not the schema
+// version or business composition. A static flatten must not erase a renderer
+// migration that only the real admitted catalog can project.
+func TestInstallPreservesCompositionMigrationInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		version             int
+		excluded, discovery bool
+	}{
+		{name: "v1 profile", version: 1}, {name: "v2 profile", version: 2},
+		{name: "v4 profile", version: 4}, {name: "v4 excluded UI", version: 4, excluded: true},
+		{name: "v5 explicit", version: 5}, {name: "discovery default", version: 4, discovery: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, markerName), []byte(markerContent), 0600); err != nil {
+				t.Fatal(err)
+			}
+			original := composition.Config{Version: tc.version}
+			if !tc.discovery {
+				original.Profile = "independent"
+				original.Profiles = map[string]composition.Profile{"independent": {Modules: []string{"wuu.session-state", "wuu.state.sqlite", "goal", "independent.shell"}, Services: []composition.Binding{{Consumer: "wuu.session-state", Service: persistence.ServiceName, Major: 1, Provider: "wuu.state.sqlite"}}}}
+			}
+			if tc.excluded {
+				original.Patches = []composition.Patch{{Modules: map[string]bool{"goal-ui": false}}}
+			}
+			if err := writeJSON(filepath.Join(home, "config.json"), map[string]any{"composition": original}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := install(home, os.Args[0], []string{"-test.run=^TestFixtureProcess$", "--"}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(home, "config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg config.Config
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			got := cfg.Composition
+			if got.Version != tc.version || got.Profile != original.Profile {
+				t.Fatalf("install flattened original selection: %s", raw)
+			}
+			resolved, err := got.ResolveWithMetadata(composition.Metadata{RendererServices: map[string][]string{"independent.shell": {"ui.shell"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.discovery {
+				if resolved.Modules != nil {
+					t.Fatalf("install converted discovery default into explicit empty composition: %+v", resolved)
+				}
+			} else {
+				if !resolved.Includes("goal") || !resolved.Includes("independent.shell") || !resolved.Includes(providerID) {
+					t.Fatalf("install lost business/provider selection: %+v", resolved)
+				}
+				if resolved.Includes("goal-ui") != (tc.version < 5 && !tc.excluded) {
+					t.Fatalf("install erased migration inputs: %+v", resolved)
+				}
+				if got.Modules != nil || got.Profiles["independent"].Modules == nil {
+					t.Fatal("install replaced the user's profile with a flattened module list")
+				}
+			}
+			for _, binding := range resolved.Services {
+				if binding.Service == persistence.ServiceName && binding.Major == 1 && (binding.Consumer != "" || binding.Provider != providerID) {
+					t.Fatalf("fixture binding did not replace selected state routes: %+v", binding)
+				}
+			}
+		})
 	}
 }

@@ -675,3 +675,49 @@ new request from that saved history; it never replays the interrupted payload.
 The selected policy must authorize it, and the host still rejects missing
 checkpoints, tool effects, and exhausted receipt/workflow budgets. A policy that
 does not recognize the phase fails closed.
+
+## Independent goal and automation presentation
+
+| Package | Owns | Public dependency or service |
+| --- | --- | --- |
+| `goal` | Persistent state, continuation, goal model tools and `/goal` prompt | Provides `goal.control@1` |
+| `goal-ui` | Composer goal controls and display | Consumes `goal.control@1` |
+| `automation` | Durable schedules, runs and background dispatch | Provides `automation.scheduler@1` |
+| `automation-client` | The model's `cron` tool | Consumes `automation.scheduler@1` |
+| `automation-ui` | Automation catalog and sidebar | Consumes `automation.scheduler@1` |
+
+Remove either UI package without removing the provider's data, tools or ongoing
+work. Replace a UI by installing an independent desktop package declaring the
+same service requirement; it imports neither the old UI nor runtime source.
+Likewise select a compatible runtime provider without copying presentation.
+The UI dependencies are optional so disabled/unavailable providers leave a
+visible service error and disabled mutations, not a crashing application or
+silently substituted scheduler. Successful later reads recover the controls.
+The cron tool requires its scheduler and never schedules work locally.
+
+`GOAL_CONTROL_SERVICE_DESCRIPTOR`, `GoalControlRequestV1`, `GoalControlResultV1`
+and `GoalSnapshotV1` are exported by the SDK. Declare `goal.control@1` in
+`desktop.required_services` and call:
+
+```ts
+const result = await api.invokeService<GoalControlResultV1>({
+  service: 'goal.control', method: 'request',
+  params: { method: 'get_goal', input: { thread_id: threadId } },
+});
+```
+
+The request methods are `get_goal`, `create_goal` (also requires `objective`),
+`pause`, `resume` and `clear`. All require `thread_id`; results contain `goal`,
+or `null` when absent/cleared. Creation/resume can start an ordinary session turn.
+Completion and blocked status remain model tools, not UI control methods.
+Calls carry the authenticated consumer's graph and execution; the UI cannot name
+an implementation provider. Goal storage remains owned by the original `goal`
+identity; splitting presentation does not move or duplicate it. The old
+`plugin.client.request` goal endpoint remains an adapter to the same controls
+for older combined-package clients until that v1 capability is retired.
+
+For explicit compositions, select `goal-ui` and/or
+`automation-ui` independently from their runtime packages. Existing
+combined third-party manifests remain supported. Composition migration preserves
+pre-split bundled desktop selections; new explicit compositions do not infer a
+UI from a runtime selection. A headless composition needs neither UI package.

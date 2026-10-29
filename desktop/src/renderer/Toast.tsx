@@ -3,6 +3,7 @@ import { useSyncExternalStore } from "react";
 import { useI18n } from "./i18n";
 import { TopNotice, type TopNoticeAction } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 const TOAST_DEDUPE_WINDOW_MS = 30_000;
 const MAX_QUEUED_TOASTS = 4;
@@ -112,6 +113,7 @@ export function toastErrorMessage(error: unknown, fallback = ""): string {
 }
 
 export function showErrorToast(error: unknown, fallback = "", dedupeKey?: string): number | undefined {
+  if (isPluginLifecycleCancellation(error)) return undefined;
   return showToast({
     message: toastErrorMessage(error, fallback),
     tone: "error",

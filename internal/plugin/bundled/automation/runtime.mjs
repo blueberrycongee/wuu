@@ -4,6 +4,9 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
 var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";

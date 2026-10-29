@@ -1828,12 +1828,10 @@ func HistoryFromContext(ctx context.Context) []providers.ChatMessage {
 
 // ── Concurrency partitioning ───────────────────────────────────────
 //
-// consecutive read-only tools run in parallel (up to maxToolConcurrency),
+// consecutive concurrency-safe tools share the admitted execution gate;
 // write tools run serially. This preserves ordering semantics while
 // getting maximum throughput for common patterns like multiple
 // concurrent reads.
-
-const maxToolConcurrency = loopdriver.DefaultToolConcurrency
 
 // toolBatch groups consecutive tool calls that share a concurrency
 // mode. concurrent=true means every call in the batch can run in

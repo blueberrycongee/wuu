@@ -45,6 +45,7 @@ type PackageInspection struct {
 	RequestedPermissions []string
 	EffectivePermissions []string
 	UnsupportedFields    []string
+	Distribution         *DistributionLock
 }
 
 // InstallResult describes a package published to the user plugin directory.
@@ -91,11 +92,12 @@ type packageTreeStats struct {
 }
 
 type stagedPackage struct {
-	root        string
-	manifestRel string
-	archiveRoot string
-	plugin      Plugin
-	stats       packageTreeStats
+	root         string
+	manifestRel  string
+	archiveRoot  string
+	plugin       Plugin
+	stats        packageTreeStats
+	distribution *DistributionLock
 }
 
 // InspectPackage validates a local plugin directory or .zip without installing
@@ -365,7 +367,14 @@ func inspectPackageTree(root string) (stagedPackage, error) {
 	if err := ValidateHostCompatibility(item, defaultCompatibilityOptions()); err != nil {
 		return stagedPackage{}, err
 	}
-	return stagedPackage{root: root, manifestRel: manifestRel, plugin: item, stats: stats}, nil
+	distribution, err := readDistributionLock(filepath.Join(root, DistributionLockFilename))
+	if err != nil && !os.IsNotExist(err) {
+		return stagedPackage{}, err
+	}
+	if distribution != nil && (distribution.PluginID != item.ID || distribution.Version != item.Version) {
+		return stagedPackage{}, errors.New("plugin identity or version differs from its distribution lock")
+	}
+	return stagedPackage{root: root, manifestRel: manifestRel, plugin: item, stats: stats, distribution: distribution}, nil
 }
 
 func validatePackageTree(root string) (packageTreeStats, error) {
@@ -714,6 +723,7 @@ func inspectionFromStaged(item stagedPackage, source string, kind PackageSourceK
 		RequestedPermissions: append([]string(nil), item.plugin.RequestedPermissions...),
 		EffectivePermissions: append([]string(nil), item.plugin.EffectivePermissions...),
 		UnsupportedFields:    append([]string(nil), item.plugin.UnsupportedFields...),
+		Distribution:         item.distribution,
 	}
 }
 

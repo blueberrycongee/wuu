@@ -333,6 +333,8 @@ type Server struct {
 	engineAuthCancels            map[string]context.CancelFunc
 	nativeHistoryCtx             context.Context
 	nativeHistoryCancel          context.CancelFunc
+	packageDownloadCtx           context.Context
+	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
@@ -365,10 +367,12 @@ type Server struct {
 
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
+	packageDownloadCtx, packageDownloadCancel := context.WithCancel(context.Background())
 	s := &Server{
 		rpcTiming:        newRPCTimingRecorder(),
 		access:           connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
+		packageDownloadCtx: packageDownloadCtx, packageDownloadCancel: packageDownloadCancel,
 		rt:      rt,
 		out:     out,
 		threads: make(map[string]*threadState),
@@ -779,6 +783,9 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		if s.packageDownloadCancel != nil {
+			s.packageDownloadCancel()
+		}
 		s.cancelPluginAdditivePreparation()
 		s.closeRendererClients()
 		s.closeChatGPTLogins()
@@ -1155,10 +1162,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return s.handleExtensionCatalogRefresh(req)
 	case MethodExtensionPackageUpdate:
 		return s.handleExtensionPackageUpdate(req)
-	case MethodPluginPackageInspect:
-		return s.handlePluginPackageInspect(req)
-	case MethodPluginPackageInstall:
-		return s.handlePluginPackageInstall(req)
+	case MethodPluginPackageInspect, MethodPluginPackageInstall:
+		return s.handlePluginPackageSource(ctx, req)
 	case MethodPluginPackageRemove:
 		return s.handlePluginPackageRemove(req)
 	case MethodPluginDesktopModuleRead:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -59,9 +60,17 @@ func testKernelStateProviders(t *testing.T, root string) []pluginhost.Client {
 	t.Helper()
 	home, state := testWorkspaceState(t, root)
 	// The file credentials provider keeps fixture authority inside its temp home.
-	clients, err := nativeStateProviders(home, root, state, []string{credentialstore.OSModule})
-	if err != nil {
-		t.Fatal(err)
+	var clients []pluginhost.Client
+	ids := []string{credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule}
+	for _, factory := range defaultNativeProviderCatalog() {
+		if !slices.Contains(ids, factory.ID) {
+			continue
+		}
+		client, err := factory.Build(NativeProviderContext{WuuHome: home, RootDir: root, WorkspaceStateDir: state})
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients = append(clients, client)
 	}
 	return clients
 }

@@ -27,15 +27,23 @@ func (s *Session) executionEnvironmentManager() *executionenv.Manager {
 }
 
 func (s *Session) configureExecutionEnvironment(kit *tools.Toolkit, id, artifactDir string) error {
+	executor, err := s.selectedExecutionEnvironment(id, artifactDir)
+	if err != nil {
+		return err
+	}
+	kit.SetExecutionEnvironment(executor)
+	return nil
+}
+
+func (s *Session) selectedExecutionEnvironment(id, artifactDir string) (executionenv.Executor, error) {
 	environment, _, err := s.executionEnvironmentManager().Open(s.WuuHome, id, artifactDir, executionenv.Config{})
 	if err != nil {
-		return fmt.Errorf("select execution environment: %w", err)
+		return nil, fmt.Errorf("select execution environment: %w", err)
 	}
-	kit.SetExecutionEnvironment(nil)
-	if environment != nil {
-		kit.SetExecutionEnvironment(&environmentToolExecutor{environment: environment, publish: NewArtifactPublisher(s.artifactClient), session: id, stateDir: s.StateDir, artifactDir: artifactDir})
+	if environment == nil {
+		return nil, nil
 	}
-	return nil
+	return &environmentToolExecutor{environment: environment, publish: NewArtifactPublisher(s.artifactClient), session: id, stateDir: s.StateDir, artifactDir: artifactDir}, nil
 }
 
 // Artifacts cross the execution boundary as immutable byte snapshots. Worker
@@ -46,8 +54,12 @@ type environmentToolExecutor struct {
 	session, stateDir, artifactDir string
 }
 
-func (e *environmentToolExecutor) Root() string    { return e.environment.Root() }
-func (e *environmentToolExecutor) Backend() string { return e.environment.Backend() }
+func (e *environmentToolExecutor) Root() string     { return e.environment.Root() }
+func (e *environmentToolExecutor) Backend() string  { return e.environment.Backend() }
+func (e *environmentToolExecutor) Identity() string { return e.environment.Identity() }
+func (e *environmentToolExecutor) StartProcess(ctx context.Context, request executionenv.ProcessRequest) (*process.Process, error) {
+	return e.environment.StartProcess(ctx, request)
+}
 
 func (e *environmentToolExecutor) Execute(ctx context.Context, request executionenv.ToolRequest) (toolresult.Result, error) {
 	result, err := e.environment.Execute(ctx, request)

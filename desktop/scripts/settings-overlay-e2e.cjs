@@ -54,18 +54,35 @@ function key(contents, keyCode) {
   contents.sendInputEvent({ type: "keyUp", keyCode });
 }
 async function click(contents, selector) {
-  const point = await until(() => evaluate(contents, selector => {
-    const element = document.querySelector(selector);
-    if (!element || element.disabled || element.closest("[inert]")) return null;
-    const rect = element.getBoundingClientRect();
-    const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
-    return rect.width > 0 && rect.height > 0 && element.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
-  }, selector), `hit-testable ${selector}`);
+  const point = await until(() => evaluate(contents, async selector => {
+    const measure = () => {
+      const element = document.querySelector(selector);
+      if (!element || element.disabled || element.closest("[inert]")) return null;
+      const rect = element.getBoundingClientRect();
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+      return rect.width > 0 && rect.height > 0 && element.contains(document.elementFromPoint(x, y))
+        ? { x, y, width: rect.width, height: rect.height } : null;
+    };
+    const before = measure();
+    if (!before) return null;
+    // Font/viewport changes schedule composer measurement on the next frame.
+    // Sample after that layout, rather than clicking its previous coordinates.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const after = measure();
+    return after && Object.keys(before).every(key => before[key] === after[key]) ? after : null;
+  }, selector), `stable hit-testable ${selector}`);
   const zoom = contents.getZoomFactor();
   const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  trace({ kind: "click", selector, point, zoom });
   contents.sendInputEvent({ type: "mouseMove", ...position });
   contents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...position });
   contents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...position });
+}
+async function focusedComposer() {
+  await until(() => evaluate(win.webContents, () => {
+    const input = document.querySelector("textarea");
+    return input && !input.disabled && !input.closest("[inert]") && document.hasFocus() && document.activeElement === input;
+  }), "native click focuses the composer");
 }
 async function openMenu() {
   await click(win.webContents, ".sidebar-account-trigger");
@@ -128,6 +145,7 @@ async function run() {
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.show(); win.focus();
     await until(() => evaluate(win.webContents, () => Boolean(document.querySelector("textarea") && document.querySelector(".sidebar-account-trigger:not(:disabled)"))), "shipping default shell initialized");
+    await evaluate(win.webContents, () => document.fonts.ready.then(() => undefined));
     if (await evaluate(win.webContents, () => document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed"))) {
       await click(win.webContents, ".section-sidebar-toggle");
     }
@@ -143,9 +161,21 @@ async function run() {
     const name = `${width}-${font}-${theme}`;
     const scenario = { name, checks: [] }; report.cases.push(scenario); save();
     await click(win.webContents, "textarea");
-    win.webContents.selectAll();
-    key(win.webContents, "Backspace");
-    await until(() => evaluate(win.webContents, () => document.querySelector("textarea")?.value === ""), "empty draft before scenario");
+    await focusedComposer();
+    if (await evaluate(win.webContents, () => document.querySelector("textarea").value.length > 0)) {
+      win.webContents.selectAll();
+      await until(() => evaluate(win.webContents, () => {
+        const input = document.querySelector("textarea");
+        return document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === input.value.length;
+      }), "native Select All reaches the focused draft");
+      key(win.webContents, "Backspace");
+      // A real value change acknowledges deletion. An already-empty input
+      // would let the wait pass before the native key event was delivered.
+      await until(() => evaluate(win.webContents, () => {
+        const input = document.querySelector("textarea");
+        return document.activeElement === input && input.value === "";
+      }), "empty focused draft before scenario");
+    }
     const draft = `Retain this draft through Settings: ${name}`;
     await win.webContents.insertText(draft);
     await until(() => evaluate(win.webContents, draft => document.querySelector("textarea")?.value === draft, draft), "scenario draft entered");
@@ -153,7 +183,7 @@ async function run() {
     await capture(name, opened.view);
     key(opened.view.webContents, "Escape"); await closed();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.matches(".sidebar-account-trigger")), "Escape restores trigger focus");
-    await openMenu(); await click(win.webContents, "textarea"); await closed();
+    await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
     await click(settingsMenu.view.webContents, '[data-settings-page="providers"]'); await closed();
@@ -202,6 +232,16 @@ run().then(() => finish(0), async error => {
   report.status = "failed"; report.error = String(error.stack || error); save();
   if (win && !win.isDestroyed()) {
     report.surfaces = win.contentView.children.map(view => ({ url: view.webContents?.getURL(), visible: view.getVisible(), bounds: view.getBounds() }));
+    report.input = await evaluate(win.webContents, () => ({
+      documentFocused: document.hasFocus(),
+      activeElement: { tag: document.activeElement?.tagName, className: document.activeElement?.className,
+        role: document.activeElement?.getAttribute("role") },
+      composers: [...document.querySelectorAll("textarea")].map(input => ({
+        value: input.value, disabled: input.disabled, inert: Boolean(input.closest("[inert]")),
+        focused: document.activeElement === input, selection: [input.selectionStart, input.selectionEnd],
+        bounds: input.getBoundingClientRect().toJSON(),
+      })),
+    }));
     save();
     await capture("failure", menuView()).catch(() => {});
   }

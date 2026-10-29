@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/defaultpolicy"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
@@ -59,7 +60,7 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 	if err != nil {
 		t.Fatal(err)
 	}
-	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService(), toolbatch.NewService(registry))
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, defaultpolicy.NewService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService(), toolbatch.NewService(registry))
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
@@ -144,7 +145,7 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, defaultpolicy.NewService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)

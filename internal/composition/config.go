@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = 4
+const Version = 5
 
 // Config selects implementations independently of discovery order. Profiles
 // compose ordered bundles from an empty module set. Inline choices and patches
@@ -88,7 +88,22 @@ func (c Config) Validate() error {
 	return err
 }
 
+// Metadata supplies inert facts from an admitted catalog for legacy projection.
+// It never selects a module, grants trust, or changes current-version choices.
+type Metadata struct {
+	// RendererServices maps renderer module identities to their provided services.
+	RendererServices map[string][]string
+}
+
+// Resolve performs static resolution without loading a provider catalog.
 func (c *Config) Resolve() (Resolved, error) {
+	return c.ResolveWithMetadata(Metadata{})
+}
+
+// ResolveWithMetadata projects legacy configurations using the same candidate
+// metadata the host will admit. Callers must use that result for graph inspection
+// as well as construction; discovery alone cannot enable an unselected renderer.
+func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 	resolved := Resolved{ModuleSource: "discovery-default"}
 	if c == nil {
 		return resolved, nil
@@ -233,7 +248,7 @@ func (c *Config) Resolve() (Resolved, error) {
 	applyChoices(modules, c.Services, "composition")
 	applyPatches(c.Patches, "composition")
 	if c.Version < Version && resolved.ModuleSources != nil {
-		projectLegacyProviders(c.Version, &resolved, bindings, excluded)
+		projectLegacyProviders(c.Version, &resolved, bindings, excluded, metadata)
 	}
 	if resolved.ModuleSources != nil {
 		modules := make([]string, 0, len(resolved.ModuleSources))

@@ -655,6 +655,7 @@ jobs:
           find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
 
       - name: Install fonts for multilingual selection captures
+        id: install-desktop-fonts
         if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         run: |
           # Hosted images can select the slow Azure archive through a mirror list.
@@ -665,6 +666,38 @@ jobs:
           done
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+
+      - name: Guard independent feature UI rendering
+        id: feature-ui-rendering
+        if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success' && steps.install-desktop-fonts.outcome == 'success') }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_FEATURE_UI_VISUAL_OUTPUT: ${{ runner.temp }}/wuu-feature-ui-rendering-evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$WUU_FEATURE_UI_VISUAL_OUTPUT"
+          # Missing Chromium must fail this gate rather than silently skip pixels.
+          if command -v google-chrome > /dev/null; then
+            export WUU_CHROMIUM="$(command -v google-chrome)"
+          elif command -v chromium > /dev/null; then
+            export WUU_CHROMIUM="$(command -v chromium)"
+          elif command -v chromium-browser > /dev/null; then
+            export WUU_CHROMIUM="$(command -v chromium-browser)"
+          else
+            echo "Chromium/Google Chrome is required for feature UI pixel acceptance" | tee "$WUU_FEATURE_UI_VISUAL_OUTPUT/run.log"
+            exit 1
+          fi
+          node scripts/external-composition-acceptance/ui/visual.mjs 2>&1 | tee "$WUU_FEATURE_UI_VISUAL_OUTPUT/run.log"
+
+      - name: Upload independent feature UI rendering evidence
+        if: ${{ matrix.suite == 'layout' && always() && steps.feature-ui-rendering.outcome != 'skipped' && steps.feature-ui-rendering.outcome != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-ui-rendering-evidence
+          path: ${{ runner.temp }}/wuu-feature-ui-rendering-evidence
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Capture sidebar surface review
         # Before/after review evidence is scoped to this visual-change branch.

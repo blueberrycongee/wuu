@@ -5,9 +5,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
-import { createUIComposition } from "./ApplicationShell";
+import { ApplicationShellOutlet } from "./ApplicationShell";
 
-const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal/desktop.js"), "utf8");
+const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal-ui/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 type InvokeRuntime = NonNullable<PluginHostOptions["invokeRuntime"]>;
 type Goal = { id: string; objective: string; status: string; tokens_used: number; time_used_seconds: number };
@@ -21,6 +21,10 @@ const activeGoal: Goal = {
 };
 const cleanups: Array<() => void> = [];
 
+it("rejects a host without selected-slot targeting before registering presentation", async () => {
+  await expect(activate({} as PluginGenerationApi)).rejects.toThrow("ui.selected-slot-target.v1");
+});
+
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   vi.useRealTimers();
@@ -28,11 +32,22 @@ afterEach(() => {
 
 async function mount(invokeRuntime: InvokeRuntime) {
   vi.useFakeTimers();
-  const host = new PluginHost({ react: React, invokeRuntime });
-  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.above", cardinality: "many" }); } });
-  const slots = createUIComposition(host);
+  const host = new PluginHost({ react: React, invokeRuntime: request => {
+    expect(request).toMatchObject({ pluginId: "goal-ui", service: "goal.control", method: "request" });
+    const { method, input } = request.input as { method: string; input: unknown };
+    return invokeRuntime({ ...request, method, input });
+  } });
+
+  await host.activateGeneration({ pluginId: "test-shell", generation: "one", register(api) {
+    api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-composer/composer.above" context={context} /> });
+  } });
+  let context: Record<string, unknown> = {};
+  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register(api) {
+    api.registerUISlot({ id: "composer.above", cardinality: "many" });
+    api.registerUIContribution({ id: "composer", target: "test-shell/composer", render: () => null });
+  } });
   await host.activateGeneration({
-    pluginId: "goal",
+    pluginId: "goal-ui",
     generation: "one",
     register: activate,
   });
@@ -41,14 +56,17 @@ async function mount(invokeRuntime: InvokeRuntime) {
   const root = createRoot(container);
   cleanups.push(() => {
     act(() => root.unmount());
-    host.disable("goal");
+    host.disable("goal-ui");
     host.unload("wuu.default-composer");
+    host.unload("test-shell");
     container.remove();
   });
 
   const render = async (threadId = "thread-one", extra: Record<string, unknown> = {}) => {
     await act(async () => {
-      root.render(<slots.Slot name="wuu.default-composer/composer.above" context={{ threadId, mainConversation: true, ...extra }} />);
+      context = { threadId, mainConversation: true, ...extra };
+      root.render(<ApplicationShellOutlet key={JSON.stringify(context)} host={host} binding={{ pluginId: "test-shell", generation: "one", id: "shell" }}
+        surfaceBindings={{ "ui.composer": { pluginId: "wuu.default-composer", generation: "one", id: "composer" } }} />);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -84,6 +102,20 @@ async function mount(invokeRuntime: InvokeRuntime) {
   return { host, container, render, button, click, expand, fill };
 }
 
+it("renders an unavailable service without crashing and recovers on the selected route", async () => {
+  let available = false;
+  const ui = await mount(async () => {
+    if (!available) throw new Error("Selected goal.control provider is unavailable");
+    return { goal: activeGoal };
+  });
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("goal.control");
+  expect(ui.container.textContent).not.toContain(activeGoal.objective);
+  available = true;
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.textContent).toContain(activeGoal.objective);
+});
+
 it("exposes live controls above the composer and removes them with the plugin", async () => {
   let goal = activeGoal;
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
@@ -101,7 +133,7 @@ it("exposes live controls above the composer and removes them with the plugin", 
   await ui.click("继续");
   expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "resume", input: { thread_id: "thread-one" } }));
 
-  act(() => ui.host.disable("goal"));
+  act(() => ui.host.disable("goal-ui"));
   expect(ui.container.textContent).toBe("");
   const calls = invoke.mock.calls.length;
   await vi.advanceTimersByTimeAsync(5000);

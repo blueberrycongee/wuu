@@ -415,3 +415,72 @@ func TestCanceledStdinWriteStillAllowsStop(t *testing.T) {
 		t.Fatalf("cancelled stdin write blocks stop recovery: %v", err)
 	}
 }
+
+func TestWorkerPluginProcessPermissionAndIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_HOME", t.TempDir())
+	root := t.TempDir()
+	server := New()
+	t.Cleanup(func() { _ = server.Close() })
+	init, _ := json.Marshal(executionenv.Init{Version: executionenv.ProtocolVersion, Root: root, Session: "process-thread", Identity: "remote-binding"})
+	if _, err := server.Handle(context.Background(), "initialize", init); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, mode, cwd, actor string
+		cancel                 bool
+	}{
+		{name: "read-only", mode: "read_only", actor: "actor"},
+		{name: "outside", mode: "standard", cwd: t.TempDir(), actor: "actor"},
+		{name: "missing-actor", mode: "unconfined"},
+		{name: "cancelled", mode: "unconfined", actor: "actor", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			data, _ := json.Marshal(executionenv.ProcessRequest{Command: "touch forbidden", CWD: tc.cwd, Actor: tc.actor, PermissionMode: tc.mode})
+			if _, err := server.Handle(ctx, "process/start", data); err == nil {
+				t.Fatal("forbidden process accepted")
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(root, "forbidden")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("denied process mutated workspace")
+	}
+	data, _ := json.Marshal(executionenv.ProcessRequest{OperationID: "operation-reconcile", Command: "printf worker-plugin-process", Actor: "child-actor", PermissionMode: "unconfined"})
+	raw, err := server.Handle(context.Background(), "process/start", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started process.Process
+	if err = json.Unmarshal(raw, &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.OperationID != "operation-reconcile" || started.CWD != root || started.RootThreadID != "process-thread" || started.OwnerID != "child-actor" || started.CompletionMode != process.CompletionModeDetached {
+		t.Fatalf("wrong process binding: %+v", started)
+	}
+	offset := int64(0)
+	out, err := server.processes.ReadOutputSnapshot(context.Background(), started.ID, process.OutputReadOptions{OffsetBytes: &offset, MaxBytes: 1024, Wait: time.Second})
+	if err != nil || !strings.Contains(out.Output, "worker-plugin-process") {
+		t.Fatalf("output=%+v err=%v", out, err)
+	}
+}
+
+func TestWorkerRejectsReboundEnvironmentIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := New()
+	defer server.Close()
+	config := executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "thread", Identity: "original"}
+	data, _ := json.Marshal(config)
+	if _, err := server.Handle(context.Background(), "initialize", data); err != nil {
+		t.Fatal(err)
+	}
+	config.Identity = "replacement"
+	data, _ = json.Marshal(config)
+	if _, err := server.Handle(context.Background(), "initialize", data); err == nil {
+		t.Fatal("worker accepted a different binding identity")
+	}
+}

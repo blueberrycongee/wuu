@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { app, BrowserWindow, clipboard } = require('electron');
+const { app, BrowserWindow, clipboard } = process.env.WUU_GENUI_PREPARE_ONLY === '1' ? {} : require('electron');
 let activeWindow;
 const { buildSync } = require('esbuild');
 const root = path.resolve(__dirname, '../..');
@@ -214,7 +214,7 @@ function render() {
  root.render(<I18nProvider><ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}><ImagePreviewProvider><ArtifactThreadContext.Provider value={threadId}>{mounted ? Array.from({length:copies},(_,copy)=><section key={copy} data-fixture-copy={copy}><TurnInlineArtifactOutputs artifacts={collectTurnArtifactsWithRenderers(turn, desktopWorkbenchController.getSnapshot().renderers)} /></section>) : null}</ArtifactThreadContext.Provider></ImagePreviewProvider></ArtifactsProvider></ConversationControlsProvider></I18nProvider>);
 }
 window.nativeEvents=[];
-for(const type of ["submit","invalid","keydown","keypress","keyup"]) document.addEventListener(type,event=>{window.nativeEvents.push({type,trusted:event.isTrusted,target:event.target.getAttribute("data-genui-node"),key:event.key,value:event.target.value});if(window.nativeEvents.length>100)window.nativeEvents.shift();},true);
+for(const type of ["click","toggle","submit","invalid","keydown","keypress","keyup"]) document.addEventListener(type,event=>{window.nativeEvents.push({type,trusted:event.isTrusted,target:event.target.closest("[data-genui-node]")?.getAttribute("data-genui-node"),tag:event.target.tagName,key:event.key,value:event.target.value,open:event.target.open});if(window.nativeEvents.length>100)window.nativeEvents.shift();},true);
 window.probe = {
  fontSize: applyMessageFlowFontSize,
  async enable() { await replaceRenderer('e2e'); render(); },
@@ -284,9 +284,11 @@ async function input(win, selector, value) {
   await evaluate(win, `(() => {const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
 }
 async function click(win, selector) {
-  const box = await evaluate(win, `(() => { const node=document.querySelector(${JSON.stringify(selector)}); node.scrollIntoView({block:'center'}); const r=node.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);
+  const box = await evaluate(win, `(() => { const node=document.querySelector(${JSON.stringify(selector)}); node.scrollIntoView({block:'center',behavior:'instant'}); const r=node.getBoundingClientRect(); window.nextNativeClick=new Promise(resolve=>document.addEventListener('click',event=>resolve({matched:node.contains(event.target),trusted:event.isTrusted,target:event.target.outerHTML}),{once:true,capture:true})); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);
   win.webContents.sendInputEvent({ type:'mouseDown', x:Math.round(box.x), y:Math.round(box.y), button:'left', clickCount:1 });
   win.webContents.sendInputEvent({ type:'mouseUp', x:Math.round(box.x), y:Math.round(box.y), button:'left', clickCount:1 });
+  const delivered = await evaluate(win, 'window.nextNativeClick', `Receive native click: ${selector}`);
+  assert.ok(delivered.trusted && delivered.matched, `Native click must reach ${selector}: ${JSON.stringify(delivered)}`);
 }
 const rendererRun = app.whenReady().then(async () => {
   const win = new BrowserWindow({ width:1100, height:1200, show:true, ...(process.platform === 'linux' ? { frame:false, autoHideMenuBar:true } : {}), webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
@@ -608,6 +610,17 @@ const rendererRun = app.whenReady().then(async () => {
   await click(win, '[data-genui-node="tableV2"] th:nth-child(2) button');
   await click(win, '[data-genui-node="mixedV2"] .plugin-genui-legend button:first-child');
   await click(win, '[data-genui-node="areaV2"] details > summary');
+  await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] details').open`);
+  for (const keyCode of ['Space', 'Enter']) {
+    win.webContents.sendInputEvent({type:'keyDown',keyCode});
+    if (keyCode === 'Enter') win.webContents.sendInputEvent({type:'char',keyCode:'\r'});
+    win.webContents.sendInputEvent({type:'keyUp',keyCode});
+    await waitFor(win, `!document.querySelector('[data-genui-node="areaV2"] details').open`);
+    assert.equal(await evaluate(win, `document.activeElement===document.querySelector('[data-genui-node="areaV2"] details > summary')`), true, 'Native disclosure keyboard activation retains summary focus');
+    await click(win, '[data-genui-node="areaV2"] details > summary');
+    await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] details').open`);
+  }
+  results.checks.push('native Space and Enter toggle chart data while preserving summary focus');
   await click(win, '[data-genui-node="pieV2"] .plugin-genui-legend button:first-child');
   await waitFor(win, `window.probe.pending===0 && document.querySelector('[data-genui-node="tableV2"] tbody td').textContent==='4'`);
   await click(win, '[data-genui-node="reversePoints"] button');
@@ -779,7 +792,7 @@ withDeadline(rendererRun,'Complete renderer E2E suite',10*60*1000).catch(async e
   fs.writeFileSync(path.join(output, 'failure.txt'), `${error.stack}\nLast operation: ${failedOperation}`);
   if (activeWindow && !activeWindow.isDestroyed()) {
     try { fs.writeFileSync(path.join(output, 'failure.png'), (await capturePage(activeWindow)).toPNG()); } catch (captureError) { fs.writeFileSync(path.join(output,'failure-capture.txt'),captureError.stack); }
-    const state = await evaluate(activeWindow, `({text:document.body.innerText, paintStages:window.paintStages, fonts:document.fonts.status, visibility:document.visibilityState, focused:document.hasFocus(), activeElement:document.activeElement?.outerHTML,nativeEvents:window.nativeEvents,inputs:[...document.querySelectorAll(".plugin-genui-program input")].map(input=>({node:input.dataset.genuiNode,value:input.value,valid:input.validity.valid,message:input.validationMessage}))})`).catch(() => null);
+    const state = await evaluate(activeWindow, `({text:document.body.innerText, paintStages:window.paintStages, fonts:document.fonts.status, visibility:document.visibilityState, focused:document.hasFocus(), activeElement:document.activeElement?.outerHTML,nativeEvents:window.nativeEvents,savedState:localStorage.getItem(window.probe.storageKey),inputs:[...document.querySelectorAll(".plugin-genui-program input")].map(input=>({node:input.dataset.genuiNode,value:input.value,valid:input.validity.valid,message:input.validationMessage}))})`).catch(() => null);
     fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(state, null, 2));
   }
   app.exit(1);

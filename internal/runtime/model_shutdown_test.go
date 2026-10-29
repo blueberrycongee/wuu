@@ -19,7 +19,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/defaultpolicy"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -542,7 +542,7 @@ func modelShutdownProcess(t *testing.T, root string) {
 	}
 	modules := testStateModules()
 	modules[1] = provider.ID()
-	modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, loopdriver.NativePolicyModule, caller.ID())
+	modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, defaultpolicy.Module, caller.ID())
 	factories := []NativeProviderFactory{
 		{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
 		{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }},
