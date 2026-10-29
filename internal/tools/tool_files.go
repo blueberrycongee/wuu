@@ -146,7 +146,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	// remote extension has finished transforming the result. Until that
 	// protocol exists, reject rather than leave an older observation in use.
 	if toolctx.IsUnobservedRead(ctx) {
-		release, err := t.env.readState.beginUnobservedRead()
+		release, err := t.env.readStateStore().beginUnobservedRead()
 		if err != nil {
 			return toolresult.Result{}, err
 		}

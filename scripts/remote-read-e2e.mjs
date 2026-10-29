@@ -18,7 +18,7 @@ try {
  report.sdk_sha256=createHash('sha256').update(await readFile(packed)).digest('hex');
  await command('go',['build','-o',join(run,'wuu'),'./cmd/wuu']);
  const output=await command('go',['test','-race','-count=1','-v','./internal/runtime','-run','^TestRemoteReadOnlyContinuation'],{env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project}});
- for(const name of ['TestRemoteReadOnlyContinuationWorkerProcess','TestRemoteReadOnlyContinuationPluginProcess']) if(!output.includes(`--- PASS: ${name}`))throw Error(`${name} did not run`);
+ for(const name of ['TestRemoteReadOnlyContinuationWorkerProcess','TestRemoteReadOnlyContinuationWorkerActorModes','TestRemoteReadOnlyContinuationPluginProcess']) if(!output.includes(`--- PASS: ${name}`))throw Error(`${name} did not run`);
  if(output.includes('--- SKIP:'))throw Error('a required process test was skipped');
  await command('go',['test','-race','-count=1','./internal/executionenv','./internal/executionworker','./internal/tools','./internal/runtime','-run','^Test(UnobservedRead|RemoteReadOnlyContinuation|SanitizeRemoteReadResult|RemoteProcessScopeUsesCapturedExecutor)']);
  report.checks.push('packed SDK plugin and runnable example use a real pinned worker and PTC; local and remote same-name files differ','authorization, identities, actor and environment change, cancellation, retirement, unsupported workers and read observation failure boundaries');report.passed=true;

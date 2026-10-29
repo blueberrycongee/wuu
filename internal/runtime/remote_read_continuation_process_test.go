@@ -313,3 +313,27 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	_, err = unsupported.NewThreadRuntime("unsupported")
 	require.ErrorContains(t, err, "unavailable in a remote execution environment")
 }
+
+func TestRemoteReadOnlyContinuationWorkerActorModes(t *testing.T) {
+	binary := os.Getenv("WUU_REMOTE_READ_WORKER_BINARY")
+	if binary == "" {
+		t.Skip("run remote-read acceptance script")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_HOME", t.TempDir())
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "file.txt"), []byte("native\n"), 0600))
+	env := executionenv.NewEnvironment(executionenv.Profile{Backend: "command", Command: []string{binary, "execution-worker"}, Workspace: root}, "actor-modes", "thread", t.TempDir())
+	defer env.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	call := providers.ToolCall{Name: "read_file", Arguments: `{"path":"file.txt"}`}
+	_, err := env.Execute(ctx, executionenv.ToolRequest{Actor: "a", PermissionMode: "standard", Call: call})
+	require.NoError(t, err)
+	_, err = env.ExecuteUnobservedRead(ctx, executionenv.ToolRequest{Actor: "a", PermissionMode: "read_only", Call: call})
+	require.ErrorContains(t, err, "existing native read observation")
+	_, err = env.ExecuteUnobservedRead(ctx, executionenv.ToolRequest{Actor: "a", PermissionMode: "standard", GitAttributionEnabled: true, Call: call})
+	require.ErrorContains(t, err, "existing native read observation")
+	_, err = env.ExecuteUnobservedRead(ctx, executionenv.ToolRequest{Actor: "b", PermissionMode: "read_only", Call: call})
+	require.NoError(t, err)
+}

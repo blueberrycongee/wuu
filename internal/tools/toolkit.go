@@ -183,6 +183,22 @@ func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
 
 func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
 
+// ShareWorkerReadState binds this unpublished worker toolkit to the same actor's
+// observation state. Call only during worker actor construction.
+func (t *Toolkit) ShareWorkerReadState(owner *Toolkit) error {
+	if t == nil || t.env == nil || owner == nil || owner.env == nil {
+		return errors.New("worker read state owner is unavailable")
+	}
+	if t.env.SessionID == "" || t.env.SessionID != owner.env.SessionID || t.env.AgentID == "" || t.env.AgentID != owner.env.AgentID || t.env.AgentPath != owner.env.AgentPath || filepath.Clean(t.env.RootDir) != filepath.Clean(owner.env.RootDir) {
+		return errors.New("worker read state owner does not match actor scope")
+	}
+	if len(t.env.readStateStore().snapshot()) != 0 {
+		return errors.New("worker read state is already in use")
+	}
+	t.env.sharedReadState = owner.env.readStateStore()
+	return nil
+}
+
 func (t *Toolkit) SetExecutionEnvironment(executor executionenv.Executor) {
 	t.env.ExecutionEnvironment = executor
 }
