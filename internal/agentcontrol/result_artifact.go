@@ -1,6 +1,10 @@
 package agentcontrol
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,34 +60,47 @@ func AgentResultPreview(raw string) (string, bool) {
 }
 
 func (c *AgentControl) recordAgentResultArtifact(snap subagent.SubAgentSnapshot) string {
-	if c == nil || c.harnessStore == nil || strings.TrimSpace(c.harnessDir) == "" || strings.TrimSpace(snap.ID) == "" || strings.TrimSpace(snap.Result) == "" {
+	if c == nil || c.harnessStore == nil || strings.TrimSpace(c.harnessDir) == "" || !safeResultWorkerID(snap.ID) || strings.TrimSpace(snap.Result) == "" {
 		return ""
 	}
-	path := filepath.Join(c.harnessDir, "artifacts", snap.ID, "result.md")
-	id := snap.ID + "-result"
-	if c.artifactAlreadyRecorded(id, path) {
-		return path
-	}
-	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
-		return ""
-	}
-	if err := os.WriteFile(path, []byte(snap.Result), securefs.FileMode); err != nil {
+	content := []byte(snap.Result)
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+	path := filepath.Join(c.harnessDir, "artifacts", snap.ID, "results", digest, "result.md")
+	id := snap.ID + "-result-" + digest
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		if !info.Mode().IsRegular() {
+			return ""
+		}
+		matches, readErr := securefs.RegularFileMatches(path, content)
+		if readErr != nil || !matches {
+			return ""
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// Writers for this content-addressed name publish identical bytes.
+		// Atomic publication avoids exposing a partially written result.
+		if err := securefs.WriteFileAtomic(path, content); err != nil {
+			return ""
+		}
+	default:
 		return ""
 	}
 	createdAt := snap.CompletedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	_ = c.harnessStore.AddArtifact(harness.Artifact{
-		ID:        id,
-		TaskID:    snap.ID,
-		RunID:     harnessRunID(snap.ID),
-		Kind:      harness.ArtifactResult,
-		Path:      path,
-		Summary:   "full agent result",
-		CreatedAt: createdAt,
-	})
+	// Reusing the same content is idempotent across repeated notifications.
+	// Do not replace an existing artifact's metadata on replay.
+	if !c.artifactAlreadyRecorded(id, path) {
+		_ = c.harnessStore.AddArtifact(harness.Artifact{ID: id, TaskID: snap.ID, RunID: harnessRunID(snap.ID), Kind: harness.ArtifactResult, Path: path, Summary: "full agent result", CreatedAt: createdAt})
+	}
 	return path
+}
+
+func safeResultWorkerID(id string) bool {
+	return id != "" && strings.TrimSpace(id) == id && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, `\/`)
 }
 
 func (c *AgentControl) artifactAlreadyRecorded(id, path string) bool {
@@ -109,6 +126,28 @@ func (c *AgentControl) artifactAlreadyRecorded(id, path string) bool {
 		return false
 	}
 	return false
+}
+
+// filterUnavailableGeneratedResults avoids advertising a content-addressed
+// artifact whose bytes no longer match its immutable identity. Legacy and
+// extension-owned paths retain their existing behavior.
+func filterUnavailableGeneratedResults(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		digest := filepath.Base(filepath.Dir(path))
+		if filepath.Base(path) == "result.md" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "results" && len(digest) == sha256.Size*2 {
+			expected, err := hex.DecodeString(digest)
+			if err != nil {
+				continue
+			}
+			actual, _, err := securefs.HashRegularFile(path)
+			if err != nil || !bytes.Equal(actual[:], expected) {
+				continue
+			}
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 func (c *AgentControl) sessionArtifactRef(path string) string {

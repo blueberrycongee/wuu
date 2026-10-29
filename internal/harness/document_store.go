@@ -98,13 +98,31 @@ func fileCollection(path string) string {
 // Derived artifacts are outside the document commit. Serialize materialization
 // and reread authoritative content so a delayed older writer cannot clobber a
 // newer report after both commits have succeeded.
-func (s *Store) materializeReport(taskID string) error {
+func (s *Store) materializeReport(taskID, reportID string) error {
 	lock, err := storelock.Acquire(s.dir)
 	if err != nil {
 		return fmt.Errorf("report committed; lock derived artifact: %w", err)
 	}
 	defer lock.Release()
-	report, found, err := s.ReportForTask(taskID)
+	var report Report
+	var found bool
+	if reportID == "" {
+		report, found, err = s.ReportForTask(taskID)
+	} else {
+		var reports []Report
+		reports, err = s.ListReports()
+		for _, candidate := range reports {
+			if candidate.TaskID == taskID && candidate.ID == reportID {
+				report, found = candidate, true
+				break
+			}
+		}
+		// A structured report may have superseded this generated record while
+		// materialization waited; do not resurrect its retired index entry.
+		if err == nil && !found {
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("report committed; read derived artifact source: %w", err)
 	}
@@ -114,8 +132,15 @@ func (s *Store) materializeReport(taskID string) error {
 	if err := os.MkdirAll(filepath.Dir(report.ReportPath), securefs.DirMode); err != nil {
 		return fmt.Errorf("report committed; create derived artifact: %w", err)
 	}
-	if err := securefs.WriteFileAtomic(report.ReportPath, []byte(renderReportMarkdown(report))); err != nil {
-		return fmt.Errorf("report committed; write derived artifact: %w", err)
+	data := []byte(renderReportMarkdown(report))
+	var writeErr error
+	if reportID != "" {
+		writeErr = writeGeneratedReport(report.ReportPath, data)
+	} else {
+		writeErr = securefs.WriteFileAtomic(report.ReportPath, data)
+	}
+	if writeErr != nil {
+		return fmt.Errorf("report committed; write derived artifact: %w", writeErr)
 	}
 	return nil
 }
