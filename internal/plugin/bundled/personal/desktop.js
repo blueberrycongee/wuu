@@ -1168,6 +1168,186 @@ ${personalReviewStyles}
 .mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
   }
 
+  // plugins/personal/ui/send-motion.js
+  var travelMS = 600;
+  var shapeMS = 190;
+  var shapeCurve = "cubic-bezier(.73,.42,.54,1)";
+  var reduced = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  var sendMotionStyles = `
+  .mosaic [data-personal-send-source] { opacity:0; }
+  .mosaic .mosaic-send-overlay { position:absolute!important;margin:0!important;pointer-events:none;z-index:12; }
+  .mosaic .mosaic-send-overlay > .bubble-message-body { width:100%;max-width:none;transform:none;transition:none;margin:0; }
+  .mosaic .mosaic-send-overlay .user-message[data-send-shaping] { position:relative;isolation:isolate;overflow:visible;background:transparent;border-color:transparent;box-shadow:none; }
+  .mosaic .mosaic-send-overlay .user-message[data-send-shaping]::before { content:"";position:absolute;inset:var(--send-inset);z-index:-1;pointer-events:none;border-radius:inherit;background:var(--send-background);border:var(--send-border);box-shadow:var(--send-shadow); }
+`;
+  function useSendMotion(React, rootRef) {
+    const flights = React.useRef(/* @__PURE__ */ new Map());
+    const className = (requestID) => requestID ? `mosaic-send-${requestID}` : void 0;
+    const reconcile = (flight) => {
+      const row = flight.view.querySelector(".plugin-conversation-flow")?.getElementsByClassName(className(flight.requestID))[0];
+      const body = row?.querySelector(".bubble-message-body");
+      if (body !== flight.source) {
+        flight.source?.removeAttribute("data-personal-send-source");
+        flight.source = body;
+        body?.setAttribute("data-personal-send-source", "");
+      }
+      return row;
+    };
+    const start = (flight) => {
+      const row = reconcile(flight), body = flight.source;
+      if (!body || flight.stop) return;
+      if (document.hidden || reduced() || flight.view.closest('[hidden],[inert],[aria-hidden="true"]')) {
+        body.removeAttribute("data-personal-send-source");
+        flights.current.delete(flight.requestID);
+        return;
+      }
+      const destination = body.getBoundingClientRect(), viewRect = flight.view.getBoundingClientRect();
+      const viewport = flight.view.querySelector(".plugin-conversation-scroll").getBoundingClientRect();
+      if (!destination.width || !body.animate || destination.bottom <= viewport.top || destination.top >= viewport.bottom) {
+        body.removeAttribute("data-personal-send-source");
+        flights.current.delete(flight.requestID);
+        return;
+      }
+      const zoom = viewRect.width / flight.view.offsetWidth;
+      const width = destination.width / zoom, height = destination.height / zoom;
+      const x = (flight.origin.right - destination.right) / zoom;
+      const y = (flight.origin.top - destination.top) / zoom;
+      const overlay = row.cloneNode(false), copy2 = body.cloneNode(true);
+      overlay.classList.add("mosaic-send-overlay");
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.inert = true;
+      copy2.removeAttribute("data-personal-send-source");
+      overlay.append(copy2);
+      for (const node of overlay.querySelectorAll("[id]")) node.removeAttribute("id");
+      overlay.style.width = `${width}px`;
+      flight.view.append(overlay);
+      let previousPosition;
+      const place = () => {
+        const target = flight.source?.getBoundingClientRect(), parent = flight.view.getBoundingClientRect();
+        if (!target) return;
+        const position = { left: (target.left - parent.left) / zoom, top: (target.top - parent.top) / zoom };
+        overlay.style.left = `${position.left}px`;
+        overlay.style.top = `${position.top}px`;
+        const previous = previousPosition;
+        previousPosition = position;
+        return previous && { x: previous.left - position.left, y: previous.top - position.top };
+      };
+      place();
+      const log = -Math.log(Math.min(3 / Math.max(3.01, Math.hypot(x, y)), 0.99));
+      const damping = log / Math.hypot(Math.PI, log), omega = Math.sqrt(140);
+      const frequency = omega * Math.sqrt(1 - damping * damping);
+      const spring = (ms) => 1 - Math.exp(-damping * omega * ms / 1e3) * (Math.cos(frequency * ms / 1e3) + damping * omega / frequency * Math.sin(frequency * ms / 1e3));
+      let naturalMS = 0;
+      while (naturalMS < 2e3) {
+        naturalMS += 50;
+        if (Math.abs(1 - spring(naturalMS)) * 100 <= 0.5 && Math.abs(spring(naturalMS + 1) - spring(naturalMS)) * 1e5 <= 15) break;
+      }
+      const tracks = [];
+      const play = (target, frames, options) => {
+        const track = target.animate(frames, options);
+        if (document.timeline.currentTime !== null) track.startTime = document.timeline.currentTime;
+        tracks.push(track);
+        return track;
+      };
+      let travel = play(overlay, Array.from({ length: 61 }, (_, index) => {
+        const remaining = index === 60 ? 0 : 1 - spring(naturalMS * index / 60);
+        return { offset: index / 60, translate: `${x * remaining}px ${y * remaining}px` };
+      }), { duration: travelMS, easing: "linear" });
+      const size = Math.min(1, Math.max(width, height) / 360);
+      overlay.style.transformOrigin = "right top";
+      const compression = play(overlay, [
+        { offset: 0, scale: "1 1", easing: "cubic-bezier(.65,0,.35,1)" },
+        { offset: 1 / 3, scale: `${1 - Math.min(0.5, 18 * size / width)} ${1 - Math.min(0.5, 4 * size / height)}`, easing: "cubic-bezier(.19,0,.48,1)" },
+        { offset: 0.9, scale: "1 1" },
+        { offset: 1, scale: "1 1" }
+      ], { duration: travelMS });
+      const bubble = copy2.querySelector(".user-message");
+      const extra = bubble ? Math.max(0, (flight.origin.width - bubble.getBoundingClientRect().width) / zoom) : 0;
+      if (bubble && extra > 0) {
+        const style = getComputedStyle(bubble);
+        for (const [name, value] of Object.entries({
+          background: style.background,
+          border: style.border,
+          shadow: style.boxShadow,
+          inset: `-${style.borderTopWidth} -${style.borderRightWidth} -${style.borderBottomWidth} -${style.borderLeftWidth}`
+        })) bubble.style.setProperty(`--send-${name}`, value);
+        const borderLeft = style.borderLeftWidth;
+        bubble.setAttribute("data-send-shaping", "");
+        const shape = play(bubble, [{ left: `${-extra - parseFloat(borderLeft)}px` }, { left: `-${borderLeft}` }], { duration: shapeMS, easing: shapeCurve, pseudoElement: "::before" });
+        for (const child of bubble.children) play(child, [{ translate: `${-extra}px 0` }, { translate: "0px 0px" }], { duration: shapeMS, easing: shapeCurve });
+        shape.addEventListener("finish", () => bubble.removeAttribute("data-send-shaping"), { once: true });
+      }
+      let frame;
+      const stop = () => {
+        cancelAnimationFrame(frame);
+        for (const track of tracks) track.cancel();
+        overlay.remove();
+        flight.source?.removeAttribute("data-personal-send-source");
+        for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.removeEventListener(event, stop, true);
+        flights.current.delete(flight.requestID);
+      };
+      flight.stop = stop;
+      const follow = () => {
+        if (document.hidden || reduced() || !flight.view.isConnected || flight.view.closest('[hidden],[inert],[aria-hidden="true"]') || Math.abs(flight.view.offsetWidth - viewRect.width / zoom) > 1) {
+          stop();
+          return;
+        }
+        reconcile(flight);
+        const delta = place();
+        if (delta && Math.hypot(delta.x, delta.y) > 0.5) {
+          const current = getComputedStyle(overlay).translate.split(" ").map(parseFloat);
+          const remaining = Math.max(1, travelMS - Number(compression.currentTime));
+          const paused = travel.playState === "paused";
+          travel.cancel();
+          travel = play(overlay, [{ translate: `${(current[0] || 0) + delta.x}px ${(current[1] || 0) + delta.y}px` }, { translate: "0px 0px" }], { duration: remaining, easing: "cubic-bezier(.19,1,.22,1)" });
+          if (paused) travel.pause();
+          travel.addEventListener("finish", stop, { once: true });
+        }
+        frame = requestAnimationFrame(follow);
+      };
+      for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.addEventListener(event, stop, true);
+      travel.addEventListener("finish", stop, { once: true });
+      frame = requestAnimationFrame(follow);
+    };
+    React.useLayoutEffect(() => {
+      for (const flight of flights.current.values()) {
+        reconcile(flight);
+        if (!flight.frame && !flight.stop) {
+          flight.frame = requestAnimationFrame(() => {
+            flight.frame = requestAnimationFrame(() => {
+              flight.frame = void 0;
+              start(flight);
+            });
+          });
+        }
+      }
+    });
+    React.useEffect(() => () => {
+      for (const flight of flights.current.values()) {
+        cancelAnimationFrame(flight.frame);
+        flight.stop?.();
+        flight.source?.removeAttribute("data-personal-send-source");
+      }
+      flights.current.clear();
+    }, []);
+    return {
+      className,
+      begin(requestID, conversationID) {
+        if (document.hidden || reduced()) return;
+        const view = [...rootRef.current?.querySelectorAll(".plugin-conversation") || []].find((node) => node.dataset.conversationId === conversationID);
+        const composer = view?.querySelector(".composer-frame");
+        if (!composer || view.closest('[hidden],[inert],[aria-hidden="true"]')) return;
+        for (const flight of flights.current.values()) if (flight.view === view) {
+          cancelAnimationFrame(flight.frame);
+          flight.stop?.();
+          flight.source?.removeAttribute("data-personal-send-source");
+          flights.current.delete(flight.requestID);
+        }
+        flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect() });
+      }
+    };
+  }
+
   // plugins/personal/ui/desktop.js
   async function activate(api) {
     const React = api.react, h = React.createElement;
@@ -1181,6 +1361,7 @@ ${personalReviewStyles}
     };
     const settingsPanels = createSettingsPanels(React, api.ui, call);
     api.registerStyle({ id: "personal-settings-panels", css: settingsPanels.styles });
+    api.registerStyle({ id: "personal-send-motion", css: sendMotionStyles });
     const words = {
       "en": {
         "profile": "About twin",
@@ -2417,6 +2598,7 @@ ${personalReviewStyles}
       const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
       const [, setDraftVersion] = React.useState(0);
       const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+      const sendMotion = useSendMotion(React, rootRef);
       const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
       const reducePanelMotion = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       const openPanel = () => {
@@ -2460,7 +2642,7 @@ ${personalReviewStyles}
             });
           });
         } else timer = setTimeout(settle, delay);
-        const reduced = () => {
+        const reduced2 = () => {
           if (reducePanelMotion()) {
             cancelAnimationFrame(frame);
             cancelAnimationFrame(secondFrame);
@@ -2470,14 +2652,14 @@ ${personalReviewStyles}
           }
         };
         const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-        media?.addEventListener("change", reduced);
-        const observer = new MutationObserver(reduced);
+        media?.addEventListener("change", reduced2);
+        const observer = new MutationObserver(reduced2);
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion"] });
         return () => {
           cancelAnimationFrame(frame);
           cancelAnimationFrame(secondFrame);
           clearTimeout(timer);
-          media?.removeEventListener("change", reduced);
+          media?.removeEventListener("change", reduced2);
           observer.disconnect();
         };
       }, [panelOpen, panelPresent]);
@@ -2620,7 +2802,7 @@ ${personalReviewStyles}
           if (opened.agent?.main_session_id && opened.agent.main_session_id !== identity.main_session_id) throw new Error("main_session_binding_conflict");
           publishIdentity(opened.agent);
           for (const entry of opened.pending_inputs || []) acceptReceipt(entry.receipt, entry);
-          for (const record2 of latest.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of latest.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           const receiptReadErrors = [];
           const readReceiptStatus = async (requestID) => {
             try {
@@ -2829,7 +3011,7 @@ ${personalReviewStyles}
           if (!mounted.current || version !== replyLoadVersion.current) return;
           const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
           if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
-          for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory(history);
           closePanel(false);
           setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
@@ -2860,7 +3042,7 @@ ${personalReviewStyles}
         try {
           const page = await call("agents.history", { agent_id: agent.agent_id, reply_seq: replySelection.rootSeq, ...earlier ? { end_seq: replyHistory.first_seq - 1 } : {} });
           if (!mounted.current || version !== replyLoadVersion.current) return;
-          for (const record2 of page.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of page.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory((current) => ({ ...page, ...!earlier && current?.records.length ? { first_seq: current.first_seq, has_earlier: current.has_earlier } : {}, records: [...new Map([...current?.records || [], ...page.records].map((record2) => [record2.seq, record2])).values()].sort((a, b) => a.seq - b.seq) }));
         } catch (cause) {
           if (version === replyLoadVersion.current) updateDraft(replySelection.key, { error: String(cause.message || cause) });
@@ -2900,6 +3082,7 @@ ${personalReviewStyles}
         const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
         if (!state.pending || state.pending.prompt !== text2 || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text2, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext() };
         const requestID = state.pending.requestID, editVersion = state.editVersion;
+        if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
         const stream2 = streamFor(conversationID), version = stream2.version;
         updateDraft(id, { submitting: true, error: "" });
         if (id === conversationID) setError("");
@@ -3143,7 +3326,7 @@ ${personalReviewStyles}
           onRetry: async (resumeHeld) => deliver(await call("genui.read", input), resumeHeld)
         };
       });
-      const renderReplyMessage = (record2) => h(ConversationMessage, { interactive: interactiveFor(record2), footer: receiptFooter(record2.receipt), reaction: reactionFor(record2), key: `reply:${record2.seq ?? record2.id}`, id: `reply:${conversationID}:${record2.seq ?? record2.id}`, streaming: record2.streaming, role: record2.role, content: record2.ui_parts?.length ? record2.ui_text || "" : record2.display_content || record2.content || "", timestamp: record2.at, linkPolicy: "external-only", attachments: record2.attachments?.length ? h(React.Fragment, null, record2.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record2.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record2.seq, attachment, t, autoLoad: true }))) : void 0 });
+      const renderReplyMessage = (record2) => h(ConversationMessage, { className: sendMotion.className(record2.receipt?.request_id), interactive: interactiveFor(record2), footer: receiptFooter(record2.receipt), reaction: reactionFor(record2), key: `reply:${record2.seq ?? record2.id}`, id: `reply:${conversationID}:${record2.seq ?? record2.id}`, streaming: record2.streaming, role: record2.role, content: record2.ui_parts?.length ? record2.ui_text || "" : record2.display_content || record2.content || "", timestamp: record2.at, linkPolicy: "external-only", attachments: record2.attachments?.length ? h(React.Fragment, null, record2.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record2.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record2.seq, attachment, t, autoLoad: true }))) : void 0 });
       const replyDraft = replySelection ? draftFor(replySelection.key) : void 0;
       const rootSeq = replySelection?.rootSeq;
       const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
@@ -3159,8 +3342,8 @@ ${personalReviewStyles}
       const taskSource = replySelection?.taskContext?.source;
       const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : void 0;
       const replyRecords = replySelection ? replyMessages.filter((record2) => ["user", "assistant"].includes(record2.role) && (replySelection.taskContext ? record2.seq !== taskSourceRef?.seq && record2.relation?.metadata?.task_links?.some((link) => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record2.seq) || record2.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record2.relation.reply_to.seq))) : [];
-      const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && !entry.receipt?.message_seq && !records.some((record2) => record2.receipt?.receipt_id && record2.receipt.receipt_id === entry.receipt?.receipt_id));
-      const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : void 0, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
+      const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some((record2) => record2.receipt?.receipt_id && record2.receipt.receipt_id === entry.receipt?.receipt_id));
+      const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : void 0, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
       const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
         if (entry.draftID === replySelection.key) return true;
         if (replySelection.taskContext) {
@@ -3257,6 +3440,7 @@ ${personalReviewStyles}
             }))
           },
           records.filter((record2) => (record2.ui_parts?.length || !liveMessages.some((message) => message.seq === record2.seq || message.source_id && message.source_id === record2.provider_item_id)) && ["user", "assistant"].includes(record2.role) && (record2.display_content || record2.content || record2.attachments?.length)).map((record2) => h(ConversationMessage, {
+            className: sendMotion.className(record2.receipt?.request_id),
             interactive: interactiveFor(record2),
             footer: receiptFooter(record2.receipt),
             reaction: reactionFor(record2),
@@ -3274,7 +3458,7 @@ ${personalReviewStyles}
           })),
           pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
           liveMessages.filter((message) => !records.some((record2) => record2.ui_parts?.length && (message.seq === record2.seq || message.source_id && message.source_id === record2.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
-          !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+          !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
           h(settingsPanels.ReviewConversation, { locale }),
           h(settingsPanels.ConnectorConversation),
           pendingCalendarOperations.length > 0 && h(

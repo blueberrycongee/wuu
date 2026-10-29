@@ -1,4 +1,5 @@
 import { createSettingsPanels } from "./settings-panels.js";
+import { sendMotionStyles, useSendMotion } from "./send-motion.js";
 export async function activate(api) {
   const React = api.react, h = React.createElement;
   const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
@@ -13,6 +14,7 @@ export async function activate(api) {
   };
   const settingsPanels = createSettingsPanels(React, api.ui, call);
   api.registerStyle({ id: "personal-settings-panels", css: settingsPanels.styles });
+  api.registerStyle({ id: "personal-send-motion", css: sendMotionStyles });
   const words = {
     "en": {
       "profile": "About twin",
@@ -867,6 +869,7 @@ export async function activate(api) {
     const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
     const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+    const sendMotion = useSendMotion(React, rootRef);
     const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
     const reducePanelMotion = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const openPanel = () => { focusVersion.current++; if (panelPresent) setPanelVisible(true); setPanelPresent(true); setPanelPhase("opening"); setPanelOpen(true); };
@@ -998,7 +1001,7 @@ export async function activate(api) {
         if (opened.agent?.main_session_id && opened.agent.main_session_id !== identity.main_session_id) throw new Error("main_session_binding_conflict");
         publishIdentity(opened.agent);
         for (const entry of opened.pending_inputs || []) acceptReceipt(entry.receipt, entry);
-        for (const record of latest.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation });
+        for (const record of latest.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         const receiptReadErrors = [];
         const readReceiptStatus = async requestID => {
           try { return await call("agents.messages.status", { agent_id: identity.agent_id, request_id: requestID }); }
@@ -1149,7 +1152,7 @@ export async function activate(api) {
         if (!mounted.current || version !== replyLoadVersion.current) return;
         const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
         if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
-        for (const record of history?.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation });
+        for (const record of history?.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(history);
         closePanel(false);
         setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
@@ -1172,7 +1175,7 @@ export async function activate(api) {
       try {
         const page = await call("agents.history", { agent_id: agent.agent_id, reply_seq: replySelection.rootSeq, ...(earlier ? { end_seq: replyHistory.first_seq - 1 } : {}) });
         if (!mounted.current || version !== replyLoadVersion.current) return;
-        for (const record of page.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation });
+        for (const record of page.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(current => ({ ...page, ...(!earlier && current?.records.length ? { first_seq: current.first_seq, has_earlier: current.has_earlier } : {}), records: [...new Map([...(current?.records || []), ...page.records].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq) }));
       } catch (cause) { if (version === replyLoadVersion.current) updateDraft(replySelection.key, { error: String(cause.message || cause) }); }
       finally { replyPaging.current = false; }
@@ -1202,6 +1205,7 @@ export async function activate(api) {
       const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
       if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext() };
       const requestID = state.pending.requestID, editVersion = state.editVersion;
+      if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
       const stream = streamFor(conversationID), version = stream.version;
       updateDraft(id, { submitting: true, error: "" }); if (id === conversationID) setError("");
       const detail = { requestID, prompt: text, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id };
@@ -1333,7 +1337,7 @@ export async function activate(api) {
         onRetry: async resumeHeld => deliver(await call("genui.read", input), resumeHeld),
       };
     });
-    const renderReplyMessage = record => h(ConversationMessage, { interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
+    const renderReplyMessage = record => h(ConversationMessage, { className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
     const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
@@ -1343,8 +1347,8 @@ export async function activate(api) {
     const taskSource = replySelection?.taskContext?.source;
     const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
     const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
-    const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && !entry.receipt?.message_seq && !records.some(record => record.receipt?.receipt_id && record.receipt.receipt_id === entry.receipt?.receipt_id));
-    const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : undefined, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
+    const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some(record => record.receipt?.receipt_id && record.receipt.receipt_id === entry.receipt?.receipt_id));
+    const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : undefined, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
     const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
       if (entry.draftID === replySelection.key) return true;
       if (replySelection.taskContext) {
@@ -1379,9 +1383,9 @@ export async function activate(api) {
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
       }, records.filter(record => (record.ui_parts?.length || !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
-          interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", linkPolicy: "external-only",
+          className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-        })), pendingReceipts.map(entry => renderPendingReceipt(entry, conversationID)), liveMessages.filter(message => !records.some(record => record.ui_parts?.length && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))).map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+        })), pendingReceipts.map(entry => renderPendingReceipt(entry, conversationID)), liveMessages.filter(message => !records.some(record => record.ui_parts?.length && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))).map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         h(settingsPanels.ReviewConversation, { locale }), h(settingsPanels.ConnectorConversation),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
