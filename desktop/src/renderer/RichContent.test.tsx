@@ -112,6 +112,27 @@ function resolvedFileReference(
 }
 
 describe("RichContent code block", () => {
+  it.each([
+    "价格 $100，$200。",
+    "价格 $100、$200。",
+    "价格 $100；$200。",
+    "Prices: $100; $200",
+    "Prices: $100 & $200",
+    "Prices: $100 vs. $200",
+    "Total: $100 + $200",
+  ])("preserves amounts separated by punctuation (%#)", text => {
+    render(<RichContent text={text} />);
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.querySelector(".rich-paragraph")?.textContent).toBe(text);
+  });
+
+  it("preserves numeric math expressions adjacent to a following number", () => {
+    render(<RichContent text={String.raw`$2x+1$3 and $2\text{ dogs}$4`} />);
+    expect(Array.from(container.querySelectorAll(".katex annotation"), node => node.textContent)).toEqual([
+      "2x+1", String.raw`2\text{ dogs}`,
+    ]);
+  });
+
   it.each(["message", "markdown"])("keeps dollar amounts as text without swallowing surrounding Markdown in %s", (mode) => {
     const text = "**最高 $500/月 API 额度**\n套餐对应 $100/$200/$500，月上限 $500。";
     const element = mode === "message" ? <RichContent text={text} /> : <MarkdownContent text={text} />;

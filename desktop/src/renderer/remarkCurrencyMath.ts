@@ -3,7 +3,7 @@ import type { Plugin } from "unified";
 
 const isDigit = (code: number | null): boolean => code !== null && code >= 48 && code <= 57;
 const prose = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|(?:^|[\s/])[a-z]{2,}(?=[\s/]|$)/iu;
-const amountWithSeparator = /^\d[\d,.]*(?:\s*[/–-])?\s*$/u;
+const amountWithSeparator = /^\d[\d,.]*(?:\s*(?:[/–+，、；;:&-]|vs\.?))?\s*$/iu;
 
 // A dollar amount and a later dollar amount otherwise look like one inline
 // formula to remark-math. Check the next delimiter without changing offsets or
