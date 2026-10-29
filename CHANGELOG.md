@@ -232,6 +232,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep external tool providers usable when their native backend was not admitted, and reject late native delegation instead of crashing or executing with incomplete thread authority.
+
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
 - Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.
 

@@ -1367,9 +1367,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit          *tools.Toolkit
-		agentControl *agentcontrol.AgentControl
-		toolExecutor = s.StreamRunner.Tools
+		kit                   *tools.Toolkit
+		agentControl          *agentcontrol.AgentControl
+		toolExecutor          = s.StreamRunner.Tools
+		nativeAdmissionClosed bool
+		nativeAdmissionMu     sync.Mutex
 	)
 	threadProcessManager, err := s.processManagerForThread(threadRoot, stateDir)
 	if err != nil {
@@ -1389,6 +1391,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// StartQueuedWork.
 	if s.Toolkit != nil {
 		initialize := func() error {
+			nativeAdmissionMu.Lock()
+			defer nativeAdmissionMu.Unlock()
+			if nativeAdmissionClosed {
+				return errors.New("native tool backend was not initialized during thread admission")
+			}
 			var err error
 			kit, err = s.Toolkit.CloneForRoot(threadRoot)
 			if err != nil {
@@ -1446,6 +1453,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if _, err := selectedToolSurface(context.Background(), toolExecutor); err != nil {
 				return nil, err
 			}
+			nativeAdmissionMu.Lock()
+			if kit == nil {
+				nativeAdmissionClosed = true
+			}
+			nativeAdmissionMu.Unlock()
 		}
 	}
 
@@ -1454,7 +1466,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
 
-	if s.Toolkit != nil {
+	if s.Toolkit != nil && kit != nil {
 		workerClient := s.WorkerClient
 		workerClientProvider := strings.TrimSpace(s.ModelRoles.Worker.Provider)
 		if workerClient == nil {
@@ -1619,7 +1631,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 
-	if kit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
+	if kit == nil && s.Toolkit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
 		toolExecutor = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
 	}
 
