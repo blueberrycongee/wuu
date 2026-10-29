@@ -10,24 +10,30 @@ Use the project's existing stack and the tools available in this Wuu session.
 
 ## Find the right resources
 
-The skill base directory is reported when this skill loads. All paths below
-are relative to that directory, including the paths returned by the catalog.
-Run the read-only catalog script with that base path quoted:
+The skill base directory is reported as a `file://` URI when this skill loads.
+All paths below, including catalog results, are relative to that directory.
+Convert the reported URI to a local path before passing it to shell commands
+or file tools. Run the following in one shell, replacing `<skill-base>` with
+the complete reported URI as a single-quoted shell literal. If the value
+contains a single quote, escape it for the shell; never interpolate the URI
+into a double-quoted shell string.
 
 ```bash
-node "<skill-base>/scripts/catalog.mjs" --kind template dashboard
-node "<skill-base>/scripts/catalog.mjs" --kind design-system linear
-node "<skill-base>/scripts/catalog.mjs" --id template/saas-landing
-node "<skill-base>/scripts/catalog.mjs" --kind workflow redesign
-node "<skill-base>/scripts/catalog.mjs" --kind craft
-node "<skill-base>/scripts/catalog.mjs" --kind prompt storyboard
+OPENDESIGN_SKILL_PATH="$(node --input-type=module -e 'import { fileURLToPath } from "node:url"; process.stdout.write(fileURLToPath(process.argv[1]))' '<skill-base>')"
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --kind template dashboard
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --kind design-system linear
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --id template/saas-landing
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --kind workflow redesign
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --kind craft
+node "$OPENDESIGN_SKILL_PATH/scripts/catalog.mjs" --kind prompt storyboard
 ```
 
 Translate a Chinese request into likely English catalog keywords when needed.
 Start with a task type or brand; relax the search if it returns no matches.
 Results are paginated: use `--offset <next_offset>` to continue, and `--limit`
 to request up to 50 entries. `--id` selects an exact returned ID. Read only
-selected entries and their dependencies. Without Node, search
+selected entries and their dependencies. Without Node, convert the URI to a
+local path with an available URL-aware tool and search
 `references/catalog.json` with the available file tools.
 
 ## Compose the design
