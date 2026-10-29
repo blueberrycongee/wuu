@@ -825,6 +825,8 @@ export async function activate(api) {
       if (!receipt || receipt.session_id !== currentAgent.current?.main_session_id || (detail.requestID && detail.requestID !== receipt.request_id) || !receipt.request_id || !receipt.receipt_id || !receipt.client_id || !receipt.queue_id || !receipt.host_request_id || !receipt.accepted_at || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || !["accepted", "in_history"].includes(receipt.receipt_state)) return false;
       const previous = receiptStates.current.get(receipt.request_id);
       if (previous?.receipt && previous.receipt.receipt_id !== receipt.receipt_id) return false;
+      // Seeing the history row is independent of the execution receipt revision.
+      if (previous && detail.inHistory) previous.inHistory = true;
       if (previous?.receipt && previous.receipt.revision > receipt.revision) return true;
       receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state });
       if (mounted.current) setDraftVersion(value => value + 1);
