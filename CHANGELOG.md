@@ -16,6 +16,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Continue compatible native byte-read cursors in remote workspaces with current native authorization and snapshot checks.
+
 - Allow opted-in remote reader replacements to return validated images from an authorized worker continuation.
 - Allow remote reader replacements to paginate through worker-bound, snapshot-checked continuation tokens.
 

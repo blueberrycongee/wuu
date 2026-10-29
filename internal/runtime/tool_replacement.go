@@ -153,6 +153,16 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return toolresult.Result{}, err
 		}
 		path = input.Path
+		if input.Continuation != "" && !strings.HasPrefix(input.Continuation, readcursor.Prefix) {
+			restored, managed, err := r.toolkit.RestoreRemoteNativeRead(call)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			if managed {
+				return r.toolkit.ExecuteNativeSessionRead(ctx, actor, actorPath, r.original, call, restored)
+			}
+			return r.toolkit.ExecuteRemoteNativeReadOn(ctx, remoteEnv, actor, actorPath, r.original, restored)
+		}
 		prepareArguments := call.Arguments
 		if strings.HasPrefix(input.Continuation, readcursor.Prefix) {
 			if !pagination {
