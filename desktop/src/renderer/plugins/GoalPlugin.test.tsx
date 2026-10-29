@@ -116,6 +116,57 @@ it("renders an unavailable service without crashing and recovers on the selected
   expect(ui.container.textContent).toContain(activeGoal.objective);
 });
 
+it("hides an absent optional provider, stops polling, and recovers after the plugin inventory changes", async () => {
+  let available = false;
+  const invoke = vi.fn(async () => {
+    if (!available) throw new Error("Error invoking remote method: no provider for service goal.control");
+    return { goal: activeGoal };
+  });
+  const ui = await mount(invoke);
+  expect(ui.container.textContent).toBe("");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTimeAsync(4500));
+  expect(invoke).toHaveBeenCalledTimes(1);
+
+  available = true;
+  await act(async () => {
+    ui.host.publishHostEvent({ kind: "notification", message: { method: "plugin/inventory/changed" } });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(ui.container.textContent).toContain(activeGoal.objective);
+  expect(invoke).toHaveBeenCalledTimes(2);
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(invoke).toHaveBeenCalledTimes(3);
+});
+
+it("hides an open goal when its provider disappears and still reports unrelated provider errors", async () => {
+  let mode: "available" | "missing" | "broken" = "available";
+  const invoke = vi.fn(async () => {
+    if (mode === "missing") throw new Error("no provider for service goal.control");
+    if (mode === "broken") throw new Error("no provider for service goal.control major version 1 (provided majors: [2])");
+    return { goal: activeGoal };
+  });
+  const ui = await mount(invoke);
+  await ui.expand();
+  mode = "missing";
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(ui.container.textContent).toBe("");
+  const calls = invoke.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  expect(invoke).toHaveBeenCalledTimes(calls);
+
+  mode = "broken";
+  await act(async () => {
+    ui.host.publishHostEvent({ kind: "notification", message: { method: "plugin/inventory/changed" } });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("major version 1");
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(invoke).toHaveBeenCalledTimes(calls + 2);
+});
+
 it("exposes live controls above the composer and removes them with the plugin", async () => {
   let goal = activeGoal;
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
