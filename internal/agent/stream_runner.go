@@ -1790,7 +1790,10 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventProviderState:
 				if event.ProviderState != nil {
-					event.ProviderState.StepIndex = req.StepIndex
+					// Providers may retain this state for later transport diagnostics.
+					state := *event.ProviderState
+					state.StepIndex = req.StepIndex
+					event.ProviderState = &state
 				}
 
 			case providers.EventLifecycle:
