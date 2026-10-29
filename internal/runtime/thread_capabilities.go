@@ -65,15 +65,17 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	s.pluginGenerationMu.Unlock()
 	retained := false
 	var resultRelease func() error
+	nativeToolScopes := newNativeToolScopeOwner()
 	defer func() {
 		if !retained {
+			_ = nativeToolScopes.close(context.Background())
 			s.releasePluginGeneration(generation)
 			if resultRelease != nil {
 				_ = resultRelease()
 			}
 		}
 	}()
-	result := &ThreadRuntime{SessionID: id,
+	result := &ThreadRuntime{SessionID: id, nativeToolScopes: nativeToolScopes,
 		Toolkit: kit, ActivityRegistry: s.ActivityRegistry,
 		Selection: selection, PluginGeneration: generation,
 		Documents: documents, Sessions: sessions, PluginHost: host,
@@ -108,6 +110,9 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		result.processHooks = dispatcher
 		if host != nil && selectsRuntimeModule(host, toolExecutionConsumer) {
 			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
+			if err := nativeToolScopes.add(selectedNativeToolScope(result.CapabilityTools)); err != nil {
+				return nil, err
+			}
 		}
 		result.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: selection.PermissionMode}, false, nil)
 		retained = true
@@ -145,6 +150,9 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	}
 	// The selected registry owns the capability surface for external engines too.
 	result.CapabilityTools = newPluginAwareToolExecutor(kit, host, dispatcher, id, id, kit.RootDir())
+	if err := nativeToolScopes.add(selectedNativeToolScope(result.CapabilityTools)); err != nil {
+		return nil, err
+	}
 	retained = true
 	return result, nil
 }

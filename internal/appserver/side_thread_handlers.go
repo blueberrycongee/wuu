@@ -534,10 +534,15 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	if err != nil {
 		return nil, err
 	}
-	artifactsOwned := true
+	runnerOwned := true
 	defer func() {
-		if artifactsOwned && releaseArtifacts != nil {
-			_ = releaseArtifacts()
+		if runnerOwned {
+			go func() {
+				_ = runtime.CloseSideThreadTools(context.Background(), runner)
+				if releaseArtifacts != nil {
+					_ = releaseArtifacts()
+				}
+			}()
 		}
 	}()
 	previewMessages = append(previewMessages,
@@ -588,7 +593,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	leaseOwned = false
 	generationOwned = false
 	executionOwned = false
-	artifactsOwned = false
+	runnerOwned = false
 
 	return &SideThreadSendResult{
 		UserMessageID: userMessageID,
@@ -689,10 +694,11 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 		}
 		s.sideTurnMu.Unlock()
 		releaseSideThreadExecutionLease(mainID, turn.lease)
-		_ = turn.execution.Close()
+		_ = runtime.CloseSideThreadTools(context.Background(), runner)
 		if turn.releaseArtifacts != nil {
 			_ = turn.releaseArtifacts()
 		}
+		_ = turn.execution.Close()
 		_ = turn.state.Close()
 	}()
 	if start != nil {

@@ -40,10 +40,17 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 }
 
 func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, release *func() error, parentSession ...string) (*agent.StreamRunner, error) {
+	var runnerOwned bool
+	var constructed *agent.StreamRunner
 	var acquired func() error
 	defer func() {
-		if acquired != nil {
-			_ = acquired()
+		if !runnerOwned {
+			go func() {
+				_ = CloseSideThreadTools(context.Background(), constructed)
+				if acquired != nil {
+					_ = acquired()
+				}
+			}()
 		}
 	}()
 	if s == nil || s.StreamRunner == nil {
@@ -61,6 +68,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	if err != nil {
 		return nil, err
 	}
+	constructed = runner
 	root := strings.TrimSpace(rootDir)
 	if root == "" {
 		root = s.RootDir
@@ -146,11 +154,25 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	runner.CompactOnly = false
 	runner.PromptCacheKey = "side-thread:" + id
 	runner.InferenceJournal = s.InferenceJournalForOwner("side-thread:" + id)
+	runnerOwned = true
 	if release != nil {
 		*release = acquired
 		acquired = nil
 	}
 	return runner, nil
+}
+
+// CloseSideThreadTools releases the side runner's native scope after its turn
+// and finalizers finish. It does not close a provider shared with other scopes.
+func CloseSideThreadTools(ctx context.Context, runner *agent.StreamRunner) error {
+	if runner == nil {
+		return nil
+	}
+	scope := selectedNativeToolScope(runner.Tools)
+	if scope == nil {
+		return nil
+	}
+	return scope.Close(ctx)
 }
 
 func joinNonEmptyPromptParts(parts ...string) string {

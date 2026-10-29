@@ -468,8 +468,11 @@ func (s *Session) RetainSideThreadExecution(binding *State, parentID string, adm
 // finalizers have drained. Non-composed runtimes use their ordinary owner.
 func (t *ThreadRuntime) CloseComposition() error {
 	t.compositionCloseOnce.Do(func() {
+		if t.CompositionID != "" {
+			t.compositionCloseErr = errors.Join(t.CloseNativeToolScope(context.Background()), t.CloseArtifacts())
+		}
 		if t.closeComposition != nil {
-			t.compositionCloseErr = t.closeComposition()
+			t.compositionCloseErr = errors.Join(t.compositionCloseErr, t.closeComposition())
 		}
 	})
 	return t.compositionCloseErr

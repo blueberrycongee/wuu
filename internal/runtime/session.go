@@ -353,6 +353,7 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	nativeToolScopes     *nativeToolScopeOwner
 	closeArtifacts       func() error
 	artifactsCloseOnce   sync.Once
 	artifactsCloseErr    error
@@ -394,6 +395,14 @@ type ThreadRuntime struct {
 	// idle-boundary rebuild adopts an update; committed disable or removal
 	// revokes the affected plugin even while this generation remains pinned.
 	PluginGeneration *PluginGeneration
+}
+
+// CloseNativeToolScope stops admission and drains the thread's native scopes.
+func (t *ThreadRuntime) CloseNativeToolScope(ctx context.Context) error {
+	if t == nil || t.nativeToolScopes == nil {
+		return nil
+	}
+	return t.nativeToolScopes.close(ctx)
 }
 
 func (s *Session) sessionArtifactManager() *tools.SessionArtifactManager {
@@ -1293,6 +1302,12 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if threadRoot == "" {
 		threadRoot = s.RootDir
 	}
+	var temporaryToolScope *toolservice.Scope
+	defer func() {
+		if temporaryToolScope != nil {
+			s.retireTemporaryToolScope(temporaryToolScope, shadow.pluginGeneration)
+		}
+	}()
 	if shadow.Toolkit != nil {
 		kit, cloneErr := shadow.Toolkit.CloneForRoot(threadRoot)
 		if cloneErr != nil {
@@ -1305,6 +1320,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		// Prompt admission must see this clone's plugin tools before the final
 		// thread runtime binds its executor, including a different pinned model.
 		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(kit, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
+		temporaryToolScope = selectedNativeToolScope(shadow.StreamRunner.Tools)
 		catalog, catalogErr := deferredToolCatalogPromptForToolkit(kit)
 		if catalogErr != nil {
 			return nil, catalogErr
@@ -1313,6 +1329,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	}
 	if shadow.Toolkit == nil && shadow.PluginHost != nil && shadow.StreamRunner.Tools != nil {
 		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(nil, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
+		temporaryToolScope = selectedNativeToolScope(shadow.StreamRunner.Tools)
 	}
 	selectedSurface, surfaceErr := selectedToolSurface(context.Background(), shadow.StreamRunner.Tools)
 	if surfaceErr != nil {
@@ -1370,9 +1387,17 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		beginModelReceipts = generation.beginModelReceipts
 	}
 	releasedGeneration := false
+	var releaseFailedResources func()
 	defer func() {
 		if !releasedGeneration {
-			s.releasePluginGeneration(generation)
+			if releaseFailedResources == nil {
+				s.releasePluginGeneration(generation)
+			} else {
+				go func() {
+					releaseFailedResources()
+					s.releasePluginGeneration(generation)
+				}()
+			}
 		}
 	}()
 	threadRoot := strings.TrimSpace(rootDir)
@@ -1417,17 +1442,16 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit            *tools.Toolkit
-		agentControl   *agentcontrol.AgentControl
-		toolExecutor   = s.StreamRunner.Tools
-		artifactsOwned bool
+		kit          *tools.Toolkit
+		agentControl *agentcontrol.AgentControl
+		toolExecutor = s.StreamRunner.Tools
 	)
 	artifactOwner := &artifactLeaseOwner{}
-	defer func() {
-		if !artifactsOwned {
-			_ = artifactOwner.close()
-		}
-	}()
+	nativeToolScopes := newNativeToolScopeOwner()
+	releaseFailedResources = func() {
+		_ = nativeToolScopes.close(context.Background())
+		_ = artifactOwner.close()
+	}
 	threadProcessManager, err := s.processManagerForThread(threadRoot, stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("thread process manager: %w", err)
@@ -1516,6 +1540,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				}
 				return toolservice.Backend{Executor: newPluginToolExecutor(kit, s.PluginHost, id, threadRoot), Toolkit: kit}, nil
 			})
+			if err := nativeToolScopes.add(scope); err != nil {
+				return nil, err
+			}
 			toolExecutor = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: threadRoot, actorID: id})
 			if s.HookDispatcher != nil {
 				toolExecutor = hooks.NewHookedExecutor(toolExecutor, s.HookDispatcher, "", threadRoot)
@@ -1641,7 +1668,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						bindToolkitHooks(workerKit, generation.hooks)
 					}
 					applyWorkerToolFilter(workerKit, wt)
-					return newPluginAwareToolExecutor(workerKit, s.PluginHost, s.HookDispatcher, id, id, workerRoot), nil
+					executor := newPluginAwareToolExecutor(workerKit, s.PluginHost, s.HookDispatcher, id, id, workerRoot)
+					if err := nativeToolScopes.add(selectedNativeToolScope(executor)); err != nil {
+						return nil, err
+					}
+					return executor, nil
 				},
 				ConfigureWorkerRunner: func(runner *agent.StreamRunner, workerID, workerRoot string) {
 					host := s.PluginHost
@@ -1700,6 +1731,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 
 	if kit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
 		toolExecutor = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
+		if err := nativeToolScopes.add(selectedNativeToolScope(toolExecutor)); err != nil {
+			return nil, err
+		}
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
@@ -1771,6 +1805,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
 	result := &ThreadRuntime{SessionID: id,
+		nativeToolScopes:   nativeToolScopes,
 		closeArtifacts:     artifactOwner.close,
 		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, ExecutionEnvironment: threadEnvironment, GitAttributionEnabled: processGitAttribution(generation), RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(threadRoot, wuuHome, artifactDir)},
 		processHooks:       s.HookDispatcher,
@@ -1794,7 +1829,6 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			PermissionMode: config.NormalizePermissionMode(s.Permissions.Mode),
 		},
 	}
-	artifactsOwned = true
 	result.prepareStepModel = func(ctx context.Context, selected session.RuntimeSelection) (*agent.ModelStepBinding, error) {
 		var cfg config.Config
 		if generation != nil && len(generation.settings.Providers) != 0 {

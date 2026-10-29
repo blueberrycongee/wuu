@@ -1801,36 +1801,30 @@ func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 		}
 		s.backgroundMu.Unlock()
 	}
-	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, shutdownDone)
-	if detached.runtime != nil && detached.runtime.CompositionID != "" {
-		if err := detached.runtime.CloseComposition(); err != nil {
-			providers.DebugLogf("close product composition: %v", err)
-		}
-		return
-	}
-	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+	var releaseGeneration func()
+	if detached.runtime != nil && detached.runtime.CompositionID == "" && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
-		if s != nil && s.rt != nil {
-			s.rt.ReleasePluginGeneration(generation)
+		releaseGeneration = func() {
+			if s != nil && s.rt != nil {
+				s.rt.ReleasePluginGeneration(generation)
+			} else {
+				generation.Release()
+			}
 		}
 	}
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, shutdownDone, releaseGeneration)
 }
 
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
-	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, nil)
-	if detached.runtime != nil && detached.runtime.CompositionID != "" {
-		if err := detached.runtime.CloseComposition(); err != nil {
-			providers.DebugLogf("close product composition: %v", err)
-		}
-		return
-	}
-	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+	var releaseGeneration func()
+	if detached.runtime != nil && detached.runtime.CompositionID == "" && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
-		generation.Release()
+		releaseGeneration = func() { generation.Release() }
 	}
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, nil, releaseGeneration)
 }
 
 func threadRuntimeHasOutstandingAgentWork(threadRuntime *runtime.ThreadRuntime) bool {
@@ -1904,7 +1898,7 @@ func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub 
 	}
 }
 
-func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, mainDone, shutdownDone <-chan struct{}) {
+func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, mainDone, shutdownDone <-chan struct{}, releaseGeneration func()) {
 	if threadRuntime == nil {
 		return
 	}
@@ -1923,7 +1917,16 @@ func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, ma
 			return control.WaitOwnedWorkerExecutions(context.Background())
 		}
 		return nil
-	}, threadRuntime.CloseArtifacts)
+	}, func() error {
+		if threadRuntime.CompositionID != "" {
+			return threadRuntime.CloseComposition()
+		}
+		err := errors.Join(threadRuntime.CloseNativeToolScope(context.Background()), threadRuntime.CloseArtifacts())
+		if releaseGeneration != nil {
+			releaseGeneration()
+		}
+		return err
+	})
 }
 
 func finishArtifactsAfterWorkers(wait, release func() error) {
