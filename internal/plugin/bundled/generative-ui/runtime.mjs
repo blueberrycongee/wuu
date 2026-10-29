@@ -2974,6 +2974,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
@@ -3005,12 +3006,13 @@ function descriptor(name, methods, preparation = []) {
     name: method,
     input_schema: `${name}.${method}.input.v1`,
     output_schema: `${name}.${method}.output.v1`,
-    ...preparation.includes(method) ? { preparation: true } : {}
+    ...preparation.includes(method) ? { preparation: true } : {},
+    ...["release-inspection", "reconcile-inspection"].includes(method) ? { cleanup: true } : {}
   })) };
 }
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
   version: "1.2.0"
@@ -3080,6 +3082,21 @@ var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
 
 // packages/plugin-sdk/src/session-service.ts
 var sessionDomainArity = {
+  "InspectionAuthority": [0, 1],
+  "ListInspections": [0, 1],
+  "ReconcileInspection": [1, 1],
+  "AcquireInspection": [1, 1],
+  "ReleaseInspection": [1, 0],
+  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
+  "ReadClientInput": [2, 2],
+  "ListUnsettledClientInputs": [1, 1],
+  "AcceptClientInput": [3, 2],
+  "ChangeClientInput": [6, 1],
+  "AppendAcceptedClientHistoryRecord": [6, 1],
+  "SettleClientInputExecution": [5, 0],
+  "ListClientInputRecoveryCandidates": [1, 1],
+  "RecoverClientInput": [2, 0],
+  "ClientInputHistoryReceipts": [1, 1],
   "AcceptHeldUserWork": [2, 1],
   "AdmitThreadExecution": [4, 1],
   "AppendAcceptedUserHistoryRecord": [3, 1],
@@ -3260,9 +3277,23 @@ var SESSION_SHARING_DESCRIPTOR = {
   }))
 };
 
+// packages/plugin-sdk/src/execution-authorization.ts
+var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
+var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
+  name: EXECUTION_AUTHORIZATION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "inspect", "issue", "validate", "revoke"].map((name) => ({
+    name,
+    input_schema: `execution.authorization.${name}.input.v1`,
+    output_schema: `execution.authorization.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
+var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
+var SECURITY_AUTHORIZE_METHOD = "authorize";
 var KERNEL_SERVICE_NAMES = {
   "host.storage.get": "host.storage.get",
   "host.storage.set": "host.storage.set",
@@ -3278,7 +3309,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -3292,6 +3325,17 @@ function kernelServiceCall(id, method, params) {
     params: { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params }
   };
 }
+function authorizationServiceDescriptor(options = {}) {
+  return {
+    name: SECURITY_AUTHORIZE_SERVICE,
+    version: "1.0.0",
+    methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }, ...options.effect_fence ? [
+      { name: "acquire-authorization", input_schema: "security.authorize.acquire-authorization.input.v1", output_schema: "security.authorize.acquire-authorization.output.v1" },
+      { name: "release-authorization", input_schema: "security.authorize.release-authorization.input.v1", output_schema: "security.authorize.release-authorization.output.v1", cleanup: true }
+    ] : []]
+  };
+}
+var AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
 var RuntimeHostServiceError = class extends Error {
   code;
   constructor(error) {
