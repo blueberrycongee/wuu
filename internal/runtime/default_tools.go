@@ -109,7 +109,8 @@ func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *Plugin
 	cfg := generation.settings
 	kit.SetStateDir(s.StateDir)
 	kit.SetRuntimeHome(s.WuuHome)
-	kit.SetWorkingNotesHome(s.WuuHome)
+	kit.SetWorkingNotesHome(s.ProductDataRoot())
+	kit.SetProtectedPaths(memoryProtectedPaths(s.WuuHome, s.UserBinding()))
 	kit.SetWorkspaceID(s.WorkspaceID)
 	kit.SetActivityRegistry(s.ActivityRegistry)
 	if generation.state != nil {
@@ -133,8 +134,8 @@ func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *Plugin
 	kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
 	kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 	bindToolkitHooks(kit, generation.hooks)
-	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
-	manager, codeMode, err := generation.nativeDependencies.get(ctx, generation)
+	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+	manager, codeMode, err := generation.nativeDependencies.get(ctx, generation, !s.UserBinding().IsUser())
 	if err != nil {
 		return nil, nil, err
 	}

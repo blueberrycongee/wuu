@@ -165,9 +165,9 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 					_ = closeResources(context.Background())
 				}
 			}()
-			_, threadSkills, skillGeneration := s.skillSnapshotForRoot(kit.RootDir(), nil)
+			_, threadSkills, skillGeneration := s.skillSnapshotForRoot(kit.RootDir(), generation)
 			kit.SetSkillsWithAvailability(threadSkills, skillGeneration.skillAvailable)
-			if skillGeneration.managedSkillDiscovery {
+			if skillGeneration != nil && skillGeneration.managedSkillDiscovery {
 				s.bindLocalSkillRefresh(kit, kit.RootDir(), skillGeneration)
 			}
 			model := strings.TrimSpace(runner.APIModel)

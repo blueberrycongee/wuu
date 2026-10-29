@@ -18,6 +18,7 @@ import (
 type nativeGenerationDependencies struct {
 	mu                  sync.Mutex
 	initialized, closed bool
+	allowMCP            bool
 	ready               chan struct{}
 	cancel              context.CancelFunc
 	manager             *mcp.Manager
@@ -27,18 +28,23 @@ type nativeGenerationDependencies struct {
 
 // The generation owns initialization. Each caller can abandon its wait
 // without canceling another thread's shared dependency construction.
-func (d *nativeGenerationDependencies) get(ctx context.Context, g *PluginGeneration) (*mcp.Manager, *codemode.Service, error) {
+func (d *nativeGenerationDependencies) get(ctx context.Context, g *PluginGeneration, allowMCP bool) (*mcp.Manager, *codemode.Service, error) {
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return nil, nil, errors.New("native generation dependencies are closed")
 	}
+	if d.initialized && d.allowMCP != allowMCP {
+		d.mu.Unlock()
+		return nil, nil, errors.New("native generation domain changed")
+	}
 	if !d.initialized {
 		d.initialized = true
+		d.allowMCP = allowMCP
 		d.ready = make(chan struct{})
 		initCtx, cancel := context.WithCancel(context.Background())
 		d.cancel = cancel
-		go d.initialize(initCtx, g)
+		go d.initialize(initCtx, g, allowMCP)
 	}
 	ready := d.ready
 	d.mu.Unlock()
@@ -58,7 +64,7 @@ func (d *nativeGenerationDependencies) get(ctx context.Context, g *PluginGenerat
 	return d.manager, d.codeMode, d.err
 }
 
-func (d *nativeGenerationDependencies) initialize(ctx context.Context, g *PluginGeneration) {
+func (d *nativeGenerationDependencies) initialize(ctx context.Context, g *PluginGeneration, allowMCP bool) {
 	var manager *mcp.Manager
 	var code *codemode.Service
 	var err error
@@ -100,7 +106,9 @@ func (d *nativeGenerationDependencies) initialize(ctx context.Context, g *Plugin
 		}
 		active = append(active, plugin)
 	}
-	manager, err = startMCPManagerWithContext(ctx, cfg, active, g.requiredPlugins, g.mcpOAuth)
+	if allowMCP {
+		manager, err = startMCPManagerWithContext(ctx, cfg, active, g.requiredPlugins, g.mcpOAuth)
+	}
 	if err == nil {
 		g.bindMCPActivityManager(manager)
 		code = codemode.NewService(codemode.ServiceConfig{NodeExecutable: g.settings.PTC.NodeExecutable})
