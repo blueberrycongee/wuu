@@ -334,6 +334,17 @@ user turn receives the tree snapshot; workers do not all restart automatically.
 Natural turn completion, by contrast, can leave asynchronous work running.
 See [subagents](../desktop/subagents.md) for worker use and recovery.
 
+If an anonymous worker's process exits after retaining a terminal candidate but
+before confirming its final outcome, recovery reports `interrupted` with an
+unconfirmed-outcome error and retains the candidate evidence. The host does not
+automatically rerun the worker or wake its parent from that candidate. Tool
+effects may already have occurred; inspect the available evidence before an
+explicit follow-up. A follow-up requires a usable saved worker snapshot.
+Older hosts do not understand the unconfirmed marker: finish recovery with the
+new host before starting an older host against the same worker state. This
+recovery describes process exits; it does not establish power-loss durability
+or resolve an external storage provider's uncertain commit receipt.
+
 ## Model and permission selection
 
 `config/model/update` has separate workspace and conversation scopes. Without

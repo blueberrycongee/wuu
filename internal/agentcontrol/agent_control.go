@@ -2272,6 +2272,9 @@ func (c *AgentControl) queuedMessageSignal(currentID string) (WaitAgentSignal, b
 }
 
 func (c *AgentControl) agentNotificationSignal(currentID string, n subagent.Notification) (WaitAgentSignal, bool) {
+	if n.SnapshotOnly {
+		return WaitAgentSignal{}, false
+	}
 	if currentID == "" {
 		if !isFinalSubAgentStatus(n.Status) {
 			return WaitAgentSignal{}, false
@@ -2918,6 +2921,16 @@ func (c *AgentControl) cancelQueuedSpawn(prepared preparedSpawn, now time.Time) 
 		return false, nil
 	}
 	defer c.releaseWorkerExecution(workerID)
+	// A terminal record proves this payload may already have executed. Do not
+	// cancel or acknowledge its queue entry as an unlaunched worker; confirmed
+	// terminal recovery owns that acknowledgement, and drafts remain unknown.
+	pending, err := c.workerTerminalFinalizationPending(workerID)
+	if err != nil {
+		return false, err
+	}
+	if pending {
+		return false, nil
+	}
 	cancellingDurable := false
 	if c.harnessStore != nil && c.harnessStore.Dir() != "" {
 		marked, err := c.harnessStore.MarkQueueItemCancelling(workerID)
@@ -3889,7 +3902,27 @@ func (c *AgentControl) consumeWorkerTerminal(n subagent.Notification) error {
 	}
 	unlockTransition := c.lockWorkerTransition(n.AgentID)
 	defer unlockTransition()
-	if outcome := c.finalizeWorkerTerminalWithAck(n); outcome == workerTerminalContinued {
+	// A pre-snapshot draft is not yet a recoverable outcome: history
+	// persistence may have changed completed into failed. Publish the final
+	// notification durably before any finalizer or queue acknowledgement.
+	durable := workerTerminalFinalizationPath(c.harnessDir, n.AgentID) != ""
+	confirmed := false
+	var confirmationErr error
+	for attempt := 1; ; attempt++ {
+		confirmationErr = c.confirmWorkerTerminal(n)
+		if confirmationErr == nil {
+			confirmed = true
+			break
+		}
+		if errors.Is(confirmationErr, errTerminalDraftMismatch) || (durable && c.workerTerminalYieldRequested()) {
+			break
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			providers.DebugLogf("agentcontrol: worker %s terminal confirmation attempt %d: %v", n.AgentID, attempt, confirmationErr)
+		}
+		time.Sleep(workerTerminalRetryDelay)
+	}
+	if confirmed && c.finalizeWorkerTerminalWithAck(n) == workerTerminalContinued {
 		return nil
 	}
 	c.workerReleaseHookMu.Lock()
@@ -3900,6 +3933,9 @@ func (c *AgentControl) consumeWorkerTerminal(n subagent.Notification) error {
 	}
 	c.releaseWorkerExecution(n.AgentID)
 	c.cleanupRetiringWorkerTerminalFinalizers()
+	if !confirmed {
+		return fmt.Errorf("confirm worker terminal outcome: %w", confirmationErr)
+	}
 	return nil
 }
 
@@ -3936,8 +3972,14 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 	// delivered. Returning here leaves the thread status untouched, so the
 	// closing turn's own completion passes the dedupe guards above and
 	// flows through this consumer normally.
-	if n.Status == subagent.StatusCompleted && c.maybeNudgeReportClosing(n) {
-		return workerNotificationContinued, nil
+	if n.Status == subagent.StatusCompleted {
+		continued, err := c.maybeNudgeReportClosing(n)
+		if err != nil {
+			return workerNotificationSettled, err
+		}
+		if continued {
+			return workerNotificationContinued, nil
+		}
 	}
 	// waiting_children: a parent that produced its final message while
 	// direct children are still live holds that result instead of delivering
@@ -3982,6 +4024,15 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 	if isFinalSubAgentStatus(n.Status) {
 		if err := c.commitDurablyAppliedNestedResults(n.AgentID); err != nil {
 			return workerNotificationSettled, fmt.Errorf("commit nested results applied by %s: %w", n.AgentID, err)
+		}
+		if n.TerminalUnconfirmed {
+			// Surface uncertainty to the root without waking a nested parent or
+			// making the candidate eligible for automatic result replay.
+			communication := c.newAgentCompletionCommunication(n.Snapshot, agentthread.RootPath)
+			if _, err := c.threadStore.RecordResultCommunication(c.rootThreadID, unconfirmedTerminalDeliveryID(n), communication); err != nil {
+				return workerNotificationSettled, fmt.Errorf("persist unconfirmed worker notification: %w", err)
+			}
+			return workerNotificationSettled, nil
 		}
 		if _, err := c.ensureAgentResultDelivery(n.Snapshot); err != nil {
 			return workerNotificationSettled, fmt.Errorf("persist result-ready for %s: %w", n.AgentID, err)
@@ -4270,41 +4321,58 @@ const reportClosingNudge = "You completed the task without submitting your struc
 // If the worker still files nothing, the second completion finds the run
 // already nudged and completes with a synthesized final_text report —
 // never a second nudge, never a lifecycle state.
-func (c *AgentControl) maybeNudgeReportClosing(n subagent.Notification) bool {
+func (c *AgentControl) maybeNudgeReportClosing(n subagent.Notification) (bool, error) {
 	if c == nil || c.isStopping() || c.manager == nil || c.harnessStore == nil || c.threads == nil {
-		return false
+		return false, nil
 	}
 	meta, ok := c.threads.Resolve(n.AgentID)
 	if !ok || meta.Source.EdgeStatus == agentthread.EdgeClosed {
-		return false
+		return false, nil
 	}
 	wt, err := LookupWorkerType(meta.Role)
 	if err != nil || !wt.RequiresReport {
-		return false
+		return false, nil
 	}
 	if _, ok, err := c.harnessStore.ReportForTask(n.AgentID); err != nil || ok {
-		return false
+		return false, nil
 	}
 	c.reportNudgeMu.Lock()
 	if _, done := c.reportNudged[n.AgentID]; done {
 		c.reportNudgeMu.Unlock()
-		return false
+		return false, nil
 	}
 	if c.reportNudged == nil {
 		c.reportNudged = make(map[string]struct{})
 	}
 	c.reportNudged[n.AgentID] = struct{}{}
 	c.reportNudgeMu.Unlock()
+	resetNudge := func() { c.reportNudgeMu.Lock(); delete(c.reportNudged, n.AgentID); c.reportNudgeMu.Unlock() }
+	// The following turn may have externally visible effects before producing
+	// its own terminal intent. Mark the previous completion uncertain before
+	// starting it; crash recovery must not replay that earlier completion.
+	if err := c.persistWorkerTerminalPhase(n, "draft"); err != nil {
+		resetNudge()
+		return false, err
+	}
+	restoreCompletion := func() error { return c.persistWorkerTerminalFinalization(n) }
 	releaseTurnAdmission, admissionErr := c.beginWorkerTurn()
 	if admissionErr != nil {
-		return false
+		if err := restoreCompletion(); err != nil {
+			resetNudge()
+			return false, err
+		}
+		return false, nil
 	}
 	_, followupErr := c.manager.FollowupForcingTool(context.Background(), n.AgentID, reportClosingNudge, "agent_report")
 	releaseTurnAdmission()
 	if followupErr != nil {
 		providers.DebugLogf("agentcontrol: report closing nudge for %s failed: %v", n.AgentID, followupErr)
 		// The caller falls through to normal recording, which settles the run.
-		return false
+		if err := restoreCompletion(); err != nil {
+			resetNudge()
+			return false, err
+		}
+		return false, nil
 	}
 	c.workerReleaseHookMu.Lock()
 	afterFollowup := c.afterReportClosingFollowupForTest
@@ -4315,7 +4383,7 @@ func (c *AgentControl) maybeNudgeReportClosing(n subagent.Notification) bool {
 	// The closing turn is in flight; keep (re-assert) the settlement window
 	// until its own terminal notification is recorded.
 	c.markReportSettlementPending(n.AgentID)
-	return true
+	return true, nil
 }
 
 type nestedResultDeliveryAttempt struct {

@@ -76,27 +76,53 @@ func (c *AgentControl) ResolveFrozenWorkerTree() []FrozenWorkerResult {
 		if decodeErr := json.Unmarshal(data, &rec); decodeErr != nil || rec.SchemaVersion != workerTerminalFinalizationSchema || strings.TrimSpace(rec.AgentID) == "" || !subagent.IsTerminal(rec.Status) {
 			continue
 		}
-		snap := rec.notification().Snapshot
-		resultID, claimed, consumedBy, claimErr := c.claimAgentResultDelivery(snap, agentResultConsumerFrozenSnapshot)
-		if claimErr != nil {
-			// Leave the record for terminal recovery rather than dropping a
-			// result the snapshot could not claim durably.
-			providers.DebugLogf("agentcontrol: claim frozen result %s: %v", rec.AgentID, claimErr)
+		if rec.Phase != "" {
 			continue
 		}
-		if !claimed && consumedBy == agentResultConsumerNestedPending {
-			// A pre-freeze delivery reserved the result but its wake was
-			// gated; move the claim to the snapshot so startup replay does
-			// not restart the parent.
-			if _, _, transitionErr := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerFrozenSnapshot); transitionErr != nil {
-				providers.DebugLogf("agentcontrol: transition frozen result %s: %v", rec.AgentID, transitionErr)
-				continue
+		// The directory scan is only a hint. Serialize result claim and ack
+		// with worker execution, then re-read the exact current record.
+		func() {
+			unlock := c.lockWorkerTransition(rec.AgentID)
+			defer unlock()
+			if c.workerExecutionOwned(rec.AgentID) {
+				return
 			}
-		}
-		if ackErr := c.acknowledgeWorkerTerminalFinalization(rec.AgentID); ackErr != nil {
-			providers.DebugLogf("agentcontrol: acknowledge frozen terminal %s: %v", rec.AgentID, ackErr)
-		}
-		out = append(out, FrozenWorkerResult{Snapshot: snap})
+			acquired, acquireErr := c.acquireWorkerExecution(rec.AgentID)
+			if acquireErr != nil || !acquired {
+				return
+			}
+			defer c.releaseWorkerExecution(rec.AgentID)
+			currentData, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if readErr != nil {
+				return
+			}
+			var current workerTerminalFinalizationRecord
+			if decodeErr := json.Unmarshal(currentData, &current); decodeErr != nil || current.SchemaVersion != workerTerminalFinalizationSchema || current.AgentID != rec.AgentID || current.Phase != "" || !subagent.IsTerminal(current.Status) {
+				return
+			}
+			rec = current
+			snap := rec.notification().Snapshot
+			resultID, claimed, consumedBy, claimErr := c.claimAgentResultDelivery(snap, agentResultConsumerFrozenSnapshot)
+			if claimErr != nil {
+				// Leave the record for terminal recovery rather than dropping a
+				// result the snapshot could not claim durably.
+				providers.DebugLogf("agentcontrol: claim frozen result %s: %v", rec.AgentID, claimErr)
+				return
+			}
+			if !claimed && consumedBy == agentResultConsumerNestedPending {
+				// A pre-freeze delivery reserved the result but its wake was
+				// gated; move the claim to the snapshot so startup replay does
+				// not restart the parent.
+				if _, _, transitionErr := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerFrozenSnapshot); transitionErr != nil {
+					providers.DebugLogf("agentcontrol: transition frozen result %s: %v", rec.AgentID, transitionErr)
+					return
+				}
+			}
+			if ackErr := c.acknowledgeWorkerTerminalFinalization(rec.AgentID); ackErr != nil {
+				providers.DebugLogf("agentcontrol: acknowledge frozen terminal %s: %v", rec.AgentID, ackErr)
+			}
+			out = append(out, FrozenWorkerResult{Snapshot: snap})
+		}()
 	}
 	return out
 }

@@ -65,11 +65,10 @@ const (
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
 	// StatusInterrupted is the terminal state stamped by startup
-	// reconciliation on a run whose owning process exited while the run
-	// was still live (crash, kill, power loss). No goroutine observed the
-	// end of the run, so unlike failed/cancelled it carries no runtime
-	// error of its own — only the reconciliation reason. Interrupted runs
-	// are resumable through Followup exactly like other terminal states.
+	// reconciliation when an owner exited before the run or its final outcome
+	// was durably settled. A candidate result may exist, but its outcome is
+	// unconfirmed and tool effects may already have occurred. Interrupted runs
+	// can be explicitly resumed when a usable worker snapshot exists.
 	StatusInterrupted Status = "interrupted"
 	// StatusWaitingChildren parks a run that produced its final message
 	// while direct children were still live. The result is held (not yet
@@ -355,9 +354,13 @@ type SubAgentSnapshot struct {
 // Notification is sent to listeners when a sub-agent's status changes
 // (started, completed, failed, cancelled).
 type Notification struct {
-	AgentID  string
-	Status   Status
-	Snapshot SubAgentSnapshot
+	TerminalGeneration  string
+	TerminalPrepared    bool
+	TerminalUnconfirmed bool
+	SnapshotOnly        bool
+	AgentID             string
+	Status              Status
+	Snapshot            SubAgentSnapshot
 }
 
 // StreamNotification is sent to listeners for every model/tool stream event

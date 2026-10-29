@@ -107,6 +107,19 @@ func (c *AgentControl) prepareWorkerFollowup(ctx context.Context, workerID strin
 			unlockTransition()
 			return subagent.SubAgentSnapshot{}, false, nil, err
 		}
+		if newLease {
+			// An earlier owner may have published an intent after the first
+			// inspection but before relinquishing its cross-process lease.
+			pending, err := c.workerTerminalFinalizationPending(workerID)
+			if err != nil || pending {
+				c.releaseWorkerExecution(workerID)
+				unlockTransition()
+				if err != nil {
+					return subagent.SubAgentSnapshot{}, false, nil, err
+				}
+				continue
+			}
+		}
 		sa := c.manager.Get(workerID)
 		if sa == nil {
 			rehydrated, rehydrateErr := c.rehydrateAgent(workerID)
