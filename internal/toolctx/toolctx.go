@@ -153,3 +153,15 @@ func IsUnobservedRead(ctx context.Context) bool {
 	v, _ := ctx.Value(unobservedReadKey{}).(bool)
 	return v
 }
+
+type preparedReadCaptureKey struct{}
+
+// WithPreparedReadCapture installs a worker-owned, non-serialized observation
+// sink. A plugin cannot provide or invoke it over the execution protocol.
+func WithPreparedReadCapture(ctx context.Context, capture func(any)) context.Context {
+	return context.WithValue(ctx, preparedReadCaptureKey{}, capture)
+}
+func PreparedReadCapture(ctx context.Context) (func(any), bool) {
+	capture, ok := ctx.Value(preparedReadCaptureKey{}).(func(any))
+	return capture, ok && capture != nil
+}

@@ -93,6 +93,8 @@ export interface ExecutionProcessEventV4 {
   Process: ExecutionProcessV4;
 }
 export interface ExecutionCodeRequestV4 {
+  /** Enforce no session state for the entire program when the capability is advertised. */
+  disable_state?: boolean;
   program: {
     code: string;
     tools: { name: string; description: string; input_schema: Record<string, unknown> }[];
@@ -147,8 +149,10 @@ export interface ExecutionBackendContextV4 {
 export interface ExecutionBackendV4 {
   /** Explicit promise, not inferred from method presence. process.start.v1 means
    * operation_id is returned AND persisted in process/list records; it does not
-   * promise duplicate-start deduplication. Unsupported capabilities are not emulated. */
-  capabilities?: readonly "process.start.v1"[];
+   * promise duplicate-start deduplication. code.stateless.v1 promises that
+   * disable_state prevents all program access to persistent Code Mode state.
+   * Unsupported capabilities are not emulated. */
+  capabilities?: readonly ("process.start.v1" | "code.stateless.v1")[];
   initialize(binding: ExecutionBackendBindingV4, context: ExecutionBackendContextV4): void | Promise<void>;
   methods: { [M in keyof ExecutionBackendMethodsV4]?: (
     input: ExecutionBackendMethodsV4[M]["input"], context: ExecutionBackendContextV4,
@@ -174,7 +178,7 @@ export type ExecutionBackendDelegateOptionsV4 = (
   | { transport: ExecutionBackendPeerTransportV4; command?: never; cwd?: never; env?: never; shutdown_grace_ms?: never }
 ) & {
   /** Required from the selected peer before this backend can initialize. */
-  capabilities?: readonly "process.start.v1"[];
+  capabilities?: readonly ("process.start.v1" | "code.stateless.v1")[];
 };
 
 /** Explicit same-world delegation, not error recovery. No peer is started until
@@ -391,6 +395,7 @@ export async function runExecutionBackendV4(backend: ExecutionBackendV4, options
   if (backend.capabilities?.includes("process.start.v1") && (!backend.methods["process/start"] || !backend.methods["process/list"] || !backend.close)) {
     throw new Error("process.start.v1 requires process/start, process/list and close handlers with durable operation_id records and owned-process cleanup");
   }
+  if (backend.capabilities?.includes("code.stateless.v1") && !backend.methods.run_code) throw new Error("code.stateless.v1 requires run_code");
   const capabilities = Object.freeze([...backend.capabilities ?? []]);
   const input = options.input ?? process.stdin;
   const output = options.output ?? { write: (chunk: string) => new Promise<void>((resolve, reject) => {

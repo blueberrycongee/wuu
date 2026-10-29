@@ -32,6 +32,7 @@ type actor struct {
 }
 
 type Server struct {
+	instanceID      string
 	code            *codemode.Service
 	token           string
 	requireToken    bool
@@ -42,10 +43,14 @@ type Server struct {
 	artifactRoots   *tools.SessionArtifactManager
 	processes       *process.Manager
 	exports         map[string]exportFile
+	readReceipts    map[string]*readReceipt
+	readBatches     map[string]*readBatch
+	readCommits     sync.WaitGroup
+	closed          bool
 }
 
 func New() *Server {
-	return &Server{actors: make(map[string]*actor), actorReadOwners: make(map[string]*tools.Toolkit), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
+	return &Server{instanceID: rand.Text(), actors: make(map[string]*actor), actorReadOwners: make(map[string]*tools.Toolkit), readReceipts: make(map[string]*readReceipt), readBatches: make(map[string]*readBatch), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
 }
 
 func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
@@ -86,7 +91,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability}, "worker_instance": s.instanceID})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -106,7 +111,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability}, "worker_instance": s.instanceID})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -121,11 +126,33 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			return nil, errors.New("missing parent tool execution scope")
 		}
 		request.Program.TimeoutMS = request.TimeoutMS
-		result, err := a.kit.RunEnvironmentCode(ctx, s.code, request.Program, executor)
+		result, err := a.kit.RunEnvironmentCode(ctx, s.code, request.Program, executor, request.DisableState)
 		if err != nil {
 			return nil, err
 		}
 		return json.Marshal(result)
+	case "read/batch-prepare":
+		return s.prepareReadBatch(ctx, data)
+	case "read/batch-status":
+		return s.readBatchState(ctx, data, "status")
+	case "read/batch-commit":
+		return s.readBatchState(ctx, data, "commit")
+	case "read/batch-abort":
+		return s.readBatchState(ctx, data, "abort")
+	case "read/batch-release":
+		return s.readBatchState(ctx, data, "release")
+	case "read/prepare":
+		return s.prepareObservation(ctx, data)
+	case "read/commit":
+		return s.commitObservation(ctx, data, false)
+	case "read/commit-batch":
+		return s.commitObservationBatch(ctx, data)
+	case "read/status":
+		return s.commitObservation(ctx, data, true)
+	case "read/abort":
+		return s.abortObservation(ctx, data)
+	case "read/release":
+		return s.releaseObservation(ctx, data)
 	case "execute":
 		var request executionenv.ToolRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -158,8 +185,8 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled bool) (*actor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.init == nil {
-		return nil, errors.New("execution worker is not initialized")
+	if s.closed || s.init == nil {
+		return nil, errors.New("execution worker is not initialized or closed")
 	}
 	if id == "" {
 		return nil, errors.New("execution actor is required")
@@ -220,6 +247,17 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 func (s *Server) Close() error {
 	err := s.code.Close()
 	s.mu.Lock()
+	s.closed = true
+	for _, receipt := range s.readReceipts {
+		if receipt.cancel != nil {
+			receipt.cancel()
+		}
+	}
+	s.mu.Unlock()
+	s.readCommits.Wait()
+	s.mu.Lock()
+	clear(s.readReceipts)
+	clear(s.readBatches)
 	manager := s.processes
 	init := s.init
 	for key, actor := range s.actors {

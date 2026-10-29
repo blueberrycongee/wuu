@@ -153,7 +153,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		ctx, th, userMsg, snapshot, true, turnReadOnlyIgnore,
 		turnAdmissionHooks{afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
 			var runtimeErr error
-			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 			if runtimeErr == nil {
 				s.foldFrozenWorkerTree(admitted, threadRuntime)
 			}
@@ -518,7 +518,7 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 					return err
 				}
 				var runtimeErr error
-				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 				return runtimeErr
 			},
 			beforeUserAppendLocked: func(_ *threadState) (func() error, error) {

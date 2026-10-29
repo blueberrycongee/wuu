@@ -145,7 +145,8 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	// The worker cannot atomically invalidate an earlier observation after a
 	// remote extension has finished transforming the result. Until that
 	// protocol exists, reject rather than leave an older observation in use.
-	if toolctx.IsUnobservedRead(ctx) {
+	_, prepared := toolctx.PreparedReadCapture(ctx)
+	if toolctx.IsUnobservedRead(ctx) && !prepared {
 		release, err := t.env.readStateStore().beginUnobservedRead()
 		if err != nil {
 			return toolresult.Result{}, err
@@ -218,6 +219,16 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	}
 	if !info.Mode().IsRegular() {
 		return toolresult.Result{}, fmt.Errorf("read_file requires a regular file: %s", args.Path)
+	}
+	if capture, ok := toolctx.PreparedReadCapture(ctx); ok {
+		if managedArtifact {
+			return toolresult.Result{}, errors.New("prepared remote read does not support managed artifacts")
+		}
+		ticket, err := t.env.readStateStore().capturePathObservation(ctx, resolved, info)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		capture(ticket)
 	}
 	sample, err := io.ReadAll(io.LimitReader(file, 512))
 	if err != nil {

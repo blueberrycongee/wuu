@@ -3,7 +3,6 @@ package executionenv
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +61,60 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 	return result, nil
 }
 
+// ErrReadObservationCommitUnknown means a worker may have applied the
+// versioned invalidation before its acknowledgement was lost. It must not be
+// replayed against a newly started worker.
+var ErrReadObservationCommitUnknown = errors.New("remote read observation commit outcome unknown")
+
+func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolRequest) (PreparedRead, error) {
+	if request.Call.Name != "read_file" {
+		return PreparedRead{}, errors.New("prepared remote continuation requires read_file")
+	}
+	client, err := e.connect(ctx)
+	if err != nil {
+		return PreparedRead{}, err
+	}
+	if !client.observationCommit {
+		return PreparedRead{}, errors.New("execution worker does not support read observation commit")
+	}
+	data, err := client.Call(ctx, "read/prepare", request)
+	if err != nil {
+		return PreparedRead{}, err
+	}
+	var response struct {
+		Receipt string            `json:"receipt"`
+		Result  toolresult.Result `json:"result"`
+	}
+	if err = json.Unmarshal(data, &response); err != nil || response.Receipt == "" {
+		return PreparedRead{}, errors.New("invalid prepared remote read receipt")
+	}
+	receipt := preparedReadBinding{Receipt: response.Receipt, Actor: request.Actor, PermissionMode: request.PermissionMode, GitAttributionEnabled: request.GitAttributionEnabled, ShellEarlyHandoffDisabled: request.ShellEarlyHandoffDisabled}
+	handle := &preparedReadHandle{client: client, binding: receipt, workerInstance: client.workerInstance, environmentIdentity: e.identity}
+	return PreparedRead{handle: handle, PermissionMode: request.PermissionMode, Result: response.Result, Commit: func(ctx context.Context) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		result, err := client.Call(ctx, "read/commit", receipt)
+		if err != nil {
+			return false, errors.Join(ErrReadObservationCommitUnknown, err)
+		}
+		var ack struct {
+			Committed bool `json:"committed"`
+			Changed   bool `json:"changed"`
+		}
+		if json.Unmarshal(result, &ack) != nil || !ack.Committed {
+			return false, ErrReadObservationCommitUnknown
+		}
+		return ack.Changed, nil
+	}, Abort: func(ctx context.Context) error {
+		_, err := client.Call(ctx, "read/abort", receipt)
+		return err
+	}, Release: func(ctx context.Context) error {
+		_, err := client.Call(ctx, "read/release", receipt)
+		return err
+	}}, nil
+}
+
 // ExecuteUnobservedRead requires an explicitly negotiated worker capability;
 // older workers must not silently record the delegated read as model-visible.
 func (e *Environment) ExecuteUnobservedRead(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
@@ -118,19 +171,11 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	tokenPath := filepath.Join(tokenDir, "transport-token")
-	token, err := os.ReadFile(tokenPath)
-	if errors.Is(err, os.ErrNotExist) {
-		secret := make([]byte, 32)
-		if _, err = rand.Read(secret); err != nil {
-			return nil, err
-		}
-		token = []byte(hex.EncodeToString(secret))
-		err = securefs.WriteFileAtomic(tokenPath, token)
-	}
+	token, err := loadTransportToken(ctx, tokenPath)
 	if err != nil {
 		return nil, err
 	}
-	client.token = string(token)
+	client.token = token
 	if e.processes == nil {
 		e.processes = process.NewRemoteManager(e.Root(), e)
 	}
@@ -159,15 +204,23 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	var hello struct {
-		Version      int      `json:"version"`
-		Capabilities []string `json:"capabilities"`
+		Version        int      `json:"version"`
+		Capabilities   []string `json:"capabilities"`
+		WorkerInstance string   `json:"worker_instance"`
 	}
 	if err = json.Unmarshal(data, &hello); err != nil || hello.Version != ProtocolVersion {
 		_ = client.Close()
 		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
+	client.codeStateless = slices.Contains(hello.Capabilities, CodeStatelessCapability)
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
+	client.observationCommit = slices.Contains(hello.Capabilities, ReadObservationCommitCapability)
+	if client.observationCommit && hello.WorkerInstance == "" {
+		_ = client.Close()
+		return nil, errors.New("execution worker did not provide an instance identity")
+	}
+	client.workerInstance = hello.WorkerInstance
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -408,6 +461,9 @@ func (e *Environment) RunCode(ctx context.Context, request CodeRequest, executor
 	client, err := e.connect(ctx)
 	if err != nil {
 		return codemode.RunResult{}, err
+	}
+	if request.DisableState && !client.codeStateless {
+		return codemode.RunResult{}, errors.New("execution worker does not support stateless Code Mode; update the environment worker")
 	}
 	data, err := client.CallWithHandler(ctx, "run_code", request, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 		var call providers.ToolCall

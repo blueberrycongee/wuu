@@ -130,6 +130,8 @@ and `close`:
   `StartOffset`, `EndOffset`, `TotalBytes`, `Truncated`, `TimedOut`, `Duration`).
   Durations in these process records are **nanoseconds**, unlike `timeout_ms`.
   `emitProcess` publishes `{ Type, Cause, Process }` events on the same connection.
+- **Stateless Code Mode:** advertise `code.stateless.v1` only when `run_code` enforces `disable_state` for the entire program, rejecting all session state access. The host requires this capability when a remote reader replacement is selected; it does not infer it from a handler. Ordinary Code Mode requests remain unchanged.
+
 - **Acceptance and recovery:** explicitly advertise `capabilities: ["process.start.v1"]`
   only when start replies and persisted records returned by `process/list`
   preserve the host's `operation_id`. The helper checks the reply identity and

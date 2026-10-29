@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/readcursor"
@@ -116,6 +118,10 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	remoteEnv := r.toolkit.ExecutionEnvironment()
 	remoteRead := r.Name() == "read_file" && remoteEnv != nil
 	var remoteCompleted atomic.Bool
+	var remoteCommitKnown atomic.Bool
+	var remoteTransferred atomic.Bool
+	useSettlement := remoteRead && toolctx.HasSettlement(ctx)
+	var remotePrepared executionenv.PreparedRead
 	if remoteRead {
 		if !r.RemoteWorkspaceReplacement() {
 			return toolresult.Result{}, fmt.Errorf("remote read contract is required")
@@ -224,6 +230,18 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		// A nested invocation must not inherit a parent scope with stale policy.
 		ctx = context.WithValue(ctx, pluginProcessScopeKey{}, (*tools.ProcessScope)(nil))
 	}
+	releasePrepared := func(prepared executionenv.PreparedRead) {
+		if prepared.Abort == nil {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if remoteCommitKnown.Load() && prepared.Release != nil {
+			_ = prepared.Release(cleanup)
+		} else {
+			_ = prepared.Abort(cleanup)
+		}
+	}
 	continuation := newNativeToolContinuation(ctx, func(nativeCtx context.Context) (toolresult.Result, error) {
 		if !r.ToolAvailable() {
 			return toolresult.Result{}, fmt.Errorf("replacement for %q is unavailable", r.Name())
@@ -246,21 +264,51 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		}
 		var result toolresult.Result
 		var err error
-		if remoteRead {
+		if remoteRead && !useSettlement {
 			result, err = r.toolkit.ContinueRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			result, err = sanitizeRemoteReadResult(result)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			remoteCompleted.Store(true)
+			return result, nil
+		}
+		if remoteRead {
+			if useSettlement && toolctx.IsNestedCall(nativeCtx) {
+				toolctx.MarkRemoteReadExposure(nativeCtx)
+			}
+			var prepared executionenv.PreparedRead
+			prepared, err = r.toolkit.PrepareRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			published := false
+			defer func() {
+				if !published || nativeCtx.Err() != nil {
+					releasePrepared(prepared)
+				}
+			}()
+			result, err = sanitizeRemoteReadResult(prepared.Result)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			remotePrepared = prepared
+			remoteCompleted.Store(true)
+			published = true
+			return result, nil
 		} else {
 			result, err = r.continueNative(nativeCtx, call)
 		}
-		if err != nil || !remoteRead {
-			return result, err
-		}
-		result, err = sanitizeRemoteReadResult(result)
-		if err != nil {
-			return toolresult.Result{}, err
-		}
-		remoteCompleted.Store(true)
-		return result, nil
+		return result, err
 	})
+	defer func() {
+		if remoteCompleted.Load() && !remoteTransferred.Load() {
+			releasePrepared(remotePrepared)
+		}
+	}()
 	defer continuation.close()
 	ctx = context.WithValue(ctx, nativeToolContinuationKey{}, continuation)
 	ctx = pluginhost.WithNativeToolContinuationBinding(ctx, r.owner)
@@ -281,10 +329,28 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return toolresult.Result{}, err
 		}
 	}
+	authorizeRemote := func(settleCtx context.Context) (string, error) {
+		if !r.ToolAvailable() {
+			return "", fmt.Errorf("replacement for %q is unavailable", r.Name())
+		}
+		metadata, _ := r.executor.ToolMetadata(pluginCall)
+		if err := r.toolkit.AuthorizeRemoteTool(settleCtx, remoteEnv, pluginCall, metadata); err != nil {
+			return "", err
+		}
+		return r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, call)
+	}
 	if result.IsError {
 		if externalRead != nil {
 			if len(result.Content) != 1 || result.Content[0].Type != toolresult.ContentTypeText {
 				return toolresult.Result{}, fmt.Errorf("external read_file returned an invalid error result")
+			}
+			if remoteRead && remoteCompleted.Load() {
+				if _, err := authorizeRemote(ctx); err != nil {
+					return toolresult.Result{}, err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return toolresult.Result{}, err
 			}
 			return toolresult.FromErrorText(result.Content[0].Text), nil
 		}
@@ -311,7 +377,35 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			}
 			return result, nil
 		}
-		return externalRead.Render(ctx, result)
+		rendered, err := externalRead.Render(ctx, result)
+		if err != nil || !remoteRead {
+			return rendered, err
+		}
+		if !useSettlement {
+			if _, err := authorizeRemote(ctx); err != nil {
+				return toolresult.Result{}, err
+			}
+			return rendered, ctx.Err()
+		}
+		commit := func(settleCtx context.Context) error {
+			mode, err := authorizeRemote(settleCtx)
+			if err != nil {
+				return err
+			}
+			if mode != remotePrepared.PermissionMode {
+				return fmt.Errorf("remote read permission mode changed")
+			}
+			if remotePrepared.Commit == nil {
+				return fmt.Errorf("remote read commit unavailable")
+			}
+			return nil
+		}
+		participant := &remoteReadSettlement{prepared: remotePrepared, authorize: commit, committed: &remoteCommitKnown}
+		if err := toolctx.RegisterGroupedSettlement(ctx, remotePrepared.GroupKey(), participant, prepareRemoteReadSettlements, func() { releasePrepared(remotePrepared) }); err != nil {
+			return toolresult.Result{}, err
+		}
+		remoteTransferred.Store(true)
+		return rendered, nil
 	}
 	text, err := validateSearchReplacement(result, call.Arguments)
 	if err != nil {
@@ -319,6 +413,58 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	}
 	r.toolkit.RecordWebSearchEvidence(text)
 	return result, nil
+}
+
+type remoteReadSettlement struct {
+	prepared  executionenv.PreparedRead
+	authorize func(context.Context) error
+	committed *atomic.Bool
+}
+
+// Every participant is reauthorized before any receipt is sent. The worker
+// applies the same-actor batch atomically; a lost acknowledgement is unknown.
+func prepareRemoteReadSettlements(ctx context.Context, values []any) (*toolctx.PreparedSettlement, error) {
+	participants := make([]*remoteReadSettlement, 0, len(values))
+	prepared := make([]executionenv.PreparedRead, 0, len(values))
+	for _, value := range values {
+		participant, ok := value.(*remoteReadSettlement)
+		if !ok || participant == nil || participant.authorize == nil {
+			return nil, fmt.Errorf("invalid remote read participant")
+		}
+		if err := participant.authorize(ctx); err != nil {
+			return nil, err
+		}
+		participants = append(participants, participant)
+		prepared = append(prepared, participant.prepared)
+	}
+	batch, err := executionenv.PrepareReadBatch(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	identity := batch.Identity
+	return &toolctx.PreparedSettlement{
+		Identity: &toolctx.SettlementIdentity{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity},
+		Commit: func(ctx context.Context) error {
+			// Staging can wait on durable storage. Recheck every participant
+			// immediately before admitting the worker commit.
+			for _, participant := range participants {
+				if err := participant.authorize(ctx); err != nil {
+					return err
+				}
+			}
+			if err := batch.Commit(ctx); err != nil {
+				if errors.Is(err, executionenv.ErrReadObservationCommitUnknown) {
+					return errors.Join(toolctx.ErrSettlementOutcomeUnknown, err)
+				}
+				return err
+			}
+			for _, participant := range participants {
+				participant.committed.Store(true)
+			}
+			return nil
+		},
+		Abort: batch.Abort, Release: batch.Release,
+	}, nil
 }
 
 // Only the bounded structured text is transferred to an extension. Other

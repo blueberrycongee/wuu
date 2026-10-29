@@ -28,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	hookspkg "github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/imageproc"
 	"github.com/blueberrycongee/wuu/internal/insight"
@@ -300,7 +301,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 				return err
 			}
 			var err error
-			threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
+			threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 			if err != nil {
 				return err
 			}
@@ -364,7 +365,7 @@ func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
 		th.runtimePluginRevision == s.pluginRuntimeRevision.Load()
 }
 
-func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.ThreadRuntime, error) {
+func (s *Server) ensureThreadRuntimeAfterAdmission(ctx context.Context, th *threadState) (*runtime.ThreadRuntime, error) {
 	threadRuntime, err := s.ensureThreadRuntime(th)
 	if err != nil || threadRuntime == nil {
 		return threadRuntime, err
@@ -398,8 +399,15 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		providers.DebugLogf("refresh thread git attribution: %v", err)
 	}
 	if threadRuntime.StreamRunner != nil && threadRuntime.StreamRunner.ToolLedger != nil {
-		if err := threadRuntime.StreamRunner.ToolLedger.Reconcile(context.Background()); err != nil {
+		if err := threadRuntime.StreamRunner.ToolLedger.Reconcile(ctx); err != nil {
 			return nil, fmt.Errorf("recover tool ledger for thread %q: %w", th.ID, err)
+		}
+		var recoverer executionenv.ReadBatchRecoverer
+		if threadRuntime.Toolkit != nil {
+			recoverer, _ = threadRuntime.Toolkit.ExecutionEnvironment().(executionenv.ReadBatchRecoverer)
+		}
+		if err := executionenv.RecoverLedgerObservations(ctx, threadRuntime.StreamRunner.ToolLedger, recoverer); err != nil {
+			return nil, fmt.Errorf("recover remote observations for thread %q: %w", th.ID, err)
 		}
 	}
 	th.mu.Lock()
@@ -531,7 +539,7 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	// Runtime construction and restoration must use the durable snapshot read
 	// under this admission lease. A resumed app-server may otherwise compact
 	// stale history or reuse a toolkit rooted at metadata another owner changed.
-	threadRuntime, err := s.ensureThreadRuntimeAfterAdmission(th)
+	threadRuntime, err := s.ensureThreadRuntimeAfterAdmission(ctx, th)
 	if err != nil {
 		th.mu.Lock()
 		th.releaseThreadExecutionLeaseLocked()
@@ -4973,7 +4981,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 					}
 				}
 				var runtimeErr error
-				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 				if runtimeErr != nil {
 					return runtimeErr
 				}
@@ -5426,7 +5434,7 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 		turnAdmissionHooks{
 			afterLease: func(admitted *threadState, admittedMsg *providers.ChatMessage) error {
 				var err error
-				threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
+				threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 				if err != nil {
 					return err
 				}

@@ -20,6 +20,10 @@ type Init struct {
 }
 
 const UnobservedReadCapability = "read.unobserved.v1"
+const ReadObservationCommitCapability = "read.observation-commit.v1"
+
+// CodeStatelessCapability enforces disabled PTC session state for a whole program.
+const CodeStatelessCapability = "code.stateless.v1"
 
 type ToolRequest struct {
 	SuppressReadObservation   bool               `json:"suppress_read_observation,omitempty"`
@@ -32,6 +36,20 @@ type ToolRequest struct {
 
 // Executor routes workspace tools to the selected environment. Host policy is
 // evaluated before this interface; the worker independently checks it again.
+// PreparedRead retains its private worker receipt in a host-only closure.
+// Once Commit is sent, a lost acknowledgement is reported as unknown.
+type PreparedRead struct {
+	handle         *preparedReadHandle
+	PermissionMode string
+	Result         toolresult.Result
+	Commit         func(context.Context) (bool, error)
+	Abort          func(context.Context) error
+	Release        func(context.Context) error
+}
+type PreparedReadExecutor interface {
+	PrepareUnobservedRead(context.Context, ToolRequest) (PreparedRead, error)
+}
+
 type UnobservedReadExecutor interface {
 	ExecuteUnobservedRead(context.Context, ToolRequest) (toolresult.Result, error)
 }
@@ -50,6 +68,7 @@ func WorkspaceTool(name string) bool {
 }
 
 type CodeRequest struct {
+	DisableState          bool                `json:"disable_state,omitempty"`
 	GitAttributionEnabled bool                `json:"git_attribution_enabled,omitempty"`
 	Program               codemode.RunRequest `json:"program"`
 	TimeoutMS             int                 `json:"timeout_ms"`

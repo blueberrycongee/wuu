@@ -102,6 +102,14 @@ func (e *environmentToolExecutor) Execute(ctx context.Context, request execution
 	return toolresult.Result{Content: []toolresult.ContentPart{part}}, err
 }
 
+func (e *environmentToolExecutor) RecoverReadBatch(ctx context.Context, identity executionenv.ReadBatchIdentity) (*executionenv.PreparedReadBatch, error) {
+	return e.environment.RecoverReadBatch(ctx, identity)
+}
+
+func (e *environmentToolExecutor) PrepareUnobservedRead(ctx context.Context, request executionenv.ToolRequest) (executionenv.PreparedRead, error) {
+	return e.environment.PrepareUnobservedRead(ctx, request)
+}
+
 func (e *environmentToolExecutor) ExecuteUnobservedRead(ctx context.Context, request executionenv.ToolRequest) (toolresult.Result, error) {
 	return e.environment.ExecuteUnobservedRead(ctx, request)
 }

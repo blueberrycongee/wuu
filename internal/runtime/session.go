@@ -1700,6 +1700,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
 					return toolledger.New(s.Documents, ownerID)
 				},
+				RecoverToolObservations: func(ctx context.Context, ledger *toolledger.Ledger) error {
+					recoverer, _ := kit.ExecutionEnvironment().(executionenv.ReadBatchRecoverer)
+					return executionenv.RecoverLedgerObservations(ctx, ledger, recoverer)
+				},
 			})
 			if controlErr != nil {
 				return nil, fmt.Errorf("create thread agent control: %w", controlErr)

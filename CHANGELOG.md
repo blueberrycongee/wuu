@@ -8,7 +8,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent Code Mode session state from outliving failed remote reader settlements through a negotiated stateless worker capability.
+
+- Prevent failed Code Mode calls from exposing output derived from uncommitted remote reads.
+
 ### Added
+
+- Preserve newer remote file observations while allowing trusted text replacements to run after earlier native reads, with durable recovery of uncertain settlements.
 
 - Allow trusted text readers to transform reads from a pinned remote workspace using an authorized, one-use native continuation.
 
@@ -244,6 +252,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Recheck remote read authorization after a direct replacement finishes before returning its content.
 
 - Keep managed session file reads and active-file freshness checks inside the session directory admitted for the conversation, even if its path is replaced while work is running. Relative links within that directory remain usable; absolute links are rejected.
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.

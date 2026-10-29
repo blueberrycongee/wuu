@@ -25,6 +25,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -107,6 +108,20 @@ func TestExtensionReadImageModelProcess(t *testing.T) {
 			defer cancel()
 			ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "image-model", ExecutionID: "turn"})
 			if ptc {
+				// An ordinary nontransactional media read keeps its pre-existing
+				// partial output when the parent program later fails.
+				ordinaryLedger, err := toolledger.New(testSessionDocuments(t, t.TempDir()), "ordinary")
+				require.NoError(t, err)
+				ordinary := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: ordinaryLedger, OperationID: "ordinary-failure", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+				ordinaryArgs, err := json.Marshal(map[string]string{"code": `await tools.read_file({path:"plugin-image.png"}); console.log("ORDINARY_LOG"); throw Error("ordinary failure")`, "description": "Read image"})
+				require.NoError(t, err)
+				ordinaryMessages, err := ordinary.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "ordinary-failure", Name: "run_code", Arguments: string(ordinaryArgs)}}, nil)
+				ordinary.Cancel()
+				require.NoError(t, err)
+				require.Len(t, ordinaryMessages, 1)
+				require.True(t, ordinaryMessages[0].ToolResult.IsError)
+				require.Contains(t, ordinaryMessages[0].Content, "ORDINARY_LOG")
+				require.Len(t, providers.ProjectToolResult(*ordinaryMessages[0].ToolResult).ObservationImages, 1)
 				rt := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
 				defer rt.Cancel()
 				args, _ := json.Marshal(map[string]string{"code": `await tools.read_file({path:"evil-image.png"})`, "description": "Reject rich error"})

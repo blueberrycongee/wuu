@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -68,11 +69,22 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 			s.mu.Unlock()
 			return toolresult.Result{}, errors.New("nested tool call limit reached")
 		}
+		release, err := toolctx.ReserveSettlementChild(s.ctx)
+		if err != nil {
+			r.mu.Unlock()
+			s.mu.Unlock()
+			return toolresult.Result{}, err
+		}
 		localID := call.ID
 		// Never trust a child's local key as a global/provider call identity.
 		call = providers.ToolCall{ID: "nested-" + rand.Text(), Name: call.Name, Arguments: call.Arguments, Kind: call.Kind}
 		run = r.runForCallLocked(call)
 		run.parent, run.depth = s.parent, s.parent.depth+1
+		// Any later child can join a durable remote settlement and earlier
+		// children can echo its data. Keep all nested detail provisional until
+		// the root has finished and its settlement outcome is known.
+		run.deferredProjection = r.ledger != nil
+		run.releaseSettlementChild = release
 		s.calls[localID] = run
 		r.startRunLocked(childCtx, run, false)
 	}
