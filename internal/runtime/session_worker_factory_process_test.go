@@ -116,6 +116,15 @@ func TestProductionWorkerFactorySessionReceiptFollowup(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, prepared)
 			require.NotNil(t, prepared.Identity)
+			original := prepared.Identity
+			identity := executionenv.ReadBatchIdentity{OperationID: original.OperationID, WorkerInstance: original.WorkerInstance, Actor: original.Actor, EnvironmentIdentity: original.EnvironmentIdentity, OwnerKind: original.OwnerKind}
+			originalReceipt, err := workerObservationRecoverer(executor).RecoverReadBatch(ctx, identity)
+			require.NoError(t, err)
+			state, err := originalReceipt.Status(ctx)
+			require.NoError(t, err)
+			require.Equal(t, "prepared", state)
+			_, err = thread.Toolkit.ObservationRecoverer().RecoverReadBatch(ctx, identity)
+			require.Error(t, err, "parent toolkit must not recover its worker's receipt")
 			target := spawn.AgentID
 			if scenario == "cross-actor" {
 				second, err := thread.AgentControl.Spawn(ctx, agentcontrol.SpawnRequest{Type: agentcontrol.DefaultSubagentType, TaskName: "other_worker", Prompt: "idle", Synchronous: true})
