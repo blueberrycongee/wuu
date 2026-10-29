@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -39,7 +40,7 @@ func TestWorkerLedgerRecoveryFencesUnknownBeforeAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{RecoverToolObservations: func(ctx context.Context, ledger *toolledger.Ledger) error {
+	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{RecoverToolObservations: func(ctx context.Context, ledger *toolledger.Ledger, _ agent.ToolExecutor) error {
 		called = true
 		decision, err := ledger.DecideReplay(ctx, batch)
 		if err != nil || decision.Reason != toolledger.ReplayReasonInvocationUnknown {
@@ -60,7 +61,7 @@ func TestWorkerLedgerRecoveryFencesUnknownBeforeAdmission(t *testing.T) {
 		t.Fatal("missing recovery environment allowed admission")
 	}
 	called = false
-	manager.recoverToolObservations = func(context.Context, *toolledger.Ledger) error { called = true; return nil }
+	manager.recoverToolObservations = func(context.Context, *toolledger.Ledger, agent.ToolExecutor) error { called = true; return nil }
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	if err = manager.ReconcileToolLedger(canceled, "worker"); !errors.Is(err, context.Canceled) || called {

@@ -11,12 +11,13 @@ import (
 
 var ErrSettlementOutcomeUnknown = errors.New("tool settlement outcome unknown")
 
-type SettlementIdentity struct{ OperationID, WorkerInstance, Actor, EnvironmentIdentity string }
+type SettlementIdentity struct{ OperationID, WorkerInstance, Actor, EnvironmentIdentity, OwnerKind string }
 type PreparedSettlement struct {
-	Identity *SettlementIdentity
-	Commit   func(context.Context) error
-	Abort    func(context.Context) error
-	Release  func(context.Context) error
+	Identity  *SettlementIdentity
+	Authorize func(context.Context) error
+	Commit    func(context.Context) error
+	Abort     func(context.Context) error
+	Release   func(context.Context) error
 }
 type settlementKey struct{}
 type settlementAction struct {

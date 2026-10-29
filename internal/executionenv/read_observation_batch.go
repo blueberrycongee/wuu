@@ -35,6 +35,7 @@ func (p PreparedRead) GroupKey() any {
 // ReadBatchIdentity contains no bearer receipt or worker transport credential.
 // It may be persisted in the invocation ledger before the commit decision.
 type ReadBatchIdentity struct {
+	OwnerKind           string `json:"owner_kind,omitempty"`
 	OperationID         string `json:"operation_id"`
 	WorkerInstance      string `json:"worker_instance"`
 	Actor               string `json:"actor"`
@@ -43,6 +44,21 @@ type ReadBatchIdentity struct {
 type PreparedReadBatch struct {
 	Identity ReadBatchIdentity
 	client   *Client
+	local    *LocalReadBatchOperations
+}
+
+// LocalReadBatchOperations binds a host-owned observation receipt to the same
+// durable ledger protocol as a worker receipt. The owner must serialize its
+// operations and retain terminal status until release.
+type LocalReadBatchOperations struct {
+	Commit  func(context.Context) error
+	Abort   func(context.Context) error
+	Release func(context.Context) error
+	Status  func(context.Context) (string, error)
+}
+
+func NewLocalReadBatch(identity ReadBatchIdentity, operations LocalReadBatchOperations) *PreparedReadBatch {
+	return &PreparedReadBatch{Identity: identity, local: &operations}
 }
 
 func PrepareReadBatch(ctx context.Context, values []PreparedRead) (*PreparedReadBatch, error) {
@@ -105,6 +121,12 @@ func (b *PreparedReadBatch) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if b != nil && b.local != nil {
+		if b.local.Commit == nil {
+			return errors.New("local observation commit unavailable")
+		}
+		return b.local.Commit(ctx)
+	}
 	data, err := b.call(ctx, "read/batch-commit")
 	if err != nil {
 		return errors.Join(ErrReadObservationCommitUnknown, err)
@@ -118,6 +140,12 @@ func (b *PreparedReadBatch) Commit(ctx context.Context) error {
 	return nil
 }
 func (b *PreparedReadBatch) Abort(ctx context.Context) error {
+	if b != nil && b.local != nil {
+		if b.local.Abort == nil {
+			return errors.New("local observation abort unavailable")
+		}
+		return b.local.Abort(ctx)
+	}
 	data, err := b.call(ctx, "read/batch-abort")
 	if err != nil {
 		return err
@@ -131,6 +159,12 @@ func (b *PreparedReadBatch) Abort(ctx context.Context) error {
 	return nil
 }
 func (b *PreparedReadBatch) Release(ctx context.Context) error {
+	if b != nil && b.local != nil {
+		if b.local.Release == nil {
+			return errors.New("local observation release unavailable")
+		}
+		return b.local.Release(ctx)
+	}
 	data, err := b.call(ctx, "read/batch-release")
 	if err != nil {
 		return err
@@ -144,6 +178,12 @@ func (b *PreparedReadBatch) Release(ctx context.Context) error {
 	return nil
 }
 func (b *PreparedReadBatch) Status(ctx context.Context) (string, error) {
+	if b != nil && b.local != nil {
+		if b.local.Status == nil {
+			return "", errors.New("local observation status unavailable")
+		}
+		return b.local.Status(ctx)
+	}
 	data, err := b.call(ctx, "read/batch-status")
 	if err != nil {
 		return "", err
@@ -169,7 +209,7 @@ func CommitPreparedReadBatch(ctx context.Context, values []PreparedRead) error {
 
 // RecoverReadBatch binds a non-bearer identity to the original worker instance.
 func (e *Environment) RecoverReadBatch(ctx context.Context, identity ReadBatchIdentity) (*PreparedReadBatch, error) {
-	if identity.EnvironmentIdentity != e.identity || identity.WorkerInstance == "" || identity.Actor == "" || identity.OperationID == "" {
+	if identity.OwnerKind != "" || identity.EnvironmentIdentity != e.identity || identity.WorkerInstance == "" || identity.Actor == "" || identity.OperationID == "" {
 		return nil, ErrReadObservationCommitUnknown
 	}
 	client, err := e.connect(ctx)

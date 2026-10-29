@@ -32,7 +32,7 @@ func RecoverLedgerObservations(ctx context.Context, ledger *toolledger.Ledger, r
 	}
 	for _, item := range pending {
 		intent := item.Intent
-		identity := ReadBatchIdentity{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity}
+		identity := ReadBatchIdentity{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity, OwnerKind: intent.OwnerKind}
 		batch, err := recoverer.RecoverReadBatch(ctx, identity)
 		if err != nil {
 			return fmt.Errorf("remote observation outcome unknown: %w", err)

@@ -112,8 +112,7 @@ func TestThreadAdmissionRecoversRemoteObservationFromOriginalWorker(t *testing.T
 	_, err = srv.ensureThreadRuntimeAfterAdmission(ctx, th)
 	require.NoError(t, err)
 	projection, err := ledger.PendingProjection(ctx)
-	require.NoError(t, err)
-	require.Len(t, projection, 1)
-	require.Equal(t, "committed result", projection[0].Result.TextProjection())
+	require.ErrorContains(t, err, "original observation authorization is unavailable")
+	require.Empty(t, projection)
 	require.NoError(t, ledger.ValidateContinuation(ctx))
 }

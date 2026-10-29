@@ -404,7 +404,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(ctx context.Context, th *thre
 		}
 		var recoverer executionenv.ReadBatchRecoverer
 		if threadRuntime.Toolkit != nil {
-			recoverer, _ = threadRuntime.Toolkit.ExecutionEnvironment().(executionenv.ReadBatchRecoverer)
+			recoverer = threadRuntime.Toolkit.ObservationRecoverer()
 		}
 		if err := executionenv.RecoverLedgerObservations(ctx, threadRuntime.StreamRunner.ToolLedger, recoverer); err != nil {
 			return nil, fmt.Errorf("recover remote observations for thread %q: %w", th.ID, err)
@@ -3630,7 +3630,22 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if item, ok := streamReconnectItemForPersistLocked(th, turnID); ok {
 		reconnectItem = &item
 	}
+	releaseObservationBindings := persistErr == nil && th.PersistHistory
 	th.mu.Unlock()
+	// History persistence atomically projected these receipts. Once the turn
+	// has ended no first model admission remains; release retained checks only
+	// after confirming that durable marker.
+	if releaseObservationBindings && threadRuntime != nil && threadRuntime.StreamRunner != nil && threadRuntime.StreamRunner.ToolLedger != nil {
+		var ids []string
+		for _, message := range res.NewMessages {
+			if message.ToolInvocationID != "" {
+				ids = append(ids, message.ToolInvocationID)
+			}
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = threadRuntime.StreamRunner.ToolLedger.ForgetProjectedObservationBindings(cleanupCtx, ids)
+		cancel()
+	}
 
 	// Persist a terminal boundary for every user turn, including ordinary
 	// successes. History projection uses this durable timestamp to restore the

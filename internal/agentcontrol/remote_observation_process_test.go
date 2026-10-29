@@ -94,7 +94,7 @@ func TestWorkerFollowupRecoversRemoteObservationUnderExecutionLease(t *testing.T
 	current := executionenv.NewEnvironment(profile, "different-env", "parent", state)
 	defer func() { _ = current.Close() }()
 	config.Client = &recordingClient{resp: providers.ChatResponse{Content: "resumed"}}
-	config.RecoverToolObservations = func(ctx context.Context, ledger *toolledger.Ledger) error {
+	config.RecoverToolObservations = func(ctx context.Context, ledger *toolledger.Ledger, _ agent.ToolExecutor) error {
 		return executionenv.RecoverLedgerObservations(ctx, ledger, current)
 	}
 	second, err := New(config)

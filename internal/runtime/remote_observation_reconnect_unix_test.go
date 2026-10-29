@@ -120,9 +120,8 @@ func TestRemoteObservationRecoversSameWorkerAfterReconnect(t *testing.T) {
 	require.NoError(t, executionenv.RecoverLedgerObservations(ctx, ledger2, third))
 	require.NoError(t, ledger2.ValidateContinuation(ctx))
 	projected, err = ledger2.PendingProjection(ctx)
-	require.NoError(t, err)
-	require.Len(t, projected, 1)
-	require.Equal(t, "final result", projected[0].Result.TextProjection())
+	require.ErrorContains(t, err, "original observation authorization is unavailable")
+	require.Empty(t, projected, "a worker receipt alone cannot authorize old result projection")
 
 	// A worker reboot can reuse the same socket, session and profile, but its
 	// new instance must not settle the original instance's pending operation.

@@ -285,7 +285,7 @@ type Config struct {
 	InferenceJournal        providers.InferenceJournal
 	BeginModelReceipts      agent.BeginModelReceiptsFunc
 	ToolLedgerFactory       func(ownerID string) (*toolledger.Ledger, error)
-	RecoverToolObservations func(context.Context, *toolledger.Ledger) error
+	RecoverToolObservations func(context.Context, *toolledger.Ledger, agent.ToolExecutor) error
 	SelectedCompaction      *compactionservice.Client
 	AcquireLoopDriver       loopdriver.AcquireFunc
 	ConfigureWorkerRunner   func(*agent.StreamRunner, string, string)

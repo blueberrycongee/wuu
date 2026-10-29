@@ -123,6 +123,17 @@ func (g *streamTurnGateway) archivePending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if g.runner.ToolLedger != nil {
+		var projected []string
+		for _, message := range g.durable {
+			if message.ToolInvocationID != "" && !g.pendingObservationAdmission[message.ToolInvocationID] {
+				projected = append(projected, message.ToolInvocationID)
+			}
+		}
+		// The history write is already confirmed. A failed cleanup retains the
+		// bounded binding until a later acknowledgement or expiry.
+		_ = g.runner.ToolLedger.ForgetProjectedObservationBindings(ctx, projected)
+	}
 	g.archiveHead = max(g.archiveHead, archived.HeadSeq)
 	g.produced = applyArchivedHistorySeqs(g.produced, g.durable, archived.Seqs)
 	g.activeHistory = applyArchivedHistorySeqs(g.activeHistory, g.durable, archived.Seqs)

@@ -408,6 +408,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if source := toolctx.UnverifiedSource(runCtx); source != "" {
 				result = toolresult.MarkUnverifiedSource(result, source)
 			}
+			remoteExecutionFailed := (executionErr != nil || result.IsError) && toolctx.HasRemoteReadExposure(runCtx)
 			result = run.finalize(r.executor, call, result)
 			// A selected finalizer may transform or replace the result. Preserve
 			// the host-observed marker after that boundary as well.
@@ -416,6 +417,13 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			}
 			valid := result.Validate()
 			success := executionErr == nil && !result.IsError
+			sanitizedFailure := false
+			if remoteExecutionFailed {
+				result = toolctx.FailedSettlementOutput(runCtx, result)
+				run.clearFinalization()
+				success = false
+				sanitizedFailure = true
+			}
 			var prepared *toolctx.PreparedSettlement
 			if run.parent == nil || !success || valid != nil {
 				var prepareErr error
@@ -444,6 +452,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if !success && (toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx)) {
 				result = toolctx.FailedSettlementOutput(runCtx, result)
 				run.clearFinalization()
+				sanitizedFailure = true
 				if source := toolctx.UnverifiedSource(runCtx); source != "" {
 					result = toolresult.MarkUnverifiedSource(result, source)
 				}
@@ -467,7 +476,13 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					return fn(ctx)
 				}
 				identity := prepared.Identity
-				intent := toolledger.ObservationIntent{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity}
+				intent := toolledger.ObservationIntent{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity, OwnerKind: identity.OwnerKind}
+				if err := toolctx.RegisterObservationAuthorization(*identity, r.ledger, prepared.Authorize); err != nil {
+					_ = cleanup(prepared.Abort)
+					_ = cleanup(prepared.Release)
+					run.complete(toolresult.Result{}, fmt.Errorf("bind observation authorization: %w", err))
+					return
+				}
 				markUnknown := func() {
 					_ = durable(func(ctx context.Context) error { return r.ledger.MarkObservationUnknown(ctx, run.invocationID, intent) })
 				}
@@ -482,6 +497,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 						markUnknown()
 						return err
 					}
+					toolctx.ForgetObservationAuthorization(*identity, r.ledger)
 					_ = cleanup(prepared.Release)
 					return nil
 				}
@@ -523,6 +539,14 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					run.complete(toolresult.Result{}, fmt.Errorf("remote observation settlement outcome unknown: %w", err))
 					return
 				}
+				if err := r.ledger.AuthorizeObservation(runCtx, intent); err != nil {
+					run.mu.Lock()
+					run.suppressNested = true
+					run.mu.Unlock()
+					run.clearFinalization()
+					run.complete(toolresult.Result{}, errors.New("observation output authorization failed"))
+					return
+				}
 				_ = cleanup(prepared.Release)
 				run.complete(result, nil)
 				return
@@ -537,7 +561,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 				}
 			}
 			if r.ledger != nil {
-				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
+				settle := r.ledger.Settle
+				if run.parent == nil && !toolctx.SettlementHasUnfinishedChildren(runCtx) && (sanitizedFailure || (!toolctx.HasRemoteReadExposure(runCtx) && !toolctx.SettlementHasParticipants(runCtx))) {
+					settle = r.ledger.SettleOrdinary
+				}
+				if settleErr := settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					if run.parent != nil {
 						_, _ = toolctx.FinishSettlement(runCtx, false)
 					}
@@ -1083,8 +1111,26 @@ func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
 }
 
 func (r *TurnToolRuntime) awaitRunResult(ctx context.Context, run *toolRun) (toolresult.Result, error) {
-	result, err := run.wait(ctx)
+	return r.awaitRunResultWithContexts(ctx, ctx, run)
+}
+
+// The physical tool must drain even after cancellation, but authorization of
+// its result remains cancellable and never inherits the detached wait context.
+func (r *TurnToolRuntime) awaitRunResultWithContexts(waitCtx, authCtx context.Context, run *toolRun) (toolresult.Result, error) {
+	result, err := run.wait(waitCtx)
 	if err == nil {
+		run.mu.Lock()
+		needsAuthorization := run.hadParticipants && !result.IsError
+		run.mu.Unlock()
+		if run.parent == nil && needsAuthorization && r.ledger != nil && run.invocationID != "" {
+			if authErr := r.ledger.AuthorizeInvocations(authCtx, []string{run.invocationID}); authErr != nil {
+				run.mu.Lock()
+				run.suppressNested = true
+				run.mu.Unlock()
+				run.clearFinalization()
+				return toolresult.Result{}, errors.New("tool output authorization failed")
+			}
+		}
 		return result, nil
 	}
 	return toolresult.Result{}, err
