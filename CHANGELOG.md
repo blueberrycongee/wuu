@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
+
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
 
 - Route plugin-owned processes through the conversation's selected execution environment, retaining their location and ownership across configuration changes. Remote start admission does not block unrelated process reads or stops, and uncertain starts retain reconciliation identities without automatic replay.

@@ -62,7 +62,7 @@ var toolViewRenderers = map[string]func(rawText string, budgetTokens int) (strin
 // a dedicated budget share the default.
 func projectionTokenBudget(toolName string) int {
 	switch toolName {
-	case "read_file", "notes", "history_read":
+	case "read_file", "recover_tool_result", "notes", "history_read":
 		return readFileProjectionTokenBudget
 	case "bash", "process":
 		return commandProjectionTokenBudget

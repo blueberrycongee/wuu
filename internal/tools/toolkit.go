@@ -376,6 +376,7 @@ func (t *Toolkit) rebuildRegistry() {
 	registered := []Tool{
 		// File operations
 		NewReadFileTool(e),
+		&RecoverToolResultTool{toolkit: t},
 		NewWriteFileTool(e),
 		NewListFilesTool(e),
 		NewEditFileTool(e),
@@ -831,6 +832,9 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) IsToolDisabled(name string) bool {
+	if name == "recover_tool_result" && t.IsToolDisabled("read_file") {
+		return true
+	}
 	_, ok := t.disabledTools[name]
 	return ok || t.toolPolicy != nil && !t.toolPolicy(name) ||
 		t.env != nil && t.env.externalCapabilitiesOnly && !t.externalCapabilityAllowed(name)

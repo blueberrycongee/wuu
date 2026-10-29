@@ -62,7 +62,7 @@ func buildBoundedResultReference(path, contextual string, isError bool, budgetTo
 		"total_bytes":    len(contextual),
 		"is_error":       isError,
 	}
-	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), len(contextual), contentSHA, budgetTokens); ok {
+	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), len(contextual), contentSHA, budgetTokens, true); ok {
 		return page, true
 	}
 	// A tiny requested budget must not expose the full output or prevent an
@@ -76,7 +76,7 @@ func buildBoundedResultReference(path, contextual string, isError bool, budgetTo
 // buildResultPage is shared by the first archived page and read_file recovery.
 // Prefer complete lines, but split an oversized line at a rune boundary so a
 // cursor always advances. Binary ranges retain the existing base64 contract.
-func buildResultPage(envelope map[string]any, path string, data []byte, offset, end, limit int, contentSHA string, budgetTokens int) (string, bool) {
+func buildResultPage(envelope map[string]any, path string, data []byte, offset, end, limit int, contentSHA string, budgetTokens int, recoveryTool bool) (string, bool) {
 	text := utf8.Valid(data) && !strings.ContainsRune(string(data), '\x00')
 	if _, width := utf8.DecodeRune(data); width > limit {
 		text = false
@@ -96,6 +96,9 @@ func buildResultPage(envelope map[string]any, path string, data []byte, offset, 
 		envelope["byte_count"] = keep
 		hasMore := offset+keep < end
 		continuation := map[string]any{"has_more": hasMore}
+		if recoveryTool {
+			continuation["recovery_tool"] = "recover_tool_result"
+		}
 		if hasMore {
 			continuation["next"] = map[string]any{
 				"continuation": encodeReadFileByteContinuation(path, offset+keep, min(limit, maxRecoveryPageBytes), end, contentSHA),

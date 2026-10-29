@@ -166,6 +166,7 @@ func (b *surfaceBuilder) sortCaps() {
 
 func addFileReadTools(b *surfaceBuilder) {
 	b.addVisible("read_file", capability.CapabilityFileRead)
+	b.addVisible("recover_tool_result", capability.CapabilityFileRead)
 	b.addVisible("list_files", capability.CapabilityFileList)
 }
 

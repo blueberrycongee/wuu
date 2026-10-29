@@ -824,7 +824,7 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
 	}
-	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget)
+	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget, ctx.Value(resultRecoveryContextKey{}) == true)
 	if !ok {
 		return "", errors.New("read_file recovery metadata exceeds the page budget; use a shorter path")
 	}
