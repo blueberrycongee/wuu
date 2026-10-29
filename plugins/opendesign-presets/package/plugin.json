@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "opendesign-presets",
+  "name": "OpenDesign Presets",
+  "version": "0.1.0",
+  "description": "Use OpenDesign's design systems, artifact templates, design workflows, craft rules, and media prompts through one searchable Wuu skill.",
+  "icon": "layout-grid",
+  "author": { "name": "Wuu" },
+  "skills": ["./skills/"],
+  "interface": {
+    "displayName": "OpenDesign Presets",
+    "shortDescription": "Choose a design direction and build from OpenDesign's reusable assets.",
+    "developerName": "Wuu",
+    "category": "Design",
+    "capabilities": ["Read"]
+  }
+}

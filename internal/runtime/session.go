@@ -1570,7 +1570,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerToolProviderName := s.ModelRoles.Worker.RuleProvider
 			workerToolModeModel := workerModel
 			_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, s.ModelRoles.Worker.RuleProviderConfig, workerToolModeModel, s.ModelRoles.Worker.ProviderOptions)
-			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, agentcontrol.WorkerType{}, agentthread.Metadata{Path: agentthread.RootPath + "/worker"})
 			if catErr != nil {
 				return nil, catErr
 			}
@@ -1618,7 +1618,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 						workerRoot = environment.Root()
 					}
-					workerToolSurface, err := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+					workerToolSurface, err := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, wt, meta)
 					if err != nil {
 						return "", err
 					}
@@ -3158,7 +3158,7 @@ func deferredToolCatalogPromptForToolkit(kit *tools.Toolkit) (string, error) {
 
 // workerToolSurfaceForToolkit resolves the same model and PTC projection used
 // by the actual worker executor before constructing its prompt.
-func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (capability.Surface, error) {
+func workerToolSurfaceForToolkit(kit *tools.Toolkit, host *pluginhost.Host, providerName, model string, toolSearchEnabled bool, wt agentcontrol.WorkerType, meta agentthread.Metadata) (capability.Surface, error) {
 	if kit == nil {
 		return capability.Surface{}, nil
 	}
@@ -3168,6 +3168,14 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	}
 	wkit.ConfigureSurfaceForProviderModel(providerName, model, false)
 	wkit.SetToolSearchEnabled(toolSearchEnabled)
+	wkit.SetAgentIdentity(meta.ID, meta.Path)
+	applyWorkerToolFilter(wkit, wt)
+	// Clones deliberately have no execution bindings. Resolve replacements and
+	// contributed tools against the child's identity before filtering skills.
+	executor := newPluginToolExecutor(wkit, host, wkit.SessionID(), wkit.RootDir())
+	if err := configureToolReplacements(executor, wkit, wkit.ReplacementBindings()); err != nil {
+		return capability.Surface{}, err
+	}
 	surface := wkit.ActiveSurface()
 	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
 	return surface, err

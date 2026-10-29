@@ -55,6 +55,23 @@ agent 运行时可以注册工具、补充上下文、观察支持的生命周�
 
 内置功能也使用这些机制。具体用法见[子代理](../desktop/subagents.md)、[自动化](../automation/scheduled-tasks.md)和[记忆](memory.md)。Peers 插件让 agent 联系同一工作区已有的会话，与创建子代理是不同功能。
 
+## OpenDesign 预设
+
+可选的 **OpenDesign Presets** 插件提供一个 `opendesign` 技能，用于选择设计系统、
+从作品模板开始制作，或在网站、仪表盘、移动界面和 HTML 演示文稿中应用设计规则。
+例如：“用 OpenDesign 做一个 Linear 风格的仪表盘。”技能会检索本地目录，按需
+读取选中的资源。
+
+在**技能与插件**中安装构建后的 `opendesign-presets` 目录或 zip，也可以使用
+`wuu plugin install`。从源码构建请参见[打包说明](../../../plugins/opendesign-presets/README.md)。
+安装包固定上游提交，保留署名和许可证，使用时无需安装 OpenDesign。
+禁用 `opendesign-presets` 后，其技能会从可用目录中移除。
+
+此包提供预设和适配 Wuu 的工作流。OpenDesign 的画布、元素批注、直接编辑和媒体
+服务属于独立的应用能力。媒体条目提供提示词配方，实际生成仍需要可用工具。
+模板可能引用可选依赖或远程资源；技能会把上游的预览和输出约定适配到当前项目
+及 Wuu 工具。
+
 ## 监控后台事件
 
 内置 Monitor 插件会运行 shell 脚本，让 agent 同时继续工作。例如，可以让它盯住 CI，
