@@ -357,7 +357,11 @@ type Server struct {
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 
-	controlMu sync.Mutex
+	controlLocksMu sync.Mutex
+	controlLocks   map[string]*sessionControlLock
+
+	stdioResumeMu   sync.Mutex
+	stdioResumeTail map[string]*stdioResumeRequest
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
 	inboxMu    sync.Mutex
@@ -1128,6 +1132,15 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 	if err := s.trackAuthorizedRequest(ctx, req); err != nil {
 		return err
 	}
+	if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); ordered {
+		if deferred, err := s.deferStdioResume(ctx, req); deferred {
+			return err
+		}
+	}
+	return s.dispatchAuthorizedRequest(ctx, req)
+}
+
+func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) error {
 	switch req.Method {
 	case "session/federation":
 		return s.handleSessionFederation(ctx, req)

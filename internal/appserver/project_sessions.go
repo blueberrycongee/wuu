@@ -124,9 +124,9 @@ func (s *ProjectCoordinationProvider) projectSessionHandler(actorID string) tool
 			if !ok || control.State != session.ControlActive || control.ManagerID != project.ID {
 				return nil, session.ErrControlChanged
 			}
-			s.controlMu.Lock()
+			unlock := s.lockSessionControls(request.SessionID)
 			_, err = s.store.ChangeControl(request.SessionID, project.ID, session.ControlActive, control.Revision)
-			s.controlMu.Unlock()
+			unlock()
 			if err != nil {
 				return nil, err
 			}
@@ -154,7 +154,7 @@ func (s *ProjectCoordinationProvider) messageProjectSession(actorID, callID stri
 	if prompt == "" || actorID == request.SessionID {
 		return nil, errors.New("message needs content and a different recipient")
 	}
-	s.controlMu.Lock()
+	unlock := s.lockSessionControls(actorID, request.SessionID)
 	project, actor, senderControl, err := s.projectActor(actorID)
 	var targetControl *session.Control
 	if err == nil {
@@ -166,29 +166,29 @@ func (s *ProjectCoordinationProvider) messageProjectSession(actorID, callID stri
 		targetControl = control
 	}
 	if err != nil {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, err
 	}
 	sourceWork, sourceFound, workErr := s.workForMember(project.ID, actor.ID)
 	if workErr != nil {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, workErr
 	}
 	if sourceFound && request.SessionID == project.ID {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, errors.New("work reports go through submit/review/block; direct workstream chatter must stay with its technical lead")
 	}
 	targetWork, targetFound, workErr := s.workForMember(project.ID, request.SessionID)
 	if workErr != nil {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, workErr
 	}
 	if targetFound && (targetWork.Phase == "stopped" || targetWork.Phase == "delivered") {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, errors.New("work is stopped or delivered; update/resume its contract first")
 	}
 	if targetFound && actor.ID == project.ID {
-		s.controlMu.Unlock()
+		unlock()
 		return nil, errors.New("use work update for coordinator corrections so requirements and acceptance stay consistent")
 	}
 
@@ -206,7 +206,7 @@ func (s *ProjectCoordinationProvider) messageProjectSession(actorID, callID stri
 		message.Controls = append(message.Controls, *targetControl)
 	}
 	err = s.store.EnqueueInbox(message)
-	s.controlMu.Unlock()
+	unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +513,8 @@ func (s *ProjectCoordinationProvider) adoptProjectSession(projectID, sessionID s
 	if metadata.WorkspaceID != project.WorkspaceID {
 		return session.Session{}, errors.New("a conversation can join only a project of its own workspace")
 	}
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
+	unlock := s.lockSessionControls(sessionID)
+	defer unlock()
 	control, _, err := s.store.ReadControl(sessionID)
 	if err != nil {
 		return session.Session{}, err
@@ -563,8 +563,8 @@ func (s *ProjectCoordinationProvider) releaseProjectSession(projectID, sessionID
 	if err != nil {
 		return session.Session{}, err
 	}
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
+	unlock := s.lockSessionControls(sessionID)
+	defer unlock()
 	control, ok, err := s.store.ReadControl(sessionID)
 	if err != nil {
 		return session.Session{}, err

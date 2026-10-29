@@ -2860,7 +2860,7 @@ describe("completion across delayed snapshots", () => {
     expect(state.thread?.turns[0].items.find((item) => item.id === "answer")?.text).toBe("done");
   }
 
-  describe.each(["answer-ready", "completed"] as const)("after %s", (boundary) => {
+  describe.each(["answer-ready", "completed", "interrupted"] as const)("after %s", (boundary) => {
     it.each(paths)("does not revive activity via %s, but accepts a new turn", (path) => {
       const initial = runningState();
       let state = reduceServerEvent(initial, {
@@ -2870,11 +2870,11 @@ describe("completion across delayed snapshots", () => {
           item: { id: "answer", type: "agent_message", status: "completed", terminal: true, text: "done" },
         } },
       });
-      if (boundary === "completed") {
+      if (boundary !== "answer-ready") {
         state = reduceServerEvent(state, {
           kind: "notification", workdir: initial.thread.cwd,
-          message: { method: "turn/completed", params: {
-            thread_id: initial.thread.id, turn: { ...state.thread!.turns[0], status: "completed" },
+          message: { method: boundary === "completed" ? "turn/completed" : "turn/error", params: {
+            thread_id: initial.thread.id, turn: { ...state.thread!.turns[0], status: boundary },
           } },
         });
       }
@@ -2894,6 +2894,24 @@ describe("completion across delayed snapshots", () => {
       expect(activeTurnIsAnswerReady(state.thread)).toBe(false);
       expect(isThreadExecuting(summarizeThreadsForSidebar(state.threads)[0])).toBe(true);
     });
+  });
+
+  it.each(["thread/resumed", "resume RPC"] as const)("keeps a directly interrupted partial answer settled across %s", (path) => {
+    const initial = runningState();
+    let state = reduceServerEvent(initial, {
+      kind: "notification", workdir: initial.thread.cwd,
+      message: { method: "turn/error", params: {
+        thread_id: initial.thread.id,
+        turn: { ...initial.thread.turns[0], status: "interrupted" },
+      } },
+    });
+    // No terminal assistant item or answer-ready boundary preceded this Stop.
+    state = applySnapshot(state, initial.thread, path);
+    expect(state.thread?.turns[0].status).toBe("interrupted");
+    expect(state.thread?.turns[0].items[0].text).toBe("partial");
+    expect(state.thread?.status).toBe("idle");
+    expect(isStateActiveThreadRunning(state)).toBe(false);
+    expect(isThreadExecuting(summarizeThreadsForSidebar(state.threads)[0])).toBe(false);
   });
 
   it.each(["thread/updated", "thread/resumed"] as const)("repairs a missed turn/completed via %s", (path) => {

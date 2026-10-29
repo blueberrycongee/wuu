@@ -1,3 +1,4 @@
+import { applyPendingComposerUpdate, pendingComposerUpdateFromNotification } from "../shared/pendingComposerMessages";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { useRef, useState, useSyncExternalStore, type MutableRefObject } from "react";
 import type {
@@ -13,7 +14,6 @@ import {
   resolveThreadRuntimeContext,
   threadForTab,
   threadFromRecord,
-  threadItemFromRecord,
   type AppState,
   type ComposerDraftState,
 } from "./AppState";
@@ -26,7 +26,6 @@ import {
 import {
   appendPendingComposerMessage,
   applyAuthoritativeComposerSnapshot,
-  applyHeldComposerSnapshot,
   emptyThreadPendingComposerMessages,
   findPendingComposerMessage,
   materializedComposerMessageIDs,
@@ -455,53 +454,13 @@ export function createComposerPendingState({
     if (!params) {
       return;
     }
-    const threadID = stringValue(params, "thread_id");
-    if (
-      method === "turn/held" ||
-      method === "thread/resumed"
-    ) {
-      const snapshot = heldComposerMessagesFromParams(
-        params,
-        method,
-      );
-      if (!snapshot) {
-        return;
-      }
-      const survivors = method === "thread/resumed"
-        ? heldAcrossCoreExitRef.current[snapshot.threadID]
-        : undefined;
-      let lost: QueuedComposerMessage[] = [];
-      if (survivors) {
-        heldAcrossCoreExitRef.current = Object.fromEntries(
-          Object.entries(heldAcrossCoreExitRef.current).filter(([threadID]) => threadID !== snapshot.threadID),
-        );
-        const known = new Set([
-          ...snapshot.messages.map((message) => message.id),
-          ...materializedComposerMessageIDs(threadFromRecord(recordValue(params, "thread"))),
-        ]);
-        const current = pendingComposerMessagesByThreadRef.current[snapshot.threadID]?.queued ?? [];
-        lost = survivors.filter(
-          (message) => !known.has(message.id) && current.some((candidate) => candidate.id === message.id),
-        );
-      }
-      updateThreadPendingComposerMessages(snapshot.threadID, (previous) => {
-        if (method !== "thread/resumed") {
-          return applyHeldComposerSnapshot(previous, snapshot.messages);
-        }
-        const lostIDs = new Set(lost.map((message) => message.id));
-        // Keep lost input visible while it is handed to the new Core.
-        return applyAuthoritativeComposerSnapshot(
-          {
-            ...previous,
-            queued: previous.queued.map((message) =>
-              lostIDs.has(message.id) ? { ...message, operationState: "sending" } : message,
-            ),
-          },
-          snapshot.messages,
-        );
-      });
-      if (lost.length > 0) {
-        void reholdQueuedMessages(snapshot.threadID, lost);
+    if (method !== "thread/resumed") {
+      const update = pendingComposerUpdateFromNotification(event.message, heldComposerMessage);
+      if (!update) return;
+      if (update.kind === "remove") {
+        removePendingComposerMessageByID(update.threadID, update.id, update.scope);
+      } else {
+        updateThreadPendingComposerMessages(update.threadID, previous => applyPendingComposerUpdate(previous, update));
       }
       if (method === "turn/held") {
         const reason = stringValue(params, "error");
@@ -509,54 +468,43 @@ export function createComposerPendingState({
       }
       return;
     }
-    if (method === "turn/queued" || method === "turn/steered") {
-      const rawMessage = recordValue(params, "message");
-      const message = heldComposerMessage(rawMessage, 0, false);
-      const messageThreadID = rawMessage
-        ? stringValue(rawMessage, "thread_id")
-        : "";
-      if (!message || !messageThreadID) {
-        return;
-      }
-      updateThreadPendingComposerMessages(messageThreadID, (previous) => {
-        const withoutPreviousMode = {
-          queued: previous.queued.filter((candidate) => candidate.id !== message.id),
-          guides: previous.guides.filter((candidate) => candidate.id !== message.id),
-        };
-        return appendPendingComposerMessage(
-          withoutPreviousMode,
-          message.origin === "steer" ? "guide" : "queue",
-          message,
-        );
-      });
+    const snapshot = heldComposerMessagesFromParams(
+      params,
+      method,
+    );
+    if (!snapshot) {
       return;
     }
-    if (method === "turn/unsteered") {
-      const steerID = stringValue(params, "steer_id");
-      if (steerID) {
-        removePendingComposerMessageByID(threadID, steerID, "guide");
-      }
-      return;
+    const survivors = heldAcrossCoreExitRef.current[snapshot.threadID];
+    let lost: QueuedComposerMessage[] = [];
+    if (survivors) {
+      heldAcrossCoreExitRef.current = Object.fromEntries(
+        Object.entries(heldAcrossCoreExitRef.current).filter(([threadID]) => threadID !== snapshot.threadID),
+      );
+      const known = new Set([
+        ...snapshot.messages.map((message) => message.id),
+        ...materializedComposerMessageIDs(threadFromRecord(recordValue(params, "thread"))),
+      ]);
+      const current = pendingComposerMessagesByThreadRef.current[snapshot.threadID]?.queued ?? [];
+      lost = survivors.filter(
+        (message) => !known.has(message.id) && current.some((candidate) => candidate.id === message.id),
+      );
     }
-    if (method === "turn/started") {
-      const queueID = stringValue(params, "queue_id");
-      if (queueID) {
-        removePendingComposerMessageByID(threadID, queueID);
-      }
-      return;
-    }
-    if (method === "turn/dequeued") {
-      const queueID = stringValue(params, "queue_id");
-      if (queueID) {
-        removePendingComposerMessageByID(threadID, queueID, "queue");
-      }
-      return;
-    }
-    if (method === "item/completed") {
-      const item = threadItemFromRecord(recordValue(params, "item"));
-      if (item?.type === "user_message" && item.source_id) {
-        removePendingComposerMessageByID(threadID, item.source_id);
-      }
+    updateThreadPendingComposerMessages(snapshot.threadID, (previous) => {
+      const lostIDs = new Set(lost.map((message) => message.id));
+      // Keep lost input visible while it is handed to the new Core.
+      return applyAuthoritativeComposerSnapshot(
+        {
+          ...previous,
+          queued: previous.queued.map((message) =>
+            lostIDs.has(message.id) ? { ...message, operationState: "sending" } : message,
+          ),
+        },
+        snapshot.messages,
+      );
+    });
+    if (lost.length > 0) {
+      void reholdQueuedMessages(snapshot.threadID, lost);
     }
   }
 

@@ -142,8 +142,8 @@ func (s *Server) updateHeldUserTurn(binding *runtime.State, threadID, id string,
 
 // A live queue has the same durable recovery record as held input. Only its
 // current owner may automatically drain it; another window/restart sees it held.
-func (s *Server) heldUserMessageSnapshot(threadID string, turns []queuedTurn) []HeldUserMessage {
-	pending := s.pendingUserMessageSummaries(threadID)
+func (s *Server) heldUserMessageSnapshot(threadID string, turns []queuedTurn, timings ...*rpcRequestTiming) []HeldUserMessage {
+	pending := s.pendingUserMessageSummaries(threadID, timings...)
 	live := make(map[string]bool, len(pending))
 	for _, message := range pending {
 		live[message.ID] = true
@@ -183,11 +183,18 @@ func heldUserMessageSummaries(threadID string, turns []queuedTurn) []HeldUserMes
 	return messages
 }
 
-func (s *Server) pendingUserMessageSummaries(threadID string) []HeldUserMessage {
+func (s *Server) pendingUserMessageSummaries(threadID string, timings ...*rpcRequestTiming) []HeldUserMessage {
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0].buffered()
+	}
+	defer timing.flush()
 	turns := make([]queuedTurn, 0)
 	th := s.thread(threadID)
 	if th != nil {
+		started := timing.now()
 		th.mu.Lock()
+		timing.span("resume_pending_thread_mutex_wait", started)
 		defer th.mu.Unlock()
 		for _, msg := range th.pendingSteers {
 			if _, _, pluginSteer := pluginSessionRequestFromClientID(msg.ClientID); pluginSteer {
@@ -203,7 +210,9 @@ func (s *Server) pendingUserMessageSummaries(threadID string) []HeldUserMessage 
 			})
 		}
 	}
+	started := timing.now()
 	s.queuedTurnMu.Lock()
+	timing.span("resume_pending_queue_mutex_wait", started)
 	defer s.queuedTurnMu.Unlock()
 	claimPrefix := strings.TrimSpace(threadID) + "\x00"
 	for key, claim := range s.claimedQueuedTurns {

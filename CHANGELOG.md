@@ -232,6 +232,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep normal plugin-generation retirement silent after catalog changes while preserving genuine update failures and plugin diagnostics.
 - Preserve generated UI disclosure state when leaving a view immediately after opening or closing it.
+- Keep newly started, completed or interrupted turns and stopped composer input from reverting when an older conversation-resume response arrives late. Reconcile accepted input changes in order, including edits, removals, mode switches and already-sent messages, without delaying Stop behind response output.
+- Scope app-server control locks to each conversation, avoiding cross-conversation waits behind a slow plugin control read during send acknowledgement or Stop. Preserve same-conversation revision fences and measure control-lock waits separately from provider reads.
+- Keep slow conversation resumes off serial stdio ingress while preserving same-conversation request order and captured authority. Active Stop bypasses pure reads, and resume snapshots capture live state after slow metadata reads.
 - Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
 - Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
 - Keep effective configuration tied to the captured base source when applying project settings, avoiding a redundant file read and mismatched source/config snapshots during external edits.

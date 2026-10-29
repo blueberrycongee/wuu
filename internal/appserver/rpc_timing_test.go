@@ -189,7 +189,7 @@ func TestRPCTimingStartAndInterruptKeepTheirOwnCorrelation(t *testing.T) {
 	}
 	expected := map[string]string{
 		"admission_begin": "start", "admission_user_persist": "start", "admission_committed": "start", "turn_launch_committed": "start",
-		"interrupt_hold_inputs": "stop", "interrupt_cancel_called": "stop", "interrupt_stop_processes": "stop",
+		"interrupt_state": "stop", "interrupt_hold_inputs": "stop", "interrupt_cancel_called": "stop", "interrupt_stop_processes": "stop",
 	}
 	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
 		var event rpcTimingEvent
