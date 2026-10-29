@@ -46,6 +46,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	var runnerOwned bool
 	var constructed *agent.StreamRunner
 	var acquired func() error
+	var openLate func()
 	defer func() {
 		if !runnerOwned && (constructed != nil || acquired != nil) {
 			generation := s.pluginGeneration
@@ -136,10 +137,19 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	} else if s.PluginHost != nil && s.StreamRunner.Tools != nil {
 		generation := s.pluginGeneration
 		var admissionMu sync.Mutex
-		var inFlight, admissionClosed bool
+		var inFlight, admissionClosed, lateOpen bool
+		sideArtifacts := &artifactLeaseOwner{}
+		if release != nil {
+			acquired = sideArtifacts.close
+		}
+		openLate = func() {
+			admissionMu.Lock()
+			lateOpen = release != nil
+			admissionMu.Unlock()
+		}
 		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
 			admissionMu.Lock()
-			if admissionClosed {
+			if admissionClosed && !lateOpen {
 				admissionMu.Unlock()
 				return toolservice.Backend{}, errors.New("native tool backend was not initialized during side thread admission")
 			}
@@ -153,10 +163,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 			ok := false
 			defer func() {
 				if !ok {
-					if acquired != nil {
-						_ = acquired()
-						acquired = nil
-					}
+					_ = sideArtifacts.close()
 					_ = closeResources(context.Background())
 				}
 			}()
@@ -181,7 +188,13 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 				}
 				artifactDir := statepath.SessionArtifactDir(stateDir, parentSession[0])
 				if release != nil {
-					acquired, err = kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+					sideArtifacts.mu.Lock()
+					if sideArtifacts.closed {
+						sideArtifacts.mu.Unlock()
+						return toolservice.Backend{}, errors.New("side thread artifact owner is closed")
+					}
+					sideArtifacts.release, err = kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+					sideArtifacts.mu.Unlock()
 					if err != nil {
 						return toolservice.Backend{}, err
 					}
@@ -237,6 +250,9 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	runner.CompactOnly = false
 	runner.PromptCacheKey = "side-thread:" + id
 	runner.InferenceJournal = s.InferenceJournalForOwner("side-thread:" + id)
+	if openLate != nil {
+		openLate()
+	}
 	runnerOwned = true
 	if release != nil {
 		*release = acquired
