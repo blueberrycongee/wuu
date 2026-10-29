@@ -14,13 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -491,21 +489,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(worker.release) }) }
 			t.Cleanup(unblock)
-			control, err := agentcontrol.New(agentcontrol.Config{
-				Documents:         rt.Documents,
-				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
-
-				Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
-				WorktreeRoot: filepath.Join(rt.RootDir, ".wuu", "worktrees"), SessionID: "reload-background",
-				ThreadDir: filepath.Join(statepath.SessionArtifactDir(rt.StateDir, "reload-background"), "threads"),
-				WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
-					return noopToolExecutor{}, nil
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { unblock(); control.StopAll(); control.Close() })
+			rt.WorkerClient = worker
 			selection := session.RuntimeSelection{Provider: rt.ProviderName, Model: rt.Model, Variant: rt.StreamRunner.Variant, Effort: rt.StreamRunner.Effort}
 			history := []providers.ChatMessage{{Role: "user", Content: "history before reload"}}
 			if persistent {
@@ -531,10 +515,12 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Use a deterministic local worker instead of any network-backed provider.
-			releaseThreadRuntimeSubscription(first, th.runtimeSubscription)
-			first.AgentControl = control
-			th.runtimeSubscription = srv.subscribeThreadRuntime(th.state, th.ID, first)
+			// The thread constructs its real worker control with the blocking client.
+			control := first.NativeAgentControl()
+			if control == nil {
+				t.Fatal("thread did not construct worker control")
+			}
+			t.Cleanup(func() { unblock(); control.StopAll(); control.Close() })
 			// Drop terminal status fanout while leaving the reliable finalizer attached.
 			// Retirement must be driven by the lease quiescence boundary, not notifications.
 			control.Unsubscribe(th.runtimeSubscription.statusCh)

@@ -184,6 +184,7 @@ type threadState struct {
 }
 
 type threadRuntimeSubscription struct {
+	control             *agentcontrol.AgentControl
 	state               *runtime.State
 	modelState          *runtime.State
 	statusCh            chan subagent.Notification
@@ -1073,8 +1074,8 @@ func collectThreadAgentControls(threads []*threadState, controls map[*agentcontr
 		th.mu.Lock()
 		threadRuntime := th.execRuntime
 		th.mu.Unlock()
-		if threadRuntime != nil && threadRuntime.AgentControl != nil {
-			controls[threadRuntime.AgentControl] = struct{}{}
+		if threadRuntime != nil && threadRuntime.NativeAgentControl() != nil {
+			controls[threadRuntime.NativeAgentControl()] = struct{}{}
 		}
 	}
 }

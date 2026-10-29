@@ -395,12 +395,12 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		th.Instructions = instructions
 		th.mu.Unlock()
 		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
-		if threadRuntime.Toolkit != nil {
+		if threadRuntime.NativeToolkit() != nil {
 			var handler tools.ProjectSessionHandler
 			if isProject {
 				handler = s.projectSessionHandlerForState(th.ID, th.state)
 			}
-			threadRuntime.Toolkit.SetProjectSessions(handler)
+			threadRuntime.NativeToolkit().SetProjectSessions(handler)
 		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
@@ -436,14 +436,14 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 // effective setting at turn admission, before any tool can create a commit;
 // worker toolkits spawned by this turn then inherit the refreshed value.
 func (s *Server) refreshThreadGitAttribution(threadRuntime *runtime.ThreadRuntime) error {
-	if s == nil || s.rt == nil || threadRuntime == nil || threadRuntime.Toolkit == nil {
+	if s == nil || s.rt == nil || threadRuntime == nil || threadRuntime.NativeToolkit() == nil {
 		return nil
 	}
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
 		return fmt.Errorf("refresh git attribution setting: %w", err)
 	}
-	threadRuntime.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
+	threadRuntime.NativeToolkit().SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 	return nil
 }
 
@@ -1352,7 +1352,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	var detached detachedThreadRuntime
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
-		workspaceMismatch := existing.Toolkit != nil && sessionWorkspacePath(existing.Toolkit.RootDir()) != sessionWorkspacePath(th.CWD)
+		workspaceMismatch := existing.NativeToolkit() != nil && sessionWorkspacePath(existing.NativeToolkit().RootDir()) != sessionWorkspacePath(th.CWD)
 		compositionMismatch := existing.CompositionID != compositionID
 		pluginMismatch := compositionMismatch || !s.threadRuntimePluginGenerationMatches(th)
 		// A generation belongs to live work, not the lifetime of a conversation.
@@ -1467,13 +1467,13 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		threadRuntime.StreamRunner.DriverCheckpointStore = &th.ephemeralDriver
 	}
 	th.mu.Unlock()
-	if coordinator && threadRuntime.Toolkit != nil {
-		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandlerForState(th.ID, th.state))
+	if coordinator && threadRuntime.NativeToolkit() != nil {
+		threadRuntime.NativeToolkit().SetProjectSessions(s.projectSessionHandlerForState(th.ID, th.state))
 	}
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
 	threadRuntime.EngineID = agentengine.NormalizeEngineID(th.EngineID)
-	if threadRuntime.Toolkit != nil {
+	if threadRuntime.NativeToolkit() != nil {
 		// Inject the embedded-browser bridge for every thread here. The bridge
 		// closure must carry this thread's id + workdir so tab operations route
 		// to the desktop views keyed by (workdir, tab_id). Set once at runtime
@@ -1481,15 +1481,15 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		// A headless client cannot execute browser actions. Apply the negotiated
 		// capability before the first request, preserving an explicit disable.
 		if !s.supportsBrowserClient() {
-			threadRuntime.Toolkit.SetBrowserEnabled(false)
+			threadRuntime.NativeToolkit().SetBrowserEnabled(false)
 		}
-		threadRuntime.Toolkit.SetBrowserBridge(s.browserBridgeForThread(browserWorkdir, th.ID))
-		threadRuntime.Toolkit.SetBrowserHostFinalize(s.supportsClientMethod(MethodBrowserFinalize) && s.supportsClientMethod(MethodBrowserTurnEnded))
-		threadRuntime.Toolkit.SetOnSessionWorkspaceChanged(func(root string) error {
+		threadRuntime.NativeToolkit().SetBrowserBridge(s.browserBridgeForThread(browserWorkdir, th.ID))
+		threadRuntime.NativeToolkit().SetBrowserHostFinalize(s.supportsClientMethod(MethodBrowserFinalize) && s.supportsClientMethod(MethodBrowserTurnEnded))
+		threadRuntime.NativeToolkit().SetOnSessionWorkspaceChanged(func(root string) error {
 			if err := s.rebindThreadWorkspace(th.state, th.ID, root); err != nil {
 				return err
 			}
-			threadRuntime.Toolkit.SetBrowserBridge(s.browserBridgeForThread(root, th.ID))
+			threadRuntime.NativeToolkit().SetBrowserBridge(s.browserBridgeForThread(root, th.ID))
 			return nil
 		})
 	}
@@ -1525,17 +1525,17 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		th.runtimePluginEpoch = s.pluginGenerationEpoch.Load()
 		th.runtimePluginRevision = s.pluginRuntimeRevision.Load()
 		th.mu.Unlock()
-		if threadRuntime.AgentControl != nil {
-			threadRuntime.AgentControl.StartWorkerTerminalRecovery()
+		if threadRuntime.NativeAgentControl() != nil {
+			threadRuntime.NativeAgentControl().StartWorkerTerminalRecovery()
 			// New only restores durable queue metadata. Start restored workers after
 			// this runtime has won installation, configuration is complete,
 			// and subscribeThreadRuntime has attached the model resolver and reliable
 			// terminal finalizer. A zero-latency worker can now safely resolve and
 			// finalize against the installed thread runtime.
-			threadRuntime.AgentControl.StartQueuedWork()
+			threadRuntime.NativeAgentControl().StartQueuedWork()
 			s.replayPendingAgentCompletions(th.state, th.ID, threadRuntime)
 		}
-		s.replayPendingProcessCompletions(th.state, th.ID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
+		s.replayPendingProcessCompletions(th.state, th.ID, threadRuntime.NativeAgentControl(), threadRuntime.ProcessManager)
 		return threadRuntime, nil
 	}
 	existing = th.execRuntime
@@ -1636,17 +1636,17 @@ func (s *Server) threadRuntimeMatchesSelectionLocked(th *threadState, existing *
 }
 
 func (s *Server) replayPendingAgentCompletions(binding *runtime.State, threadID string, threadRuntime *runtime.ThreadRuntime) {
-	if s == nil || threadRuntime == nil || threadRuntime.AgentControl == nil {
+	if s == nil || threadRuntime == nil || threadRuntime.NativeAgentControl() == nil {
 		return
 	}
-	pending, err := threadRuntime.AgentControl.PendingRootAgentCompletions()
+	pending, err := threadRuntime.NativeAgentControl().PendingRootAgentCompletions()
 	if err != nil {
 		providers.DebugLogf("restore pending agent completions for thread %q: %v", threadID, err)
 		return
 	}
 	for _, completion := range pending {
-		msg := threadRuntime.AgentControl.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
-		consumer, _ := threadRuntime.AgentControl.AgentResultDeliveryConsumer(completion.ResultID)
+		msg := threadRuntime.NativeAgentControl().AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
+		consumer, _ := threadRuntime.NativeAgentControl().AgentResultDeliveryConsumer(completion.ResultID)
 		if consumer != "" {
 			continue
 		}
@@ -1663,10 +1663,10 @@ func (s *Server) replayPendingAgentCompletions(binding *runtime.State, threadID 
 }
 
 func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string, threadRuntime *runtime.ThreadRuntime) *threadRuntimeSubscription {
-	if threadRuntime == nil || (threadRuntime.AgentControl == nil && threadRuntime.ProcessManager == nil) {
+	if threadRuntime == nil || (threadRuntime.NativeAgentControl() == nil && threadRuntime.ProcessManager == nil) {
 		return nil
 	}
-	control := threadRuntime.AgentControl
+	control := threadRuntime.NativeAgentControl()
 	var modelState *runtime.State
 	// Per-participant model pins persist the raw pin but not the stream
 	// client (StreamClient is not serializable). When a queued spawn
@@ -1725,6 +1725,7 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		})
 	}
 	sub := &threadRuntimeSubscription{
+		control:        control,
 		state:          binding.Retain(),
 		modelState:     modelState,
 		statusCh:       make(chan subagent.Notification, 64),
@@ -1813,7 +1814,8 @@ func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
 }
 
 func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
-	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	releaseThreadRuntimeSubscription(detached.subscription)
+	closeThreadRuntimeControl(detached.runtime)
 	var shutdownDone <-chan struct{}
 	if s != nil {
 		s.backgroundMu.Lock()
@@ -1842,7 +1844,8 @@ func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 }
 
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
-	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	releaseThreadRuntimeSubscription(detached.subscription)
+	closeThreadRuntimeControl(detached.runtime)
 	var releaseGeneration func()
 	if detached.runtime != nil && detached.runtime.CompositionID == "" && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
@@ -1853,10 +1856,10 @@ func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 }
 
 func threadRuntimeHasOutstandingAgentWork(threadRuntime *runtime.ThreadRuntime) bool {
-	if threadRuntime == nil || threadRuntime.AgentControl == nil {
+	if threadRuntime == nil || threadRuntime.NativeAgentControl() == nil {
 		return false
 	}
-	control := threadRuntime.AgentControl
+	control := threadRuntime.NativeAgentControl()
 	if control.HasOwnedWorkerExecutions() || control.HasPendingWorkerTerminalFinalizations() {
 		return true
 	}
@@ -1873,7 +1876,7 @@ func threadRuntimeAwaitsAutoContinuation(th *threadState, threadRuntime *runtime
 		return false
 	}
 	return threadRuntimeHasOutstandingAgentWork(threadRuntime) ||
-		threadHasOutstandingProcessCompletion(th, threadRuntime.AgentControl, threadRuntime.ProcessManager)
+		threadHasOutstandingProcessCompletion(th, threadRuntime.NativeAgentControl(), threadRuntime.ProcessManager)
 }
 
 func threadRuntimeHasOutstandingWork(threadID string, threadRuntime *runtime.ThreadRuntime) bool {
@@ -1889,7 +1892,7 @@ func threadRuntimeHasOutstandingWork(threadID string, threadRuntime *runtime.Thr
 		return true
 	}
 	for _, p := range processes {
-		if p.Lifecycle != process.LifecycleManaged || !processEventBelongsToThread(threadID, threadRuntime.AgentControl, process.Event{Process: p}) {
+		if p.Lifecycle != process.LifecycleManaged || !processEventBelongsToThread(threadID, threadRuntime.NativeAgentControl(), process.Event{Process: p}) {
 			continue
 		}
 		switch p.Status {
@@ -1900,10 +1903,10 @@ func threadRuntimeHasOutstandingWork(threadID string, threadRuntime *runtime.Thr
 	return false
 }
 
-func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub *threadRuntimeSubscription) {
-	if threadRuntime != nil && threadRuntime.AgentControl != nil && sub != nil {
-		threadRuntime.AgentControl.Unsubscribe(sub.statusCh)
-		threadRuntime.AgentControl.UnsubscribeStream(sub.streamCh)
+func releaseThreadRuntimeSubscription(sub *threadRuntimeSubscription) {
+	if sub != nil && sub.control != nil {
+		sub.control.Unsubscribe(sub.statusCh)
+		sub.control.UnsubscribeStream(sub.streamCh)
 	}
 	if sub != nil && sub.processManager != nil {
 		sub.processManager.Unsubscribe(sub.processCh)
@@ -1914,12 +1917,19 @@ func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub 
 	if sub != nil {
 		sub.stop()
 	}
-	if threadRuntime != nil && threadRuntime.AgentControl != nil {
-		threadRuntime.AgentControl.Close()
-	}
 	if sub != nil {
 		_ = sub.modelState.Close()
 		_ = sub.state.Close()
+	}
+}
+
+// Closing a subscription must not close a different control installed on the
+// runtime. Retiring the runtime is the owner of control shutdown.
+func closeThreadRuntimeControl(threadRuntime *runtime.ThreadRuntime) {
+	if threadRuntime != nil {
+		if control := threadRuntime.NativeAgentControl(); control != nil {
+			control.Close()
+		}
 	}
 }
 
@@ -1927,7 +1937,7 @@ func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, ma
 	if threadRuntime == nil {
 		return nil
 	}
-	control := threadRuntime.AgentControl
+	control := threadRuntime.NativeAgentControl()
 	if control != nil {
 		control.BeginShutdown()
 	}
@@ -2428,9 +2438,9 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 		th.mu.Unlock()
 		timing.flush()
 		s.rt.ActivityRegistry.PauseThread(threadID)
-		if hasAgentWork && threadRuntime.AgentControl != nil {
+		if hasAgentWork && threadRuntime.NativeAgentControl() != nil {
 			phaseStarted = timing.now()
-			threadRuntime.AgentControl.FreezeWorkerTree()
+			threadRuntime.NativeAgentControl().FreezeWorkerTree()
 			timing.span("interrupt_freeze_workers", phaseStarted)
 		}
 		phaseStarted = timing.now()
@@ -2601,7 +2611,7 @@ func threadAgentControlLocked(th *threadState) *agentcontrol.AgentControl {
 	if th == nil || th.execRuntime == nil {
 		return nil
 	}
-	return th.execRuntime.AgentControl
+	return th.execRuntime.NativeAgentControl()
 }
 
 // foldFrozenWorkerTree lifts a turn/interrupt freeze for this user turn: it
@@ -2622,7 +2632,7 @@ func (s *Server) foldFrozenWorkerTree(th *threadState, threadRuntime *runtime.Th
 		return
 	}
 	if control == nil && threadRuntime != nil {
-		control = threadRuntime.AgentControl
+		control = threadRuntime.NativeAgentControl()
 	}
 	pending := s.takePendingAgentCompletionTurns(th.ID)
 	var frozenResults []agentcontrol.FrozenWorkerResult
@@ -2925,7 +2935,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
 	turnKit := s.rt.Toolkit
 	if threadRuntime != nil {
-		turnKit = threadRuntime.Toolkit
+		turnKit = threadRuntime.NativeToolkit()
 	}
 	defer func() {
 		s.rt.ActivityRegistry.EndExecution(th.ID, browserTurn.executionID)
@@ -3271,8 +3281,8 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		usageModel = runner.Model
 	}
 	toolRecordStart := 0
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
-		toolRecordStart = len(threadRuntime.Toolkit.ToolTelemetry())
+	if threadRuntime != nil && threadRuntime.NativeToolkit() != nil {
+		toolRecordStart = len(threadRuntime.NativeToolkit().ToolTelemetry())
 	}
 	// Forward provider-reported token usage into throttled "turn/usage"
 	// notifications so live UIs can render a real token-speed gauge when the
@@ -3463,8 +3473,8 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			// Reused runtimes have no installation replay to collect retained
 			// agent results after a human message permits recovery. Collect them
 			// with the same pause and answer-receipt gates as process results.
-			if threadRuntime != nil && threadRuntime.AgentControl != nil {
-				control := threadRuntime.AgentControl
+			if threadRuntime != nil && threadRuntime.NativeAgentControl() != nil {
+				control := threadRuntime.NativeAgentControl()
 				pending, pendingErr := control.PendingRootAgentCompletions()
 				if pendingErr != nil {
 					providers.DebugLogf("read pending agent completions for thread %q: %v", th.ID, pendingErr)
@@ -3503,7 +3513,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 				}
 				for _, p := range pending {
 					event := process.Event{Process: p}
-					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
+					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.NativeAgentControl(), event) {
 						continue
 					}
 					if th.completionDeliveryPaused(nil, []string{p.ID}) {
@@ -3836,8 +3846,8 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		unconsumedSteers = generated
 	}
 	if len(unconsumedSteers) > 0 {
-		if threadRuntime != nil && threadRuntime.AgentControl != nil {
-			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
+		if threadRuntime != nil && threadRuntime.NativeAgentControl() != nil {
+			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.NativeAgentControl())
 		}
 		if len(unconsumedSteers) > 0 {
 			queuedSteers := coalescedQueuedTurnsFromSteers(unconsumedSteers)
@@ -3875,13 +3885,13 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// persistence failures leave the obligation pending for explicit recovery;
 	// replaying them here would reset the request layer's retry budget.
 	completionClaimFailed := false
-	if err == nil && completionAnswerReady && persistErr == nil && threadRuntime != nil && threadRuntime.AgentControl != nil {
+	if err == nil && completionAnswerReady && persistErr == nil && threadRuntime != nil && threadRuntime.NativeAgentControl() != nil {
 		for _, resultID := range turnRuntime.AgentCompletionResultIDs {
 			resultID = strings.TrimSpace(resultID)
 			if resultID == "" {
 				continue
 			}
-			claimed, consumedBy, claimErr := threadRuntime.AgentControl.ClaimAgentResultDeliveryID(resultID, "auto_completion")
+			claimed, consumedBy, claimErr := threadRuntime.NativeAgentControl().ClaimAgentResultDeliveryID(resultID, "auto_completion")
 			if claimErr != nil {
 				completionClaimFailed = true
 				providers.DebugLogf("persist completed agent result claim %q for thread %q: %v", resultID, th.ID, claimErr)
@@ -4028,7 +4038,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	if processCompletionClaimFailed {
 		s.scheduleThreadExecutionLeaseRetry(binding, func(binding *runtime.State) {
-			s.replayPendingProcessCompletions(binding, th.ID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
+			s.replayPendingProcessCompletions(binding, th.ID, threadRuntime.NativeAgentControl(), threadRuntime.ProcessManager)
 		})
 	}
 	// A failed canonical checkpoint is not an admission boundary. Keep queued
@@ -4191,9 +4201,9 @@ func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime
 	}
 	var records []tools.ToolExecutionRecord
 	var inventory []tools.ToolInfo
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
-		records = threadRuntime.Toolkit.ToolTelemetry()
-		inventory = threadRuntime.Toolkit.ToolInfos()
+	if threadRuntime != nil && threadRuntime.NativeToolkit() != nil {
+		records = threadRuntime.NativeToolkit().ToolTelemetry()
+		inventory = threadRuntime.NativeToolkit().ToolInfos()
 	}
 	if toolRecordStart > 0 && toolRecordStart < len(records) {
 		records = records[toolRecordStart:]
@@ -5229,11 +5239,11 @@ func gateAlreadyDeliveredCompletions(history []providers.ChatMessage, threadRunt
 		return nil
 	}
 	if len(agentResultIDs) > 0 {
-		if threadRuntime == nil || threadRuntime.AgentControl == nil {
+		if threadRuntime == nil || threadRuntime.NativeAgentControl() == nil {
 			return errors.Join(errRetryableTurnAdmission, errors.New("agent completion control is unavailable"))
 		}
 		for _, resultID := range agentResultIDs {
-			consumer, err := threadRuntime.AgentControl.AgentResultDeliveryConsumer(resultID)
+			consumer, err := threadRuntime.NativeAgentControl().AgentResultDeliveryConsumer(resultID)
 			if err != nil {
 				return errors.Join(errRetryableTurnAdmission, err)
 			}
@@ -5241,7 +5251,7 @@ func gateAlreadyDeliveredCompletions(history []providers.ChatMessage, threadRunt
 				return errAgentCompletionAlreadyDelivered
 			}
 			if agentCompletionMarkerAnswered(history, resultID) {
-				claimed, consumedBy, err := threadRuntime.AgentControl.ClaimAgentResultDeliveryID(resultID, "auto_completion")
+				claimed, consumedBy, err := threadRuntime.NativeAgentControl().ClaimAgentResultDeliveryID(resultID, "auto_completion")
 				if err != nil {
 					return errors.Join(errRetryableTurnAdmission, err)
 				}

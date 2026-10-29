@@ -57,8 +57,8 @@ func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID st
 		}
 	}
 	threadRuntime.StreamRunner.Tools = guarded
-	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
-		threadRuntime.Toolkit.SetToolPolicy(guard.allowed)
+	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.NativeToolkit() != nil {
+		threadRuntime.NativeToolkit().SetToolPolicy(guard.allowed)
 	}
 	return nil
 }
@@ -95,6 +95,10 @@ func newSessionToolPolicyExecutor(base agent.ToolExecutor, policy pluginhost.Ses
 	}
 	return executor
 }
+
+// UnwrapToolExecutor identifies the selected host executor for authority
+// updates. The policy still guards every model-visible execution.
+func (e *sessionToolPolicyExecutor) UnwrapToolExecutor() agent.ToolExecutor { return e.base }
 
 func (e *sessionToolPolicyExecutor) allowed(name string) bool {
 	name = strings.TrimSpace(name)

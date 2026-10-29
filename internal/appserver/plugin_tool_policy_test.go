@@ -127,3 +127,15 @@ func (e *policyFinalizationTools) TakeAdditionalContext(providers.ToolCall) stri
 	e.contextTaken = true
 	return "execute context"
 }
+
+func TestSessionToolPolicyExposesHostAuthorityTargetWithoutBypassingPolicy(t *testing.T) {
+	base := &policyFinalizationTools{}
+	wrapper := newSessionToolPolicyExecutor(base, pluginhost.SessionToolPolicy{Deny: []string{"blocked"}})
+	hostWrapper, ok := wrapper.(interface{ UnwrapToolExecutor() agent.ToolExecutor })
+	if !ok || hostWrapper.UnwrapToolExecutor() != base {
+		t.Fatal("host cannot find the selected tool executor")
+	}
+	if _, err := wrapper.Execute(context.Background(), providers.ToolCall{Name: "blocked", Arguments: `{}`}); err == nil {
+		t.Fatal("policy wrapper allowed a denied tool")
+	}
+}

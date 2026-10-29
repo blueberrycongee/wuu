@@ -3,15 +3,12 @@ package appserver
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
-	"github.com/blueberrycongee/wuu/internal/agentthread"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -21,15 +18,12 @@ import (
 // A worker admitted between an idle check and retirement must not be canceled
 // merely because the runtime is being released.
 func TestRuntimeRetirementLetsAdmittedWorkerFinish(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
+	client := &fakeClient{}
+	rt := newTestRuntime(t, client)
+	rt = newReloadBehaviorRuntime(t, rt, client)
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	worker := newBlockingStreamClient("finished naturally")
-	control, err := agentcontrol.New(agentcontrol.Config{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir, WorktreeRoot: filepath.Join(rt.RootDir, "worktrees"), SessionID: "retirement-race", WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
-		return noopToolExecutor{}, nil
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { control.StopAll(); control.Close() })
+	rt.WorkerClient = worker
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
@@ -45,10 +39,11 @@ func TestRuntimeRetirementLetsAdmittedWorkerFinish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if thread.AgentControl != nil {
-		thread.AgentControl.Close()
+	control := thread.NativeAgentControl()
+	if control == nil {
+		t.Fatal("thread did not construct worker control")
 	}
-	thread.AgentControl = control
+	t.Cleanup(func() { control.StopAll(); control.Close() })
 	settled := thread.Toolkit.FinalizeToolResult(providers.ToolCall{ID: "archive", Name: "synthetic"}, toolresult.FromText(strings.Repeat("evidence", 10000)))
 	var first map[string]any
 	if err := json.Unmarshal([]byte(settled.TextProjection()), &first); err != nil {
@@ -73,13 +68,38 @@ func TestRuntimeRetirementLetsAdmittedWorkerFinish(t *testing.T) {
 	select {
 	case <-worker.started:
 	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not start")
+		t.Fatalf("worker did not start: %+v", control.List())
 	}
+	// Resource snapshots remain coherent while retirement starts and drains an
+	// already admitted worker.
+	snapshotDone := make(chan error, 1)
+	snapshotStarted, stopSnapshots := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(snapshotStarted)
+		for {
+			kit, current := thread.NativeResources()
+			if kit != thread.Toolkit || current != control {
+				snapshotDone <- fmt.Errorf("native binding changed during retirement")
+				return
+			}
+			select {
+			case <-stopSnapshots:
+				snapshotDone <- nil
+				return
+			default:
+			}
+		}
+	}()
+	<-snapshotStarted
 	// This is the production cleanup called after the caller detaches its runtime.
 	th.mu.Lock()
 	detached := detachThreadRuntimeLocked(th)
 	th.mu.Unlock()
 	srv.releaseDetachedThreadRuntime(detached)
+	close(stopSnapshots)
+	if err := <-snapshotDone; err != nil {
+		t.Fatal(err)
+	}
 	if page, err := thread.Toolkit.Execute(context.Background(), call); err != nil || !strings.Contains(page, "evidence") {
 		t.Fatalf("archive lost while worker active: %q %v", page, err)
 	}

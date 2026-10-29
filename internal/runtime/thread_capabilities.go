@@ -114,6 +114,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			}
 		}
 		result.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: selection.PermissionMode}, false, nil)
+		result.bindNativeResources()
 		retained = true
 		return result, nil
 	}
@@ -153,6 +154,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	if err := nativeToolScopes.add(selectedNativeToolScope(result.CapabilityTools)); err != nil {
 		return nil, err
 	}
+	result.bindNativeResources()
 	retained = true
 	return result, nil
 }

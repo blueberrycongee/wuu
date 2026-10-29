@@ -86,8 +86,8 @@ func startExternalCapabilities(ctx context.Context, binding *runtime.State, thre
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	ownerID := thread.SessionID
-	if ownerID == "" && thread.Toolkit != nil {
-		ownerID = thread.Toolkit.SessionID()
+	if ownerID == "" && thread.NativeToolkit() != nil {
+		ownerID = thread.NativeToolkit().SessionID()
 	}
 	bridge := &externalCapabilities{
 		ctx: ctx, cancel: cancel, host: listener.Addr().String(), path: "/mcp/" + rand.Text(),

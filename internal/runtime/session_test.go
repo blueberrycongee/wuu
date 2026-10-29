@@ -3508,6 +3508,12 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 	if first.AgentControl == nil || second.AgentControl == nil || first.AgentControl == second.AgentControl {
 		t.Fatal("thread runtimes must have distinct agent control instances")
 	}
+	firstKit, firstControl := first.NativeResources()
+	secondKit, secondControl := second.NativeResources()
+	if firstKit != first.Toolkit || firstControl != first.AgentControl || secondKit != second.Toolkit || secondControl != second.AgentControl {
+		t.Fatal("thread native resource snapshot does not match its admitted toolkit and control")
+	}
+
 	if first.AgentControl.SessionID() != "thread-a" || second.AgentControl.SessionID() != "thread-b" {
 		t.Fatalf("unexpected agent control sessions: first=%q second=%q", first.AgentControl.SessionID(), second.AgentControl.SessionID())
 	}

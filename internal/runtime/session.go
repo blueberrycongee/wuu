@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -366,14 +367,21 @@ type ReadinessIssue struct {
 	Message  string
 }
 
+type nativeThreadBinding struct {
+	toolkit *tools.Toolkit
+	control *agentcontrol.AgentControl
+}
+
 // ThreadRuntime owns the mutable execution state for one app-server
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	nativeBinding        atomic.Pointer[nativeThreadBinding]
 	nativeToolScopes     *nativeToolScopeOwner
 	closeArtifacts       func() error
 	artifactsCloseOnce   sync.Once
 	artifactsCloseErr    error
+	processScopeTarget   atomic.Pointer[selectedToolExecutor]
 	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
 	CompositionID        string
 	compositionBinding   productCompositionBinding
@@ -389,7 +397,9 @@ type ThreadRuntime struct {
 	StreamRunner         *agent.StreamRunner
 	// CapabilityTools exposes host capabilities to an external engine without
 	// creating an in-process model runner or worker runtime.
-	CapabilityTools   agent.ToolExecutor
+	CapabilityTools agent.ToolExecutor
+	// Toolkit and AgentControl are populated during construction only. Runtime
+	// consumers must use NativeResources or its accessors to read their binding.
 	Toolkit           *tools.Toolkit
 	AgentControl      *agentcontrol.AgentControl
 	ProcessManager    *process.Manager
@@ -412,6 +422,30 @@ type ThreadRuntime struct {
 	// idle-boundary rebuild adopts an update; committed disable or removal
 	// revokes the affected plugin even while this generation remains pinned.
 	PluginGeneration *PluginGeneration
+}
+
+// NativeResources returns one coherent snapshot of this thread's native
+// toolkit and worker control. The returned resources remain owned by the
+// runtime; callers must not independently release them.
+func (t *ThreadRuntime) NativeResources() (*tools.Toolkit, *agentcontrol.AgentControl) {
+	if t == nil {
+		return nil, nil
+	}
+	if binding := t.nativeBinding.Load(); binding != nil {
+		return binding.toolkit, binding.control
+	}
+	// Compatibility for externally constructed test or embedded runtimes.
+	return t.Toolkit, t.AgentControl
+}
+
+func (t *ThreadRuntime) NativeToolkit() *tools.Toolkit { kit, _ := t.NativeResources(); return kit }
+func (t *ThreadRuntime) NativeAgentControl() *agentcontrol.AgentControl {
+	_, control := t.NativeResources()
+	return control
+}
+
+func (t *ThreadRuntime) bindNativeResources() {
+	t.nativeBinding.Store(&nativeThreadBinding{toolkit: t.Toolkit, control: t.AgentControl})
 }
 
 // CloseNativeToolScope stops admission and drains the thread's native scopes.
@@ -1527,9 +1561,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit          *tools.Toolkit
-		agentControl *agentcontrol.AgentControl
-		toolExecutor = s.StreamRunner.Tools
+		kit                   *tools.Toolkit
+		agentControl          *agentcontrol.AgentControl
+		toolExecutor          = s.StreamRunner.Tools
+		nativeAdmissionClosed bool
+		nativeAdmissionMu     sync.Mutex
 	)
 	artifactOwner := &artifactLeaseOwner{}
 	nativeToolScopes := newNativeToolScopeOwner()
@@ -1555,6 +1591,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// StartQueuedWork.
 	if s.Toolkit != nil {
 		initialize := func() error {
+			nativeAdmissionMu.Lock()
+			defer nativeAdmissionMu.Unlock()
+			if nativeAdmissionClosed {
+				return errors.New("native tool backend was not initialized during thread admission")
+			}
 			artifactOwner.mu.Lock()
 			defer artifactOwner.mu.Unlock()
 			if artifactOwner.closed || artifactOwner.release != nil {
@@ -1570,6 +1611,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 				}
 			}()
+
 			var err error
 			kit, err = s.Toolkit.CloneForRoot(threadRoot)
 			if err != nil {
@@ -1641,6 +1683,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if _, err := selectedToolSurface(context.Background(), toolExecutor); err != nil {
 				return nil, err
 			}
+			nativeAdmissionMu.Lock()
+			if kit == nil {
+				nativeAdmissionClosed = true
+			}
+			nativeAdmissionMu.Unlock()
 		}
 	}
 
@@ -1649,7 +1696,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
 
-	if s.Toolkit != nil {
+	if s.Toolkit != nil && kit != nil {
 		workerClient := s.WorkerClient
 		workerClientProvider := strings.TrimSpace(s.ModelRoles.Worker.Provider)
 		if workerClient == nil {
@@ -1820,7 +1867,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 
-	if kit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
+	if kit == nil && s.Toolkit == nil && s.PluginHost != nil && s.StreamRunner.Tools != nil {
 		toolExecutor = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
 		if err := nativeToolScopes.add(selectedNativeToolScope(toolExecutor)); err != nil {
 			return nil, err
@@ -1952,6 +1999,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		binding.Revision = metadata.ModelSelectionRevision
 		return binding, nil
 	}
+	result.bindNativeResources()
 	result.ConfigureExecutionPermissions(s.Permissions, false, nil)
 	return result, nil
 }

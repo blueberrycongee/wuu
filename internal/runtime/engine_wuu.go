@@ -459,7 +459,7 @@ func (w *wuuEngineSession) Close(ctx context.Context) error {
 				<-turnDone
 			}
 			if rt := w.ownedRuntime; rt != nil {
-				if control := rt.AgentControl; control != nil {
+				if control := rt.NativeAgentControl(); control != nil {
 					control.BeginShutdown()
 					control.StopAll()
 					control.YieldWorkerTerminalFinalizations()
