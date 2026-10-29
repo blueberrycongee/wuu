@@ -179,6 +179,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Resume interrupted worker recovery after a storage error so task, run, child thread, and worker history settle consistently without disturbing active workers.
+- Wait for worker ownership bookkeeping to finish after execution locks are released before reporting that workers have drained.
 
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
