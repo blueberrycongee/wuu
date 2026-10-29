@@ -20,7 +20,7 @@ try {
  const output=await command('go',['test','-race','-count=1','-v','./internal/runtime','-run','^TestRemoteReadOnlyContinuation'],{env:{...process.env,WUU_REMOTE_READ_WORKER_BINARY:join(run,'wuu'),WUU_REMOTE_READ_FIXTURE:project}});
  for(const name of ['TestRemoteReadOnlyContinuationWorkerProcess','TestRemoteReadOnlyContinuationPluginProcess']) if(!output.includes(`--- PASS: ${name}`))throw Error(`${name} did not run`);
  if(output.includes('--- SKIP:'))throw Error('a required process test was skipped');
- await command('go',['test','-race','-count=1','./internal/executionenv','./internal/executionworker','./internal/tools','./internal/runtime','-run','^Test(UnobservedRead|RemoteReadOnlyContinuation|SanitizeRemoteReadResult)']);
+ await command('go',['test','-race','-count=1','./internal/executionenv','./internal/executionworker','./internal/tools','./internal/runtime','-run','^Test(UnobservedRead|RemoteReadOnlyContinuation|SanitizeRemoteReadResult|RemoteProcessScopeUsesCapturedExecutor)']);
  report.checks.push('packed SDK plugin and runnable example use a real pinned worker and PTC; local and remote same-name files differ','authorization, identities, actor and environment change, cancellation, retirement, unsupported workers and read observation failure boundaries');report.passed=true;
 }catch(error){report.error=String(error);process.exitCode=1;console.error(error);}
 finally{await writeFile(join(run,'verification.log'),log);await writeFile(join(run,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(`Remote read evidence: ${run}`);}

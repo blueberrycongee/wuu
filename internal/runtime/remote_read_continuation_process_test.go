@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,11 +85,32 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	plugin := testRuntimePlugin("fixture.remote-reader")
 	plugin.Root, plugin.Runtime.Command, plugin.Runtime.Args = fixture, node, []string{"fixture.js"}
 	plugins := []pluginpkg.Plugin{plugin}
-	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "gpt-5"}}, ExecutionEnvironments: executionenv.Config{Default: "remote", Profiles: map[string]executionenv.Profile{"remote": {Backend: "command", Command: []string{binary, "execution-worker"}, Workspace: remote}}}}
+	modelRequests := make(chan []providers.ChatMessage, 4)
+	var modelCalls atomic.Int32
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []providers.ChatMessage `json:"messages"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil {
+			http.Error(w, "invalid request", 400)
+			return
+		}
+		modelRequests <- request.Messages
+		w.Header().Set("Content-Type", "text/event-stream")
+		if modelCalls.Add(1) == 1 {
+			fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"model-read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"shared.txt\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+		} else {
+			fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+		}
+	}))
+	defer model.Close()
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: model.URL, APIKey: "fixture", Model: "gpt-5"}}, ExecutionEnvironments: executionenv.Config{Default: "remote", Profiles: map[string]executionenv.Profile{"remote": {Backend: "command", Command: []string{binary, "execution-worker"}, Workspace: remote}}}}
 	cfg.Agent.ToolReplacements = map[string]config.ToolReplacement{"read_file": {PluginID: plugin.ID, ToolID: "read"}}
 	owner, err := NewSession(Options{RootDir: local, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
 	require.NoError(t, err)
 	defer owner.Cleanup()
+	_, err = owner.Sessions.CreateWithMetadata("remote-read", local)
+	require.NoError(t, err)
 	require.NoError(t, owner.PinExecutionEnvironment("remote-read", ""))
 	thread, err := owner.NewThreadRuntime("remote-read")
 	require.NoError(t, err)
@@ -101,6 +124,16 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	require.Contains(t, text, "plugin:REMOTE-ONLY")
 	require.NotContains(t, text, "LOCAL-ONLY")
 	require.Contains(t, text, `"source":"extension"`)
+	_, err = thread.StreamRunner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Read the file"}}, nil)
+	require.NoError(t, err)
+	<-modelRequests
+	second := <-modelRequests
+	var observed strings.Builder
+	for _, message := range second {
+		observed.WriteString(message.Content)
+	}
+	require.Contains(t, observed.String(), "plugin:REMOTE-ONLY")
+	require.NotContains(t, observed.String(), "LOCAL-ONLY")
 	for _, name := range []string{"forgery.txt", "duplicate.txt"} {
 		text, err = thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: name, Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q}`, name)})
 		require.NoError(t, err)

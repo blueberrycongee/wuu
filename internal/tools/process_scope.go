@@ -59,6 +59,20 @@ func (s *ProcessScope) Bind(thread, actor, cwd string) (*ProcessScope, error) {
 	return NewProcessScope(c), nil
 }
 
+// WithExecutionEnvironment binds a host-captured execution target while
+// retaining the scope's current authorization and actor fields.
+func (s *ProcessScope) WithExecutionEnvironment(env executionenv.Executor, actor, actorPath string) (*ProcessScope, error) {
+	if s == nil {
+		return nil, errors.New("host process scope unavailable")
+	}
+	if actor == "" || s.config.ActorID != actor || s.config.ActorPath != actorPath {
+		return nil, errors.New("host process actor changed")
+	}
+	config := s.config
+	config.ExecutionEnvironment = env
+	return NewProcessScope(config), nil
+}
+
 // ProcessEnvironment reports the captured location without provisioning it.
 type ProcessEnvironment struct {
 	Backend  string `json:"backend"`

@@ -220,7 +220,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			Backend() string
 			Identity() string
 		})
-		ctx = context.WithValue(ctx, remoteProcessBindingKey{}, remoteProcessBinding{root: location.Root(), backend: location.Backend(), identity: location.Identity(), actor: actor, actorPath: actorPath})
+		ctx = context.WithValue(ctx, remoteProcessBindingKey{}, remoteProcessBinding{root: location.Root(), backend: location.Backend(), identity: location.Identity(), actor: actor, actorPath: actorPath, executor: remoteEnv})
 		// A nested invocation must not inherit a parent scope with stale policy.
 		ctx = context.WithValue(ctx, pluginProcessScopeKey{}, (*tools.ProcessScope)(nil))
 	}

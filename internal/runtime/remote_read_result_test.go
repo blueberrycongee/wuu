@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,5 +33,25 @@ func TestSanitizeRemoteReadResultRejectsOtherContent(t *testing.T) {
 	huge := native
 	huge.StructuredContent = json.RawMessage(`{"text":"` + strings.Repeat("x", 256*1024+1) + `","path":"file.txt","start_line":1,"num_lines":1,"total_lines":1}`)
 	_, err = sanitizeRemoteReadResult(huge)
+	require.Error(t, err)
+}
+
+func TestRemoteProcessScopeUsesCapturedExecutor(t *testing.T) {
+	original := newRuntimeProcessEnvironment(t, "original")
+	replacement := newRuntimeProcessEnvironment(t, "replacement")
+	scope := tools.NewProcessScope(tools.ProcessScopeConfig{RootDir: "/host", ThreadID: "thread", ActorID: "actor", ActorPath: "/root/actor", ExecutionEnvironment: replacement})
+	// Simulate the selected environment changing after the host checked it but
+	// before it built the current permission scope.
+	_, err := scope.WithExecutionEnvironment(original, "actor", "/root/other")
+	require.Error(t, err)
+	scope, err = scope.WithExecutionEnvironment(original, "actor", "/root/actor")
+	require.NoError(t, err)
+	bound, err := scope.Bind("thread", "actor", "/host")
+	require.NoError(t, err)
+	location, err := bound.Environment()
+	require.NoError(t, err)
+	require.Equal(t, "original", location.Identity)
+	require.Equal(t, original.Root(), location.Root)
+	_, err = scope.Bind("thread", "other", "/host")
 	require.Error(t, err)
 }
