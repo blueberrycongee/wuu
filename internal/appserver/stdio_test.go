@@ -163,7 +163,7 @@ func TestRunStdioQueueAcknowledgedWhileResumedThreadPrunesOldRuntime(t *testing.
 				server.Close()
 				close(closed)
 			}()
-			<-server.nativeHistoryCtx.Done()
+			<-server.sessionOperationCtx.Done()
 			select {
 			case <-closed:
 				t.Fatal("server shutdown did not join deferred runtime cleanup")

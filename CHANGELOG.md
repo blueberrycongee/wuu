@@ -230,6 +230,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
+- Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.
+
 - Keep normal plugin-generation retirement silent after catalog changes while preserving genuine update failures and plugin diagnostics.
 - Preserve generated UI disclosure state when leaving a view immediately after opening or closing it.
 - Keep newly started, completed or interrupted turns and stopped composer input from reverting when an older conversation-resume response arrives late. Reconcile accepted input changes in order, including edits, removals, mode switches and already-sent messages, without delaying Stop behind response output.

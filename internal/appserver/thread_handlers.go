@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -1609,13 +1610,28 @@ func (s *Server) handleThreadPin(req Request) error {
 	return s.notifyThreadUpdated(binding, thread)
 }
 
-func (s *Server) handleThreadArchive(req Request) error {
+func (s *Server) handleThreadArchive(ctx context.Context, req Request) error {
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
 	}
 	defer binding.Close()
+	return s.handleThreadArchiveForState(ctx, binding, req)
+}
 
+func (s *Server) handleThreadArchiveForState(ctx context.Context, binding *runtime.State, req Request) error {
+	if s.closed.Load() {
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if s.sessionOperationCtx != nil {
+		stop := context.AfterFunc(s.sessionOperationCtx, cancel)
+		defer stop()
+	}
+	if err := ctx.Err(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	var params ThreadArchiveParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1625,7 +1641,7 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
-		if err := s.settleThreadExecutionForForcedArchive(binding, id); err != nil {
+		if err := s.settleThreadExecutionForForcedArchive(ctx, binding, id); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
@@ -1662,18 +1678,59 @@ func (s *Server) handleThreadArchive(req Request) error {
 			return s.writeResponse(req.ID, nil, leaseErr)
 		}
 	}
-	metadata, err := binding.Sessions.UpdateArchived(id, params.Archived)
-	if err != nil {
+	// Consent and request lifetime can change while the owned runner settles.
+	// Revalidate the original principal/resources immediately before the write.
+	if _, err := s.requireRequestAccess(req, MethodThreadArchive, nil); err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if s.closed.Load() {
+		releaseThreadMutationLease(id, mutationLease)
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	metadata, err := binding.Sessions.WithContext(ctx).UpdateArchived(id, params.Archived)
+	if err != nil {
+		releaseThreadMutationLease(id, mutationLease)
+		var uncertain *persistence.CommitError
+		if errors.Is(err, session.ErrOutcomeUnknown) || errors.As(err, &uncertain) {
+			err = fmt.Errorf("thread archive outcome is unknown; inspect the session before retrying: %w", err)
+		}
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// The durable mutation is finished, but auxiliary snapshot providers may
+	// still be unwinding. Cancellation can report that committed outcome now;
+	// this owner must join the physical refresh before releasing its lease and
+	// ordered session lane. The child borrows this binding only until that join.
+	type refreshedArchive struct {
+		thread Thread
+		err    error
+	}
+	refreshed := make(chan refreshedArchive, 1)
+	if !s.startBackground(func() {
+		thread, err := s.threadAfterMetadataUpdate(binding, metadata)
+		refreshed <- refreshedArchive{thread: thread, err: err}
+	}) {
+		releaseThreadMutationLease(id, mutationLease)
+		return s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", errServerClosed))
+	}
+	var result refreshedArchive
+	select {
+	case result = <-refreshed:
+	case <-ctx.Done():
+		writeErr := s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", ctx.Err()))
+		<-refreshed
+		releaseThreadMutationLease(id, mutationLease)
+		return writeErr
 	}
 	releaseThreadMutationLease(id, mutationLease)
-	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
+	if result.err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", result.err))
+	}
+	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: result.thread}, nil)
 }
 
 func validateArchiveExecutionOwner(binding, owner *runtime.State, threadID string) error {
@@ -1714,7 +1771,7 @@ var errArchivedWhileRunning = errors.New("archived while the conversation was st
 // in place. An unresponsive live runner retains its execution lease. Cross-process ownership is unaffected: a live owner in
 // another app-server still holds the OS-level execution lock, so the mutation
 // lease acquisition that follows keeps rejecting the archive.
-func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, threadID string) error {
+func (s *Server) settleThreadExecutionForForcedArchive(ctx context.Context, binding *runtime.State, threadID string) error {
 	owner, runID, err := s.retainUserThreadExecutionState(threadID, true)
 	if err != nil {
 		return err
@@ -1745,15 +1802,18 @@ func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, t
 		}
 	}
 
+	// A confirmed archive stays pending through physical settlement rather than
+	// asking the user to repeat consent after an arbitrary cleanup deadline.
 	// Do not hold th.mu while the runner checkpoints partial output and settles.
 	if completion != nil {
-		timer := time.NewTimer(2 * time.Second)
-		defer timer.Stop()
 		select {
 		case <-completion.done:
-		case <-timer.C:
-			return errors.New("thread cancellation is still settling; retry archive after it stops")
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if completion != nil && completion.durabilityErr != nil {
 		return fmt.Errorf("cannot archive before durable turn settlement: %w", completion.durabilityErr)

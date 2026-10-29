@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
@@ -77,5 +78,27 @@ func TestStateAuthorityCustomCompositionOwnsActivationAndCleanup(t *testing.T) {
 				t.Fatalf("cleanup receipt was not durably accounted for: %+v, %v", record, err)
 			}
 		})
+	}
+}
+
+// A selected state provider cannot be published with a quarantined authority.
+// Preparation must expose the failing authority, not only retired consumers.
+func TestStateAuthorityPreparationFailureIsRequired(t *testing.T) {
+	ctx := context.Background()
+	home, root := t.TempDir(), t.TempDir()
+	authorityDir := filepath.Join(home, "state-authority")
+	if err := os.MkdirAll(authorityDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authorityDir, "head.json"), []byte(`{"invalid":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modules := []string{persistence.JSONLModule}
+	host, _, err := buildPluginHost(nil, root, "", home, filepath.Join(home, "workspaces", "proof"), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+	if host != nil {
+		defer host.Close(ctx)
+	}
+	if err == nil || !strings.Contains(err.Error(), `prepare plugin "wuu.state-authority"`) || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("selected state authority failure was hidden: %v", err)
 	}
 }

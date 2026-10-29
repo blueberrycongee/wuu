@@ -309,6 +309,7 @@ func buildPluginHostWithSelection(ctx context.Context, plugins []pluginpkg.Plugi
 			}
 		}
 		host.Add(consumer)
+		required[consumer.ID()] = true
 		conflicts = append(conflicts, registry.RegisterClients(consumer)...)
 		host.SetPackageRequirements(packageRequirements)
 		if err := registry.WrapServiceInvoker(persistence.ServiceName, 1, authority.Wrap); err != nil {
