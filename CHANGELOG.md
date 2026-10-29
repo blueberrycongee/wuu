@@ -283,6 +283,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
+
 - Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.

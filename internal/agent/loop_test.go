@@ -978,6 +978,37 @@ func TestRunToolLoop_FiltersLegacyHookContextHistory(t *testing.T) {
 	}
 }
 
+type overlappingConcurrentTools struct {
+	*delayedConcurrentTools
+	firstStarted chan struct{}
+}
+
+func (f *overlappingConcurrentTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	switch call.ID {
+	case "call_1":
+		close(f.firstStarted)
+		select {
+		case <-f.call2Done:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(5 * time.Second):
+			return "", errors.New("call_1 timed out waiting for call_2")
+		}
+		f.recordCompleted(call.ID)
+	case "call_2":
+		select {
+		case <-f.firstStarted:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(5 * time.Second):
+			return "", errors.New("call_2 timed out waiting for call_1 to start")
+		}
+		f.recordCompleted(call.ID)
+		f.closeOnce.Do(func() { close(f.call2Done) })
+	}
+	return `{"ok":"` + call.ID + `"}`, nil
+}
+
 func TestRunToolLoop_ConcurrentToolCompletionDoesNotReorderProviderMessages(t *testing.T) {
 	step := &fakeStep{results: []StepResult{
 		{ToolCalls: []providers.ToolCall{
@@ -986,7 +1017,8 @@ func TestRunToolLoop_ConcurrentToolCompletionDoesNotReorderProviderMessages(t *t
 		}},
 		{Content: "done"},
 	}}
-	tools := newDelayedConcurrentTools()
+	tools := &overlappingConcurrentTools{delayedConcurrentTools: newDelayedConcurrentTools(), firstStarted: make(chan struct{})}
+	step.results[0].ToolRuntime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools, Gate: NewToolExecutionGate(2)})
 
 	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("inspect")}, LoopConfig{
 		Model: "m",
