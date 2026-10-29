@@ -23,7 +23,7 @@ process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = "1";
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({
   default_provider: "fixture",
-  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
+  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true, "account-connectors": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
   providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:9/v1", api_key: "fixture-only", model: "fixture" } },
   engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
 }));
@@ -41,9 +41,18 @@ const until = (fn, arg) => win.webContents.executeJavaScript(`new Promise((resol
   const test = (${fn});
   const argument = ${JSON.stringify(arg)};
   const observer = new MutationObserver(check);
-  const timer = setTimeout(() => { observer.disconnect(); reject(new Error("UI condition timed out")); }, 30000);
-  function check() { if (test(argument)) { observer.disconnect(); clearTimeout(timer); resolve(); } }
+  const timer = setTimeout(() => { cleanup(); reject(new Error("UI condition timed out: " + test.toString())); }, 30000);
+  function cleanup() {
+    observer.disconnect(); clearTimeout(timer);
+    document.removeEventListener("focusin", check, true);
+    document.removeEventListener("focusout", check, true);
+  }
+  function check() { if (test(argument)) { cleanup(); resolve(); } }
   observer.observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
+  // Keyboard focus can change without a DOM mutation; observing mutations alone
+  // times out even after Tab reaches the expected control.
+  document.addEventListener("focusin", check, true);
+  document.addEventListener("focusout", check, true);
   check();
 })`);
 const capture = async name => {

@@ -727,3 +727,12 @@ it("explains a context-unavailable connector in details without offering activat
   await click(connectorRow().querySelector('[data-connector-details-toggle]')!);
   expect(connectorRow().textContent).toContain(reason);
 });
+
+it("does not read credentials for a connector excluded from the active plugin composition", async () => {
+  const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, plugin_active: false, configurable: false }] }) });
+  await render(source);
+  expect(connectorRow().querySelector('[data-connector-action="connect"]')).toBeNull();
+  expect(source.getMCPAuthStatus).not.toHaveBeenCalled();
+  await click(connectorRow().querySelector('[data-connector-details-toggle]')!);
+  expect(connectorRow().getAttribute("data-authorized")).toBe("unknown");
+});

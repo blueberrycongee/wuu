@@ -980,6 +980,7 @@ export const zhCN = {
   "advanced.sourceManualLimit": "来自手动上限",
   "advanced.sourceUnknown": "未识别，主动压缩只依赖服务错误恢复",
   "connector.unavailable": "当前环境无法设置连接",
+  "connector.inactive": "当前配置未启用此连接器",
   "connector.title": "连接器",
   "connector.documentation": "设置指南",
   "connector.setupRequired": "需要服务商设置",
