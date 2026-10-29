@@ -35,13 +35,14 @@ type StreamEventObserver func(context.Context, StreamEvent) error
 // StreamRecoveryInput is a completed attempt's immutable evidence. The
 // operation's admission budget remains authoritative even when policy changes.
 type StreamRecoveryInput struct {
-	Failure            NormalizedFailure
-	Attempt            int
-	MaxAttempts        int
-	Submissions        int
-	ForwardedEvents    int
-	FinalizedToolCalls []ToolCall
-	Config             RetryConfig
+	Failure                 NormalizedFailure
+	Attempt                 int
+	MaxAttempts             int
+	Submissions             int
+	ForwardedEvents         int
+	PartialOutputResettable bool
+	FinalizedToolCalls      []ToolCall
+	Config                  RetryConfig
 }
 type StreamRecoveryPlanner func(context.Context, StreamRecoveryInput) (RecoveryPlan, time.Duration, error)
 
@@ -85,6 +86,12 @@ func WithStreamReplayGuard(guard StreamReplayGuard) ReliableStreamOption {
 	}
 }
 
+// WithStreamPartialReset declares that the consumer handles ResetPartial by
+// discarding the failed attempt. A replay guard is also required to opt in.
+func WithStreamPartialReset() ReliableStreamOption {
+	return func(client *ReliableStreamClient) { client.partialReset = true }
+}
+
 // WithStreamEventObserver installs a synchronous pre-forward observer.
 func WithStreamEventObserver(observer StreamEventObserver) ReliableStreamOption {
 	return func(client *ReliableStreamClient) {
@@ -112,6 +119,7 @@ type ReliableStreamClient struct {
 	onRetry         StreamRetryHook
 	replayGuard     StreamReplayGuard
 	eventObserver   StreamEventObserver
+	partialReset    bool
 	wait            func(context.Context, time.Duration) error
 }
 
@@ -267,7 +275,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			}
 		}
 		failure := NormalizeFailure(err)
-		evidence := StreamRecoveryInput{Failure: failure, Attempt: attempt.Ordinal, MaxAttempts: maxAttempts, Submissions: len(req.Execution.Snapshot().Submissions), ForwardedEvents: forwardedEvents, FinalizedToolCalls: append([]ToolCall(nil), finalizedToolCalls...), Config: cfg}
+		evidence := StreamRecoveryInput{Failure: failure, Attempt: attempt.Ordinal, MaxAttempts: maxAttempts, Submissions: len(req.Execution.Snapshot().Submissions), ForwardedEvents: forwardedEvents, PartialOutputResettable: r.partialReset && r.replayGuard != nil, FinalizedToolCalls: append([]ToolCall(nil), finalizedToolCalls...), Config: cfg}
 		var plan RecoveryPlan
 		var delay time.Duration
 		var policyErr error

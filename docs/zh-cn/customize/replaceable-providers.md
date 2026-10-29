@@ -116,6 +116,30 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
 
 
+## 替换网页搜索
+
+选择原生 `agent.tools@1` 注册表时，可以用受信任的插件工具替换 `web_search`，其他工具保留原实现。先安装并启用插件，再在可信用户的 agent 配置中填写实际的插件清单 ID 和声明的工具 ID；项目设置不能选择替代实现：
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+[合成搜索示例](../../../examples/plugins/synthetic-web-search.ts)可直接运行，用于说明插件编写；它返回固定的演示结果，并不进行真实搜索。使用 `wuu plugin dev` 安装后，将上方的 `example-search` 替换成 Wuu 返回的插件 ID。目前只支持 `web_search`。替代实现必须声明与原工具完全相同的输入 schema、freeform 和 direct-only 设置，不能是编排工具。插件描述以 `web_search` 名称暴露，插件自身的命名空间名称则隐藏。目标缺失、禁用或不兼容时会失败，不会回退；删除绑定是显式选择，后续准备的 generation 使用原生实现。
+
+成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
+
+如果会话设置了工具允许列表，必须同时允许 `web_search` 和该插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
+
+工具调度采用原工具和替代实现中更严格的活动声明，调用经过原工具策略与插件工具授权；禁用任一名称都会阻止执行。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
+
+运行 `node scripts/tool-replacement-e2e.mjs`，可验证打包 SDK 合成插件、受控模型、直接和 code mode 调用、worker 与侧会话、授权及 generation 更新。该测试不验证外部搜索服务、真实模型质量或界面呈现。
+
 ## 会话、工具与 agent 策略提供者
 
 `session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
@@ -440,9 +464,11 @@ provider 会停止这些调用；错误或空决策不会切换到另一实现�
 | `retry` | 失败的循环步骤可选择 `fail`、使用有界上下文溢出恢复的 `recover`，或对证明尚未提交的请求显式 `retry`。重试必须提供 `max_attempts`，首次值固定总尝试上限，后续决策不能续领预算。 |
 | `transport_retry` | 接收已结束物理尝试的失败、提交次数、尝试预算及退避配置。`fail` 终止；`recover` 给出 `recovery_action`（`replay_same_payload`、`wait_then_replay`、`refresh_credential` 或 `switch_transport`）及可选 `delay_ms`。仍须满足适配器能力及持久化工作流预算。 |
 
-策略不能重放已显示的部分输出、已接纳工具副作用、提交结果不明的操作，或重置
-耗尽的推理预算。传输恢复保留物理提交回执，包括结果不明但可能计费的提交；选中策略可以在
-预算内重新尝试模型调用，但不能重放已接纳或结果不明的工具副作用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
+循环重试不能重放部分输出、已接纳的工具副作用、提交结果不明的操作，也不能重置
+耗尽的推理预算。对于 `transport_retry`，当消费者能够丢弃失败尝试且已安装重放安全检查时，
+宿主可设置 `partial_output_resettable`。恢复决策仍须通过安全检查，以保护已完成的检查点及
+已接纳或结果不明的工具副作用；没有此能力时，部分输出会阻止传输恢复。传输恢复保留物理
+提交回执，包括结果不明但可能计费的提交；选中策略可以在预算内重新尝试模型调用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
 会保留；刷新凭证、切换传输和重试仍需既有的预写回执及适配器支持。
 
 完整循环替换通过 `driverTurn(host, execution).evaluatePolicy()` 使用策略，

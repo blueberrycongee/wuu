@@ -38,14 +38,16 @@ it("installed independent UI packages replace shipped presentation through selec
   const child = spawn(binary, ["app-server", "--workspace-id", "acceptance-workspace", "--workdir", workspace, "--config", config], { env, stdio: ["pipe", "pipe", "pipe"] });
   const exited = once(child, "exit"), transcript: unknown[] = [], cases: string[] = [];
   const notifications: Array<{ method: string; params: any }> = [];
+  const serviceErrors: string[] = [];
   const pending = new Map<string, { resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   let sequence = 0, stopped = false;
   child.stderr.on("data", data => transcript.push({ stderr: String(data) }));
   createInterface({ input: child.stdout }).on("line", line => {
     transcript.push({ received: line }); const message = JSON.parse(line), waiter = pending.get(String(message.id));
     if (message.method) notifications.push(message);
+    if (message.error) serviceErrors.push(message.error.message);
     if (!waiter) return; pending.delete(String(message.id)); clearTimeout(waiter.timer);
-    message.error ? waiter.reject(new Error(JSON.stringify(message.error))) : waiter.resolve(message.result);
+    message.error ? waiter.reject(new Error(message.error.message)) : waiter.resolve(message.result);
   });
   child.on("exit", () => { stopped = true; for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error("app-server exited")); } pending.clear(); });
   const rpc = (method: string, params: unknown = {}): Promise<any> => new Promise((resolve, reject) => {
@@ -157,15 +159,18 @@ it("installed independent UI packages replace shipped presentation through selec
     await eventually(() => expect(element.querySelector('[data-independent-status]')?.textContent).toBe("paused"));
     expect((await request("goal", "get_goal", { thread_id: threadID })).goal.objective).toBe("Preserve goal across independent UIs");
     cases.push("disabling shipped goal UI leaves goal runtime/state intact and independent UI consumes the same service");
-    await toggle("goal-ui", true); await toggle("goal", false);
-    await eventually(() => expect(element.querySelector('.plugin-goal [role="alert"]')?.textContent).toMatch(/unavailable|disabled|provider|service/i));
-    const drawer = element.querySelector<HTMLButtonElement>('.plugin-goal button[aria-expanded]')!;
-    await act(async () => drawer.click());
-    expect(element.querySelector<HTMLTextAreaElement>('.plugin-goal textarea')?.disabled).toBe(true);
+    await toggle("goal-ui", true);
+    const errorsBeforeDisable = serviceErrors.length;
+    await toggle("goal", false);
+    await eventually(() => expect(serviceErrors.slice(errorsBeforeDisable)).toContain("no provider for service goal.control"));
+    await eventually(() => expect(element.querySelector('.plugin-goal')).toBeNull());
     expect(element.querySelector<HTMLButtonElement>('[data-independent-goal-ui] button')?.disabled).toBe(true);
     expect(element.querySelector('[data-independent-shell]')?.textContent).toBe("Independent shell remains available");
     expect(host.getGenerationDiagnostics(get("acceptance-surfaces").id, get("acceptance-surfaces").fingerprint!).some(item => item.kind === "render")).toBe(false);
-    cases.push("disabling real goal runtime leaves UI error/disabled writes and unrelated shell/nav available without fallback");
+    cases.push("disabling the real goal runtime hides optional goal controls and leaves unrelated UI available");
+    await toggle("goal", true);
+    await eventually(() => expect(element.querySelector('.plugin-goal')?.textContent).toContain("Preserve goal"));
+    cases.push("enabling the real goal runtime restores the retained goal in the selected composer");
     await toggle("automation-ui", false);
     expect(get("automation").runtime_state).toBe("active");
     expect(element.querySelector('.plugin-automation')).toBeNull();
