@@ -39,7 +39,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       primary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
     settings: { contractVersion: 1, open: false, engineInventoryError: '', runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],
       providers: [{ id: 'preview', label: 'Synthetic preview data', configured: true }], plugins: [] },
-    preview: null, previewWorkspace: { ownerTabId: "thread:research-1", conversationTitle: "Research", tabs: [], conversationSelected: false }, appearance: { theme: 'system', resolvedTheme: 'light', uiFontSize: 15, codeFontSize: 13 },
+    preview: null, previewWorkspace: { ownerTabId: "thread:research-1", conversationTitle: "Research", tabs: [], conversationOpen: true, conversationSelected: false }, appearance: { theme: 'system', resolvedTheme: 'light', uiFontSize: 15, codeFontSize: 13 },
     status: { contractVersion: 1, items: [{ id: 'ready', label: 'Preview fixture', kind: 'info' }] },
   };
   if (state.contractVersion !== 1) throw new Error('Preview state requires ApplicationSnapshotV1 contractVersion 1.');

@@ -295,6 +295,74 @@ describe("createThreadActivationActions", () => {
     expect(harness.getAppState().thread?.id).toBe("thread-2");
   });
 
+  it("uses the retained session binding when a closed thread is reopened after a workspace switch", async () => {
+    const target = thread("retained", "/tmp/project-2");
+    const targetContext = projectContext("project-2");
+    installWuuApi(target);
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext("project-1"),
+      activeProjectId: "project-1", projects: [project("project-1"), project("project-2")],
+      sessionTabs: [createThreadSessionTab(target, targetContext, { ...emptyComposerDraft(), prompt: "keep draft" })] } });
+    await harness.actions.activateThread(target.id);
+    expect(harness.selectRuntimeContext).toHaveBeenCalledWith(targetContext);
+    expect(harness.getAppState().thread?.id).toBe(target.id);
+    expect(harness.getDraft().prompt).toBe("keep draft");
+  });
+
+  it.each([true, false])("reopens a retained session at the selected workspace's current path (catalog updated: %s)", async (catalogUpdated) => {
+    const locator = { version: 1 as const, execution_host: "host-a", session_id: "retained" };
+    const oldContext: RuntimeContext = { ...projectContext("project-2"), session_locator: locator };
+    const relocated = project("project-2", "/tmp/moved-project-2");
+    const currentContext: RuntimeContext = { kind: "project", project_id: relocated.id, cwd: relocated.path };
+    const boundContext = { ...currentContext, session_locator: locator };
+    const target = thread("retained", relocated.path);
+    installWuuApi(target);
+    const projects = [project("project-1"), catalogUpdated ? relocated : project("project-2")];
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext("project-1"),
+      activeProjectId: "project-1", projects,
+      sessionTabs: [createThreadSessionTab(target, oldContext, { ...emptyComposerDraft(), prompt: "keep draft" })] } });
+    harness.selectRuntimeContext.mockResolvedValueOnce({ projects: [projects[0], relocated], active_context: currentContext });
+
+    await harness.actions.activateThread(target.id);
+
+    expect(harness.selectRuntimeContext).toHaveBeenCalledWith(catalogUpdated ? boundContext : oldContext);
+    expect(harness.getAppState().activeContext).toEqual(currentContext);
+    expect(harness.getAppState().sessionTabs.find(tab => tab.id === threadSessionTabID(target.id))?.context).toEqual(boundContext);
+    expect(harness.getDraft().prompt).toBe("keep draft");
+  });
+
+  it("does not attach a retained session to a different selected workspace", async () => {
+    const target = thread("retained", "/tmp/project-2");
+    const api = installWuuApi(target);
+    const source = projectContext("project-1");
+    const harness = buildActions({ initial: { ...initialState, activeContext: source, activeProjectId: "project-1",
+      projects: [project("project-1"), project("project-2"), project("project-3")],
+      sessionTabs: [createThreadSessionTab(target, projectContext("project-2"), { ...emptyComposerDraft(), prompt: "keep draft" })] } });
+    harness.selectRuntimeContext.mockResolvedValueOnce({ projects: harness.getAppState().projects, active_context: projectContext("project-3") });
+
+    await harness.actions.activateThread(target.id);
+
+    expect(api.resumeThread).not.toHaveBeenCalled();
+    expect(harness.getAppState().activeContext).toEqual(source);
+    expect(harness.getAppState().sessionTabs.find(tab => tab.id === threadSessionTabID(target.id))?.context).toEqual(projectContext("project-2"));
+    expect(showErrorToast).toHaveBeenCalledWith(expect.stringContaining("does not match"));
+  });
+
+  it("retains the session locator when reopening in the already selected relocated workspace", async () => {
+    const locator = { version: 1 as const, execution_host: "host-a", session_id: "retained" };
+    const oldContext: RuntimeContext = { ...projectContext("project-2"), session_locator: locator };
+    const context: RuntimeContext = { kind: "project", project_id: "project-2", cwd: "/tmp/moved-project-2" };
+    const target = thread("retained", context.cwd);
+    installWuuApi(target);
+    const harness = buildActions({ initial: { ...initialState, activeContext: context, activeProjectId: "project-2",
+      projects: [project("project-2", context.cwd)],
+      sessionTabs: [createThreadSessionTab(target, oldContext, { ...emptyComposerDraft(), prompt: "keep draft" })] } });
+
+    await harness.actions.activateThread(target.id);
+
+    expect(harness.getAppState().sessionTabs.find(tab => tab.id === threadSessionTabID(target.id))?.context).toEqual({ ...context, session_locator: locator });
+    expect(harness.getDraft().prompt).toBe("keep draft");
+  });
+
   it("keeps the source context until a loaded cross-project target has resumed", async () => {
     const workspaceTwo = project("project-2");
     const targetContext = projectContext("project-2");

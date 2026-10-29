@@ -49,4 +49,17 @@ describe("application-owned workspace tabs", () => {
     expect(application.getSnapshot().previewWorkspace.tabs).toHaveLength(0);
     expect(hook.setOpen).not.toHaveBeenCalled();
   });
+
+  it("keeps the conversation available with a V1 provider that predates close support", async () => {
+    const application = new ApplicationController();
+    await application.invoke("preview.open-file", { context: { kind: "no_project", cwd: "/tmp" }, path: "one.ts" });
+    const snapshot = application.getSnapshot();
+    const { conversationOpen: _addedField, ...legacyPreview } = snapshot.previewWorkspace;
+    const legacy = { ...snapshot, previewWorkspace: legacyPreview };
+    vi.spyOn(application, "getSnapshot").mockReturnValue(legacy);
+    const invoke = vi.spyOn(application, "invoke");
+    const hook = await mount(application);
+    expect(hook.get().workspaceConversationOpen).toBe(true);
+    expect(invoke.mock.calls.some(([action]) => action === "preview.open-conversation")).toBe(false);
+  });
 });

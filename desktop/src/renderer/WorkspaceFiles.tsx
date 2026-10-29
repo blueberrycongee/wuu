@@ -18,6 +18,7 @@ import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { workspacePathToSlash } from "./WorkspacePaths";
+import { readWorkspacePreviewScroll, writeWorkspacePreviewScroll } from "./WorkspacePreviewRecovery";
 import { translateCurrent, useI18n } from "./i18n";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { VideoPreview } from "./VideoPreview";
@@ -564,6 +565,8 @@ export function WorkspaceFilePreview({
   const editorViewStateRef = useRef<WorkspaceMonacoViewState | null>(null);
   const loadedFileKeyRef = useRef<string | undefined>(undefined);
   const markdownHostRef = useRef<HTMLDivElement>(null);
+  const fileScrollRef = useRef<HTMLDivElement>(null);
+  const restoredScrollRef = useRef(false);
   const selectedWorkspaceFilePath = useMemo(
     () => normalizeSelectedWorkspaceFilePath(selectedFilePath, activeContext?.cwd),
     [activeContext?.cwd, selectedFilePath]
@@ -629,14 +632,24 @@ export function WorkspaceFilePreview({
   const isMarkdownReadingMode = isMarkdown && !selection;
   const dirtyStatePath = file?.path ?? selectedWorkspaceFilePath;
 
+  useLayoutEffect(() => {
+    if (!active || !isMarkdownReadingMode || !editorResourceID || !fileScrollRef.current) return;
+    const scroll = readWorkspacePreviewScroll(editorResourceID);
+    if (scroll !== undefined) {
+      fileScrollRef.current.scrollTop = scroll;
+      restoredScrollRef.current = Boolean(anchor);
+    }
+  }, [active, editorResourceID, isMarkdownReadingMode, file?.path]);
+
   useEffect(() => {
-    if (!isMarkdownReadingMode || !anchor) {
+    if (!active || !isMarkdownReadingMode || !anchor) {
       return;
     }
+    if (restoredScrollRef.current) { restoredScrollRef.current = false; return; }
     const target = Array.from(markdownHostRef.current?.querySelectorAll<HTMLElement>("[id]") ?? [])
       .find((element) => element.id === anchor);
     target?.scrollIntoView({ block: "start" });
-  }, [anchor, draftText, isMarkdownReadingMode]);
+  }, [active, anchor, draftText, isMarkdownReadingMode]);
 
   useEffect(() => {
     onDirtyChange?.({
@@ -726,7 +739,8 @@ export function WorkspaceFilePreview({
         {file.truncated ? <p className="workspace-file-preview-notice" role="status">{t("workspace.files.previewTruncated")}</p> : null}
         <FileSelectionSurface key={`${activeContext.cwd}:${file.path}`} workspace={activeContext.cwd} path={file.path} text={draftText} active={active}>
           {(selectionControls) => (
-            <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
+            <div ref={fileScrollRef} className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}
+              onScroll={event => { if (isMarkdownReadingMode && editorResourceID) writeWorkspacePreviewScroll(editorResourceID, event.currentTarget.scrollTop); }}>
               {isMarkdownReadingMode ? (
                 <MarkdownDocumentReading
                   ref={markdownHostRef}

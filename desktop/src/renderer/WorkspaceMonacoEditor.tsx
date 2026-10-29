@@ -1,6 +1,7 @@
 import { isTouchWebShell } from "./ComposerFocus";
 import * as monaco from "monaco-editor";
 import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
+import { readWorkspacePreviewScroll, writeWorkspacePreviewScroll } from "./WorkspacePreviewRecovery";
 import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import HtmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
@@ -88,6 +89,7 @@ export function WorkspaceMonacoEditor({
   const onSelectionChangeRef = useRef(onSelectionChange);
   const decorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const anchorDecorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const initialSelectionRef = useRef(true);
   const language = useMemo(() => monacoLanguageForPath(path), [path]);
 
   useEffect(() => {
@@ -165,7 +167,6 @@ export function WorkspaceMonacoEditor({
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", up, true);
     const selectionDisposable = editor.onDidChangeCursorSelection(() => { if (!dragging) reportSelection(); });
-    const scrollDisposable = editor.onDidScrollChange(() => document.dispatchEvent(new Event("file-selection-layout")));
     decorationRef.current = editor.createDecorationsCollection();
     editor.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
@@ -176,7 +177,14 @@ export function WorkspaceMonacoEditor({
     editorRef.current = editor;
     if (initialViewState) {
       editor.restoreViewState(initialViewState);
+    } else {
+      const scroll = readWorkspacePreviewScroll(resourceID);
+      if (scroll !== undefined) editor.setScrollTop(scroll);
     }
+    const scrollDisposable = editor.onDidScrollChange(() => {
+      writeWorkspacePreviewScroll(resourceID, editor.getScrollTop());
+      document.dispatchEvent(new Event("file-selection-layout"));
+    });
     // A viewer leaves focus where the reader was (the file tree keeps its
     // keyboard path); only an editor takes the caret.
     if (!readOnly) {
@@ -249,6 +257,8 @@ export function WorkspaceMonacoEditor({
     if (!editor || !model || !selection) {
       return;
     }
+    const savedScroll = initialSelectionRef.current ? readWorkspacePreviewScroll(resourceID) : undefined;
+    initialSelectionRef.current = false;
     const start = model.validatePosition({
       lineNumber: selection.startLineNumber,
       column: selection.startColumn,
@@ -265,6 +275,7 @@ export function WorkspaceMonacoEditor({
     );
     editor.setSelection(editorSelection);
     editor.revealRangeInCenter(editorSelection, monaco.editor.ScrollType.Immediate);
+    if (savedScroll !== undefined) editor.setScrollTop(savedScroll);
     if (!readOnly) {
       editor.focus();
     }
