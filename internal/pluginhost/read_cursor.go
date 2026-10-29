@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -20,16 +21,21 @@ const maxPluginReadCursorBytes = 4096
 const maxReadCursorPlainBytes = 8192
 const maxReadCursorTokenBytes = 12000
 
-type ReadCursorOwner struct{ SessionID, ActorID, ActorPath, CWD, PluginID, ToolID string }
+type ReadCursorOwner struct {
+	SessionID, ActorID, ActorPath, CWD, PluginID, ToolID string
+	RemoteBackend, RemoteIdentity, RemoteRoot            string
+}
 type ReadCursorState struct {
 	SessionID, ActorID, ActorPath, CWD, PluginID, ToolID string
+	RemoteBackend, RemoteIdentity, RemoteRoot            string
+	WorkerInstance, NativeSHA256                         string
 	Path                                                 string
 	Offset, Limit, TotalLines                            int
 	PluginCursor                                         string
 }
 
 func (s ReadCursorState) ReadCursorOwner() ReadCursorOwner {
-	return ReadCursorOwner{SessionID: s.SessionID, ActorID: s.ActorID, ActorPath: s.ActorPath, CWD: s.CWD, PluginID: s.PluginID, ToolID: s.ToolID}
+	return ReadCursorOwner{SessionID: s.SessionID, ActorID: s.ActorID, ActorPath: s.ActorPath, CWD: s.CWD, PluginID: s.PluginID, ToolID: s.ToolID, RemoteBackend: s.RemoteBackend, RemoteIdentity: s.RemoteIdentity, RemoteRoot: s.RemoteRoot}
 }
 
 type readCursorEnvelope struct {
@@ -64,6 +70,13 @@ func (s *readCursorStore) aead() (cipher.AEAD, error) {
 func (h *Host) IssueReadCursor(state ReadCursorState) (string, error) {
 	if h == nil || strings.TrimSpace(state.SessionID) == "" || strings.TrimSpace(state.CWD) == "" || strings.TrimSpace(state.PluginID) == "" || strings.TrimSpace(state.ToolID) == "" || strings.TrimSpace(state.Path) == "" || state.Offset < 1 || state.Limit < 0 || state.TotalLines < 0 || state.PluginCursor == "" || len(state.PluginCursor) > maxPluginReadCursorBytes {
 		return "", errors.New("invalid external read continuation")
+	}
+	remote := state.RemoteBackend != "" || state.RemoteIdentity != "" || state.RemoteRoot != "" || state.WorkerInstance != "" || state.NativeSHA256 != ""
+	if remote {
+		digest, err := hex.DecodeString(state.NativeSHA256)
+		if state.RemoteBackend == "" || state.RemoteIdentity == "" || state.RemoteRoot == "" || state.WorkerInstance == "" || err != nil || len(digest) != 32 {
+			return "", errors.New("invalid remote read continuation")
+		}
 	}
 	store := &h.readCursors
 	store.mu.Lock()

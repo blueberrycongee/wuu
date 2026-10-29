@@ -71,3 +71,36 @@ func TestReadCursorExpiryBoundsAndRetirement(t *testing.T) {
 	_, err = host.IssueReadCursor(state)
 	require.Error(t, err, "retired owner must not issue new handles")
 }
+
+func TestRemoteReadCursorBindsEnvironmentAndExpires(t *testing.T) {
+	host := New()
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	now := time.Now()
+	host.readCursors.clock = func() time.Time { return now }
+	state := ReadCursorState{SessionID: "session", ActorID: "actor", ActorPath: "/root/actor", CWD: "/workspace", PluginID: "reader", ToolID: "read", Path: "file.txt", Offset: 3, TotalLines: 5, PluginCursor: "provider-secret", RemoteBackend: "command", RemoteIdentity: "environment", RemoteRoot: "/private/remote-root", WorkerInstance: "worker", NativeSHA256: strings.Repeat("a", 64)}
+	token, err := host.IssueReadCursor(state)
+	require.NoError(t, err)
+	for _, secret := range []string{state.PluginCursor, state.RemoteRoot, state.WorkerInstance, state.NativeSHA256} {
+		require.NotContains(t, token, secret)
+	}
+	for _, mutate := range []func(*ReadCursorOwner){func(o *ReadCursorOwner) { o.RemoteBackend = "ssh" }, func(o *ReadCursorOwner) { o.RemoteIdentity = "other" }, func(o *ReadCursorOwner) { o.RemoteRoot = "/other" }} {
+		owner := state.ReadCursorOwner()
+		mutate(&owner)
+		_, err = host.ResolveReadCursor(token, owner)
+		require.Error(t, err)
+	}
+	restored, err := host.ResolveReadCursor(token, state.ReadCursorOwner())
+	require.NoError(t, err)
+	require.Equal(t, state, restored)
+	bad := state
+	bad.NativeSHA256 = "bad"
+	_, err = host.IssueReadCursor(bad)
+	require.Error(t, err)
+	bad = state
+	bad.WorkerInstance = ""
+	_, err = host.IssueReadCursor(bad)
+	require.Error(t, err)
+	now = now.Add(readCursorLifetime)
+	_, err = host.ResolveReadCursor(token, state.ReadCursorOwner())
+	require.Error(t, err)
+}

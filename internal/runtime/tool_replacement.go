@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	pathpkg "path"
 	"reflect"
 	"regexp"
 	"strings"
@@ -114,10 +116,14 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	var pagination bool
 	var path string
 	var providerArguments = call.Arguments
+	nativeCall := call
 	var remoteRoot string
-	var remoteImage bool
+	var remoteImage, remoteIsImage bool
 	remoteEnv := r.toolkit.ExecutionEnvironment()
 	remoteRead := r.Name() == "read_file" && remoteEnv != nil
+	actor, actorPath := r.toolkit.ExecutionActor()
+	var remoteBackend, remoteIdentity, remoteWorker, remoteDigest string
+	var remoteTotal int
 	var remoteCompleted atomic.Bool
 	var remoteCommitKnown atomic.Bool
 	var remoteTransferred atomic.Bool
@@ -127,8 +133,66 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		if !r.RemoteWorkspaceReplacement() {
 			return toolresult.Result{}, fmt.Errorf("remote read contract is required")
 		}
+		location, ok := remoteEnv.(interface {
+			Root() string
+			Backend() string
+			Identity() string
+		})
+		if !ok || location.Root() == "" || location.Backend() == "" || location.Identity() == "" {
+			return toolresult.Result{}, fmt.Errorf("authenticated remote workspace unavailable")
+		}
+		remoteRoot, remoteBackend, remoteIdentity = location.Root(), location.Backend(), location.Identity()
+		for _, contract := range r.registration.ReplacementContracts {
+			pagination = pagination || contract == "read_file.pagination.v1"
+		}
+		var input struct {
+			Path         string `json:"path"`
+			Continuation string `json:"continuation"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &input); err != nil {
+			return toolresult.Result{}, err
+		}
+		path = input.Path
+		prepareArguments := call.Arguments
+		if strings.HasPrefix(input.Continuation, readcursor.Prefix) {
+			if !pagination {
+				return toolresult.Result{}, fmt.Errorf("external read continuation unavailable")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(call.Arguments), &fields); err != nil || len(fields) != 1 {
+				return toolresult.Result{}, fmt.Errorf("external read continuation must be used alone")
+			}
+			owner := pluginhost.ReadCursorOwner{SessionID: r.executor.threadID, ActorID: actor, ActorPath: actorPath, CWD: r.executor.cwd, PluginID: r.owner, ToolID: r.registration.ID, RemoteBackend: remoteBackend, RemoteIdentity: remoteIdentity, RemoteRoot: remoteRoot}
+			state, err := r.executor.host.ResolveReadCursor(input.Continuation, owner)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			resumed, path, remoteWorker = &state, state.Path, state.WorkerInstance
+			args := map[string]any{"path": state.Path, "offset": state.Offset}
+			if state.Limit > 0 {
+				args["limit"] = state.Limit
+			}
+			encoded, err := json.Marshal(args)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			prepareArguments = string(encoded)
+			args["expected_sha256"] = state.NativeSHA256
+			encoded, err = json.Marshal(args)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			nativeCall.Arguments = string(encoded)
+			delete(args, "expected_sha256")
+			args["continuation"] = state.PluginCursor
+			encoded, err = json.Marshal(args)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			providerArguments = string(encoded)
+		}
 		var err error
-		externalRead, remoteRoot, err = r.toolkit.PrepareRemoteExternalRead(ctx, remoteEnv, call.Arguments)
+		externalRead, remoteRoot, err = r.toolkit.PrepareRemoteExternalRead(ctx, remoteEnv, prepareArguments)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -215,14 +279,19 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	pluginCall.Name = r.publicName
 	pluginCall.Arguments = providerArguments
 	metadata, _ := r.executor.ToolMetadata(pluginCall)
-	if err := r.toolkit.AuthorizeTool(ctx, pluginCall, metadata); err != nil {
-		return toolresult.Result{}, err
+	var authErr error
+	if remoteRead {
+		authErr = r.toolkit.AuthorizeRemoteTool(ctx, remoteEnv, pluginCall, metadata)
+	} else {
+		authErr = r.toolkit.AuthorizeTool(ctx, pluginCall, metadata)
+	}
+	if authErr != nil {
+		return toolresult.Result{}, authErr
 	}
 	input, err := r.executor.toolInput(ctx, pluginCall)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	actor, actorPath := r.toolkit.ExecutionActor()
 	ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, r.toolkit)
 	if remoteRead {
 		location := remoteEnv.(interface {
@@ -245,6 +314,20 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		} else {
 			_ = prepared.Abort(cleanup)
 		}
+	}
+	captureRemoteSnapshot := func(result toolresult.Result) error {
+		if remoteWorker == "" {
+			return fmt.Errorf("remote worker identity unavailable")
+		}
+		digest, total, err := remoteReadSnapshot(result, nativeCall)
+		if err != nil {
+			return err
+		}
+		if resumed != nil && (remoteWorker != resumed.WorkerInstance || digest != resumed.NativeSHA256 || total != resumed.TotalLines) {
+			return fmt.Errorf("remote read continuation is stale")
+		}
+		remoteDigest, remoteTotal = digest, total
+		return nil
 	}
 	continuation := newNativeToolContinuation(ctx, func(nativeCtx context.Context) (toolresult.Result, error) {
 		if !r.ToolAvailable() {
@@ -269,9 +352,23 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		var result toolresult.Result
 		var err error
 		if remoteRead && !useSettlement {
-			result, err = r.toolkit.ContinueRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			if pagination {
+				result, remoteWorker, err = r.toolkit.ContinueRemoteReadOnWorker(nativeCtx, remoteEnv, actor, actorPath, r.original, nativeCall, remoteWorker)
+			} else {
+				result, err = r.toolkit.ContinueRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, nativeCall)
+			}
 			if err != nil {
 				return toolresult.Result{}, err
+			}
+			if pagination && len(result.Content) == 2 && result.Content[1].Type == toolresult.ContentTypeImage {
+				if resumed != nil {
+					return toolresult.Result{}, fmt.Errorf("remote read continuation changed to an image")
+				}
+				remoteIsImage = true
+			} else if pagination {
+				if err := captureRemoteSnapshot(result); err != nil {
+					return toolresult.Result{}, err
+				}
 			}
 			result, err = sanitizeRemoteReadContinuation(nativeCtx, externalRead, result, remoteImage)
 			if err != nil {
@@ -285,7 +382,11 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 				toolctx.MarkRemoteReadExposure(nativeCtx)
 			}
 			var prepared executionenv.PreparedRead
-			prepared, err = r.toolkit.PrepareRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
+			if pagination {
+				prepared, err = r.toolkit.PrepareRemoteReadOnWorker(nativeCtx, remoteEnv, actor, actorPath, r.original, nativeCall, remoteWorker)
+			} else {
+				prepared, err = r.toolkit.PrepareRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, nativeCall)
+			}
 			if err != nil {
 				return toolresult.Result{}, err
 			}
@@ -295,6 +396,20 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 					releasePrepared(prepared)
 				}
 			}()
+			if pagination {
+				remoteWorker = prepared.WorkerInstance()
+				if remoteWorker == "" {
+					return toolresult.Result{}, fmt.Errorf("remote worker identity unavailable")
+				}
+				if len(prepared.Result.Content) == 2 && prepared.Result.Content[1].Type == toolresult.ContentTypeImage {
+					if resumed != nil {
+						return toolresult.Result{}, fmt.Errorf("remote read continuation changed to an image")
+					}
+					remoteIsImage = true
+				} else if err := captureRemoteSnapshot(prepared.Result); err != nil {
+					return toolresult.Result{}, err
+				}
+			}
 			result, err = sanitizeRemoteReadContinuation(nativeCtx, externalRead, prepared.Result, remoteImage)
 			if err != nil {
 				return toolresult.Result{}, err
@@ -341,7 +456,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		if err := r.toolkit.AuthorizeRemoteTool(settleCtx, remoteEnv, pluginCall, metadata); err != nil {
 			return "", err
 		}
-		return r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, call)
+		return r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, nativeCall)
 	}
 	if result.IsError {
 		if externalRead != nil {
@@ -364,14 +479,26 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		return toolresult.Result{}, fmt.Errorf("remote read provider did not complete its worker continuation")
 	}
 	if externalRead != nil {
-		if pagination {
+		var rendered toolresult.Result
+		var err error
+		if pagination && !(remoteRead && remoteIsImage) {
 			var expected *int
-			if resumed != nil {
+			if remoteRead {
+				expected = &remoteTotal
+			} else if resumed != nil {
 				expected = &resumed.TotalLines
 			}
-			result, err := externalRead.RenderPaginated(ctx, result, expected, func(cursor string, next, limit, total int) (string, error) {
-				actorID, actorPath := r.toolkit.ExecutionActor()
-				return r.executor.host.IssueReadCursor(pluginhost.ReadCursorState{SessionID: r.executor.threadID, ActorID: actorID, ActorPath: actorPath, CWD: r.executor.cwd, PluginID: r.owner, ToolID: r.registration.ID, Path: path, Offset: next, Limit: limit, TotalLines: total, PluginCursor: cursor})
+			rendered, err = externalRead.RenderPaginated(ctx, result, expected, func(cursor string, next, limit, total int) (string, error) {
+				actorID, currentPath := r.toolkit.ExecutionActor()
+				state := pluginhost.ReadCursorState{SessionID: r.executor.threadID, ActorID: actorID, ActorPath: currentPath, CWD: r.executor.cwd, PluginID: r.owner, ToolID: r.registration.ID, Path: path, Offset: next, Limit: limit, TotalLines: total, PluginCursor: cursor}
+				if remoteRead {
+					if actorID != actor || currentPath != actorPath {
+						return "", fmt.Errorf("remote continuation actor changed")
+					}
+					state.RemoteBackend, state.RemoteIdentity, state.RemoteRoot = remoteBackend, remoteIdentity, remoteRoot
+					state.WorkerInstance, state.NativeSHA256 = remoteWorker, remoteDigest
+				}
+				return r.executor.host.IssueReadCursor(state)
 			})
 			if err != nil || ctx.Err() != nil {
 				if err == nil {
@@ -379,9 +506,9 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 				}
 				return toolresult.Result{}, err
 			}
-			return result, nil
+		} else {
+			rendered, err = externalRead.Render(ctx, result)
 		}
-		rendered, err := externalRead.Render(ctx, result)
 		if err != nil || !remoteRead {
 			return rendered, err
 		}
@@ -476,6 +603,58 @@ func sanitizeRemoteReadContinuation(ctx context.Context, scope *tools.ExternalRe
 		return scope.AcceptRemoteNativeImage(ctx, result, imageAllowed)
 	}
 	return sanitizeRemoteReadResult(result)
+}
+
+// remoteReadSnapshot validates the worker-owned whole-file digest and range
+// separately from the extension's unverified content. It remains host-only.
+func remoteReadSnapshot(result toolresult.Result, call providers.ToolCall) (string, int, error) {
+	invalid := func() (string, int, error) { return "", 0, fmt.Errorf("invalid remote read snapshot") }
+	if _, err := sanitizeRemoteReadResult(result); err != nil {
+		return invalid()
+	}
+	var args struct {
+		Path     string `json:"path"`
+		Offset   int    `json:"offset"`
+		Limit    *int   `json:"limit"`
+		Expected string `json:"expected_sha256"`
+	}
+	var view struct {
+		SHA string `json:"content_sha256"`
+	}
+	var body struct {
+		Path  string `json:"path"`
+		Text  string `json:"text"`
+		SHA   string `json:"content_sha256"`
+		Start int    `json:"start_line"`
+		Count int    `json:"num_lines"`
+		Total int    `json:"total_lines"`
+	}
+	if json.Unmarshal([]byte(call.Arguments), &args) != nil || json.Unmarshal([]byte(result.Content[0].Text), &view) != nil || json.Unmarshal(result.StructuredContent, &body) != nil {
+		return invalid()
+	}
+	decoded, err := hex.DecodeString(body.SHA)
+	if err != nil || len(decoded) != 32 || body.SHA != view.SHA || (args.Expected != "" && body.SHA != args.Expected) || pathpkg.Clean(strings.ReplaceAll(body.Path, "\\", "/")) != pathpkg.Clean(strings.TrimSpace(args.Path)) {
+		return invalid()
+	}
+	start := args.Offset
+	if start <= 0 {
+		start = 1
+	}
+	lines := strings.SplitAfter(body.Text, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if body.Text == "" {
+		lines = nil
+	}
+	count := max(0, body.Total-start+1)
+	if args.Limit != nil && *args.Limit > 0 {
+		count = min(count, *args.Limit)
+	}
+	if body.Start != start || body.Count != len(lines) || body.Count != count {
+		return invalid()
+	}
+	return body.SHA, body.Total, nil
 }
 
 // Only the bounded structured text is transferred to an extension. Other

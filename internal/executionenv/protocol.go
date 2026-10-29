@@ -50,6 +50,23 @@ type PreparedReadExecutor interface {
 	PrepareUnobservedRead(context.Context, ToolRequest) (PreparedRead, error)
 }
 
+// Pinned reads bind a continuation to the authenticated worker that read its
+// first page. Implementations reject a different worker before dispatch.
+type PinnedPreparedReadExecutor interface {
+	PrepareUnobservedReadOnWorker(context.Context, ToolRequest, string) (PreparedRead, error)
+}
+
+type PinnedUnobservedReadExecutor interface {
+	ExecuteUnobservedReadOnWorker(context.Context, ToolRequest, string) (toolresult.Result, string, error)
+}
+
+func (p PreparedRead) WorkerInstance() string {
+	if p.handle == nil {
+		return ""
+	}
+	return p.handle.workerInstance
+}
+
 type UnobservedReadExecutor interface {
 	ExecuteUnobservedRead(context.Context, ToolRequest) (toolresult.Result, error)
 }

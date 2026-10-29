@@ -39,6 +39,23 @@ func (t *Toolkit) ContinueRemoteReadOnlyOn(ctx context.Context, remote execution
 	return remote.Execute(ctx, request)
 }
 
+// ContinueRemoteReadOnWorker additionally binds pagination to one worker
+// instance. The expected instance is empty only for the first page.
+func (t *Toolkit) ContinueRemoteReadOnWorker(ctx context.Context, remote executionenv.Executor, actor, actorPath string, original Tool, call providers.ToolCall, expected string) (toolresult.Result, string, error) {
+	request, err := t.authorizeRemoteReadOnly(ctx, remote, actor, actorPath, original, call)
+	if err != nil {
+		return toolresult.Result{}, "", err
+	}
+	if call.Name != "read_file" {
+		return toolresult.Result{}, "", errors.New("pinned remote continuation requires read_file")
+	}
+	executor, ok := remote.(executionenv.PinnedUnobservedReadExecutor)
+	if !ok {
+		return toolresult.Result{}, "", errors.New("remote execution environment does not support worker-bound reads")
+	}
+	return executor.ExecuteUnobservedReadOnWorker(ctx, request, expected)
+}
+
 // PrepareRemoteReadOnlyOn admits an exact original call without committing
 // observation invalidation. The host commits only after validating its result.
 func (t *Toolkit) PrepareRemoteReadOnlyOn(ctx context.Context, remote executionenv.Executor, actor, actorPath string, original Tool, call providers.ToolCall) (executionenv.PreparedRead, error) {
@@ -54,6 +71,21 @@ func (t *Toolkit) PrepareRemoteReadOnlyOn(ctx context.Context, remote executione
 		return executionenv.PreparedRead{}, errors.New("remote execution environment does not support read observation commit")
 	}
 	return executor.PrepareUnobservedRead(ctx, request)
+}
+
+func (t *Toolkit) PrepareRemoteReadOnWorker(ctx context.Context, remote executionenv.Executor, actor, actorPath string, original Tool, call providers.ToolCall, expected string) (executionenv.PreparedRead, error) {
+	request, err := t.authorizeRemoteReadOnly(ctx, remote, actor, actorPath, original, call)
+	if err != nil {
+		return executionenv.PreparedRead{}, err
+	}
+	if call.Name != "read_file" {
+		return executionenv.PreparedRead{}, errors.New("pinned remote continuation requires read_file")
+	}
+	executor, ok := remote.(executionenv.PinnedPreparedReadExecutor)
+	if !ok {
+		return executionenv.PreparedRead{}, errors.New("remote execution environment does not support worker-bound reads")
+	}
+	return executor.PrepareUnobservedReadOnWorker(ctx, request, expected)
 }
 
 // RecheckRemoteReadOnlyOn repeats original actor and permission authorization

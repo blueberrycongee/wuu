@@ -57,3 +57,42 @@ func TestStatelessCodeRejectsOlderWorkerBeforeDispatch(t *testing.T) {
 	_, err = os.Stat(receipt)
 	require.NoError(t, err, "ordinary Code Mode is dispatched")
 }
+
+func TestLegacyUnobservedWorkerWithoutInstanceHelper(t *testing.T) {
+	if os.Getenv("WUU_LEGACY_UNOBSERVED_HELPER") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req Request
+		if json.Unmarshal(scanner.Bytes(), &req) != nil {
+			os.Exit(2)
+		}
+		var data []byte
+		if req.Method == "execute" {
+			_ = os.WriteFile(os.Getenv("WUU_LEGACY_UNOBSERVED_RECEIPT"), []byte("read"), 0600)
+			data, _ = json.Marshal(map[string]any{"content": []any{map[string]any{"type": "text", "text": "legacy"}}})
+		} else {
+			data, _ = json.Marshal(map[string]any{"version": ProtocolVersion, "capabilities": []string{UnobservedReadCapability}})
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Data: data})
+	}
+	os.Exit(0)
+}
+func TestPinnedReadRejectsLegacyWorkerWithoutInstance(t *testing.T) {
+	t.Setenv("WUU_LEGACY_UNOBSERVED_HELPER", "1")
+	receipt := filepath.Join(t.TempDir(), "executed")
+	t.Setenv("WUU_LEGACY_UNOBSERVED_RECEIPT", receipt)
+	env := NewEnvironment(Profile{Backend: "command", Command: []string{os.Args[0], "-test.run=^TestLegacyUnobservedWorkerWithoutInstanceHelper$"}, Workspace: t.TempDir()}, "legacy", "thread", t.TempDir())
+	defer env.Close()
+	request := ToolRequest{Actor: "actor", Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"file.txt"}`}}
+	_, _, err := env.ExecuteUnobservedReadOnWorker(context.Background(), request, "")
+	require.ErrorContains(t, err, "identity unavailable")
+	_, err = os.Stat(receipt)
+	require.True(t, os.IsNotExist(err), "pinned reads must fail before dispatch")
+	result, err := env.ExecuteUnobservedRead(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, "legacy", result.TextProjection())
+	_, err = os.Stat(receipt)
+	require.NoError(t, err, "ordinary unobserved reads remain compatible")
+}

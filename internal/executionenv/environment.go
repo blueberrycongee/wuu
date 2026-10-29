@@ -67,6 +67,14 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 var ErrReadObservationCommitUnknown = errors.New("remote read observation commit outcome unknown")
 
 func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolRequest) (PreparedRead, error) {
+	return e.prepareUnobservedRead(ctx, request, "")
+}
+
+func (e *Environment) PrepareUnobservedReadOnWorker(ctx context.Context, request ToolRequest, expected string) (PreparedRead, error) {
+	return e.prepareUnobservedRead(ctx, request, expected)
+}
+
+func (e *Environment) prepareUnobservedRead(ctx context.Context, request ToolRequest, expected string) (PreparedRead, error) {
 	if request.Call.Name != "read_file" {
 		return PreparedRead{}, errors.New("prepared remote continuation requires read_file")
 	}
@@ -76,6 +84,9 @@ func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolReq
 	}
 	if !client.observationCommit {
 		return PreparedRead{}, errors.New("execution worker does not support read observation commit")
+	}
+	if expected != "" && client.workerInstance != expected {
+		return PreparedRead{}, errors.New("remote read continuation belongs to a different worker")
 	}
 	data, err := client.Call(ctx, "read/prepare", request)
 	if err != nil {
@@ -118,26 +129,41 @@ func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolReq
 // ExecuteUnobservedRead requires an explicitly negotiated worker capability;
 // older workers must not silently record the delegated read as model-visible.
 func (e *Environment) ExecuteUnobservedRead(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
+	result, _, err := e.executeUnobservedRead(ctx, request, "", false)
+	return result, err
+}
+
+func (e *Environment) ExecuteUnobservedReadOnWorker(ctx context.Context, request ToolRequest, expected string) (toolresult.Result, string, error) {
+	return e.executeUnobservedRead(ctx, request, expected, true)
+}
+
+func (e *Environment) executeUnobservedRead(ctx context.Context, request ToolRequest, expected string, requireWorker bool) (toolresult.Result, string, error) {
 	if request.Call.Name != "read_file" {
-		return toolresult.Result{}, errors.New("unobserved continuation requires read_file")
+		return toolresult.Result{}, "", errors.New("unobserved continuation requires read_file")
 	}
 	client, err := e.connect(ctx)
 	if err != nil {
-		return toolresult.Result{}, err
+		return toolresult.Result{}, "", err
 	}
 	if !client.unobservedRead {
-		return toolresult.Result{}, errors.New("execution worker does not support unobserved reads")
+		return toolresult.Result{}, "", errors.New("execution worker does not support unobserved reads")
+	}
+	if requireWorker && client.workerInstance == "" {
+		return toolresult.Result{}, "", errors.New("remote worker identity unavailable")
+	}
+	if expected != "" && client.workerInstance != expected {
+		return toolresult.Result{}, "", errors.New("remote read continuation belongs to a different worker")
 	}
 	request.SuppressReadObservation = true
 	data, err := client.Call(ctx, "execute", request)
 	if err != nil {
-		return toolresult.Result{}, err
+		return toolresult.Result{}, "", err
 	}
 	var result toolresult.Result
 	if err = json.Unmarshal(data, &result); err != nil {
-		return result, fmt.Errorf("decode execution result: %w", err)
+		return result, "", fmt.Errorf("decode execution result: %w", err)
 	}
-	return result, nil
+	return result, client.workerInstance, nil
 }
 
 func (e *Environment) connect(ctx context.Context) (*Client, error) {

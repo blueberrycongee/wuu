@@ -17,6 +17,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Allow opted-in remote reader replacements to return validated images from an authorized worker continuation.
+- Allow remote reader replacements to paginate through worker-bound, snapshot-checked continuation tokens.
 
 - Preserve newer remote file observations while allowing trusted text replacements to run after earlier native reads, with durable recovery of uncertain settlements.
 
