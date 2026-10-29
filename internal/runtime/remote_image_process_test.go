@@ -198,6 +198,7 @@ func TestRemoteImageReaderProcess(t *testing.T) {
 				}
 				for _, name := range []string{"failed-parent.png", "success-parent.png"} {
 					req := makePriorObservation(name)
+					_ = os.Remove(filepath.Join(fixture, "observed-image"))
 					code := fmt.Sprintf(`await tools.read_file({path:%q}); console.log("CHILD_OK");`, name)
 					if name == "failed-parent.png" {
 						code += ` throw new Error("controlled parent failure")`
@@ -209,7 +210,16 @@ func TestRemoteImageReaderProcess(t *testing.T) {
 					run.Cancel()
 					require.NoError(t, err)
 					require.Len(t, messages, 1)
-					require.Contains(t, messages[0].Content, "CHILD_OK")
+					observed, err := os.ReadFile(filepath.Join(fixture, "observed-image"))
+					require.NoError(t, err)
+					require.Equal(t, name, string(observed))
+					if name == "failed-parent.png" {
+						require.NotContains(t, messages[0].Content, "CHILD_OK")
+						require.Empty(t, providers.ProjectToolResult(*messages[0].ToolResult).ObservationImages)
+					} else {
+						require.Contains(t, messages[0].Content, "CHILD_OK")
+						require.Len(t, providers.ProjectToolResult(*messages[0].ToolResult).ObservationImages, 1)
+					}
 					require.Equal(t, name == "failed-parent.png", messages[0].ToolResult.IsError)
 					checkObservation(req, name == "failed-parent.png")
 				}
