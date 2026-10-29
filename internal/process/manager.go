@@ -218,9 +218,9 @@ type processHandle struct {
 	stdin   io.WriteCloser
 	ptyFile *os.File
 	done    chan struct{}
-	// An adopted command may outlive its leader while a descendant owns an
-	// output pipe. Retain launch identity, not just a persisted process-group ID.
-	command          *CommandHandle
+	// A command may outlive its leader while a descendant owns an output pipe.
+	// Retain launch identity, not just a persisted process-group ID.
+	tree             ProcessTree
 	pid              int
 	processStartTime string
 }
@@ -494,6 +494,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		p.SeparateStreams = true
 		cmd.Stdout = io.MultiWriter(logf, streamFiles[0])
 		cmd.Stderr = io.MultiWriter(logf, streamFiles[1])
+		// Descendants can inherit these pipes after the shell exits. Bound
+		// their drain so Wait reaches process-tree cleanup and settlement.
+		cmd.WaitDelay = DefaultStopGracePeriod
 		PrepareCommand(cmd)
 		if err := cmd.Start(); err != nil {
 			_ = stdin.Close()
@@ -531,7 +534,10 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	p.Status = StatusRunning
 	p.UpdatedAt = time.Now()
 	_ = m.save(p)
-	handle := &processHandle{stdin: stdin, ptyFile: ptyFile, done: make(chan struct{})}
+	handle := &processHandle{
+		stdin: stdin, ptyFile: ptyFile, done: make(chan struct{}),
+		tree: ProcessTreeFromID(p.PGID), pid: p.PID, processStartTime: p.ProcessStartTime,
+	}
 	m.handles[id] = handle
 	m.publish(Event{Type: EventStarted, Process: *p})
 	handedOff = true
@@ -541,10 +547,10 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 			m.waitPTY(id, cmd, logf, tty)
 		}()
 	} else {
-		go func() {
+		go func(launch Process) {
 			defer close(handle.done)
-			m.wait(id, cmd, logf, streamFiles...)
-		}()
+			m.wait(launch, cmd, logf, streamFiles...)
+		}(*p)
 	}
 	return p, nil
 }
@@ -644,8 +650,19 @@ func terminalCommandEnv(env []string) []string {
 	return result
 }
 
-func (m *Manager) wait(id string, cmd *exec.Cmd, logf *os.File, streams ...*os.File) {
+func (m *Manager) wait(launch Process, cmd *exec.Cmd, logf *os.File, streams ...*os.File) {
 	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The shell exited successfully; only inherited output pipes outlived
+		// the drain window. Preserve its exit result while cleaning its tree.
+		err = nil
+	}
+	if _, identityErr := processMatchesRecord(&launch); identityErr != nil {
+		err = errors.Join(err, identityErr)
+	} else {
+		err = errors.Join(err, ProcessTreeFromID(launch.PGID).Kill())
+	}
+	id := launch.ID
 	for _, file := range streams {
 		_ = file.Close()
 	}
@@ -1022,8 +1039,8 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		m.mu.Unlock()
 		return p, waitForProcessMonitor(handle)
 	}
-	ownedCommand := handle != nil && handle.command != nil
-	if ownedCommand && (handle.pid != p.PID || handle.command.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
+	ownedCommand := handle != nil && handle.pid > 0
+	if ownedCommand && (handle.pid != p.PID || handle.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
 		m.mu.Unlock()
 		return p, fmt.Errorf("process %q record does not match its owned command; refusing to signal it", id)
 	}
@@ -1537,7 +1554,7 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		return nil, err
 	}
 	adopted := &processHandle{
-		done: make(chan struct{}), command: handle,
+		done: make(chan struct{}), tree: handle.tree,
 		pid: p.PID, processStartTime: p.ProcessStartTime,
 	}
 	m.handles[id] = adopted
