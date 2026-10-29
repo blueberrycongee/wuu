@@ -469,6 +469,18 @@ func TestRemoteSessionLineTransactionsProcess(t *testing.T) {
 				pending, err = ledger.PendingProjection(ctx)
 				require.NoError(t, err)
 				require.Len(t, pending, 1)
+				filePath := filepath.Join(remote, name)
+				if managed {
+					filePath = filepath.Join(thread.Toolkit.SessionDir(), name)
+				}
+				require.NoError(t, os.WriteFile(filePath, []byte("changed file\n"), 0600))
+				pending, err = ledger.PendingProjection(ctx)
+				require.Error(t, err)
+				require.Empty(t, pending)
+				require.NoError(t, os.WriteFile(filePath, content, 0600))
+				pending, err = ledger.PendingProjection(ctx)
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
 			})
 		}
 	}

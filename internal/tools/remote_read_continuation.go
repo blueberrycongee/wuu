@@ -195,6 +195,15 @@ func (t *Toolkit) PrepareNativeByteRead(ctx context.Context, remote executionenv
 			if err := t.checkPermission(checkCtx, t.toolInfoForCall(original, restored.Arguments), restored); err != nil {
 				return err
 			}
+			if captured != nil {
+				revalidated, err := t.ExecuteNativeSessionRead(checkCtx, actor, actorPath, original, originalCall, restored)
+				if err != nil {
+					return err
+				}
+				if !sameNativeByteSnapshot(*captured, revalidated) {
+					return errors.New("native byte snapshot changed")
+				}
+			}
 		} else {
 			current, err := t.RecheckRemoteReadOnlyOn(checkCtx, remote, actor, actorPath, original, restored)
 			if err != nil {
