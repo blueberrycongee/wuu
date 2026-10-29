@@ -106,6 +106,10 @@ func (e *environmentToolExecutor) RecoverReadBatch(ctx context.Context, identity
 	return e.environment.RecoverReadBatch(ctx, identity)
 }
 
+func (e *environmentToolExecutor) PrepareNativeRead(ctx context.Context, request executionenv.ToolRequest) (executionenv.PreparedRead, error) {
+	return e.environment.PrepareNativeRead(ctx, request)
+}
+
 func (e *environmentToolExecutor) PrepareUnobservedRead(ctx context.Context, request executionenv.ToolRequest) (executionenv.PreparedRead, error) {
 	return e.environment.PrepareUnobservedRead(ctx, request)
 }

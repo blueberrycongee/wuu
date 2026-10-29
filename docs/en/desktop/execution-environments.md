@@ -130,6 +130,7 @@ and `close`:
   `StartOffset`, `EndOffset`, `TotalBytes`, `Truncated`, `TimedOut`, `Duration`).
   Durations in these process records are **nanoseconds**, unlike `timeout_ms`.
   `emitProcess` publishes `{ Type, Cause, Process }` events on the same connection.
+- **Native line observation:** the built-in worker advertises `read.native-observation.v1` alongside the existing read observation settlement capabilities. It stages native line observations until the durable parent settles. Older workers fail closed. An independent backend must implement the complete observation and recovery protocol before advertising this capability; the process-oriented SDK alone does not provide it.
 - **Stateless Code Mode:** advertise `code.stateless.v1` only when `run_code` enforces `disable_state` for the entire program, rejecting all session state access. The host requires this capability when a remote reader replacement is selected; it does not infer it from a handler. Ordinary Code Mode requests remain unchanged.
 
 - **Acceptance and recovery:** explicitly advertise `capabilities: ["process.start.v1"]`

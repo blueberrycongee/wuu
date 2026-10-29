@@ -91,7 +91,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability}, "worker_instance": s.instanceID})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability, executionenv.NativeReadObservationCapability}, "worker_instance": s.instanceID})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -111,7 +111,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability}, "worker_instance": s.instanceID})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability, executionenv.ReadObservationCommitCapability, executionenv.CodeStatelessCapability, executionenv.NativeReadObservationCapability}, "worker_instance": s.instanceID})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {

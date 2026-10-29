@@ -220,6 +220,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	if !info.Mode().IsRegular() {
 		return toolresult.Result{}, fmt.Errorf("read_file requires a regular file: %s", args.Path)
 	}
+	var preparedTicket *ReadObservationTicket
 	if capture, ok := toolctx.PreparedReadCapture(ctx); ok {
 		if managedArtifact {
 			return toolresult.Result{}, errors.New("prepared remote read does not support managed artifacts")
@@ -228,6 +229,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		if err != nil {
 			return toolresult.Result{}, err
 		}
+		preparedTicket = ticket
 		capture(ticket)
 	}
 	sample, err := io.ReadAll(io.LimitReader(file, 512))
@@ -328,16 +330,16 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 
 	// Track freshness without suppressing explicit reads: Code Mode may not have
 	// printed the earlier result, or its final output may have been cropped.
-	if !toolctx.IsUnobservedRead(ctx) {
-		t.env.RecordRead(resolved, ReadFileEntry{
-			ManagedArtifact: managedArtifact,
-			MtimeUnix:       info.ModTime().Unix(),
-			MtimeUnixNano:   info.ModTime().UnixNano(),
-			Size:            info.Size(),
-			ContentSHA256:   contentHash,
-			Offset:          args.Offset,
-			Limit:           limit,
-		})
+	entry := ReadFileEntry{ManagedArtifact: managedArtifact, MtimeUnix: info.ModTime().Unix(), MtimeUnixNano: info.ModTime().UnixNano(), Size: info.Size(), ContentSHA256: contentHash, Offset: args.Offset, Limit: limit}
+	if toolctx.IsPreparedNativeRead(ctx) {
+		if preparedTicket == nil {
+			return toolresult.Result{}, errors.New("native observation preparation unavailable")
+		}
+		if err := preparedTicket.stageNativeRead(resolved, entry, info); err != nil {
+			return toolresult.Result{}, err
+		}
+	} else if !toolctx.IsUnobservedRead(ctx) {
+		t.env.RecordRead(resolved, entry)
 	}
 
 	result := map[string]any{

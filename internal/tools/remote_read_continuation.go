@@ -20,44 +20,44 @@ import (
 // RestoreRemoteNativeRead resolves the legacy native cursor without trusting it
 // as an authority. It returns a path-bearing call for fresh host authorization;
 // the worker independently validates the captured file snapshot and range.
-func (t *Toolkit) RestoreRemoteNativeRead(call providers.ToolCall) (providers.ToolCall, bool, error) {
+func (t *Toolkit) RestoreRemoteNativeRead(call providers.ToolCall) (providers.ToolCall, bool, bool, error) {
 	var input struct {
 		Path         string `json:"path"`
 		Continuation string `json:"continuation"`
 	}
 	if err := json.Unmarshal([]byte(call.Arguments), &input); err != nil {
-		return providers.ToolCall{}, false, err
+		return providers.ToolCall{}, false, false, err
 	}
 	if len(input.Continuation) > 12000 {
-		return providers.ToolCall{}, false, errors.New("native read continuation is too large")
+		return providers.ToolCall{}, false, false, errors.New("native read continuation is too large")
 	}
 	cursor, err := decodeReadFileContinuation(input.Continuation)
 	if err != nil {
-		return providers.ToolCall{}, false, err
+		return providers.ToolCall{}, false, false, err
 	}
 	if t == nil || t.env == nil {
-		return providers.ToolCall{}, false, errors.New("read environment unavailable")
+		return providers.ToolCall{}, false, false, errors.New("read environment unavailable")
 	}
 	managed := false
 	if cursor.Path == "$SESSION_DIR" || strings.HasPrefix(cursor.Path, "$SESSION_DIR/") || filepath.IsAbs(cursor.Path) {
 		_, _, managed, err = t.env.ResolveReadPath(cursor.Path)
 		if err != nil {
-			return providers.ToolCall{}, false, err
+			return providers.ToolCall{}, false, false, err
 		}
 	}
 	clean := path.Clean(cursor.Path)
 	windowsVolume := len(cursor.Path) >= 2 && cursor.Path[1] == ':' && ((cursor.Path[0] >= 'a' && cursor.Path[0] <= 'z') || (cursor.Path[0] >= 'A' && cursor.Path[0] <= 'Z'))
 	if cursor.Path == "" || (!managed && (path.IsAbs(cursor.Path) || windowsVolume || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsAny(cursor.Path, "\\\x00"))) || (input.Path != "" && input.Path != cursor.Path) {
-		return providers.ToolCall{}, false, errors.New("remote native continuation requires a relative workspace path")
+		return providers.ToolCall{}, false, false, errors.New("remote native continuation requires a relative workspace path")
 	}
 	digest, err := hex.DecodeString(cursor.ExpectedSHA256)
 	if err != nil || len(digest) != 32 {
-		return providers.ToolCall{}, false, errors.New("native read continuation requires a valid snapshot digest")
+		return providers.ToolCall{}, false, false, errors.New("native read continuation requires a valid snapshot digest")
 	}
 	args := map[string]any{"path": cursor.Path, "expected_sha256": cursor.ExpectedSHA256}
 	if cursor.ByteOffset != nil {
 		if *cursor.ByteOffset < 0 || cursor.Limit <= 0 || cursor.Limit > maxRecoveryPageBytes || (cursor.ByteEndOffset != nil && *cursor.ByteEndOffset <= *cursor.ByteOffset) {
-			return providers.ToolCall{}, false, errors.New("invalid native byte continuation")
+			return providers.ToolCall{}, false, false, errors.New("invalid native byte continuation")
 		}
 		window := map[string]any{"offset": *cursor.ByteOffset, "limit": cursor.Limit}
 		if cursor.ByteEndOffset != nil {
@@ -65,14 +65,41 @@ func (t *Toolkit) RestoreRemoteNativeRead(call providers.ToolCall) (providers.To
 		}
 		args["byte_range"] = window
 	} else {
-		return providers.ToolCall{}, false, errors.New("remote native line continuations are unsupported")
+		if cursor.Offset <= 0 || cursor.Limit <= 0 {
+			return providers.ToolCall{}, false, false, errors.New("invalid native line continuation")
+		}
+		args["offset"], args["limit"] = cursor.Offset, cursor.Limit
 	}
 	raw, err := json.Marshal(args)
 	if err != nil {
-		return providers.ToolCall{}, false, err
+		return providers.ToolCall{}, false, false, err
 	}
 	call.Arguments = string(raw)
-	return call, managed, nil
+	return call, managed, cursor.ByteOffset == nil, nil
+}
+
+// MatchesRemoteNativeReadAuthority rejects changes to the captured authority.
+func (t *Toolkit) MatchesRemoteNativeReadAuthority(remote executionenv.Executor, actor, actorPath, sessionID, mode string) bool {
+	if t == nil || t.env == nil || remote == nil || t.env.ExecutionEnvironment == nil {
+		return false
+	}
+	a, b := reflect.ValueOf(remote), reflect.ValueOf(t.env.ExecutionEnvironment)
+	currentActor, currentPath := t.ExecutionActor()
+	return a.IsValid() && b.IsValid() && a.Comparable() && b.Comparable() && a == b && currentActor == actor && currentPath == actorPath && t.env.SessionID == sessionID && t.env.PermissionMode == mode
+}
+
+// PrepareRemoteNativeReadOn stages the worker's native observation, without
+// publishing it before host authorization and parent settlement.
+func (t *Toolkit) PrepareRemoteNativeReadOn(ctx context.Context, remote executionenv.Executor, actor, actorPath string, original Tool, call providers.ToolCall) (executionenv.PreparedRead, error) {
+	request, err := t.authorizeRemoteReadOnly(ctx, remote, actor, actorPath, original, call)
+	if err != nil {
+		return executionenv.PreparedRead{}, err
+	}
+	executor, ok := remote.(executionenv.NativePreparedReadExecutor)
+	if !ok {
+		return executionenv.PreparedRead{}, errors.New("remote execution environment does not support native observation preparation")
+	}
+	return executor.PrepareNativeRead(ctx, request)
 }
 
 // ExecuteRemoteNativeReadOn preserves native observation semantics. The legacy

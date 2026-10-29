@@ -9,6 +9,7 @@ const plugin: RuntimePlugin = {
   if(args.continuation && args.continuation!=='provider-private') throw Error('invalid provider cursor');
   const native=await continueNativeTool(host);
   if(args.path==='pause-page.txt' && args.continuation) await fetch(readFileSync(new URL('./control.txt',import.meta.url),'utf8'));
+  if(args.path==='conflict.txt' || args.path==='alias-other.txt' || args.path==='extension-distinct.txt') appendFileSync(new URL('./native-line-witness.txt',import.meta.url), `${args.path}\n`);
   if(args.path.startsWith('ptc-') || args.path==='image.png') appendFileSync(new URL('./completed.txt',import.meta.url), `${args.path}:${args.continuation?'next':'first'}\n`);
   const image=native.content?.[0];
   if(image?.type==='image') return {result:{content:[image]}};

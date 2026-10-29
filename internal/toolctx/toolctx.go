@@ -165,3 +165,14 @@ func PreparedReadCapture(ctx context.Context) (func(any), bool) {
 	capture, ok := ctx.Value(preparedReadCaptureKey{}).(func(any))
 	return capture, ok && capture != nil
 }
+
+type preparedNativeReadKey struct{}
+
+// WithPreparedNativeRead is set only by the worker's negotiated prepare RPC.
+func WithPreparedNativeRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, preparedNativeReadKey{}, true)
+}
+func IsPreparedNativeRead(ctx context.Context) bool {
+	v, _ := ctx.Value(preparedNativeReadKey{}).(bool)
+	return v
+}

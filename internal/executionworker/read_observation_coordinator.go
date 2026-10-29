@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type readBatchRequest struct {
@@ -68,6 +70,17 @@ func (s *Server) prepareReadBatch(ctx context.Context, data json.RawMessage) (js
 			return nil, errors.New("remote read receipt unavailable")
 		}
 		receipts = append(receipts, receipt)
+	}
+	tickets := make([]*tools.ReadObservationTicket, 0, len(receipts))
+	for _, receipt := range receipts {
+		ticket, ok := receipt.ticket.(*tools.ReadObservationTicket)
+		if !ok {
+			return nil, errors.New("invalid remote read receipt")
+		}
+		tickets = append(tickets, ticket)
+	}
+	if err := tools.ValidateReadObservationBatch(tickets); err != nil {
+		return nil, err
 	}
 	expires := time.Now().Add(readReceiptLifetime)
 	for _, receipt := range receipts {

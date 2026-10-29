@@ -21,11 +21,13 @@ type Init struct {
 
 const UnobservedReadCapability = "read.unobserved.v1"
 const ReadObservationCommitCapability = "read.observation-commit.v1"
+const NativeReadObservationCapability = "read.native-observation.v1"
 
 // CodeStatelessCapability enforces disabled PTC session state for a whole program.
 const CodeStatelessCapability = "code.stateless.v1"
 
 type ToolRequest struct {
+	PrepareNativeObservation  bool               `json:"prepare_native_observation,omitempty"`
 	SuppressReadObservation   bool               `json:"suppress_read_observation,omitempty"`
 	ShellEarlyHandoffDisabled bool               `json:"shell_early_handoff_disabled,omitempty"`
 	GitAttributionEnabled     bool               `json:"git_attribution_enabled,omitempty"`
@@ -46,6 +48,10 @@ type PreparedRead struct {
 	Abort          func(context.Context) error
 	Release        func(context.Context) error
 }
+type NativePreparedReadExecutor interface {
+	PrepareNativeRead(context.Context, ToolRequest) (PreparedRead, error)
+}
+
 type PreparedReadExecutor interface {
 	PrepareUnobservedRead(context.Context, ToolRequest) (PreparedRead, error)
 }

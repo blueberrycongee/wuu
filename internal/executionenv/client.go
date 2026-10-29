@@ -40,6 +40,7 @@ type Client struct {
 	codeStateless     bool
 	processStart      bool
 	unobservedRead    bool
+	nativeObservation bool
 	observationCommit bool
 	workerInstance    string
 	closeGrace        time.Duration

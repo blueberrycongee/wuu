@@ -136,3 +136,30 @@ func TestReadObservationWorkerInstanceIsStableAndUnique(t *testing.T) {
 	require.Equal(t, original, read(first))
 	require.NotEqual(t, original, read(second))
 }
+
+func TestReadObservationNativeRejectsByteAndImage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_HOME", t.TempDir())
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "file.txt"), []byte("text\n"), 0600))
+	// A valid one-pixel PNG exercises the native image path.
+	png := []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 0, 0, 3, 1, 1, 0, 24, 221, 141, 176, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "image.png"), png, 0600))
+	server := New()
+	defer server.Close()
+	init, _ := json.Marshal(executionenv.Init{Version: executionenv.ProtocolVersion, Root: root, Session: "thread", Identity: "env"})
+	hello, err := server.Handle(context.Background(), "initialize", init)
+	require.NoError(t, err)
+	require.Contains(t, string(hello), executionenv.NativeReadObservationCapability)
+	for _, args := range []string{`{"path":"file.txt","byte_range":{"offset":0,"limit":2}}`, `{"path":"image.png"}`} {
+		req, err := json.Marshal(executionenv.ToolRequest{Actor: "a", PermissionMode: "read_only", PrepareNativeObservation: true, Call: providers.ToolCall{Name: "read_file", Arguments: args}})
+		require.NoError(t, err)
+		_, err = server.Handle(context.Background(), "read/prepare", req)
+		require.ErrorContains(t, err, "prepared read did not return a text observation")
+		require.Empty(t, server.readReceipts)
+	}
+	actor, err := server.actor("a", "read_only", false, false)
+	require.NoError(t, err)
+	_, exists := actor.kit.ActiveFilesContextBlock()
+	require.False(t, exists)
+}
