@@ -23,6 +23,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -226,6 +227,10 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
+	personalActions   *personalActions
+	clientInputMu     sync.Mutex
+	clientInputOwner  string
+	clientInputLease  *session.DocumentThreadExecutionLease
 	trustedTransport  trustedTransportState
 	sessionFederation *SessionFederation
 	access            connectionAccess
@@ -477,6 +482,12 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		}
 		s.settleOnBoot(binding)
 	}
+	if s.clientInputReceiptsEnabled() {
+		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope("", "")); err != nil {
+			s.startupErr = err
+			return s
+		}
+	}
 	if s.presenceLease != nil {
 		if err := s.presenceLease.FinalizeStartup(); err != nil {
 			// Retain the startup/exclusive lock until Close. Blocking a peer is
@@ -503,8 +514,36 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 				return s.controlPluginSession(binding, ctx, pluginID, p)
 			},
 		)
+		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
+		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
+			if strings.HasPrefix(operation, "personal/") {
+				operation = strings.TrimPrefix(operation, "personal/")
+				_, execution, known := personalhost.OperationAccess(operation)
+				if !known {
+					return ctx, errors.New("Personal operation is unavailable")
+				}
+				if reference != nil {
+					resources := []access.Resource{{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID}}
+					if execution {
+						resources = append(resources, access.Resource{Kind: "session", ID: sessionID})
+					}
+					var err error
+					ctx, err = rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, sessionID, "personal/"+operation, resources...)
+					if err != nil {
+						return ctx, err
+					}
+				}
+				return ctx, s.authorizePersonalOperation(ctx, operation, sessionID)
+			}
+			ctx, err := s.restoreUserSessionAuthorization(ctx, pluginID, reference, operation, sessionID)
+			if err != nil {
+				return ctx, err
+			}
+			return ctx, s.authorizeUserSessionOperation(ctx, operation, sessionID)
+		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses() }
+		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
+		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
@@ -590,10 +629,8 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 	} else if orphanWorktrees > 0 {
 		providers.DebugLogf("worktree storage maintenance: removed %d orphan owner group(s)", orphanWorktrees)
 	}
-	if stateDir, err := s.workspaceStateDir(); err == nil {
-		if err := maintainInputImageStorage(stateDir, time.Now().UTC()); err != nil {
-			providers.DebugLogf("input image storage maintenance: %v", err)
-		}
+	if err := s.maintainInputAttachments(time.Now().UTC()); err != nil {
+		providers.DebugLogf("input image storage maintenance: %v", err)
 	}
 }
 
@@ -932,6 +969,23 @@ func (s *Server) Close() {
 		}
 		s.waitForRetirements(retirementDeadline)
 		s.releaseEngineScopes()
+		s.clientInputMu.Lock()
+		if s.clientInputLease != nil {
+			_ = s.clientInputLease.Release()
+			s.clientInputLease = nil
+		}
+		clientInputOwner := s.clientInputOwner
+		s.clientInputMu.Unlock()
+		if s.clientInputReceiptsEnabled() && clientInputOwner != "" {
+			scope := s.clientInputScope("", "")
+			scope.LiveOwner = clientInputOwner
+			if binding, err := s.rt.RetainState(); err == nil {
+				if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, scope); err != nil {
+					providers.DebugLogf("recover accepted inputs on close: %v", err)
+				}
+				_ = binding.Close()
+			}
+		}
 		s.releasePresence()
 	})
 }
@@ -1152,6 +1206,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 	if err := s.trackAuthorizedRequest(ctx, req); err != nil {
 		return err
 	}
+	ctx = s.captureAuthorizedResponse(ctx, req)
 	if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); ordered {
 		if deferred, err := s.deferStdioResume(ctx, req); deferred {
 			return err
@@ -1164,6 +1219,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	switch req.Method {
 	case "session/federation":
 		return s.handleSessionFederation(ctx, req)
+	case MethodStateInspectionsList, MethodStateInspectionsReconcile:
+		return s.handleStateInspections(ctx, req)
 	case MethodInitialize:
 		return s.handleInitialize(req)
 	case MethodConfigRead:
@@ -1226,7 +1283,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodPluginClientRequest:
 		return s.handlePluginClientRequest(ctx, req)
 	case MethodPluginClientCancel:
-		return s.handlePluginClientCancel(req)
+		return s.handlePluginClientCancel(ctx, req)
 	case MethodUserQuestionList:
 		return s.handleUserQuestionList(req)
 	case MethodUserQuestionRespond:
@@ -1288,6 +1345,9 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case "thread/attachment/read", "thread/content/read":
 		return s.handleThreadAttachmentRead(ctx, req)
 	case MethodThreadFork, MethodThreadEditMessage:
+		if req.Method == MethodThreadFork && s.rt != nil && s.rt.UserBinding().IsUser() {
+			return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+		}
 		binding, stateErr := s.rt.RetainState()
 		if stateErr != nil {
 			return s.writeResponse(req.ID, nil, stateErr)
@@ -1725,6 +1785,13 @@ func (s *Server) writeJSON(v any) error {
 }
 
 func (s *Server) writeJSONContext(ctx context.Context, v any) error {
+	// A shared host is an internal fanout, not an authenticated recipient.
+	// Its private sink establishes a fresh guard for each real connection.
+	if notification, ok := v.(Notification); ok {
+		if sink, ok := s.out.(interface{ writeRecipientNotification(Notification) error }); ok {
+			return sink.writeRecipientNotification(notification)
+		}
+	}
 	var allowed bool
 	var guard func() error
 	v, guard, allowed = s.authorizeOutbound(ctx, v)

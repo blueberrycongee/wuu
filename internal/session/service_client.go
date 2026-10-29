@@ -96,10 +96,10 @@ var domainErrors = []struct {
 }{
 	{"session_outcome_unknown", ErrOutcomeUnknown}, {"session_model_selection_changed", ErrModelSelectionChanged}, {"session_admission_changed", errAdmissionChanged}, {"session_not_found", ErrSessionNotFound}, {"session_not_archived", ErrSessionNotArchived},
 	{"history_unavailable", ErrHistoryUnavailable}, {"history_snapshot_gone", ErrHistorySnapshotGone},
-	{"control_changed", ErrControlChanged}, {"held_work_settled", ErrHeldUserWorkSettled}, {"held_work_unconfirmed", ErrHeldUserWorkUnconfirmed},
+	{"client_input_conflict", ErrClientInputConflict}, {"client_input_settled", ErrClientInputSettled}, {"control_changed", ErrControlChanged}, {"held_work_settled", ErrHeldUserWorkSettled}, {"held_work_unconfirmed", ErrHeldUserWorkUnconfirmed},
 	{"context_seed_invalid", ErrContextSeedInvalid}, {"session_launch_conflict", ErrSessionLaunchConflict}, {"session_launch_not_found", ErrSessionLaunchNotFound},
 	{"participant_not_found", ErrParticipantNotFound}, {"project_work_not_found", ErrProjectWorkNotFound}, {"project_work_changed", ErrProjectWorkChanged}, {"project_worker_capacity", ErrProjectWorkerCapacity},
-	{"state_conflict", persistence.ErrConflict}, {"state_operation_conflict", persistence.ErrOperationConflict}, {"state_binding_changed", persistence.ErrBindingChanged}, {"state_migration_required", persistence.ErrMigrationRequired}, {"state_corrupt", persistence.ErrCorrupt}, {"invalid_request", persistence.ErrInvalid},
+	{"namespace_ownership", persistence.ErrNamespaceOwnership}, {"inspection_active", persistence.ErrInspectionActive}, {"inspection_released", persistence.ErrInspectionReleased}, {"inspection_unsupported", persistence.ErrInspectionUnsupported}, {"state_conflict", persistence.ErrConflict}, {"state_operation_conflict", persistence.ErrOperationConflict}, {"state_binding_changed", persistence.ErrBindingChanged}, {"state_migration_required", persistence.ErrMigrationRequired}, {"state_corrupt", persistence.ErrCorrupt}, {"invalid_request", persistence.ErrInvalid},
 	{"request_cancelled", context.Canceled}, {"deadline_exceeded", context.DeadlineExceeded},
 }
 

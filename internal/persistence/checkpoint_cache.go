@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
@@ -72,6 +73,14 @@ func (s *Store) Checkpoint(ctx context.Context) (Checkpoint, error) {
 		return Checkpoint{}, err
 	}
 	defer lock.Release()
+	if namespaceIdentityFrom(ctx).migration {
+		if err := inspectionjournal.Check(s.dir, nil); err != nil {
+			return Checkpoint{}, err
+		}
+	}
+	if err := s.checkNamespaceAccess(ctx, nil); err != nil {
+		return Checkpoint{}, err
+	}
 	view, err := s.backend.read(ctx, Query{Namespace: ServiceName, Keys: []string{}})
 	if err != nil {
 		return Checkpoint{}, err
@@ -97,6 +106,9 @@ func (p *preparedStore) checkpoint(ctx context.Context, dir, kind string) (Check
 		if source == nil {
 			var err error
 			result, err = SnapshotCheckpoint(Snapshot{Version: 1})
+			return err
+		}
+		if err := (&Store{backend: source}).checkNamespaceAccess(ctx, nil); err != nil {
 			return err
 		}
 		view, err := source.read(ctx, Query{Namespace: ServiceName, Keys: []string{}})

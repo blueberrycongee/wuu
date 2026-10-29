@@ -9,6 +9,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
+import type { Writable } from "node:stream";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWuuCommand } from "./wuuCommand";
@@ -39,7 +40,7 @@ class AppServerMessageTooLargeError extends Error {}
 type AppServerSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
-  stdio: ["pipe", "pipe", "pipe"];
+  stdio: ["pipe", "pipe", "pipe"] | ["pipe", "pipe", "pipe", "pipe"];
 };
 
 export type AppServerSpawn = (
@@ -49,7 +50,7 @@ export type AppServerSpawn = (
 ) => ChildProcessWithoutNullStreams;
 
 const defaultSpawnAppServer: AppServerSpawn = (command, args, options) =>
-  spawnChild(command, args, options);
+  spawnChild(command, args, options) as ChildProcessWithoutNullStreams;
 
 type DesktopPaths = { appPath: string; isPackaged: boolean };
 
@@ -367,7 +368,10 @@ export class AppServerClientPool {
     const owner = this.sessionOwners.get(JSON.stringify([sessionRouteHost(route), sessionID]));
     const relocated = owner && context.kind === "project" &&
       owner.workspaceId === context.project_id && owner.workdir !== resolve(context.cwd);
-    return owner && !relocated && this.isSelectedClient(owner) ? owner : this.clientForContext(context);
+    // Affinity must preserve both the selected connection and user boundary.
+    const crossesUserBoundary = owner && (context.kind === "user" || owner.userBinding !== undefined) &&
+      (context.kind !== "user" || owner.userBinding?.userSpaceId !== context.user_space_id || owner.userBinding?.productDomain !== context.product_domain || (context.composition_profile !== undefined && owner.userBinding?.compositionProfile !== context.composition_profile));
+    return owner && !relocated && !crossesUserBoundary && this.isSelectedClient(owner) ? owner : this.clientForContext(context);
   }
 
   requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
@@ -483,7 +487,8 @@ export class AppServerClientPool {
     // workspace stays path-keyed (its scratch dir never moves).
     const workspaceId = context.kind === "project" ? context.project_id : "";
     let client = this.clients.get(workdir);
-    if (client && client.workspaceId !== workspaceId) {
+    const userBinding = context.kind === "user" ? { userSpaceId: context.user_space_id, productDomain: context.product_domain, compositionProfile: context.composition_profile } : undefined;
+    if (client && (client.workspaceId !== workspaceId || client.userBinding?.userSpaceId !== userBinding?.userSpaceId || client.userBinding?.productDomain !== userBinding?.productDomain || (userBinding?.compositionProfile !== undefined && client.userBinding?.compositionProfile !== userBinding.compositionProfile))) {
       // Re-registering a path creates a new identity. Let old turns finish,
       // but never admit new project requests into their former runtime.
       this.clients.delete(workdir);
@@ -500,6 +505,7 @@ export class AppServerClientPool {
           workdir, workspaceId, route, this.sessionRoutes.connect.bind(this.sessionRoutes),
           (source, event) => this.emitServerEvent(source, event), onStateChange,
           () => this.isSelectedClient(remote),
+          userBinding,
         );
         client = remote;
       } else client = new AppServerClient(
@@ -510,6 +516,7 @@ export class AppServerClientPool {
         this.spawnAppServer,
         undefined,
         this.getInitializeParams,
+        userBinding,
         this.desktopPaths,
       );
       this.clients.set(workdir, client);
@@ -594,7 +601,7 @@ export class AppServerClientPool {
 
   private evictIdleClients(admittingClient?: PooledAppServerClient): void {
     for (const client of this.retiredClients) {
-      if (!client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
+      if (!client.userBinding && !client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
         this.disposeClient(client);
       }
     }
@@ -607,6 +614,7 @@ export class AppServerClientPool {
         (client) =>
           client !== admittingClient &&
           client.workdir !== activeWorkdir &&
+          !client.userBinding &&
           !client.isBusy() &&
           !this.isWorkdirPinned?.(client.workdir),
       )
@@ -656,6 +664,8 @@ export class AppServerClient {
   private lastUsedAt = Date.now();
   private lastStderr = "";
   private stoppedActivityIDs = new Set<string>();
+  private userHostReady?: Promise<unknown>;
+  private userHostVerified = false;
   private readonly canonicalWorkdir: string;
 
   constructor(
@@ -673,6 +683,7 @@ export class AppServerClient {
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
     private readonly getInitializeParams?: () => unknown,
+    readonly userBinding?: Readonly<{ userSpaceId: string; productDomain: string; compositionProfile?: string }>,
     private readonly desktopPaths?: DesktopPaths,
   ) {
     // Go resolves workspace symlinks for tool execution, while desktop route
@@ -712,6 +723,17 @@ export class AppServerClient {
 
   request<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
     this.start();
+    if (this.userBinding) {
+      const child = this.child;
+      return this.userHostReady!.then(() => {
+        if (!child || child !== this.child || child.killed || this.disposing) throw new Error("The owning app-server process is no longer available");
+        return this.sendRequest<T>(method, params, onResponse);
+      });
+    }
+    return this.sendRequest<T>(method, params, onResponse);
+  }
+
+  private sendRequest<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
     const id = `client-${this.nextRequestID++}`;
     const payload: AppServerRequest = { id, method, params };
     return new Promise<T>((resolveRequest, rejectRequest) => {
@@ -877,6 +899,10 @@ export class AppServerClient {
     if (this.workspaceId.trim() !== "") {
       appServerArgs.push("--workspace-id", this.workspaceId);
     }
+    if (this.userBinding) {
+      appServerArgs.push("--user-space", this.userBinding.userSpaceId, "--product-domain", this.userBinding.productDomain);
+      if (this.userBinding.compositionProfile) appServerArgs.push("--composition-profile", this.userBinding.compositionProfile);
+    }
     const helperEnv = appServerHelperEnvironment(
       process.env,
       sourceRoot,
@@ -887,13 +913,28 @@ export class AppServerClient {
     if (this.desktopPaths?.isPackaged) {
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
+    const desktopOwner = this.userBinding !== undefined;
+    if (desktopOwner) {
+      appServerArgs.push("--desktop-owner-pipe");
+      const calendarClientID = process.env.WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID?.trim();
+      if (calendarClientID) appServerArgs.push("--personal-calendar-client-id", calendarClientID);
+    }
     this.shutdownPromise = undefined;
     const child = this.spawnAppServer(command.command, appServerArgs, {
       cwd: command.cwd,
       env: helperEnv,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: desktopOwner ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
     });
+    if (desktopOwner) {
+      const admission = child.stdio[3] as Writable | null;
+      if (!admission) { child.kill(); throw new Error("Desktop owner admission pipe is unavailable"); }
+      admission.on("error", () => child.kill());
+      // This private parent pipe is never reachable through renderer JSONL.
+      admission.end(JSON.stringify({ version: 1, user_space_id: this.userBinding!.userSpaceId, product_domain: this.userBinding!.productDomain }));
+    }
     this.child = child;
+    this.userHostVerified = false;
+    this.userHostReady = undefined;
     this.stdoutChunks = [];
     this.lastStderr = "";
 
@@ -958,8 +999,10 @@ export class AppServerClient {
     });
     // Prewarmed and restarted cores can host background identities before a
     // renderer opens that project. Negotiate host routing on every spawn.
-    if (this.getInitializeParams) {
-      void this.request("initialize", this.getInitializeParams()).catch(error => {
+    if (this.userBinding || this.getInitializeParams) {
+      const initialization = this.sendRequest("initialize", this.getInitializeParams?.());
+      if (this.userBinding) this.userHostReady = initialization;
+      void initialization.catch(error => {
         if (this.child === child && !this.disposing) {
           this.emit(this, { kind: "server-error", message: String(error) });
         }
@@ -1089,6 +1132,12 @@ export class AppServerClient {
     }
 
     const maybeRequest = message as Required<AppServerRequest>;
+    // Unverified processes cannot acquire reverse-RPC authority or publish
+    // session ownership. initialize's response validates scope synchronously.
+    if (this.userBinding && !this.userHostVerified && maybeRequest.method) {
+      if (maybeRequest.id !== undefined) this.writeResponse({ id: maybeRequest.id, error: { code: "user_host_binding_unverified", message: "User host binding has not been verified" } });
+      return;
+    }
     if (maybeRequest.method && maybeRequest.id !== undefined) {
       const rejection = activityServerRequestRejection(
         maybeRequest,
@@ -1127,6 +1176,16 @@ export class AppServerClient {
       return;
     }
     this.pending.delete(key);
+    if (this.userBinding && pending.method === "initialize" && !response.error) {
+      const result = isRecord(response.result) ? response.result : {};
+      if (result.user_space_id !== this.userBinding.userSpaceId || result.product_domain !== this.userBinding.productDomain) {
+        const message = "user_host_binding_mismatch: The initialized host does not match the requested user space and product domain";
+        pending.reject(new Error(message));
+        if (this.child) this.finalizeChild(this.child, null, message, true);
+        return;
+      }
+      this.userHostVerified = true;
+    }
     if (!response.error && pending.composerUpdates) {
       response.result = rebaseResumeComposerResult(response.result, pending.composerUpdates);
     }

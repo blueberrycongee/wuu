@@ -1,7 +1,9 @@
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
+  type ComponentProps,
   type KeyboardEvent,
+  type ReactNode,
   type SyntheticEvent,
   useCallback,
   useEffect,
@@ -53,6 +55,8 @@ import {
   TurnInlineArtifactOutputs,
 } from "./ArtifactOutputs";
 
+type MessagePresentation = Pick<ComponentProps<typeof ThreadItemView>, "linkPolicy" | "messageActions">;
+
 const recoveredTurnStartedAt = new Map<string, number>();
 const MAX_RECOVERED_TURN_STARTS = 1_000;
 
@@ -95,6 +99,9 @@ export function AssistantTurnShell({
   onCollapseComplete,
   trailingContent,
   editSummaryCard,
+  messagePresentation,
+  processLabel,
+  processContent,
 }: {
   turn: Turn;
   display: AssistantTurnDisplay;
@@ -121,6 +128,12 @@ export function AssistantTurnShell({
    * paints the message — the display-builder filter never renders JSX.
    */
   editSummaryCard?: JSX.Element;
+  /** Independent transports retain their own read-only message boundary. */
+  messagePresentation?: MessagePresentation;
+  /** A transport-owned status when no native execution timing is available. */
+  processLabel?: string;
+  /** Transport-owned records rendered inside the existing process fold. */
+  processContent?: ReactNode;
 }): JSX.Element {
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
@@ -148,6 +161,7 @@ export function AssistantTurnShell({
   // those turns lose the duration entirely when the empty process body is
   // omitted.
   const hasProcess =
+    processLabel !== undefined ||
     processEntries.length > 0 ||
     Boolean(display.latestProcessPreview) ||
     turn.status === "in_progress" ||
@@ -176,12 +190,15 @@ export function AssistantTurnShell({
     onForkMessage,
     onCollapseComplete,
     editSummaryCard,
+    messagePresentation,
   };
 
   return (
     <div className={className}>
       {hasProcess ? (
         <TurnProcessFold
+          processLabel={processLabel}
+          processContent={processContent}
           entries={processEntries}
           activeGrayEntryKey={activeGrayEntryKey}
           collapseRequested={processCollapseRequested}
@@ -221,6 +238,9 @@ function TurnProcessFold({
   onForkMessage,
   onCollapseComplete,
   editSummaryCard,
+  messagePresentation,
+  processLabel: suppliedProcessLabel,
+  processContent,
 }: {
   turn: Turn;
   entries: TurnEntry[];
@@ -245,6 +265,9 @@ function TurnProcessFold({
    */
   onCollapseComplete?: () => void;
   editSummaryCard?: JSX.Element;
+  messagePresentation?: MessagePresentation;
+  processLabel?: string;
+  processContent?: ReactNode;
 }): JSX.Element {
   const renderActive = useConversationRenderActive();
   const revealSnap = useConversationRevealSnap();
@@ -310,6 +333,7 @@ function TurnProcessFold({
     ? localTiming.finished ? localTiming.elapsed : undefined
     : answerReadyDuration ?? settledDuration;
   const liveDuration =
+    suppliedProcessLabel === undefined &&
     completedDuration === undefined &&
     turn.status === "in_progress";
   // A legacy/recovered in-progress turn can arrive without started_at. Keep
@@ -346,14 +370,14 @@ function TurnProcessFold({
       ? pausedTurnElapsed(turn.id)
       : undefined;
   const elapsedMs = completedDuration ?? liveElapsedMs ?? pausedElapsedMs ?? 0;
-  const processLabel = turnProcessTitle(
+  const processLabel = suppliedProcessLabel ?? turnProcessTitle(
     turn,
     elapsedMs,
     completedDuration !== undefined || pausedElapsedMs !== undefined,
     collapseRequested,
     answerReady,
   );
-  const metaParts = turnProcessMetaParts(
+  const metaParts = suppliedProcessLabel !== undefined ? [] : turnProcessMetaParts(
     turn,
     elapsedMs,
     pausedElapsedMs !== undefined || completedDuration !== undefined,
@@ -411,7 +435,7 @@ function TurnProcessFold({
     setExpanded((prev) => !prev);
   }, []);
 
-  const hasDetails = entries.length > 0;
+  const hasDetails = entries.length > 0 || Boolean(processContent);
   const visiblePreview = expanded ? undefined : latestPreview;
   const hasPreview = Boolean(visiblePreview);
   const previewWaveRef = useLiveTextWave<HTMLSpanElement>(
@@ -518,9 +542,11 @@ return (
                     onStreamFrame={onStreamFrame}
                     onForkMessage={onForkMessage}
                     editSummaryCard={editSummaryCard}
+                    messagePresentation={messagePresentation}
                   />
                 </div>
               ))}
+              {processContent}
             </div>
           ) : null}
         </CollapsibleDetails>
@@ -558,6 +584,7 @@ function EntryRenderer({
   onStreamFrame,
   onForkMessage,
   editSummaryCard,
+  messagePresentation,
 }: {
   entry: TurnEntry;
   activeGray?: boolean;
@@ -572,6 +599,7 @@ function EntryRenderer({
   onStreamFrame: () => void;
   onForkMessage?: (turnID: string, itemID: string) => void;
   editSummaryCard?: JSX.Element;
+  messagePresentation?: MessagePresentation;
 }): JSX.Element | null {
   const { item, kind, streaming } = entry;
   if (kind === "activity" || kind === "process_group") {
@@ -586,6 +614,7 @@ function EntryRenderer({
         model={turn.model}
         renderProcessItem={(processItem, isStreaming) => (
           <ThreadItemView
+            {...messagePresentation}
             turnID={turn.id}
             turnStatus={turn.status}
             item={processItem}
@@ -608,6 +637,7 @@ function EntryRenderer({
     // user's expanded/collapsed choice persists across re-renders.
     return (
       <ReasoningFold
+        messagePresentation={messagePresentation}
         item={item}
         streaming={streaming}
         activeGray={activeGray}
@@ -623,6 +653,7 @@ function EntryRenderer({
   if (item.type === "agent_message") {
     return (
       <ThreadItemView
+        {...messagePresentation}
         turnID={turn.id}
         turnStatus={turn.status}
         turnAnswerReadyAt={turn.answer_ready_at ?? turn.completed_at}
@@ -661,6 +692,7 @@ function ReasoningFold({
   onOpenFile,
   onOpenAgent,
   onStreamFrame,
+  messagePresentation,
 }: {
   item: ThreadItem;
   streaming: boolean;
@@ -671,6 +703,7 @@ function ReasoningFold({
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;
   onStreamFrame: () => void;
+  messagePresentation?: MessagePresentation;
 }): JSX.Element {
   const { t } = useI18n();
   const label = streaming ? t("process.thinking") : t("process.viewReasoning");
@@ -726,6 +759,7 @@ function ReasoningFold({
             {...{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
           >
             <ThreadItemView
+              {...messagePresentation}
               turnID={turnID}
               turnStatus={turnStatus}
               item={item}

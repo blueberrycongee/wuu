@@ -1,3 +1,4 @@
+import type { ApplicationPreviewContextV1 } from "../../../packages/plugin-sdk/src/ui-preview";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
 import {
@@ -32,7 +33,7 @@ export type WorkspaceDiffViewTab = {
 export type WorkspaceFileViewTab = {
   kind: "file";
   id: string;
-  context: RuntimeContext;
+  context: ApplicationPreviewContextV1;
   path: string;
   title: string;
   selection?: WorkspaceFileSelection;
@@ -155,7 +156,7 @@ export function workspaceDiffViewTab({
   };
 }
 
-export function workspaceFileViewTabID(context: RuntimeContext, path: string): string {
+export function workspaceFileViewTabID(context: ApplicationPreviewContextV1, path: string): string {
   const normalizedPath = normalizeWorkspaceFileTabPath(
     context,
     workspaceFileTarget(path).path,
@@ -171,7 +172,7 @@ export function workspaceFileViewTab({
   context,
   path,
 }: {
-  context: RuntimeContext;
+  context: ApplicationPreviewContextV1;
   path: string;
 }): WorkspaceFileViewTab {
   const target = workspaceFileTarget(path);
@@ -191,7 +192,7 @@ function workspaceFileTarget(path: string): WorkspaceFileLinkTarget {
   return parseWorkspaceFileTarget(path) ?? { kind: "workspace-file", path };
 }
 
-export function normalizeWorkspaceFileTabPath(context: RuntimeContext, path: string): string {
+export function normalizeWorkspaceFileTabPath(context: ApplicationPreviewContextV1, path: string): string {
   const normalizedRoot = workspacePathToSlash(context.cwd, context.cwd).replace(/\/+$/, "");
   const normalizedPath = workspacePathToSlash(path, context.cwd).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)

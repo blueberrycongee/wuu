@@ -91,5 +91,8 @@ func TestPluginLifecycleAsyncKeepsCapturedHostAndOutbox(t *testing.T) {
 
 func pluginInvocationContext(t *testing.T, rt *runtime.Session, ctx context.Context) context.Context {
 	t.Helper()
+	if rt.UserBinding().IsUser() {
+		ctx = personalTestOwner(ctx)
+	}
 	return runtime.WithInvocationState(ctx, testRuntimeState(t, rt))
 }
