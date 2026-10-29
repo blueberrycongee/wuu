@@ -178,6 +178,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let app-server shutdown proceed when queued worker launch is stalled, while retaining its state until queued cancellation and worker ownership have settled.
+
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
 - Keep Personal task cancellation recoverable across interrupted dispatch and queue promotion, preserve unanswered questions during concurrent completion, and recover tool-disabled main-conversation replies without repeating worker execution. Stopping an undelivered terminal update preserves its saved outcome.

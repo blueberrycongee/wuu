@@ -1502,6 +1502,9 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime.StreamRunner.SeedConversationUsageBaseline(retained, len(history))
 		}
 	}
+	if s.beforeRuntimeInstallForTest != nil {
+		s.beforeRuntimeInstallForTest(threadRuntime)
+	}
 	sub := s.subscribeThreadRuntime(th.state, th.ID, threadRuntime)
 	th.mu.Lock()
 	if s.closed.Load() {
