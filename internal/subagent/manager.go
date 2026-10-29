@@ -1088,10 +1088,14 @@ func (m *Manager) ReconcileToolLedger(ctx context.Context, id string) error {
 	}
 	sa.mu.Lock()
 	ledger := sa.toolLedger
+	kit := sa.toolkit
 	sa.mu.Unlock()
 	if ledger == nil {
 		return nil
 	}
+	// A dormant worker may have inherited stale authority since its last run.
+	// Reapply the current parent policy before authorizing recovered results.
+	m.refreshWakeAuthority(kit)
 	if err := ledger.Reconcile(ctx); err != nil {
 		return err
 	}

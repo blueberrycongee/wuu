@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
@@ -35,6 +36,83 @@ func (i ObservationIntent) valid() bool {
 
 func observationIntent(o *toolstate.Observation) ObservationIntent {
 	return ObservationIntent{o.OperationID, o.WorkerInstance, o.Actor, o.EnvironmentIdentity}
+}
+
+func (l *Ledger) AuthorizeObservation(ctx context.Context, intent ObservationIntent) error {
+	if l == nil || !intent.valid() || intent.Actor != l.ownerID {
+		return errors.New("invalid observation authorization identity")
+	}
+	id := toolctx.SettlementIdentity{OperationID: intent.OperationID, WorkerInstance: intent.WorkerInstance, Actor: intent.Actor, EnvironmentIdentity: intent.EnvironmentIdentity}
+	if err := toolctx.AuthorizeObservation(ctx, id, l); err != nil {
+		return fmt.Errorf("observation result unavailable: %w", err)
+	}
+	return nil
+}
+
+// AuthorizeInvocations checks observation-backed results before a live
+// callback or a model request receives them, including after history storage.
+func (l *Ledger) AuthorizeInvocations(ctx context.Context, ids []string) error {
+	if l == nil || len(ids) == 0 {
+		return nil
+	}
+	var observations []ObservationIntent
+	err := l.write(ctx, func(tx *persistence.Tx) error {
+		observations = nil
+		for _, id := range ids {
+			if strings.TrimSpace(id) == "" {
+				continue
+			}
+			inv, err := l.invocation(tx, id)
+			if err != nil {
+				return err
+			}
+			if inv.Observation != nil && inv.Observation.Outcome == "committed" {
+				observations = append(observations, observationIntent(inv.Observation))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, intent := range observations {
+		if err := l.AuthorizeObservation(ctx, intent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForgetProjectedObservationBindings drops retained closures only after the
+// corresponding history write has durably marked the invocation projected.
+func (l *Ledger) ForgetProjectedObservationBindings(ctx context.Context, ids []string) error {
+	if l == nil || len(ids) == 0 {
+		return nil
+	}
+	var done []ObservationIntent
+	err := l.write(ctx, func(tx *persistence.Tx) error {
+		done = nil
+		for _, id := range ids {
+			if strings.TrimSpace(id) == "" {
+				continue
+			}
+			inv, err := l.invocation(tx, id)
+			if err != nil {
+				return err
+			}
+			if inv.ProjectedAt > 0 && inv.Observation != nil {
+				done = append(done, observationIntent(inv.Observation))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, i := range done {
+		toolctx.ForgetObservationAuthorization(toolctx.SettlementIdentity{OperationID: i.OperationID, WorkerInstance: i.WorkerInstance, Actor: i.Actor, EnvironmentIdentity: i.EnvironmentIdentity}, l)
+	}
+	return nil
 }
 
 // StageObservation atomically saves the identity and final validated result
@@ -176,7 +254,7 @@ func (l *Ledger) ResolveObservation(ctx context.Context, invocationID string, in
 			result, state = o.Result.Clone(), InvocationSucceeded
 		}
 		o.Outcome, o.Result = outcome, nil
-		invocation.State, invocation.Result, invocation.SettledAt = string(state), &result, now
+		invocation.State, invocation.Result, invocation.SettledAt, invocation.ProjectionSafetyVersion = string(state), &result, now, 1
 		if err := tx.Put(toolstate.Invocations, invocationID, invocation); err != nil {
 			return err
 		}

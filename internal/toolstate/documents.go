@@ -31,21 +31,22 @@ type Batch struct {
 }
 
 type Invocation struct {
-	ID                 string
-	BatchID            string
-	ParentInvocationID string
-	ProviderCallID     string
-	ToolName           string
-	ToolKind           providers.ToolCallKind
-	Arguments          string
-	ReplayPolicy       string
-	State              string
-	Result             *toolresult.Result
-	PreparedAt         int64
-	RunningAt          int64
-	SettledAt          int64
-	ProjectedAt        int64
-	Observation        *Observation `json:",omitempty"`
+	ID                      string
+	BatchID                 string
+	ParentInvocationID      string
+	ProviderCallID          string
+	ToolName                string
+	ToolKind                providers.ToolCallKind
+	Arguments               string
+	ReplayPolicy            string
+	State                   string
+	Result                  *toolresult.Result
+	PreparedAt              int64
+	RunningAt               int64
+	SettledAt               int64
+	ProjectedAt             int64
+	ProjectionSafetyVersion int          `json:",omitempty"`
+	Observation             *Observation `json:",omitempty"`
 }
 
 // Observation stores recovery identifiers and a validated result, never the

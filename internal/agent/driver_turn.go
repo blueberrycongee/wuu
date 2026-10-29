@@ -18,50 +18,51 @@ import (
 // streamTurnGateway owns execution resources, not the driver's algorithm. The
 // gate also makes close wait for accepted calls before releasing their tools.
 type streamTurnGateway struct {
-	ctx                     context.Context
-	cancel                  context.CancelFunc
-	gate                    chan struct{}
-	modelSteps              []providers.ModelStepUsage
-	modelBinding            *ModelStepBinding
-	modelBoundaryPending    bool
-	runner                  *StreamRunner
-	descriptor              loopdriver.Descriptor
-	input                   loopdriver.PersistedInput
-	baseHistory             []providers.ChatMessage
-	activeHistory           []providers.ChatMessage
-	revision                uint64
-	historyRewritten        bool
-	onEvent                 StreamCallback
-	client                  providers.StreamClient
-	policy                  *compactionservice.Policy
-	toolGate                *ToolExecutionGate
-	serialTools             bool
-	ready                   bool
-	closed                  bool
-	complete                bool
-	frozen                  ToolSurfaceFreezer
-	step                    int
-	batches                 map[string]bool
-	streamedBatches         map[string]driverToolStream
-	toolRuntimes            map[*TurnToolRuntime]bool
-	toolCalls               map[string]bool
-	produced                []providers.ChatMessage
-	durable                 []providers.ChatMessage
-	archiveHead             int
-	usage                   providers.TokenUsage
-	contextTokens           int
-	turnRouting             providers.TurnRouting
-	lastModelOperationID    string
-	proposedContextParentID string
-	proposedContextHash     string
-	nextModelParentID       string
-	postToolContext         []ContextSegment
-	completed               LoopResult
+	ctx                         context.Context
+	cancel                      context.CancelFunc
+	gate                        chan struct{}
+	modelSteps                  []providers.ModelStepUsage
+	modelBinding                *ModelStepBinding
+	modelBoundaryPending        bool
+	runner                      *StreamRunner
+	descriptor                  loopdriver.Descriptor
+	input                       loopdriver.PersistedInput
+	baseHistory                 []providers.ChatMessage
+	activeHistory               []providers.ChatMessage
+	revision                    uint64
+	historyRewritten            bool
+	onEvent                     StreamCallback
+	client                      providers.StreamClient
+	policy                      *compactionservice.Policy
+	toolGate                    *ToolExecutionGate
+	serialTools                 bool
+	ready                       bool
+	closed                      bool
+	complete                    bool
+	frozen                      ToolSurfaceFreezer
+	step                        int
+	batches                     map[string]bool
+	streamedBatches             map[string]driverToolStream
+	toolRuntimes                map[*TurnToolRuntime]bool
+	toolCalls                   map[string]bool
+	pendingObservationAdmission map[string]bool
+	produced                    []providers.ChatMessage
+	durable                     []providers.ChatMessage
+	archiveHead                 int
+	usage                       providers.TokenUsage
+	contextTokens               int
+	turnRouting                 providers.TurnRouting
+	lastModelOperationID        string
+	proposedContextParentID     string
+	proposedContextHash         string
+	nextModelParentID           string
+	postToolContext             []ContextSegment
+	completed                   LoopResult
 }
 
 func newStreamTurnGateway(ctx context.Context, runner *StreamRunner, input loopdriver.PersistedInput, onEvent StreamCallback) *streamTurnGateway {
 	ctx, cancel := context.WithCancel(ctx)
-	gateway := &streamTurnGateway{ctx: ctx, cancel: cancel, gate: make(chan struct{}, 1), runner: runner, input: input, onEvent: onEvent, batches: make(map[string]bool), toolCalls: make(map[string]bool)}
+	gateway := &streamTurnGateway{ctx: ctx, cancel: cancel, gate: make(chan struct{}, 1), runner: runner, input: input, onEvent: onEvent, batches: make(map[string]bool), toolCalls: make(map[string]bool), pendingObservationAdmission: make(map[string]bool)}
 	gateway.gate <- struct{}{}
 	return gateway
 }
@@ -165,6 +166,9 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	if err != nil {
 		return providers.ChatRequest{}, err
 	}
+	if err := g.admitPendingObservation(ctx); err != nil {
+		return providers.ChatRequest{}, err
+	}
 	return providers.ChatRequest{
 		ModelSelectionRevision: g.modelRevision(),
 		Provider:               r.ProviderName, Model: model,
@@ -201,6 +205,10 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	}
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
+		return loopdriver.ModelRound{}, err
+	}
+	// A custom driver may call the model without first asking for ReadTurn.
+	if err := g.admitPendingObservation(ctx); err != nil {
 		return loopdriver.ModelRound{}, err
 	}
 	// Prefix effects require explicit admission by the selected batch backend.
@@ -515,6 +523,9 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		}
 		capacity := g.toolGate.capacity
 		messages, segments, runErr := executeSelectedToolBatch(ctx, g.runner.SelectedToolBatch, toolbatch.Request{ID: batch.ID, Calls: batch.Calls, Serial: g.serialTools, MaxParallel: capacity}, ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx}, onResult, streamed.runtime)
+		if err := g.authorizeToolMessages(ctx, messages); err != nil {
+			return nil, err
+		}
 		g.postToolContext = append(g.postToolContext, segments...)
 		g.appendMessages(messages...)
 		g.contextTokens += estimateMessages(messages)
@@ -530,6 +541,9 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	// Admitted children can finalize after their parent result is available.
 	// Drain the owned batch before projecting its request-only metadata.
 	runtime.Close()
+	if authErr := g.authorizeToolMessages(ctx, messages); authErr != nil {
+		return nil, authErr
+	}
 	g.postToolContext = append(g.postToolContext, runtime.TakeRequestContextSegments()...)
 	g.appendMessages(messages...)
 	g.contextTokens += estimateMessages(messages)
@@ -578,10 +592,47 @@ func (g *streamTurnGateway) appendMessages(messages ...providers.ChatMessage) {
 	g.produced = append(g.produced, providers.CloneChatMessages(messages)...)
 	g.durable = append(g.durable, providers.CloneChatMessages(messages)...)
 	for _, message := range messages {
+		if message.Role == "tool" && message.ToolInvocationID != "" {
+			if g.pendingObservationAdmission == nil {
+				g.pendingObservationAdmission = make(map[string]bool)
+			}
+			g.pendingObservationAdmission[message.ToolInvocationID] = true
+		}
 		if g.onEvent != nil && !message.Hidden && !isNonDurableHistoryMessage(message) && !isInternalContextHistoryMessage(message) {
 			g.onEvent(providers.StreamEvent{Type: providers.EventMessage, Message: &message})
 		}
 	}
+}
+
+func (g *streamTurnGateway) authorizeToolMessages(ctx context.Context, messages []providers.ChatMessage) error {
+	if g.runner.ToolLedger == nil {
+		return nil
+	}
+	var ids []string
+	for _, message := range messages {
+		if message.ToolInvocationID != "" {
+			ids = append(ids, message.ToolInvocationID)
+		}
+	}
+	if err := g.runner.ToolLedger.AuthorizeInvocations(ctx, ids); err != nil {
+		return fmt.Errorf("authorize tool output: %w", err)
+	}
+	return nil
+}
+
+func (g *streamTurnGateway) admitPendingObservation(ctx context.Context) error {
+	var pending []string
+	for id := range g.pendingObservationAdmission {
+		pending = append(pending, id)
+	}
+	if g.runner.ToolLedger != nil {
+		if err := g.runner.ToolLedger.AuthorizeInvocations(ctx, pending); err != nil {
+			return fmt.Errorf("authorize tool results for model: %w", err)
+		}
+		_ = g.runner.ToolLedger.ForgetProjectedObservationBindings(ctx, pending)
+	}
+	clear(g.pendingObservationAdmission)
+	return nil
 }
 
 func (g *streamTurnGateway) snapshot() LoopResult {

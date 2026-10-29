@@ -122,6 +122,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	remoteEnv := r.toolkit.ExecutionEnvironment()
 	remoteRead := r.Name() == "read_file" && remoteEnv != nil
 	actor, actorPath := r.toolkit.ExecutionActor()
+	sessionID := r.toolkit.SessionID()
 	var remoteBackend, remoteIdentity, remoteWorker, remoteDigest string
 	var remoteTotal int
 	var remoteCompleted atomic.Bool
@@ -478,7 +479,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return result, nil
 		}
 		if remoteRead {
-			if useSettlement && toolctx.IsNestedCall(nativeCtx) {
+			if useSettlement {
 				toolctx.MarkRemoteReadExposure(nativeCtx)
 			}
 			var prepared executionenv.PreparedRead
@@ -619,11 +620,19 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return rendered, ctx.Err()
 		}
 		commit := func(settleCtx context.Context) error {
+			validAuthority := func() bool {
+				current, currentPath := r.toolkit.ExecutionActor()
+				a, b := reflect.ValueOf(remoteEnv), reflect.ValueOf(r.toolkit.ExecutionEnvironment())
+				return current == actor && currentPath == actorPath && r.toolkit.SessionID() == sessionID && r.toolkit.LookupTool(r.Name()) == r && r.ToolAvailable() && a.IsValid() && b.IsValid() && a.Comparable() && b.Comparable() && a == b
+			}
+			if !validAuthority() {
+				return fmt.Errorf("remote read authority changed")
+			}
 			mode, err := authorizeRemote(settleCtx)
 			if err != nil {
 				return err
 			}
-			if mode != remotePrepared.PermissionMode {
+			if mode != remotePrepared.PermissionMode || !validAuthority() {
 				return fmt.Errorf("remote read permission mode changed")
 			}
 			if remotePrepared.Commit == nil {
@@ -709,6 +718,14 @@ func prepareRemoteReadSettlements(ctx context.Context, values []any) (*toolctx.P
 	identity := batch.Identity
 	return &toolctx.PreparedSettlement{
 		Identity: &toolctx.SettlementIdentity{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity},
+		Authorize: func(ctx context.Context) error {
+			for _, participant := range participants {
+				if err := participant.authorize(ctx); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 		Commit: func(ctx context.Context) error {
 			// Staging can wait on durable storage. Recheck every participant
 			// immediately before admitting the worker commit.

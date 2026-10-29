@@ -103,8 +103,8 @@ func TestObservationIntentSurvivesRestartAndRequiresMatchingConfirmation(t *test
 			t.Fatal("conflicting resolution accepted")
 		}
 		projected, err := ledger.PendingProjection(ctx)
-		if err != nil || len(projected) != 1 || projected[0].Result.TextProjection() != "finalized model result" {
-			t.Fatalf("confirmed projection: %+v %v", projected, err)
+		if err == nil || len(projected) != 0 {
+			t.Fatalf("restarted ledger projected without the original authorization binding: %+v %v", projected, err)
 		}
 		if err = ledger.ValidateContinuation(ctx); err != nil {
 			t.Fatalf("confirmed outcome still unknown: %v", err)
@@ -210,8 +210,8 @@ func TestObservationIntentLostPersistenceAcknowledgement(t *testing.T) {
 			t.Fatalf("resolution retry: %v", err)
 		}
 		projection, err := ledger.PendingProjection(ctx)
-		if err != nil || len(projection) != 1 || projection[0].Result.TextProjection() != "verified result" {
-			t.Fatalf("projection after lost response: %+v %v", projection, err)
+		if err == nil || len(projection) != 0 {
+			t.Fatalf("restarted ledger projected without the original authorization binding: %+v %v", projection, err)
 		}
 	})
 }

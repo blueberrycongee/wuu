@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Recheck every remote read authorization before first result delivery or replay, including after a lost settlement acknowledgement.
+
 - Prevent Code Mode session state from outliving failed remote reader settlements through a negotiated stateless worker capability.
 
 - Prevent failed Code Mode calls from exposing output derived from uncommitted remote reads.
