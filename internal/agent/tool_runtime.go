@@ -852,15 +852,18 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 	for _, run := range r.runs {
 		if run.parent != nil {
 			run.mu.Lock()
-			deferred, delivered := run.deferredProjection, run.projectionDelivered
+			deferred, delivered, late := run.deferredProjection, run.projectionDelivered, run.completedAfterRoot
 			run.mu.Unlock()
 			if deferred {
 				done, accepted := rootSettlementOutcome(run)
 				if !done {
 					continue
 				}
-				if !accepted || !delivered {
+				if !accepted || late {
 					run.clearFinalization()
+					continue
+				}
+				if !delivered {
 					continue
 				}
 			}

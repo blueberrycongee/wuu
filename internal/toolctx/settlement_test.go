@@ -34,6 +34,24 @@ func TestInvocationSettlementOwnsCommitAndAbort(t *testing.T) {
 	require.Equal(t, 1, commits)
 }
 
+func TestNestedReservationRetainsEveryAncestorUntilPhysicalCompletion(t *testing.T) {
+	root := WithSettlement(context.Background())
+	releaseChild, err := ReserveSettlementChild(root)
+	require.NoError(t, err)
+	child := WithSettlement(root)
+	releaseGrandchild, err := ReserveSettlementChild(child)
+	require.NoError(t, err)
+	releaseChild()
+	require.True(t, SettlementHasUnfinishedChildren(root))
+	_, err = FinishSettlement(root, true)
+	require.NoError(t, err)
+	_, err = ReserveSettlementChild(child)
+	require.Error(t, err, "a closed ancestor rejects late descendants")
+	releaseGrandchild()
+	releaseGrandchild()
+	require.False(t, SettlementHasUnfinishedChildren(root))
+}
+
 func TestSettlementRejectsIncompatibleOrInvalidGroups(t *testing.T) {
 	ctx := WithSettlement(context.Background())
 	commits := 0

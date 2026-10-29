@@ -74,15 +74,40 @@ func ReserveSettlementChild(ctx context.Context) (func(), error) {
 	if s == nil || !s.durable {
 		return func() {}, nil
 	}
-	s.mu.Lock()
-	if s.finished {
-		s.mu.Unlock()
+	var chain []*settlement
+	for current := s; current != nil; current = current.parent {
+		chain = append(chain, current)
+	}
+	// Lock from root to leaf. Closing any ancestor and admitting a descendant
+	// are mutually exclusive, including when an intermediate child has ended.
+	for i := len(chain) - 1; i >= 0; i-- {
+		chain[i].mu.Lock()
+	}
+	closed := false
+	for _, current := range chain {
+		closed = closed || current.finished
+	}
+	if !closed {
+		for _, current := range chain {
+			current.children++
+		}
+	}
+	for _, current := range chain {
+		current.mu.Unlock()
+	}
+	if closed {
 		return nil, errors.New("parent settlement scope closed")
 	}
-	s.children++
-	s.mu.Unlock()
 	var once sync.Once
-	return func() { once.Do(func() { s.mu.Lock(); s.children--; s.mu.Unlock() }) }, nil
+	return func() {
+		once.Do(func() {
+			for _, current := range chain {
+				current.mu.Lock()
+				current.children--
+				current.mu.Unlock()
+			}
+		})
+	}, nil
 }
 
 // MarkRemoteReadExposure records that a nested invocation dispatched a remote

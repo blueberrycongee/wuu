@@ -121,6 +121,9 @@ func (e *partialOutputExecutor) FinalizeToolOutcome(call providers.ToolCall, res
 	if call.Name == "remote" {
 		return ToolFinalization{Result: result, AdditionalContext: "remote SECRET context"}
 	}
+	if call.Name == "ordinary" {
+		return ToolFinalization{Result: result, AdditionalContext: "ordinary context"}
+	}
 	return ToolFinalization{Result: result}
 }
 func TestFailedRemotePTCSuppressesOnlyUncommittedMediaAndText(t *testing.T) {
@@ -227,12 +230,54 @@ func TestRemoteNestedProjectionWaitsForParentSettlement(t *testing.T) {
 			if fail {
 				require.NotContains(t, string(detail), "SECRET")
 				require.NotContains(t, string(segments), "SECRET")
+				require.NotContains(t, string(segments), "ordinary context")
 			} else {
 				require.Contains(t, string(detail), "SECRET")
 				require.Contains(t, string(segments), "SECRET")
 			}
 		})
 	}
+}
+
+func TestOrdinaryNestedProjectionRemainsAvailableAfterParentCompletion(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			executor := &partialOutputExecutor{fail: fail}
+			ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread")
+			require.NoError(t, err)
+			run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "ordinary"})
+			defer run.Close()
+			var mu sync.Mutex
+			var names []string
+			run.SetResultCallback(func(call providers.ToolCall, _ toolresult.Result) {
+				mu.Lock()
+				defer mu.Unlock()
+				names = append(names, call.Name)
+			})
+			_, err = run.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "parent", Name: "parent", Arguments: `{}`}}, nil)
+			require.NoError(t, err)
+			mu.Lock()
+			got := append([]string(nil), names...)
+			mu.Unlock()
+			require.Contains(t, got, "ordinary")
+			segments, _ := json.Marshal(run.TakeRequestContextSegments())
+			require.Contains(t, string(segments), "ordinary context")
+		})
+	}
+}
+
+func TestAcceptedNestedContextWaitsForProjectionDelivery(t *testing.T) {
+	root := &toolRun{state: toolRunDone, done: make(chan struct{})}
+	close(root.done)
+	segment := postToolAdditionalContextSegment("child", "ordinary context")
+	child := &toolRun{parent: root, state: toolRunDone, deferredProjection: true, requestContext: &segment}
+	run := &TurnToolRuntime{runs: []*toolRun{root, child}}
+	require.Empty(t, run.TakeRequestContextSegments())
+	child.mu.Lock()
+	child.projectionDelivered = true
+	child.mu.Unlock()
+	segments, _ := json.Marshal(run.TakeRequestContextSegments())
+	require.Contains(t, string(segments), "ordinary context")
 }
 
 func TestCanceledRemotePTCDiscardsPendingOutput(t *testing.T) {
