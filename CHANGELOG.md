@@ -283,6 +283,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep external tool providers usable when their native backend was not admitted, and reject late native delegation instead of crashing or executing with incomplete thread authority.
+
 - Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
