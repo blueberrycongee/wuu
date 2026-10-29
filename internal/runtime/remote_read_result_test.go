@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/stretchr/testify/require"
@@ -53,5 +54,31 @@ func TestRemoteProcessScopeUsesCapturedExecutor(t *testing.T) {
 	require.Equal(t, "original", location.Identity)
 	require.Equal(t, original.Root(), location.Root)
 	_, err = scope.Bind("thread", "other", "/host")
+	require.Error(t, err)
+}
+
+func TestRemoteReadSnapshotRequiresConsistentWorkerResult(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	view, _ := json.Marshal(map[string]any{"action": "read", "path": "a.txt", "start_line": 1, "num_lines": 2, "total_lines": 2, "content_sha256": digest})
+	data, _ := json.Marshal(map[string]any{"text": "one\ntwo\n", "path": "a.txt", "start_line": 1, "num_lines": 2, "total_lines": 2, "content_sha256": digest})
+	result := toolresult.Result{Content: []toolresult.ContentPart{{Type: "text", Text: string(view)}}, StructuredContent: data}
+	call := providers.ToolCall{Name: "read_file", Arguments: `{"path":"a.txt"}`}
+	got, total, err := remoteReadSnapshot(result, call)
+	require.NoError(t, err)
+	require.Equal(t, digest, got)
+	require.Equal(t, 2, total)
+	call.Arguments = `{"path":"a.txt","expected_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`
+	_, _, err = remoteReadSnapshot(result, call)
+	require.Error(t, err)
+	call.Arguments = `{"path":"other.txt"}`
+	_, _, err = remoteReadSnapshot(result, call)
+	require.Error(t, err)
+	call.Arguments = `{"path":"a.txt","offset":2}`
+	_, _, err = remoteReadSnapshot(result, call)
+	require.Error(t, err)
+	bad := result
+	bad.StructuredContent = json.RawMessage(`{"text":"one\n","path":"a.txt","start_line":1,"num_lines":2,"total_lines":2,"content_sha256":"` + digest + `"}`)
+	call.Arguments = `{"path":"a.txt"}`
+	_, _, err = remoteReadSnapshot(bad, call)
 	require.Error(t, err)
 }

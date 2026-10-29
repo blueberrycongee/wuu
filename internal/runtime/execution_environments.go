@@ -110,8 +110,16 @@ func (e *environmentToolExecutor) PrepareUnobservedRead(ctx context.Context, req
 	return e.environment.PrepareUnobservedRead(ctx, request)
 }
 
+func (e *environmentToolExecutor) PrepareUnobservedReadOnWorker(ctx context.Context, request executionenv.ToolRequest, expected string) (executionenv.PreparedRead, error) {
+	return e.environment.PrepareUnobservedReadOnWorker(ctx, request, expected)
+}
+
 func (e *environmentToolExecutor) ExecuteUnobservedRead(ctx context.Context, request executionenv.ToolRequest) (toolresult.Result, error) {
 	return e.environment.ExecuteUnobservedRead(ctx, request)
+}
+
+func (e *environmentToolExecutor) ExecuteUnobservedReadOnWorker(ctx context.Context, request executionenv.ToolRequest, expected string) (toolresult.Result, string, error) {
+	return e.environment.ExecuteUnobservedReadOnWorker(ctx, request, expected)
 }
 
 func (e *environmentToolExecutor) RunCode(ctx context.Context, request executionenv.CodeRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
