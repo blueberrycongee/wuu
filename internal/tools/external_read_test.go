@@ -80,6 +80,31 @@ func TestExternalReadRejectsInvalidScopeAndResult(t *testing.T) {
 	}
 }
 
+func TestExternalReadHonorsProtectedPathsWhenUnconfined(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "private")
+	if err := os.Mkdir(protected, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{filepath.Join(protected, "file.txt"), filepath.Join(root, "public.txt")} {
+		if err := os.WriteFile(name, []byte("content"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kit, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.env.Unconfined = true
+	kit.SetProtectedPaths([]string{protected})
+	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"private/file.txt"}`); err == nil {
+		t.Fatal("external reader accepted a protected path")
+	}
+	if _, err := kit.PrepareExternalRead(context.Background(), `{"path":"public.txt"}`); err != nil {
+		t.Fatalf("external reader rejected an allowed path: %v", err)
+	}
+}
+
 func TestExternalReadPreservesCRWithoutTrailingNewline(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("source"), 0600); err != nil {
