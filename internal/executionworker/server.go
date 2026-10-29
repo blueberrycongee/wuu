@@ -26,21 +26,25 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-type actor struct{ kit *tools.Toolkit }
+type actor struct {
+	kit              *tools.Toolkit
+	releaseArtifacts func() error
+}
 
 type Server struct {
-	code         *codemode.Service
-	token        string
-	requireToken bool
-	mu           sync.Mutex
-	init         *executionenv.Init
-	actors       map[string]*actor
-	processes    *process.Manager
-	exports      map[string]exportFile
+	code          *codemode.Service
+	token         string
+	requireToken  bool
+	mu            sync.Mutex
+	init          *executionenv.Init
+	actors        map[string]*actor
+	artifactRoots *tools.SessionArtifactManager
+	processes     *process.Manager
+	exports       map[string]exportFile
 }
 
 func New() *Server {
-	return &Server{actors: make(map[string]*actor), code: codemode.NewService(codemode.ServiceConfig{})}
+	return &Server{actors: make(map[string]*actor), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
 }
 
 func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
@@ -186,11 +190,14 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 	}
 	state := filepath.Join(home, ".wuu-execution", s.init.Identity, s.init.Session)
 	kit.SetStateDir(state)
-	kit.SetSessionDir(filepath.Join(state, "artifacts"))
+	releaseArtifacts, err := kit.BindSessionArtifacts(filepath.Join(state, "artifacts"), s.artifactRoots)
+	if err != nil {
+		return nil, err
+	}
 	kit.SetFileScopeRoots([]string{s.init.Root})
 	kit.SetGitAttributionEnabled(attribution)
 	kit.SetArtifactPublisher(s.publish)
-	a := &actor{kit: kit}
+	a := &actor{kit: kit, releaseArtifacts: releaseArtifacts}
 	s.actors[key] = a
 	return a, nil
 }
@@ -200,6 +207,12 @@ func (s *Server) Close() error {
 	s.mu.Lock()
 	manager := s.processes
 	init := s.init
+	for key, actor := range s.actors {
+		if actor.releaseArtifacts != nil {
+			err = errors.Join(err, actor.releaseArtifacts())
+		}
+		delete(s.actors, key)
+	}
 	for token, file := range s.exports {
 		_ = file.file.Close()
 		_ = os.Remove(file.file.Name())

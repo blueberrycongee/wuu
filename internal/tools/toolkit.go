@@ -57,6 +57,7 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // (all registered tools). The old switch-case dispatch is replaced by
 // registry lookup.
 type Toolkit struct {
+	sessionRootRelease      func() error
 	fileActionGate          FileActionGate
 	permissionHookLocalOnly func() bool
 	fileChangedLocalOnly    func() bool
@@ -297,6 +298,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
+		sessionArtifactRoot:         t.env.sessionArtifactRoot,
 		AgentID:                     t.env.AgentID,
 		AgentPath:                   t.env.AgentPath,
 		ToolSearchEnabled:           t.env.ToolSearchEnabled,
@@ -389,6 +391,7 @@ func (t *Toolkit) rebuildRegistry() {
 	registered := []Tool{
 		// File operations
 		NewReadFileTool(e),
+		&RecoverToolResultTool{toolkit: t},
 		NewWriteFileTool(e),
 		NewListFilesTool(e),
 		NewEditFileTool(e),
@@ -676,8 +679,59 @@ func (t *Toolkit) SessionID() string {
 }
 
 // SetSessionDir sets the session directory for result budgeting.
-func (t *Toolkit) SetSessionDir(dir string) {
+func (t *Toolkit) SetSessionDir(dir string) error {
+	if dir == t.env.SessionDir && t.env.sessionArtifactRoot != nil {
+		return nil
+	}
+	var root *sessionArtifactRoot
+	if strings.TrimSpace(dir) != "" {
+		var err error
+		root, err = newSessionArtifactRoot(dir)
+		if err != nil {
+			return fmt.Errorf("bind session artifact root: %w", err)
+		}
+	}
+	if t.sessionRootRelease != nil {
+		_ = t.sessionRootRelease()
+	}
 	t.env.SessionDir = dir
+	t.env.sessionArtifactRoot = root
+	t.sessionRootRelease = nil
+	if root != nil {
+		t.sessionRootRelease = root.Close
+	}
+	return nil
+}
+
+// CloseSessionArtifacts closes a root opened directly by SetSessionDir.
+// Borrowed roots are owned and closed by their session lease instead.
+func (t *Toolkit) CloseSessionArtifacts() error {
+	if t.sessionRootRelease == nil {
+		return nil
+	}
+	release := t.sessionRootRelease
+	t.sessionRootRelease = nil
+	t.env.sessionArtifactRoot = nil
+	return release()
+}
+
+// BindSessionArtifacts pins a session root and returns its owner lease. Cloned
+// toolkits borrow the root and must finish before the returned lease is closed.
+func (t *Toolkit) BindSessionArtifacts(dir string, manager *SessionArtifactManager) (func() error, error) {
+	if manager == nil {
+		return nil, errors.New("session artifact manager is required")
+	}
+	lease, err := manager.acquire(dir)
+	if err != nil {
+		return nil, fmt.Errorf("bind session artifact root: %w", err)
+	}
+	if t.sessionRootRelease != nil {
+		_ = t.sessionRootRelease()
+		t.sessionRootRelease = nil
+	}
+	t.env.SessionDir = dir
+	t.env.sessionArtifactRoot = lease.root
+	return lease.Close, nil
 }
 
 // SetSessionStore binds tools to the owning runtime's captured provider. Call
@@ -898,6 +952,9 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) IsToolDisabled(name string) bool {
+	if name == "recover_tool_result" && t.IsToolDisabled("read_file") {
+		return true
+	}
 	_, ok := t.disabledTools[name]
 	return ok || t.toolPolicy != nil && !t.toolPolicy(name) ||
 		t.env != nil && t.env.externalCapabilitiesOnly && !t.externalCapabilityAllowed(name)

@@ -35,6 +35,16 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 }
 
 func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	return s.newSideThreadRunnerWithArtifacts(sideThreadID, rootDir, selected, systemPrompt, nil, parentSession...)
+}
+
+func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, release *func() error, parentSession ...string) (*agent.StreamRunner, error) {
+	var acquired func() error
+	defer func() {
+		if acquired != nil {
+			_ = acquired()
+		}
+	}()
 	if s == nil || s.StreamRunner == nil {
 		return nil, errors.New("stream runner is required")
 	}
@@ -82,7 +92,14 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 			if err != nil {
 				return nil, err
 			}
-			if err := s.configureExecutionEnvironment(kit, parentSession[0], statepath.SessionArtifactDir(stateDir, parentSession[0])); err != nil {
+			artifactDir := statepath.SessionArtifactDir(stateDir, parentSession[0])
+			if release != nil {
+				acquired, err = kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+				if err != nil {
+					return nil, err
+				}
+			}
+			if err := s.configureExecutionEnvironment(kit, parentSession[0], artifactDir); err != nil {
 				return nil, err
 			}
 		}
@@ -128,6 +145,10 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 	runner.CompactOnly = false
 	runner.PromptCacheKey = "side-thread:" + id
 	runner.InferenceJournal = s.InferenceJournalForOwner("side-thread:" + id)
+	if release != nil {
+		*release = acquired
+		acquired = nil
+	}
 	return runner, nil
 }
 

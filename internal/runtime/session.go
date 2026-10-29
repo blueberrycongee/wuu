@@ -134,6 +134,9 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	artifactRootsMu           sync.Mutex
+	artifactRoots             *tools.SessionArtifactManager
+	rootArtifactRelease       func() error
 	UserHostIsolationMode     UserHostIsolationMode
 	userHostIsolationVerifier UserHostIsolationVerifier
 	UserSpaceID               string
@@ -268,7 +271,8 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		}
 	}
 	clone := &Session{
-		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode, userHostIsolationVerifier: s.userHostIsolationVerifier,
+		artifactRoots: s.sessionArtifactManager(),
+		UserSpaceID:   s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode, userHostIsolationVerifier: s.userHostIsolationVerifier,
 		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
@@ -362,6 +366,9 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	closeArtifacts       func() error
+	artifactsCloseOnce   sync.Once
+	artifactsCloseErr    error
 	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
 	CompositionID        string
 	compositionBinding   productCompositionBinding
@@ -400,6 +407,49 @@ type ThreadRuntime struct {
 	// idle-boundary rebuild adopts an update; committed disable or removal
 	// revokes the affected plugin even while this generation remains pinned.
 	PluginGeneration *PluginGeneration
+}
+
+func (s *Session) sessionArtifactManager() *tools.SessionArtifactManager {
+	s.artifactRootsMu.Lock()
+	defer s.artifactRootsMu.Unlock()
+	if s.artifactRoots == nil {
+		s.artifactRoots = tools.NewSessionArtifactManager()
+	}
+	return s.artifactRoots
+}
+
+// CloseArtifacts releases the thread's lease after all owned work has drained.
+func (t *ThreadRuntime) CloseArtifacts() error {
+	if t == nil {
+		return nil
+	}
+	t.artifactsCloseOnce.Do(func() {
+		if t.closeArtifacts != nil {
+			t.artifactsCloseErr = t.closeArtifacts()
+		}
+	})
+	return t.artifactsCloseErr
+}
+
+// artifactLeaseOwner coordinates lazy tool-backend initialization with runtime
+// shutdown. A backend initialized after shutdown cannot retain a root.
+type artifactLeaseOwner struct {
+	mu      sync.Mutex
+	closed  bool
+	release func() error
+}
+
+func (o *artifactLeaseOwner) close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return nil
+	}
+	o.closed = true
+	if o.release != nil {
+		return o.release()
+	}
+	return nil
 }
 
 // ThreadModelSelection is the model choice persisted with one conversation.
@@ -1448,10 +1498,17 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit          *tools.Toolkit
-		agentControl *agentcontrol.AgentControl
-		toolExecutor = s.StreamRunner.Tools
+		kit            *tools.Toolkit
+		agentControl   *agentcontrol.AgentControl
+		toolExecutor   = s.StreamRunner.Tools
+		artifactsOwned bool
 	)
+	artifactOwner := &artifactLeaseOwner{}
+	defer func() {
+		if !artifactsOwned {
+			_ = artifactOwner.close()
+		}
+	}()
 	threadProcessManager, err := s.processManagerForThread(threadRoot, stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("thread process manager: %w", err)
@@ -1470,6 +1527,21 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// StartQueuedWork.
 	if s.Toolkit != nil {
 		initialize := func() error {
+			artifactOwner.mu.Lock()
+			defer artifactOwner.mu.Unlock()
+			if artifactOwner.closed || artifactOwner.release != nil {
+				return errors.New("session artifact owner is closed or already initialized")
+			}
+			initialized := false
+			defer func() {
+				if !initialized {
+					artifactOwner.closed = true
+					if artifactOwner.release != nil {
+						_ = artifactOwner.release()
+						artifactOwner.release = nil
+					}
+				}
+			}()
 			var err error
 			kit, err = s.Toolkit.CloneForRoot(threadRoot)
 			if err != nil {
@@ -1485,7 +1557,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			ConfigureToolkitPermissions(kit, s.Permissions)
 			kit.SetApproveForMe(false)
 			kit.SetSessionID(id)
-			kit.SetSessionDir(artifactDir)
+			releaseArtifacts, err := kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+			if err != nil {
+				return err
+			}
+			artifactOwner.release = releaseArtifacts
 			kit.SetSessionStore(s.Sessions)
 			kit.SetWorkingNotesHome(s.ProductDataRoot())
 			kit.SetBrowserTabs(browserTabs)
@@ -1507,6 +1583,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				kit.SetProcessManager(threadProcessManager)
 			}
 
+			initialized = true
 			return nil
 		}
 		if s.PluginHost == nil {
@@ -1641,7 +1718,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					s.bindLocalSkillRefresh(workerKit, workerRoot, generation)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
-					workerKit.SetSessionDir(artifactDir)
+					if err := workerKit.SetSessionDir(artifactDir); err != nil {
+						return nil, err
+					}
 					workerKit.SetToolSearchEnabled(workerToolSearchEnabled)
 					workerKit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
 					workerKit.SetAgentIdentity(meta.ID, meta.Path)
@@ -1779,17 +1858,19 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
 	result := &ThreadRuntime{SessionID: id,
+		closeArtifacts:     artifactOwner.close,
 		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, ExecutionEnvironment: threadEnvironment, GitAttributionEnabled: processGitAttribution(generation), RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(threadRoot, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())},
-		processHooks:       s.HookDispatcher,
-		StreamRunner:       runner,
-		Toolkit:            kit,
-		AgentControl:       agentControl,
-		ProcessManager:     threadProcessManager,
-		ActivityRegistry:   s.ActivityRegistry,
-		ModelBudget:        s.ModelBudget,
-		WorkerModelBudget:  s.WorkerModelBudget,
-		PluginGeneration:   generation,
-		Documents:          s.Documents, Sessions: s.Sessions, PluginHost: s.PluginHost,
+
+		processHooks:      s.HookDispatcher,
+		StreamRunner:      runner,
+		Toolkit:           kit,
+		AgentControl:      agentControl,
+		ProcessManager:    threadProcessManager,
+		ActivityRegistry:  s.ActivityRegistry,
+		ModelBudget:       s.ModelBudget,
+		WorkerModelBudget: s.WorkerModelBudget,
+		PluginGeneration:  generation,
+		Documents:         s.Documents, Sessions: s.Sessions, PluginHost: s.PluginHost,
 		// Direct callers get the session's own identity as the stamp;
 		// NewThreadRuntimeForRootModel overwrites it with the thread's
 		// requested selection so reuse comparisons stay in thread terms.
@@ -1801,6 +1882,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			PermissionMode: config.NormalizePermissionMode(s.Permissions.Mode),
 		},
 	}
+	artifactsOwned = true
 	result.prepareStepModel = func(ctx context.Context, selected session.RuntimeSelection) (*agent.ModelStepBinding, error) {
 		var cfg config.Config
 		if generation != nil && len(generation.settings.Providers) != 0 {
@@ -2188,7 +2270,14 @@ func (s *Session) SetSessionID(id string) error {
 	if s.Toolkit != nil {
 		s.Toolkit.SetSessionID(id)
 		s.Toolkit.SetAgentIdentity(id, agentthread.RootPath)
-		s.Toolkit.SetSessionDir(artifactDir)
+		release, err := s.Toolkit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+		if err != nil {
+			return err
+		}
+		if s.rootArtifactRelease != nil {
+			_ = s.rootArtifactRelease()
+		}
+		s.rootArtifactRelease = release
 		if err := s.configureExecutionEnvironment(s.Toolkit, id, artifactDir); err != nil {
 			return err
 		}
@@ -2331,6 +2420,10 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	if s.executionEnvironments != nil {
 		cleanupErr = errors.Join(cleanupErr, s.executionEnvironments.Close())
+	}
+	if s.rootArtifactRelease != nil {
+		cleanupErr = errors.Join(cleanupErr, s.rootArtifactRelease())
+		s.rootArtifactRelease = nil
 	}
 	return result, cleanupErr
 }

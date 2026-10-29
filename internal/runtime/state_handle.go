@@ -309,20 +309,23 @@ func (s *Session) NewThreadCapabilityRuntimeForState(binding *State, sessionID, 
 
 // NewSideThreadRunnerForState uses a retained execution chosen at admission.
 // The caller owns binding until the runner and its finalizers finish.
-func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection, prompt string, parentSession ...string) (*agent.StreamRunner, error) {
+func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection, prompt string, parentSession ...string) (*agent.StreamRunner, func() error, error) {
 	owner := s
 	if binding.Generation != nil && binding.Generation.composition.scope != nil {
 		owner = binding.Generation.composition.scope.runtime
 	}
 	shadow, err := owner.cloneForThreadModel(binding)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer owner.releasePluginGeneration(shadow.pluginGeneration)
 	if owner != s {
 		selected.Provider, selected.Model = shadow.ProviderName, shadow.Model
 		selected.Variant, selected.Effort = shadow.StreamRunner.Variant, shadow.StreamRunner.Effort
 		shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
+		shadow.artifactRoots = s.sessionArtifactManager()
 	}
-	return shadow.newSideThreadRunner(sessionID, rootDir, selected, prompt, parentSession...)
+	var release func() error
+	runner, err := shadow.newSideThreadRunnerWithArtifacts(sessionID, rootDir, selected, prompt, &release, parentSession...)
+	return runner, release, err
 }

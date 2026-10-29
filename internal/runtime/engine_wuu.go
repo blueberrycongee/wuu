@@ -470,6 +470,7 @@ func (w *wuuEngineSession) Close(ctx context.Context) error {
 				}
 				w.owner.ReleasePluginGeneration(rt.PluginGeneration)
 				rt.PluginGeneration = nil
+				w.closeErr = errors.Join(w.closeErr, rt.CloseArtifacts())
 			}
 			close(w.closeDone)
 		}()

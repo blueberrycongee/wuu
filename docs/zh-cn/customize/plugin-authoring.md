@@ -606,6 +606,8 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 `reportExecutionUpdate`、`invokeTool`、`askUserQuestions` 和 `importArtifact` 都调用版本化服务，需要对应声明。编排工具使用 `activity.orchestrator=true` 和 `execution.invoke-tool`，通过正常工具链委托副作用。重试相同工具和参数时，保持子调用 `call_id` 不变；不要用同一个 ID 表示不同工作。
 
+对于已归档的工具输出，编排工具可通过 `invokeTool` 将 `continuation.next` 传给 `recover_tool_result`。这需要正常声明 `execution.invoke-tool` 依赖并处于活动的编排回调中。子调用遵循普通调度与权限检查：必须同时允许 `recover_tool_result` 和 `read_file`。续读只接受当前会话宿主结果归档的字节续读参数，归档变化时会拒绝，也不会重跑原工具。参见[续读编排示例](../../../examples/plugins/result-recovery.ts)；同一续读参数仍可用于 `read_file`。
+
 `security.authorize` 服务可以进一步限制操作，但不能放宽宿主的强制边界。`sandbox.process` provider 必须提供真实的文件系统约束，不是命令审批弹窗。实现前请阅读[权限](../reference/permissions.md)。
 
 ## Agent 管理的开发

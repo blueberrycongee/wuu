@@ -83,7 +83,9 @@ func runFakeList(t *testing.T, mode string) (providers.ToolCall, string, []ToolE
 	if err != nil {
 		t.Fatalf("New toolkit: %v", err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	kit.env.ToolResultProjectionMode = mode
 
 	call := providers.ToolCall{ID: "call-int", Name: "list_files", Arguments: "{}"}
@@ -141,7 +143,9 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	kit.env.ToolResultProjectionMode = "active"
 	locations := make([]map[string]any, 8)
 	for i := range locations {
@@ -172,9 +176,15 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 	}
 	// A file cannot serve as the session directory: archival must fail open
 	// without discarding any of the terminal output.
-	kit.env.SessionDir = parseOut(t, returned.TextProjection())["artifact_ref"].(string)
+	badKit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := badKit.SetSessionDir(parseOut(t, returned.TextProjection())["artifact_ref"].(string)); err == nil {
+		t.Fatal("expected invalid session directory to fail binding")
+	}
 	input := toolresult.FromText(raw)
-	if got := kit.FinalizeToolResult(call, input); got.TextProjection() != fullView || !reflect.DeepEqual(got.Content, input.Content) {
+	if got := badKit.FinalizeToolResult(call, input); got.TextProjection() != fullView || !reflect.DeepEqual(got.Content, input.Content) {
 		t.Fatal("archival failure lost terminal output or the audit payload")
 	}
 }
@@ -377,7 +387,9 @@ func TestRichMediaSettlement_IsStableAndKeepsNativeObservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	tool := fakeRichMediaTool{text: strings.Repeat("semantic evidence line\n", 3_000)}
 	call := providers.ToolCall{ID: "call-rich", Name: tool.Name(), Arguments: "{}"}
 	returned, err := kit.executeKnownToolResult(context.Background(), call, tool)
@@ -438,7 +450,9 @@ func TestReadFileModelViewPreservesLiteralSourceAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(projectionModeEnvVar, "active")
 	source := "7|const path = \"C:\\\\tmp\";\n|const greeting = \"你好\";\n"
 	for _, continuation := range []any{nil, map[string]any{"has_more": true, "next": map[string]any{"continuation": "opaque-cursor"}}} {

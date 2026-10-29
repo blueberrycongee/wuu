@@ -315,6 +315,7 @@ func (s *Session) productThreadRuntime(binding *State, sessionID, root string, s
 	}
 	defer scope.runtime.releasePluginGeneration(shadow.pluginGeneration)
 	shadow.StateDir, shadow.SessionDir, shadow.WuuHome, shadow.DataRoot = s.StateDir, s.SessionDir, s.WuuHome, s.ProductDataRoot()
+	shadow.artifactRoots = s.sessionArtifactManager()
 	var thread *ThreadRuntime
 	if len(capabilityOnly) > 0 && capabilityOnly[0] {
 		thread, err = shadow.NewThreadCapabilityRuntime(sessionID, root, selected)

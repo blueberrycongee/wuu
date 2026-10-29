@@ -318,7 +318,7 @@ func closeEngineRuntime(owner *Session, rt *ThreadRuntime) error {
 	}
 	owner.ReleasePluginGeneration(rt.PluginGeneration)
 	rt.PluginGeneration = nil
-	return errors.Join(err, rt.CloseComposition())
+	return errors.Join(err, rt.CloseComposition(), rt.CloseArtifacts())
 }
 
 // EngineDescriptors lists the selected engine services in this captured generation.

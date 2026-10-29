@@ -1790,6 +1790,7 @@ func releaseThreadRuntime(th *threadState) {
 type detachedThreadRuntime struct {
 	runtime      *runtime.ThreadRuntime
 	subscription *threadRuntimeSubscription
+	mainDone     <-chan struct{}
 }
 
 func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
@@ -1799,6 +1800,9 @@ func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
 	detached := detachedThreadRuntime{
 		runtime:      th.execRuntime,
 		subscription: th.runtimeSubscription,
+	}
+	if th.turnCompletion != nil {
+		detached.mainDone = th.turnCompletion.done
 	}
 	th.execRuntime = nil
 	th.runtimeSubscription = nil
@@ -1810,6 +1814,15 @@ func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
 
 func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	var shutdownDone <-chan struct{}
+	if s != nil {
+		s.backgroundMu.Lock()
+		if s.closed.Load() {
+			shutdownDone = s.shutdownBackgroundDrained
+		}
+		s.backgroundMu.Unlock()
+	}
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, shutdownDone)
 	if detached.runtime != nil && detached.runtime.CompositionID != "" {
 		if err := detached.runtime.CloseComposition(); err != nil {
 			providers.DebugLogf("close product composition: %v", err)
@@ -1827,6 +1840,7 @@ func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, nil)
 	if detached.runtime != nil && detached.runtime.CompositionID != "" {
 		if err := detached.runtime.CloseComposition(); err != nil {
 			providers.DebugLogf("close product composition: %v", err)
@@ -1909,6 +1923,35 @@ func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub 
 		_ = sub.modelState.Close()
 		_ = sub.state.Close()
 	}
+}
+
+func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, mainDone, shutdownDone <-chan struct{}) {
+	if threadRuntime == nil {
+		return
+	}
+	control := threadRuntime.AgentControl
+	if control != nil {
+		control.BeginShutdown()
+	}
+	finishArtifactsAfterWorkers(func() error {
+		if shutdownDone != nil {
+			<-shutdownDone
+		}
+		if mainDone != nil {
+			<-mainDone
+		}
+		if control != nil {
+			return control.WaitOwnedWorkerExecutions(context.Background())
+		}
+		return nil
+	}, threadRuntime.CloseArtifacts)
+}
+
+func finishArtifactsAfterWorkers(wait, release func() error) {
+	go func() {
+		_ = wait()
+		_ = release()
+	}()
 }
 
 func normalizeTurnStartImages(images []TurnStartImage) ([]providers.InputImage, error) {

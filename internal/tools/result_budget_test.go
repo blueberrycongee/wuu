@@ -20,7 +20,9 @@ func TestGenericResultPagesRecoverUnicodeAndSurviveCallIDReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	text := strings.Repeat("证据🙂\\\"", 4000)
 	call := providers.ToolCall{ID: "../repeated", Name: "extension_records"}
 	settled := kit.FinalizeToolResult(call, toolresult.FromText(text))

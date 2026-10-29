@@ -800,6 +800,8 @@ Disabling a plugin cancels its work across retained generations as well.
 
 `reportExecutionUpdate`, `invokeTool`, `askUserQuestions`, and `importArtifact` call versioned services and require the corresponding declarations. An orchestrator uses `activity.orchestrator=true` and `execution.invoke-tool` to delegate effects through the normal tool path. Keep a child `call_id` stable across retries with identical tool name and arguments; do not reuse it for different work.
 
+For archived tool output, an orchestrator can pass `continuation.next` to `recover_tool_result` with `invokeTool`. It needs the normal `execution.invoke-tool` dependency and a live orchestrator callback. The child call follows ordinary scheduling and permission checks: both `recover_tool_result` and `read_file` must be allowed. Recovery accepts only a byte continuation for a host result archive in the current session, rejects changed archives, and does not rerun the producer. See the [recovery orchestrator example](../../../examples/plugins/result-recovery.ts); the same continuation remains usable with `read_file`.
+
 The `security.authorize` service may further restrict an operation, but cannot relax the host's mandatory boundary. A `sandbox.process` provider must supply real filesystem enforcement; it is not a command approval dialog. See [permissions](../reference/permissions.md) before implementing either.
 
 ## Agent-managed development

@@ -175,6 +175,13 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		return toolresult.Result{}, fmt.Errorf("open file: %w", err)
 	}
 	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return toolresult.Result{}, fmt.Errorf("stat opened file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return toolresult.Result{}, fmt.Errorf("read_file requires a regular file: %s", args.Path)
+	}
 	sample, err := io.ReadAll(io.LimitReader(file, 512))
 	if err != nil {
 		return toolresult.Result{}, fmt.Errorf("read file header: %w", err)
@@ -194,7 +201,10 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		if args.Offset > 0 || args.Limit != nil {
 			return toolresult.Result{}, errors.New("read_file accepts byte_range instead of offset/limit")
 		}
-		text, err := readFileByteWindowRedacted(ctx, t.env, resolved, displayPath, args.ByteRange.Offset, args.ByteRange.Limit, args.ByteRange.EndOffset, strings.TrimSpace(args.ExpectedSHA256), info.Size())
+		text, err := readFileByteWindowFromOpen(ctx, t.env, file, displayPath, args.ByteRange.Offset, args.ByteRange.Limit, args.ByteRange.EndOffset, strings.TrimSpace(args.ExpectedSHA256), info.Size())
+		if err == nil {
+			text = redactSensitiveReadContent(t.env, resolved, text)
+		}
 		return toolresult.FromText(text), err
 	}
 	if bytes.IndexByte(sample, 0) >= 0 {
@@ -220,7 +230,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	if args.Limit != nil {
 		maxSelectedBytes = 0
 	}
-	readResult, err := readFileLineRange(resolved, args.Offset, limit, maxSelectedBytes)
+	readResult, err := readFileLineRangeFromOpen(file, args.Offset, limit, maxSelectedBytes)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
@@ -642,13 +652,10 @@ type readFileLineRangeResult struct {
 	ContentSHA256 string
 }
 
-func readFileLineRange(path string, offset, limit, maxSelectedBytes int) (readFileLineRangeResult, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return readFileLineRangeResult{}, fmt.Errorf("read file: %w", err)
+func readFileLineRangeFromOpen(f *os.File, offset, limit, maxSelectedBytes int) (readFileLineRangeResult, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return readFileLineRangeResult{}, fmt.Errorf("seek file: %w", err)
 	}
-	defer f.Close()
-
 	reader := bufio.NewReaderSize(f, 64*1024)
 	hasher := sha256.New()
 	endLine := 0
@@ -745,19 +752,7 @@ func hashOpenFile(f *os.File) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// readFileByteWindowRedacted wraps readFileByteWindow so that content read
-// from a sensitive path while unconfined reaches the model with credential
-// values masked. Confined modes never get this far: the read is refused
-// earlier by rejectSensitiveReadPath.
-func readFileByteWindowRedacted(ctx context.Context, env *Env, resolved, displayPath string, offset, limit, endOffset int, expectedSHA256 string, fileSize int64) (string, error) {
-	out, err := readFileByteWindow(ctx, env, resolved, displayPath, offset, limit, endOffset, expectedSHA256, fileSize)
-	if err != nil {
-		return out, err
-	}
-	return redactSensitiveReadContent(env, resolved, out), nil
-}
-
-func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath string, offset, limit, endOffset int, expectedSHA256 string, fileSize int64) (string, error) {
+func readFileByteWindowFromOpen(ctx context.Context, env *Env, f *os.File, displayPath string, offset, limit, endOffset int, expectedSHA256 string, fileSize int64) (string, error) {
 	if offset < 0 {
 		return "", errors.New("read_file byte_range.offset must be non-negative")
 	}
@@ -767,11 +762,6 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	if limit > maxRecoveryPageBytes {
 		return "", fmt.Errorf("read_file byte_range.limit must be <= %d", maxRecoveryPageBytes)
 	}
-	f, err := os.Open(resolved)
-	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
-	}
-	defer f.Close()
 	contentSHA, err := hashOpenFile(f)
 	if err != nil {
 		return "", err
@@ -824,7 +814,7 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
 	}
-	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget)
+	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget, ctx.Value(resultRecoveryContextKey{}) == true)
 	if !ok {
 		return "", errors.New("read_file recovery metadata exceeds the page budget; use a shorter path")
 	}
