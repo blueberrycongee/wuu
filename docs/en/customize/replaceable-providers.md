@@ -525,10 +525,14 @@ There is no second host-side policy registry.
 | `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
 | `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
 
-A policy cannot replay visible partial output, accepted tool effects, an unknown
-submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
-potentially billable outcomes; the selected policy may permit a bounded model
-reattempt, but cannot replay accepted or uncertain tool effects.
+A loop retry cannot replay partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. For `transport_retry`, the host may
+set `partial_output_resettable` when the consumer can discard the failed attempt
+and a replay guard is installed. A recovery decision still passes that guard,
+which protects completed checkpoints and accepted or uncertain tool effects.
+Without this capability, partial output blocks transport recovery. Transport
+recovery retains physical submission receipts, including unknown but potentially
+billable outcomes; the selected policy may permit a bounded model reattempt.
 Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
 receipts survive failed attempts. Credential refresh, transport changes and
 retries still require their existing write-ahead receipts and adapter support.

@@ -73,7 +73,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	switch in.Phase {
 	case "transport_retry":
 		out.Action = "fail"
-		if !in.PartialOutput && !in.ToolWorkStarted && in.Failure != nil && in.Failure.Recovery != nil {
+		if (!in.PartialOutput || in.PartialOutputResettable) && !in.ToolWorkStarted && in.Failure != nil && in.Failure.Recovery != nil {
 			failure := (&loopdriver.FailureError{Failure: *in.Failure}).FailureEvidence()
 			if in.RecoveryHint == string(providers.RecoveryRefreshAuth) {
 				failure.Cause = providers.MarkAuthRefreshable(failure.Cause)

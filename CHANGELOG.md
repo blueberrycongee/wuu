@@ -232,6 +232,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
+
 - Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
 - Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.
 
