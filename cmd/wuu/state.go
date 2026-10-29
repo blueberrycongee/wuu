@@ -15,8 +15,11 @@ import (
 )
 
 func runState(args []string) error {
+	if len(args) > 0 && args[0] == "migrate-personal-review" {
+		return runPersonalReviewMigration(args[1:], os.Stdout)
+	}
 	if len(args) == 0 {
-		return errors.New("state requires check, export, import, or migrate")
+		return errors.New("state requires check, export, import, migrate, or migrate-personal-review")
 	}
 	fs := flag.NewFlagSet("state "+args[0], flag.ContinueOnError)
 	dir := fs.String("dir", "", "document store directory")

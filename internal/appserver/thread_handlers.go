@@ -51,6 +51,9 @@ func workspaceKindForCWD(wuuHome, cwd string) WorkspaceKind {
 }
 
 func (s *Server) handleThreadStart(req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts create conversations through the named-agent session service"))
+	}
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -790,6 +793,9 @@ type forkSourceThread struct {
 }
 
 func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+	}
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -799,6 +805,9 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Context, req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+	}
 
 	var params ThreadForkParams
 	if err := decodeParams(req.Params, &params); err != nil {

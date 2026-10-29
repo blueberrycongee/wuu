@@ -359,6 +359,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | Independent full logical model calls and streams |
 | `host.model.emit` | Events from a streaming adapter or middleware |
 | `host.background` | Generation-owned calls to a plugin’s own service |
+| `host.client.invalidate` | Content-free hints to refresh plugin-owned client state |
 | `host.process` | Conversation-bound shell processes, output and event delivery |
 | `host.settings.get/list` | Declared setting values |
 | `host.credentials.request` | Origin-bound HTTPS requests using a host-held Bearer credential |
@@ -373,6 +374,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
+
+`host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. General per-turn allow/deny policies are not supported.
+
+`host.session.history.read` is a read-only view of physical audit records, including hidden model context and tool records. Records carry optional `hidden`, `read_only`, and `origin` metadata; omitted flags are false and omitted origin is empty for legacy records. A `user` role alone does not establish human authorship. Retain these fields when building a conversation projection: exclude hidden records, and treat user-role records as human input only when they are not read-only and their origin is `user` or empty. Do not classify messages by their wording or strip matching text from genuine input. Projection does not delete audit records or alter provider context.
+
+`host.session.history.search` with `view: "conversation"` applies those visibility and authorship rules to user/assistant records before pagination. It searches displayed conversation text rather than reasoning or tool output. Omitting `view` retains the default audit/trace search. Sequence addresses remain physical record addresses, so clients can reopen an original record without treating filtered results as renumbered history.
 
 `host.workspace.status` and `apply` compare tracked files against the commit frozen at workspace creation, including committed, staged, and unstaged changes. `apply` writes the cumulative patch into the parent working tree without committing it, then removes the isolated workspace and rebinds the session. Conflicts, untracked files, or an unavailable baseline fail without discarding the workspace or its binding. Automatic cleanup also preserves committed work and workspaces whose baseline cannot be verified.
 
@@ -474,6 +481,12 @@ The remote Web client also has an independent 30-second RPC deadline for `api.in
 The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.
 
 The host reuses configured credentials, provider preparation, capacity coordination, retries, and inference accounting. It adds no conversation history, agent-specific request hooks, or tools and creates no persistent session. Select and limit context in the plugin. The service does not accept credentials, endpoint URLs, or arbitrary provider overrides. Explain what draft/history text will reach the configured provider, bound request frequency and output, and treat cancellation as best effort at avoiding further work: a submitted request may already incur charges.
+
+## Refreshing plugin-owned client state
+
+Declare `requireClientInvalidationService()` to consume `host.client.invalidate` version 1. After persisting a change, call `invalidateClient(host, "reactions")`, or use service method `call` with `{ topic }`. This also fits calendar or other plugin-owned record updates. Topics must match `[a-z][a-z0-9.-]{0,63}`; arbitrary payloads and caller-supplied identities are rejected.
+
+The host emits `plugin/client/invalidated` with `plugin_id` (the package subject ID), `fingerprint`, `user_space_id`, `product_domain`, and `topic`. Identity comes from the active generation. Disabled, closed, or superseded runtimes cannot publish. Desktop consumers receive the notification through `api.onHostEvent`, check its package and context, and re-read through their scoped runtime API. The event is only an invalidation hint: it does not send a message, create a turn, write history, or request user attention. Keep polling or another recovery read for missed notifications; a failed hint does not undo the preceding durable write.
 
 ## Composable model extensions
 
@@ -818,6 +831,42 @@ Use `validate` for package structure, `test` for executable initialization and n
 The install CLI grants trust and enables the package. Updates from the same recorded source retain trust and the enabled state; a changed or previously unrecorded source requires confirmation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
 
 Exact authoring types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts). The Go host and its internal application-embedding facade are host implementation code, not additional plugin authoring SDKs. Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.
+
+## Private storage ownership transfers
+
+A package can move a user-scoped storage prefix to another package with reciprocal
+`storageTransfers.exports` and `storageTransfers.imports` manifest declarations.
+Each declaration contains `id` (stable transfer identifier), `plugin` (the peer's
+package ID), `scope` (`user`), `domain` (the host-selected product domain), and
+`keyPrefix` (a nonempty valid storage-key prefix). The exporter names the importer;
+the importer names the exporter. Every other field must match exactly.
+
+The host resolves exact discovered package identities and requires independent
+trust for both packages. A disabled exporter may declare the transfer without
+running. The importer must be selected for activation. Missing exporters do not
+trigger a search of old identities or other user/product roots. These declarations
+are fingerprinted package inputs, not cross-plugin storage RPC permissions.
+
+Importers must defer reading the imported prefix until their effectful activation
+callback, not cache its contents during initialization. Preparation does not mutate
+storage. At accepted startup or generation activation,
+the host validates the complete target document before fencing the source prefix,
+then atomically persists the raw copied values and an import receipt. Conflicts or
+storage quota overflow fail closed without overwriting target state. Transfer
+failures block the importing runtime. Pending transfers recover on the next
+accepted activation; a completed receipt prevents replay after target deletion.
+The existing per-plugin entry and byte quotas still apply to the combined target.
+
+Source bytes remain as an inactive backup. Ordinary reads and writes cannot access
+that prefix after its durable fence, including from retained older generations.
+Other source prefixes and other product/user roots remain unchanged. The host does
+not parse plugin business records. Returning to an older plugin version does not
+undo ownership or restore access to the backup.
+
+Transferred documents use storage schema 2 so older host binaries fail closed
+rather than ignore ownership metadata. Untransferred documents remain schema 1.
+Host downgrades cannot use transferred state; recovery requires a migration-aware
+host and retained raw backups, not automatic restoration of the previous owner.
 
 ## Package distribution
 

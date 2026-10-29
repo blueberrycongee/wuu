@@ -6,9 +6,9 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // A candidate allocates only a scope. The selected provider decides whether the
@@ -38,7 +38,8 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		cfg := generation.settings
 		kit.SetStateDir(s.StateDir)
 		kit.SetRuntimeHome(s.WuuHome)
-		kit.SetWorkingNotesHome(s.WuuHome)
+		kit.SetWorkingNotesHome(s.ProductDataRoot())
+		kit.SetProtectedPaths(memoryProtectedPaths(s.WuuHome, s.UserBinding()))
 		kit.SetWorkspaceID(s.WorkspaceID)
 		kit.SetProcessManager(s.ProcessManager)
 		kit.SetActivityRegistry(s.ActivityRegistry)
@@ -55,8 +56,11 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
 		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		bindToolkitHooks(kit, generation.hooks)
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
-		manager, err := startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+		var manager *mcp.Manager
+		if !s.UserBinding().IsUser() {
+			manager, err = startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+		}
 		if err != nil {
 			return toolservice.Backend{}, err
 		}
@@ -105,7 +109,8 @@ func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *Plugin
 	cfg := generation.settings
 	kit.SetStateDir(s.StateDir)
 	kit.SetRuntimeHome(s.WuuHome)
-	kit.SetWorkingNotesHome(s.WuuHome)
+	kit.SetWorkingNotesHome(s.ProductDataRoot())
+	kit.SetProtectedPaths(memoryProtectedPaths(s.WuuHome, s.UserBinding()))
 	kit.SetWorkspaceID(s.WorkspaceID)
 	kit.SetActivityRegistry(s.ActivityRegistry)
 	if generation.state != nil {
@@ -129,8 +134,8 @@ func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *Plugin
 	kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
 	kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 	bindToolkitHooks(kit, generation.hooks)
-	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
-	manager, codeMode, err := generation.nativeDependencies.get(ctx, generation)
+	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+	manager, codeMode, err := generation.nativeDependencies.get(ctx, generation, !s.UserBinding().IsUser())
 	if err != nil {
 		return nil, nil, err
 	}

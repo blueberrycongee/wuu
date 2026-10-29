@@ -82,6 +82,7 @@ type ResolvedCommand struct {
 }
 
 type Manifest struct {
+	StorageTransfers     *extensions.StorageTransfers      `json:"storage_transfers,omitempty"`
 	SchemaVersion        int                               `json:"schema_version"`
 	ID                   string                            `json:"id"`
 	Name                 string                            `json:"name,omitempty"`
@@ -422,6 +423,7 @@ type LoadOptions struct {
 }
 
 type rawManifest struct {
+	StorageTransfers       json.RawMessage `json:"storageTransfers"`
 	SchemaVersion          json.RawMessage `json:"schemaVersion"`
 	SchemaVersionAlias     json.RawMessage `json:"schema_version"`
 	ID                     string          `json:"id"`
@@ -472,7 +474,8 @@ type rawContributes struct {
 }
 
 var supportedManifestFields = map[string]struct{}{
-	"schemaVersion": {}, "schema_version": {},
+	"storageTransfers": {},
+	"schemaVersion":    {}, "schema_version": {},
 	"id": {}, "name": {}, "description": {}, "icon": {}, "version": {}, "defaultEnabled": {}, "default_enabled": {}, "author": {},
 	"homepage": {}, "repository": {}, "license": {}, "keywords": {},
 	"skills": {}, "runtime": {}, "hooks": {}, "mcpServers": {}, "mcp_servers": {},
@@ -541,6 +544,10 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 	}
 	if id == "" {
 		return Manifest{}, fmt.Errorf("requires id or name")
+	}
+	storageTransfers, err := normalizeStorageTransfers(raw.StorageTransfers, id)
+	if err != nil {
+		return Manifest{}, err
 	}
 	requires, err := normalizePackageRelationships(id, "requires", raw.Requires)
 	if err != nil {
@@ -653,6 +660,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		SettingsPages:        ui.settingsPages,
 		Interface:            cloneRaw(raw.Interface),
 		Platforms:            normalizeStrings(raw.Platforms),
+		StorageTransfers:     storageTransfers,
 		Requires:             requires,
 		Dependencies:         dependencies,
 		Breaks:               breaks,

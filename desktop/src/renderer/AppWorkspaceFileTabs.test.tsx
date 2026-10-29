@@ -1,3 +1,8 @@
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
+import type { PluginHost } from "./plugins/PluginHost";
+const desktopPluginHost = new Proxy({} as PluginHost, { get: (_target, key) => { const host = getDesktopApplication().contributions as PluginHost; const value = Reflect.get(host, key); return typeof value === "function" ? value.bind(host) : value; } });
+const desktopWorkbenchController = new Proxy({} as import("../../../packages/plugin-sdk/src/ui-contributions").ApplicationWorkbenchV1, { get: (_target, key) => { const workbench = getDesktopApplication().workbench; const value = Reflect.get(workbench, key); return typeof value === "function" ? value.bind(workbench) : value; } });
+import { PluginConversationAttachment } from "./plugins/PluginConversation";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -279,6 +284,65 @@ describe("workspace file tabs", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.useRealTimers();
+  });
+
+  it.each([false, true])("preserves Coding panel and saved preferences across Twin attachments with open=%s", async codingOpen => {
+    const thread = completedThread();
+    thread.turns[0].items[1].text = "Open [README.md](README.md) or [notes.txt](notes.txt).";
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(thread.id)); });
+    await flushAsync();
+    const links = container.querySelectorAll<HTMLButtonElement>(".rich-file-link");
+    await act(async () => links[0].click()); await flushAsync();
+    await act(async () => links[1].click()); await flushAsync();
+    const codingPanel = container.querySelector<HTMLElement>(".workspace-right-panel")!;
+    const firstResource = codingPanel.querySelector('.workspace-file-resource');
+    expect(firstResource).not.toBeNull();
+    const codingTabs = [...codingPanel.querySelectorAll('[role="tab"]')].map(node => node.textContent);
+    const activeTitle = codingPanel.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+    if (!codingOpen) {
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
+      await flushAsync();
+    }
+    const keys = ["workspaceRightPanelOpen", "workspaceRightPanelWidth", "sidebarWidth", "sidebarCollapsed", "fileTreeWidth", "fileTreeSide", "fileTreeVisible"].map(key => `wuu.desktop.${key}`);
+    const prefs = keys.map(key => localStorage.getItem(key));
+    await desktopPluginHost.activateGeneration({ pluginId: "test:twin-panel-isolation", generation: "one", register(api) {
+      api.registerViewType({ id: "test.twin-panel", title: "Twin fixture", defaultRegion: "primary", layout: "user-space", render: () => <PluginConversationAttachment resourceId="twin:verified" name="Twin only.txt" mediaType="text/plain" size={1} loadLabel="Read" downloadLabel="Download" onLoad={() => {}} onRead={() => new Promise(() => {})} /> });
+    } });
+    try {
+      await act(async () => { await desktopWorkbenchController.openPluginView("test:twin-panel-isolation", "test.twin-panel", { region: "primary" }); });
+      await flushAsync();
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-action="open-attachment"]')!.click());
+      await flushAsync();
+      const twinPanel = container.querySelector<HTMLElement>(".plugin-view-attachment-panel")!;
+      expect(twinPanel).not.toBeNull();
+      expect(codingPanel.getAttribute("aria-hidden")).toBe("true");
+      expect(twinPanel.querySelector(".workspace-panel-add")).toBeNull();
+      expect(twinPanel.textContent).not.toContain("README.md");
+      expect(codingPanel.querySelector('.workspace-file-resource')).toBe(firstResource);
+      await act(async () => twinPanel.querySelector<HTMLButtonElement>("[aria-pressed]")!.click());
+      await flushAsync();
+      expect(keys.map(key => localStorage.getItem(key))).toEqual(prefs);
+      await act(async () => twinPanel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await flushAsync();
+      expect(container.querySelector(".plugin-view-attachment-panel")).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-action="open-attachment"]')!.click());
+      await flushAsync();
+      await act(async () => container.querySelector<HTMLButtonElement>(".plugin-view-attachment-tab .icon-button")!.click());
+      await flushAsync();
+      expect(keys.map(key => localStorage.getItem(key))).toEqual(prefs);
+      await act(async () => desktopWorkbenchController.deactivateRegion("primary"));
+      await flushAsync();
+      expect(codingPanel.isConnected).toBe(true);
+      expect(codingPanel.getAttribute("aria-hidden")).toBe(String(!codingOpen));
+      expect([...codingPanel.querySelectorAll('[role="tab"]')].map(node => node.textContent)).toEqual(codingTabs);
+      expect(codingPanel.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(activeTitle);
+      expect(codingPanel.querySelector('.workspace-file-resource')).toBe(firstResource);
+      expect(keys.map(key => localStorage.getItem(key))).toEqual(prefs);
+    } finally {
+      await act(async () => { desktopWorkbenchController.deactivateRegion("primary"); desktopPluginHost.unload("test:twin-panel-isolation"); });
+    }
   });
 
   it.each([false, true])("closes the %s selected conversation entry without closing its session or losing the file", async (selectConversation) => {

@@ -312,6 +312,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
 | `host.model.emit` | 流式适配器或 middleware 发出的事件 |
 | `host.background` | 调用插件自己服务的 generation 所属后台工作 |
+| `host.client.invalidate` | 提示客户端重新读取插件状态，不携带业务内容 |
 | `host.process` | 绑定会话的 shell 进程、输出读取和事件投递 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.credentials.request` | 使用宿主持有的 Bearer 凭据向限定 HTTPS 来源发送请求 |
@@ -326,6 +327,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
+
+`host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。暂不支持按轮次配置通用工具允许／拒绝列表。
+
+`host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
+
+`host.session.history.search` 使用 `view: "conversation"` 时，在分页前对用户和助理记录应用这些可见性与来源规则，搜索显示的对话文字，不搜索推理或工具输出。省略 `view` 时保留默认审计／执行轨迹搜索。序号仍指向物理记录，客户端可以恢复原消息，不应将筛选结果重新编号。
 
 `host.workspace.status` 和 `apply` 以创建工作区时冻结的提交为基线，比较已跟踪文件，包含已提交、已暂存和未暂存的改动。`apply` 将累计补丁写入父工作目录，不创建提交，随后移除独立工作区并重新绑定会话。存在冲突、未跟踪文件或基线不可用时，调用失败并保留工作区及其绑定。自动清理也会保留已提交成果和无法验证基线的工作区。
 
@@ -418,6 +425,12 @@ async function requestText(host: RuntimeHost, content: string) {
 结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。
 
 宿主复用已配置的凭据、提供商请求准备、容量协调、重试和推理用量记录。不自动加入对话历史、代理专用请求 hook 或工具，也不创建持久会话。上下文由插件自行选择和限制。此服务不接受凭据、端点 URL 或任意提供商覆盖。应说明哪些草稿或历史文本会发送给已配置的提供商，限制请求频率和输出；取消只能尽量避免后续工作，已提交的请求仍可能产生费用。
+
+## 刷新插件拥有的客户端状态
+
+声明 `requireClientInvalidationService()` 以使用 `host.client.invalidate` 版本 1。持久化变更后，调用 `invalidateClient(host, "reactions")`，或使用服务方法 `call`，参数为 `{ topic }`。此机制也适用于日历和其他插件记录的更新。topic 必须匹配 `[a-z][a-z0-9.-]{0,63}`；任意业务内容及调用方提供的身份字段都会被拒绝。
+
+宿主发出 `plugin/client/invalidated`，包含 `plugin_id`（包的 subject ID）、`fingerprint`、`user_space_id`、`product_domain` 和 `topic`。身份来自活动 generation；已禁用、已关闭或已被替换的运行时不能发布。桌面消费者通过 `api.onHostEvent` 接收通知，核对包和上下文后，通过带作用域的运行时 API 重新读取状态。该事件仅提示状态失效，不发送消息、不创建轮次、不写入历史，也不请求用户注意。保留轮询或其他恢复读取路径，以应对通知丢失；提示失败不应撤销此前的持久化写入。
 
 ## 可组合的模型扩展
 
@@ -624,6 +637,32 @@ Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev":
 install CLI 会确认信任并启用包。同一已记录来源的更新继承信任与启停状态；来源改变或尚未记录来源时需要确认。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
 完整插件编写类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)。Go 宿主及其内部应用嵌入接口属于宿主实现，不是另一套插件编写 SDK。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。
+
+## 私有存储所有权迁移
+
+插件可通过对应的 `storageTransfers.exports` 和 `storageTransfers.imports`
+声明，将用户级存储前缀交给另一个插件。每条声明包含 `id`（稳定的迁移标识）、
+`plugin`（对方插件 ID）、`scope`（仅支持 `user`）、`domain`（宿主选择的产品域）
+和 `keyPrefix`（非空的合法存储键前缀）。导出方指定导入方，导入方指定导出方；
+其余字段必须完全一致。
+
+宿主解析实际发现的精确插件身份，并分别验证双方信任。已禁用的导出插件无需运行；
+导入插件必须已被选中激活。找不到导出方时，不搜索旧身份或其他用户、产品域的数据。
+声明参与包指纹计算，不提供跨插件存储 RPC 权限。
+
+导入插件应在正式激活回调中读取迁入前缀，不应在初始化阶段缓存其内容。
+预检不修改存储。启动或更新被接受后，宿主先验证整个目标文档，再持久化源前缀隔离，
+然后原子保存原始值和导入回执。键冲突或存储配额超限会阻止迁移，不覆盖目标数据。
+迁移失败会阻止导入插件运行；未完成迁移在下次接受激活时恢复。完成回执可防止目标
+删除数据后再次导入。合并后的目标仍遵守原有的单插件条目数和字节配额。
+
+源字节保留为非活动备份。持久化隔离后，普通读写（包括保留的旧运行代）无法访问该
+前缀。源插件的其他前缀以及其他用户、产品域不受影响。宿主不解析插件业务记录。
+回退插件版本不会撤销所有权迁移，也不会重新开放备份。
+
+迁移文档使用存储 schema 2，使旧宿主明确拒绝读取，而不是忽略所有权元数据。
+未迁移文档保持 schema 1。降级后的旧宿主不能使用已迁移状态；恢复需要支持迁移的
+宿主和保留的原始备份，不会自动恢复旧所有者。
 
 ## 包分发
 

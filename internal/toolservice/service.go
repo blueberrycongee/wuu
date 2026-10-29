@@ -29,9 +29,11 @@ type Backend struct {
 // Scope carries an inert factory for one authenticated conversation/actor.
 // Allocating it must not initialize tools, MCP connections or Code Mode.
 type Scope struct {
-	factory       func(context.Context) (Backend, error)
-	mu            sync.Mutex
-	closed        bool
+	factory func(context.Context) (Backend, error)
+	mu      sync.Mutex
+	closed  bool
+	// Retain the first initialization failure only if it preceded closure.
+	failure       error
 	entries       map[*Service]*backendEntry
 	closeDone     chan struct{}
 	closeErr      error
@@ -217,7 +219,11 @@ func (s *Service) backend(ctx context.Context) (Backend, func(), error) {
 	}
 	scope.mu.Lock()
 	if scope.closed {
+		failure := scope.failure
 		scope.mu.Unlock()
+		if failure != nil {
+			return Backend{}, nil, fmt.Errorf("tool scope is closed: %w", failure)
+		}
 		return Backend{}, nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool scope is closed"}
 	}
 	s.mu.Lock()
@@ -252,6 +258,13 @@ func (s *Service) backend(ctx context.Context) (Backend, func(), error) {
 				if value := recover(); value != nil {
 					entry.err = fmt.Errorf("tool backend initialization panicked: %v", value)
 				}
+				if entry.err != nil {
+					scope.mu.Lock()
+					if !scope.closed && scope.failure == nil {
+						scope.failure = entry.err
+					}
+					scope.mu.Unlock()
+				}
 				close(entry.ready)
 			}()
 			entry.backend, entry.err = scope.factory(ctx)
@@ -269,12 +282,16 @@ func (s *Service) backend(ctx context.Context) (Backend, func(), error) {
 	}
 	scope.mu.Lock()
 	closed := scope.closed
+	failure := scope.failure
 	scope.mu.Unlock()
 	s.mu.Lock()
 	active := s.state == pluginhost.StateActive
 	s.mu.Unlock()
 	if closed || !active {
 		finish()
+		if closed && failure != nil {
+			return Backend{}, nil, fmt.Errorf("tool scope stopped during initialization: %w", failure)
+		}
 		return Backend{}, nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool scope or provider stopped during initialization"}
 	}
 	if entry.err != nil {

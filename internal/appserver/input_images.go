@@ -35,6 +35,12 @@ func (s *Server) userMessageWithInputImages(ctx context.Context, threadID, promp
 		msg.Content = content
 		msg.DisplayContent = strings.TrimSpace(prompt)
 	}
+	return s.persistInputWorkingCopies(ctx, threadID, msg, received, selected)
+}
+
+// persistInputWorkingCopies shares byte retention with explicitly admitted
+// plugin-client input without interpreting that input as a slash command.
+func (s *Server) persistInputWorkingCopies(ctx context.Context, threadID string, msg providers.ChatMessage, received []TurnStartImage, selected bool) (result providers.ChatMessage, err error) {
 	// Decode the complete batch before writing, retaining the received bytes
 	// rather than the resized imageproc result sent to the vision provider.
 	payloads := make([][]byte, len(received))
@@ -87,14 +93,7 @@ func (s *Server) userMessageWithInputImages(ctx context.Context, threadID, promp
 	if threadID == "." || !filepath.IsLocal(threadID) || filepath.Base(threadID) != threadID {
 		return msg, errors.New("invalid attachment thread id")
 	}
-	stateDir, err := s.workspaceStateDir()
-	if err != nil {
-		return msg, err
-	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return msg, err
-	}
-	root, err := os.OpenRoot(stateDir)
+	root, stateDir, err := s.openInputAttachmentRoot(true)
 	if err != nil {
 		return msg, err
 	}
@@ -173,6 +172,57 @@ func (s *Server) userMessageWithInputImages(ctx context.Context, threadID, promp
 	msg.Content += inputImagePathReference(msg.Images)
 	msg.Content += inputFilePathReference(msg.Files)
 	return msg, nil
+}
+
+// Working copies are intentionally tool-readable. Personal state (memory and
+// histories) remains protected, so user-selected copies live under user files.
+func (s *Server) inputAttachmentStateDir() (string, error) {
+	if s.rt.UserBinding().IsUser() {
+		return filepath.Join(s.rt.RootDir, ".input-files"), nil
+	}
+	return s.workspaceStateDir()
+}
+
+// Open the trusted files root before following any model-writable child. An
+// os.OpenRoot on .input-files itself would first follow an escaping symlink.
+func (s *Server) openInputAttachmentRoot(create bool) (*os.Root, string, error) {
+	stateDir, err := s.inputAttachmentStateDir()
+	if err != nil {
+		return nil, "", err
+	}
+	if !s.rt.UserBinding().IsUser() {
+		if create {
+			if err := os.MkdirAll(stateDir, 0700); err != nil {
+				return nil, "", err
+			}
+		}
+		root, err := os.OpenRoot(stateDir)
+		return root, stateDir, err
+	}
+	parent, err := os.OpenRoot(s.rt.RootDir)
+	if err != nil {
+		return nil, "", err
+	}
+	defer parent.Close()
+	if create {
+		if err := parent.MkdirAll(".input-files", 0700); err != nil {
+			return nil, "", err
+		}
+	}
+	root, err := parent.OpenRoot(".input-files")
+	return root, stateDir, err
+}
+
+func (s *Server) maintainInputAttachments(now time.Time) error {
+	root, _, err := s.openInputAttachmentRoot(false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return maintainInputImageRoot(root, now)
 }
 
 // inputFilePathReference lists attachment working copies in the model-facing
@@ -256,6 +306,10 @@ func maintainInputImageStorage(stateDir string, now time.Time) error {
 		return err
 	}
 	defer root.Close()
+	return maintainInputImageRoot(root, now)
+}
+
+func maintainInputImageRoot(root *os.Root, now time.Time) error {
 	sessions, err := readInputImageDirectory(root, "sessions")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

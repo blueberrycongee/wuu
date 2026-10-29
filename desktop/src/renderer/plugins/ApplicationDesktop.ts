@@ -26,6 +26,7 @@ export class ApplicationDesktop {
     submitPetText(text: string, target: ApplicationDesktopPetTargetV1): Promise<boolean>;
   }) {
     const initial = this.available("popOutInit") ? this.bridge.popOutInit() : { kind: null, threadID: null, context: null };
+    if (initial.context?.kind === "user") throw new Error("User-space views do not use workspace pop-out controls");
     this.popOut = Object.freeze({ ...initial, context: initial.context && Object.freeze({ ...initial.context }) });
   }
   private available(key: keyof DesktopBridge): boolean {
@@ -134,6 +135,10 @@ export class ApplicationDesktop {
     this.petPending.add(captured.id);
     void Promise.resolve().then(() => {
       if (!this.petPending.has(captured.id)) return false;
+      if ("workspace" in captured.target) {
+        if (captured.target.workspace.kind === "user") return false;
+        return this.host!.submitPetText(captured.text, { workspace: captured.target.workspace });
+      }
       return this.host!.submitPetText(captured.text, captured.target);
     }).catch(() => false).then(ok => this.settlePet(captured.id, ok));
   }
