@@ -140,11 +140,240 @@ turn completion, rejection and cleanup paths, recording
 `report.json` and `verification.log` under `.tmp/e2e/provider-delegation/`.
 
 
+## Unattended execution authorization
+
+`execution.authorization@1` is the selected authority for finite, revocable
+unattended grants. `executionAuthorization(host).describe()` supplies the selected
+policy's default/max lifetimes and supported authority/scope kinds; clients must
+not hardcode the native policy. `issue`, `validate` and `revoke` transport typed
+requests without retry or fallback. Persist only the opaque `{ provider, id }`
+reference, never an owner principal or serialized permission proof.
+
+Scopes bind consumer, user space/domain, task, revision, context digest and the
+selected task-authority service/provider/subject/fingerprint. `exact-run` binds a
+specific run/session. `task-lineage` requires empty run/session fields: these do
+not authorize wildcard effects, only host-attested child derivation. Required
+provider/model/permission allowlists are never unrestricted when empty; child
+bounds, depth and expiry cannot widen their parent.
+
+Issuance/revocation use `ServiceInvokeParams.admission` supplied only by trusted
+host ingress, not caller `service.call` JSON. Providers verify its version/action,
+hash the UTF-8 `input_json` against `input_digest`, and structurally compare the
+parsed input with `params`. JSON reserialization is not byte-stable. Optional
+`admission.lineage` is a host attestation of selected task-authority observations,
+not a claim accepted from a business record. The host validates the selected
+proof and current resource policy again at effects; stored handles and cached
+validation are not authority. Expiry requires renewed live authorization, never
+background owner borrowing or automatic replay of expired missed work.
+
+Product providers use `executionGrants(host)` and `host.execution.authorization`
+for `describe`, `issue`, `inspect` and `revoke` intents. The host resolves identity,
+selected authority, session/model bounds and exact resources; caller JSON cannot
+supply that proof. Save the selected-policy `expires_at` with the business request
+before its first issue call, and reuse it after a lost response. The same
+`request_id` must not acquire a new expiry or retargeted authority on retry.
+Optional `run_id` names the exact execution independently of the issuance
+`request_id` (omission preserves the existing request-ID convention). A fresh
+explicit live-owner admission may renew a delivery-only grant with a new persisted
+issuance nonce while keeping its original run/receipt identity. It does not reopen
+completed work or authorize tools. Inspect the original outcome first: an existing
+grant with an absent/unknown delivery receipt cannot be automatically replayed.
+`execution_authorization_required` is an authoritative refusal requiring live
+renewal; transport errors and malformed responses remain distinct unknown
+outcomes, not permission to reissue or borrow an owner.
+
+`validate` is a point-in-time verdict, not a publication transaction. A durable
+publication that must serialize with revocation uses `acquire-commit` and
+`release-commit`. Persist `{ id, operation_digest, authorization }` before
+acquisition; `authorization` is the exact validate request. Acquisition requires
+host-attested `execution/commit/acquire` admission (`execution-grant` authority
+for a restored non-owner grant), with the same authenticated principal as the
+selected grant. The provider atomically pins the leaf and every ancestor and
+returns an exact-bound guard. Unknown or malformed acquisition admits no effect.
+
+The bundled provider stores newly issued grants in a fence-aware namespace with
+version-distinct opaque references. Legacy grants remain readable and revocable
+for ordinary work; they are not migrated, deleted or silently renewed. Publication
+fencing rejects any legacy leaf **or ancestor** and requires explicit live-owner
+renewal with a new issuance nonce. The shared issuance index preserves old nonce
+idempotency; an older writer cannot find or revoke a new-format grant. Deriving
+from a legacy parent does not upgrade its revocation semantics.
+
+The guard's expiry is the admission cutoff, not a timer that releases the fence.
+The one admitted operation may reach its terminal receipt after expiry or process
+restart. A revocation that encounters a pin returns `execution_commit_active`,
+not success; retry revocation after terminal release. A successful revoke prevents
+new acquisition. Reusing an active ID requires identical caller, operation and
+authorization; a released ID can never acquire again.
+
+Release uses the captured provider generation's cleanup route, including after
+caller cancellation. `committed` requires the SHA-256 digest of the authoritative
+durable receipt; `not-committed` requires establishing that no write can still
+commit. Unknown publication retains the fence. Release-before-acquire with
+`not-committed` persists a tombstone against delayed acquisition. These methods
+never retry the publication or extend its resource grant. They do not replace
+independent source, task or resource-policy fences.
+
+Recovery first resolves the original persisted intent and receipt. The same
+stable service caller can `inspect-commit` and release after expiry without
+restoring an old owner principal. If the worker or its local intent is gone,
+owner-attested `list-commits`, `inspect-commit` and `reconcile-commit` use actions
+`execution/commits/list`, `execution/commits/inspect` and
+`execution/commits/reconcile`. Reconciliation binds the full original request,
+expected caller, terminal receipt and reason; the host must stop the original
+writer and establish disposition first. Listing an unresolved intent does not
+authorize dispatch, and an unknown receipt cannot be reconciled away.
+
+`executionGrants(host).callService({ reference, service, method, params })`
+revalidates an exact-run grant for `service/<service>/<method>` and routes through
+that consumer's declared selected service. Downstream callbacks inherit the
+revalidated non-owner principal; they do not borrow the opaque reference as a
+second consumer. A lineage grant cannot make this call. Scheduled source reads
+first persist their exact observation run and derive a bounded read-only grant.
+Business grants do not bypass tool policy, exact action review or connector scope.
+
+## Retained tool-policy authorization
+
+`authorizationServiceDescriptor({ effect_fence: true })` advertises optional
+`security.authorize@1` `acquire-authorization` and `release-authorization` methods.
+`acquireAuthorization(host, { id, request })` returns `{ id, decision }` and retains
+the exact caller-bound policy decision through an admitted effect. Release with
+`releaseAuthorization(host, { id })`, which uses cleanup admission; its descriptor
+must declare `cleanup: true`. Unsupported providers fail closed rather than
+substitute a snapshot `authorize` decision. There is no automatic expiry or
+cross-provider transaction: keep the captured generation through effect and
+release, and never replay an effect merely because acquisition or cleanup can be
+retried. A final execution-grant validation is separate one-operation admission,
+not a full-duration lock on the grant authority.
+
+## Durable inspection guards
+
+`documentStore(host).acquireInspection({ id, namespaces })` uses the optional
+`state.documents@1` inspection capability and returns `{ id, namespaces, revision }`.
+Document revisions remain decimal strings. Advertise acquisition, release and maintenance methods through
+`documentStoreDescriptor({ inspection: true })` only when implemented.
+`pluginSettingsStore(host).acquireInspection({ id, subject, scope })` similarly
+returns the fenced state document and revision. `session.domain` exposes
+`AcquireInspection` / `ReleaseInspection` with positional `[id]` arguments.
+
+These are durable check-through-effect guards, not expiring leases or local mutexes.
+Relevant writes fail with `inspection_active` while held. Release the same ID even
+if acquisition had an unknown result; SDK release helpers use cleanup routing.
+Release is idempotent and tombstones the ID so a delayed acquire cannot revive it.
+After an uncertain acquire, do not perform the effect; never retry an external
+effect because guard acquisition or cleanup is retryable. Unsupported providers
+fail explicitly; no native store or process-local lock substitutes for the guard.
+
+Acquire cooperating guards in a fixed order: task state, session authority, then
+review policy. Read and validate authority inside all guards before dispatch.
+Callbacks may write the separate action journal, but must not write protected
+namespaces. Retain each captured service scope through reverse-order cleanup;
+`release-inspection`, `reconcile-inspection`, `ReleaseInspection` and
+`ReconcileInspection` use cleanup admission during provider retirement.
+
+A crashed holder is discoverable through `list-inspections`; entries contain its
+ID, caller and protected scopes, not business values. Owner-authorized maintenance
+uses `reconcile-inspection` with the exact ID, `expected_owner`, scopes, terminal
+`outcome` (`completed` or `not-dispatched`) and an evidence `reason`. Settings
+requests use `subject` and `scope`; document requests use `namespaces`.
+`session.domain` exposes `ListInspections` with `[]` and `ReconcileInspection`
+with `[resolution]`; use the exact provider identity returned by the list.
+The durable receipt records the reconciler, disposition and reason. Repeating
+identical reconciliation after a lost reply returns the receipt. An unknown
+outcome is not evidence of completion and cannot unlock the guard; first resolve
+or stop the external operation. Never expose reconciliation as a model/tool route
+or automatically clear guards at startup.
+
+Maintenance invocation must carry the host's authenticated `admission` for
+`state/inspections/list` or `state/inspections/reconcile`, bound to the exact input
+bytes. A declared service dependency does not grant operator permission. Settings
+`inspection-authority` and session `InspectionAuthority` declare the selected
+storage/execution topology. A single-host operator must drain local effect
+sections and attest stopped writers; multi-host deployments require an additional
+provider-supported exclusive-writer proof or explicit offline recovery.
+
+Guards linearize validation through durable effect admission against cooperating
+storage writers; they do not make a remote API or filesystem operation part of a
+database transaction. Local file callbacks drain their physical work before
+cleanup. A remote request may finish locally with an uncertain downstream outcome:
+persist that nonreplayable receipt, then release the generic authority guards.
+Cancellation does not retroactively revoke an already admitted effect. Multiple execution hosts
+need a compatible distributed execution coordinator and downstream fencing where
+required; these guards alone neither supply that coordinator nor permit replay.
+
+
+### Consumer-owned authority namespaces
+
+`documentStore(host).claimNamespaces(namespaces)` is the optional
+`claim-namespaces` method, advertised with
+`documentStoreDescriptor({ owned_namespaces: true })`. Ownership is the actual
+registry caller, never an owner supplied in request JSON. Repeated identical
+claims are idempotent; foreign claims fail with `namespace_ownership`. Populated
+unowned namespaces require an explicit migration instead of silent adoption.
+Reads, writes, inspection guards and exports enforce ownership, including during
+preparation. Existing unowned namespaces remain compatible.
+
+Ownership is revision-changing provider metadata in the reserved namespace
+`wuu.state.namespace_owners.v1`: key is the protected namespace and value is
+`{ "version": 1, "namespace": "…", "owner": "authenticated-consumer" }`.
+Ordinary commits cannot write this registry. Snapshots and checkpoints preserve
+it; imports reject malformed or foreign ownership unless explicitly admitted as
+migration. Authority stores must refuse unsupported ownership rather than fall
+back to unprotected documents. In host-journal mode, claims use the deterministic
+transaction produced by `PrepareNamespaceClaim`; the host records before/after
+checkpoints and original caller before dispatch and recovers the same claim,
+never an ordinary registry-write shortcut.
+
+The invocation-only `storage_stewardship` metadata identifies configured storage
+coordination, not a user principal. Providers validate version, exact provider,
+operation, `input_json` and its SHA-256 digest. `verify` permits only internal
+read/export/checkpoint operations; `migration` permits explicit transfer;
+`recover` replays only the journaled commit or claim as its persisted consumer.
+None permits arbitrary plugin callers to bypass ownership or create an owner.
+
+
+## Replace web search
+
+When the native `agent.tools@1` registry is selected, a trusted plugin tool can replace `web_search` without replacing the other tools. Install and enable the plugin first, then select its actual manifest ID and declared tool ID in trusted user agent configuration. Project settings cannot select replacements:
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+The [synthetic search example](../../../examples/plugins/synthetic-web-search.ts) is a runnable authoring example; it returns a fixed demonstration result, not real search data. Install it with `wuu plugin dev` and replace `example-search` above with the plugin ID returned by Wuu. Only `web_search` is supported. The replacement must declare exactly the native input schema, freeform and direct-only settings; orchestration tools cannot be selected. The plugin's description is exposed under `web_search`, while its namespaced tool name is hidden. Missing, disabled or incompatible targets fail without falling back. Removing the binding is an explicit choice to use the native implementation in the next prepared generation.
+
+A successful result must be a single JSON object in the text or structured result: `action` is `web_search`, `query` matches the request, `evidence` has an `id`, `kind: "search"`, `source`, `source_tier`, RFC 3339 `retrieved_at`, and `version_matched_to_repo`, and it contains either `results` (at most 10 items with URLs) or a nonempty `error`. If both text and structured content are present, they must agree. Evidence IDs and source tiers contain only letters, digits, underscores or hyphens. For `version_matched_to_repo`, use the trimmed, whitespace-normalized `version_hint` when present; otherwise use `package_context` as `ecosystem name@version` using the available fields. Truncate to 160 Unicode characters and append `...` if longer; use `unknown` if neither supplies a value. The host rejects incompatible results and records valid evidence for the existing evidence context.
+
+A session with an explicit tool allowlist must allow both `web_search` and the plugin tool’s namespaced public name. Run `wuu plugin describe --workdir <workspace>` and inspect `tools` to find the namespaced name registered for the plugin tool; the plugin ID and declared tool ID contribute to that name, which also contains a collision-dependent suffix. The command inspects a new CLI generation, so verify it matches the session’s selected generation before relying on it.
+
+Scheduling uses the more restrictive native and plugin activity declarations. Both the original and plugin tool authorization apply; disabling either name prevents execution. A plugin runs as a trusted extension using its own callback identity. Native file and process safeguards do not automatically constrain arbitrary plugin-process code: use authenticated host gateways for managed effects and implement appropriate checks. Admitted work retains its generation; explicit removal or disable revokes the target. A frozen tool surface retains its definitions until the turn releases it, but execution checks target availability each time.
+
+Run `node scripts/tool-replacement-e2e.mjs` for a packed-SDK synthetic plugin, a controlled model, direct and code-mode execution, worker and side-conversation paths, authorization and generation replacement. This does not test an external search service, real model quality or rendered UI.
+
 ## Session, tool and agent policy providers
 
 `session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
 
+`ReadActiveHistoryQuery` is an additive `session.domain@1` operation using the existing `HistoryReadQuery` and `HistoryPage` types. It reads a bounded sequence range while excluding currently retracted records, including when a caller supplies an older snapshot or cursor. Desktop attention uses this operation to revalidate its exact admitted input and any result target before delivery. Unsupported providers fail closed; the host does not substitute physical history or its cached projection. The native provider reads the indexed range and current retraction spans without loading the full transcript.
+
 Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispatch their typed argument/value arrays. `sessionDomain(host).call(method, args)` is the bound consumer. Preserve the exported record field names, including Go-style casing where specified. Journal handles belong to the authenticated caller and provider generation. `session_outcome_unknown` requires durable inspection before replay; it is not proof that a mutation failed. OS locks and execution identity remain host mechanisms, while the provider owns atomic membership and domain decisions.
+
+The additive receipt methods (`AcceptClientInput`, `ReadClientInput`,
+`ChangeClientInput`, `AppendAcceptedClientHistoryRecord`,
+`SettleClientInputExecution` and the scoped list/recovery methods) use the same
+selected `session.domain` authority. `SessionDomainAcceptedClientInput` retains
+Go field casing and base64 byte slices, including the distinction between `null`
+and empty bytes. Receipt acceptance, execution state and durable history admission
+are separate facts; none implies that a model saw or read the message. The host
+supplies `SessionDomainClientInputScope` from its immutable binding. Recovery
+reconciles receipt state without replaying tools or external effects. Unsupported
+methods fail explicitly; consumers never reopen a native receipt store.
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
@@ -162,9 +391,34 @@ serial leaf-tool consumers without speculative streaming or nested execution.
 
 `agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Conversation titles use the independently selected `session.title` service below. Plugin-command side-conversation prompts remain separate from the main/worker contract; replacing `agent.prompt` alone does not replace either behavior.
 
+Personal policy is an ordinary `agent.prompt@1` provider exported by `personal`.
+A composition selects it explicitly with `{ "service": "agent.prompt", "major": 1,
+"provider": "personal" }`. It assembles a complete non-Coding base from explicit
+request facts and contributions, preserving the `main` / `worker` execution roles.
+User-space identity does not silently switch prompt providers or add another role.
+
+### Replace one prompt section
+
+The native prompt provider declares the optional `wuu.prompt.sections.v1` layout for main and worker results when their sections satisfy that layout. A decorator can call `promptService(host).assemble(request)` and then `await replacePromptSection(result, key, replacement)` from `@wuu/plugin-sdk`. The helper returns a new result, preserving the other sections and their metadata. The [prompt section decorator](../../../examples/plugins/prompt-section-decorator.ts) replaces `environment` while retaining the delegate's remaining prompt.
+
+Select the decorator as the global `agent.prompt@1` provider and bind its own `agent.prompt@1` dependency to `wuu.prompt.default`, using the two-route composition shown in [partially extending a provider](#partially-extending-a-provider). Multiple decorators can be chained by binding each decorator to its next provider; each must preserve the declared layout. A missing delegate or failed replacement fails the request without a native fallback.
+
+The layout joins UTF-8 section contents with two LF bytes. Each section records its UTF-8 byte length and the first 16 SHA-256 bytes as lowercase hexadecimal. The helper validates the declared layout, unique nonempty keys, metadata, separators, byte boundaries, hashes and complete content before replacing an existing key with nonempty text. It updates the replaced section's length and hash. An undeclared or incompatible layout is rejected; ordinary `agent.prompt@1` consumers can still use providers that do not declare it. A prompt section is guidance, not an authorization boundary.
+
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
 
 These contracts keep the Go host and public SDK. Authors implement a process plugin through the ordinary service declarations and callback-bound `RuntimeHost`; they do not need a replacement kernel, private source imports or privileged native APIs.
+
+### Process read/write exclusions
+
+`sandbox.process@1` receives optional `ProcessSandboxPolicy.protected_paths`:
+absolute filesystem paths excluded from both reads and writes independently of
+`writable_roots`. If this list is nonempty, the provider must return
+`ProcessSandboxResult.protected_paths_enforced: true`; `enforcement: "full"`
+alone is not sufficient. Missing support is rejected before the process starts,
+without a native or unconfined fallback. Empty exclusions preserve the existing
+contract. This protects filesystem content access, not network access, process
+visibility or metadata-only queries.
 
 ## Complete tool batches
 
@@ -368,6 +622,18 @@ Consume pages incrementally instead of accumulating another full snapshot. Host 
 
 A missing native config file reads as `source: null`; a present zero-byte file reads as `source: ""`. Check for `null` before decoding. These values must not be normalized into each other by the client. A config CAS with `source: null` supplies zero replacement bytes: native file mode writes an empty file, rather than deleting it; trusted project mode rejects empty JSON. The CAS response can retain `null` even though the empty file now exists, so it describes returned source bytes rather than file existence.
 
+`pluginSettingsStore(host).transferState(transfer)` calls the selected provider's
+optional `transfer-state` method with `StateTransfer`: `{ id, source_subject_id,
+target_subject_id, key_prefix, scope: "user" }`. The admitted host must authorize
+both exact subjects. Ownership moves once: the source prefix is permanently fenced,
+existing target keys conflict even when values match, and an exact-intent receipt
+prevents a retry from overwriting later target updates or deletions. After an
+uncertain result, reconcile or explicitly retry the identical transfer; the SDK
+never retries automatically or emulates a move with reads and writes. Unsupported
+providers return an explicit method error, with no native storage fallback. The
+full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method; a provider that
+cannot implement it must omit it from its advertised methods.
+
 Configuration revisions and settings revisions are opaque strings, distinct from document-store revision numbers. Neither service offers the document store's transaction receipt protocol. Retry only a definite compare-and-exchange conflict after rereading; reconcile an unavailable/canceled write before attempting another write. Do not log credential bytes, raw configuration or secret-bearing effective configuration.
 
 Native configuration modes preserve their source boundaries: explicit-file mode uses that file; embedded mode starts from the supplied configuration; explicit project mode uses the project's base and settings layers, falling back from `.wuu.json` to `wuu.json` only when the primary is missing. Restricted project overlays on user configuration do not gain permission to replace credentials or grants.
@@ -517,10 +783,14 @@ There is no second host-side policy registry.
 | `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
 | `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
 
-A policy cannot replay visible partial output, accepted tool effects, an unknown
-submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
-potentially billable outcomes; the selected policy may permit a bounded model
-reattempt, but cannot replay accepted or uncertain tool effects.
+A loop retry cannot replay partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. For `transport_retry`, the host may
+set `partial_output_resettable` when the consumer can discard the failed attempt
+and a replay guard is installed. A recovery decision still passes that guard,
+which protects completed checkpoints and accepted or uncertain tool effects.
+Without this capability, partial output blocks transport recovery. Transport
+recovery retains physical submission receipts, including unknown but potentially
+billable outcomes; the selected policy may permit a bounded model reattempt.
 Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
 receipts survive failed attempts. Credential refresh, transport changes and
 retries still require their existing write-ahead receipts and adapter support.
@@ -585,6 +855,14 @@ potentially completed rather than silently replayed or reported successful.
 registry is an inventory projection, not another provider selector. A replacement
 may provide `engine.wuu` without inheriting any native implementation or identity
 privileges. Missing or disabled selections never create a substitute engine.
+
+An engine may advertise the string capability `explicit-context` in its
+`EngineDescriptor.capabilities`. It promises that execution uses only the host's
+explicit context, supplied history and tools, without discovering or injecting
+ambient home/workspace instructions, skills or memory. Consumers requiring
+isolated context check this capability, not engine IDs, and reject missing support
+or failures rather than selecting a substitute. This is a logical context contract,
+not an OS sandbox or a claim that tools cannot read files when explicitly authorized.
 
 The version 1 `descriptor` response may declare `requires_host_model: boolean`.
 The native Wuu loop declares `true`; engines that own model access and credentials
@@ -675,3 +953,49 @@ new request from that saved history; it never replays the interrupted payload.
 The selected policy must authorize it, and the host still rejects missing
 checkpoints, tool effects, and exhausted receipt/workflow budgets. A policy that
 does not recognize the phase fails closed.
+
+## Independent goal and automation presentation
+
+| Package | Owns | Public dependency or service |
+| --- | --- | --- |
+| `goal` | Persistent state, continuation, goal model tools and `/goal` prompt | Provides `goal.control@1` |
+| `goal-ui` | Composer goal controls and display | Consumes `goal.control@1` |
+| `automation` | Durable schedules, runs and background dispatch | Provides `automation.scheduler@1` |
+| `automation-client` | The model's `cron` tool | Consumes `automation.scheduler@1` |
+| `automation-ui` | Automation catalog and sidebar | Consumes `automation.scheduler@1` |
+
+Remove either UI package without removing the provider's data, tools or ongoing
+work. Replace a UI by installing an independent desktop package declaring the
+same service requirement; it imports neither the old UI nor runtime source.
+Likewise select a compatible runtime provider without copying presentation.
+The UI dependencies are optional so disabled/unavailable providers leave a
+visible service error and disabled mutations, not a crashing application or
+silently substituted scheduler. Successful later reads recover the controls.
+The cron tool requires its scheduler and never schedules work locally.
+
+`GOAL_CONTROL_SERVICE_DESCRIPTOR`, `GoalControlRequestV1`, `GoalControlResultV1`
+and `GoalSnapshotV1` are exported by the SDK. Declare `goal.control@1` in
+`desktop.required_services` and call:
+
+```ts
+const result = await api.invokeService<GoalControlResultV1>({
+  service: 'goal.control', method: 'request',
+  params: { method: 'get_goal', input: { thread_id: threadId } },
+});
+```
+
+The request methods are `get_goal`, `create_goal` (also requires `objective`),
+`pause`, `resume` and `clear`. All require `thread_id`; results contain `goal`,
+or `null` when absent/cleared. Creation/resume can start an ordinary session turn.
+Completion and blocked status remain model tools, not UI control methods.
+Calls carry the authenticated consumer's graph and execution; the UI cannot name
+an implementation provider. Goal storage remains owned by the original `goal`
+identity; splitting presentation does not move or duplicate it. The old
+`plugin.client.request` goal endpoint remains an adapter to the same controls
+for older combined-package clients until that v1 capability is retired.
+
+For explicit compositions, select `goal-ui` and/or
+`automation-ui` independently from their runtime packages. Existing
+combined third-party manifests remain supported. Composition migration preserves
+pre-split bundled desktop selections; new explicit compositions do not infer a
+UI from a runtime selection. A headless composition needs neither UI package.

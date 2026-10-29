@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -47,4 +48,30 @@ type CodeRequest struct {
 	TimeoutMS             int                 `json:"timeout_ms"`
 	PermissionMode        string              `json:"permission_mode"`
 	Actor                 string              `json:"actor"`
+}
+
+// ProcessStartCapability promises operation IDs in start results and durable
+// process records, allowing reconciliation without replaying an uncertain start.
+const ProcessStartCapability = "process.start.v1"
+
+// ProcessRequest carries host-authorized input to the same worker authority as
+// workspace tools. Session/root identity comes from the initialized transport,
+// never from extension-supplied process arguments.
+type ProcessRequest struct {
+	OperationID           string `json:"operation_id"`
+	Command               string `json:"command"`
+	CWD                   string `json:"cwd,omitempty"`
+	PermissionMode        string `json:"permission_mode"`
+	Actor                 string `json:"actor"`
+	GitAttributionEnabled bool   `json:"git_attribution_enabled,omitempty"`
+}
+
+// ProcessExecutor is implemented by execution environments that can own a
+// detached process. A selected executor without this capability fails closed.
+type ProcessExecutor interface {
+	Executor
+	Root() string
+	Backend() string
+	StartProcess(context.Context, ProcessRequest) (*process.Process, error)
+	ProcessManager() *process.Manager
 }

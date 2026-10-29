@@ -15,6 +15,7 @@ import {
   requireKernelService,
   runJSONLRuntime,
   type ComposerSnapshotV1,
+  type ApplicationPreviewWorkspaceV1,
   type ConversationItemSnapshotV1,
   type ConversationProcessSnapshotV1,
   type FilePreviewSnapshotV1,
@@ -101,6 +102,11 @@ const header: HeaderSnapshotV1 = Object.freeze({
   tabs: Object.freeze([{ id: "thread-1", title: "Conversation" }] as const),
   activeTabId: "thread-1",
 });
+// A provider compiled against the previous V1 shape remains valid.
+const legacyPreviewWorkspace: ApplicationPreviewWorkspaceV1 = {
+  ownerTabId: "thread-1", conversationTitle: "Conversation", tabs: [], conversationSelected: false,
+};
+if (legacyPreviewWorkspace.ownerTabId !== "thread-1") throw new Error("legacy preview workspace contract failed");
 const navigation: NavigationSnapshotV1 = Object.freeze({
   contractVersion: 1,
   nodes: Object.freeze([
@@ -291,4 +297,10 @@ const dependentManifest = createManifest({
 if (JSON.stringify(dependentManifest.requires) !== '["workspace-core"]'
   || JSON.stringify(dependentManifest.dependencies) !== '[{"id":"workspace-core","version":"^2.0.0"},{"id":"notes","optional":true}]') {
   throw new Error("createManifest lost dependency declarations");
+}
+
+const transferDeclaration = { id: "records-v1", plugin: "old-owner", scope: "user" as const, domain: "personal", keyPrefix: "records." };
+const transferringManifest = createManifest({ id: "new-owner", storageTransfers: { imports: [transferDeclaration] } });
+if (JSON.stringify(transferringManifest.storageTransfers) !== JSON.stringify({ imports: [transferDeclaration] })) {
+  throw new Error("createManifest lost private storage transfer declarations");
 }

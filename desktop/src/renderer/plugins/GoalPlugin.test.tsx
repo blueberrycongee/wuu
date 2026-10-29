@@ -5,9 +5,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
-import { createUIComposition } from "./ApplicationShell";
+import { ApplicationShellOutlet } from "./ApplicationShell";
 
-const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal/desktop.js"), "utf8");
+const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal-ui/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 type InvokeRuntime = NonNullable<PluginHostOptions["invokeRuntime"]>;
 type Goal = { id: string; objective: string; status: string; tokens_used: number; time_used_seconds: number };
@@ -21,6 +21,10 @@ const activeGoal: Goal = {
 };
 const cleanups: Array<() => void> = [];
 
+it("rejects a host without selected-slot targeting before registering presentation", async () => {
+  await expect(activate({} as PluginGenerationApi)).rejects.toThrow("ui.selected-slot-target.v1");
+});
+
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   vi.useRealTimers();
@@ -28,11 +32,22 @@ afterEach(() => {
 
 async function mount(invokeRuntime: InvokeRuntime) {
   vi.useFakeTimers();
-  const host = new PluginHost({ react: React, invokeRuntime });
-  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.above", cardinality: "many" }); } });
-  const slots = createUIComposition(host);
+  const host = new PluginHost({ react: React, invokeRuntime: request => {
+    expect(request).toMatchObject({ pluginId: "goal-ui", service: "goal.control", method: "request" });
+    const { method, input } = request.input as { method: string; input: unknown };
+    return invokeRuntime({ ...request, method, input });
+  } });
+
+  await host.activateGeneration({ pluginId: "test-shell", generation: "one", register(api) {
+    api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-composer/composer.above" context={context} /> });
+  } });
+  let context: Record<string, unknown> = {};
+  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register(api) {
+    api.registerUISlot({ id: "composer.above", cardinality: "many" });
+    api.registerUIContribution({ id: "composer", target: "test-shell/composer", render: () => null });
+  } });
   await host.activateGeneration({
-    pluginId: "goal",
+    pluginId: "goal-ui",
     generation: "one",
     register: activate,
   });
@@ -41,14 +56,17 @@ async function mount(invokeRuntime: InvokeRuntime) {
   const root = createRoot(container);
   cleanups.push(() => {
     act(() => root.unmount());
-    host.disable("goal");
+    host.disable("goal-ui");
     host.unload("wuu.default-composer");
+    host.unload("test-shell");
     container.remove();
   });
 
   const render = async (threadId = "thread-one", extra: Record<string, unknown> = {}) => {
     await act(async () => {
-      root.render(<slots.Slot name="wuu.default-composer/composer.above" context={{ threadId, mainConversation: true, ...extra }} />);
+      context = { threadId, mainConversation: true, ...extra };
+      root.render(<ApplicationShellOutlet key={JSON.stringify(context)} host={host} binding={{ pluginId: "test-shell", generation: "one", id: "shell" }}
+        surfaceBindings={{ "ui.composer": { pluginId: "wuu.default-composer", generation: "one", id: "composer" } }} />);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -84,6 +102,76 @@ async function mount(invokeRuntime: InvokeRuntime) {
   return { host, container, render, button, click, expand, fill };
 }
 
+it("renders an unavailable service without crashing and recovers on the selected route", async () => {
+  let available = false;
+  const failure = new Error("Selected goal.control provider is unavailable");
+  const ui = await mount(async () => {
+    if (!available) throw failure;
+    return { goal: activeGoal };
+  });
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
+  expect(ui.container.textContent).not.toContain(activeGoal.objective);
+  available = true;
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.textContent).toContain(activeGoal.objective);
+});
+
+it("hides an absent optional provider, stops polling, and recovers after the plugin inventory changes", async () => {
+  let available = false;
+  const invoke = vi.fn(async () => {
+    if (!available) throw new Error("Error invoking remote method: no provider for service goal.control");
+    return { goal: activeGoal };
+  });
+  const ui = await mount(invoke);
+  expect(ui.container.textContent).toBe("");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTimeAsync(4500));
+  expect(invoke).toHaveBeenCalledTimes(1);
+
+  available = true;
+  await act(async () => {
+    ui.host.publishHostEvent({ kind: "notification", message: { method: "plugin/inventory/changed" } });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(ui.container.textContent).toContain(activeGoal.objective);
+  expect(invoke).toHaveBeenCalledTimes(2);
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(invoke).toHaveBeenCalledTimes(3);
+});
+
+it("hides an open goal when its provider disappears and still reports unrelated provider errors", async () => {
+  let mode: "available" | "missing" | "broken" = "available";
+  const failure = new Error("no provider for service goal.control major version 1 (provided majors: [2])");
+  const invoke = vi.fn(async () => {
+    if (mode === "missing") throw new Error("no provider for service goal.control");
+    if (mode === "broken") throw failure;
+    return { goal: activeGoal };
+  });
+  const ui = await mount(invoke);
+  await ui.expand();
+  mode = "missing";
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(ui.container.textContent).toBe("");
+  const calls = invoke.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  expect(invoke).toHaveBeenCalledTimes(calls);
+
+  mode = "broken";
+  await act(async () => {
+    ui.host.publishHostEvent({ kind: "notification", message: { method: "plugin/inventory/changed" } });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(invoke).toHaveBeenCalledTimes(calls + 2);
+});
+
 it("exposes live controls above the composer and removes them with the plugin", async () => {
   let goal = activeGoal;
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
@@ -101,7 +189,7 @@ it("exposes live controls above the composer and removes them with the plugin", 
   await ui.click("继续");
   expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "resume", input: { thread_id: "thread-one" } }));
 
-  act(() => ui.host.disable("goal"));
+  act(() => ui.host.disable("goal-ui"));
   expect(ui.container.textContent).toBe("");
   const calls = invoke.mock.calls.length;
   await vi.advanceTimersByTimeAsync(5000);
@@ -166,8 +254,11 @@ it("discards stale reads and shows runtime errors even when collapsed", async ()
   expect(ui.container.textContent).not.toContain("Stale goal");
 
   await act(async () => vi.advanceTimersByTimeAsync(1500));
-  await act(async () => pending.at(-1)!.reject(new Error("storage unavailable")));
-  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("storage unavailable");
+  const failure = new Error("storage unavailable");
+  await act(async () => pending.at(-1)!.reject(failure));
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
 });
 
 it("scopes the direct entry to an editable main conversation", async () => {
@@ -201,4 +292,26 @@ it("keeps ordinary conversations empty until a goal is created", async () => {
   });
   expect(ui.container.textContent).toContain(activeGoal.objective);
   expect(ui.button("结束目标").disabled).toBe(false);
+});
+
+it("keeps action failures diagnostic-only while allowing an explicit retry", async () => {
+  const failure = new Error("internal goal writer path /private/state failed");
+  let rejected = true, goal = activeGoal;
+  const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
+    if (request.method === "pause") {
+      if (rejected) throw failure;
+      goal = { ...goal, status: "paused" };
+    }
+    return { goal };
+  });
+  const ui = await mount(invoke);
+  await ui.click("暂停");
+  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.textContent).not.toContain(failure.message);
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
+  expect(ui.button("暂停").disabled).toBe(false);
+  rejected = false;
+  await ui.click("暂停");
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(invoke.mock.calls.filter(([request]) => request.method === "pause")).toHaveLength(2);
 });

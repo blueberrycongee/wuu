@@ -12,7 +12,7 @@ wuu plugin dev examples/plugins/composition-lab.ts
 
 ## 配置升级
 
-组合版本 1–3 仍可读取。版本 4 将资源授权设为显式 provider 边界，并引入最小会话宿主。
+组合版本 1–4 仍可读取。新配置使用版本 5。版本 4 将资源授权设为显式 provider 边界，并引入最小会话宿主。
 旧选择包含 `kernel`、`wuu.session-state` 或 `wuu.session-execution` 时，解析会补入
 `wuu.resource-access`；未绑定其他 `resource.authorization@1` provider 时，还会补入
 `wuu.resource-policy.default`。检查结果用 `migration:vN-to-v4` 标注这些新增项，
@@ -21,6 +21,18 @@ wuu plugin dev examples/plugins/composition-lab.ts
 版本 3 保留原有产品目录：不会悄悄加入新的可选共享 provider，也不会重新应用版本 1/2
 的执行 provider 迁移。版本 4 不会补足缺失的授权组件。将旧配置改成版本 4 前，应显式
 保留投影后的模块或选择替代实现。缺失或禁用的策略仍会拒绝访问；迁移不是运行时回退。
+
+版本 5 将功能界面与运行时业务 provider 分开。版本 1–4 的选择同时包含桌面 renderer
+及 `goal` 或 `automation-client` 时，解析分别加入
+`goal-ui` 或 `automation-ui`，来源标记为 `migration:vN-to-v5`。
+显式排除 UI 优先；headless 与空选择不会加入界面。版本 5 的显式组合独立选择运行时
+和 UI；新产品默认配置通过普通扩展接纳流程发现两个包。现有 goal 和 automation
+运行时 ID、持久化状态不变。
+
+原生产品采用构造器目录，而非回退注册表：先解析选择，再构造 provider；嵌入方可为
+目录项提供显式构造器。原生与外部进程实现使用相同的服务绑定、准备、激活和依赖清理。
+随产品提供的 `agent.policy` 实现与契约客户端、验证逻辑分离；替换它不需要替换循环
+或消费者。移除所选策略会停止接纳，不会恢复原生重试或并发策略。
 
 ## 最小会话宿主
 
@@ -112,7 +124,12 @@ const scoped = await scopes.create({
 
 产品会话绑定仅支持原生 Wuu 引擎。外部引擎会话不能绑定组合；已绑定会话后来切换到外部引擎时，新轮次会在派发前失败，必须先显式解除组合绑定。
 
-使用 `state: "parent"` 的组合导入父级选中的 session、document 和 artifact 服务。这项显式导入优先于状态服务的选择补丁。服务图、模型配置和插件进程仍独立。通过已有产品会话的 ID 绑定：
+使用 `state: "parent"` 的组合导入父级选中的 session、document 和 artifact 服务，以及已选中时的执行授权服务。授权仍属于该产品权威；子组合不会经通用文档桥接另建一套授权存储。这项显式导入优先于状态服务的选择补丁。服务图、模型配置和插件进程仍独立。通过已有产品会话的 ID 绑定：
+
+导入状态的子服务图若直接调用自身的授权感知资源策略，目前仍有权威路由限制：桥接提供方
+ID 与原不透明授权中的提供方 ID 不同。这类调用会拒绝操作；宿主不会改写授权引用，也
+不会放宽提供方身份检查。已验证的产品会话和效果路径保留父级权威，不经过这个尚未支持的
+直接子图路径。将逻辑权威与桥接路由身份分离，仍属于后续组合边界，而非当前保证。
 
 ```ts
 const candidate = await scopes.create({

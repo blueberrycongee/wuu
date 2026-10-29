@@ -190,6 +190,8 @@ export function App({ application, slots, shellPluginId }: {
   const workspaceSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
   const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
   const configuration = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.configuration);
+  const navigationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace);
+  const userSpaceViewActive = navigationWorkspace.activePluginView?.layout === "user-space";
   const initialized = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace.initialized);
   const environmentSnapshot = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
   const gitStatus = environmentSnapshot.status;
@@ -293,8 +295,8 @@ export function App({ application, slots, shellPluginId }: {
     sidebarAnimating,
     clampedWorkspaceRightPanelWidth,
     resizingRightPanel,
-    rightPanelOpen,
-    rightPanelAnimating,
+    rightPanelOpen: savedRightPanelOpen,
+    rightPanelAnimating: savedRightPanelAnimating,
     effectiveSidebarWidth,
     workspaceRightPanelAutoGlobalized,
     workspaceRightPanelDockableWithoutSidebar,
@@ -321,6 +323,9 @@ export function App({ application, slots, shellPluginId }: {
     // The selected navigation surface owns its menus.
     onCloseWorkspaceMenu: () => {},
   });
+  // Independent user-space views do not borrow or overwrite Coding panel state.
+  const rightPanelOpen = savedRightPanelOpen && !userSpaceViewActive;
+  const rightPanelAnimating = savedRightPanelAnimating && !userSpaceViewActive;
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
   const rightPanelAutoGlobalized =
@@ -403,7 +408,6 @@ export function App({ application, slots, shellPluginId }: {
   const setNativeSection = useCallback((section: "conversations" | "catalog") => {
     void application.invoke("navigation.show-section", { section }).catch(showErrorToast);
   }, [application]);
-  const navigationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace);
   const ribbonBrowser = { state: navigationWorkspace.browser };
   const activeWebsiteID = navigationWorkspace.activeWebsiteId;
   const setActiveWebsiteID = useCallback((id: string | undefined): void => {
@@ -451,6 +455,7 @@ export function App({ application, slots, shellPluginId }: {
 
   const {
     workspaceViewTabs,
+    workspaceConversationOpen,
     workspaceConversationActive,
     focusWorkspaceConversation,
     workspaceActiveViewTabID,
@@ -1032,7 +1037,7 @@ export function App({ application, slots, shellPluginId }: {
   // A docked preview sits beside the conversation, whose own input is in
   // reach; the document input appears once the preview takes the window.
   const documentComposerVisible = Boolean(
-    initialized && workspaceToolsCoverConversation &&
+    initialized && workspaceToolsCoverConversation && workspaceConversationOpen &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
@@ -1607,6 +1612,7 @@ export function App({ application, slots, shellPluginId }: {
   useEffect(() => { scheduleStreamScroll(); }, [conversationDetails, scheduleStreamScroll]);
 
   async function submitContextChat(text: string, page: PageContextSnapshot, context: RuntimeContext, sessionId?: string): Promise<{ sessionId: string; sent: boolean }> {
+    if (context.kind === "user") throw new Error("Workspace context chat is unavailable in a user-space view");
     return application.invoke("context-chat.submit", { text, page, context, sessionId });
   }
 
@@ -1691,6 +1697,7 @@ export function App({ application, slots, shellPluginId }: {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
@@ -1782,6 +1789,7 @@ export function App({ application, slots, shellPluginId }: {
         inert={workspaceToolsCoverConversation || settingsOpen || showingWebsite}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
+        data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
         data-primary-plugin-web-page={showingPluginWebPage ? "" : undefined}
         data-native-section={showingManagementCatalog ? "catalog" : "conversations"}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
@@ -1789,7 +1797,7 @@ export function App({ application, slots, shellPluginId }: {
         }`}
         ref={conversationPaneRef}
       >
-        <header className="titlebar" data-wuu-component="conversation-titlebar">
+        <header hidden={userSpaceViewActive} className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {/* The ribbon owns a shell-level toggle. A hidden legacy toggle
                 would still activate the hover drawer's layout placeholder. */}
@@ -1933,7 +1941,7 @@ export function App({ application, slots, shellPluginId }: {
       ) : null}
       {poppedOutMode ? null : (
         <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
-          covered: settingsOpen || showingWebsite,
+          covered: settingsOpen || showingWebsite || userSpaceViewActive,
           toolsVisible: workspaceControlsVisible,
           runtimeControlsRef: setRuntimeControlsTarget,
           open: rightPanelOpen,

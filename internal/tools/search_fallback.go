@@ -14,6 +14,11 @@ import (
 // Match complete lines before applying any display budget. Scanner's default
 // token limit made an unrelated generated line abort the entire search.
 func scanFallbackLines(ctx context.Context, path string, visit func(int, []byte) bool) error {
+	if env := protectedPathEnv(ctx); env != nil {
+		if err := env.rejectProtectedPath(path, false); err != nil {
+			return err
+		}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -40,6 +45,12 @@ func walkFallbackSearchFiles(ctx context.Context, root, searchRoot, include stri
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if env := protectedPathEnv(ctx); env != nil && env.rejectProtectedPath(path, false) != nil {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if info.IsDir() {
 			if isSkippedDir(info.Name()) {
 				return filepath.SkipDir
@@ -64,7 +75,7 @@ func walkFallbackSearchFiles(ctx context.Context, root, searchRoot, include stri
 	}
 	// Explicit files, like ripgrep's positional files, bypass ignore rules.
 	ignored := map[string]bool{}
-	if info, err := os.Stat(searchRoot); err == nil && info.IsDir() && len(paths) > 0 {
+	if info, err := os.Stat(searchRoot); protectedPathEnv(ctx) == nil && err == nil && info.IsDir() && len(paths) > 0 {
 		absolutePaths := make([]string, 0, len(paths))
 		for _, rel := range paths {
 			absolutePaths = append(absolutePaths, filepath.Join(root, filepath.FromSlash(rel)))
@@ -79,6 +90,9 @@ func walkFallbackSearchFiles(ctx context.Context, root, searchRoot, include stri
 			return err
 		}
 		path := filepath.Join(root, filepath.FromSlash(rel))
+		if env := protectedPathEnv(ctx); env != nil && env.rejectProtectedPath(path, false) != nil {
+			continue
+		}
 		if ignored[path] || isBinaryFile(path) {
 			continue
 		}

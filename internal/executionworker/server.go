@@ -78,10 +78,10 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		}
 		cfg.Root = root
 		if s.init != nil {
-			if s.init.Session != cfg.Session || s.init.Root != cfg.Root {
+			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -101,7 +101,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -196,9 +196,10 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 }
 
 func (s *Server) Close() error {
-	_ = s.code.Close()
+	err := s.code.Close()
 	s.mu.Lock()
 	manager := s.processes
+	init := s.init
 	for token, file := range s.exports {
 		_ = file.file.Close()
 		_ = os.Remove(file.file.Name())
@@ -206,20 +207,22 @@ func (s *Server) Close() error {
 	}
 	s.mu.Unlock()
 	if manager == nil {
-		return nil
+		return err
 	}
-	err := manager.CleanupSession()
-	if s.init != nil && s.init.RemoveWorkspaceOnExit {
-		err = errors.Join(err, os.RemoveAll(s.init.Root))
+	err = errors.Join(err, manager.CleanupOwned())
+	// Keep recovery evidence and files intact if an owned process could not
+	// stop; deleting its workspace would hide a failed shutdown.
+	if err == nil && init != nil && init.RemoveWorkspaceOnExit {
+		err = os.RemoveAll(init.Root)
 	}
 	return err
 }
 
 // Serve accepts independent request IDs and addressed cancellation. EOF cancels
 // active calls and stops owned background processes before the worker exits.
-func Serve(parent context.Context, in io.Reader, out io.Writer) error {
+func Serve(parent context.Context, in io.Reader, out io.Writer) (err error) {
 	server := New()
-	defer server.Close()
+	defer func() { err = errors.Join(err, server.Close()) }()
 	return serveConnection(parent, in, out, server)
 }
 

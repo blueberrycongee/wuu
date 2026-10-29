@@ -60,6 +60,28 @@ account. Results, transport traces and separate shell/menu captures go to
 Linux and hosted macOS CI run this gate; separate captures do not replace a
 composed desktop screenshot or physical macOS acceptance.
 
+The existing macOS focused-controls CI job also checks the Personal desktop
+home, settings and action-permission UI with synthetic transport. After installing
+the locked desktop, plugin and shared-client dependencies, reproduce it on macOS:
+
+```bash
+node scripts/build-personal-desktop.mjs --check
+node desktop/scripts/build-personal-fixture.cjs
+desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs
+clients/mobile-web/node_modules/.bin/playwright install chromium
+WUU_REVIEW_PLAYWRIGHT_PATH="$PWD/clients/mobile-web/node_modules/playwright" \
+  node desktop/scripts/personal-approval-ui-e2e.cjs
+```
+
+Both renderers retain their sandbox. Checks cover light/dark, wide/narrow and
+large-text layouts, unavailable services, approval/rejection, revocation,
+lost-response recovery and explicit Auto Review opt-in. CI uploads
+`personal-desktop-hosted-macos-evidence-<PR head SHA>` with screenshots, reports,
+logs, exact checkout/PR identity and fixture hashes, including failure evidence.
+It excludes browser profiles and uses no real accounts, model or external effects.
+Review the pixels as well as the assertions; this is not mobile, native host
+authorization, real provider or physical-device acceptance.
+
 For CLI-only development:
 
 ```bash
@@ -695,6 +717,11 @@ overhead and must remain separate from uninstrumented wall-clock baselines.
   request processing from work after the reply. `stdin_read` means the serial
   scanner consumed a complete frame, not when bytes first reached the pipe.
   Existing asynchronous handlers can return before their eventual response.
+  `resume_dispatch_wait` and `resume_dispatch_begin/end` identify an off-ingress
+  resume or its same-conversation successor; its `handler_end` is ingress return,
+  not background completion. Active Stop may bypass pure resume reads, but not
+  earlier submitted input. Pending-summary and response-snapshot mutex waits
+  are recorded separately from provider reads.
 - `resume_*` separates persisted-history loading, child/worktree inspection,
   metadata/held-input reads, process recovery, cache detach and detached cleanup.
 - `queue_*` separates input preparation, permission/control checks, actual mutex
@@ -704,6 +731,10 @@ overhead and must remain separate from uninstrumented wall-clock baselines.
   previous-turn settlement, plugin refresh, execution lease, history refresh,
   runtime preparation, hooks and the durable user append. Launch is **not** a
   provider request: keep the local provider/HTTP wrapper's dispatch timestamps.
+- `session_control_mutex_wait` measures the per-session control-lock acquisition;
+  `session_control_input_read` and `session_control_read` measure the selected
+  provider reads outside and inside that lock. Unrelated session control
+  transactions do not share the provider-waiting critical section.
 - `interrupt_*` separates session control, held-input persistence, cancellation,
   worker freeze, managed-process stop and lifecycle bookkeeping. The interrupt
   response and the later terminal notification/UI update are distinct events.

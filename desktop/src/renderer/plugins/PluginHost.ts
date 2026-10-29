@@ -1,3 +1,6 @@
+import { BrowserControlsProvider } from "../BrowserControlsContext";
+import { PluginViewAttachmentPreviews } from "./PluginViewAttachmentPreviews";
+import { PluginConversationScope } from "./PluginConversationScope";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { showToast, dismissToast } from "../Toast";
 import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
@@ -24,6 +27,8 @@ import type {
   ComposerInlineCompletionProviderHandle,
   ComposerInlineCompletionRefresh,
   PluginUIKit,
+  PluginUIAvatarProps,
+  PluginConversationComponents,
   PluginCommandPresentation,
   PluginCommandActionContext,
   PresentationMode,
@@ -174,6 +179,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
 
   /** Register a view type that the host can open in a semantic region. */
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Presentation only: update one declared navigation entry owned by this generation. */
+  setNavigationTitle(id: string, title: string): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
@@ -190,6 +197,10 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
+  readonly userSpaceId?: string;
+  readonly productDomain?: "personal" | "coding";
+  readonly compositionProfile?: string;
+  readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly resumeReceiptId?: string; readonly relation?: import("../../shared/protocol").MessageRelation; readonly attachments?: readonly { readonly sha256: string; readonly filename: string; readonly media_type: string; readonly data: string }[] };
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
 }
@@ -360,8 +371,11 @@ export interface PluginHostOptions {
   application?: HostApplicationService;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
+  renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>;
   /** Internal startup budget override for deterministic host and renderer checks. */
   activationTimeoutMs?: number;
+  conversationComponents?: PluginConversationComponents;
+  avatarComponent?: React.ComponentType<PluginUIAvatarProps>;
   styleContainer?: HTMLElement | (() => HTMLElement | null);
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
@@ -372,6 +386,10 @@ export interface PluginHostOptions {
     input?: unknown;
     workspaceId?: string;
     workspaceRoot?: string;
+    userSpaceId?: string;
+    productDomain?: "personal" | "coding";
+    compositionProfile?: string;
+    userInput?: PluginRuntimeInvokeOptions["userInput"];
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   listWorkspaces?: () => Promise<PluginWorkspaceSnapshot>;
@@ -487,6 +505,7 @@ interface GenerationState {
   readonly pluginId: string;
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
+  readonly navigationTitles: Map<string, string>;
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -600,7 +619,7 @@ export class PluginHost {
     this.reportActivation = options.reportActivation;
     this.application = options.application;
     this.react = options.react;
-    this.ui = createPluginUIKit(options.react);
+    this.ui = createPluginUIKit(options.react, options.renderConversationContent, options.conversationComponents, options.avatarComponent);
     this.styleContainer = options.styleContainer;
     this.runtimeInvoker = options.invokeRuntime;
     this.workspaceLister = options.listWorkspaces;
@@ -732,7 +751,7 @@ export class PluginHost {
     state.presentationOnly = true;
     return register(Object.freeze({ react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
       registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
-      registerUIContribution: api.registerUIContribution }));
+      registerUIContribution: api.registerUIContribution, supportedFeatures: api.supportedFeatures }));
   }
 
   canRebindPresentation(pluginId: string, generation: string): boolean {
@@ -1184,6 +1203,15 @@ export class PluginHost {
 
   private createGenerationApi(state: GenerationState): PluginGenerationApi {
     const application = this.createApplicationService(state);
+    const scopedConversation = <Props extends object>(Component: React.ComponentType<Props>): React.ComponentType<Props> =>
+      props => this.react.createElement(PluginConversationScope, { application, signal: state.lifetime.signal,
+        children: this.react.createElement(Component, props) });
+    const conversationUI = {
+      ConversationView: scopedConversation(this.ui.ConversationView),
+      ConversationMessage: scopedConversation(this.ui.ConversationMessage),
+      ConversationComposer: scopedConversation(this.ui.ConversationComposer),
+      ConversationAttachment: scopedConversation(this.ui.ConversationAttachment),
+    };
     const invokeRequest = async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions, service?: string): Promise<unknown> => {
       if (!this.runtimeInvoker) {
         throw new Error("Plugin runtime requests are unavailable");
@@ -1205,6 +1233,10 @@ export class PluginHost {
           signal: controller.signal,
           ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
           ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+          ...(options?.userSpaceId ? { userSpaceId: options.userSpaceId } : {}),
+          ...(options?.productDomain ? { productDomain: options.productDomain } : {}),
+          ...(options?.compositionProfile ? { compositionProfile: options.compositionProfile } : {}),
+          ...(options?.userInput ? { userInput: options.userInput } : {}),
         });
         this.assertActive(state);
         controller.signal.throwIfAborted();
@@ -1248,6 +1280,7 @@ export class PluginHost {
 
     return Object.freeze({
       react: this.react,
+      supportedFeatures: Object.freeze(["ui.selected-slot-target.v1"]),
       application,
       contributions: this.createContributionRegistry(state),
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
@@ -1294,8 +1327,11 @@ export class PluginHost {
       registerUIContribution: (definition: UIContributionDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "ui-contribution", definition.id);
-        const target = requireNonEmpty(definition.target, "UI slot target");
-        if (!target.includes("/")) throw new Error("UI slot target must include its owner");
+        const target = typeof definition.target === "string"
+          ? requireNonEmpty(definition.target, "UI slot target")
+          : Object.freeze({ service: requireNonEmpty(definition.target.service, "UI target service"), slot: requireNonEmpty(definition.target.slot, "UI target slot") });
+        if (typeof target === "string" && !target.includes("/")) throw new Error("UI slot target must include its owner");
+        if (typeof target !== "string" && target.slot.includes("/")) throw new Error("Selected UI target slot must be local to its provider");
         if (definition.mode !== undefined && definition.mode !== "content" && definition.mode !== "wrap") throw new Error("Invalid UI contribution mode");
         const record: UIContributionRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: normalizeOrder(definition.order), removed: false,
@@ -1306,6 +1342,7 @@ export class PluginHost {
       },
       ui: Object.freeze({
         ...this.ui,
+        ...conversationUI,
         WebPage: createPluginWebPage(this.react, state.lifetime.signal, (error) => {
           this.addDiagnostic({
             pluginId: state.pluginId,
@@ -1573,13 +1610,27 @@ export class PluginHost {
         return disposable;
       },
 
+      setNavigationTitle: (id: string, title: string) => {
+        this.assertUsable(state);
+        if (!state.declaredContributions?.navigation?.some(entry => entry.id === id)) return false;
+        const normalized = typeof title === "string" ? title.trim() : "";
+        if (!normalized || Array.from(normalized).length > 64) throw new Error("Navigation title must contain 1–64 characters");
+        if (state.navigationTitles.get(id) === normalized) return true;
+        state.navigationTitles.set(id, normalized);
+        if (state.active) this.refreshPublicState();
+        return true;
+      },
+
       registerViewType: (definition: ViewTypeDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
         validatePublicIcon(definition.icon, `Plugin view ${id}`);
+        const RegisteredView = definition.render;
+        const render: ViewTypeDefinition["render"] = props => this.react.createElement(BrowserControlsProvider, { service: application.browser, children:
+          this.react.createElement(PluginViewAttachmentPreviews, { children: this.react.createElement(RegisteredView, props) }) });
         const record: ViewTypeRecord = {
           pluginId: state.pluginId, generation: state.generation, id,
-          order: 0, removed: false, definition: { ...definition, id },
+          order: 0, removed: false, definition: { ...definition, id, render },
         };
         state.views.push(record);
         return this.ownRecord(state, record);
@@ -1986,7 +2037,7 @@ export class PluginHost {
         pluginId: state.pluginId,
         generation: state.generation,
       });
-      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(declaredEntry));
+      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title })));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
     }
@@ -2016,7 +2067,7 @@ export class PluginHost {
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
     const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation)) {
+    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title)) {
       this.navigationSnapshot = nextNavigation;
       changed = true;
     }
@@ -2249,6 +2300,7 @@ function createGenerationState(
     pluginId,
     generation,
     declaredContributions,
+    navigationTitles: new Map(),
     shells: [],
     applicationProviders: [],
     uiSlots: [],

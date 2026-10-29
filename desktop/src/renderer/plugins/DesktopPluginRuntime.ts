@@ -1,3 +1,6 @@
+import { PluginConversationAttachment, PluginConversationView, PluginConversationComposer, PluginConversationMessage } from "./PluginConversation";
+import { MarkdownContent } from "../RichContent";
+import { PluginAvatar } from "../PluginAvatar";
 import * as React from "react";
 import { useEffect } from "react";
 
@@ -30,7 +33,10 @@ export interface DesktopPluginFailure {
 export const desktopPluginHost = new PluginHost({
   reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
-  invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, signal }) => {
+  avatarComponent: PluginAvatar,
+  conversationComponents: { View: PluginConversationView, Attachment: PluginConversationAttachment, Composer: PluginConversationComposer, Message: PluginConversationMessage },
+  renderConversationContent: ({ content, linkPolicy }) => React.createElement(MarkdownContent, { text: content, linkPolicy }),
+  invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, userSpaceId, productDomain, compositionProfile, userInput, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
     if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
@@ -45,6 +51,10 @@ export const desktopPluginHost = new PluginHost({
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
       ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
+      ...(userSpaceId ? { user_space_id: userSpaceId } : {}),
+      ...(productDomain ? { product_domain: productDomain } : {}),
+      ...(compositionProfile ? { composition_profile: compositionProfile } : {}),
+      ...(userInput ? { user_input: { request_id: userInput.requestId, prompt: userInput.prompt, ...(userInput.resumeReceiptId ? { resume_receipt_id: userInput.resumeReceiptId } : {}), ...(userInput.relation ? { relation: userInput.relation } : {}), ...(userInput.attachments ? { attachments: [...userInput.attachments] } : {}) } } : {}),
     });
     const cancel = () => {
       void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {

@@ -3,9 +3,19 @@
 // plugins/goal/src/index.ts
 import { randomBytes } from "node:crypto";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
 var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
+// packages/plugin-sdk/src/goal.ts
+var GOAL_CONTROL_SERVICE_DESCRIPTOR = {
+  name: "goal.control",
+  version: "1.0.0",
+  methods: [{ name: "request", input_schema: "goal.control.request.v1", output_schema: "goal.control.response.v1" }]
+};
 
 // packages/plugin-sdk/src/theme-contract.generated.ts
 var PUBLIC_THEME_TOKEN_NAMES = [
@@ -127,6 +137,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
@@ -158,12 +169,13 @@ function descriptor(name, methods, preparation = []) {
     name: method,
     input_schema: `${name}.${method}.input.v1`,
     output_schema: `${name}.${method}.output.v1`,
-    ...preparation.includes(method) ? { preparation: true } : {}
+    ...preparation.includes(method) ? { preparation: true } : {},
+    ...["release-inspection", "reconcile-inspection"].includes(method) ? { cleanup: true } : {}
   })) };
 }
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
   version: "1.2.0"
@@ -233,6 +245,21 @@ var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
 
 // packages/plugin-sdk/src/session-service.ts
 var sessionDomainArity = {
+  "InspectionAuthority": [0, 1],
+  "ListInspections": [0, 1],
+  "ReconcileInspection": [1, 1],
+  "AcquireInspection": [1, 1],
+  "ReleaseInspection": [1, 0],
+  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
+  "ReadClientInput": [2, 2],
+  "ListUnsettledClientInputs": [1, 1],
+  "AcceptClientInput": [3, 2],
+  "ChangeClientInput": [6, 1],
+  "AppendAcceptedClientHistoryRecord": [6, 1],
+  "SettleClientInputExecution": [5, 0],
+  "ListClientInputRecoveryCandidates": [1, 1],
+  "RecoverClientInput": [2, 0],
+  "ClientInputHistoryReceipts": [1, 1],
   "AcceptHeldUserWork": [2, 1],
   "AdmitThreadExecution": [4, 1],
   "AppendAcceptedUserHistoryRecord": [3, 1],
@@ -324,6 +351,7 @@ var sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
   "ReadProjectWork": [1, 1],
@@ -413,9 +441,24 @@ var SESSION_SHARING_DESCRIPTOR = {
   }))
 };
 
+// packages/plugin-sdk/src/execution-authorization.ts
+var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
+var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
+  name: EXECUTION_AUTHORIZATION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"].map((name) => ({
+    name,
+    ...name === "release-commit" ? { cleanup: true } : {},
+    input_schema: `execution.authorization.${name}.input.v1`,
+    output_schema: `execution.authorization.${name}.output.v1`
+  }))
+};
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
+var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
+var SECURITY_AUTHORIZE_METHOD = "authorize";
 var KERNEL_SERVICE_NAMES = {
   "host.storage.get": "host.storage.get",
   "host.storage.set": "host.storage.set",
@@ -431,7 +474,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -448,6 +493,17 @@ function kernelServiceCall(id, method, params) {
 function requireKernelService(method) {
   return { name: KERNEL_SERVICE_NAMES[method], major_version: 1, required: true };
 }
+function authorizationServiceDescriptor(options = {}) {
+  return {
+    name: SECURITY_AUTHORIZE_SERVICE,
+    version: "1.0.0",
+    methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }, ...options.effect_fence ? [
+      { name: "acquire-authorization", input_schema: "security.authorize.acquire-authorization.input.v1", output_schema: "security.authorize.acquire-authorization.output.v1" },
+      { name: "release-authorization", input_schema: "security.authorize.release-authorization.input.v1", output_schema: "security.authorize.release-authorization.output.v1", cleanup: true }
+    ] : []]
+  };
+}
+var AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
 var RuntimeHostServiceError = class extends Error {
   code;
   constructor(error) {
@@ -987,12 +1043,20 @@ ${String(saveError)}`);
       await save(host2, goal.thread_id, goal);
     } else await continueGoal(host2, goal);
   }
+  async function clientRequest(host2, value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected one goal request object");
+    const envelope = value;
+    if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
+    const args = decode(envelope.input, envelope.method === "create_goal" ? ["thread_id", "objective"] : ["thread_id"]);
+    return mutate(host2, envelope.method, args, "", true);
+  }
   return {
     initialize(_params, runtimeHost) {
       host = runtimeHost;
       goals = {};
       stopped = false;
       return {
+        provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
           { id: "create_goal", description: "Create a persistent goal only when the user explicitly asks for a goal. An unfinished goal cannot be replaced.", input_schema: schema({ objective: { type: "string", minLength: 1, maxLength: maxObjectiveBytes } }, ["objective"]) },
           { id: "get_goal", description: "Read this session's goal, status, settled token usage and active time.", input_schema: schema({}), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -1106,6 +1170,11 @@ ${String(saveError)}`);
       const result = await locked(() => mutate(host2, call.tool_id, args, call.turn_id || "", false));
       return { result: { content: [{ type: "text", text: JSON.stringify(result) }], structured_content: result } };
     },
+    async invokeService(call, host2) {
+      if (call.service !== "goal.control") throw new Error("unknown goal service");
+      if (call.method !== "request") throw new Error("unknown goal service method");
+      return locked(() => clientRequest(host2, call.params));
+    },
     async invokeCapability(call, host2) {
       return locked(async () => {
         if (stopped) throw new Error("goal plugin is stopped");
@@ -1113,10 +1182,7 @@ ${String(saveError)}`);
           case "agent.system_prompt.section":
             return { output: { text: "Use create_goal only when the user explicitly requests a persistent goal. Ordinary tasks do not create goals. get_goal reads the goal; update_goal may only mark verified completion or a blocker persisting for three consecutive goal turns. Goal controls belong to the user. Active goals continue across turns until completed, blocked, or paused." } };
           case "plugin.client.request": {
-            const envelope = call.input;
-            const args = decode(envelope.input, ["thread_id", "objective", "status"]);
-            if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
-            return { output: { result: await mutate(host2, envelope.method, args, "", true) } };
+            return { output: { result: await clientRequest(host2, call.input) } };
           }
           case "agent.pre_step": {
             const input = call.input, goal = goals[input.session_id || input.thread_id || ""];

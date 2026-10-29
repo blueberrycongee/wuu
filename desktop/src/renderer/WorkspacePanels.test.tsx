@@ -206,6 +206,7 @@ type PanelFixtureProps = {
   onReorderTabs: (activeID: string, overID: string) => void;
   onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   globalized: boolean;
+  legacyPreview?: boolean;
   conversationTab?: { title: string; active: boolean; onSelect: () => void };
   sideThreadContent?: React.ReactNode;
   sideThreadRunning?: boolean;
@@ -233,7 +234,9 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
   React.useEffect(() => () => previewContent.dispose(), [previewContent]);
   const snapshot = {
     connection: { status: "connected" },
+    tabs: { activeTabId: "draft:one" },
     previewWorkspace: { ownerTabId: "draft:one", tabs: props.tabs, activeTabId: props.activeTabID, activeFileTabId: props.activeFileTabID,
+      ...(!props.legacyPreview ? { conversationOpen: true } : {}),
       conversationSelected: Boolean(props.conversationTab?.active), conversationTitle: props.conversationTab?.title ?? "Conversation",
       activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
       fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },
@@ -286,6 +289,12 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
 
 describe("WorkspaceRightPanel", () => {
+  it("keeps a legacy provider's conversation tab selectable without offering an unsupported close", () => {
+    mount(<WorkspaceRightPanel {...baseProps()} globalized legacyPreview
+      conversationTab={{ title: "Conversation", active: false, onSelect: vi.fn() }} />);
+    expect(container!.querySelector('.workspace-conversation-tab [role="tab"]')).not.toBeNull();
+    expect(container!.querySelector('.workspace-conversation-tab .workspace-tool-tab-close')).toBeNull();
+  });
   it("renders an installed workspace view through the supplied public slot", () => {
     const tab = workspacePluginViewTab({ id: "workspace", pluginId: "workspace-actions", generation: "one", view: "workspace.view", title: "Workspace view" });
     const contexts: unknown[] = [];

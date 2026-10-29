@@ -265,7 +265,7 @@ export class ApplicationController implements HostApplicationService {
   get previewContent(): ApplicationPreviewContent {
     return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu, { openFile: ({ root, path }) => {
       const project = this.state.projects.find(project => project.path === root);
-      const context = this.state.activeContext?.cwd === root ? this.state.activeContext
+      const context = this.state.activeContext?.kind !== "user" && this.state.activeContext?.cwd === root ? this.state.activeContext
         : project ? { kind: "project" as const, project_id: project.id, cwd: root } : { kind: "no_project" as const, cwd: root };
       return this.invoke("preview.open-file", { context, path });
     } });
@@ -754,6 +754,11 @@ export class ApplicationController implements HostApplicationService {
         });
         const next = withLoadedRuntimeSessionTab({ ...state, sessionTabs }, loaded);
         const active = sessionTabs.find(tab => tab.id === activeTabId && context && sameRecoveryContext(tab.context, context));
+        if (!next.thread && !active && context && activeTabId.startsWith("draft:")
+          && !sessionTabs.some(tab => tab.id === activeTabId)) {
+          const draft = createDraftSessionTab(activeTabId, context);
+          return { ...next, sessionTabs: ensureSessionTab(next.sessionTabs, draft), activeSessionTabID: draft.id };
+        }
         return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
       });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
@@ -1167,6 +1172,33 @@ export class ApplicationController implements HostApplicationService {
         input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
       if (["navigation.select-browser-tab", "navigation.create-browser-tab", "navigation.reopen-browser-tab", "navigation.reveal-browser"].includes(action)) this.setSettings(false);
       return result;
+    }
+    if (action === "preview.close-conversation") {
+      const { tabId } = input as ApplicationActionMapV1["preview.close-conversation"]["input"];
+      const context = this.state.activeContext;
+      if (!context || this.state.activeSessionTabID !== tabId || !this.applicationPreview.getSnapshot().conversationOpen) {
+        throw new Error("Conversation entry is no longer active");
+      }
+      const current = activeSessionTab(this.state);
+      const reusable = current?.kind === "draft" && !composerDraftHasContent(this.getComposerDraft(current.id))
+        && !this.submissionOwner?.getPendingDraftTabIds().includes(current.id) ? current : undefined;
+      const draft = reusable ?? this.state.sessionTabs.find(tab => tab.kind === "draft" && tab.id !== tabId
+        && sameRecoveryContext(tab.context, context) && !composerDraftHasContent(tab)
+        && !this.submissionOwner?.getPendingDraftTabIds().includes(tab.id))
+        ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
+      const wasSelected = this.applicationPreview.getSnapshot().conversationSelected;
+      const closing = this.applicationPreview.invoke(action, { tabId }, signal);
+      try {
+        await this.selectTab(draft, signal);
+        await closing;
+      } catch (error) {
+        await closing;
+        if (this.state.activeSessionTabID === tabId && !this.applicationPreview.getSnapshot().conversationOpen) {
+          await this.applicationPreview.invoke(wasSelected ? "preview.show-conversation" : "preview.open-conversation", {});
+        }
+        throw error;
+      }
+      return;
     }
     if (isApplicationPreviewAction(action)) {
       const result = await this.applicationPreview.invoke(action,
@@ -1707,7 +1739,7 @@ export class ApplicationController implements HostApplicationService {
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
       preview: this.preview, previewWorkspace: Object.freeze({ ...this.applicationPreview.getSnapshot(),
         ownerTabId: this.composerDraftForPane(state.activePane).ownerTabId ?? state.activeSessionTabID,
-        activeContext: state.activeContext && Object.freeze({ ...state.activeContext }),
+        activeContext: state.activeContext && state.activeContext.kind !== "user" ? Object.freeze({ ...state.activeContext }) : undefined,
         workspaceContext: workspacePanelContext(state.activeContext, thread) && Object.freeze({ ...workspacePanelContext(state.activeContext, thread)! }),
         threadId: thread?.id, conversationTitle: conversationHeadingTitle(thread,
           activeSessionTab(state)?.kind === "draft" ? activeSessionTab(state)?.title : undefined, translateCurrent("tabs.newConversation")),

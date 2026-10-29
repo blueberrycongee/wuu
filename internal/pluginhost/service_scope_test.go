@@ -25,17 +25,18 @@ func TestRetainedServiceScopePartialFailureAndClosedAuthority(t *testing.T) {
 	if live != 0 {
 		t.Fatalf("partial scope leaked %d executions", live)
 	}
-	scope, err := host.OpenServiceScope(context.Background(), "consumer", "resource.capacity")
+	outer := context.WithValue(context.Background(), nativeInvocationKey{}, &nativeInvocation{registry: registry, owner: "provider", executionID: "outer-callback", live: true, root: true})
+	scope, err := host.OpenServiceScope(outer, "consumer", "resource.capacity")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scope.CallCleanup(context.Background(), "resource.capacity", "release", json.RawMessage(`{}`)); err != nil {
+	if _, err := scope.CallCleanup(scope.Context, "resource.capacity", "release", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := scope.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scope.CallCleanup(context.Background(), "resource.capacity", "release", json.RawMessage(`{}`)); err == nil {
+	if _, err := scope.CallCleanup(scope.Context, "resource.capacity", "release", json.RawMessage(`{}`)); err == nil {
 		t.Fatal("closed scope retained cleanup authority")
 	}
 	if err := host.Close(context.Background()); err != nil {

@@ -72,15 +72,22 @@ type Options struct {
 	// AppServer connects an authenticated device to an existing execution host.
 	// When omitted, standalone hosts create their own app-server connection.
 	AppServer func(context.Context, io.Reader, io.Writer) error
-	// AppServerOptions bind each standalone connection to the runtime composition.
-	AppServerOptions []appserver.ServerOption
-	Workdir          string
-	Runtime          *runtime.Session
-	Store            *Store
-	RelayURL         string // overrides the store's relay URL
-	HostName         string // overrides the store's host name
-	Pairing          *PairingConfig
-	Logf             func(format string, args ...any)
+	// AppServerForDevice preserves a persistent authority while binding push to the authenticated device.
+	AppServerForDevice func(context.Context, io.Reader, io.Writer, appserver.PushRegistrar) error
+	// SubscribeUserAttention observes admitted attention for the host lifetime,
+	// including when no phone has opened a device app-server connection.
+	SubscribeUserAttention func(context.Context, func(appserver.UserAttentionNotification)) error
+	// AuthorizeUserAttention checks the selected resource policy for each verified
+	// recipient immediately before a host-lifetime push. Missing policy denies delivery.
+	AuthorizeUserAttention func(context.Context, appserver.UserAttentionNotification) error
+	AppServerOptions       []appserver.ServerOption
+	Workdir                string
+	Runtime                *runtime.Session
+	Store                  *Store
+	RelayURL               string // overrides the store's relay URL
+	HostName               string // overrides the store's host name
+	Pairing                *PairingConfig
+	Logf                   func(format string, args ...any)
 	// OnConnected runs after the relay authenticates and registers this host.
 	OnConnected func()
 
@@ -104,25 +111,29 @@ type pairingState struct {
 
 // Host runs the desktop side of remote control.
 type Host struct {
-	appServer        func(context.Context, io.Reader, io.Writer) error
-	appServerOptions []appserver.ServerOption
-	workdir          string
-	rt               *runtime.Session
-	store            *Store
-	relayURL         string
-	hostName         string
-	logf             func(format string, args ...any)
-	onConnected      func()
-	reconnectMin     time.Duration
-	reconnectMax     time.Duration
-	pushMinInterval  time.Duration
-	pusher           HostPusher
+	appServer              func(context.Context, io.Reader, io.Writer) error
+	appServerForDevice     func(context.Context, io.Reader, io.Writer, appserver.PushRegistrar) error
+	subscribeUserAttention func(context.Context, func(appserver.UserAttentionNotification)) error
+	authorizeUserAttention func(context.Context, appserver.UserAttentionNotification) error
+	appServerOptions       []appserver.ServerOption
+	workdir                string
+	rt                     *runtime.Session
+	store                  *Store
+	relayURL               string
+	hostName               string
+	logf                   func(format string, args ...any)
+	reconnectMin           time.Duration
+	reconnectMax           time.Duration
+	pushMinInterval        time.Duration
+	pusher                 HostPusher
+	onConnected            func()
 
 	baseCtx context.Context
 
-	wsMu    sync.Mutex // guards the ws pointer
-	writeMu sync.Mutex // serializes writes on the live socket
-	ws      *websocket.Conn
+	wsMu           sync.Mutex // guards the ws pointer
+	writeMu        sync.Mutex // serializes writes on the live socket
+	ws             *websocket.Conn
+	attentionReady chan struct{} // closed on the first authenticated relay connection; guarded by wsMu
 
 	sessMu   sync.Mutex
 	sessions map[string]*deviceSession
@@ -133,7 +144,7 @@ type Host struct {
 }
 
 func New(opts Options) (*Host, error) {
-	if opts.Runtime == nil && opts.AppServer == nil {
+	if opts.Runtime == nil && opts.AppServer == nil && opts.AppServerForDevice == nil {
 		return nil, errors.New("remote host requires a runtime")
 	}
 	if opts.Store == nil {
@@ -166,20 +177,23 @@ func New(opts Options) (*Host, error) {
 		pusher = NewExpoPusher()
 	}
 	h := &Host{
-		appServer:        opts.AppServer,
-		appServerOptions: append([]appserver.ServerOption(nil), opts.AppServerOptions...),
-		workdir:          opts.Workdir,
-		rt:               opts.Runtime,
-		store:            opts.Store,
-		relayURL:         relayURL,
-		hostName:         hostName,
-		logf:             logf,
-		onConnected:      opts.OnConnected,
-		reconnectMin:     opts.ReconnectMin,
-		reconnectMax:     opts.ReconnectMax,
-		pushMinInterval:  opts.PushMinInterval,
-		pusher:           pusher,
-		sessions:         map[string]*deviceSession{},
+		appServer:              opts.AppServer,
+		appServerForDevice:     opts.AppServerForDevice,
+		subscribeUserAttention: opts.SubscribeUserAttention,
+		authorizeUserAttention: opts.AuthorizeUserAttention,
+		appServerOptions:       append([]appserver.ServerOption(nil), opts.AppServerOptions...),
+		workdir:                opts.Workdir,
+		rt:                     opts.Runtime,
+		store:                  opts.Store,
+		relayURL:               relayURL,
+		hostName:               hostName,
+		logf:                   logf,
+		reconnectMin:           opts.ReconnectMin,
+		reconnectMax:           opts.ReconnectMax,
+		pushMinInterval:        opts.PushMinInterval,
+		pusher:                 pusher,
+		sessions:               map[string]*deviceSession{},
+		onConnected:            opts.OnConnected,
 	}
 	if h.reconnectMin <= 0 {
 		h.reconnectMin = time.Second
@@ -239,8 +253,19 @@ func (h *Host) Run(ctx context.Context) error {
 	defer h.shutdownSessions()
 	syncCtx, stopSync := context.WithCancel(ctx)
 	syncDone := make(chan struct{})
+	attentionDone := make(chan struct{})
+	ready := make(chan struct{})
+	h.wsMu.Lock()
+	h.attentionReady = ready
+	h.wsMu.Unlock()
 	go func() { defer close(syncDone); h.publishConversations(syncCtx) }()
-	defer func() { stopSync(); <-syncDone }()
+	go func() {
+		defer close(attentionDone)
+		if err := h.runUserAttention(syncCtx, ready); err != nil && syncCtx.Err() == nil {
+			h.logf("remote user attention subscription: %v", err)
+		}
+	}()
+	defer func() { stopSync(); <-syncDone; <-attentionDone }()
 
 	attempt := 0
 	for {
@@ -297,6 +322,12 @@ func (h *Host) runOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	h.logf("remote host: connected to relay %s as %s", h.relayURL, secure.Fingerprint(h.store.Identity().Public()))
+	h.wsMu.Lock()
+	if h.attentionReady != nil {
+		close(h.attentionReady)
+		h.attentionReady = nil
+	}
+	h.wsMu.Unlock()
 	if h.onConnected != nil {
 		h.onConnected()
 	}
@@ -595,44 +626,90 @@ func (h *Host) sendFrame(devPub string, payload []byte) error {
 	})
 }
 
-// sendPush nudges a device with a content-free hint, through both legs
-// independently: the relay (for relay-native transports) and, when the device
-// registered a push token, the host's own pusher — a relay outage must not
-// silence native notifications. threadID deep-links turn-bound hints.
-func (h *Host) sendPush(devPub, hint, threadID string) {
-	err := h.writeRelay(wire.RelayMsg{Type: wire.TypePush, To: devPub, Hint: hint, ThreadID: threadID})
+// sendPush delivers Coding and legacy-paired hints through relay and local
+// provider independently. Account Personal stays relay-only so a local token
+// cannot bypass account revocation. Personal never carries a thread ID.
+func (h *Host) sendPush(devPub, hint, threadID string, location *wire.UserLocation) {
+	ctx := h.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	h.sendPushContext(ctx, devPub, hint, threadID, location, location != nil && h.store.Account() != nil)
+}
+
+func (h *Host) sendPushContext(ctx context.Context, devPub, hint, threadID string, location *wire.UserLocation, accountPersonal bool, guards ...func(context.Context) error) {
+	if ctx.Err() != nil {
+		return
+	}
+	if location != nil {
+		if location.Validate() != nil || hint != wire.PushAgentDone || threadID != "" {
+			return
+		}
+		if !accountPersonal && !h.store.IsPaired(mustDecodeKey(devPub)) {
+			return
+		}
+	}
+	for _, guard := range guards {
+		if guard(ctx) != nil {
+			return
+		}
+	}
+	err := h.writeRelayContext(ctx, wire.RelayMsg{Type: wire.TypePush, To: devPub, Hint: hint, ThreadID: threadID, UserLocation: location})
 	if err == nil {
 		h.logf("remote host: push %s -> %s", hint, devPub[:min(12, len(devPub))])
+	}
+	// Account membership is authoritative at the relay. A local legacy token
+	// must not bypass account revocation when the relay is unavailable.
+	if accountPersonal {
+		return
 	}
 	token, platform, registered := h.store.DevicePush(devPub)
 	if !registered {
 		return
 	}
 	ev := HostPushEvent{
-		Device:   devPub,
-		Token:    token,
-		Platform: platform,
-		Hint:     hint,
-		ThreadID: threadID,
-		At:       time.Now().UTC(),
+		Host:         secure.EncodeKey(h.store.Identity().Public()),
+		UserLocation: location,
+		Device:       devPub,
+		Token:        token,
+		Platform:     platform,
+		Hint:         hint,
+		ThreadID:     threadID,
+		At:           time.Now().UTC(),
 	}
 	// The pusher owns its own HTTP timeout; run it off the session's write
 	// path so a slow provider cannot stall app-server output pumping.
 	go func() {
+		if location != nil {
+			// A queued Personal notification must not outlive local token revocation.
+			currentToken, currentPlatform, ok := h.store.DevicePush(devPub)
+			if !ok || currentToken != ev.Token || currentPlatform != ev.Platform {
+				return
+			}
+		}
 		ctx, cancel := context.WithTimeout(h.baseCtx, 15*time.Second)
 		defer cancel()
+		for _, guard := range guards {
+			if guard(ctx) != nil {
+				return
+			}
+		}
 		h.pusher.Push(ctx, ev)
 	}()
 }
 
 func (h *Host) writeRelay(msg wire.RelayMsg) error {
+	return h.writeRelayContext(context.Background(), msg)
+}
+
+func (h *Host) writeRelayContext(ctx context.Context, msg wire.RelayMsg) error {
 	h.wsMu.Lock()
 	ws := h.ws
 	h.wsMu.Unlock()
 	if ws == nil {
 		return ErrNotConnected
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), relayWriteTimeout)
+	ctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
 	defer cancel()
 	return h.writeWS(ctx, ws, msg)
 }

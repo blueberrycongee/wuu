@@ -114,7 +114,7 @@ func (a *StateAuthority) verifyProviderBinding(ctx context.Context, client *pers
 	}
 	// Full verification is deliberate at this one-time migration boundary; a
 	// provider's self-reported checkpoint alone is not a transfer audit.
-	return persistence.VerifyCheckpoint(ctx, client, record.Checkpoint)
+	return persistence.VerifyCheckpoint(context.WithValue(ctx, authorityStewardKey{}, a), client, record.Checkpoint)
 }
 
 func (a *StateAuthority) prepareProviderAuthority(ctx context.Context, client *persistence.Client) (persistence.Revision, error) {

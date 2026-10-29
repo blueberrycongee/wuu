@@ -328,6 +328,10 @@ async function conversation() {
     return false;
   }, 'return to the conversation after plugin graph updates');
 }
+async function assertNoErrorNotice(stage) {
+  const notice = await evaluate(() => document.querySelector('[data-wuu-component="notice"][data-wuu-variant="error"]')?.textContent ?? null);
+  assert.equal(notice, null, `${stage} must not report normal generation retirement as an error`);
+}
 async function reopenConversation() {
   const row = '.sidebar-session-row:not([data-draft-id]) .thread-row-main';
   await wait(selector => document.querySelector(selector), row);
@@ -375,6 +379,7 @@ async function run() {
   await click(pluginSwitch);
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'true' && !document.querySelector(selector).disabled, pluginSwitch);
   assert.ok(rpc.some(entry => entry.channel === 'wuu:extension-package-update' && entry.completed && entry.args[0]?.action === 'enable'));
+  await assertNoErrorNotice('Enabling the plugin');
   await capture('02-user-enabled.png', '[data-plugin="generative-ui"]');
   await conversation();
   const stopStreamRecording = recordFrames('streaming-frames');
@@ -466,6 +471,7 @@ async function run() {
   await conversation();
   await wait(() => !document.querySelector('[data-wuu-component="generated-ui"]') && [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes('![never-load]')));
   assert.equal(await evaluate(() => document.querySelectorAll('.session-flow img[src*="example.invalid"]').length), 0);
+  await assertNoErrorNotice('Disabling the plugin');
   await capture('06-app-disabled-fallback.png');
   await submit('GENUI_DISABLED_AGAIN', 'Disabled-again discovery verified.');
   pass('user disablement removes renderer and tool discovery while preserving literal historical fallback');
@@ -476,6 +482,7 @@ async function run() {
   await conversation();
   await wait(() => document.querySelector('[data-genui-block="draft"] input')?.value === 'Persisted via production storage');
   assert.equal(requests.length, calls, 'Re-enabling history does not send a model request');
+  await assertNoErrorNotice('Re-enabling the plugin');
   await capture('07-app-reenabled-history.png', '[data-genui-block="draft"]');
   pass('re-enabled historical renderer retains local edits without model activity');
   await submit('GENUI_ACTION', 'The follow-up form is ready.');
@@ -599,11 +606,17 @@ async function run() {
   fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace('export async function activate(api) {', "export async function activate(api) { throw new Error('Synthetic desktop activation failure');"));
   console.log(publish());
   await until(() => errors.some(error => String(error).includes('Synthetic desktop activation failure')), 'failed desktop replacement observed');
+  const registrationFailure = await until(() => rpc.find(entry => entry.channel === 'wuu:plugin-desktop-activation' && entry.completed && entry.args[0]?.status === 'failed'), 'failed registration reaches production diagnostics');
   const beforeFailedEdit = rpc.length;
   await trustedType('input[data-genui-node="ownerInput"]', 'Edited retained renderer');
   const retainedWrite = await until(() => rpc.slice(beforeFailedEdit).find(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0].value.includes('Edited retained renderer')), 'retained renderer storage written');
   assert.notEqual(retainedWrite.args[0].fingerprint, prior.args[0].fingerprint, 'State uses the currently approved same-source package');
-  await catalog(); await conversation();
+  await catalog();
+  await click('[data-plugin="generative-ui"] .catalog-row-open');
+  await wait(message => [...document.querySelectorAll('[data-wuu-component="plugin-settings"] .plugin-notice')].some(notice => notice.textContent.includes(message)), registrationFailure.args[0].message, 'real failed replacement remains visible in plugin diagnostics');
+  await capture('11-app-failed-replacement.png', '[data-wuu-component="plugin-settings"]');
+  await click('[data-testid="plugin-page-back"]');
+  await conversation();
   await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Edited retained renderer');
   await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
   fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace("window.__genuiReproGeneration = 'initial'", "window.__genuiReproGeneration = 'recovered'"));

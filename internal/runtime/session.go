@@ -52,14 +52,21 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/version"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // Options describes the shared agent runtime needed by interactive clients.
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
+	// StartupPresence is an already-held exclusive maintenance admission for the exact session directory.
+	// It is borrowed only during initial activation and is never finalized or released by runtime.
+	StartupPresence           *session.AppServerPresenceLease
+	UserHostIsolationMode     UserHostIsolationMode
+	UserHostIsolationVerifier UserHostIsolationVerifier
+	UserSpaceID               string
+	ProductDomain             string
 	// CapacityResources explicitly shares physical account limits across sessions.
 	CapacityResources *CapacityResources
 	NativeProviders   []NativeProviderFactory
@@ -127,24 +134,29 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
-	capacityRootRelease      func()
-	Documents                persistence.Documents
-	Sessions                 *session.Store
-	nativeProviders          []NativeProviderFactory
-	credentials              credentialstore.Store
-	configClient             *config.Client
-	chatGPTManager           *siwc.Manager
-	artifactClient           *ArtifactClient
-	ProviderName             string
-	Model                    string
-	RootDir                  string
-	Host                     Host
-	WorkspaceID              string
-	StateDir                 string
-	ConfigPath               string
-	HomeDir                  string
-	ConfigLoadMode           ConfigLoadMode
-	DesktopExecutionDefaults bool
+	UserHostIsolationMode     UserHostIsolationMode
+	userHostIsolationVerifier UserHostIsolationVerifier
+	UserSpaceID               string
+	ProductDomain             string
+	DataRoot                  string
+	capacityRootRelease       func()
+	Documents                 persistence.Documents
+	Sessions                  *session.Store
+	nativeProviders           []NativeProviderFactory
+	credentials               credentialstore.Store
+	configClient              *config.Client
+	chatGPTManager            *siwc.Manager
+	artifactClient            *ArtifactClient
+	ProviderName              string
+	Model                     string
+	RootDir                   string
+	Host                      Host
+	WorkspaceID               string
+	StateDir                  string
+	ConfigPath                string
+	HomeDir                   string
+	ConfigLoadMode            ConfigLoadMode
+	DesktopExecutionDefaults  bool
 
 	SessionDir        string
 	StreamRunner      *agent.StreamRunner
@@ -256,6 +268,7 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		}
 	}
 	clone := &Session{
+		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode, userHostIsolationVerifier: s.userHostIsolationVerifier,
 		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
@@ -420,6 +433,13 @@ func browserEnabledFromEnv() bool {
 }
 
 func NewSession(opts Options) (*Session, error) {
+	binding := userspace.Binding{UserSpaceID: strings.TrimSpace(opts.UserSpaceID), ProductDomain: strings.TrimSpace(opts.ProductDomain)}
+	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	if binding.IsUser() && opts.WorkspaceID != "" {
+		return nil, errors.New("user host cannot bind a workspace")
+	}
 	rootDir := strings.TrimSpace(opts.RootDir)
 	if rootDir == "" {
 		return nil, fmt.Errorf("root dir is required")
@@ -428,7 +448,11 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
+	cfg := opts.Config
+	if err := opts.Overrides.Apply(&cfg); err != nil {
+		return nil, err
+	}
+	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding)
 	configLoadMode := opts.ConfigLoadMode
 	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
 		configLoadMode = ConfigLoadFile
@@ -457,6 +481,21 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, fmt.Errorf("resolve wuu home: %w", err)
 		}
 	}
+	isolationMode, err := resolveUserHostIsolation(context.Background(), binding, wuuHome, opts.UserHostIsolationMode, opts.UserHostIsolationVerifier)
+	if err != nil {
+		return nil, err
+	}
+	dataRoot := wuuHome
+	if binding.IsUser() {
+		rootDir = binding.Root(wuuHome)
+		dataRoot = binding.State(wuuHome)
+		if err := os.MkdirAll(rootDir, 0700); err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(dataRoot, 0700); err != nil {
+			return nil, err
+		}
+	}
 	startupPluginLease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(wuuHome)
 	if err != nil {
 		return nil, fmt.Errorf("acquire initial plugin generation: %w", err)
@@ -475,7 +514,13 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
 	}
-	sessionDir := statepath.SessionsDir(wuuHome)
+	if binding.IsUser() {
+		workspaceStateDir, err = userHostWorkspaceStateDir(wuuHome, rootDir, binding)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sessionDir := statepath.SessionsDir(dataRoot)
 
 	catalogLease, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(wuuHome)
 	if err != nil {
@@ -500,6 +545,10 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		activePlugins = activationPlan.Plugins
 	}
+	storageTransfers, err := resolveStorageTransfers(cfg, discoveredPlugins, activePlugins, binding)
+	if err != nil {
+		return nil, err
+	}
 	activePlugins, initialSnapshotRoots, err := snapshotMutableExecutionPackages(activePlugins)
 	if err != nil {
 		return nil, err
@@ -522,9 +571,15 @@ func NewSession(opts Options) (*Session, error) {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
 	selection := productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activePlugins, factories)
-	pluginHost, pluginKernel, err := buildPluginHostWithSelection(context.Background(), activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, factories...)
+	pluginHost, pluginKernel, err := buildPluginHostForBinding(context.Background(), activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, binding, storageTransfers, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
+	}
+
+	if err := validateToolReplacements(rootDir, pluginHost, cfg.Agent.ToolReplacements); err != nil {
+		snapshotsOwned = false
+		closeErr := (&PluginGeneration{host: pluginHost, ownedRoots: initialSnapshotRoots}).close()
+		return nil, errors.Join(err, closeErr)
 	}
 
 	initialGeneration := &PluginGeneration{
@@ -546,7 +601,11 @@ func NewSession(opts Options) (*Session, error) {
 			initialGeneration.Release()
 		}
 	}()
-	activationErr := activatePluginHost(context.Background(), pluginHost)
+	activationContext := context.Background()
+	if opts.StartupPresence != nil {
+		activationContext = context.WithValue(activationContext, startupPresenceKey{}, opts.StartupPresence)
+	}
+	activationErr := activatePluginHost(activationContext, pluginHost)
 	// Cold startup cannot admit a generation that lost an explicit service
 	// choice, including a services-only binding with no required module list.
 	if bindingErr := pluginHost.ServiceRegistry().ValidateBindings(); bindingErr != nil {
@@ -591,7 +650,7 @@ func NewSession(opts Options) (*Session, error) {
 	if err := opts.Overrides.Apply(&cfg); err != nil {
 		return nil, err
 	}
-	cfg = withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults)
+	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding)
 	permissions := config.ResolveAgentPermissions(cfg.Agent)
 
 	var providerCfg config.ProviderConfig
@@ -637,7 +696,7 @@ func NewSession(opts Options) (*Session, error) {
 		titleClient = roleClient
 	}
 
-	providers.InitDebugLog(statepath.LogDir(wuuHome))
+	providers.InitDebugLog(statepath.LogDir(dataRoot))
 	setupCatwalk(cfg)
 
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
@@ -650,9 +709,16 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
-	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
+	hookConfig := cfg
+	if binding.IsUser() {
+		hookConfig.Hooks = nil
+	}
+	hookDispatcher := buildHookDispatcher(hookConfig, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
 	pluginSkills := discoverPluginSkills(activePlugins)
-	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
+	var discoveredSkills []skills.Skill
+	if !binding.IsUser() {
+		discoveredSkills = discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
+	}
 
 	processMgr, err := process.NewManager(rootDir, statepath.RuntimeDir(workspaceStateDir))
 	if err != nil {
@@ -677,8 +743,9 @@ func NewSession(opts Options) (*Session, error) {
 			}
 			kit.SetStateDir(workspaceStateDir)
 			kit.SetRuntimeHome(wuuHome)
+			kit.SetProtectedPaths(memoryProtectedPaths(wuuHome, binding))
 			kit.SetSessionStore(sessions)
-			kit.SetWorkingNotesHome(wuuHome)
+			kit.SetWorkingNotesHome(dataRoot)
 			kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
 			kit.SetWorkspaceID(workspaceID)
 			kit.SetProcessManager(processMgr)
@@ -692,14 +759,24 @@ func NewSession(opts Options) (*Session, error) {
 			kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 			kit.SetActivityRegistry(activityRegistry)
 			bindToolkitHooks(kit, hookDispatcher)
-			kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome))
+			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, binding))
 			toolkit = kit
-			connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+			if !binding.IsUser() {
+				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+			}
 
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 			codeModeService = codeMode
 			kit.ConfigurePTC(codeMode, cfg.PTC)
-			return toolservice.Backend{Executor: newPluginToolExecutor(kit, pluginHost, "", rootDir), Toolkit: kit, Close: func(context.Context) error {
+			executor := newPluginToolExecutor(kit, pluginHost, "", rootDir)
+			if err := configureToolReplacements(executor, kit, cfg.Agent.ToolReplacements); err != nil {
+				if manager := kit.MCPManager(); manager != nil {
+					_ = manager.Close()
+				}
+				_ = codeMode.Close()
+				return toolservice.Backend{}, err
+			}
+			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: func(context.Context) error {
 				var closeErr error
 				if manager := kit.MCPManager(); manager != nil {
 					closeErr = manager.Close()
@@ -713,7 +790,10 @@ func NewSession(opts Options) (*Session, error) {
 		}
 	}
 
-	instructionFiles := discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
+	var instructionFiles []instructions.File
+	if !binding.IsUser() {
+		instructionFiles = discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
+	}
 	// Freeze the environment date once at session start. Every system-prompt
 	// build in this session (base, worker, per-thread rebuild) reuses this
 	// frozen value so the cached system prefix does not drift when threads
@@ -817,6 +897,7 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession := &Session{
 		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
 		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts,
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot, UserHostIsolationMode: isolationMode, userHostIsolationVerifier: opts.UserHostIsolationVerifier,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -825,7 +906,7 @@ func NewSession(opts Options) (*Session, error) {
 		StateDir:                    workspaceStateDir,
 		ConfigPath:                  opts.ConfigPath,
 		executionEnvironments:       executionenv.NewManager(),
-		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
+		executionEnvironmentConfig:  cfg.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
 		configOverrides:             opts.Overrides,
@@ -996,7 +1077,7 @@ func (s *Session) applyRuntimeConfig(cfg config.Config) (config.Config, error) {
 	if err := s.configOverrides.Apply(&cfg); err != nil {
 		return config.Config{}, err
 	}
-	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), nil
+	return userHostConfig(withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), s.UserBinding()), nil
 }
 
 func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
@@ -1375,6 +1456,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	if err != nil {
 		return nil, fmt.Errorf("thread process manager: %w", err)
 	}
+	threadEnvironment, err := s.selectedExecutionEnvironment(id, artifactDir)
+	if err != nil {
+		return nil, err
+	}
+	if remote, ok := threadEnvironment.(*environmentToolExecutor); ok {
+		threadProcessManager = remote.ProcessManager()
+	}
 
 	// Prepare every fallible thread-local dependency before AgentControl. The
 	// control restores queue metadata here but remains dormant until app-server
@@ -1399,7 +1487,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			kit.SetSessionID(id)
 			kit.SetSessionDir(artifactDir)
 			kit.SetSessionStore(s.Sessions)
-			kit.SetWorkingNotesHome(wuuHome)
+			kit.SetWorkingNotesHome(s.ProductDataRoot())
 			kit.SetBrowserTabs(browserTabs)
 			kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
 			kit.SetAgentIdentity(id, agentthread.RootPath)
@@ -1410,7 +1498,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			// Rebase the file-scope whitelist on the thread root (the clone
 			// inherited the parent session's roots): thread root + registered
 			// workspaces + temp + artifact extras.
-			kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
+			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), fileScopeExtras...))
 			if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
 				return err
 			}
@@ -1430,7 +1518,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				if err := initialize(); err != nil {
 					return toolservice.Backend{}, err
 				}
-				return toolservice.Backend{Executor: newPluginToolExecutor(kit, s.PluginHost, id, threadRoot), Toolkit: kit}, nil
+				executor := newPluginToolExecutor(kit, s.PluginHost, id, threadRoot)
+				if generation != nil {
+					if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
+						return toolservice.Backend{}, err
+					}
+				}
+				return toolservice.Backend{Executor: executor, Toolkit: kit}, nil
 			})
 			toolExecutor = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: threadRoot, actorID: id})
 			if s.HookDispatcher != nil {
@@ -1466,7 +1560,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerToolProviderName := s.ModelRoles.Worker.RuleProvider
 			workerToolModeModel := workerModel
 			_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, s.ModelRoles.Worker.RuleProviderConfig, workerToolModeModel, s.ModelRoles.Worker.ProviderOptions)
-			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, agentcontrol.WorkerType{}, agentthread.Metadata{Path: agentthread.RootPath + "/worker"})
 			if catErr != nil {
 				return nil, catErr
 			}
@@ -1514,7 +1608,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 						workerRoot = environment.Root()
 					}
-					workerToolSurface, err := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+					workerToolSurface, err := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, wt, meta)
 					if err != nil {
 						return "", err
 					}
@@ -1529,7 +1623,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 					// Reset the inherited file-scope whitelist: a worker gets
 					// the standard workspace boundary roots.
-					workerKit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
+					workerKit.SetFileScopeRoots(runtimeFileScopeRoots(workerRoot, wuuHome, s.UserBinding()))
 					workerKit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 					workerStateDir := stateDir
 					if !sameRuntimeRoot(workerRoot, threadRoot) {
@@ -1685,7 +1779,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
 	result := &ThreadRuntime{SessionID: id,
-		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(threadRoot, wuuHome, artifactDir)},
+		processScopeConfig: tools.ProcessScopeConfig{Manager: threadProcessManager, ExecutionEnvironment: threadEnvironment, GitAttributionEnabled: processGitAttribution(generation), RootDir: threadRoot, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(threadRoot, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())},
 		processHooks:       s.HookDispatcher,
 		StreamRunner:       runner,
 		Toolkit:            kit,
@@ -2817,7 +2911,7 @@ func bindToolkitHooks(kit *tools.Toolkit, dispatcher *hooks.Dispatcher) {
 			ToolName: call.Name, ToolInput: json.RawMessage(call.Arguments),
 		})
 		return err
-	})
+	}, func() bool { return !dispatcher.HasHooks(hooks.PermissionRequest) })
 	kit.SetOnFileChanged(func(ctx context.Context, absPath string) {
 		actorID, _ := kit.ExecutionActor()
 		// The file is already written. Ordinary hook errors remain advisory;
@@ -2825,7 +2919,7 @@ func bindToolkitHooks(kit *tools.Toolkit, dispatcher *hooks.Dispatcher) {
 		_, _ = dispatcher.Dispatch(ctx, hooks.FileChanged, &hooks.Input{
 			SessionID: kit.SessionID(), CWD: kit.RootDir(), AgentID: actorID, FilePath: absPath,
 		})
-	})
+	}, func() bool { return !dispatcher.HasHooks(hooks.FileChanged) })
 }
 
 func ConfigureToolkitPermissions(kit *tools.Toolkit, permissions config.ResolvedPermissions) {
@@ -2881,6 +2975,9 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 // guidanceForRoot preserves the pinned plugin generation and user discovery
 // configuration while replacing project guidance with the actual checkout.
 func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
+	if s.UserBinding().IsUser() {
+		return nil, nil
+	}
 	files, discovered, _ := s.skillSnapshotForRoot(root, generation)
 	return files, discovered
 }
@@ -2888,6 +2985,9 @@ func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]
 // Return the owner with its content so callers never combine old skill bytes
 // with a replacement generation's admission gate.
 func (s *Session) skillSnapshotForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill, *PluginGeneration) {
+	if s.UserBinding().IsUser() {
+		return nil, nil, generation
+	}
 	s.pluginGenerationMu.Lock()
 	snapshot, discovered := s.pluginSkills, s.Skills
 	skillConfig := s.skillsConfig
@@ -2986,13 +3086,19 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) (string,
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
 	}
+	cfg = userHostConfig(cfg, s.UserBinding())
 	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
 	s.instructionConfig = cfg.Instructions
-	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
+	if s.UserBinding().IsUser() {
+		s.InstructionFiles = nil
+		s.Skills = nil
+	} else {
+		s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
+	}
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
-		s.Toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(s.Toolkit.RootDir(), s.WuuHome))
+		s.Toolkit.SetFileScopeRoots(runtimeFileScopeRoots(s.Toolkit.RootDir(), s.WuuHome, s.UserBinding()))
 	}
 	apiModel := s.Model
 	if s.StreamRunner != nil && strings.TrimSpace(s.StreamRunner.APIModel) != "" {
@@ -3039,7 +3145,7 @@ func deferredToolCatalogPromptForToolkit(kit *tools.Toolkit) (string, error) {
 
 // workerToolSurfaceForToolkit resolves the same model and PTC projection used
 // by the actual worker executor before constructing its prompt.
-func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (capability.Surface, error) {
+func workerToolSurfaceForToolkit(kit *tools.Toolkit, host *pluginhost.Host, providerName, model string, toolSearchEnabled bool, wt agentcontrol.WorkerType, meta agentthread.Metadata) (capability.Surface, error) {
 	if kit == nil {
 		return capability.Surface{}, nil
 	}
@@ -3049,6 +3155,14 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	}
 	wkit.ConfigureSurfaceForProviderModel(providerName, model, false)
 	wkit.SetToolSearchEnabled(toolSearchEnabled)
+	wkit.SetAgentIdentity(meta.ID, meta.Path)
+	applyWorkerToolFilter(wkit, wt)
+	// Clones deliberately have no execution bindings. Resolve replacements and
+	// contributed tools against the child's identity before filtering skills.
+	executor := newPluginToolExecutor(wkit, host, wkit.SessionID(), wkit.RootDir())
+	if err := configureToolReplacements(executor, wkit, wkit.ReplacementBindings()); err != nil {
+		return capability.Surface{}, err
+	}
 	surface := wkit.ActiveSurface()
 	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
 	return surface, err

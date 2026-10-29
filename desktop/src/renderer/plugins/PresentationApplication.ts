@@ -25,13 +25,19 @@ export function retainPresentationReads(service: ApplicationServiceV1, signal: A
   const wrapped = new WeakMap<object, object>();
   const wrap = (source: object, application = false): object => {
     const existing = wrapped.get(source); if (existing) return existing;
-    const values = new Map<PropertyKey, unknown>();
+    const values = new Map<string | symbol, unknown>();
     const proxy = new Proxy({}, {
-      ownKeys: () => Reflect.ownKeys(source),
-      has: (_target, key) => Reflect.has(source, key),
-      getOwnPropertyDescriptor: (_target, key) => Reflect.has(source, key) ? { configurable: true, enumerable: true } : undefined,
+      // React's development profiler compares old and new props after a
+      // handoff. Only expose values already observed on the retired facade;
+      // enumerating an untouched getter must not reopen its dead scope.
+      ownKeys: () => signal.aborted ? [...values.keys()] : Reflect.ownKeys(source),
+      has: (_target, key) => signal.aborted ? values.has(key) : Reflect.has(source, key),
+      getOwnPropertyDescriptor: (_target, key) => (signal.aborted ? values.has(key) : Reflect.has(source, key)) ? { configurable: true, enumerable: true } : undefined,
       get(_target, key) {
       if (values.has(key)) return values.get(key);
+      // React also probes these metadata properties directly, even on a Proxy
+      // whose source has no such property. They carry no application authority.
+      if (signal.aborted && (key === "$$typeof" || key === Symbol.toStringTag)) return undefined;
       const value = Reflect.get(source, key, source);
       if (typeof value === "function") {
         const reads: { args: unknown[]; value: unknown }[] = [];

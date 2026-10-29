@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
 import { EventEmitter } from "node:events";
 import { observeDesktopActivationDocument, PluginDesktopActivations } from "./pluginDesktopActivations";
+import { AppServerResponseError } from "./appServerErrors";
 
 const inventory = (graph: string) => [{ id: "shell", fingerprint: "source", graph_generation: graph, desktop: {} }] as ExtensionInventoryRecord[];
 const report = (graph: string): PluginDesktopActivationParams => ({ id: "shell", fingerprint: "source", graph_generation: graph, activation: 1, phase: "registration", status: "active" });
@@ -220,4 +221,50 @@ it("rejects unknown graphs and workspace mismatch after pre-dispatch recovery wi
   await expect(owner.recoverRuntimeRequest("forged", undefined, handshake)).rejects.toMatchObject({ code: "WUU_DESKTOP_GRAPH_OWNER_MISSING" });
   await expect(owner.recoverRuntimeRequest("graph", "/other", handshake)).rejects.toThrow(/workspace/i);
   expect(backend.calls.mock.calls.map(call => call[0])).toEqual(["initialize"]);
+});
+
+it("maps an explicit scoped runtime only after matching source and target inventories", async () => {
+  const owner = new PluginDesktopActivations(42), source = server("source-graph"), target = server("target-graph");
+  await owner.initialize("/source", source.request, {});
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source-graph" };
+  const acquire = vi.fn(async () => ({ workdir: "/target", request: target.request, params: {} }));
+  const bound = await owner.scopedRuntimeRequest(identity, "user/domain/profile", acquire);
+  await bound("plugin/client/request", { ...identity, method: "send" });
+  expect(target.calls.mock.calls.at(-1)?.[1]).toMatchObject({ graph_generation: "target-graph", method: "send" });
+  expect(await owner.scopedRuntimeRequest(identity, "user/domain/profile", acquire)).toBe(bound);
+  expect(acquire).toHaveBeenCalledTimes(1);
+  await expect(owner.scopedRuntimeRequest({ ...identity, fingerprint: "forged" }, "other", acquire)).rejects.toThrow(/identity/i);
+  await owner.disconnect();
+  expect(target.calls.mock.calls.some(([method]) => method === "plugin/desktop-activation")).toBe(false);
+  await expect(bound("plugin/client/request", { ...identity, method: "send" })).rejects.toThrow(/disconnected/i);
+  await bound("plugin/client/cancel", { ...identity, request_id: "pending" });
+  expect(target.calls.mock.calls.at(-1)?.[1]).toMatchObject({ graph_generation: "target-graph", request_id: "pending" });
+});
+
+it("rebinds a retired scoped graph on the next request without replaying the rejected operation", async () => {
+  const owner = new PluginDesktopActivations(46), source = server("source-graph"), target = server("target-old");
+  await owner.initialize("/source", source.request, {});
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source-graph" };
+  const acquire = vi.fn(async () => ({ workdir: "/target", request: target.request, params: {} }));
+  const old = await owner.scopedRuntimeRequest(identity, "scope", acquire);
+  target.calls.mockRejectedValueOnce(new AppServerResponseError("plugin graph generation is no longer active"));
+  await expect(old("plugin/client/request", { ...identity, method: "send" })).rejects.toThrow(/no longer active/);
+  expect(target.calls.mock.calls.filter(([method]) => method === "plugin/client/request")).toHaveLength(1);
+  target.calls.mockImplementation(async method => method === "initialize" ? { extension_inventory: inventory("target-new") } : {});
+  const next = await owner.scopedRuntimeRequest(identity, "scope", acquire);
+  await next("plugin/client/request", { ...identity, method: "read" });
+  expect(acquire).toHaveBeenCalledTimes(2);
+  expect(target.calls.mock.calls.at(-1)?.[1]).toMatchObject({ graph_generation: "target-new", method: "read" });
+});
+
+it("does not dispatch or rebind when a target plugin differs or initialization fails", async () => {
+  const owner = new PluginDesktopActivations(43), source = server("source-graph"), target = server("target-graph");
+  await owner.initialize("/source", source.request, {});
+  target.calls.mockImplementation(async () => ({ extension_inventory: [{ ...inventory("target-graph")[0], fingerprint: "different" }] }));
+  const acquire = vi.fn(async () => ({ workdir: "/target", request: target.request, params: {} }));
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source-graph" };
+  await expect(owner.scopedRuntimeRequest(identity, "scope", acquire)).rejects.toThrow(/identity/i);
+  await expect(owner.scopedRuntimeRequest(identity, "scope", acquire)).rejects.toThrow(/identity/i);
+  expect(acquire).toHaveBeenCalledTimes(1);
+  expect(target.calls).toHaveBeenCalledTimes(1);
 });

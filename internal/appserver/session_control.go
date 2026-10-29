@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -12,9 +14,70 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-func (s *Server) controlPluginSession(binding *runtime.State, _ context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
+type sessionControlLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// Control transactions serialize only the sessions whose fences they inspect
+// or change. Retain every lock before waiting and take multi-session locks in
+// sorted order, so peer messages cannot deadlock opposite-direction messages.
+// The registry mutex never covers provider work or waits for a session lock.
+func (s *Server) lockSessionControls(ids ...string) func() {
+	ids = append([]string(nil), ids...)
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	s.controlLocksMu.Lock()
+	if s.controlLocks == nil {
+		s.controlLocks = make(map[string]*sessionControlLock)
+	}
+	locks := make([]*sessionControlLock, len(ids))
+	for i, id := range ids {
+		lock := s.controlLocks[id]
+		if lock == nil {
+			lock = &sessionControlLock{}
+			s.controlLocks[id] = lock
+		}
+		lock.refs++
+		locks[i] = lock
+	}
+	s.controlLocksMu.Unlock()
+	for _, lock := range locks {
+		lock.mu.Lock()
+	}
+	return func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			locks[i].mu.Unlock()
+		}
+		s.controlLocksMu.Lock()
+		defer s.controlLocksMu.Unlock()
+		for i, lock := range locks {
+			lock.refs--
+			if lock.refs == 0 {
+				delete(s.controlLocks, ids[i])
+			}
+		}
+	}
+}
+
+func (s *Server) controlPluginSession(binding *runtime.State, ctx context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, p.ExecutionAuthorization, "control", p.SessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionControlResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "control", p.SessionID); err != nil {
+		return pluginhost.SessionControlResult{}, err
+	}
+	unlock := s.lockSessionControls(p.SessionID)
+	defer unlock()
+	// Authority may have been revoked while waiting for a same-session fence.
+	if err := s.authorizeUserSessionOperation(ctx, "control", p.SessionID); err != nil {
+		return pluginhost.SessionControlResult{}, err
+	}
 	manager := "plugin:" + strings.TrimSpace(pluginID)
 	m, ok, err := binding.Sessions.Find(p.SessionID)
 	if err != nil {
@@ -22,6 +85,9 @@ func (s *Server) controlPluginSession(binding *runtime.State, _ context.Context,
 	}
 	if !ok {
 		return pluginhost.SessionControlResult{}, session.ErrSessionNotFound
+	}
+	if err := s.requireUserSessionBinding(m); err != nil {
+		return pluginhost.SessionControlResult{}, err
 	}
 	if m.Visibility == "plugin" && m.Owner != manager {
 		return pluginhost.SessionControlResult{}, errors.New("session control requires a shared or owned ordinary session")
@@ -87,11 +153,17 @@ func (s *Server) threadSessionControl(binding *runtime.State, _ string, c sessio
 // A project keeps its control state: a managed session goes on under the
 // project, which learns what the user wrote from the turn's result, and a
 // session the user holds stays theirs. Other managers yield to the user.
-func (s *Server) takeSessionControlForInput(binding *runtime.State, id string) error {
+func (s *Server) takeSessionControlForInput(binding *runtime.State, id string, timings ...*rpcRequestTiming) error {
 	if s == nil || s.rt == nil {
 		return nil
 	}
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0]
+	}
+	started := timing.now()
 	c, ok, err := binding.Sessions.ReadControl(id)
+	timing.span("session_control_input_read", started)
 	if err != nil {
 		return err
 	}
@@ -100,18 +172,27 @@ func (s *Server) takeSessionControlForInput(binding *runtime.State, id string) e
 			return nil
 		}
 	}
-	return s.takeSessionControl(binding, id, session.ControlTakenOver)
+	return s.takeSessionControl(binding, id, session.ControlTakenOver, timings...)
 }
 
 // takeSessionControl records a human takeover or pause of a managed session.
 // Admitted automatic instructions are revoked before the manager is told.
-func (s *Server) takeSessionControl(binding *runtime.State, id, state string) error {
+func (s *Server) takeSessionControl(binding *runtime.State, id, state string, timings ...*rpcRequestTiming) error {
 	if s == nil || s.rt == nil {
 		return nil
 	}
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0].buffered()
+	}
+	defer timing.flush()
+	started := timing.now()
+	unlock := s.lockSessionControls(id)
+	timing.span("session_control_mutex_wait", started)
+	defer unlock()
+	started = timing.now()
 	c, ok, err := binding.Sessions.ReadControl(id)
+	timing.span("session_control_read", started)
 	if err != nil {
 		return err
 	}

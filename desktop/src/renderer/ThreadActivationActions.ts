@@ -151,6 +151,10 @@ export function createThreadActivationActions(
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
         const withDraft = persistComposerDrafts(current, outgoingDraft);
+        const retainedContext = withDraft.sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)?.context;
+        const sessionContext = retainedContext?.session_locator && sameRuntimeContext(retainedContext, sourceContext)
+          ? { ...sourceContext, session_locator: retainedContext.session_locator }
+          : sourceContext;
         const reconciled = reconcileResumedThreadTurns(
           thread,
           findKnownThread(thread.id, current),
@@ -163,7 +167,7 @@ export function createThreadActivationActions(
           allowThreadAutoActivation: true,
           sessionTabs: ensureSessionTab(
             withDraft.sessionTabs,
-            createThreadSessionTab(reconciled, sourceContext, targetDraft),
+            createThreadSessionTab(reconciled, sessionContext, targetDraft),
           ),
           activeSessionTabID: threadSessionTabID(reconciled.id),
           threads: upsertThread(current.threads, reconciled),
@@ -196,6 +200,13 @@ export function createThreadActivationActions(
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
+      const selectedContext = workspaceState.active_context;
+      if (!selectedContext || !sameRuntimeContext(selectedContext, targetContext)) {
+        throw new Error("Selected workspace does not match the requested conversation context");
+      }
+      const sessionContext = targetContext.session_locator
+        ? { ...selectedContext, session_locator: targetContext.session_locator }
+        : selectedContext;
       const configuration = loadRuntimeConfiguration(workspaceState);
       let loadedState: Partial<AppState>;
       let resumed: ThreadResumeResult;
@@ -230,7 +241,7 @@ export function createThreadActivationActions(
           ...loadedState,
           threads: withDraft.threads.filter((candidate) =>
             candidate.archived || sameRuntimeContext(
-              resolveThreadRuntimeContext(candidate, withDraft.projects), targetContext,
+              resolveThreadRuntimeContext(candidate, withDraft.projects), selectedContext,
             ),
           ),
         };
@@ -242,7 +253,7 @@ export function createThreadActivationActions(
           allowThreadAutoActivation: true,
           sessionTabs: ensureSessionTab(
             next.sessionTabs,
-            createThreadSessionTab(reconciled, targetContext, targetDraft),
+            createThreadSessionTab(reconciled, sessionContext, targetDraft),
           ),
           activeSessionTabID: threadSessionTabID(reconciled.id),
           threads: upsertThread(next.threads, reconciled),
@@ -403,6 +414,18 @@ export function createThreadActivationActions(
 
   async function activateThread(threadID: string): Promise<void> {
     const currentState = deps.getAppState();
+    const retained = currentState.sessionTabs.find((tab) => tab.kind === "thread" && tab.threadID === threadID);
+    if (retained && !sameRuntimeContext(retained.context, currentState.activeContext)) {
+      const retainedContext = retained.context;
+      const project = retainedContext.kind === "project"
+        ? currentState.projects.find(candidate => candidate.id === retainedContext.project_id)
+        : undefined;
+      const context: RuntimeContext = project && retainedContext.kind === "project"
+        ? { ...retainedContext, cwd: project.path }
+        : retainedContext;
+      await selectContextThread(context, threadID);
+      return;
+    }
     const project = currentState.projects.find((candidate) =>
       deps.getSidebarWorkspaceThreadsByWorkspaceID()[candidate.id]?.some(
         (thread) => thread.id === threadID,

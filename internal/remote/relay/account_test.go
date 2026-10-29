@@ -109,3 +109,59 @@ func TestAccountRelayIsolationAndRevocation(t *testing.T) {
 		t.Fatalf("revoked key: %+v", got)
 	}
 }
+
+// This integration test uses only a disposable PostgreSQL account store and a
+// recording pusher. It never requests provider credentials or delivers pushes.
+func TestPersonalAccountPushRejectsRevokedIdentities(t *testing.T) {
+	store, err := account.Open(pgtest.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	enroll := func(user, role string, register bool) string {
+		id := mustID(t)
+		pub := secure.EncodeKey(id.Public())
+		_, err := store.Login(account.Login{Username: user, Password: "synthetic test password", Pub: pub, Role: role, Name: role, Proof: base64.RawURLEncoding.EncodeToString(id.SignRelayAuth([]byte("wuu/account/enroll/v1:"+user), role))}, register)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pub
+	}
+	host := enroll("alice", "host", true)
+	phone := enroll("alice", "phone", false)
+	foreign := enroll("bobby", "host", true)
+	pusher := &recordingPusher{}
+	srv := New(Options{Accounts: store, Pusher: pusher})
+	location := &wire.UserLocation{Version: 1, UserSpaceID: "local", ProductDomain: "personal", AgentID: "main"}
+	push := func(source *conn, target string) {
+		srv.mu.Lock()
+		delete(srv.pushLast, target)
+		srv.mu.Unlock()
+		srv.handlePush(source, wire.RelayMsg{Type: wire.TypePush, To: target, Hint: wire.PushAgentDone, UserLocation: location})
+	}
+	source := &conn{pub: host, account: "alice", role: wire.RoleHost}
+	push(source, phone)
+	if pusher.count() != 1 || pusher.events[0].Host != host || pusher.events[0].Device != phone {
+		t.Fatal("account Personal push not bound to authorized source and recipient")
+	}
+	push(&conn{pub: foreign, account: "bobby", role: wire.RoleHost}, phone)
+	push(source, foreign)
+	if pusher.count() != 1 {
+		t.Fatal("Personal push crossed account boundary")
+	}
+	if err := store.Revoke("alice", phone); err != nil {
+		t.Fatal(err)
+	}
+	push(source, phone)
+	if pusher.count() != 1 {
+		t.Fatal("revoked recipient received Personal push")
+	}
+	next := enroll("alice", "phone", false)
+	if err := store.Revoke("alice", host); err != nil {
+		t.Fatal(err)
+	}
+	push(source, next)
+	if pusher.count() != 1 {
+		t.Fatal("revoked host sent Personal push")
+	}
+}

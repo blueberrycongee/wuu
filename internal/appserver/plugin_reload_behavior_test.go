@@ -993,6 +993,80 @@ func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
 	})
 }
 
+func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
+	for _, ephemeral := range []bool{false, true} {
+		for _, mode := range []string{"steer", "queue"} {
+			t.Run(fmt.Sprintf("ephemeral_%t_%s", ephemeral, mode), func(t *testing.T) {
+				entered, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				unblock := func() { once.Do(func() { close(release) }) }
+				t.Cleanup(unblock)
+				client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
+					if call == 1 {
+						close(entered)
+						<-release
+					}
+				}}
+				rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
+				publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				defer func() { unblock(); srv.Close(); _, _ = rt.Cleanup() }()
+				dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{Ephemeral: ephemeral})
+				threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+				dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+				started := responseByID(t, parseOutput(t, out.String()), "start")
+				if started["error"] != nil {
+					t.Fatalf("start: %+v", started)
+				}
+				turnID := remarshal[TurnStartResult](t, started["result"]).Turn.ID
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("first model call did not start")
+				}
+				original := srv.thread(threadID)
+				publishReloadBehaviorGeneration(t, rt, "new implementation", "Read fixture")
+				if original.state.Sessions == rt.Sessions {
+					t.Fatal("fixture did not replace the session authority")
+				}
+				check := func(id, method string, params any) map[string]any {
+					t.Helper()
+					dispatchPayload(t, srv, id, method, params)
+					response := responseByID(t, parseOutput(t, out.String()), id)
+					if response["error"] != nil {
+						t.Fatalf("%s during retained turn: %+v", method, response)
+					}
+					return response
+				}
+				if mode == "steer" {
+					check("guide-cancel", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "cancel this guide", ClientID: "guide-cancel"})
+					if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); !result.OK {
+						t.Fatal("guide could not be removed")
+					}
+					check("guide-queue", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "convert this guide", ClientID: "guide-queue"})
+					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); !result.OK || result.State != "queued" {
+						t.Fatalf("guide could not be queued: %+v", result)
+					}
+				} else {
+					check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: "guide-queue"})
+				}
+				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: "guide-queue", Prompt: "edited queued message"})["result"]); !result.OK {
+					t.Fatal("queued input could not be edited")
+				}
+				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: "guide-queue"})["result"]); !result.OK {
+					t.Fatal("queued input could not be removed")
+				}
+				if current := srv.thread(threadID); current != original {
+					t.Fatal("input changed the running turn's state owner")
+				}
+				unblock()
+				waitForReloadTurnCompletions(t, out, threadID, 1)
+			})
+		}
+	}
+}
+
 func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {
 	for _, ephemeral := range []bool{false, true} {
 		t.Run(fmt.Sprintf("ephemeral_%t", ephemeral), func(t *testing.T) {

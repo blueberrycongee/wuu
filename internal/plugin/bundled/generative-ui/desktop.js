@@ -900,10 +900,12 @@ export async function activate(api) {
     });
   }
   function ProgramDetails({ title, open, change, disabled, children, ...props }) {
-    return h("details", { ...props, open, onToggle: event => {
-      if (event.currentTarget.open === open) return;
-      if (disabled || change(event.currentTarget.open) === false) event.currentTarget.open = open;
-    } }, h("summary", { onClick: event => { if (disabled) event.preventDefault(); } }, title), children);
+    return h("details", { ...props, open }, h("summary", { onClick: event => {
+      // Native toggle events are queued: navigation can unmount this view before
+      // they arrive. Commit in the summary activation, including keyboard clicks.
+      event.preventDefault();
+      if (!disabled) change(!open);
+    } }, title), children);
   }
   function ProgramTable({ node, disabled, value, change }) {
     const update = next => {

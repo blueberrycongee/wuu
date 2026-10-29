@@ -33,6 +33,7 @@ import {
 import { isPublicIconName, type PublicIconName } from "../shared/themeContract.generated";
 import type { ExtensionIconDescriptor } from "../shared/protocol";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { PluginAvatar } from "./PluginAvatar";
 import { useEffect, useState } from "react";
 
 export const PUBLIC_ICON_COMPONENTS = {
@@ -52,6 +53,7 @@ export const PUBLIC_ICON_COMPONENTS = {
   inbox: Inbox,
   "layout-grid": LayoutGrid,
   "list-todo": ListTodo,
+  mascot: PluginAvatar,
   "message-square": MessageSquare,
   moon: Moon,
   plug: Plug,
@@ -65,7 +67,7 @@ export const PUBLIC_ICON_COMPONENTS = {
   users: Users,
   workflow: Workflow,
   wrench: Wrench,
-} as const satisfies Readonly<Record<PublicIconName, IconComponent>>;
+} as const satisfies Readonly<Record<PublicIconName, IconComponent | typeof PluginAvatar>>;
 
 export function PublicIcon({
   name,

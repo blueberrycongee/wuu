@@ -323,7 +323,7 @@ async function run() {
 void run().catch(async (error) => {
   if (main && !main.isDestroyed()) {
     fs.writeFileSync(path.join(output, 'failure-ui.json'), JSON.stringify(await evaluate(() => ({
-      url: location.href, text: document.body.innerText, buttons: [...document.querySelectorAll('button')].map(button => ({ text: button.textContent, label: button.getAttribute('aria-label') })),
+      url: location.href, text: document.body.innerText, inputs: [...document.querySelectorAll('textarea')].map(input => ({ value: input.value, visible: Boolean(input.getBoundingClientRect().width) })), buttons: [...document.querySelectorAll('button')].map(button => ({ text: button.textContent, label: button.getAttribute('aria-label') })),
     })), null, 2));
   }
   save('failed', error.stack);

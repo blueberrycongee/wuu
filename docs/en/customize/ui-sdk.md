@@ -235,3 +235,39 @@ semantic keys are deduplicated. The returned disposable dismisses the notice,
 and generation retirement dismisses its notices and rejects later calls. Keep
 messages concise and put technical detail in diagnostics. Standalone preview
 explicitly does not simulate central product notification delivery.
+
+### Following a selected presentation provider
+
+Feature UI can target a provider's public local slot without naming the shipped
+provider's package. For example:
+
+```tsx
+if (!api.supportedFeatures?.includes('ui.selected-slot-target.v1')) {
+  throw new Error('This UI requires renderer feature ui.selected-slot-target.v1');
+}
+api.registerUIContribution({
+  id: 'goal-controls',
+  target: { service: 'ui.composer', slot: 'composer.above' },
+  render: ({ context }) => <span>{String(context.threadId ?? '')}</span>,
+});
+```
+
+This target follows the committed UI surface binding's provider identity,
+generation and registered surface. The selected provider must declare and mount
+`composer.above`; a different provider merely declaring the same local slot does
+not receive the contribution. No selection, a retired generation or an absent
+slot means no mounting point, never a built-in fallback. The navigation analogue
+is `{ service: 'ui.navigation', slot: 'sidebar.primary' }`. Providers choose which
+public slots they support and pass their documented context. These targets attach
+to nested slots, not the graph-selected surface slot itself. Existing
+`owner/local-slot` string targets retain their original exact-owner behavior.
+Conflicting contributors to a single-cardinality slot produce diagnostics and
+leave that slot empty; unrelated slots remain usable and removal recovers it.
+`UI_SELECTED_SLOT_TARGET_FEATURE` exports this capability name. Check it before
+registration: older hosts may omit `supportedFeatures`, and product CalVer alone
+does not negotiate renderer features. Unsupported hosts receive an explicit
+activation error, not a hard-coded default-provider fallback.
+Standalone component preview has no committed product graph and does not advertise
+the capability; feature-requiring packages reject activation there. Use an
+owner-qualified preview shell to inspect a component in isolation, and the running
+host to verify graph selection. Existing owner-qualified previews are unchanged.

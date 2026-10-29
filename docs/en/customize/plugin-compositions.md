@@ -12,7 +12,7 @@ For a fixed task list, independent grading, process isolation and retained resul
 
 ## Configuration upgrades
 
-Composition versions 1–3 remain readable. Version 4 makes resource authorization
+Composition versions 1–4 remain readable. New configurations use version 5. Version 4 makes resource authorization
 an explicit provider boundary and introduces the minimal session host. When an
 older selection includes `kernel`, `wuu.session-state` or `wuu.session-execution`,
 resolution adds `wuu.resource-access` and, unless another `resource.authorization@1`
@@ -25,6 +25,23 @@ new optional sharing providers or reapply version 1/2 execution migrations.
 Version 4 never repairs missing authority. Before changing an old configuration's
 version to 4, explicitly retain the projected modules or choose replacements.
 Missing or disabled policy still fails closed; migration is not a runtime fallback.
+
+Version 5 separates feature UI from runtime business providers. When a version
+1–4 selection includes a desktop renderer and `goal` or
+`automation-client`, resolution adds `goal-ui` or
+`automation-ui`, respectively, with `migration:vN-to-v5` provenance.
+Explicit UI exclusions win; headless and empty selections gain no presentation.
+A version-5 explicit composition selects the runtime and UI independently. Fresh
+product defaults discover both packages through ordinary extension admission.
+Existing goal and automation runtime IDs and persisted state do not change.
+
+The native product is a constructor catalog, not a fallback registry. Selection
+happens before constructing a provider; embedding applications can supply an
+explicit constructor for a catalog entry. Native and process implementations use
+the same service bindings, preparation, activation and dependency cleanup. The
+shipped `agent.policy` implementation is separate from the contract client and
+validation; replacing it keeps the loop and its consumers. Removing the selected
+policy stops admission rather than restoring native retries or parallelism.
 
 ## Minimal session host
 
@@ -124,7 +141,7 @@ Omitting `model` preserves the captured parent choice. An explicit model object 
 
 Product session bindings support the native Wuu engine only. Binding an external-engine session is rejected. If a bound session later selects an external engine, new turns fail before dispatch; explicitly unbind its composition first.
 
-A scope with `state: "parent"` imports the parent's selected session, document and artifact services. This explicit import overrides state-service selection patches. The service graph, model configuration and plugin processes remain separate. Bind an existing product conversation using its session ID:
+A scope with `state: "parent"` imports the parent's selected session, document and artifact services, plus its selected execution-authorization service when present. Grant ownership stays with that product authority; the child does not create a second grant store through the general document bridge. This explicit import overrides state-service selection patches. The service graph, model configuration and plugin processes remain separate. Bind an existing product conversation using its session ID:
 
 ```ts
 const candidate = await scopes.create({
@@ -144,6 +161,14 @@ The candidate's model takes precedence over the conversation's saved model defau
 A side conversation captures the running parent's admitted composition, or the current durable selection when the parent is idle. It retains that scope through its own completion, including when the parent finishes, rebinds or disposes the scope. Its tools use the parent's workspace and its native toolkit remains read-only. The selected graph's step and request policies also apply. Missing compositions or explicit models fail admission instead of falling back to workspace defaults.
 
 A background lifecycle callback returns to the plugin instance that sent the request, even after the parent turn ends or its next turn selects another composition. Admitted child execution and callback delivery keep that origin alive through disposal; its private resources drain afterward. Request IDs are plugin-wide within the shared state authority: reusing one from another composition or for another target session fails before admission. Terminal observations remain durable if their origin is unavailable after restart; replay cannot deliver them to the default plugin instance.
+
+Direct calls from an imported child graph to its own grant-aware resource policy
+have a remaining authority-routing limitation: the bridge provider ID differs
+from the original opaque grant's provider ID. Such calls fail closed; the host
+does not rewrite grant references or relax provider identity checks. The verified
+product session/effect paths retain the parent's authority and are not this
+unsupported direct-child path. Preserving logical authority separately from the
+bridge routing identity is a future composition boundary, not a current guarantee.
 
 Product selection is authoritative in `state.documents` and survives disposal, generation retirement and process restart. Runtime resources are temporary. If they are missing or their parent state generation has changed, new turns fail before inference. `inspectSession` returns `default`, `active`, or `unavailable`, the selected ID, selecting caller, and the live composition or saved binding snapshot. Explicitly rebind a newly created scope, or unbind using the old ID. Storage errors and unknown commit outcomes propagate; inspect before retrying a write. An isolated scope cannot bind a product session.
 

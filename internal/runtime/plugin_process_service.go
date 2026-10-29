@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -34,23 +35,56 @@ type pluginProcessDelivery struct {
 	result json.RawMessage
 }
 
+// Admission owns one key while authorization or a remote transport is pending.
+// The generation mutex protects receipts, never network or process I/O.
+type pluginProcessAdmission struct {
+	input    pluginProcessStart
+	done     chan struct{}
+	cancel   context.CancelFunc
+	process  *pluginProcess
+	err      error
+	terminal bool
+}
+
 type pluginProcess struct {
-	manager            *proc.Manager
-	id, key, sessionID string
-	input              pluginProcessStart
-	cancel             func() bool
-	timer              *time.Timer
-	mu                 sync.Mutex
-	reason             string
-	deliveryMu         sync.Mutex
-	deliveries         map[string]pluginProcessDelivery
-	deliveryOrder      []string
+	manager                  *proc.Manager
+	id, processID, sessionID string
+	input                    pluginProcessStart
+	environment              tools.ProcessEnvironment
+	cancel                   func() bool
+	timer                    *time.Timer
+	mu                       sync.Mutex
+	reason                   string
+	deliveryMu               sync.Mutex
+	deliveries               map[string]pluginProcessDelivery
+	deliveryOrder            []string
+}
+
+func newPluginProcess(started *proc.Process, manager *proc.Manager, sessionID string, input pluginProcessStart, location tools.ProcessEnvironment, generation context.Context) *pluginProcess {
+	id := started.ID
+	if location.Backend != "local" {
+		id = "plugin-process-" + rand.Text()
+	}
+	p := &pluginProcess{manager: manager, id: id, processID: started.ID, sessionID: sessionID, input: input, environment: location}
+	p.cancel = context.AfterFunc(generation, func() {
+		if _, err := p.stop("generation_closed"); err != nil {
+			slog.Error("stop extension process", "process", p.id, "error", err)
+		}
+	})
+	if input.TimeoutMS > 0 {
+		p.timer = time.AfterFunc(time.Duration(input.TimeoutMS)*time.Millisecond, func() {
+			if _, err := p.stop("timeout"); err != nil {
+				slog.Error("expire extension process", "process", p.id, "error", err)
+			}
+		})
+	}
+	return p
 }
 
 func (p *pluginProcess) stop(reason string) (*proc.Process, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	current, err := p.manager.Get(p.id)
+	current, err := p.manager.Get(p.processID)
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +94,25 @@ func (p *pluginProcess) stop(reason string) (*proc.Process, error) {
 	if p.reason == "" {
 		p.reason = reason
 	}
-	return p.manager.Stop(p.id)
+	return p.manager.Stop(p.processID)
 }
 
 func (s *pluginHostServices) closeProcesses() {
 	s.processMu.Lock()
+	s.processesClosed = true
+	admissions := make([]*pluginProcessAdmission, 0, len(s.processStarts))
+	for _, admission := range s.processStarts {
+		admissions = append(admissions, admission)
+		admission.cancel()
+	}
 	processes := s.processes
 	s.processes = nil
 	s.processMu.Unlock()
+	// A start that returns after cancellation must stop its unaccepted process
+	// before completing the receipt. Do not let generation cleanup race it.
+	for _, admission := range admissions {
+		<-admission.done
+	}
 	for _, p := range processes {
 		p.cancel()
 		if p.timer != nil {
@@ -77,6 +122,67 @@ func (s *pluginHostServices) closeProcesses() {
 			slog.Error("stop extension process", "plugin", s.pluginID, "process", p.id, "error", err)
 		}
 	}
+	s.processMu.Lock()
+	s.processStarts = nil
+	s.processStartOrder = nil
+	s.processMu.Unlock()
+}
+
+func (s *pluginHostServices) admitProcess(key string, input pluginProcessStart, cancel context.CancelFunc) (*pluginProcessAdmission, bool, error) {
+	s.processMu.Lock()
+	defer s.processMu.Unlock()
+	if s.processesClosed {
+		return nil, false, serviceError("generation_closed", "process owner is inactive")
+	}
+	if existing := s.processStarts[key]; existing != nil {
+		if existing.input != input {
+			return nil, false, serviceError("request_conflict", "process key already used with different arguments")
+		}
+		return existing, false, nil
+	}
+	if s.processActive >= 64 {
+		return nil, false, serviceError("limit_exceeded", "at most 64 extension processes may run or prepare")
+	}
+	if len(s.processStarts) >= 256 {
+		// Live/pending operations retain their receipts; only terminal receipts age
+		// out. The order remains bounded because at most 64 operations can be live.
+		order := s.processStartOrder[:0]
+		for _, oldKey := range s.processStartOrder {
+			old := s.processStarts[oldKey]
+			complete := false
+			select {
+			case <-old.done:
+				complete = true
+			default:
+			}
+			if len(s.processStarts) >= 256 && old.terminal && complete {
+				delete(s.processStarts, oldKey)
+				if old.process != nil {
+					delete(s.processes, old.process.id)
+				}
+				continue
+			}
+			order = append(order, oldKey)
+		}
+		s.processStartOrder = order
+	}
+	if s.processStarts == nil {
+		s.processStarts = make(map[string]*pluginProcessAdmission)
+	}
+	admission := &pluginProcessAdmission{input: input, done: make(chan struct{}), cancel: cancel}
+	s.processStarts[key] = admission
+	s.processStartOrder = append(s.processStartOrder, key)
+	s.processActive++
+	return admission, true, nil
+}
+
+func (s *pluginHostServices) finishProcess(admission *pluginProcessAdmission) {
+	s.processMu.Lock()
+	if !admission.terminal {
+		admission.terminal = true
+		s.processActive--
+	}
+	s.processMu.Unlock()
 }
 
 func (p *pluginProcess) refreshSession(ctx context.Context, router *PluginSessionRouter) error {
@@ -89,7 +195,7 @@ func (p *pluginProcess) refreshSession(ctx context.Context, router *PluginSessio
 	p.sessionID = id
 	if closed {
 		p.reason = "session_closed"
-		_, err = p.manager.Stop(p.id)
+		_, err = p.manager.Stop(p.processID)
 	}
 	return err
 }
@@ -102,8 +208,14 @@ func (p *pluginProcess) watchSession(ctx context.Context, router *PluginSessionR
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			current, err := p.manager.Get(p.id)
-			if err != nil || current.Status == proc.StatusStopped || current.Status == proc.StatusFailed {
+			current, err := p.manager.Get(p.processID)
+			if err != nil {
+				if ctx.Err() == nil {
+					slog.Error("inspect extension process", "process", p.id, "error", err)
+				}
+				continue
+			}
+			if current.Status == proc.StatusStopped || current.Status == proc.StatusFailed {
 				return
 			}
 			if err := p.refreshSession(ctx, router); err != nil && ctx.Err() == nil {
@@ -117,7 +229,7 @@ type processServiceInvoker struct{ parent *kernelHostServices }
 
 func (k *processServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *processServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
-func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, resultErr error) {
 	ctx, releaseState := k.parent.captureInvocationState(ctx)
 	defer releaseState()
 	k.parent.mu.RLock()
@@ -136,12 +248,12 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 	if !active {
 		return nil, serviceError("generation_closed", "process owner is inactive")
 	}
-	if params.Method == "start" {
+	if params.Method == "start" || params.Method == "environment" {
 		var input pluginProcessStart
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		if input.Key == "" || len(input.Key) > 128 || input.Command == "" || len(input.Command) > 64*1024 || input.TimeoutMS < 0 || input.TimeoutMS > int64((1<<63-1)/time.Millisecond) {
+		if params.Method == "start" && (input.Key == "" || len(input.Key) > 128 || input.Command == "" || len(input.Command) > 64*1024 || input.TimeoutMS < 0 || input.TimeoutMS > int64((1<<63-1)/time.Millisecond)) {
 			return nil, serviceError("invalid_params", "start requires a key, a command within 64 KiB and a non-negative timeout_ms")
 		}
 		scope, scopeErr := params.CallerExecution(true)
@@ -172,75 +284,88 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if err := scope.Context.Err(); err != nil {
 			return nil, err
 		}
-		s.processMu.Lock()
-		defer s.processMu.Unlock()
-		key := scope.SessionID + ":" + input.Key
-		running := 0
-		for id, p := range s.processes {
-			if p.key == key {
-				if p.input != input {
-					return nil, serviceError("request_conflict", "process key already used with different arguments")
-				}
-				return processServiceSnapshot(p)
-			}
-			current, err := p.manager.Get(p.id)
-			if err != nil {
-				return nil, err
-			}
-			if current.Status == proc.StatusRunning || current.Status == proc.StatusStarting || current.Status == proc.StatusStopping {
-				running++
-			} else if len(s.processes) >= 256 {
-				p.cancel()
-				if p.timer != nil {
-					p.timer.Stop()
-				}
-				delete(s.processes, id)
-			}
-		}
-		if running >= 64 {
-			return nil, serviceError("limit_exceeded", "at most 64 extension processes may run")
-		}
-		binding, err := RetainInvocationState(ctx)
+		location, err := processScope.Environment()
 		if err != nil {
 			return nil, err
 		}
-		watchStarted := false
-		defer func() {
-			if !watchStarted {
-				_ = binding.Close()
-			}
-		}()
+		if params.Method == "environment" {
+			return marshalServiceResult(location)
+		}
 		startCtx, cancel := context.WithCancel(scope.Context)
 		stopTransport := context.AfterFunc(ctx, cancel)
 		stopGeneration := context.AfterFunc(generation, cancel)
 		defer func() { stopTransport(); stopGeneration(); cancel() }()
+		key := scope.SessionID + ":" + input.Key
+		admission, owner, err := s.admitProcess(key, input, cancel)
+		if err != nil {
+			return nil, err
+		}
+		if !owner {
+			select {
+			case <-admission.done:
+				if admission.err != nil {
+					return nil, admission.err
+				}
+				return processServiceSnapshot(admission.process)
+			case <-startCtx.Done():
+				return nil, startCtx.Err()
+			}
+		}
+		var accepted *pluginProcess
+		var binding *State
+		watchStarted := false
+		defer func() {
+			s.processMu.Lock()
+			admission.process = accepted
+			if accepted == nil {
+				admission.err = resultErr
+				admission.terminal = true
+				s.processActive--
+			}
+			close(admission.done)
+			s.processMu.Unlock()
+			if binding != nil && !watchStarted {
+				_ = binding.Close()
+			}
+		}()
+		binding, err = RetainInvocationState(ctx)
+		if err != nil {
+			return nil, err
+		}
 		started, manager, err := processScope.Start(startCtx, input.Command, input.CWD)
 		if err != nil {
 			return nil, err
 		}
-		p := &pluginProcess{manager: manager, id: started.ID, key: key, sessionID: scope.SessionID, input: input}
 		if err := startCtx.Err(); err != nil {
-			_, stopErr := p.stop("requested_stop")
+			_, stopErr := manager.Stop(started.ID)
 			return nil, errors.Join(err, stopErr)
 		}
-		p.cancel = context.AfterFunc(generation, func() {
-			if _, err := p.stop("generation_closed"); err != nil {
-				slog.Error("stop extension process", "process", p.id, "error", err)
+		p := newPluginProcess(started, manager, scope.SessionID, input, location, generation)
+		s.processMu.Lock()
+		if s.processesClosed || startCtx.Err() != nil {
+			s.processMu.Unlock()
+			p.cancel()
+			if p.timer != nil {
+				p.timer.Stop()
 			}
-		})
-		if input.TimeoutMS > 0 {
-			p.timer = time.AfterFunc(time.Duration(input.TimeoutMS)*time.Millisecond, func() {
-				if _, err := p.stop("timeout"); err != nil {
-					slog.Error("expire extension process", "process", p.id, "error", err)
-				}
-			})
+			_, stopErr := p.stop("generation_closed")
+			return nil, errors.Join(serviceError("generation_closed", "process owner closed during preparation"), stopErr)
 		}
 		if s.processes == nil {
 			s.processes = make(map[string]*pluginProcess)
 		}
 		s.processes[p.id] = p
+		accepted = p
+		s.processMu.Unlock()
 		watchStarted = true
 		go func() {
+			defer s.finishProcess(admission)
+			defer p.cancel()
+			defer func() {
+				if p.timer != nil {
+					p.timer.Stop()
+				}
+			}()
 			defer binding.Close()
 			p.watchSession(WithInvocationState(generation, binding), s.turnRouter)
 		}()
@@ -330,7 +455,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		readCtx, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(generation, cancel)
 		defer func() { stop(); cancel() }()
-		out, err := p.manager.ReadOutputSnapshot(readCtx, p.id, proc.OutputReadOptions{OffsetBytes: &input.Offset, MaxBytes: input.MaxBytes, Wait: time.Duration(input.WaitMS) * time.Millisecond})
+		out, err := p.manager.ReadOutputSnapshot(readCtx, p.processID, proc.OutputReadOptions{OffsetBytes: &input.Offset, MaxBytes: input.MaxBytes, Wait: time.Duration(input.WaitMS) * time.Millisecond})
 		if err != nil {
 			return nil, err
 		}
@@ -360,7 +485,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 }
 
 func processServiceSnapshot(p *pluginProcess) (json.RawMessage, error) {
-	current, err := p.manager.Get(p.id)
+	current, err := p.manager.Get(p.processID)
 	if err != nil {
 		return nil, err
 	}
@@ -375,11 +500,13 @@ func processServiceStatus(p *pluginProcess, current *proc.Process) any {
 		reason = "requested_stop"
 	}
 	return struct {
-		ID        string      `json:"id"`
-		SessionID string      `json:"session_id"`
-		State     proc.Status `json:"state"`
-		ExitCode  int         `json:"exit_code"`
-		Reason    string      `json:"reason,omitempty"`
-		Error     string      `json:"error,omitempty"`
-	}{p.id, sessionID, current.Status, current.ExitCode, reason, tools.RedactToolOutput(current.LastError)}
+		ID          string                   `json:"id"`
+		OperationID string                   `json:"operation_id,omitempty"`
+		SessionID   string                   `json:"session_id"`
+		State       proc.Status              `json:"state"`
+		ExitCode    int                      `json:"exit_code"`
+		Reason      string                   `json:"reason,omitempty"`
+		Error       string                   `json:"error,omitempty"`
+		Environment tools.ProcessEnvironment `json:"environment"`
+	}{p.id, current.OperationID, sessionID, current.Status, current.ExitCode, reason, tools.RedactToolOutput(current.LastError), p.environment}
 }

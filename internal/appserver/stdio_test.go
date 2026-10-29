@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -70,14 +71,15 @@ func TestRunStdioQueueAcknowledgedWhileResumedThreadPrunesOldRuntime(t *testing.
 
 			input := fmt.Sprintf(
 				"{\"id\":\"resume\",\"method\":\"thread/resume\",\"params\":{\"session_id\":%q}}\n"+
-					"{\"id\":\"resume-again\",\"method\":\"thread/resume\",\"params\":{\"session_id\":%q}}\n"+
-					"{\"id\":\"queue\",\"method\":\"turn/queue\",\"params\":{\"thread_id\":%q,\"prompt\":\"follow-up\",\"client_id\":\"queued-follow-up\"}}\n",
-				sess.ID, sess.ID, queueThreadID,
+					"{\"id\":\"resume-again\",\"method\":\"thread/resume\",\"params\":{\"session_id\":%q}}\n",
+				sess.ID, sess.ID,
 			)
+			reader, writer := io.Pipe()
+			t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
 			scannerDone := make(chan struct{})
 			var scannerErr error
 			go func() {
-				scannerErr = runStdioScanner(context.Background(), server, strings.NewReader(input))
+				scannerErr = runStdioScanner(context.Background(), server, reader)
 				close(scannerDone)
 			}()
 			t.Cleanup(func() {
@@ -88,10 +90,23 @@ func TestRunStdioQueueAcknowledgedWhileResumedThreadPrunesOldRuntime(t *testing.
 					t.Error("stdio scanner did not stop after releasing runtime cleanup")
 				}
 			})
+			if _, err := io.WriteString(writer, input); err != nil {
+				t.Fatal(err)
+			}
 			select {
 			case <-sub.done:
 			case <-time.After(5 * time.Second):
 				t.Fatal("resume did not begin retiring the old runtime")
+			}
+
+			// The target must already be detached for the evicted-idle case.
+			// Cross-session ingress no longer orders unrelated cache reads.
+			queueInput := fmt.Sprintf("{\"id\":\"queue\",\"method\":\"turn/queue\",\"params\":{\"thread_id\":%q,\"prompt\":\"follow-up\",\"client_id\":\"queued-follow-up\"}}\n", queueThreadID)
+			if _, err := io.WriteString(writer, queueInput); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
 			}
 
 			select {
@@ -101,6 +116,9 @@ func TestRunStdioQueueAcknowledgedWhileResumedThreadPrunesOldRuntime(t *testing.
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("turn/queue acknowledgement waited for unrelated runtime cleanup after thread/resume replied")
+			}
+			for _, id := range []string{"resume", "resume-again", "queue"} {
+				waitResumeStdioResponse(t, out, id)
 			}
 			responses := parseOutput(t, out.String())
 			for _, id := range []string{"resume", "resume-again", "queue"} {
@@ -145,7 +163,7 @@ func TestRunStdioQueueAcknowledgedWhileResumedThreadPrunesOldRuntime(t *testing.
 				server.Close()
 				close(closed)
 			}()
-			<-server.nativeHistoryCtx.Done()
+			<-server.sessionOperationCtx.Done()
 			select {
 			case <-closed:
 				t.Fatal("server shutdown did not join deferred runtime cleanup")

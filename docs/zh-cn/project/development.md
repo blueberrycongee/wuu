@@ -46,6 +46,26 @@ Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有
 更改目录。Linux 与托管 macOS CI 运行此门禁；分层截图不替代完整桌面截图或实体
 macOS 验收。
 
+已有的 macOS focused-controls CI 任务也会使用合成传输验证 Personal 电脑端
+主页、设置与动作权限界面。安装锁定的 desktop、plugins 和共享客户端依赖后，
+可在 macOS 复现：
+
+```bash
+node scripts/build-personal-desktop.mjs --check
+node desktop/scripts/build-personal-fixture.cjs
+desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs
+clients/mobile-web/node_modules/.bin/playwright install chromium
+WUU_REVIEW_PLAYWRIGHT_PATH="$PWD/clients/mobile-web/node_modules/playwright" \
+  node desktop/scripts/personal-approval-ui-e2e.cjs
+```
+
+两个渲染器均保留沙箱。检查覆盖明暗主题、宽窄窗口、大字号、服务不可用、
+同意与拒绝、撤回、响应丢失后的恢复，以及显式开启 Auto Review。CI 将截图、
+报告、日志、准确的检出与 PR 身份、夹具哈希和失败证据上传为
+`personal-desktop-hosted-macos-evidence-<PR head SHA>`，不上传浏览器配置目录，
+不使用真实账户、模型或外部操作。应同时检查截图与断言；这不代表手机端、
+原生宿主授权、真实提供商或实体设备验收。
+
 只开发 CLI 时可以运行：
 
 ```bash
@@ -503,6 +523,10 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 - `stdin_read`、`handler_start`、`response_written`、`handler_end` 区分请求处理
   和回复后的工作。`stdin_read` 表示串行扫描器已读到完整帧，不是字节最早到达管道
   的时刻。已有异步 handler 可能先返回、后回复。
+  `resume_dispatch_wait` 和 `resume_dispatch_begin/end` 标记移出入口的恢复读取
+  及其同会话后继；此时 `handler_end` 仅表示入口已返回，不是后台完成。活动 Stop
+  可越过纯恢复读取，但不越过先前提交的输入；待处理输入汇总和回复快照的锁等待
+  与 provider 读取分别计时。
 - `resume_*` 区分持久历史载入、子代理/工作树检查、元数据/暂存输入读取、进程恢复、
   缓存分离及已分离资源清理。
 - `queue_*` 区分输入准备、权限/控制检查、真正的互斥锁获取等待及持久接受。
@@ -510,6 +534,9 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 - `admission_*`、`answer_ready_handoff` 和 `turn_launch_committed` 区分上轮结算、
   插件刷新、执行租约、历史刷新、运行环境准备、hook 和用户输入持久追加。
   launch **不等于** provider 请求，仍需保留本地 provider/HTTP 包装器的派发时间。
+- `session_control_mutex_wait` 直接测量按会话控制锁的获取等待；
+  `session_control_input_read` 和 `session_control_read` 分别测量锁外和锁内所选 provider
+  的控制读取。不同会话的控制事务不再共享包含 provider 等待的临界区。
 - `interrupt_*` 区分会话控制、暂存输入持久化、取消、worker 冻结、受管理进程停止
   及生命周期记录。中断回复与后续终态通知/UI 更新是不同事件。
 

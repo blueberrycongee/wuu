@@ -12,6 +12,7 @@ import { PluginPresentation } from "./PluginPresentation";
 import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../../packages/plugin-sdk/src/ui-contributions";
 
 export interface HeaderPresentationProps {
+  enabled?: boolean;
   snapshot: HeaderSnapshotV1;
   fallback: ReactNode;
   onSelectTab?: (tabId: string) => void;
@@ -40,6 +41,7 @@ export function immutableHeaderTab(
 }
 
 export function HeaderPresentation({
+  enabled = true,
   snapshot,
   fallback,
   onSelectTab,
@@ -51,6 +53,7 @@ export function HeaderPresentation({
 }: HeaderPresentationProps): JSX.Element {
   const controller = useApplicationWorkbench(suppliedController);
   const host = suppliedHost ?? controller.registry;
+  if (!enabled) return <>{fallback}</>;
   const actions: HeaderActionId[] = [];
   if (onSelectTab) actions.push(HEADER_ACTIONS.selectTab);
   if (onCloseTab) actions.push(HEADER_ACTIONS.closeTab);

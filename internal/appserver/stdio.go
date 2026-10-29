@@ -16,6 +16,7 @@ import (
 const appServerMaxStdioRequestBytes = 64 * 1024 * 1024
 
 func runStdioScanner(ctx context.Context, s *Server, in io.Reader) error {
+	ctx = context.WithValue(ctx, stdioResumeDispatchKey{}, true)
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), appServerMaxStdioRequestBytes)
 	for scanner.Scan() {

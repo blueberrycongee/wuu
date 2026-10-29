@@ -6,7 +6,7 @@ import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sd
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
 import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
 import type { DesktopProject } from "../../shared/protocol";
-import { PluginActionNotStartedError } from "../../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { showErrorToast } from "../Toast";
 import { showApplicationActionError } from "../ApplicationActionError";
@@ -89,6 +89,39 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       || deferredDraft.gesture.version !== interactionVersion.current) return;
     startDraft(deferredDraft.target, deferredDraft.gesture);
   }, [application, deferredDraft, draftContext]);
+  type ThreadTarget = { threadId: string; workspaceId?: string };
+  type ThreadIntent = { application: ApplicationServiceV1; target: ThreadTarget; targetContext?: string; version: number };
+  const [deferredThread, setDeferredThread] = useState<ThreadIntent>();
+  const threadTargetContext = (target: ThreadTarget): string | undefined => target.workspaceId
+    ? targetContext({ kind: "workspace", workspaceId: target.workspaceId }) : undefined;
+  const selectThread = (target: ThreadTarget, version = interactionVersion.current): void => {
+    const intent = { application, target, targetContext: threadTargetContext(target), version };
+    run(presentNavigation(async () => {
+      if (version !== interactionVersion.current) return;
+      try {
+        await application.invoke("navigation.show-native", {});
+      } catch (error) {
+        // No thread action has started; preserve the click across a provider handoff.
+        if (isPluginLifecycleCancellation(error)) { setDeferredThread(intent); return; }
+        throw error;
+      }
+      if (version !== interactionVersion.current) return;
+      try {
+        await application.invoke("thread.activate", target);
+      } catch (error) {
+        // The thread action never reached its writer, so a successor may carry it.
+        if (error instanceof PluginActionNotStartedError) { setDeferredThread(intent); return; }
+        throw error;
+      }
+    }));
+  };
+  useEffect(() => {
+    if (!deferredThread || deferredThread.application === application) return;
+    setDeferredThread(undefined);
+    if (deferredThread.version !== interactionVersion.current
+      || deferredThread.targetContext !== threadTargetContext(deferredThread.target)) return;
+    selectThread(deferredThread.target, deferredThread.version);
+  }, [application, deferredThread]);
   const archiveTipID = useRef(0);
   const [archiveTip, setArchiveTip] = useState<{ id: number; thread: ThreadSummary; error?: string; forceRetryable?: boolean; pending?: boolean }>();
   const archiveRequest = useRef(0);
@@ -175,8 +208,8 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onStartNewThread={() => startDraft({ kind: "active" })}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
-    onSelectThread={threadId => run(presentNavigation(() => application.invoke("thread.activate", { threadId })))}
-    onSelectWorkspaceThread={(workspaceId, threadId) => run(presentNavigation(() => application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })))}
+    onSelectThread={threadId => selectThread({ threadId })}
+    onSelectWorkspaceThread={(workspaceId, threadId) => selectThread({ threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })}
     onTogglePinned={thread => run(invoke("navigation.pin-thread", { threadId: thread.id, pinned: !thread.pinned }))}
     onArchiveThread={thread => run(archiveThread(thread))}
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}

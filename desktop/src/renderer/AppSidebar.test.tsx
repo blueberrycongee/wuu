@@ -128,7 +128,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     <DesktopControlsProvider controls={desktop}><AppSidebar
       workbenchController={options.workbenchController}
       initialized={Boolean(state.initialized)}
-      activeContextKind={state.activeContext?.kind}
+      activeContextKind={state.activeContext?.kind === "user" ? undefined : state.activeContext?.kind}
       activeSessionTabID={state.activeSessionTabID}
       selectedWorkspaceID={state.activeProjectId}
       extensionInventory={state.initialized?.extension_inventory}

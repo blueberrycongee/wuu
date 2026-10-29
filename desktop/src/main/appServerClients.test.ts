@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppServerResponseError } from "./appServerErrors";
+import { SessionOutcomeUnknownError } from "./sessionRoutes";
 import { requestTrustedRemote, bindRemoteEventAuthorization, type TrustedRemotePeer } from "./trustedRemoteTransport";
-import type { ServerEvent } from "../shared/protocol";
+import type { AppServerResponse, ServerEvent } from "../shared/protocol";
 
 vi.mock("electron", () => ({
   app: {
@@ -31,6 +32,8 @@ class FakeAppServerChild extends EventEmitter {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
+  readonly ownerAdmission = new PassThrough();
+  readonly stdio = [this.stdin, this.stdout, this.stderr, this.ownerAdmission];
   killed = false;
 
   kill(): boolean {
@@ -387,6 +390,341 @@ describe("AppServerClientPool session routing", () => {
     expect(await followUp).toEqual({ owner: true });
     expect(await steer).toEqual({ owner: true });
     pool.shutdown();
+  });
+
+  describe("completion during an in-flight resume", () => {
+    function fixture() {
+      vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+      const active = { kind: "no_project" as const, cwd: "/active" };
+      const owner = { kind: "no_project" as const, cwd: "/owner" };
+      const children = new Map<string, FakeAppServerChild>();
+      const requests = new Map<string, Array<{ id: string; method: string }>>();
+      const pool = new AppServerClientPool(() => active, () => active.cwd, () => {}, (_cmd, _args, options) => {
+        const child = new FakeAppServerChild();
+        children.set(options.cwd, child);
+        requests.set(options.cwd, []);
+        child.stdin.on("data", data => {
+          const request = JSON.parse(String(data));
+          requests.get(options.cwd)!.push(request);
+          if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null));
+        });
+        return child.asChildProcess();
+      });
+      pool.prewarmContexts([active, owner]);
+      const send = (message: unknown) => children.get(owner.cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
+      const turn = (method: string, id: string, threadID = "session") => send({
+        method, params: { thread_id: threadID, turn: {
+          id, status: method === "turn/started" ? "in_progress" : method === "turn/error" ? "interrupted" : "completed",
+        } },
+      });
+      const snapshot = (id: string) => ({ thread: {
+        id: "session", cwd: owner.cwd, status: "in_progress", turns: [{ id, status: "in_progress" }],
+      } });
+      const reply = (result: unknown) => send({ id: requests.get(owner.cwd)!.at(-1)!.id, result });
+      const resume = (onResponse?: (response: AppServerResponse) => void, sessionID = "session") => pool.requestForSession(
+        active, "session", "thread/resume", { session_id: sessionID, response_only: true }, onResponse,
+      );
+      return { pool, active, owner, requests, send, turn, snapshot, reply, resume };
+    }
+
+    it.each([
+      ["turn/completed", "session"], ["turn/error", "session"],
+      ["turn/completed", ""], ["turn/error", ""],
+    ])("does not revive %s via a late same-turn resume (%s) or lose the interrupt route", async (method, sessionID) => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const visible: unknown[] = [];
+        f.pool.setRunningThreadsChangedHandler(snapshot => visible.push(snapshot));
+        let atResponse: unknown;
+        const read = f.resume(() => { atResponse = f.pool.runningThreadsSnapshot(); }, sessionID);
+        f.turn(method, "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        f.reply(f.snapshot("turn-a"));
+        await read;
+        expect(atResponse).toEqual([]);
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        expect(visible.at(-1)).toEqual([]);
+        const stop = f.pool.requestInContext(f.active, "turn/interrupt", { thread_id: "session" });
+        expect(f.requests.get(f.owner.cwd)!.at(-1)!.method).toBe("turn/interrupt");
+        expect(f.requests.get(f.active.cwd)).toEqual([]);
+        f.reply({ ok: true });
+        await stop;
+        // The completed request must not leave permanent history/tombstones.
+        const fresh = f.resume();
+        f.reply(f.snapshot("turn-a"));
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each(["session", ""])("preserves stopped input in both resume deliveries (%s), including its wire content", async sessionID => {
+      const f = fixture();
+      const queued = { id: "queue-a", thread_id: "session", origin: "queue", prompt: "keep", delivery_unconfirmed: true,
+        files: [{ media_type: "text/plain", filename: "note.txt", data: "a2VlcA==" }],
+        content_parts: [{ type: "text", text: "keep" }], active_document: { path: "/note.txt" } };
+      try {
+        f.turn("turn/started", "turn-a");
+        let published: unknown;
+        const read = f.resume(response => { published = response.result; }, sessionID);
+        const guide = { ...queued, id: "guide-a", origin: "steer" };
+        f.send({ method: "turn/held", params: { thread_id: "session", messages: [guide, queued] } });
+        const stale = { ...f.snapshot("turn-a"), held_user_messages: [], pending_user_messages: [guide, queued] };
+        f.reply(stale);
+        const result = await read;
+        expect(result).toMatchObject({ ...stale, held_user_messages: [guide, queued], pending_user_messages: [] });
+        expect(published).toEqual(result);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("replays composer edits, consumption, mode changes, and new input in order without resurrecting materialized IDs", async () => {
+      const f = fixture();
+      const entry = (id: string, origin = "queue", prompt = id) => ({ id, origin, prompt, thread_id: "session" });
+      const notify = (method: string, params: Record<string, unknown>) => f.send({ method, params: { thread_id: "session", ...params } });
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        const stopped = [entry("keep"), entry("edit"), entry("consume"), entry("materialized")];
+        notify("turn/held", { messages: stopped });
+        notify("turn/dequeued", { queue_id: "edit" });
+        notify("turn/started", { queue_id: "consume", turn: { id: "turn-b", status: "in_progress" } });
+        notify("item/completed", { item: { id: "item-materialized", type: "user_message", source_id: "materialized" } });
+        notify("turn/queued", { message: entry("fresh", "queue", "new input") });
+        notify("turn/queued", { message: entry("keep", "queue", "edited input") });
+        notify("turn/steered", { message: entry("mode", "steer") });
+        notify("turn/queued", { message: entry("mode") });
+        notify("turn/unsteered", { steer_id: "mode" }); // Cannot remove the newer queue mode.
+        notify("turn/queued", { message: entry("removed") });
+        notify("turn/steered", { message: entry("removed", "steer") });
+        notify("turn/dequeued", { queue_id: "removed" });
+        notify("turn/unsteered", { steer_id: "removed" });
+        notify("turn/queued", { message: entry("in-history") });
+        // Another session's authoritative held snapshot cannot replace ours.
+        notify("turn/held", { thread_id: "other", messages: [entry("fresh")] });
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, turns: [{ id: "turn-b", status: "in_progress",
+          items: [{ type: "user_message", source_id: "in-history" }] }] },
+          held_user_messages: [], pending_user_messages: stopped });
+        expect(await read).toMatchObject({ held_user_messages: [], pending_user_messages: [
+          entry("fresh", "queue", "new input"), entry("keep", "queue", "edited input"), entry("mode"),
+        ] });
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("applies later empty held snapshots and releases composer evidence after a response error", async () => {
+      const f = fixture();
+      const queued = { id: "queue-a", thread_id: "session", origin: "queue", prompt: "keep" };
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        for (const messages of [[queued], []]) f.send({ method: "turn/held", params: { thread_id: "session", messages } });
+        f.reply({ ...f.snapshot("turn-a"), held_user_messages: [queued], pending_user_messages: [] });
+        expect(await read).toMatchObject({ held_user_messages: [], pending_user_messages: [] });
+        const failed = f.resume();
+        const failure = expect(failed).rejects.toThrow("revoked");
+        f.send({ method: "turn/held", params: { thread_id: "session", messages: [queued] } });
+        f.send({ id: f.requests.get(f.owner.cwd)!.at(-1)!.id, error: { code: "error", message: "revoked" } });
+        await failure;
+        const fresh = f.resume();
+        const snapshot = { ...f.snapshot("turn-a"), held_user_messages: [], pending_user_messages: [queued] };
+        f.reply(snapshot);
+        expect(await fresh).toMatchObject(snapshot);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("forgets terminal and composer receipt evidence when the owning process exits", async () => {
+      const children: FakeAppServerChild[] = [];
+      const { client } = makeClient(() => {
+        const child = new FakeAppServerChild();
+        children.push(child);
+        return child.asChildProcess();
+      });
+      const send = (message: unknown) => children.at(-1)!.stdout.write(`${JSON.stringify(message)}\n`);
+      const queued = { id: "same-input", thread_id: "session", origin: "queue", prompt: "keep" };
+      const first = client.request("thread/resume", { session_id: "session" });
+      const failure = expect(first).rejects.toThrow();
+      send({ method: "turn/error", params: { thread_id: "session", turn: { id: "same-turn", status: "interrupted" } } });
+      send({ method: "turn/held", params: { thread_id: "session", messages: [queued] } });
+      send({ method: "turn/started", params: { thread_id: "session", turn: { id: "same-turn", status: "in_progress" } } });
+      children[0].emit("exit", 1, null);
+      await failure;
+      const restarted = client.request("thread/resume", { session_id: "session" });
+      const result = { thread: { id: "session", status: "in_progress", turns: [{ id: "same-turn", status: "in_progress" }] },
+        held_user_messages: [], pending_user_messages: [queued] };
+      send({ id: "client-2", result });
+      expect(await restarted).toEqual(result);
+      expect(client.runningThreadIDsList()).toEqual(["session"]);
+      children[1].emit("exit", 0, null);
+    });
+
+    it.each([
+      { order: ["start-b"], snapshotTurn: "idle-a", running: true },
+      { order: ["start-b"], snapshotTurn: "turn-a", running: true },
+      { order: ["finish-a", "start-b"], snapshotTurn: "idle-a", running: true },
+      { order: ["start-b", "finish-a"], snapshotTurn: "idle-a", running: true },
+      { order: ["finish-a", "start-b"], snapshotTurn: "turn-a", running: true },
+      { order: ["start-b", "finish-a"], snapshotTurn: "turn-a", running: true },
+      { order: ["start-b", "finish-b"], snapshotTurn: "turn-b", running: false },
+      { order: ["start-b", "finish-a", "finish-b"], snapshotTurn: "idle-a", running: false },
+    ])("keeps the current turn's activity across $order then $snapshotTurn", async ({ order, snapshotTurn, running }) => {
+      const f = fixture();
+      const busy = [{ workdir: f.owner.cwd, thread_id: "session" }];
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        void read.catch(() => {}); // Teardown also settles the request if an earlier assertion fails.
+        let currentRunning = true;
+        for (const event of order) {
+          if (event === "start-b") {
+            f.turn("turn/started", "turn-b");
+            currentRunning = true;
+          } else {
+            f.turn("turn/completed", event === "finish-a" ? "turn-a" : "turn-b");
+            if (event === "finish-b" || !order.slice(0, order.indexOf(event)).includes("start-b")) currentRunning = false;
+          }
+          expect(f.pool.runningThreadsSnapshot()).toEqual(currentRunning ? busy : []);
+        }
+        const stale = snapshotTurn === "idle-a"
+          ? { thread: { ...f.snapshot("turn-a").thread, status: "idle", turns: [{ id: "turn-a", status: "completed" }] } }
+          : f.snapshot(snapshotTurn);
+        f.reply(stale);
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual(running ? busy : []);
+        if (running) {
+          // A response must not replace B's active identity with an older A.
+          f.turn("turn/completed", "turn-a");
+          expect(f.pool.runningThreadsSnapshot()).toEqual(busy);
+          f.turn("turn/completed", "turn-b");
+          expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        }
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each([undefined, "future_status", "in_progress"])("does not treat B's %s status in an idle snapshot as terminal", async status => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, status: "idle", turns: [{ id: "turn-b", status }] } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("does not erase B's known identity when a running thread-list summary omits its turns", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        void read.catch(() => {});
+        f.turn("turn/started", "turn-b");
+        const list = f.pool.requestInContext(f.owner, "thread/list", { summary_only: true });
+        f.reply({ threads: [{ ...f.snapshot("turn-b").thread, turns: [] }] });
+        await list;
+        f.turn("turn/completed", "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.send({ id: f.requests.get(f.owner.cwd)!.find(request => request.method === "thread/resume")!.id,
+          result: { thread: { ...f.snapshot("turn-a").thread, status: "idle", turns: [] } } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("keeps B's observed identity when an active snapshot also contains an older active A", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, turns: [
+          { id: "turn-b", status: "in_progress" }, { id: "turn-a", status: "in_progress" },
+        ] } });
+        await read;
+        f.turn("turn/completed", "turn-a");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each(["completed", "interrupted", "failed"])("accepts B's %s snapshot and releases its start receipt before the next request", async status => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/started", "turn-b");
+        f.reply({ thread: { ...f.snapshot("turn-b").thread, status: "idle", turns: [{ id: "turn-b", status }] } });
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+        f.turn("turn/started", "turn-c");
+        const fresh = f.resume();
+        f.reply({ thread: { ...f.snapshot("turn-c").thread, status: "idle", turns: [] } });
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it.each(["turn-a", "turn-b"])("preserves a newer live turn when the late response contains %s", async snapshotTurn => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "turn-a");
+        const read = f.resume();
+        f.turn("turn/completed", "turn-a");
+        f.turn("turn/started", "turn-b");
+        f.reply(f.snapshot(snapshotTurn));
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        f.turn("turn/completed", "turn-b");
+        expect(f.pool.runningThreadsSnapshot()).toEqual([]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
+
+    it("scopes terminal identity to the session and releases it on an error response", async () => {
+      const f = fixture();
+      try {
+        f.turn("turn/started", "same-turn-id");
+        const read = f.resume();
+        f.turn("turn/completed", "same-turn-id", "other-session");
+        f.reply(f.snapshot("same-turn-id"));
+        await read;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+        const failed = f.resume();
+        const failure = expect(failed).rejects.toThrow("revoked");
+        f.turn("turn/error", "same-turn-id");
+        f.send({ id: f.requests.get(f.owner.cwd)!.at(-1)!.id, error: { code: "error", message: "revoked" } });
+        await failure;
+        const fresh = f.resume();
+        f.reply(f.snapshot("same-turn-id"));
+        await fresh;
+        expect(f.pool.runningThreadsSnapshot()).toEqual([{ workdir: f.owner.cwd, thread_id: "session" }]);
+      } finally {
+        await f.pool.shutdown();
+      }
+    });
   });
 
   it("reads the execution owner across workspaces, retains completion, and forgets exited owners", async () => {
@@ -849,4 +1187,105 @@ it("does not restart a disposed core while the desktop is waiting for exit", asy
   expect(spawn).toHaveBeenCalledTimes(1);
   child.emit("exit", 0, null);
   await stopped;
+});
+
+it("keeps an explicit user host resident across project switches and passes its binding to core", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  vi.stubEnv("WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID", "synthetic.apps.googleusercontent.com");
+  const user = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, composition_profile: "personal", cwd: join(tmpdir(), "user-host-pool") };
+  const argsByCwd = new Map<string, readonly string[]>();
+  const disposed: string[] = [];
+  const admissions: string[] = [];
+  const pool = new AppServerClientPool(() => user, () => "/another-project", () => {}, (_command, args, options) => {
+    const child = new FakeAppServerChild(); argsByCwd.set(options.cwd, args);
+    child.ownerAdmission.on("data", data => admissions.push(String(data)));
+    child.stdin.on("data", data => {
+      const request = JSON.parse(String(data));
+      queueMicrotask(() => request.method === "shutdown" ? child.emit("exit", 0, null) : child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" ? { user_space_id: "local", product_domain: "personal" } : {} })}\n`));
+    });
+    return child.asChildProcess();
+  });
+  pool.setClientTorndownHandler(cwd => disposed.push(cwd));
+  try {
+    await pool.requestInContext(user, "plugin/list");
+    for (let index = 0; index < 6; index++) await pool.requestInContext({ kind: "project", project_id: `p${index}`, cwd: join(tmpdir(), `pool-project-${index}`) }, "thread/list");
+    expect(disposed).not.toContain(user.cwd);
+    const args = argsByCwd.get(user.cwd)!;
+    expect(args.slice(args.indexOf("--user-space"), args.indexOf("--user-space") + 4)).toEqual(["--user-space", "local", "--product-domain", "personal"]);
+    expect(args.slice(args.indexOf("--composition-profile"), args.indexOf("--composition-profile") + 2)).toEqual(["--composition-profile", "personal"]);
+    expect(args).not.toContain("--workspace-id");
+    expect(args).toContain("--desktop-owner-pipe");
+    expect(args.slice(args.indexOf("--personal-calendar-client-id"), args.indexOf("--personal-calendar-client-id") + 2)).toEqual(["--personal-calendar-client-id", "synthetic.apps.googleusercontent.com"]);
+    for (const [cwd, projectArgs] of argsByCwd) if (cwd !== user.cwd) expect(projectArgs).not.toContain("--personal-calendar-client-id");
+    expect(admissions.map(raw => JSON.parse(raw))).toEqual([{ version: 1, user_space_id: "local", product_domain: "personal" }]);
+  } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
+});
+
+it("does not follow a session owner across a user-space product boundary", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  const coding = { kind: "project" as const, project_id: "coding", cwd: join(tmpdir(), "owner-coding") };
+  const personal = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, cwd: join(tmpdir(), "owner-personal") };
+  const children = new Map<string, FakeAppServerChild>();
+  const pool = new AppServerClientPool(() => coding, () => coding.cwd, () => {}, (_command, _args, options) => {
+    const child = new FakeAppServerChild(); children.set(options.cwd, child);
+    child.stdin.on("data", data => { const request = JSON.parse(String(data)); if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null)); else child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" ? { user_space_id: "local", product_domain: "personal" } : { cwd: options.cwd } })}\n`); });
+    return child.asChildProcess();
+  });
+  try {
+    pool.prewarmContexts([coding, personal]);
+    children.get(coding.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "coding-session" } })}\n`);
+    children.get(personal.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "personal-session" } })}\n`);
+    expect(await pool.requestInContext(personal, "thread/resume", { session_id: "coding-session" })).toEqual({ cwd: personal.cwd });
+    expect(await pool.requestInContext(coding, "thread/resume", { session_id: "personal-session" })).toEqual({ cwd: coding.cwd });
+  } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
+});
+
+it.each([{}, { user_space_id: "someone-else", product_domain: "personal" }, { user_space_id: "local", product_domain: "coding" }])("rejects a user connection whose initialize binding is not exact: %j", async result => {
+  const child = new FakeAppServerChild(), requests: any[] = [], events: AppServerClientEvent[] = [];
+  child.stdin.on("data", data => { requests.push(JSON.parse(String(data))); });
+  const client = new AppServerClient(tmpdir(), "", (_source,event) => events.push(event), () => {}, () => child.asChildProcess(), (_env,cwd) => ({ command:"test-wuu-core", args:[], cwd }), undefined, { userSpaceId:"local", productDomain:"personal" });
+  const pending = client.request("plugin/client/request", { method:"agents.list" });
+  const rejected = expect(pending).rejects.toThrow("user_host_binding_mismatch");
+  expect(requests.map(request => request.method)).toEqual(["initialize"]);
+  child.stdout.write(`${JSON.stringify({ method:"turn/started", params:{ thread_id:"foreign" } })}\n`);
+  child.stdout.write(`${JSON.stringify({ id:requests[0].id, result })}\n`);
+  await rejected;
+  expect(requests.some(request => request.method === "plugin/client/request")).toBe(false);
+  expect(events.some(event => event.kind === "notification")).toBe(false);
+  expect(child.killed).toBe(true);
+});
+
+it("waits for exact immutable binding before sending user requests and checks replacement processes again", async () => {
+  const children: FakeAppServerChild[] = [], requests: any[][] = [];
+  const client = new AppServerClient(tmpdir(), "", () => {}, () => {}, () => {
+    const child = new FakeAppServerChild(), list: any[] = []; children.push(child); requests.push(list);
+    child.stdin.on("data", data => { list.push(JSON.parse(String(data))); }); return child.asChildProcess();
+  }, (_env,cwd) => ({ command:"test-wuu-core",args:[],cwd }), undefined, {userSpaceId:"local",productDomain:"personal"});
+  const first = client.request("plugin/client/request");
+  expect(requests[0].map(request => request.method)).toEqual(["initialize"]);
+  children[0].stdout.write(`${JSON.stringify({id:requests[0][0].id,result:{user_space_id:"local",product_domain:"personal"}})}\n`);
+  await Promise.resolve();
+  expect(requests[0][1].method).toBe("plugin/client/request");
+  children[0].stdout.write(`${JSON.stringify({id:requests[0][1].id,result:{accepted:true}})}\n`);
+  expect(await first).toEqual({accepted:true});
+  children[0].emit("exit", 1);
+  const second = client.request("plugin/client/request"), rejected = expect(second).rejects.toThrow("user_host_binding_mismatch");
+  expect(requests[1].map(request => request.method)).toEqual(["initialize"]);
+  children[1].stdout.write(`${JSON.stringify({id:requests[1][0].id,result:{}})}\n`);
+  await rejected;
+  expect(requests[1].some(request => request.method === "plugin/client/request")).toBe(false);
+});
+
+it.each(["exit", "dispose"])("reports unacknowledged archive as unknown on %s without replaying", async outcome => {
+  const child = new FakeAppServerChild();
+  const { client } = makeClient(() => child.asChildProcess());
+  const writes: string[] = [];
+  child.stdin.on("data", chunk => writes.push(String(chunk)));
+  const pending = client.request("thread/archive", { thread_id: "target", archived: true, force: true });
+  const rejected = expect(pending).rejects.toBeInstanceOf(SessionOutcomeUnknownError);
+  if (outcome === "dispose") { void client.dispose(); child.emit("close", 0, null); }
+  else child.emit("exit", 1, null);
+  await rejected;
+  expect(writes.filter(line => JSON.parse(line).method === "thread/archive")).toHaveLength(1);
+  expect(client.isBusy()).toBe(false);
 });

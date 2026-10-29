@@ -64,10 +64,11 @@ const (
 )
 
 type Process struct {
-	Action    string    `json:"action,omitempty"`
-	ID        string    `json:"id"`
-	OwnerKind OwnerKind `json:"owner_kind"`
-	OwnerID   string    `json:"owner_id"`
+	Action      string    `json:"action,omitempty"`
+	ID          string    `json:"id"`
+	OperationID string    `json:"operation_id,omitempty"`
+	OwnerKind   OwnerKind `json:"owner_kind"`
+	OwnerID     string    `json:"owner_id"`
 	// RootThreadID is the conversation that owns this command. It is stamped
 	// at start from host state, never derived afterwards: once a thread or
 	// subagent is gone there is nothing left to scan to recover the owner. This
@@ -121,6 +122,8 @@ type Process struct {
 }
 
 type StartOptions struct {
+	// OperationID correlates an uncertain remote submission with its durable record.
+	OperationID   string
 	Command       string
 	CommandPrefix string
 	CWD           string
@@ -390,7 +393,7 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		opt.TTY = false
 	}
 	id := "proc-" + randomHex(4)
-	p := &Process{ID: id, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1, RecheckMinutes: opt.RecheckMinutes}
+	p := &Process{ID: id, OperationID: opt.OperationID, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1, RecheckMinutes: opt.RecheckMinutes}
 	if opt.SandboxPolicy != nil {
 		p.SandboxMode = opt.SandboxPolicy.Mode
 	}
@@ -1747,6 +1750,39 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 
 func (m *Manager) CleanupSession() error {
 	_, err := m.CleanupSessionWithResult()
+	return err
+}
+
+// CleanupOwned stops and reaps every process still controlled by this manager.
+// Callers must drain process starts first. Registry records can belong to other
+// live managers, so only in-memory handles establish shutdown ownership.
+func (m *Manager) CleanupOwned() error {
+	if m.remote != nil {
+		return errors.New("owned process cleanup must run in the execution worker")
+	}
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.handles))
+	for id := range m.handles {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	// A worker has one shutdown budget, not one per background command. Stop
+	// all owned commands concurrently while retaining Stop's identity checks,
+	// durable terminal receipts and output-monitor/reaping barrier.
+	results := make(chan error, len(ids))
+	for _, id := range ids {
+		go func() {
+			_, err := m.Stop(id)
+			if err != nil {
+				err = fmt.Errorf("cleanup owned process %s: %w", id, err)
+			}
+			results <- err
+		}()
+	}
+	var err error
+	for range ids {
+		err = errors.Join(err, <-results)
+	}
 	return err
 }
 

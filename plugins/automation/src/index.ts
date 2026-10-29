@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
 import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
+import { createUserAutomationPlugin } from "./user-routines.js";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
 const storageKey = "automation.state";
@@ -72,7 +73,7 @@ function restoreRun(raw: unknown): Run {
 }
 
 
-export function createAutomationPlugin(): RuntimePlugin {
+function createWorkspaceAutomationPlugin(): RuntimePlugin {
   let host: RuntimeHost;
   let pluginID = "", workspaceID = "", workspaceRoot = "";
   let tasks = new Map<string, Task>(), runs: Run[] = [];
@@ -338,4 +339,20 @@ export function createAutomationPlugin(): RuntimePlugin {
   };
 }
 
+export function createAutomationPlugin(): RuntimePlugin {
+  let delegate: RuntimePlugin;
+  return {
+    concurrentServices: ["automation.routines", "automation.scheduler"],
+    initialize(params, host, lifecycle) {
+      delegate = params.user_space_id && params.product_domain === "personal" ? createUserAutomationPlugin() : createWorkspaceAutomationPlugin();
+      return delegate.initialize(params, host, lifecycle);
+    },
+    prepare(host, lifecycle) { return delegate.prepare?.(host, lifecycle); },
+    activate(host, lifecycle) { return delegate.activate?.(host, lifecycle); },
+    shutdown() { return delegate.shutdown?.(); },
+    executeTool(call, host, execution) { if (!delegate.executeTool) throw new Error("user routines are managed through the public service"); return delegate.executeTool(call, host, execution); },
+    invokeCapability(call, host, execution) { if (!delegate.invokeCapability) throw new Error("unsupported automation capability"); return delegate.invokeCapability(call, host, execution); },
+    invokeService(call, host, execution) { if (!delegate.invokeService) throw new Error("routine service requires a user-space host"); return delegate.invokeService(call, host, execution); },
+  };
+}
 export default createAutomationPlugin();

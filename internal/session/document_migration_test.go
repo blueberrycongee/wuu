@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session/legacysqlite"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 func TestLegacyMigrationPreservesInvalidTextAndRejectsLossyMarker(t *testing.T) {
@@ -585,4 +587,116 @@ func TestLegacyMigrationRecorded(t *testing.T) {
 			t.Fatalf("committed migration marker: %v %v", recorded, err)
 		}
 	})
+}
+
+func TestLegacyPersonalReceiptMigrationPreservesScopeAndPayload(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		if _, err := Create(dir, "personal"); err != nil {
+			t.Fatal(err)
+		}
+		db, err := openStore(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		for _, statement := range []string{
+			`ALTER TABLE sessions ADD COLUMN user_space_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sessions ADD COLUMN product_domain TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`,
+			`UPDATE sessions SET user_space_id='local',product_domain='personal',agent_id='agent',owner='plugin' WHERE id='personal'`,
+			`CREATE TABLE client_input_receipts(session_id TEXT,client_id TEXT,plugin_id TEXT,host_request_id TEXT,request_id TEXT,queue_id TEXT,summary_json TEXT,fingerprint TEXT,message_json TEXT,runtime_json TEXT,selection_json TEXT,live_owner TEXT)`,
+		} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+		summary := providers.ClientInputReceipt{SessionID: "personal", ClientID: "client", PluginID: "plugin", HostRequestID: "host", RequestID: "request", QueueID: "queue", ReceiptID: "receipt", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin", ReceiptState: "accepted", ExecutionState: "queued", Revision: 4}
+		raw, _ := json.Marshal(summary)
+		message := `{ "text": "original" }`
+		runtime := `{"ExecutionControlBaseline":{"SessionID":"personal"}}`
+		selection := `{"bytes":"original attachment"}`
+		if _, err := db.Exec(`INSERT INTO client_input_receipts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, "personal", "client", "plugin", "host", "request", "queue", string(raw), "fingerprint", message, runtime, selection, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := MigrateLegacySQLite(ctx, dir, native.documents); err != nil {
+			t.Fatal(err)
+		}
+		client := NewStore(ctx, native.documents)
+		scope := ClientInputScope{Binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, SessionID: "personal", PluginID: "plugin"}
+		got, found, err := client.ReadClientInput(scope, "host")
+		if err != nil || !found || !reflect.DeepEqual(got.Receipt, summary) || string(got.MessageJSON) != message || string(got.RuntimeJSON) != runtime || string(got.SelectionJSON) != selection || got.LiveOwner != "owner" {
+			t.Fatalf("migrated accepted input: %+v %v %v", got, found, err)
+		}
+		if _, err := MigrateLegacySQLite(ctx, dir, native.documents); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.RecoverClientInputs(t.TempDir(), scope); err != nil {
+			t.Fatal(err)
+		}
+		got, found, err = client.ReadClientInput(scope, "host")
+		if err != nil || !found || got.Receipt.ExecutionState != "held" || got.Receipt.Revision != 5 || string(got.SelectionJSON) != selection {
+			t.Fatalf("recovered input: %+v %v %v", got, found, err)
+		}
+		if _, err := client.Delete("personal"); err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range []string{"client_input_receipts", "client_input_payloads"} {
+			view, err := native.documents.Read(ctx, persistence.Query{Namespace: documentNamespace(table)})
+			if err != nil || len(view.Documents) != 0 {
+				t.Fatalf("deleted receipt leaked in %s: %d %v", table, len(view.Documents), err)
+			}
+		}
+	})
+}
+
+func TestLegacyMigrationArchivesRetiredFusionData(t *testing.T) {
+	ctx := context.Background()
+	legacy := t.TempDir()
+	if _, err := Create(legacy, "original"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := openStore(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE fusion_dispatches (id TEXT, payload BLOB); INSERT INTO fusion_dispatches VALUES ('dispatch', X'00FF'); CREATE TABLE fusion_tasks (id TEXT, payload TEXT); INSERT INTO fusion_tasks VALUES ('task', 'preserve me')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := persistence.Open(ctx, t.TempDir(), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	result, err := MigrateLegacySQLite(ctx, legacy, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"fusion_dispatches", "fusion_tasks"} {
+		if result.Rows[table] != 1 {
+			t.Fatalf("%s: missing row count", table)
+		}
+		view, err := provider.Read(ctx, persistence.Query{Namespace: documentNamespace("legacy_sqlite_rows"), Prefix: documentPrefix(table)})
+		if err != nil || len(view.Documents) != 1 {
+			t.Fatalf("%s archive: %d, %v", table, len(view.Documents), err)
+		}
+		var row legacysqlite.Row
+		if err := json.Unmarshal(view.Documents[0].Value, &row); err != nil {
+			t.Fatal(err)
+		}
+		if table == "fusion_dispatches" && row.Values["payload"] != "AP8=" {
+			t.Fatalf("blob not preserved: %#v", row)
+		}
+		if table == "fusion_tasks" && row.Values["payload"] != "preserve me" {
+			t.Fatalf("task not preserved: %#v", row)
+		}
+	}
+	if result, err := MigrateLegacySQLite(ctx, legacy, provider); err != nil || !result.AlreadyMigrated {
+		t.Fatalf("retry: %+v, %v", result, err)
+	}
 }

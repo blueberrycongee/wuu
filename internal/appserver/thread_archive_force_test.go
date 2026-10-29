@@ -8,8 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -252,6 +254,8 @@ func TestForceArchiveDoesNotReleaseUnsettledOrSuccessorRunner(t *testing.T) {
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
+			requestCtx, cancelRequest := context.WithCancel(context.Background())
+			defer cancelRequest()
 			th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), id)
 			require.NoError(t, err)
 			done := make(chan struct{})
@@ -263,6 +267,9 @@ func TestForceArchiveDoesNotReleaseUnsettledOrSuccessorRunner(t *testing.T) {
 			th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: done}
 			th.cancel = func() {
 				cancelCount.Add(1)
+				if !successor {
+					cancelRequest()
+				}
 				if successor {
 					th.mu.Lock()
 					th.releaseThreadExecutionLeaseLocked()
@@ -290,7 +297,9 @@ func TestForceArchiveDoesNotReleaseUnsettledOrSuccessorRunner(t *testing.T) {
 				th.turnCompletion = nil
 				th.mu.Unlock()
 			})
-			dispatchPayload(t, srv, "archive", MethodThreadArchive, ThreadArchiveParams{ThreadID: id, Archived: true, Force: true})
+			payload, err := json.Marshal(map[string]any{"id": "archive", "method": MethodThreadArchive, "params": ThreadArchiveParams{ThreadID: id, Archived: true, Force: true}})
+			require.NoError(t, err)
+			require.NoError(t, srv.handleLine(requestCtx, payload))
 			require.NotNil(t, responseByID(t, parseOutput(t, out.String()), "archive")["error"])
 			require.NoError(t, admissionErr)
 			require.EqualValues(t, 1, cancelCount.Load())
@@ -486,4 +495,77 @@ func TestForceArchiveRetainsDeadRunnerSettlementFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Nil(t, metadata.ArchivedAt)
+}
+
+// The runner's physical completion, not an elapsed UI budget, admits archive.
+// Fake time crosses the former two-second cutoff without delaying this suite.
+func TestForceArchiveWaitsForOwnedSettlementAndCurrentConsent(t *testing.T) {
+	for _, outcome := range []string{"slow", "cancelled", "revoked"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				rt := newTestRuntime(t, &fakeClient{})
+				const id = "archive-slow-settlement"
+				_, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir)
+				require.NoError(t, err)
+				out := &lockedBuffer{}
+				var revoked atomic.Bool
+				srv := New(rt, out, WithAccessPolicy(access.PolicyFunc(func(context.Context, access.Request) (access.Decision, error) {
+					return access.Decision{Allow: !revoked.Load()}, nil
+				})))
+				t.Cleanup(srv.Close)
+				th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), id)
+				require.NoError(t, err)
+				t.Cleanup(func() { th.mu.Lock(); th.releaseTurnExecutionLocked(th.currentTurn); th.mu.Unlock() })
+				done, interrupted := make(chan struct{}), make(chan struct{})
+				settle := sync.OnceFunc(func() { close(done) })
+				defer settle()
+				th.mu.Lock()
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+				th.startTurnLocked("owned-turn", providers.ChatMessage{}, time.Now().UTC())
+				th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: done}
+				th.cancel = sync.OnceFunc(func() { close(interrupted) })
+				th.mu.Unlock()
+				require.NoError(t, err)
+				require.True(t, acquired)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				go func() {
+					_ = srv.handleLine(ctx, []byte(`{"id":"archive","method":"thread/archive","params":{"thread_id":"archive-slow-settlement","archived":true,"force":true}}`))
+				}()
+				<-interrupted
+				synctest.Wait()
+				if outcome == "cancelled" {
+					cancel()
+				} else if outcome == "revoked" {
+					revoked.Store(true)
+				} else {
+					time.Sleep(3 * time.Second)
+				}
+				synctest.Wait()
+				respondedBeforeSettlement := resumeStdioHasResponse(t, out, "archive")
+				metadata, found, err := rt.Sessions.Find(id)
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Nil(t, metadata.ArchivedAt)
+				th.mu.Lock()
+				leaseHeld := th.executionLease != nil
+				th.mu.Unlock()
+				require.True(t, leaseHeld, "waiting or cancellation must not release the execution owner")
+				settle()
+				synctest.Wait()
+				require.Equal(t, outcome == "cancelled", respondedBeforeSettlement, "only actual request cancellation may end the pending archive before settlement")
+				response := responseByID(t, parseOutput(t, out.String()), "archive")
+				metadata, found, err = rt.Sessions.Find(id)
+				require.NoError(t, err)
+				require.True(t, found)
+				if outcome == "slow" {
+					require.Nil(t, response["error"])
+					require.NotNil(t, metadata.ArchivedAt)
+				} else {
+					require.NotNil(t, response["error"])
+					require.Nil(t, metadata.ArchivedAt, "revoked or cancelled consent cannot archive later")
+				}
+			})
+		})
+	}
 }

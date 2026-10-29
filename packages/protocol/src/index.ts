@@ -1,3 +1,6 @@
+export interface MessageRef { session_id: string; seq: number; }
+export interface MessageRelation { reply_to?: MessageRef; metadata?: Record<string, unknown>; }
+
 import type { SessionLocatorV1 } from "./sessionLocator";
 export type { SessionLocatorV1 } from "./sessionLocator";
 export type * from "./trusted-transport";
@@ -51,6 +54,7 @@ export type UserQuestion = {
 };
 
 export type UserQuestionRequest = {
+  relation?: MessageRelation;
   request_id: string;
   plugin_id: string;
   execution_id: string;
@@ -182,6 +186,10 @@ export type ResourceAccessCapabilities = {
 };
 
 export type InitializeResult = {
+  user_space_id?: string;
+  product_domain?: "personal" | "coding";
+  /** Memory APIs and injected context are domain-scoped; OS confidentiality is separate. */
+  user_host_isolation?: { memory: "logical"; host: "unverified" | "verified" };
   resource_access?: ResourceAccessCapabilities;
   application_shell?: ApplicationShellBinding | null;
   /** Selected UI service providers from the same committed composition as the shell. */
@@ -415,6 +423,8 @@ export type ExecutionEnvironmentProfile = {
   cpus?: number;
   memory_mb?: number;
   lifetime_seconds?: number;
+  /** Total EOF drain/cleanup budget in milliseconds; zero selects the backend default. */
+  shutdown_timeout_ms?: number;
   forward_env?: string[];
   command?: string[];
 };
@@ -707,6 +717,23 @@ export type ConfigChangedNotification = {
 
 export type PluginPackageSourceKind = "directory" | "zip";
 
+export type PluginPackageDistribution = {
+  lock_version: 1;
+  registry: string;
+  name: string;
+  version: string;
+  plugin_id: string;
+  tarball: string;
+  integrity: string;
+};
+
+export type PluginPackageSourceParams = {
+  /** Local directory/ZIP, npm:name@exact-version, or lock:path. */
+  path: string;
+  registry?: string;
+  integrity?: string;
+};
+
 export type PluginPackageMetadata = {
   id: string;
   name?: string;
@@ -721,6 +748,7 @@ export type PluginPackageMetadata = {
   requested_permissions?: string[];
   effective_permissions?: string[];
   unsupported_fields?: string[];
+  distribution?: PluginPackageDistribution;
 };
 
 export type PluginPackageInstallResult = {
@@ -845,6 +873,12 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Exact client-authored message, bound to this live plugin invocation by the host. */
+  user_input?: { request_id: string; prompt: string; resume_receipt_id?: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
+  user_space_id?: string;
+  /** Explicit target profile, never inferred from the product domain. */
+  composition_profile?: string;
+  product_domain?: "personal" | "coding";
   /** Exact admitted graph identity, independent of the plugin code fingerprint. */
   graph_generation: string;
   /** Declared service dependency. Omit to invoke the plugin's client capability. */
@@ -1585,6 +1619,7 @@ export type RecentWorkspacesResult = {
 };
 
 export type RuntimeContext =
+  | { kind: "user"; user_space_id: string; product_domain: "personal" | "coding"; composition_profile?: string; cwd: string; session_locator?: SessionLocatorV1 }
   | {
       kind: "project";
       project_id: string;
@@ -2551,7 +2586,29 @@ export type TurnErrorCategory =
   | "local"
   | "internal";
 
+/** Content-free navigation supplied by an immutable user host, never a session chooser. */
+export type UserLocation = {
+  version: 1;
+  user_space_id: string;
+  product_domain: string;
+  agent_id: string;
+  message_seq?: number;
+};
+
+/** Owner-admitted, content-free attention; raw terminal events do not authorize push. */
+export type UserAttentionNotification = {
+  item_count?: number;
+  user_space_id: string;
+  product_domain: string;
+  user_location: UserLocation;
+  turn_id: string;
+  outcome: "completed" | "failed";
+};
+
 export type TurnErrorNotification = {
+  user_space_id?: string;
+  product_domain?: string;
+  user_location?: UserLocation;
   thread_id: string;
   turn_id: string;
   // Legacy string payload. The `error` field on `turn` (above) is
@@ -2569,6 +2626,9 @@ export type TurnErrorNotification = {
 };
 
 export type TurnCompletedNotification = {
+  user_space_id?: string;
+  product_domain?: string;
+  user_location?: UserLocation;
   thread_id: string;
   turn: Turn;
   content: string;
@@ -3215,13 +3275,14 @@ export type WuuDesktopApi = {
     processId: string,
   ) => Promise<ManagedProcessActionResult>;
   initialize: () => Promise<InitializeResult>;
-  listUserQuestions: (threadId?: string) => Promise<UserQuestionListResult>;
+  listUserQuestions: (threadId?: string, context?: RuntimeContext) => Promise<UserQuestionListResult>;
   answerUserQuestion: (
     requestId: string,
     answer: UserQuestionAnswer,
+    context?: RuntimeContext,
   ) => Promise<UserQuestionResolveResult>;
-  cancelUserQuestion: (requestId: string) => Promise<UserQuestionResolveResult>;
-  holdUserQuestion: (requestId: string) => Promise<UserQuestionResolveResult>;
+  cancelUserQuestion: (requestId: string, context?: RuntimeContext) => Promise<UserQuestionResolveResult>;
+  holdUserQuestion: (requestId: string, context?: RuntimeContext) => Promise<UserQuestionResolveResult>;
   showSystemNotification: (
     params: SystemNotificationParams,
   ) => Promise<SystemNotificationResult>;

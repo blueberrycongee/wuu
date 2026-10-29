@@ -34,9 +34,18 @@
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
     "desktop/scripts/ptc-settings-e2e.cjs": "shell",
+    "desktop/scripts/build-personal-fixture.cjs": "shell",
+    "desktop/scripts/personal-settings-e2e.cjs": "shell",
+    "desktop/scripts/personal-approval-ui-e2e.cjs": "shell",
+    "desktop/dev/personal/index.tsx": "shell",
+    "desktop/dev/personal/shell.ts": "shell",
     "desktop/scripts/first-send-continuity-e2e.cjs": "session",
     "desktop/scripts/error-message-style-e2e.cjs": "session",
     "desktop/scripts/confirmed-archive-e2e.cjs": "session",
-    "desktop/scripts/composer-footer-e2e.cjs": "session"
+    "desktop/scripts/workspace-conversation-close-e2e.cjs": "session",
+    "desktop/scripts/composer-footer-e2e.cjs": "session",
+    "scripts/external-composition-acceptance/ui/visual-preview.tsx": "layout",
+    "scripts/external-composition-acceptance/ui/visual.html": "layout",
+    "scripts/external-composition-acceptance/ui/visual.mjs": "layout"
   }
 }

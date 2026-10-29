@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -276,6 +277,14 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 		// This explicit import changes selection in the same graph as every
 		// other override; native and process consumers see the bridge provider.
 		imported := map[string]bool{persistence.ServiceName: true, session.ServiceName: true, ArtifactServiceName: true}
+		// Grants belong to the imported product authority, not to a second
+		// provider instantiated against the bridge's general document consumer.
+		// Import only the actually selected service; its absence stays absent.
+		var executionDescriptor *pluginhost.ServiceDescriptor
+		if descriptor, ok := generation.host.ServiceRegistry().ServiceDescriptorFor(executionauth.ConsumerModule, executionauth.ServiceName, 1); ok {
+			executionDescriptor = &descriptor
+			imported[executionauth.ServiceName] = true
+		}
 		modules := map[string]bool{parentStateModule: true}
 		var removeDelegates []composition.ServiceKey
 		parentServices := generation.host.ServiceRegistry().Snapshot(0).Services
@@ -294,17 +303,19 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 			}
 		}
 		modules[parentStateModule] = true
+		bindings := []composition.Binding{
+			{Service: persistence.ServiceName, Major: 1, Provider: parentStateModule},
+			{Service: session.ServiceName, Major: 1, Provider: parentStateModule},
+			{Service: ArtifactServiceName, Major: 1, Provider: parentStateModule},
+		}
+		if executionDescriptor != nil {
+			bindings = append(bindings, composition.Binding{Service: executionauth.ServiceName, Major: 1, Provider: parentStateModule})
+		}
 		input.Selection.Patches = append(input.Selection.Patches, composition.Patch{
-			Modules:        modules,
-			RemoveServices: removeDelegates,
-			Services: []composition.Binding{
-				{Service: persistence.ServiceName, Major: 1, Provider: parentStateModule},
-				{Service: session.ServiceName, Major: 1, Provider: parentStateModule},
-				{Service: ArtifactServiceName, Major: 1, Provider: parentStateModule},
-			},
+			Modules: modules, RemoveServices: removeDelegates, Services: bindings,
 		})
 		factories = append(factories, NativeProviderFactory{ID: parentStateModule, Build: func(NativeProviderContext) (pluginhost.Client, error) {
-			return &compositionStateImport{parent: generation.host, state: pluginhost.StatePrepared}, nil
+			return &compositionStateImport{parent: generation.host, state: pluginhost.StatePrepared, executionDescriptor: executionDescriptor}, nil
 		}})
 		productParent, productRouter = c.parent, owner.PluginSessionRouter
 	}
@@ -362,6 +373,7 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	}
 	cfg.Agent.Variant, cfg.Agent.Effort = model.Variant, model.Effort
 	runtime, err = NewSession(Options{RootDir: root, HomeDir: directory, WuuHome: home, Config: cfg,
+		UserSpaceID: owner.UserSpaceID, ProductDomain: owner.ProductDomain, UserHostIsolationMode: owner.UserHostIsolationMode, UserHostIsolationVerifier: owner.userHostIsolationVerifier,
 		DiscoveredPlugins: &catalog, NativeProviders: factories, NonInteractive: true, DriverProfile: input.DriverProfile,
 		productParent: productParent, productRouter: productRouter, composition: productCompositionBinding{service: c, scope: scope},
 		ProviderName: model.Provider, ModelOverride: model.Model})
@@ -381,6 +393,13 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	}
 	if input.State == "parent" {
 		runtime.productCompositions = owner.productCompositions
+	}
+	// The initial static resolution validates syntax before preparing sources.
+	// Published diagnostics use the same admitted metadata as the actual host,
+	// including renderer packages supplied by this composition's local paths.
+	scope.selection, err = resolveCompositionSelection(&input.Selection, runtime.pluginGeneration.active)
+	if err != nil {
+		return nil, err
 	}
 	scope.runtime = runtime
 	for _, item := range runtime.pluginGeneration.active {

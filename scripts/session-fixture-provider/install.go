@@ -146,14 +146,38 @@ func install(home, executable string, prefix []string) (map[string]string, error
 	if err != nil {
 		return nil, err
 	}
-	if resolved.Modules != nil && !slices.Contains(*resolved.Modules, providerID) {
-		*resolved.Modules = append(*resolved.Modules, providerID)
-	}
-	bindings := slices.DeleteFunc(resolved.Services, func(binding composition.Binding) bool {
+	isStateBinding := func(binding composition.Binding) bool {
 		return binding.Service == persistence.ServiceName && binding.Major == 1
-	})
-	bindings = append(bindings, composition.Binding{Service: persistence.ServiceName, Major: 1, Provider: providerID})
-	fields["composition"], err = json.Marshal(composition.Config{Version: composition.Version, Modules: resolved.Modules, Services: bindings})
+	}
+	fixtureBinding := composition.Binding{Service: persistence.ServiceName, Major: 1, Provider: providerID}
+	// Preserve migration inputs for the real admitted catalog. Static resolution
+	// cannot identify every independent renderer and must not upgrade or flatten
+	// the user's business composition while selecting this storage fixture.
+	if selection.Version >= 2 && resolved.Modules != nil {
+		patch := composition.Patch{Modules: map[string]bool{providerID: true}, Services: []composition.Binding{fixtureBinding}}
+		for _, binding := range resolved.Services {
+			if isStateBinding(binding) && binding.Consumer != "" {
+				patch.RemoveServices = append(patch.RemoveServices, composition.ServiceKey{Consumer: binding.Consumer, Service: binding.Service, Major: binding.Major})
+			}
+		}
+		selection.Patches = append(selection.Patches, patch)
+	} else {
+		// Version 1 has no patches. A discovery-default composition must also
+		// remain patch-free: even an empty patch list establishes an explicit set.
+		if selection.Profile != "" {
+			profile := selection.Profiles[selection.Profile]
+			if selection.Modules == nil && !slices.Contains(profile.Modules, providerID) {
+				profile.Modules = append(profile.Modules, providerID)
+			}
+			profile.Services = slices.DeleteFunc(profile.Services, isStateBinding)
+			selection.Profiles[selection.Profile] = profile
+		}
+		if selection.Modules != nil && !slices.Contains(*selection.Modules, providerID) {
+			*selection.Modules = append(*selection.Modules, providerID)
+		}
+		selection.Services = append(slices.DeleteFunc(selection.Services, isStateBinding), fixtureBinding)
+	}
+	fields["composition"], err = json.Marshal(selection)
 	if err != nil {
 		return nil, err
 	}

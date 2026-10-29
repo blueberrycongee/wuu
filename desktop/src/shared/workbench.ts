@@ -13,6 +13,7 @@
 
 import type * as React from "react";
 import { createComposerDrawer, type ComposerDrawerProps } from "./ComposerDrawer";
+import { iconArtwork } from "./iconArtwork";
 import type {
   PublicIconName,
   PublicSyntaxTokenName,
@@ -102,6 +103,8 @@ export interface ViewTypeDefinition {
   defaultRegion?: ViewPlacementRegion;
   /** Whether this view's state survives a session restart. */
   persistence?: ViewPersistence;
+  /** Presentation only: hide Coding workspace panels, retaining the normal Wuu navigation. Grants no runtime authority. */
+  layout?: "user-space";
   /** React component that receives host context and renders the view. */
   render: React.ComponentType<ViewRenderProps>;
 }
@@ -187,12 +190,15 @@ export interface PluginUIToolbarToggleProps extends Omit<React.ButtonHTMLAttribu
   "aria-label": string;
 }
 
-export interface PluginUITextInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "children"> {
+export interface PluginUITextInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "children" | "value" | "defaultValue"> {
+  value?: string | number;
+  defaultValue?: string | number;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
 
-export interface PluginUITextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children"> {
+export interface PluginUITextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "value"> {
+  value?: string;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
@@ -202,7 +208,9 @@ export interface PluginUICheckboxProps extends Omit<React.InputHTMLAttributes<HT
   description?: React.ReactNode;
 }
 
-export interface PluginUISelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+export interface PluginUISelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "value" | "defaultValue"> {
+  value?: string | number;
+  defaultValue?: string | number;
   label: React.ReactNode;
   description?: React.ReactNode;
 }
@@ -230,6 +238,14 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
   active?: boolean;
 }
 
+/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+export interface PluginUIAvatarProps {
+  size?: number;
+  status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
+  motion?: "static" | "ambient";
+  className?: string;
+}
+
 export interface PluginUIWebPageProps {
   readonly url: string;
   readonly title?: string;
@@ -239,7 +255,114 @@ export interface PluginUIWebPageProps {
  * Small host-owned component set for plugin surfaces. These components own the
  * common visual rhythm while plugins retain freedom inside their contribution.
  */
+export interface PluginUIInteractiveAnswerProps {
+  snapshot: unknown;
+  fallbackText?: string;
+  onStateChange?(state: unknown): void;
+  onSync?(input: unknown): Promise<unknown>;
+  onAction(input: unknown): Promise<unknown>;
+  onRefresh(): Promise<unknown>;
+  onRetry(resumeHeld?: boolean): Promise<unknown>;
+}
+
+export interface PluginUIConversationMessageProps {
+  /** Opt-in bounded interactive answer; transport remains owned by the contribution. */
+  interactive?: readonly PluginUIInteractiveAnswerProps[];
+  footer?: React.ReactNode;
+  linkPolicy?: "external-only";
+  role: "user" | "assistant";
+  content: string;
+  className?: string;
+  timestamp?: string;
+  id?: string;
+  latest?: boolean;
+  streaming?: boolean;
+  turnId?: string;
+  turnStatus?: "in_progress" | "completed" | "failed" | "interrupted";
+  /** Read-only work summary; its explicit status does not imply execution timing. */
+  process?: { label: string; content?: string; details?: React.ReactNode };
+  messageActions?: "copy-only" | "none";
+  /** Explicit opt-in: reaction transport and policy belong to the contribution. */
+  reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void };
+  replyPreview?: React.ReactNode;
+  onReply?(): void;
+  replyLabel?: string;
+  attachments?: React.ReactNode;
+}
+
+export interface PluginUIConversationViewProps {
+  /** Opt-in messaging bubbles; standard preserves Coding-style presentation. */
+  presentation?: "standard" | "bubbles";
+  conversationId: string;
+  sessionId?: string;
+  sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding"; compositionProfile?: string };
+  onQuestionReply?: (requestId: string, prompt: string, relation?: import("./protocol").MessageRelation) => Promise<void>;
+  actions?: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  avatar?: React.ReactNode;
+  status?: React.ReactNode;
+  loading?: boolean;
+  /** Hide only this conversation’s history trigger; defaults to true. */
+  showHistorySearch?: boolean;
+  /** Suppress the floating control when another conversation overlays this view. */
+  showJumpToLatest?: boolean;
+  searchLabel: string;
+  searchContent: React.ReactNode;
+  children: React.ReactNode;
+  composer: React.ReactNode;
+}
+
+export interface PluginUIConversationAttachmentProps {
+  resourceId?: string;
+  onOpen?(): void;
+  /** Read a verified byte snapshot independently of the card mount/Blob URL lifetime. */
+  onRead?(): Promise<Blob>;
+  name: string;
+  mediaType: string;
+  size: number;
+  url?: string;
+  loading?: boolean;
+  error?: string;
+  loadLabel: string;
+  downloadLabel: string;
+  onLoad(): void | Promise<string | void>;
+}
+
+export interface PluginUIConversationComposerProps {
+  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
+  conversationId: string;
+  prompt: string;
+  placeholder?: string;
+  running: boolean;
+  submitting?: boolean;
+  queuedCount?: number;
+  pendingCount?: number;
+  stopState?: "pending" | "retry";
+  disabled?: boolean;
+  sendDisabled?: boolean;
+  attachments: readonly { id: string; filename: string; media_type: string; data: string }[];
+  onChangePrompt(value: string): void;
+  onAddAttachments(files: File[]): void;
+  onRemoveAttachment(id: string): void;
+  onSend(prompt: string): void;
+  onStop(): void;
+}
+
+/** Native conversation controls for independent transports, such as personal or support conversations. */
+export interface PluginConversationComponents {
+  View?: React.ComponentType<PluginUIConversationViewProps>;
+  Attachment?: React.ComponentType<PluginUIConversationAttachmentProps>;
+  Message: React.ComponentType<PluginUIConversationMessageProps>;
+  Composer: React.ComponentType<PluginUIConversationComposerProps>;
+}
+
 export interface PluginUIKit {
+  readonly Avatar: React.ComponentType<PluginUIAvatarProps>;
+  readonly ConversationView: React.ComponentType<PluginUIConversationViewProps>;
+  readonly ConversationAttachment: React.ComponentType<PluginUIConversationAttachmentProps>;
+  readonly ConversationComposer: React.ComponentType<PluginUIConversationComposerProps>;
+  readonly ConversationMessage: React.ComponentType<PluginUIConversationMessageProps>;
   readonly WebPage: React.ComponentType<PluginUIWebPageProps>;
   readonly ComposerDrawer: React.ComponentType<ComposerDrawerProps>;
   readonly Page: React.ComponentType<PluginUIPageProps>;
@@ -260,7 +383,24 @@ export interface PluginUIKit {
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
 }
 
-export function createPluginUIKit(react: typeof React): Omit<PluginUIKit, "WebPage"> {
+export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>): Omit<PluginUIKit, "WebPage"> {
+  function StaticAvatar({ size = 24, className }: PluginUIAvatarProps): React.ReactNode {
+    // Lightweight hosts without the desktop renderer keep an existing static agent mark.
+    return react.createElement("svg", {
+      className, width: size, height: size, viewBox: "0 0 24 24",
+      fill: "none", stroke: "currentColor", strokeWidth: 1.75,
+      strokeLinecap: "round", strokeLinejoin: "round", focusable: false,
+      "aria-hidden": true, "data-wuu-component": "plugin-ui-avatar",
+    }, ...iconArtwork.Bot.map(([tag, attributes], key) => react.createElement(tag, { ...attributes, key })));
+  }
+
+  function ConversationMessage({ role, content, className, linkPolicy }: PluginUIConversationMessageProps): React.ReactNode {
+    return react.createElement("div", {
+      className: joinPluginUIClass(`plugin-ui-conversation-message ${role === "assistant" ? "rich-content" : "user-text"}`, className),
+      "data-wuu-component": "plugin-ui-conversation-message", "data-role": role,
+    }, role === "assistant" && renderConversationContent ? react.createElement(renderConversationContent, { content, linkPolicy }) : content);
+  }
+
   const container = (
     tag: "section" | "article" | "div",
     name: string,
@@ -479,6 +619,11 @@ export function createPluginUIKit(react: typeof React): Omit<PluginUIKit, "WebPa
   }
 
   return Object.freeze({
+    Avatar: avatarComponent ?? StaticAvatar,
+    ConversationView: conversationComponents?.View ?? (() => { throw new Error("Native conversation view is unavailable in this host"); }),
+    ConversationAttachment: conversationComponents?.Attachment ?? (() => { throw new Error("Native conversation attachments are unavailable in this host"); }),
+    ConversationMessage: conversationComponents?.Message ?? ConversationMessage,
+    ConversationComposer: conversationComponents?.Composer ?? (() => { throw new Error("Native conversation composer is unavailable in this host"); }),
     ComposerDrawer: createComposerDrawer(react),
     Page,
     Panel,
@@ -792,6 +937,8 @@ export interface HeaderTabDescriptorV1 {
   readonly busy?: boolean;
   readonly dirty?: boolean;
   readonly disabled?: boolean;
+  /** Whether this tab can be closed; omitted by older hosts. */
+  readonly closable?: boolean;
 }
 
 export interface HeaderSnapshotV1 {

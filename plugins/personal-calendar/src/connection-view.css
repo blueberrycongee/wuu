@@ -1,0 +1,35 @@
+.gcal-view { font-family:var(--wuu-font-family-ui,Inter,ui-sans-serif,system-ui,-apple-system,"PingFang SC",sans-serif); font-size:var(--font-ui,15px); color:var(--ink-strong); line-height:1.55; max-width:760px; margin:auto; }
+.gcal-view * { box-sizing:border-box; }
+.gcal-view h2 { font-size:1.35em;font-weight:600;margin:0 0 4px; }
+.gcal-view h3 { font-size:1.1em;font-weight:600;margin:0; }
+.gcal-view p { margin:0; }
+.gcal-heading { display:flex;gap:16px;align-items:center;margin-bottom:32px; }
+.gcal-icon { flex:none;display:grid;place-items:center;width:48px;height:48px;border:1px solid var(--hairline);border-radius:12px;background:var(--surface-1);font-size:1.25em;font-weight:600; }
+.gcal-muted { color:var(--ink-soft); }
+.gcal-connection { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline); }
+.gcal-status { display:flex;align-items:center;gap:8px; }
+.gcal-status::before { content:"";width:7px;height:7px;flex:none;border-radius:50%;background:currentColor; }
+.gcal-button { font:inherit;cursor:pointer;padding:9px 14px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--paper);color:var(--ink-strong);white-space:normal; }
+.gcal-button:hover { background:var(--surface-2); }
+.gcal-button.primary { background:var(--ink-strong);color:var(--paper);border-color:var(--ink-strong); }
+.gcal-view :disabled { cursor:default;opacity:.55; }
+.gcal-view :focus-visible { outline:2px solid var(--ink-soft);outline-offset:3px; }
+.gcal-view fieldset { border:0;padding:24px 0;margin:0;min-width:0; }
+.gcal-view legend { padding:20px 0 0;font-weight:600; }
+.gcal-choice { display:flex;align-items:flex-start;gap:12px;padding:10px 0;cursor:pointer; }
+.gcal-choice input { width:18px;height:18px;flex:none;margin:3px 0;accent-color:var(--ink-strong); }
+.gcal-choice span { overflow-wrap:anywhere; }
+.gcal-choice small { display:block;font-size:.9em;margin-top:3px; }
+.gcal-agenda-form { display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;padding:20px 0;border-top:1px solid var(--hairline); }
+.gcal-zone { grid-column:1/-1;display:flex;gap:14px;align-items:center;flex-wrap:wrap;color:var(--ink-soft); }
+.gcal-view input:not([type=checkbox]) { min-width:0;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--paper);color:var(--ink-strong);font:inherit;padding:10px 12px; }
+.gcal-zone input { flex:1;max-width:310px; }
+.gcal-results { padding:24px 0; }
+.gcal-results > .gcal-muted { margin-top:5px;margin-bottom:16px; }
+.gcal-event { display:grid;grid-template-columns:120px 1fr;gap:16px;padding:15px 0;border-bottom:1px solid var(--hairline);overflow-wrap:anywhere; }
+.gcal-time { color:var(--ink-soft);font-variant-numeric:tabular-nums; }
+.gcal-disconnect { padding:20px 0;border-top:1px solid var(--hairline);margin-top:12px; }
+.gcal-disconnect summary { cursor:pointer;color:var(--ink-soft); }
+.gcal-disconnect p { margin:8px 0 16px; }
+.gcal-notice { padding:16px 0; }
+@media(max-width:520px) { .gcal-connection { align-items:flex-start;flex-direction:column; } .gcal-event { grid-template-columns:1fr;gap:4px; } .gcal-agenda-form { grid-template-columns:1fr; } }

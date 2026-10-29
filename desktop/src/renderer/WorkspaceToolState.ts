@@ -24,6 +24,7 @@ export function useWorkspaceToolState({
   workspaceViewTabs: WorkspaceViewTab[];
   workspaceActiveViewTabID: string | undefined;
   workspaceActiveFileTabID: string | undefined;
+  workspaceConversationOpen: boolean;
   workspaceConversationActive: boolean;
   focusWorkspaceConversation: () => void;
   ensureWorkspaceToolTab: (view: WorkspacePanelView) => void;
@@ -32,7 +33,7 @@ export function useWorkspaceToolState({
   openWorkspaceSideThread: () => void;
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
-  openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
+  openWorkspaceFileTab: (input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
   syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
@@ -49,6 +50,11 @@ export function useWorkspaceToolState({
   const workspaceActiveViewTabID = snapshot.activeTabId;
   const workspaceActiveFileTabID = snapshot.activeFileTabId;
   const conversationSelected = snapshot.conversationSelected;
+  useLayoutEffect(() => {
+    if (!rightPanelGlobalized && snapshot.conversationOpen === false) {
+      void application.invoke("preview.open-conversation", {}).catch(showErrorToast);
+    }
+  }, [application, rightPanelGlobalized, snapshot.conversationOpen]);
   useLayoutEffect(() => {
     if (rightPanelOpen && !conversationSelected && !application.getSnapshot().previewWorkspace.activeTabId) {
       void application.invoke("preview.new-tab", {}).catch(showErrorToast);
@@ -91,7 +97,7 @@ export function useWorkspaceToolState({
   function openWorkspaceDiffTab(input: { threadID: string; path: string; selection: TurnFileDiffSelection }): void {
     void application.invoke("preview.open-diff", { threadId: input.threadID, path: input.path, selection: input.selection }).catch(showErrorToast);
   }
-  function openWorkspaceFileTab(input: { context: RuntimeContext; path: string }): void {
+  function openWorkspaceFileTab(input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }): void {
     void application.invoke("preview.open-file", input).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
@@ -155,6 +161,7 @@ export function useWorkspaceToolState({
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    workspaceConversationOpen: snapshot.conversationOpen !== false,
     workspaceConversationActive: rightPanelGlobalized && conversationSelected,
     focusWorkspaceConversation,
     ensureWorkspaceToolTab,

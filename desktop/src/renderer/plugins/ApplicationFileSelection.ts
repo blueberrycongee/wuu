@@ -42,7 +42,9 @@ export class ApplicationFileSelection implements ApplicationFileSelectionService
     if (target.ownerTabId !== activeID || !sameRuntimeContext(tab.context, state.activeContext) && tab.kind === "draft") return;
     const thread = tab.kind === "thread" ? threadForTab(state, tab.threadID) : undefined;
     if (tab.kind === "thread" && !thread || writable && thread?.read_only) return;
-    return { tab, thread, context: thread ? resolveThreadRuntimeContext(thread, state.projects) : tab.context, storageKey: thread?.id ?? tab.id };
+    const context = thread ? resolveThreadRuntimeContext(thread, state.projects) : tab.context;
+    if (context.kind === "user") return;
+    return { tab, thread, context, storageKey: thread?.id ?? tab.id };
   }
   getSnapshot = (target: ApplicationFileSelectionTargetV1): ApplicationFileSelectionSnapshotV1 => {
     const state = this.options.getState();

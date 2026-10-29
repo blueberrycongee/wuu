@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -50,6 +51,9 @@ func workspaceKindForCWD(wuuHome, cwd string) WorkspaceKind {
 }
 
 func (s *Server) handleThreadStart(req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts create conversations through the named-agent session service"))
+	}
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -403,29 +407,29 @@ func (s *Server) startThreadPrewarm(th *threadState) {
 	})
 }
 
-func (s *Server) handleThreadResume(req Request) error {
+func (s *Server) retainThreadResume(req Request) (*runtime.State, Request, ThreadResumeParams, error) {
 	var params ThreadResumeParams
 	if err := decodeParams(req.Params, &params); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, req, params, err
 	}
 	id := strings.TrimSpace(params.SessionID)
 	var err error
 	if id == "" {
 		current, stateErr := s.rt.RetainState()
 		if stateErr != nil {
-			return s.writeResponse(req.ID, nil, stateErr)
+			return nil, req, params, stateErr
 		}
 		id, err = s.mostRecentVisibleThreadID(current)
 		_ = current.Close()
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, req, params, err
 		}
 		if id == "" {
-			return s.writeResponse(req.ID, nil, errors.New("no sessions found"))
+			return nil, req, params, errors.New("no sessions found")
 		}
 	}
 	if _, err := s.requireRequestAccess(req, MethodThreadResume, nil, access.Resource{Kind: "session", ID: id}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, req, params, err
 	}
 	// Reads follow an accepted execution's captured authority until it settles.
 	// A plugin publication must not turn reopening its local owner into a new
@@ -435,14 +439,30 @@ func (s *Server) handleThreadResume(req Request) error {
 	binding, _, stateErr := s.retainUserThreadExecutionState(id, true)
 	req.timing.span("resume_state", phaseStarted)
 	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
+		return nil, req, params, stateErr
+	}
+	params.SessionID = id
+	return binding, req, params, nil
+}
+
+func (s *Server) handleThreadResume(req Request) error {
+	binding, req, params, err := s.retainThreadResume(req)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	defer binding.Close()
+	return s.handleThreadResumeForState(binding, req, params)
+}
+
+func (s *Server) handleThreadResumeForState(binding *runtime.State, req Request, params ThreadResumeParams) error {
+	id := params.SessionID
+	var err error
+	var phaseStarted time.Time
 	if th := s.threadForState(binding, id); th != nil {
 		phaseStarted = req.timing.now()
 		th.mu.Lock()
 		restorePluginToolLabels(binding.Host, th.Turns)
-		thread := th.threadResumeSnapshotLocked(params)
+		thread := th.snapshotTurnsLocked(nil)
 		th.mu.Unlock()
 		req.timing.span("resume_cached_snapshot", phaseStarted)
 		phaseStarted = req.timing.now()
@@ -451,7 +471,7 @@ func (s *Server) handleThreadResume(req Request) error {
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+		return s.writeThreadResumeResult(binding, req, thread, params, th)
 	}
 	phaseStarted = req.timing.now()
 	req.timing.mark("resume_persisted_load_begin")
@@ -473,7 +493,7 @@ func (s *Server) handleThreadResume(req Request) error {
 		} else if params.HistoryPage {
 			thread = pageThreadSnapshot(thread)
 		}
-		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+		return s.writeThreadResumeResult(binding, req, thread, params, nil)
 	}
 	// An execution can become locally owned after the read capture. Serve the
 	// read-only snapshot rather than replacing that owner or reporting a lease
@@ -486,7 +506,7 @@ func (s *Server) handleThreadResume(req Request) error {
 		th = loaded
 	}
 	th.mu.Lock()
-	thread := th.threadResumeSnapshotLocked(params)
+	thread := th.snapshotTurnsLocked(nil)
 	th.mu.Unlock()
 	phaseStarted = req.timing.now()
 	thread, err = s.threadWithChildAgents(binding, thread)
@@ -494,10 +514,11 @@ func (s *Server) handleThreadResume(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
+	return s.writeThreadResumeResult(binding, req, thread, params, th)
 }
 
-func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, thread Thread, responseOnly bool) error {
+func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, thread Thread, params ThreadResumeParams, source *threadState) error {
+	responseOnly := params.ResponseOnly || params.HistoryPage || params.ConversationHistory
 	phaseStarted := req.timing.now()
 	thread = s.threadWithPersistedMetadata(binding, thread)
 	held, err := s.loadHeldUserTurns(binding, thread.ID)
@@ -508,20 +529,57 @@ func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, th
 	if th := s.threadForState(binding, thread.ID); th != nil {
 		s.startThreadPrewarm(th)
 	}
-	heldMessages := s.heldUserMessageSnapshot(thread.ID, held)
-	pendingMessages := s.pendingUserMessageSummaries(thread.ID)
-	result := ThreadResumeResult{
-		Thread: thread, HeldUserMessages: heldMessages, PendingUserMessages: pendingMessages,
-	}
-	if err := s.writeResponse(req.ID, result, nil); err != nil {
-		return err
-	}
-	if !responseOnly {
-		if err := s.writeNotification(NotificationThreadResumed, ThreadResumedNotification{
+	phaseStarted = req.timing.now()
+	heldMessages := s.heldUserMessageSnapshot(thread.ID, held, req.timing)
+	pendingMessages := s.pendingUserMessageSummaries(thread.ID, req.timing)
+	req.timing.span("resume_pending_summaries", phaseStarted)
+	criticalTiming := req.timing.buffered()
+	responseErr := func() error {
+		th := s.threadForState(binding, thread.ID)
+		if th == nil {
+			// Concurrent cache eviction or another execution owner must not
+			// erase the read-only history captured by this admitted read.
+			th = source
+		}
+		if th != nil {
+			// Provider metadata can wait while Stop or stream events advance the
+			// conversation. Project its history only at the response boundary,
+			// then order that response before the next stream notification.
+			started := req.timing.now()
+			th.streamMu.Lock()
+			defer th.streamMu.Unlock()
+			criticalTiming.span("resume_response_stream_mutex_wait", started)
+			started = req.timing.now()
+			th.mu.Lock()
+			criticalTiming.span("resume_response_thread_mutex_wait", started)
+			started = req.timing.now()
+			fresh := th.threadResumeSnapshotLocked(params)
+			th.mu.Unlock()
+			fresh.ChildAgents, fresh.ProjectExists = thread.ChildAgents, thread.ProjectExists
+			fresh.Worktree = thread.Worktree
+			fresh.Pinned, fresh.FolderID, fresh.WorkspaceID = thread.Pinned, thread.FolderID, thread.WorkspaceID
+			if thread.TitleRevision >= fresh.TitleRevision {
+				fresh.Title, fresh.TitleRevision, fresh.Preview = thread.Title, thread.TitleRevision, thread.Preview
+			}
+			thread = fresh
+			criticalTiming.span("resume_response_snapshot", started)
+		}
+		result := ThreadResumeResult{
 			Thread: thread, HeldUserMessages: heldMessages, PendingUserMessages: pendingMessages,
-		}); err != nil {
+		}
+		if err := s.writeResponse(req.ID, result, nil); err != nil {
 			return err
 		}
+		if !responseOnly {
+			return s.writeNotification(NotificationThreadResumed, ThreadResumedNotification{
+				Thread: thread, HeldUserMessages: heldMessages, PendingUserMessages: pendingMessages,
+			})
+		}
+		return nil
+	}()
+	criticalTiming.flush()
+	if responseErr != nil {
+		return responseErr
 	}
 	if s.threadForState(binding, thread.ID) != nil {
 		phaseStarted = req.timing.now()
@@ -735,6 +793,9 @@ type forkSourceThread struct {
 }
 
 func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+	}
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -744,6 +805,9 @@ func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Context, req Request) error {
+	if s.rt != nil && s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("user hosts fork execution through the named-agent session service"))
+	}
 
 	var params ThreadForkParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -1555,13 +1619,28 @@ func (s *Server) handleThreadPin(req Request) error {
 	return s.notifyThreadUpdated(binding, thread)
 }
 
-func (s *Server) handleThreadArchive(req Request) error {
+func (s *Server) handleThreadArchive(ctx context.Context, req Request) error {
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
 	}
 	defer binding.Close()
+	return s.handleThreadArchiveForState(ctx, binding, req)
+}
 
+func (s *Server) handleThreadArchiveForState(ctx context.Context, binding *runtime.State, req Request) error {
+	if s.closed.Load() {
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if s.sessionOperationCtx != nil {
+		stop := context.AfterFunc(s.sessionOperationCtx, cancel)
+		defer stop()
+	}
+	if err := ctx.Err(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	var params ThreadArchiveParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1571,7 +1650,7 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
-		if err := s.settleThreadExecutionForForcedArchive(binding, id); err != nil {
+		if err := s.settleThreadExecutionForForcedArchive(ctx, binding, id); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
@@ -1608,18 +1687,59 @@ func (s *Server) handleThreadArchive(req Request) error {
 			return s.writeResponse(req.ID, nil, leaseErr)
 		}
 	}
-	metadata, err := binding.Sessions.UpdateArchived(id, params.Archived)
-	if err != nil {
+	// Consent and request lifetime can change while the owned runner settles.
+	// Revalidate the original principal/resources immediately before the write.
+	if _, err := s.requireRequestAccess(req, MethodThreadArchive, nil); err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if s.closed.Load() {
+		releaseThreadMutationLease(id, mutationLease)
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	metadata, err := binding.Sessions.WithContext(ctx).UpdateArchived(id, params.Archived)
+	if err != nil {
+		releaseThreadMutationLease(id, mutationLease)
+		var uncertain *persistence.CommitError
+		if errors.Is(err, session.ErrOutcomeUnknown) || errors.As(err, &uncertain) {
+			err = fmt.Errorf("thread archive outcome is unknown; inspect the session before retrying: %w", err)
+		}
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// The durable mutation is finished, but auxiliary snapshot providers may
+	// still be unwinding. Cancellation can report that committed outcome now;
+	// this owner must join the physical refresh before releasing its lease and
+	// ordered session lane. The child borrows this binding only until that join.
+	type refreshedArchive struct {
+		thread Thread
+		err    error
+	}
+	refreshed := make(chan refreshedArchive, 1)
+	if !s.startBackground(func() {
+		thread, err := s.threadAfterMetadataUpdate(binding, metadata)
+		refreshed <- refreshedArchive{thread: thread, err: err}
+	}) {
+		releaseThreadMutationLease(id, mutationLease)
+		return s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", errServerClosed))
+	}
+	var result refreshedArchive
+	select {
+	case result = <-refreshed:
+	case <-ctx.Done():
+		writeErr := s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", ctx.Err()))
+		<-refreshed
+		releaseThreadMutationLease(id, mutationLease)
+		return writeErr
 	}
 	releaseThreadMutationLease(id, mutationLease)
-	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
+	if result.err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("thread archive state was committed but its refreshed view is unavailable: %w", result.err))
+	}
+	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: result.thread}, nil)
 }
 
 func validateArchiveExecutionOwner(binding, owner *runtime.State, threadID string) error {
@@ -1660,7 +1780,7 @@ var errArchivedWhileRunning = errors.New("archived while the conversation was st
 // in place. An unresponsive live runner retains its execution lease. Cross-process ownership is unaffected: a live owner in
 // another app-server still holds the OS-level execution lock, so the mutation
 // lease acquisition that follows keeps rejecting the archive.
-func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, threadID string) error {
+func (s *Server) settleThreadExecutionForForcedArchive(ctx context.Context, binding *runtime.State, threadID string) error {
 	owner, runID, err := s.retainUserThreadExecutionState(threadID, true)
 	if err != nil {
 		return err
@@ -1691,15 +1811,18 @@ func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, t
 		}
 	}
 
+	// A confirmed archive stays pending through physical settlement rather than
+	// asking the user to repeat consent after an arbitrary cleanup deadline.
 	// Do not hold th.mu while the runner checkpoints partial output and settles.
 	if completion != nil {
-		timer := time.NewTimer(2 * time.Second)
-		defer timer.Stop()
 		select {
 		case <-completion.done:
-		case <-timer.C:
-			return errors.New("thread cancellation is still settling; retry archive after it stops")
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if completion != nil && completion.durabilityErr != nil {
 		return fmt.Errorf("cannot archive before durable turn settlement: %w", completion.durabilityErr)

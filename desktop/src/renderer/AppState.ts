@@ -2135,7 +2135,7 @@ export function isScratchThread(
 export function resolveThreadRuntimeContext(
   thread: Thread,
   projects: DesktopProject[],
-): RuntimeContext {
+): Exclude<RuntimeContext, { kind: "user" }> {
   const project = projects.find((candidate) =>
     threadBelongsToWorkspace(thread, candidate),
   );
@@ -2166,7 +2166,8 @@ export function resolveThreadRuntimeContext(
 export function workspacePanelContext(
   activeContext: RuntimeContext | undefined,
   thread: Thread | undefined,
-): RuntimeContext | undefined {
+): Exclude<RuntimeContext, { kind: "user" }> | undefined {
+  if (activeContext?.kind === "user") return undefined;
   if (!thread || !thread.cwd || thread.cwd === activeContext?.cwd) {
     return activeContext;
   }
@@ -2624,6 +2625,7 @@ export function workspaceNameForContext(context: RuntimeContext, projects: Deskt
   if (context.kind === "no_project") {
     return t("sidebar.conversations");
   }
+  if (context.kind === "user") return context.product_domain;
   const project = projects.find(
     (candidate) => candidate.id === context.project_id,
   );

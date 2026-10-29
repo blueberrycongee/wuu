@@ -4,7 +4,7 @@ import UserNotifications
 import WuuCore
 
 @MainActor final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, ObservableObject {
-    @Published var openedHost: String?
+    @Published var openedNotification: [String: String]?
     private var pending: CheckedContinuation<String, Error>?
     private var deadline: Task<Void, Never>?
     static weak var shared: PushDelegate?
@@ -36,8 +36,14 @@ import WuuCore
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { finish(.failure(error)) }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let host = response.notification.request.content.userInfo["host"] as? String
-        Task { @MainActor in self.openedHost = host }
+        var payload: [String: String] = [:]
+        for (key, value) in response.notification.request.content.userInfo {
+            guard let key = key as? String else { continue }
+            if let text = value as? String { payload[key] = text }
+            else if let number = value as? NSNumber { payload[key] = number.stringValue }
+        }
+        let locator = payload
+        Task { @MainActor in self.openedNotification = locator }
         completionHandler()
     }
 }

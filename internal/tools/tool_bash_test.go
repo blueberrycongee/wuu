@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,15 @@ func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 
 func TestBashRunAddsVerificationSummary(t *testing.T) {
 	root := t.TempDir()
+	// Login shells can reset PATH; use the toolchain running this test without
+	// changing the go test command whose verification classification is checked.
+	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goBinary += ".exe"
+	}
+	bashEnv := filepath.Join(t.TempDir(), "bash_env")
+	mustWriteFile(t, bashEnv, "go() { '"+strings.ReplaceAll(filepath.ToSlash(goBinary), "'", "'\"'\"'")+"' \"$@\"; }\n")
+	t.Setenv("BASH_ENV", filepath.ToSlash(bashEnv))
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/bashverify\n\ngo 1.22\n")
 	mustWriteFile(t, filepath.Join(root, "fail_test.go"), `package bashverify
 

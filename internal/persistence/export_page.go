@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"io"
 	"strings"
 )
@@ -171,6 +172,14 @@ func (s *Store) ExportPage(ctx context.Context, q ExportQuery) (ExportPage, erro
 		return ExportPage{}, err
 	}
 	defer lock.Release()
+	if namespaceIdentityFrom(ctx).migration {
+		if err := inspectionjournal.Check(s.dir, nil); err != nil {
+			return ExportPage{}, err
+		}
+	}
+	if err := s.checkNamespaceAccess(ctx, nil); err != nil {
+		return ExportPage{}, err
+	}
 	return s.backend.exportPage(ctx, q, s.binding.Generation)
 }
 

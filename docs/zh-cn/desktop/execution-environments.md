@@ -28,7 +28,7 @@ docker build -f containers/execution/Dockerfile -t wuu-execution:local .
 | Modal | Python 3.10+、`modal` 1.5+、已配置 SDK 凭据及可访问的执行镜像 | CPU、内存限制及网络隔离 |
 | Daytona | Python 3.10+、`daytona` SDK、已配置凭据及可访问的执行镜像 | 整数 CPU 核数、向上取整至 GiB 的内存及网络隔离 |
 | Vercel Sandbox | Python 3.10+、已登录的 `sandbox` CLI 3+ 及位于服务镜像仓库中的执行镜像 | 整数 CPU 核数、随 CPU 分配的内存及网络隔离 |
-| Command | 已安装且可信的私有执行协议适配器 | 由适配器负责创建环境及落实限制 |
+| Command | 已安装且可信、实现带版本执行后端协议的适配器 | 由适配器负责创建环境及落实限制 |
 
 云端依赖是可选的，不会自动安装。Python 字段可以指向安装了 SDK 的虚拟环境。通过服务提供方的 SDK 或 CLI 登录流程配置凭据。宿主适配器使用这些凭据创建环境，不会自动将其交给工作区命令；环境自身的镜像或服务器可能已有凭据。
 
@@ -73,7 +73,107 @@ Linux 命令写入限制需要 Landlock ABI 3 或更新版本。若不可用，�
 }
 ```
 
-可选字段包括 `shared`、`user`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
+可选字段包括 `shared`、`user`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`shutdown_timeout_ms`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
+
+`shutdown_timeout_ms` 设置宿主从 EOF 到退出的总预算，包含请求排空和提供者资源清理。
+正值必须为 1 到 2,147,483,647 毫秒之间的整数；省略或为零时使用后端默认值：原生 worker
+7 秒、云后端 90 秒、命令适配器 60 秒。命令默认预算涵盖 SDK 最多 35 秒的取消排空、
+10 秒的委派清理及传输余量；清理成功立即返回，不会等待预算耗尽。委派或嵌套适配器的
+外层预算必须长于整条内层
+请求排空和清理链。超时后 Wuu 会终止传输并报告失败，远程资源状态仍可能未知。
+
+## 使用公共 SDK 实现后端
+
+`@wuu/plugin-sdk` 导出 `runExecutionBackendV4` 及 `ExecutionBackendV4` 类型，
+直接服务既有 worker 协议，不新增宿主服务，也不是插件的 `runJSONLRuntime` 协议。
+后端无需导入 Wuu 内部代码即可实现文件操作及进程管理。通过用户配置选择已安装的程序，
+例如 `{ "backend": "command", "command": ["node", "/absolute/path/backend.mjs"], "workspace": "/workspace" }`。
+[独立后端验收实现](../../../scripts/external-composition-acceptance/external-worker.ts)
+展示了仅使用 Node API 的文件读写与列表、进程输出、恢复记录及清理。它明确拒绝受限模式
+下的 shell 执行，是受信任的测试实现，不是生产沙箱。
+
+适配器负责分帧、认证 token 绑定、请求取消和回调路由；提供者实现 `initialize`、
+带类型的 `methods` 映射和 `close`：
+
+- **握手：**以换行分隔 JSON，请求为 `{ id, method, token, data }`，回复为
+  `{ id, data }` 或 `{ id, error }`，其中 `error` 是字符串。每帧含换行最多 16 MiB。
+  首次初始化固定 token 以及不可变的 `{ version: 4, root, session, identity?,
+  environment?, require_existing_workspace?, remove_workspace_on_exit? }` 绑定。
+  初始化成功之前不执行操作，重复初始化不得更改绑定。提供者初始化被取消或失败后必须
+  建立新连接。token 保护的是私有连接，不能替代远程传输认证；跨机器应使用已认证的 SSH
+  或同等安全的传输。
+- **文件与工具：**`execute` 接收 `ExecutionToolRequestV4`，包含工作区工具名、已编码的
+  `call.arguments`、执行者和权限模式，返回普通 `ToolResult`。路径属于已初始化的后端。
+  提供者负责实现操作、落实只读/路径/OS 边界、处理初始化中的保留标志与显式环境变量，
+  并拒绝不支持的策略。SDK 不创建目录，不自动把适配器环境传给命令，也不提供本地文件
+  系统回退。
+- **进程：**实现 `process/start`、`process/list`、`process/get`、`process/read`、
+  `process/stop` 及实际支持的其他控制操作。`ExecutionProcessV4` 使用 snake_case，
+  `root_thread_id` 必须等于 `binding.session`。读取选项和结果刻意保留 Go wire 大小写：
+  `MaxBytes`、`OffsetBytes`、`Wait`、`MinDwell`，以及 `Process`、`Output`、`StartOffset`、
+  `EndOffset`、`TotalBytes`、`Truncated`、`TimedOut`、`Duration`。这些进程字段中的时长
+  单位为**纳秒**，不同于 `timeout_ms`。`emitProcess` 在同一连接发布
+  `{ Type, Cause, Process }` 事件。
+- **接纳与恢复：**只有启动回复及 `process/list` 返回的持久记录均保留宿主
+  `operation_id` 时，才显式声明 `capabilities: ["process.start.v1"]`。辅助函数检查
+  回复标识并要求两个 handler 及 `close` 都存在，持久性由提供者保证。此能力不承诺重复启动去重；
+  SDK 不重放请求，回复丢失也不代表操作没有产生效果。
+- **生命周期：**handler 可以并发，需保护共享状态。`context.signal` 随对应请求结束，
+  `cancel` 中止它，终态回复等待 handler 实际退出。已接纳的后台进程不能将此信号作为
+  生命周期；应使用 `context.lifetimeSignal`，并在 `close` 中停止所属进程树。EOF、
+  格式错误或输出失败先取消并等待请求退出，再清理资源；输出失败后，阻塞的输入也不能
+  拖延清理。不支持的方法明确报错，不会改用本地实现。
+- **代码与产物：**可选的 `run_code` handler 只能在自身父请求有效期间调用
+  `context.invokeTool`。版本 4 要求每次程序的 `result_view` 语义，不能忽略它仍声称执行
+  成功。产物通过 `export/read` 按 token 和字节偏移读取，返回 base64 `{ data, eof }`，
+  随后调用 `export/close`。提供者负责不可变快照；不支持的 handler 应省略，而非伪造成功。
+
+局部扩展后端时，`delegateExecutionBackendV4` 提供显式 peer 客户端，不查找或自动启动
+默认 worker：
+
+```ts
+const peer = delegateExecutionBackendV4({
+  command: ["node", "/absolute/path/selected-peer.mjs"],
+  capabilities: ["process.start.v1"],
+});
+await runExecutionBackendV4({
+  ...peer,
+  methods: {
+    ...peer.methods,
+    async execute(request, context) {
+      // Add an audit operation here, then explicitly delegate unchanged input.
+      return peer.methods.execute!(request, context);
+    },
+  },
+});
+```
+
+peer 仅在初始化时启动，必须接受相同的完整绑定、协议版本、工作区根目录及要求的能力。
+每次调用保留该绑定和当前取消信号。代码回调使用原始外层请求的 `invokeTool`，进程事件
+仍归外层连接生命周期。peer 缺失或失败时不重试、不替换。传输终态失败会立即关闭 peer，
+即使外层输入仍保持打开。取消最多等待 35 秒取得 peer 的终态回复，随后关闭无响应的 peer。
+所启动的 peer 通过 EOF 开始清理，默认退出预算为 10 秒。仅 `command` 可设置
+`shutdown_grace_ms`，取值为 1 到 2,147,483,647 毫秒之间的整数，例如云适配器可设置
+`90_000`，同时将其外层命令配置设为 `"shutdown_timeout_ms": 150000`。外层配置的
+`shutdown_timeout_ms` 必须长于完整的请求排空和清理链，包含
+每一层嵌套委派。超时后 peer 会被终止并报告清理失败；远程资源状态仍可能未知，不能据此
+声称所有资源已停止。也可显式提供 `{ input, output, close }` 传输代替 `command`，此时
+`close` 负责物理清理，不能同时设置 `shutdown_grace_ms`。未提供 `env` 时，子进程继承
+适配器环境，因此只能选择可信 peer，必要时应显式提供受限环境。
+
+原生 worker 关闭时会停止并回收其仍持有控制句柄的全部进程，包括 managed 进程，
+但不会停止共享注册表中属于其他 worker 的进程。清理错误会返回调用方。原生进程清理
+或宿主传输清理失败时，Wuu 会保留 worker 工作区，并跳过宿主容器和状态目录删除，
+供显式恢复时检查。
+
+委派必须保持同一执行世界。如果文件覆盖改用无关的内存或远程文件系统，应省略委派的
+进程方法和 `process.start.v1`，而非让命令读取另一套文件。
+[审计及内存文件系统验收实现](../../../scripts/external-composition-acceptance/README.md)
+通过真实宿主验证这两种选择。
+
+插件消费者使用独立的[会话绑定进程 API](../customize/plugin-authoring.md#绑定会话的-shell-进程)。
+`getProcessEnvironment` 和已接纳进程的快照公开所选位置，但这些元数据不能用来改变绑定或
+获取权限。
 
 ## 可重复验证
 
@@ -94,3 +194,6 @@ SSH 检查使用一次性测试服务器：将 JSON 格式的 SSH 配置赋给 `
 宿主与 worker 必须使用执行协议版本 4。升级宿主时也需要更新 worker 可执行文件
 或重建镜像。旧 worker 在执行前就会被拒绝：程序要求仅通过工具调用的解释器
 隔离、按执行者隔离的 JSON 状态和每次程序的结果视图选择，不能回退到原生程序权限。此次升级不扩大任何现有权限。
+
+`host.process` 的远程启动还要求版本 4 握手中声明新增的 `process.start.v1` 能力。
+较旧的版本 4 worker 仍可处理其已有方法，但不能在插件进程启动时悄悄忽略新的操作标识契约。

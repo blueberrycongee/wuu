@@ -12,6 +12,25 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Expose a composer runtime slot and add an installable Token Speed example that estimates observable streamed output.
 
+- Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
+- Add explicit browser current-page capture and native share intake into the existing Personal main conversation. Native compilation, signing and device acceptance remain separate from source-level integration.
+
+- Add native Personal message menus for copying, text selection, and plain-text quotation, with bounded previews and reduced-motion support. Formal reply bindings and reactions remain unavailable in these menus.
+
+- Add Personal interactive answer forms with durable submission receipts and read-only Google Calendar connection settings. Calendar remains unavailable until configured; Personal action review remains unavailable pending its production policy and authorization adapters.
+
+- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
+- Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
+- Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
+
+- Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
+- Select a trusted plugin tool as the replacement for the native `web_search` tool while retaining the remaining tool registry, execution policy and lifecycle.
+
+- Route plugin-owned processes through the conversation's selected execution environment, retaining their location and ownership across configuration changes. Remote start admission does not block unrelated process reads or stops, and uncertain starts retain reconciliation identities without automatic replay.
+- Publish an execution-backend TypeScript SDK for the existing versioned worker transport, including authenticated binding, tool callbacks, cancellation, process receipts and transport cleanup, so independent backends do not import Wuu's Go internals.
+- Install exact-version, integrity-pinned, self-contained npm plugins and replay saved distribution locks through the existing trust and generation lifecycle, without install scripts or automatic dependency downloads.
+- Separate goal and automation presentation into independently selectable UI plugins using public services and selected-provider slots. Composition version 5 preserves older explicit desktop selections while respecting exclusions and headless configurations.
+- Assemble native default providers through one lazy factory catalog and separate the default agent policy from its consumer contract, allowing external replacements without constructing disabled defaults.
 - Add a default-disabled experimental Generative UI plugin with composable layouts,
   reactive local calculations, charts and forms, bounded data programs, per-result
   state restoration, and readable fallback. Preview validated nodes while tool
@@ -151,6 +170,43 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
+
+- Render Markdown conversation attachments with the shared document reading presentation while keeping HTML and other executable text inert.
+- Give Personal a persistent renameable identity label, visible status, wider bubble flow, and compact conversation composer without changing Coding conversation presentation.
+- Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
+
+### Fixed
+
+- Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
+
+- Keep Personal task cancellation recoverable across interrupted dispatch and queue promotion, preserve unanswered questions during concurrent completion, and recover tool-disabled main-conversation replies without repeating worker execution. Stopping an undelivered terminal update preserves its saved outcome.
+
+- Automatically synchronize Personal interactive answers and include current field values in the next ordinary message. Remove redundant save and explanation buttons, preserve retry snapshots, and fix surface storage keys and direct tool-result projection.
+
+- Forward Electron launch arguments, including isolated user-data directories, through the desktop development launcher.
+
+- Interrupt desktop owner admission when the bootstrap pipe times out or its context is cancelled.
+
+- Recover Personal drafts and uncertain sends across restarts, retry unavailable quote sources, and keep reply panels compact. Preserve stale calendar warnings and associate delayed authorization cleanup diagnostics with their original attempt.
+
+- Check for desktop updates every 30 minutes instead of every six hours.
+
+- Reserve a font-scaled timestamp column in Personal conversations so revealing times does not overlap message bubbles; attachments and reactions move with their message.
+
+- Keep Personal pages and their composer visible when a retained Coding conversation is open underneath them; hidden Coding content no longer occupies grid rows or paints through the page.
+- Preserve Personal background recovery across transient host failures and retry durable pending work on later ticks.
+
+- Keep retried Personal task updates and resumes responsive while question or result delivery is being reconciled.
+
+- Restore twin conversation history automatically when recent background context fills the first history pages, including tab reentry and interrupted reads.
+- Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
+
+- Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.
+- Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
+- Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
+- Continue checking for newer desktop releases while an update is available,
+  and refresh the latest version before downloading from either update entry point.
 - Keep the main conversation input centered across the full canvas regardless of the right tool rail. Let the rail scroll above the input in short windows and when drafts expand.
 
 - Reduce redundant desktop hover labels, reveal clipped names only when needed, and unify useful hints at the saved UI text size with readable wrapping. Keep hints next to their controls, prevent nested duplicates, and preserve control layout and click targets.
@@ -227,6 +283,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
+
+- Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
+- Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.
+
+- Keep normal plugin-generation retirement silent after catalog changes while preserving genuine update failures and plugin diagnostics.
+- Preserve generated UI disclosure state when leaving a view immediately after opening or closing it.
+- Keep newly started, completed or interrupted turns and stopped composer input from reverting when an older conversation-resume response arrives late. Reconcile accepted input changes in order, including edits, removals, mode switches and already-sent messages, without delaying Stop behind response output.
+- Scope app-server control locks to each conversation, avoiding cross-conversation waits behind a slow plugin control read during send acknowledgement or Stop. Preserve same-conversation revision fences and measure control-lock waits separately from provider reads.
+- Keep slow conversation resumes off serial stdio ingress while preserving same-conversation request order and captured authority. Active Stop bypasses pure reads, and resume snapshots capture live state after slow metadata reads.
 - Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
 - Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
 - Keep effective configuration tied to the captured base source when applying project settings, avoiding a redundant file read and mismatched source/config snapshots during external edits.

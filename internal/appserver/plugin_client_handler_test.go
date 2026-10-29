@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,5 +190,133 @@ func TestPluginClientRequestRoutesOnlyToActiveGeneration(t *testing.T) {
 	})
 	if responseByID(t, parseOutput(t, out.String()), "stale")["error"] == nil {
 		t.Fatal("stale generation unexpectedly reached plugin runtime")
+	}
+}
+
+func TestPluginClientNonOwnerResourceAdmissionAndReplay(t *testing.T) {
+	var calls atomic.Int32
+	base, item, _ := newPluginStateTestServer(t,
+		func(id string) pluginhost.Client { return &desktopServiceTestClient{id: id} },
+		func(string) pluginhost.Client {
+			return &desktopServiceTestClient{id: "external.catalog", provider: true, call: func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+				calls.Add(1)
+				return json.RawMessage(`{"private":"catalog"}`), nil
+			}}
+		},
+	)
+	viewer, _ := principal.Authenticated(principal.Identity{Kind: "user", Issuer: "fixture", Tenant: "tenant", Subject: "viewer"})
+	params := PluginClientRequestParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, GraphGeneration: base.rt.ExtensionSnapshot().GenerationID, Service: "example.catalog", Method: "list"}
+	var revoked atomic.Bool
+	policy := access.PolicyFunc(func(_ context.Context, r access.Request) (access.Decision, error) {
+		want := map[string]string{"plugin-subject": params.ID, "plugin-fingerprint": params.Fingerprint, "plugin-generation": params.GraphGeneration, "plugin-service": params.Service, "plugin-method": params.Method}
+		if revoked.Load() || r.Owner || r.Principal != viewer.Identity() || r.Action != MethodPluginClientRequest || len(r.Resources) != len(want) {
+			return access.Decision{}, nil
+		}
+		for _, resource := range r.Resources {
+			if want[resource.Kind] != resource.ID || resource.ID == "" {
+				return access.Decision{}, nil
+			}
+		}
+		return access.Decision{Allow: true}, nil
+	})
+	out := &captureGuardedWriter{}
+	srv := New(base.rt, out, WithPrincipal(viewer), WithAccessPolicy(policy))
+	defer srv.Close()
+	call := func(id string, p PluginClientRequestParams) Response {
+		t.Helper()
+		raw, _ := json.Marshal(Request{ID: mustJSON(id), Method: MethodPluginClientRequest, Params: mustJSON(p)})
+		if err := srv.handleLine(context.Background(), raw); err != nil {
+			t.Fatal(err)
+		}
+		for _, frame := range out.frames {
+			var response Response
+			_ = json.Unmarshal(frame.payload, &response)
+			if string(response.ID) == string(mustJSON(id)) {
+				return response
+			}
+		}
+		t.Fatal("missing response")
+		return Response{}
+	}
+	if response := call("allowed", params); response.Error != nil || calls.Load() != 1 {
+		t.Fatalf("nonowner selected request failed: %+v, calls=%d", response, calls.Load())
+	}
+	for _, field := range []string{"subject", "fingerprint", "generation", "service", "method"} {
+		bad := params
+		switch field {
+		case "subject":
+			bad.ID = "other"
+		case "fingerprint":
+			bad.Fingerprint = "other"
+		case "generation":
+			bad.GraphGeneration = "other"
+		case "service":
+			bad.Service = "other"
+		case "method":
+			bad.Method = "other"
+		}
+		if response := call(field, bad); response.Error == nil {
+			t.Fatalf("cross-%s request admitted", field)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatal("denied route reached provider")
+	}
+	revoked.Store(true)
+	for _, frame := range out.frames {
+		var response Response
+		_ = json.Unmarshal(frame.payload, &response)
+		if string(response.ID) == `"allowed"` && (frame.guard == nil || frame.guard() == nil) {
+			t.Fatal("revoked plugin response replay disclosed data")
+		}
+	}
+}
+
+func TestPluginClientNonOwnerCancelUsesCapturedOperation(t *testing.T) {
+	started := make(chan struct{})
+	base, item, _ := newPluginStateTestServer(t,
+		func(id string) pluginhost.Client { return &desktopServiceTestClient{id: id} },
+		func(string) pluginhost.Client {
+			return &desktopServiceTestClient{id: "external.catalog", provider: true, call: func(ctx context.Context, _ pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+				close(started)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}}
+		},
+	)
+	viewer, _ := principal.Authenticated(principal.Identity{Kind: "user", Issuer: "fixture", Tenant: "tenant", Subject: "viewer"})
+	generation := base.rt.ExtensionSnapshot().GenerationID
+	out := &lockedBuffer{}
+	var denyCancel atomic.Bool
+	srv := New(base.rt, out, WithPrincipal(viewer), WithAccessPolicy(access.PolicyFunc(func(_ context.Context, r access.Request) (access.Decision, error) {
+		want := map[string]string{"plugin-subject": item.SubjectID, "plugin-fingerprint": item.Fingerprint, "plugin-generation": generation, "plugin-service": "example.catalog", "plugin-method": "list", "plugin-client-request": "request"}
+		if r.Principal != viewer.Identity() || r.Owner || len(r.Resources) != len(want) || (r.Action != MethodPluginClientRequest && r.Action != MethodPluginClientCancel) || (r.Action == MethodPluginClientCancel && denyCancel.Load()) {
+			return access.Decision{}, nil
+		}
+		for _, resource := range r.Resources {
+			if want[resource.Kind] != resource.ID || resource.ID == "" {
+				return access.Decision{}, nil
+			}
+		}
+		return access.Decision{Allow: true}, nil
+	})))
+	defer srv.Close()
+	callPluginPackageRPC(t, srv, "request", MethodPluginClientRequest, PluginClientRequestParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, GraphGeneration: generation, Service: "example.catalog", Method: "list", RequestID: "request"})
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("nonowner request not dispatched: %s", out.String())
+	}
+	cancel := PluginClientCancelParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, GraphGeneration: generation, RequestID: "request"}
+	denyCancel.Store(true)
+	callPluginPackageRPC(t, srv, "denied", MethodPluginClientCancel, cancel)
+	if responseByID(t, parseOutput(t, out.String()), "denied")["error"] == nil {
+		t.Fatal("cancel bypassed selected policy")
+	}
+	denyCancel.Store(false)
+	callPluginPackageRPC(t, srv, "cancel", MethodPluginClientCancel, cancel)
+	response := responseByID(t, parseOutput(t, out.String()), "cancel")
+	if response["error"] != nil || !remarshal[PluginClientCancelResult](t, response["result"]).Cancelled {
+		t.Fatalf("captured operation cancel failed: %+v", response)
 	}
 }

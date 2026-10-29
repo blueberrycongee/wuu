@@ -49,3 +49,53 @@ test("session next-step intent uses its optional provider operation and preserve
   assert.equal(restored.permission_mode, "default");
   assert.equal(legacyWrites, 0);
 });
+
+// Receipt admission is an independent selected-domain transaction; byte payloads,
+// ownership, null controls, and uncertain results must cross the public wire intact.
+test("session client receipts retain scoped admission bytes without fallback or replay", async () => {
+  const receipt = {request_id:"input",receipt_id:"receipt",host_request_id:"host-input",client_id:"client",queue_id:"queue",session_id:"session",plugin_id:"consumer",owner:"owner",receipt_state:"accepted",execution_state:"held",accepted_at:"2026-10-27T00:00:00Z",revision:1} as const;
+  const accepted = {Receipt:receipt,Fingerprint:"fingerprint",MessageJSON:"AAEC",RuntimeJSON:"",SelectionJSON:null,LiveOwner:"owner"};
+  const scope = {Binding:{user_space_id:"space",product_domain:"personal"},SessionID:"session",PluginID:"consumer",LiveOwner:"owner"};
+  let admissions = 0, changes = 0;
+  const provider = sessionDomainProvider({
+    AcceptClientInput: ([input, control, baseline], context) => {
+      admissions++; assert.equal(context.caller, "admitted-host");
+      assert.deepEqual(input, accepted); assert.equal(control, null); assert.equal(baseline, null);
+      return [input, true];
+    },
+    ReadClientInput: ([bound, request]) => { assert.deepEqual(bound, scope); assert.equal(request, "host-input"); return [accepted, true]; },
+    ChangeClientInput: ([input, state, owner, bytes, control, baseline]) => {
+      changes++; assert.deepEqual(input,accepted); assert.equal(state,"queued"); assert.equal(owner,"next-owner");
+      assert.equal(bytes,null); assert.equal(control,null); assert.equal(baseline,null);
+      throw Object.assign(new Error("unknown commit outcome"), {code:"session_outcome_unknown"});
+    },
+  });
+  const host = {call: async (_method: string, request: ServiceInvokeParams) =>
+    JSON.parse(JSON.stringify(await provider.invoke(JSON.parse(JSON.stringify({...request,caller:"admitted-host"}))))),
+  } as unknown as RuntimeHost;
+  const client = sessionDomain(host);
+  assert.deepEqual(await client.call("AcceptClientInput", [accepted,null,null]), [accepted,true]);
+  assert.deepEqual(await client.call("ReadClientInput", [scope,"host-input"]), [accepted,true]);
+  await assert.rejects(client.call("ChangeClientInput", [accepted,"queued","next-owner",null,null,null]), error => (error as {code:string}).code === "session_outcome_unknown");
+  await assert.rejects(client.call("RecoverClientInput", [scope,accepted]), error => (error as {code:string}).code === "method_not_found");
+  assert.equal(admissions,1); assert.equal(changes,1);
+});
+
+// Inspection lifetime is independent from the execution it fences; release is
+// cleanup authority and must remain routable after cancellation.
+test("session inspection preserves the selected guard and cleanup routing", async () => {
+  const calls: Array<{method:string;cleanup?:boolean}> = [];
+  const provider = sessionDomainProvider({
+    AcquireInspection: ([id]) => [{id,namespaces:["session"],revision:"9007199254740993"}],
+    ReleaseInspection: ([id]) => { assert.equal(id,"guard"); return []; },
+  });
+  const host = {call: async (_method:string, request:ServiceInvokeParams, options?:{cleanup?:boolean}) => {
+    calls.push({method:request.method,cleanup:options?.cleanup});
+    return provider.invoke(request);
+  }} as unknown as RuntimeHost;
+  const client = sessionDomain(host);
+  const [guard] = await client.call("AcquireInspection", ["guard"]);
+  assert.equal(guard.revision,"9007199254740993");
+  assert.deepEqual(await client.call("ReleaseInspection", [guard.id]),[]);
+  assert.deepEqual(calls,[{method:"AcquireInspection",cleanup:undefined},{method:"ReleaseInspection",cleanup:true}]);
+});

@@ -498,3 +498,180 @@ func TestSharingConsumerIsCurrentProductOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonalProfileSelectsReplaceablePrompt(t *testing.T) {
+	for _, version := range []int{2, 3, Version} {
+		legacy := &Config{Version: version, Profile: "personal"}
+		resolved, err := legacy.Resolve()
+		if err != nil || !resolved.Includes("personal") || !resolved.Includes("wuu.resource-access") {
+			t.Fatalf("explicit Personal selection required rewriting config v%d: %v", version, err)
+		}
+	}
+	cfg := DefaultConfig("personal")
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Includes("personal") || !resolved.Includes("automation") || !resolved.Includes("personal-calendar") || resolved.Includes("wuu.prompt.default") {
+		t.Fatal("Personal profile did not select its complete provider composition")
+	}
+	found := false
+	for _, binding := range resolved.Services {
+		if binding.Service == "agent.prompt" && binding.Major == 1 && binding.Provider == "personal" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Personal prompt is not an explicit service binding")
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"replacement.prompt": true}, Services: []Binding{{Service: "agent.prompt", Major: 1, Provider: "replacement.prompt"}}}}
+	resolved, err = cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range resolved.Services {
+		if binding.Service == "agent.prompt" && binding.Provider != "replacement.prompt" {
+			t.Fatal("Personal prompt cannot be replaced")
+		}
+	}
+	cfg.Patches = append(cfg.Patches, Patch{Modules: map[string]bool{"replacement.prompt": false}})
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("missing selected prompt restored native or Personal fallback")
+	}
+}
+
+// Durable grants are product capability selection, not an implicit mutation of
+// every Coding/minimal document provider's storage and namespace contract.
+func TestExecutionAuthorizationRequiresExplicitProductSelection(t *testing.T) {
+	for _, profile := range []string{"desktop", "headless", "minimal"} {
+		resolved, err := DefaultConfig(profile).Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, module := range []string{"wuu.execution-access", "wuu.execution-authorization.default"} {
+			if resolved.Includes(module) {
+				t.Errorf("%s implicitly selected %s", profile, module)
+			}
+		}
+	}
+	resolved, err := DefaultConfig("personal").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, module := range []string{"wuu.execution-access", "wuu.execution-authorization.default"} {
+		if !resolved.Includes(module) {
+			t.Errorf("explicit Personal product omitted %s", module)
+		}
+	}
+}
+
+// Splitting optional presentation from business providers must preserve old
+// desktop selections without enabling a feature the user omitted or removed.
+func TestLegacyFeaturePresentationMigration(t *testing.T) {
+	for _, feature := range []struct{ runtime, ui string }{{"goal", "goal-ui"}, {"automation-client", "automation-ui"}} {
+		for _, tc := range []struct {
+			name              string
+			version           int
+			renderer, exclude bool
+			want              bool
+		}{
+			{"legacy desktop", 4, true, false, true},
+			{"legacy headless", 4, false, false, false},
+			{"explicit removal", 4, true, true, false},
+			{"current explicit", 5, true, false, false},
+		} {
+			t.Run(feature.runtime+"/"+tc.name, func(t *testing.T) {
+				modules := []string{feature.runtime}
+				if tc.renderer {
+					modules = append(modules, "wuu.default-shell")
+				}
+				cfg := Config{Version: tc.version, Modules: &modules}
+				if tc.exclude {
+					cfg.Patches = []Patch{{Modules: map[string]bool{feature.ui: false}}}
+				}
+				got, err := cfg.Resolve()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Includes(feature.ui) != tc.want {
+					t.Fatalf("presentation=%v want=%v selection=%+v", got.Includes(feature.ui), tc.want, got)
+				}
+				if tc.want && got.SourceForModule(feature.ui) != "migration:v4-to-v5" {
+					t.Fatalf("migration provenance=%q", got.SourceForModule(feature.ui))
+				}
+				if len(modules) != 1+map[bool]int{true: 1, false: 0}[tc.renderer] {
+					t.Fatal("resolution changed source configuration")
+				}
+			})
+		}
+	}
+}
+
+func TestLegacyFeaturePresentationFollowsExternalRendererBinding(t *testing.T) {
+	cfg := Config{Version: 4, Modules: &[]string{"goal", "external.shell"}, Services: []Binding{{Service: "ui.shell", Major: 1, Provider: "external.shell"}}}
+	got, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Includes("goal-ui") {
+		t.Fatalf("external renderer lost legacy feature presentation: %+v", got)
+	}
+}
+
+// Metadata is a migration input, never an implicit module selection. Both the
+// renderer's explicit selection and the user's presentation exclusions survive.
+func TestLegacyFeaturePresentationMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		version                  int
+		renderer, excluded, want bool
+	}{
+		{"legacy selected renderer", 4, true, false, true},
+		{"discovery alone", 4, false, false, false},
+		{"explicit exclusion", 4, true, true, false},
+		{"current selection", 5, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			modules := []string{"goal"}
+			if tc.renderer {
+				modules = append(modules, "independent.shell")
+			}
+			cfg := Config{Version: tc.version, Modules: &modules}
+			if tc.excluded {
+				cfg.Patches = []Patch{{Modules: map[string]bool{"goal-ui": false}}}
+			}
+			before, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := cfg.ResolveWithMetadata(Metadata{RendererServices: map[string][]string{"independent.shell": {"ui.shell"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Includes("goal-ui") != tc.want {
+				t.Fatalf("selection=%+v want presentation=%v", got, tc.want)
+			}
+			after, err := json.Marshal(cfg)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("metadata resolution rewrote the persisted configuration", err)
+			}
+			static, err := cfg.Resolve()
+			if err != nil || static.Includes("goal-ui") {
+				t.Fatalf("static resolution retained metadata from another call: %+v %v", static, err)
+			}
+		})
+	}
+}
+
+func TestLegacyFeaturePresentationDoesNotTreatAddonAsApplicationRenderer(t *testing.T) {
+	cfg := Config{Version: 4, Modules: &[]string{"goal", "independent.addon"}}
+	for _, services := range [][]string{nil, {"search.provider"}, {"ui.notification"}} {
+		resolved, err := cfg.ResolveWithMetadata(Metadata{RendererServices: map[string][]string{"independent.addon": services}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Includes("goal-ui") {
+			t.Fatalf("addon services %v activated application presentation: %+v", services, resolved)
+		}
+	}
+}

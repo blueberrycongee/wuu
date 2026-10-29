@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   requireBackgroundService, requireKernelService, requireProcessService, RuntimeHostServiceError,
-  startBackground, startProcess, readProcess, stopProcess, sendProcessEvent,
+  startBackground, getProcessEnvironment, startProcess, readProcess, stopProcess, sendProcessEvent,
   type RuntimePlugin, type RuntimeHost, type ToolExecuteParams, type PluginProcessSnapshot,
 } from "@wuu/plugin-sdk";
 import { Events } from "./events.js";
@@ -187,12 +187,15 @@ export function createMonitorPlugin(): RuntimePlugin {
       if (index < 0) throw new Error("monitor history is awaiting event delivery");
       tasks.splice(index, 1);
     }
+    const environment = await getProcessEnvironment(scoped);
+    // The callback cwd is a host path, not a remote execution override. Omitting
+    // cwd preserves the captured backend root, including local worktree scopes.
     const process = await startProcess(scoped, {
-      key: params.call_id || randomUUID(), command: `export PYTHONUNBUFFERED=1\n${args.command}`, cwd: params.cwd, timeout_ms: timeout, follow_parent: true,
+      key: params.call_id || randomUUID(), command: `export PYTHONUNBUFFERED=1\n${args.command}`, timeout_ms: timeout, follow_parent: true,
     });
     const existing = tasks.find(task => task.id === process.id);
     if (existing) return publicTask(existing);
-    const task: Task = { id: process.id, thread_id: threadID, command: args.command, description: args.description.trim(), cwd: params.cwd,
+    const task: Task = { id: process.id, thread_id: threadID, command: args.command, description: args.description.trim(), cwd: process.environment?.root ?? environment.root,
       persistent: !!args.persistent, timeout_ms: timeout, started_at: new Date().toISOString(), status: "running", lines: 0, events: 0, suppressed: 0, output: "", offset: 0 };
     tasks.push(task);
     try {

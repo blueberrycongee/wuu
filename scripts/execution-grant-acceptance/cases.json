@@ -1,0 +1,15 @@
+[
+  "external identity, resource policy and execution authority compile against the packed public SDK",
+  "composition selects the independent providers with native grant and resource-policy modules disabled",
+  "selected policy distinguishes exact plugin subject, fingerprint, generation, method, capability and dependency service",
+  "signed provider authentication establishes an attested nonowner principal",
+  "shipped Personal creates a task-lineage parent and exact-run child through the public gateway",
+  "unattended execution continues after the authenticated GUI transport disconnects",
+  "durable grants and task lineage restore after a complete host restart",
+  "revoking a login token does not implicitly revoke the separately authorized durable account grant",
+  "provider-owned account disablement rejects unattended effects",
+  "provider-owned grant revocation rejects descendants and later restoration",
+  "expanded action, wrong session, wrong run and expired grants fail closed",
+  "selected provider failure and removal never fall back to native execution authority",
+  "native execution authority honestly rejects unsupported authenticated account durability"
+]

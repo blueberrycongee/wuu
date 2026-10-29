@@ -116,11 +116,8 @@ func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 		running:         map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
-		capacity := maxToolConcurrency
-		if config.Serial {
-			capacity = 1
-		}
-		runtime.gate = NewToolExecutionGate(capacity)
+		// Parallel capacity must be explicitly admitted by the caller.
+		runtime.gate = NewToolExecutionGate(1)
 	}
 	runtime.SetStepIndex(config.StepIndex)
 	return runtime
