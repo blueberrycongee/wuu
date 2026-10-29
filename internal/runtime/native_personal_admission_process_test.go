@@ -150,3 +150,57 @@ func TestPersonalDelegatedNativeAdmissionProcess(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonalSideLateNativeBoundaryProcess(t *testing.T) {
+	fixture := os.Getenv("WUU_CONTINUATION_FIXTURE")
+	if fixture == "" {
+		t.Skip("run native admission acceptance")
+	}
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	home, root, marker := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "admit")
+	secret := filepath.Join(home, "sessions", "coding.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(secret), 0700))
+	require.NoError(t, os.WriteFile(secret, []byte("coding-secret"), 0600))
+	plugin := testRuntimePlugin("late-personal-fixture")
+	plugin.Root = fixture
+	plugin.Runtime.Command = node
+	plugin.Runtime.Args = []string{"lazy-native.js", "thread-admission", marker}
+	plugin.MCPServers = map[string]config.MCPServerConfig{"forbidden": {Command: "/nonexistent/forbidden-mcp"}}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "fixture"}}, Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{plugin.ID: true}, Services: []composition.Binding{{Service: toolservice.ServiceName, Major: 1, Provider: plugin.ID}, {Consumer: plugin.ID, Service: toolservice.ServiceName, Major: 1, Provider: toolservice.DefaultModule}}}}}}
+	owner, err := NewSession(Options{RootDir: root, HomeDir: home, WuuHome: home, UserSpaceID: "local", ProductDomain: "personal", Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	state, err := owner.RetainState()
+	require.NoError(t, err)
+	defer state.Close()
+	side, release, err := owner.NewSideThreadRunnerForState(state, "personal-late-side", owner.RootDir, ThreadModelSelection{}, "side prompt", "personal-parent")
+	require.NoError(t, err)
+	defer func() {
+		_ = CloseSideThreadTools(context.Background(), side)
+		if release != nil {
+			_ = release()
+		}
+	}()
+	require.False(t, owner.pluginGeneration.nativeDependencies.initialized)
+	require.NoError(t, os.WriteFile(marker, []byte("ready"), 0600))
+	require.NoError(t, (workingnotes.Store{Home: owner.ProductDataRoot()}).CompareAndSwap("personal-late-side", nil, `{"side.md":"late-personal-note"}`))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "personal-late-side", ExecutionID: "turn"})
+	result, err := side.Tools.Execute(ctx, providers.ToolCall{ID: "notes", Name: "notes", Arguments: `{"action":"read","path":"side.md"}`})
+	require.NoError(t, err)
+	require.Contains(t, result, "late-personal-note")
+	args, _ := json.Marshal(map[string]string{"path": secret})
+	result, err = side.Tools.Execute(ctx, providers.ToolCall{ID: "secret", Name: "read_file", Arguments: string(args)})
+	require.NotContains(t, result, "coding-secret")
+	require.Contains(t, fmt.Sprint(err)+result, "protected")
+	owner.pluginGeneration.nativeDependencies.mu.Lock()
+	manager := owner.pluginGeneration.nativeDependencies.manager
+	owner.pluginGeneration.nativeDependencies.mu.Unlock()
+	require.Nil(t, manager, "late Personal admission started MCP")
+	shared, err := (workingnotes.Store{Home: home}).Read("personal-late-side")
+	require.NoError(t, err)
+	require.Nil(t, shared)
+}
