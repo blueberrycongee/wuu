@@ -29,6 +29,7 @@ func (p Plugin) PackageContract() (PackageContract, error) {
 		source = "user"
 	}
 	spec := extensions.PackageSpec{
+		StorageTransfers:     p.StorageTransfers,
 		ID:                   p.ID,
 		Source:               source,
 		Scope:                source,

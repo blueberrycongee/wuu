@@ -47,6 +47,7 @@ type persistedFile struct {
 }
 
 type persistedMessage struct {
+	Relation   *providers.MessageRelation `json:"relation,omitempty"`
 	ModelSteps []providers.ModelStepUsage `json:"model_steps,omitempty"`
 	// Seq is the message's stable per-thread address. It is not serialized to
 	// the store's message columns because seq is the row's own key.
@@ -150,6 +151,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			OriginID:             rec.OriginID,
 			Cause:                rec.Cause,
 			PresentationKind:     rec.PresentationKind,
+			Relation:             providers.CloneMessageRelation(rec.Relation),
 			RelatedSessionID:     rec.RelatedSessionID,
 			ReadOnly:             rec.ReadOnly,
 			Phase:                providers.NormalizeMessagePhase(rec.Phase),
@@ -398,6 +400,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		OriginID:          msg.OriginID,
 		Cause:             msg.Cause,
 		PresentationKind:  msg.PresentationKind,
+		Relation:          providers.CloneMessageRelation(msg.Relation),
 		RelatedSessionID:  msg.RelatedSessionID,
 		ReadOnly:          msg.ReadOnly,
 		Phase:             string(msg.Phase),
@@ -542,6 +545,7 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		OriginID:            rec.OriginID,
 		Cause:               rec.Cause,
 		PresentationKind:    rec.PresentationKind,
+		Relation:            providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:    rec.RelatedSessionID,
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,
@@ -596,6 +600,7 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		OriginID:            rec.OriginID,
 		Cause:               rec.Cause,
 		PresentationKind:    rec.PresentationKind,
+		Relation:            providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:    rec.RelatedSessionID,
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,
@@ -756,7 +761,7 @@ func replaceBaseSystemPrompt(history []providers.ChatMessage, prompt string) []p
 func appendControlledChatMessage(store *sessionstore.Store, id string, msg providers.ChatMessage, control, baseline *sessionstore.Control, accepted *sessionstore.HeldUserWork) (int, error) {
 	rec := historyRecordFromPersistedMessage(persistedMessageFromChatMessage(msg))
 	if accepted != nil {
-		return store.AppendAcceptedUserHistoryRecord(id, rec, *accepted)
+		return store.AppendAcceptedUserHistoryRecordWithControl(id, rec, *accepted, control, baseline)
 	}
 	if baseline != nil {
 		return store.AppendContinuationHistoryRecord(id, rec, control, *baseline)

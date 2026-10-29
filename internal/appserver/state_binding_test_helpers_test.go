@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +70,29 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 	}
 	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
+	// User-host fixtures may bind their user space after runtime construction.
+	// Select their review ledger through the same declared consumer as production.
+	hasReview, hasDocuments := false, false
+	for _, client := range clients {
+		hasReview = hasReview || client.ID() == personalActionsConsumerID
+		if provider, ok := client.(interface {
+			ProvidedServices() []pluginhost.ServiceDescriptor
+		}); ok {
+			for _, service := range provider.ProvidedServices() {
+				hasDocuments = hasDocuments || service.Name == persistence.ServiceName
+			}
+		}
+	}
+	if !hasReview {
+		clients = append(clients, NewPersonalActionsConsumer())
+	}
+	if !hasDocuments {
+		documentDir := filepath.Join(rt.SessionDir, "documents")
+		if strings.TrimSpace(rt.SessionDir) == "" {
+			documentDir = t.TempDir()
+		}
+		clients = append(clients, persistence.NewService("fixture.documents", documentDir, "sqlite"))
+	}
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	if len(conflicts) != 0 {
 		t.Fatal(conflicts)
@@ -172,7 +196,7 @@ func (c *embeddedToolsConsumer) Status() pluginhost.Status {
 	return status
 }
 func (*embeddedToolsConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: toolservice.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: toolservice.ServiceName, MajorVersion: 1, Required: true}, {Name: pluginhost.SecurityAuthorizeService, MajorVersion: 1}}
 }
 
 // Configuration UI fixtures use the public adapter validation contract. Native

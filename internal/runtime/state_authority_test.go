@@ -12,24 +12,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 )
 
 type authorityProviderFixture struct {
 	*persistence.Service
-	mu         sync.Mutex
-	exports    int
-	loseID     string
-	loseBefore bool
+	mu           sync.Mutex
+	exports      int
+	loseID       string
+	loseBefore   bool
+	stewardCalls []map[string]json.RawMessage
+	loseClaim    bool
 }
 
 func (p *authorityProviderFixture) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	p.mu.Lock()
+	wire, _ := json.Marshal(params)
+	var captured map[string]json.RawMessage
+	_ = json.Unmarshal(wire, &captured)
+	p.stewardCalls = append(p.stewardCalls, captured)
 	if params.Method == "export" {
 		p.exports++
 	}
 	lose := false
+	if params.Method == "claim-namespaces" && p.loseClaim {
+		lose = true
+		p.loseClaim = false
+	}
 	before := p.loseBefore
 	if params.Method == "commit" {
 		var tx persistence.Transaction
@@ -807,3 +819,107 @@ readline.createInterface({input: process.stdin}).on('line', async line => {
   } catch (error) { send({id: request.id, error: {code: 'prepare_failed', message: error.message}}); }
 });
 `
+
+func TestAuthorityForwardsInspectionWithoutChangingRevision(t *testing.T) {
+	fixture := newAuthorityFixture(t, t.TempDir(), t.TempDir(), "jsonl")
+	admitAuthority(t, fixture)
+	before := authorityHead(t, fixture.documents)
+	called := false
+	if err := persistence.WithInspection(context.Background(), fixture.documents, []string{"guarded"}, func() error {
+		called = true
+		inside := authorityHead(t, fixture.documents)
+		if inside.Revision != before.Revision {
+			t.Fatal("inspection mutated authority revision")
+		}
+		return nil
+	}); err != nil || !called {
+		t.Fatalf("selected authority lost inspection contract: %v", err)
+	}
+	if _, err := fixture.documents.Commit(context.Background(), authorityWrite("after-inspection", before.Revision, "released")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStateAuthorityStewardshipIsNotTransferredToConsumerCalls(t *testing.T) {
+	fixture := newAuthorityFixture(t, t.TempDir(), t.TempDir(), "jsonl")
+	admitAuthority(t, fixture)
+	fixture.provider.mu.Lock()
+	attested := false
+	for _, call := range fixture.provider.stewardCalls {
+		if len(call["storage_stewardship"]) > 0 {
+			attested = true
+		}
+	}
+	fixture.provider.stewardCalls = nil
+	fixture.provider.mu.Unlock()
+	if !attested {
+		t.Fatal("host verification lacks explicit captured storage stewardship")
+	}
+	if _, err := fixture.documents.Read(context.Background(), persistence.Query{Namespace: "ordinary"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.documents.Export(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fixture.provider.mu.Lock()
+	defer fixture.provider.mu.Unlock()
+	for _, call := range fixture.provider.stewardCalls {
+		var method string
+		_ = json.Unmarshal(call["method"], &method)
+		if method == "read" || method == "export" {
+			if len(call["storage_stewardship"]) > 0 {
+				t.Fatal("ordinary consumer inherited whole-dataset authority")
+			}
+		}
+	}
+}
+
+func TestStateAuthorityOwnsClaimRecoveryWithoutTransferringOwnership(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		t.Run(fmt.Sprint(before), func(t *testing.T) {
+			f := newAuthorityFixture(t, t.TempDir(), t.TempDir(), "jsonl")
+			admitAuthority(t, f)
+			f.provider.loseClaim = true
+			f.provider.loseBefore = before
+			if err := f.documents.ClaimNamespaces(context.Background(), []string{"protected"}); err == nil {
+				t.Fatal("lost claim outcome hidden")
+			}
+			// An unrelated consumer can trigger exact journal recovery, never take ownership.
+			view, err := f.plugin.Read(context.Background(), persistence.Query{Namespace: "ordinary"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.plugin.Read(context.Background(), persistence.Query{Namespace: "protected"}); err == nil {
+				t.Fatal("claim replay transferred owner")
+			}
+			tx := persistence.Transaction{ID: "owner-write", ExpectedRevision: view.Revision, Writes: []persistence.Write{{Namespace: "protected", Key: "secret", Value: json.RawMessage(`true`)}}}
+			if _, err = f.documents.Commit(context.Background(), tx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestStateAuthorityMigrationRequiresExactMaintenanceAdmission(t *testing.T) {
+	f := newAuthorityFixture(t, t.TempDir(), t.TempDir(), "jsonl")
+	admitAuthority(t, f)
+	if err := f.documents.ClaimNamespaces(context.Background(), []string{"owned"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.plugin.Export(context.Background()); err == nil {
+		t.Fatal("ordinary consumer exported protected ownership")
+	}
+	raw := json.RawMessage(`{}`)
+	ctx := pluginhost.WithServiceAdmission(context.Background(), "third-party", persistence.ServiceName, "export", pluginhost.ServiceAdmission{Version: 1, Principal: principal.LocalOwner().Identity(), Action: "state/authority/export", Authority: "local-installation", InputDigest: executionauth.RawRequestDigest(raw)})
+	if _, err := f.host.CallService(ctx, "third-party", persistence.ServiceName, "export", raw); err != nil {
+		t.Fatalf("authorized source transfer rejected: %v", err)
+	}
+	request := persistence.InspectionRequest{ID: "uncertain-effect", Namespaces: []string{"owned"}}
+	if _, err := f.documents.AcquireInspection(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	defer f.documents.ReleaseInspection(context.Background(), request)
+	if _, err := f.host.CallService(ctx, "third-party", persistence.ServiceName, "export", raw); err == nil {
+		t.Fatal("migration discarded uncertain source effect fence")
+	}
+}

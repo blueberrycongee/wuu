@@ -55,6 +55,7 @@ class MemoryPlugin implements RuntimePlugin {
   private lifecycleHost!: RuntimeHost;
   private notebook = "";
   private workspaceStateDir = "";
+  private available = true;
   private readonly jobs = new Map<string, Job>();
   private readonly jobSnapshots = new Map<string, Map<string, FileStamp>>();
 
@@ -64,6 +65,9 @@ class MemoryPlugin implements RuntimePlugin {
     if (!home) throw new Error("memory plugin requires wuu_home");
     this.notebook = join(home, "memory");
     this.workspaceStateDir = params.workspace_state_dir?.trim() ?? "";
+    this.available = params.product_domain !== "personal";
+    if (!this.available) return { tools: [], capabilities: [], provided_services: [] };
+    if (params.product_domain && params.product_domain !== "coding") throw new Error("unsupported memory product domain");
     return {
       tools: [
         { id: "memory_list", description: "List the user's durable memory notebook files. Use only when durable cross-project user preferences, feedback, references, or lessons are relevant.", input_schema: objectSchema(), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -89,11 +93,13 @@ class MemoryPlugin implements RuntimePlugin {
   }
 
   async activate(): Promise<void> {
+    if (!this.available) return;
     if (!this.notebook.trim()) throw new Error("memory: notebook path is required");
     await mkdir(this.notebook, { recursive: true, mode: 0o755 });
   }
 
-  async executeTool(call: ToolExecuteParams, _host: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
+  async executeTool(call: ToolExecuteParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     if (call.tool_id === "memory_list") return jsonResult({ files: await this.readNotebook() });
     const input = object(call.arguments);
     if (call.tool_id === "session_memory") {
@@ -117,7 +123,8 @@ class MemoryPlugin implements RuntimePlugin {
     }
   }
 
-  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost): Promise<{ output: unknown }> {
+  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<{ output: unknown }> {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     switch (call.capability) {
       case CAPABILITY_PROMPT: return { output: { text: promptSection(this.notebook, await readSafeIndex(this.notebook)) } };
       case CAPABILITY_CLIENT: {
@@ -129,7 +136,8 @@ class MemoryPlugin implements RuntimePlugin {
     }
   }
 
-  async invokeService(call: ServiceInvokeParams, _host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+  async invokeService(call: ServiceInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+    if (!this.available) throw new Error("Coding Memory is unavailable in the Personal domain");
     if (call.service === NOTEBOOK_MEMORY_SERVICE) return readNotebookSnapshot(this.notebook, call.method, object(call.params));
     if (call.service !== SESSION_MEMORY_SERVICE) throw new Error(`memory plugin does not provide service ${JSON.stringify(call.service)}`);
     const params = object(call.params);
@@ -246,4 +254,6 @@ class MemoryPlugin implements RuntimePlugin {
 
 function compareNames(a: string, b: string): number { return Buffer.compare(Buffer.from(a), Buffer.from(b)); }
 
-export default new MemoryPlugin();
+export function createMemoryPlugin(): RuntimePlugin { return new MemoryPlugin(); }
+
+export default createMemoryPlugin();

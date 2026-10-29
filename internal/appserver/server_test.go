@@ -1429,6 +1429,20 @@ func TestServerConfigModelUpdate(t *testing.T) {
 	if rt.StreamRunner.ContextWindowOverride != 0 {
 		t.Fatalf("context window override not updated: got %d", rt.StreamRunner.ContextWindowOverride)
 	}
+	publications := notificationsByMethod(msgs, NotificationPluginInventoryChanged)
+	if len(publications) == 0 {
+		t.Fatal("model update replaced the desktop graph without publishing inventory")
+	}
+	published := remarshal[PluginInventoryChangedNotification](t, publications[len(publications)-1]["params"])
+	if len(published.ExtensionInventory) == 0 {
+		t.Fatal("model update published empty inventory")
+	}
+	for _, item := range published.ExtensionInventory {
+		if item.Kind == extensions.KindPlugin && item.GraphGeneration != rt.ExtensionSnapshot().GenerationID {
+			t.Fatalf("model update left desktop routes on stale graph: %+v", item)
+		}
+	}
+
 	data, err := os.ReadFile(rt.ConfigPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)

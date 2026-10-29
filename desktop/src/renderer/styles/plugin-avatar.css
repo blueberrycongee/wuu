@@ -1,0 +1,15 @@
+/* Host icon classes can size the same identity without an inline size override. */
+:where(.plugin-ui-avatar) {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+.plugin-ui-avatar > .agent-avatar-mark,
+.plugin-ui-avatar > .agent-avatar-mark > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

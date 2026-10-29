@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/remote/account"
+	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
 
 // NativePushConfig belongs to the deployment operator, never a phone or host.
@@ -246,6 +247,17 @@ func (p *NativePusher) authorization(ctx context.Context, platform string) (stri
 	return p.fcmToken, nil
 }
 func (p *NativePusher) deliver(ctx context.Context, event PushEvent, registration account.PushRegistration) error {
+	var personalData map[string]string
+	if event.UserLocation != nil {
+		if event.Hint != wire.PushAgentDone {
+			return errors.New("invalid personal push hint")
+		}
+		var err error
+		personalData, err = event.UserLocation.PushData(event.Host, event.Device)
+		if err != nil {
+			return err
+		}
+	}
 	token, err := p.authorization(ctx, registration.Platform)
 	if err != nil {
 		return err
@@ -264,10 +276,18 @@ func (p *NativePusher) deliver(ctx context.Context, event PushEvent, registratio
 		if p.config.APNs.Sandbox {
 			endpoint = "https://api.sandbox.push.apple.com/3/device/" + registration.Token
 		}
-		payload = map[string]any{"aps": map[string]any{"alert": map[string]string{"title": "Wuu", "body": body}, "sound": "default"}, "host": event.Host}
+		fields := map[string]any{"aps": map[string]any{"alert": map[string]string{"title": "Wuu", "body": body}, "sound": "default"}, "host": event.Host}
+		for key, value := range personalData {
+			fields[key] = value
+		}
+		payload = fields
 	} else {
 		endpoint = "https://fcm.googleapis.com/v1/projects/" + p.fcmProject + "/messages:send"
-		payload = map[string]any{"message": map[string]any{"token": registration.Token, "notification": map[string]string{"title": "Wuu", "body": body}, "data": map[string]string{"host": event.Host}, "android": map[string]any{"priority": "high", "ttl": "300s"}}}
+		fields := map[string]string{"host": event.Host}
+		if personalData != nil {
+			fields = personalData
+		}
+		payload = map[string]any{"message": map[string]any{"token": registration.Token, "notification": map[string]string{"title": "Wuu", "body": body}, "data": fields, "android": map[string]any{"priority": "high", "ttl": "300s"}}}
 	}
 	data, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))

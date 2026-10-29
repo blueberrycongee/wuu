@@ -12,9 +12,15 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // ProtocolVersion is the app-server contract implemented by Runtime.Serve.
@@ -35,9 +41,27 @@ type Host struct {
 	InstanceID string
 }
 
-// Options configures one workspace runtime. Empty WorkDir and HomeDir values
+// Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// CompositionProfile explicitly selects a shipped or configured product profile.
+	// Empty preserves the configured profile; identity never selects a product.
+	CompositionProfile string
+	// PersonalConnectors supplies trusted test/embedding dependencies, never RPC credentials.
+	PersonalConnectors                    personalconnectors.Options
+	OpenPersonalConnectorAuthorizationURL func(context.Context, string) error
+	// PersonalCalendar is trusted local-host composition; zero stays unavailable.
+	// The SDK replaces StateDir with its resolved Personal state root.
+	PersonalCalendar                     personalcalendar.DesktopOptions
+	OpenPersonalCalendarAuthorizationURL func(context.Context, string) error
+	// UserHostIsolationMode defaults to logical_memory for a user binding. It
+	// separates memory APIs and automatic context by domain, but does not promise
+	// OS/file confidentiality. verified_host additionally requires a trusted verifier.
+	UserHostIsolationMode runtime.UserHostIsolationMode
+	// UserHostIsolationVerifier is a trusted host integration, never a client or environment assertion.
+	UserHostIsolationVerifier runtime.UserHostIsolationVerifier
+	UserSpaceID               string
+	ProductDomain             string
 	// WorkDir is the workspace root used for tools and project discovery.
 	WorkDir string
 	// WorkspaceID is a stable identity that keeps workspace state attached when
@@ -85,18 +109,20 @@ type Options struct {
 	SafeMode bool
 }
 
-// Runtime is an initialized, UI-neutral Wuu host for one workspace.
+// Runtime is an initialized, UI-neutral Wuu workspace or domain-bound user host.
 //
 // A Runtime may serve app-server connections sequentially or concurrently.
 // Close must be called after all Serve calls return; it rejects an early close
 // instead of racing shared provider, plugin, and persistence resources.
 type Runtime struct {
-	mu       sync.Mutex
-	core     *runtime.Session
-	bindings *appserver.RuntimeBindings
-	serving  int
-	closed   bool
-	closeErr error
+	mu             sync.Mutex
+	core           *runtime.Session
+	serviceRelease func()
+	userHost       *appserver.UserHost
+	bindings       *appserver.RuntimeBindings
+	serving        int
+	closed         bool
+	closeErr       error
 }
 
 // New builds the default Wuu host using the same composition path as the
@@ -119,6 +145,20 @@ func New(opts Options) (*Runtime, error) {
 			}
 		}
 	}
+	binding := userspace.Binding{UserSpaceID: strings.TrimSpace(opts.UserSpaceID), ProductDomain: strings.TrimSpace(opts.ProductDomain)}
+	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	if binding.IsUser() {
+		if opts.WorkspaceID != "" || opts.IgnoreUserConfig {
+			return nil, errors.New("user host cannot inherit a project binding")
+		}
+		home, err := statepath.Home(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		rootDir = binding.Root(home)
+	}
 	host, err := runtimeconfig.ResolveHost(
 		string(opts.Host.Kind),
 		opts.Host.InstanceID,
@@ -132,22 +172,35 @@ func New(opts Options) (*Runtime, error) {
 		return nil, errors.New("cloud host cannot create a starter config")
 	}
 
-	cfg, configPath, configLoadMode, err := runtimeconfig.Load(runtimeconfig.LoadOptions{
-		RootDir:               rootDir,
-		HomeDir:               homeDir,
-		ConfigPath:            opts.ConfigPath,
-		IgnoreUserConfig:      opts.IgnoreUserConfig,
-		CreateConfigIfMissing: opts.CreateConfigIfMissing,
-	})
+	var cfg config.Config
+	var configPath string
+	var configLoadMode runtime.ConfigLoadMode
+	if binding.IsUser() {
+		configPath = strings.TrimSpace(opts.ConfigPath)
+		if configPath == "" {
+			configPath, err = statepath.ConfigPath(homeDir)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !filepath.IsAbs(configPath) {
+			return nil, errors.New("user host requires an absolute config path")
+		}
+		cfg, configPath, err = config.LoadPath(configPath)
+		configLoadMode = runtime.ConfigLoadFile
+	} else {
+		cfg, configPath, configLoadMode, err = runtimeconfig.Load(runtimeconfig.LoadOptions{RootDir: rootDir, HomeDir: homeDir, ConfigPath: opts.ConfigPath, IgnoreUserConfig: opts.IgnoreUserConfig, CreateConfigIfMissing: opts.CreateConfigIfMissing})
+	}
 	if err != nil {
 		return nil, err
 	}
 	overrides := runtimeconfig.Overrides{
-		AgentProfile:   opts.AgentProfile,
-		MaxTurns:       opts.MaxTurns,
-		Effort:         opts.Effort,
-		Variant:        opts.Variant,
-		PermissionMode: opts.PermissionMode,
+		CompositionProfile: opts.CompositionProfile,
+		AgentProfile:       opts.AgentProfile,
+		MaxTurns:           opts.MaxTurns,
+		Effort:             opts.Effort,
+		Variant:            opts.Variant,
+		PermissionMode:     opts.PermissionMode,
 	}
 	if err := runtimeconfig.ApplyOverrides(&cfg, overrides); err != nil {
 		return nil, err
@@ -155,6 +208,7 @@ func New(opts Options) (*Runtime, error) {
 
 	bindings := appserver.NewRuntimeBindings()
 	core, err := runtime.NewSession(runtime.Options{
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
 		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,
@@ -174,16 +228,115 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{core: core, bindings: bindings}, nil
+	result := &Runtime{core: core, bindings: bindings}
+	if binding.IsUser() {
+		personalOptions := personalhost.Options{}
+		var selected *runtime.StateServices
+		if host.Kind == runtime.HostLocal && !opts.SafeMode {
+			selected, result.serviceRelease, err = core.RetainStateServices()
+			if err != nil {
+				_, _ = core.Cleanup()
+				return nil, err
+			}
+		}
+		initialized := false
+		defer func() {
+			if !initialized && result.serviceRelease != nil {
+				result.serviceRelease()
+			}
+		}()
+		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode {
+			connectorOptions := opts.PersonalConnectors
+			connectorHome, pathErr := statepath.Home(homeDir)
+			if pathErr != nil {
+				_, _ = core.Cleanup()
+				return nil, pathErr
+			}
+			connectorOptions.StateDir = filepath.Join(binding.State(connectorHome), "connectors")
+			if connectorOptions.Store == nil {
+				connectorOptions.Store = selected.Credentials
+			}
+			personalOptions.Connectors = personalconnectors.New(connectorOptions)
+			personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
+		} else {
+			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
+		}
+
+		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode && opts.PersonalCalendar.ClientID != "" {
+			stateHome, pathErr := statepath.Home(homeDir)
+			if pathErr != nil {
+				if personalOptions.Connectors != nil {
+					_ = personalOptions.Connectors.Close()
+				}
+				_, _ = core.Cleanup()
+				return nil, pathErr
+			}
+			calendarOptions := opts.PersonalCalendar
+			calendarOptions.StateDir = filepath.Join(binding.State(stateHome), "calendar")
+			if calendarOptions.Store == nil {
+				calendarOptions.Store = selected.Credentials
+			}
+			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
+			if calendarErr != nil {
+				personalOptions.UnavailableCode = "secure_store_unavailable"
+				var failure *personalcalendar.Failure
+				if errors.As(calendarErr, &failure) {
+					personalOptions.UnavailableCode = failure.Code
+				}
+			} else {
+				personalOptions.Calendar = broker
+				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
+			}
+		}
+		result.userHost, err = appserver.NewUserHost(core, personalOptions, appserver.WithRuntimeBindings(bindings))
+		if err != nil {
+			if personalOptions.Calendar != nil {
+				_ = personalOptions.Calendar.Close()
+			}
+			if personalOptions.Connectors != nil {
+				_ = personalOptions.Connectors.Close()
+			}
+			_, _ = core.Cleanup()
+			return nil, err
+		}
+		initialized = true
+	}
+	return result, nil
 }
 
 // Serve runs one app-server JSONL connection until the client requests
 // shutdown, the input closes, or the protocol returns an error. The caller owns
 // in and out.
+// Serve is the trusted local-pipe embedding entrypoint. Network transports
+// must use ServeProviderAuthenticated or carry a verified device principal.
 func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	return r.serve(ctx, in, out, nil, nil)
+	trustedLocal := false
+	if ctx != nil {
+		if _, ok := principal.FromContext(ctx); !ok {
+			trustedLocal = true
+			ctx = principal.WithContext(ctx, principal.LocalOwner())
+		}
+	}
+	return r.serve(ctx, in, out, nil, nil, trustedLocal)
 }
-func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage) error {
+
+// ServeForDevice accepts an already-authenticated device principal and its
+// bound push registrar; it never upgrades a transport to local owner authority.
+func (r *Runtime) ServeForDevice(ctx context.Context, in io.Reader, out io.Writer, registrar appserver.PushRegistrar) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	caller, ok := principal.FromContext(ctx)
+	if !ok {
+		return errors.New("authenticated device principal is required")
+	}
+	if err := caller.Check(ctx); err != nil {
+		return err
+	}
+	return r.serve(ctx, in, out, nil, nil, false, registrar)
+}
+
+func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, credential *principal.Credential, authenticationID json.RawMessage, trustedLocal bool, registrars ...appserver.PushRegistrar) error {
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -222,7 +375,62 @@ func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, creden
 			return err
 		}
 	}
-	return appserver.RunStdio(ctx, core, in, out, appserver.WithRuntimeBindings(r.bindings))
+	var registrar appserver.PushRegistrar
+	if len(registrars) > 0 {
+		registrar = registrars[0]
+	}
+	if r.userHost != nil {
+		return r.userHost.Serve(ctx, in, out, registrar)
+	}
+	options := []appserver.ServerOption{appserver.WithRuntimeBindings(r.bindings)}
+	if trustedLocal {
+		// Forwarding belongs to this private ingress, not to a caller's owner
+		// identity. Authenticated peers and device transports cannot opt into it.
+		options = append(options, appserver.WithTrustedLocalTransport())
+	}
+	if len(registrars) > 0 {
+		return appserver.RunStdioForDevice(ctx, core, in, out, registrar, options...)
+	}
+	return appserver.RunStdio(ctx, core, in, out, options...)
+}
+
+// SubscribeUserAttention observes owner-admitted notifications for the user
+// host without a phone or desktop connection. The receiver must honor ctx for
+// external work. Close ends the subscription; Coding runtimes reject it.
+func (r *Runtime) SubscribeUserAttention(ctx context.Context, receive func(appserver.UserAttentionNotification)) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if r == nil {
+		return errors.New("runtime is required")
+	}
+	r.mu.Lock()
+	host := r.userHost
+	closed := r.closed
+	r.mu.Unlock()
+	if closed || host == nil {
+		return errors.New("active user host is required")
+	}
+	if _, ok := principal.FromContext(ctx); !ok {
+		ctx = principal.WithContext(ctx, principal.LocalOwner())
+	}
+	return host.SubscribeUserAttention(ctx, receive)
+}
+
+// AuthorizeUserAttention verifies one recipient against the selected resource
+// policy and the original host-minted event provenance. Transport adapters must
+// pass a verified recipient principal; this method never grants local ownership.
+func (r *Runtime) AuthorizeUserAttention(ctx context.Context, event appserver.UserAttentionNotification) error {
+	if r == nil || ctx == nil {
+		return errors.New("runtime and context are required")
+	}
+	r.mu.Lock()
+	host, closed := r.userHost, r.closed
+	r.mu.Unlock()
+	if closed || host == nil {
+		return errors.New("active user host is required")
+	}
+	return host.AuthorizeUserAttention(ctx, event)
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.
@@ -239,8 +447,17 @@ func (r *Runtime) Close() error {
 		return fmt.Errorf("close runtime: %d app-server connection(s) still serving", r.serving)
 	}
 	r.closed = true
+	if r.userHost != nil {
+		r.closeErr = r.userHost.Close()
+		r.userHost = nil
+	}
+	if r.serviceRelease != nil {
+		r.serviceRelease()
+		r.serviceRelease = nil
+	}
 	if r.core != nil {
-		_, r.closeErr = r.core.Cleanup()
+		_, coreErr := r.core.Cleanup()
+		r.closeErr = errors.Join(r.closeErr, coreErr)
 		r.core = nil
 	}
 	return r.closeErr

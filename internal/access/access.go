@@ -20,8 +20,18 @@ type Resource struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id,omitempty"`
 }
+
+// Delegation is an opaque selected-provider grant, not an allow assertion.
+// A policy must validate it against the current provider before granting access.
+type Delegation struct {
+	Provider string          `json:"provider"`
+	Grant    string          `json:"grant"`
+	Scope    json.RawMessage `json:"scope"`
+}
+
 type Request struct {
-	Principal principal.Identity `json:"principal"`
+	Delegation *Delegation        `json:"delegation,omitempty"`
+	Principal  principal.Identity `json:"principal"`
 	// Owner is transport-established authority, never accepted from RPC params.
 	Owner      bool                       `json:"owner"`
 	Action     string                     `json:"action"`
@@ -111,4 +121,19 @@ func AttributesFromContext(ctx context.Context) map[string]json.RawMessage {
 		copy[key] = append(json.RawMessage(nil), value...)
 	}
 	return copy
+}
+
+type delegationKey struct{}
+
+func WithDelegation(ctx context.Context, proof Delegation) context.Context {
+	proof.Scope = append(json.RawMessage(nil), proof.Scope...)
+	return context.WithValue(ctx, delegationKey{}, proof)
+}
+func DelegationFromContext(ctx context.Context) *Delegation {
+	proof, ok := ctx.Value(delegationKey{}).(Delegation)
+	if !ok {
+		return nil
+	}
+	proof.Scope = append(json.RawMessage(nil), proof.Scope...)
+	return &proof
 }

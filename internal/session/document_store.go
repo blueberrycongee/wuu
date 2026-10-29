@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
 // documentStore is the session domain bound to one selected document provider. It does
@@ -17,6 +18,9 @@ import (
 // supplies an operation context; a retired binding cannot reopen local files.
 type documentStore struct {
 	ctx                        context.Context
+	caller                     string
+	providerID                 string
+	admission                  *pluginhost.ServiceAdmission
 	documents                  persistence.Documents
 	journalBackgroundDocuments persistence.Documents
 }
@@ -26,7 +30,7 @@ func newDocumentStore(ctx context.Context, documents persistence.Documents) *doc
 }
 
 func (s *documentStore) WithContext(ctx context.Context) *documentStore {
-	return &documentStore{ctx: ctx, documents: s.documents, journalBackgroundDocuments: s.journalBackgroundDocuments}
+	return &documentStore{ctx: ctx, documents: s.documents, caller: s.caller, providerID: s.providerID, admission: s.admission, journalBackgroundDocuments: s.journalBackgroundDocuments}
 }
 
 func documentNamespace(table string) string { return "wuu." + table + ".v1" }

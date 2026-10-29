@@ -22,7 +22,7 @@ func (r *Runtime) ServeProviderAuthenticated(ctx context.Context, in io.Reader, 
 		_ = json.NewEncoder(out).Encode(map[string]any{"id": id, "error": map[string]string{"code": "authentication_failed", "message": "a valid authentication v1 handshake is required"}})
 		return errors.New("authentication handshake rejected")
 	}
-	return r.serve(ctx, buffered, out, &credential, id)
+	return r.serve(ctx, buffered, out, &credential, id, false)
 }
 func readAuthenticationHandshake(in io.Reader, audience string) (*bufio.Reader, json.RawMessage, principal.Credential, error) {
 	if strings.TrimSpace(audience) == "" {

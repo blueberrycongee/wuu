@@ -9,6 +9,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
@@ -33,6 +34,9 @@ func (s *Server) resolveSessionWorkspace(id, root string) (string, string, error
 	}
 	if id == "" && root == "" {
 		return s.rt.RootDir, s.rt.WorkspaceID, nil
+	}
+	if s.rt.UserBinding().IsUser() {
+		return "", "", errors.New("user hosts cannot route into project workspaces")
 	}
 	if root != "" && !filepath.IsAbs(root) {
 		return "", "", errors.New("workspace_root must be absolute")
@@ -66,6 +70,12 @@ func availableSessionWorkspace(root, id string) (string, string, error) {
 // The persisted workspace ID owns configuration and state; CWD is the execution
 // directory and may be a subdirectory or a local fork's shared worktree.
 func (s *Server) sessionWorkspace(m session.Session) (string, string, error) {
+	if !s.rt.UserBinding().Matches(userspace.Binding{UserSpaceID: m.UserSpaceID, ProductDomain: m.ProductDomain}) {
+		return "", "", errors.New("session belongs to another user space or product domain")
+	}
+	if s.rt.UserBinding().IsUser() {
+		return s.rt.RootDir, "", nil
+	}
 	if strings.TrimSpace(m.WorkspaceID) != "" {
 		return s.resolveSessionWorkspace(m.WorkspaceID, m.WorktreeBaseRepo)
 	}

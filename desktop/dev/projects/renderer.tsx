@@ -179,7 +179,7 @@ function Fixture() {
     const initial = createFixtureApplication();
     const base = createFixtureApplication({previewWorkspace:{...initial.getSnapshot().previewWorkspace,
       tabs: initialTabs, activeTabId: initialTabs.at(-1)?.id, ownerTabId:`thread:${active}`,
-      activeContext: state.activeContext, workspaceContext: state.activeContext,
+      activeContext: state.activeContext?.kind === "user" ? undefined : state.activeContext, workspaceContext: state.activeContext?.kind === "user" ? undefined : state.activeContext,
       conversationTitle: threads.find(item => item.id === active)?.title ?? "Projects"},
       conversationWorkspace:{activePane:"primary", threads, turnStreamStatus:{}},
       navigationWorkspace:{...initial.getSnapshot().navigationWorkspace,
@@ -208,7 +208,7 @@ function Fixture() {
     <div className={`app-shell sample-shell${initialTabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
         initialized={Boolean(state.initialized)}
-        activeContextKind={state.activeContext?.kind}
+        activeContextKind={state.activeContext?.kind === "user" ? undefined : state.activeContext?.kind}
         activeSessionTabID={state.activeSessionTabID}
         selectedWorkspaceID={state.activeProjectId}
         extensionInventory={state.initialized?.extension_inventory}

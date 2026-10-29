@@ -255,14 +255,14 @@ const api: WuuDesktopApi = {
     runtimeInitialization.complete(requestId, initialized);
     return initialized;
   },
-  listUserQuestions: (threadId?: string) =>
-    ipcRenderer.invoke("wuu:user-question-list", threadId),
-  answerUserQuestion: (requestId, answer) =>
-    ipcRenderer.invoke("wuu:user-question-answer", requestId, answer),
-  cancelUserQuestion: (requestId) =>
-    ipcRenderer.invoke("wuu:user-question-cancel", requestId),
-  holdUserQuestion: (requestId) =>
-    ipcRenderer.invoke("wuu:user-question-hold", requestId),
+  listUserQuestions: (threadId, context) =>
+    ipcRenderer.invoke("wuu:user-question-list", threadId, context),
+  answerUserQuestion: (requestId, answer, context) =>
+    ipcRenderer.invoke("wuu:user-question-answer", requestId, answer, context),
+  cancelUserQuestion: (requestId, context) =>
+    ipcRenderer.invoke("wuu:user-question-cancel", requestId, context),
+  holdUserQuestion: (requestId, context) =>
+    ipcRenderer.invoke("wuu:user-question-hold", requestId, context),
   showSystemNotification: (params) =>
     ipcRenderer.invoke("wuu:system-notification", params),
   getBuildInfo: () => ipcRenderer.invoke("wuu:build-info"),

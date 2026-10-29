@@ -5,6 +5,8 @@ import "sort"
 // Resource declarations are explicit protocol registration. A new method must
 // declare its scope before non-owner callers can reach its handler.
 var resourceMethods = map[string]string{
+	MethodStateInspectionsList:           "global",
+	MethodStateInspectionsReconcile:      "global",
 	"thread/artifact/cancel":             "session",
 	"activity/list":                      "global",
 	"activity/release":                   "global",
@@ -52,8 +54,8 @@ var resourceMethods = map[string]string{
 	"mcp/list":                           "global",
 	"mcp/refresh":                        "global",
 	"message/image/read":                 "session",
-	"plugin/client/cancel":               "global",
-	"plugin/client/request":              "global",
+	"plugin/client/cancel":               "plugin-client",
+	"plugin/client/request":              "plugin-client",
 	"plugin/desktop-activation":          "global",
 	"plugin/desktop-module/read":         "global",
 	"plugin/diagnostics/list":            "global",
@@ -153,12 +155,14 @@ var resourceMethods = map[string]string{
 // delegation. Extensions add an action only with its admission contract; this is
 // protocol capability registration, not an alternative authorization policy.
 var delegatedResourceActions = map[string]bool{
-	"initialize":        true,
-	"engine/list":       true,
-	"config/read":       true,
-	"instructions/list": true,
-	"skill/list":        true,
-	"thread/list":       true, "thread/listAll": true, "thread/listArchived": true, "thread/search": true,
+	MethodPluginClientRequest: true,
+	MethodPluginClientCancel:  true,
+	"initialize":              true,
+	"engine/list":             true,
+	"config/read":             true,
+	"instructions/list":       true,
+	"skill/list":              true,
+	"thread/list":             true, "thread/listAll": true, "thread/listArchived": true, "thread/search": true,
 	"thread/resume": true, "thread/preview": true, "thread/textSnapshot": true,
 	"thread/activity/read": true, "thread/history/read": true, "thread/context-composition": true,
 	"thread/attachment/read": true, "thread/content/read": true, "message/image/read": true,
@@ -190,6 +194,8 @@ func resourceAccessCapabilities() ResourceAccessCapabilities {
 // Event names are registered independently from request actions. Missing thread
 // provenance cannot be widened to a global event for delegated subscribers.
 var delegatedEventScopes = map[string]string{
+	NotificationUserAttention:           "user-space",
+	"plugin/client/invalidated":         "user-space",
 	NotificationBrowserRequestCancelled: "session",
 	NotificationBrowserTurnStarted:      "session",
 	NotificationThreadStarted:           "session",

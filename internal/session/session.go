@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -27,6 +28,9 @@ var (
 
 // Session represents one conversation session.
 type Session struct {
+	UserSpaceID            string            `json:"user_space_id,omitempty"`
+	ProductDomain          string            `json:"product_domain,omitempty"`
+	AgentID                string            `json:"agent_id,omitempty"`
 	ID                     string            `json:"id"`
 	CreatedAt              time.Time         `json:"created_at"`
 	UpdatedAt              time.Time         `json:"updated_at,omitempty"`
@@ -105,7 +109,10 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
-	ModelSteps []pluginprotocol.ModelStepUsageV1 `json:"model_steps,omitempty"`
+	AcceptedClientInput  *AcceptedClientInput              `json:"-"`
+	AcceptedClientTurnID string                            `json:"-"`
+	Relation             *providers.MessageRelation        `json:"relation,omitempty"`
+	ModelSteps           []pluginprotocol.ModelStepUsageV1 `json:"model_steps,omitempty"`
 	// ExpectedHeldMessage is an admission-only compare-and-swap fence for an
 	// accepted steer. It is never serialized into conversation history.
 	ExpectedHeldMessage json.RawMessage `json:"-"`

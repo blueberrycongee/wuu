@@ -27,6 +27,7 @@ type ProcessScopeConfig struct {
 	PermissionMode                string
 	Boundary                      WorkspaceBoundary
 	FileScopeRoots                []string
+	ProtectedPaths                []string
 	Authorizer                    Authorizer
 	SandboxProvider               processsandbox.Provider
 	BeforePermission              func(context.Context, ToolInfo, providers.ToolCall) error
@@ -41,6 +42,7 @@ type ProcessScope struct{ config ProcessScopeConfig }
 
 func NewProcessScope(config ProcessScopeConfig) *ProcessScope {
 	config.FileScopeRoots = append([]string(nil), config.FileScopeRoots...)
+	config.ProtectedPaths = append([]string(nil), config.ProtectedPaths...)
 	config.Boundary.Guards = append([]Guard(nil), config.Boundary.Guards...)
 	return &ProcessScope{config: config}
 }
@@ -94,6 +96,11 @@ func (s *ProcessScope) Start(ctx context.Context, command, cwd string) (*proc.Pr
 	c := s.config
 	if (c.Manager == nil && c.ExecutionEnvironment == nil) || c.RootDir == "" || c.ThreadID == "" || c.ThreadID == "session-pending" || c.ActorID == "" {
 		return nil, nil, errors.New("process start requires host manager, workspace, thread and actor")
+	}
+	// Detached process records do not yet retain immutable protected-path
+	// authority across recovery. Never admit a process that could lose it.
+	if len(c.ProtectedPaths) > 0 {
+		return nil, nil, errors.New("protected read/write policy does not support background processes")
 	}
 	if c.Disabled {
 		return nil, nil, errors.New("process execution is disabled in this conversation")
@@ -157,7 +164,7 @@ func (s *ProcessScope) startAuthorized(ctx context.Context, command, cwd, operat
 			return nil, nil, err
 		}
 	}
-	policy, tempDir, err := (processSandboxScope{root: c.RootDir, stateDir: c.StateDir, sessionDir: c.SessionDir, sessionID: c.ThreadID, execRoot: execRoot, roots: c.FileScopeRoots, unconfined: !c.Boundary.Enforce, allowMutations: c.Boundary.AllowMutations, boundaryConfigured: true, provider: c.SandboxProvider}).policy(processsandbox.Supported())
+	policy, tempDir, err := (processSandboxScope{root: c.RootDir, stateDir: c.StateDir, sessionDir: c.SessionDir, sessionID: c.ThreadID, execRoot: execRoot, roots: c.FileScopeRoots, protectedPaths: c.ProtectedPaths, unconfined: !c.Boundary.Enforce, allowMutations: c.Boundary.AllowMutations, boundaryConfigured: true, provider: c.SandboxProvider}).policy(processsandbox.Supported())
 	if err != nil {
 		return nil, nil, fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}

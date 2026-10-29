@@ -44,7 +44,7 @@ func (p *securityServiceProvider) InvokeService(_ context.Context, params plugin
 		}
 		return json.RawMessage(`{"outcome":"deny","reason":"protected branch"}`), nil
 	case pluginhost.ProcessSandboxService:
-		return json.RawMessage(`{"argv":["/usr/bin/env","secure-runner"],"enforcement":"full","denial_signatures":["custom denied"],"runner_failure_signatures":["custom runner failed"]}`), nil
+		return json.RawMessage(`{"argv":["/usr/bin/env","secure-runner"],"enforcement":"full","protected_paths_enforced":true,"denial_signatures":["custom denied"],"runner_failure_signatures":["custom runner failed"]}`), nil
 	default:
 		return nil, nil
 	}
@@ -295,11 +295,37 @@ func TestPluginSecurityServicesAreRealCoreConsumers(t *testing.T) {
 	}
 
 	sandbox := &pluginSandboxProvider{host: host}
-	confined, err := sandbox.Confine(context.Background(), []string{"/bin/echo", "hello"}, processsandbox.Policy{Mode: processsandbox.ModeReadOnly})
-	if err != nil || confined.Enforcement != processsandbox.EnforcementFull || len(confined.Argv) != 2 || len(confined.DenialSignatures) != 1 || len(confined.RunnerFailureSignatures) != 1 {
+	confined, err := sandbox.Confine(context.Background(), []string{"/bin/echo", "hello"}, processsandbox.Policy{Mode: processsandbox.ModeReadOnly, ProtectedPaths: []string{"/private/domain"}})
+	if err != nil || !confined.ProtectedPathsEnforced || confined.Enforcement != processsandbox.EnforcementFull || len(confined.Argv) != 2 || len(confined.DenialSignatures) != 1 || len(confined.RunnerFailureSignatures) != 1 {
 		t.Fatalf("confined = %+v err = %v", confined, err)
+	}
+	var sandboxInput pluginhost.ProcessSandboxRequest
+	if err := json.Unmarshal(provider.invocations[1].Params, &sandboxInput); err != nil || len(sandboxInput.Policy.ProtectedPaths) != 1 || sandboxInput.Policy.ProtectedPaths[0] != "/private/domain" {
+		t.Fatalf("selected sandbox lost mandatory domain protection: %+v %v", sandboxInput, err)
 	}
 	if len(provider.invocations) != 2 || provider.invocations[0].Caller != toolExecutionConsumer || provider.invocations[1].ExecutionID == "" {
 		t.Fatalf("invocations = %+v", provider.invocations)
+	}
+}
+
+func TestSelectedAuthorizationLeaseFencesFileEffect(t *testing.T) {
+	host := securityTestHost(t, permissionpolicy.NewService(permissionpolicy.Module))
+	authorizer := &pluginAuthorizer{host: host}
+	request := tools.AuthorizationRequest{PermissionMode: "unconfined", Tool: tools.ToolInfo{Name: "write_file", Kind: tools.ToolKindFile}}
+	called := false
+	if err := authorizer.WithAuthorization(context.Background(), request, func(ctx context.Context) error { called = true; return ctx.Err() }); err != nil || !called {
+		t.Fatalf("selected lease did not dispatch: %v", err)
+	}
+	request.PermissionMode = "read_only"
+	called = false
+	if err := authorizer.WithAuthorization(context.Background(), request, func(context.Context) error { called = true; return nil }); err == nil || called {
+		t.Fatal("denied lease dispatched effect")
+	}
+	if err := host.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	request.PermissionMode = "unconfined"
+	if err := authorizer.WithAuthorization(context.Background(), request, func(context.Context) error { called = true; return nil }); err == nil || called {
+		t.Fatal("retired provider authorized effect")
 	}
 }
