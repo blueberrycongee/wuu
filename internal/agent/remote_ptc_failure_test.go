@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,8 +20,10 @@ import (
 
 type partialOutputExecutor struct {
 	remote, nested, fail, finalizerFail, commitFail bool
+	echo                                            bool
 	committed, aborted                              atomic.Int32
 	entered                                         chan struct{}
+	childComplete, parentRelease                    chan struct{}
 }
 
 var identicalMedia = toolresult.ContentPart{Type: toolresult.ContentTypeImage, MIMEType: "image/png", Data: "eA==", Name: "same.png"}
@@ -77,6 +81,15 @@ func (e *partialOutputExecutor) ExecuteResult(ctx context.Context, call provider
 			}
 			output.Content[0].Text += " remote SECRET"
 			output.Content = append(output.Content, child.Content[1:]...)
+			if e.echo {
+				if _, err := n.Invoke(ctx, providers.ToolCall{ID: "echo", Name: "ordinary", Arguments: `{"value":"remote SECRET"}`}); err != nil {
+					return toolresult.Result{}, err
+				}
+			}
+			if e.childComplete != nil {
+				close(e.childComplete)
+				<-e.parentRelease
+			}
 		}
 		output.IsError = e.fail
 		if e.entered != nil {
@@ -92,6 +105,9 @@ func (e *partialOutputExecutor) FinalizeToolOutcome(call providers.ToolCall, res
 	if call.Name == "parent" && e.finalizerFail {
 		result.IsError = true
 		result.Content[0].Text += " finalizer SECRET"
+	}
+	if call.Name == "remote" {
+		return ToolFinalization{Result: result, AdditionalContext: "remote SECRET context"}
 	}
 	return ToolFinalization{Result: result}
 }
@@ -153,6 +169,55 @@ func TestFailedRemotePTCSuppressesOnlyUncommittedMediaAndText(t *testing.T) {
 			}
 			if !tc.remote {
 				require.True(t, strings.Contains(output.TextProjection(), "ORDINARY LOG"))
+			}
+		})
+	}
+}
+
+func TestRemoteNestedProjectionWaitsForParentSettlement(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			executor := &partialOutputExecutor{remote: true, nested: true, echo: true, fail: fail, childComplete: make(chan struct{}), parentRelease: make(chan struct{})}
+			ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread")
+			require.NoError(t, err)
+			run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "projection"})
+			defer run.Close()
+			var mu sync.Mutex
+			var details []string
+			run.SetResultCallback(func(call providers.ToolCall, result toolresult.Result) {
+				mu.Lock()
+				defer mu.Unlock()
+				details = append(details, call.Arguments+result.TextProjection())
+			})
+			done := make(chan error, 1)
+			go func() {
+				_, err := run.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "parent", Name: "parent", Arguments: `{}`}}, nil)
+				done <- err
+			}()
+			select {
+			case <-executor.childComplete:
+			case <-time.After(10 * time.Second):
+				close(executor.parentRelease)
+				t.Fatal("nested read did not complete")
+			}
+			mu.Lock()
+			before, _ := json.Marshal(details)
+			mu.Unlock()
+			pending, _ := json.Marshal(run.TakeRequestContextSegments())
+			close(executor.parentRelease)
+			require.NotContains(t, string(before), "SECRET", "nested result must wait for settlement")
+			require.NotContains(t, string(pending), "SECRET", "nested context must wait for settlement")
+			require.NoError(t, <-done)
+			mu.Lock()
+			detail, _ := json.Marshal(details)
+			mu.Unlock()
+			segments, _ := json.Marshal(run.TakeRequestContextSegments())
+			if fail {
+				require.NotContains(t, string(detail), "SECRET")
+				require.NotContains(t, string(segments), "SECRET")
+			} else {
+				require.Contains(t, string(detail), "SECRET")
+				require.Contains(t, string(segments), "SECRET")
 			}
 		})
 	}

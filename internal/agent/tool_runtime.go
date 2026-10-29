@@ -47,6 +47,9 @@ type toolRun struct {
 	requestContext         *ContextSegment
 	discoveredTools        []providers.LoadableToolDefinition
 	releaseSettlementChild func()
+	deferredProjection     bool
+	projectionDelivered    bool
+	hadParticipants        bool
 }
 
 // TurnToolRuntime owns tool executions for one model turn. Streaming can
@@ -436,6 +439,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					success = false
 				}
 			}
+			if toolctx.SettlementHasParticipants(runCtx) {
+				run.mu.Lock()
+				run.hadParticipants = true
+				run.mu.Unlock()
+			}
 			if !success && toolctx.SettlementHasParticipants(runCtx) {
 				result = toolctx.FailedSettlementOutput(runCtx, beforeFinalization, result)
 				run.clearFinalization()
@@ -588,7 +596,10 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		finish(result, err)
 		if run.parent != nil {
 			settled, settleErr := run.wait(context.Background())
-			if settleErr == nil {
+			run.mu.Lock()
+			deferred := run.deferredProjection
+			run.mu.Unlock()
+			if settleErr == nil && !deferred {
 				r.notifyResult(call, settled, nil)
 			}
 		}
@@ -831,6 +842,21 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 	// Nested hooks finish concurrently. Project their context in registration
 	// order, never completion order or through the program's output filtering.
 	for _, run := range r.runs {
+		if run.parent != nil {
+			run.mu.Lock()
+			deferred := run.deferredProjection
+			run.mu.Unlock()
+			if deferred {
+				done, accepted := rootSettlementOutcome(run)
+				if !done {
+					continue
+				}
+				if !accepted {
+					run.clearFinalization()
+					continue
+				}
+			}
+		}
 		out = append(out, run.takeRequestContext()...)
 	}
 	out = append(out, r.requestContext...)
@@ -934,6 +960,7 @@ func (r *TurnToolRuntime) executeBatch(
 			legacyContextSafe := !r.legacyContextUnsafe
 			r.mu.Unlock()
 			result, err := r.awaitRunResult(ctx, run)
+			r.publishDeferredResults(run)
 			if err != nil {
 				return toolBatchResult{err: err}
 			}
@@ -966,6 +993,7 @@ func (r *TurnToolRuntime) executeBatch(
 	requestContext := make([]ContextSegment, 0, len(batch.calls))
 	for i, call := range batch.calls {
 		result, err := r.awaitRunResult(ctx, runs[i])
+		r.publishDeferredResults(runs[i])
 		if err != nil {
 			return toolBatchResult{err: err}
 		}
@@ -1090,6 +1118,46 @@ func validateRuntimeToolArguments(call providers.ToolCall) error {
 		return toolerrors.New(toolerrors.InvalidArguments, fmt.Sprintf("tool %q arguments are invalid JSON", call.Name))
 	}
 	return nil
+}
+
+// Nested remote results remain provisional until the root commits its
+// settlement. A failed or still-running root cannot project their context.
+func rootSettlementOutcome(run *toolRun) (bool, bool) {
+	for run.parent != nil {
+		run = run.parent
+	}
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	done := run.state == toolRunDone
+	return done, done && (!run.hadParticipants || (run.err == nil && !run.result.IsError))
+}
+
+func (r *TurnToolRuntime) publishDeferredResults(root *toolRun) {
+	done, allowed := rootSettlementOutcome(root)
+	if !done || !allowed {
+		return
+	}
+	r.mu.Lock()
+	runs := append([]*toolRun(nil), r.runs...)
+	r.mu.Unlock()
+	for _, run := range runs {
+		ancestor := run
+		for ancestor.parent != nil {
+			ancestor = ancestor.parent
+		}
+		if run == root || ancestor != root {
+			continue
+		}
+		run.mu.Lock()
+		if !run.deferredProjection || run.projectionDelivered || run.state != toolRunDone || run.err != nil {
+			run.mu.Unlock()
+			continue
+		}
+		run.projectionDelivered = true
+		call, result := run.call, run.result.Clone()
+		run.mu.Unlock()
+		r.notifyResult(call, result, nil)
+	}
 }
 
 func (r *TurnToolRuntime) notifyResult(call providers.ToolCall, result toolresult.Result, legacy func(providers.ToolCall, string)) {
