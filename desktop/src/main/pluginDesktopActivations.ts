@@ -2,6 +2,7 @@ import type { WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { AppServerResponse, ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
+import { AppServerResponseError } from "./appServerErrors";
 
 export class DesktopGraphOwnershipError extends Error {
   readonly code = "WUU_DESKTOP_GRAPH_OWNER_MISSING";
@@ -109,7 +110,15 @@ export class PluginDesktopActivations {
           if (!input || input.id !== identity.id || input.fingerprint !== identity.fingerprint || input.graph_generation !== identity.graph_generation) {
             throw new Error("Scoped plugin request identity changed");
           }
-          return request<T>(method, { ...input, graph_generation: plugin.graph_generation }, response);
+          try {
+            return await request<T>(method, { ...input, graph_generation: plugin.graph_generation }, response);
+          } catch (error) {
+            // This rejection occurs before the server admits the operation.
+            // Retire only this binding; never replay an already dispatched call.
+            if (error instanceof AppServerResponseError && error.message === "plugin graph generation is no longer active"
+              && this.scopedBindings.get(key) === binding) this.scopedBindings.delete(key);
+            throw error;
+          }
         };
       })();
       this.scopedBindings.set(key, binding);
