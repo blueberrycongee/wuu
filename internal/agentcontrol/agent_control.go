@@ -379,7 +379,9 @@ func New(cfg Config) (*AgentControl, error) {
 	mgr.SetTerminalObserver(c.consumeWorkerTerminal)
 	mgr.SetWakeAuthority(cfg.WorkerWakeAuthority)
 	c.restoreAgentResultDeliveries()
-	c.registerRootThread()
+	if err := c.registerRootThread(); err != nil {
+		return nil, fmt.Errorf("register root thread: %w", err)
+	}
 	if err := c.restoreQueuedSpawns(); err != nil {
 		return nil, fmt.Errorf("restore queued spawns: %w", err)
 	}
@@ -672,10 +674,12 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 	// available, so its initial harness path is empty. Restore only after the
 	// real artifact directory is bound; otherwise CLI callers silently miss
 	// queued launches persisted by an earlier process.
+	if err := c.registerRootThread(); err != nil {
+		return fmt.Errorf("register root thread: %w", err)
+	}
 	if err := c.restoreQueuedSpawns(); err != nil {
 		return fmt.Errorf("restore queued spawns: %w", err)
 	}
-	c.registerRootThread()
 	// The harness dir may only become known here; reconcile the durable
 	// task graph against the (possibly empty) set of live executors so
 	// crash-orphaned tasks stop reporting running forever.
@@ -2354,21 +2358,28 @@ func (c *AgentControl) UnsubscribeStream(ch chan<- subagent.StreamNotification) 
 	c.manager.UnsubscribeStream(ch)
 }
 
-func (c *AgentControl) registerRootThread() {
+func (c *AgentControl) registerRootThread() error {
 	if c == nil || c.threads == nil {
-		return
+		return nil
 	}
 	sessionID := strings.TrimSpace(c.sessionID)
 	if sessionID == "" || sessionID == "session-pending" {
-		return
+		return nil
 	}
 	if c.rootThreadID == sessionID && c.rootThreadDir == c.threadDir {
-		return
+		return nil
 	}
 	meta := c.threads.RegisterRoot(sessionID, sessionID, c.ParentRepo(), "", time.Now().UTC())
-	_ = c.threadStore.UpsertThread(meta)
+	meta, err := c.threadStore.EnsureRoot(meta)
+	if err != nil {
+		return err
+	}
+	if err := c.threads.Restore(meta); err != nil {
+		return err
+	}
 	c.rootThreadID = sessionID
 	c.rootThreadDir = c.threadDir
+	return nil
 }
 
 func (c *AgentControl) workerSystemPrompt(rootDir string, wt WorkerType, meta agentthread.Metadata, isolation IsolationMode) (string, error) {
@@ -2404,7 +2415,9 @@ func (c *AgentControl) registerChildThreadWithStatus(id, taskName, agentProfile,
 	if c == nil || c.threads == nil {
 		return agentthread.Metadata{}, errors.New("thread registry is not configured")
 	}
-	c.registerRootThread()
+	if err := c.registerRootThread(); err != nil {
+		return agentthread.Metadata{}, fmt.Errorf("register root thread: %w", err)
+	}
 	parentPath = strings.TrimSpace(parentPath)
 	if parentPath == "" {
 		parentPath = agentthread.RootPath
