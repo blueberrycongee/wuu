@@ -664,6 +664,12 @@ describe("RichContent raw HTML and heading levels", () => {
   });
 });
 
+it("external-only plugin content cannot resolve workspace paths or load unverified embedded images", () => {
+  render(<MarkdownContent linkPolicy="external-only" text={'[artifact](wuu-artifact://workspace/private.txt) [local](file:///tmp/private.txt) [web](https://example.test) ![remote](https://example.test/image.png) ![artifact image](wuu-artifact://workspace/image.png)'} />);
+  expect(Array.from(container.querySelectorAll("a")).map(link => link.getAttribute("href"))).toEqual(["https://example.test/"]);
+  expect(container.querySelector("img")).toBeNull(); expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
+});
+
 it("uses public file navigation and host media URLs without legacy callbacks", () => {
   const openFile = vi.fn(); const legacy = vi.fn();
   const service = new ApplicationPreviewContent(window.wuu, { openFile, encodedFileURL: encoded => `https://remote.example/file/${encoded}` });

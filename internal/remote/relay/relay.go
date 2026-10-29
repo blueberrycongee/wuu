@@ -578,6 +578,11 @@ func (s *Server) handlePush(c *conn, msg wire.RelayMsg) {
 	if msg.Hint != wire.PushAgentDone && msg.Hint != wire.PushNeedsInput {
 		return
 	}
+	if msg.UserLocation != nil {
+		if msg.UserLocation.Validate() != nil || msg.To == "" || msg.ThreadID != "" || msg.Hint != wire.PushAgentDone {
+			return
+		}
+	}
 	targets := []string{}
 	if s.accounts != nil {
 		source, ok := s.accounts.Device(c.pub)
@@ -615,11 +620,12 @@ func (s *Server) handlePush(c *conn, msg wire.RelayMsg) {
 			continue
 		}
 		s.pusher.Push(context.Background(), PushEvent{
-			Account: c.account,
-			Device:  target,
-			Hint:    msg.Hint,
-			At:      now.UTC(),
-			Host:    c.pub,
+			UserLocation: msg.UserLocation,
+			Account:      c.account,
+			Device:       target,
+			Hint:         msg.Hint,
+			At:           now.UTC(),
+			Host:         c.pub,
 		})
 	}
 }

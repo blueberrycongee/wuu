@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
 
@@ -60,6 +61,11 @@ func (p *preparedStore) withBackend(ctx context.Context, dir, kind string, read 
 		return read(nil, binding{})
 	}
 	defer lock.Release()
+	if namespaceIdentityFrom(ctx).migration {
+		if err := inspectionjournal.Check(dir, nil); err != nil {
+			return err
+		}
+	}
 	selected, err := readBinding(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := requireEmptyDirectory(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -141,6 +147,9 @@ func (p *preparedStore) snapshot(ctx context.Context, dir, kind string) (Snapsho
 			return nil
 		}
 		var err error
+		if err := (&Store{backend: source}).checkNamespaceAccess(ctx, nil); err != nil {
+			return err
+		}
 		snapshot, err = source.export(ctx)
 		return err
 	})
@@ -159,6 +168,9 @@ func (p *preparedStore) view(ctx context.Context, dir, kind string, q Query) (Vi
 			return nil
 		}
 		var err error
+		if err := (&Store{backend: source}).checkNamespaceAccess(ctx, []string{q.Namespace}); err != nil {
+			return err
+		}
 		view, err = source.read(ctx, q)
 		return err
 	})
@@ -186,6 +198,9 @@ func (p *preparedStore) exportPage(ctx context.Context, dir, kind string, q Expo
 			return nil
 		}
 		var err error
+		if err := (&Store{backend: source}).checkNamespaceAccess(ctx, nil); err != nil {
+			return err
+		}
 		page, err = source.exportPage(ctx, q, b.Generation)
 		return err
 	})

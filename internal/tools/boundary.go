@@ -6,7 +6,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// WorkspaceBoundary is the single authority gate in the system. It answers
+// WorkspaceBoundary selects ordinary workspace authority. Mandatory protected
+// paths remain enforced by Env in every mode. This boundary answers
 // exactly one question per tool call: is this action allowed to happen?
 //
 // The answer is derived from reachability, never from trust. There is no
@@ -29,7 +30,8 @@ func ReadOnlyBoundary() WorkspaceBoundary {
 	return WorkspaceBoundary{Enforce: true, AllowMutations: false}
 }
 
-// UnconfinedBoundary lifts path confinement. It is the rare escape hatch for
+// UnconfinedBoundary lifts ordinary path confinement, never protected paths.
+// It is the rare escape hatch for
 // tasks that must operate outside registered workspace roots.
 func UnconfinedBoundary() WorkspaceBoundary {
 	return WorkspaceBoundary{Enforce: false, AllowMutations: true}

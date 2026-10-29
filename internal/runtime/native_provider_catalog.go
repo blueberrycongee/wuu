@@ -28,6 +28,13 @@ import (
 // The catalog contains constructors, not live providers. Resolution selects
 // entries before any provider resources are constructed. Native defaults and
 // embedding replacements then enter exactly the same graph/lifecycle path.
+func providerDataRoot(input NativeProviderContext) string {
+	if input.DataRoot != "" {
+		return input.DataRoot
+	}
+	return input.WuuHome
+}
+
 func defaultNativeProviderCatalog() []NativeProviderFactory {
 	catalog := []NativeProviderFactory{
 		{ID: loopdriver.DefaultDriverID, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
@@ -45,7 +52,7 @@ func defaultNativeProviderCatalog() []NativeProviderFactory {
 		}},
 		{ID: toolservice.DefaultModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) { return toolservice.NewService(), nil }},
 		{ID: session.DefaultModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
-			return newNativeSessionDomain(input.Registry, statepath.SessionsDir(input.WuuHome), input.Host), nil
+			return newNativeSessionDomain(input.Registry, statepath.SessionsDir(providerDataRoot(input)), input.Host), nil
 		}},
 		{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) {
 			return credentialstore.NewService(credentialstore.OSModule, credentialstore.NewDesktopStore), nil
@@ -56,7 +63,7 @@ func defaultNativeProviderCatalog() []NativeProviderFactory {
 			}), nil
 		}},
 		{ID: pluginsettings.Module, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
-			return pluginsettings.NewService(pluginsettings.Module, input.WuuHome, input.RootDir), nil
+			return pluginsettings.NewServiceWithStateRoot(pluginsettings.Module, input.WuuHome, providerDataRoot(input), input.RootDir), nil
 		}},
 		{ID: config.Module, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return config.NewService(config.Module, filepath.Join(input.WuuHome, "config.json"), input.RootDir), nil
@@ -65,19 +72,19 @@ func defaultNativeProviderCatalog() []NativeProviderFactory {
 			return permissionpolicy.NewService(permissionpolicy.Module), nil
 		}},
 		{ID: ArtifactModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
-			return NewArtifactService(ArtifactModule, input.WuuHome, input.WorkspaceStateDir), nil
+			return NewArtifactService(ArtifactModule, providerDataRoot(input), input.WorkspaceStateDir), nil
 		}},
 		{ID: DataQueryModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return NewDataQueryService(DataQueryModule, input.WorkspaceStateDir), nil
 		}},
-		nativeModelProviderFactory(), nativeEngineProviderFactory(), resourceAccessConsumerFactory(), resourcePolicyProviderFactory(), sessionSharingProviderFactory(), sessionSharingConsumerFactory(),
+		nativeModelProviderFactory(), nativeEngineProviderFactory(), resourceAccessConsumerFactory(), resourcePolicyProviderFactory(), sessionSharingProviderFactory(), sessionSharingConsumerFactory(), executionAuthorizationConsumerFactory(), executionAuthorizationProviderFactory(),
 	}
 	for _, backend := range []struct{ id, name string }{{persistence.SQLiteModule, "sqlite"}, {persistence.JSONLModule, "jsonl"}} {
 		catalog = append(catalog, NativeProviderFactory{ID: backend.id, DefaultEnabled: backend.name == "sqlite", Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			if strings.TrimSpace(input.WuuHome) == "" {
 				return nil, errors.New("state provider requires a resolved Wuu home")
 			}
-			return persistence.NewService(backend.id, filepath.Join(statepath.SessionsDir(input.WuuHome), "documents"), backend.name), nil
+			return persistence.NewService(backend.id, filepath.Join(statepath.SessionsDir(providerDataRoot(input)), "documents"), backend.name), nil
 		}})
 	}
 	return catalog

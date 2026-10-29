@@ -70,7 +70,33 @@ const (
 	// CapabilityPluginClientRequest handles a generation-bound opaque request
 	// from a Wuu client. Method names and payload schemas belong to the plugin.
 	CapabilityPluginClientRequest = "plugin.client.request"
+	// CapabilitySessionAttention lets the persisted owner decide whether a settled
+	// main conversation should request user attention under its current policy.
+	CapabilitySessionAttention = "session.attention"
 )
+
+// SessionAttentionInput is host-authenticated, content-free terminal context.
+// It is never accepted from a client as permission to send a notification.
+type SessionAttentionInput struct {
+	// RequestID is the exact host-admitted send bound to this persisted turn.
+	// It is observation provenance, never session read or execution authority.
+	RequestID     string `json:"request_id"`
+	UserSpaceID   string `json:"user_space_id"`
+	ProductDomain string `json:"product_domain"`
+	SessionID     string `json:"session_id"`
+	AgentID       string `json:"agent_id"`
+	MessageSeq    int    `json:"message_seq,omitempty"`
+	TurnID        string `json:"turn_id"`
+	Outcome       string `json:"outcome"`
+}
+
+type SessionAttentionOutput struct {
+	Allowed bool `json:"allowed"`
+	// BatchWindowSeconds optionally coalesces attention for one responsible
+	// agent. Zero or absence preserves immediate delivery; the host bounds the
+	// first-item window to 15 minutes. Conversation results are never batched.
+	BatchWindowSeconds int `json:"batch_window_seconds,omitempty"`
+}
 
 // SeamKind classifies how the host dispatches one plugin capability. The
 // capability RPC is the single production seam model: descriptors declare the
@@ -189,14 +215,18 @@ const (
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
-	HostServiceSessionCreate        HostServiceMethod = "host.session.create"
-	HostServiceSessionControl       HostServiceMethod = "host.session.control"
-	HostServiceSessionSend          HostServiceMethod = "host.session.send"
-	HostServiceSessionList          HostServiceMethod = "host.session.list"
-	HostServiceSessionCancel        HostServiceMethod = "host.session.cancel"
-	HostServiceSessionInspect       HostServiceMethod = "host.session.inspect"
-	HostServiceSessionHistoryRead   HostServiceMethod = "host.session.history.read"
-	HostServiceSessionHistorySearch HostServiceMethod = "host.session.history.search"
+	HostServiceSessionCreate          HostServiceMethod = "host.session.create"
+	HostServiceSessionControl         HostServiceMethod = "host.session.control"
+	HostServiceSessionSend            HostServiceMethod = "host.session.send"
+	HostServiceSessionList            HostServiceMethod = "host.session.list"
+	HostServiceSessionCancel          HostServiceMethod = "host.session.cancel"
+	HostServiceSessionInspect         HostServiceMethod = "host.session.inspect"
+	HostServiceExecutionAuthorization HostServiceMethod = "host.execution.authorization"
+	HostServicePersonal               HostServiceMethod = "host.personal"
+	HostServiceSessionContext         HostServiceMethod = "host.session.context"
+	HostServiceSessionHistoryRead     HostServiceMethod = "host.session.history.read"
+	HostServiceSessionHistorySearch   HostServiceMethod = "host.session.history.search"
+	HostServiceSessionAttachmentRead  HostServiceMethod = "host.session.attachment.read"
 
 	// Workspaces. These methods operate only on an isolated workspace owned by
 	// a plugin-created session; callers never supply filesystem paths.
@@ -241,26 +271,38 @@ type SessionToolPolicy struct {
 	Deny  []string `json:"deny,omitempty"`
 }
 
+// ExecutionAuthorizationReference identifies opaque selected-provider authority.
+// It is not an owner claim and is revalidated before every restored operation.
+type ExecutionAuthorizationReference struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+}
+
 type SessionCreateParams struct {
-	Speed           string               `json:"speed,omitempty"`
-	RequestID       string               `json:"request_id"`
-	Name            string               `json:"name,omitempty"`
-	Visibility      string               `json:"visibility"`
-	ParentSessionID string               `json:"parent_session_id,omitempty"`
-	ContextSource   string               `json:"context_source"`
-	Workspace       string               `json:"workspace,omitempty"`
-	WorkspaceID     string               `json:"workspace_id,omitempty"`
-	WorkspaceRoot   string               `json:"workspace_root,omitempty"`
-	ModelAlias      string               `json:"model_alias,omitempty"`
-	Provider        string               `json:"provider,omitempty"`
-	Model           string               `json:"model,omitempty"`
-	Variant         string               `json:"variant,omitempty"`
-	Effort          string               `json:"effort,omitempty"`
-	PermissionMode  string               `json:"permission_mode,omitempty"`
-	Instructions    string               `json:"instructions,omitempty"`
-	ToolPolicy      *SessionToolPolicy   `json:"tool_policy,omitempty"`
-	Seed            *SessionContextSeed  `json:"seed,omitempty"`
-	Launch          *SessionLaunchParams `json:"launch,omitempty"`
+	AuthorizationTaskID    string                           `json:"authorization_task_id,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	UserSpaceID            string                           `json:"user_space_id,omitempty"`
+	ProductDomain          string                           `json:"product_domain,omitempty"`
+	AgentID                string                           `json:"agent_id,omitempty"`
+	Speed                  string                           `json:"speed,omitempty"`
+	RequestID              string                           `json:"request_id"`
+	Name                   string                           `json:"name,omitempty"`
+	Visibility             string                           `json:"visibility"`
+	ParentSessionID        string                           `json:"parent_session_id,omitempty"`
+	ContextSource          string                           `json:"context_source"`
+	Workspace              string                           `json:"workspace,omitempty"`
+	WorkspaceID            string                           `json:"workspace_id,omitempty"`
+	WorkspaceRoot          string                           `json:"workspace_root,omitempty"`
+	ModelAlias             string                           `json:"model_alias,omitempty"`
+	Provider               string                           `json:"provider,omitempty"`
+	Model                  string                           `json:"model,omitempty"`
+	Variant                string                           `json:"variant,omitempty"`
+	Effort                 string                           `json:"effort,omitempty"`
+	PermissionMode         string                           `json:"permission_mode,omitempty"`
+	Instructions           string                           `json:"instructions,omitempty"`
+	ToolPolicy             *SessionToolPolicy               `json:"tool_policy,omitempty"`
+	Seed                   *SessionContextSeed              `json:"seed,omitempty"`
+	Launch                 *SessionLaunchParams             `json:"launch,omitempty"`
 }
 
 type SessionContextSeed struct {
@@ -316,9 +358,16 @@ type SessionCreateResult struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
+type SessionInputAttachment struct {
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+}
+
 type SessionInput struct {
-	Prompt        string                `json:"prompt"`
-	ContextBlocks []SessionContextBlock `json:"context_blocks,omitempty"`
+	Attachments   []SessionInputAttachment `json:"attachments,omitempty"`
+	Prompt        string                   `json:"prompt"`
+	ContextBlocks []SessionContextBlock    `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {
@@ -329,7 +378,15 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	ControlRevision int64 `json:"control_revision,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ResumeReceiptID        string                           `json:"resume_receipt_id,omitempty"`
+	ResumeAccepted         bool                             `json:"resume_accepted,omitempty"`
+	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
+	DisableTools bool                       `json:"disable_tools,omitempty"`
+	Relation     *providers.MessageRelation `json:"relation,omitempty"`
+	// UserInputRequestID requires an exact live client submission proof in the host context.
+	UserInputRequestID string `json:"user_input_request_id,omitempty"`
+	ControlRevision    int64  `json:"control_revision,omitempty"`
 	// ReplyToTurnID preserves the original turn scope when a plugin returns deferred work.
 	ReplyToTurnID string                    `json:"reply_to_turn_id,omitempty"`
 	RequestID     string                    `json:"request_id"`
@@ -341,21 +398,26 @@ type SessionSendParams struct {
 }
 
 type SessionSendResult struct {
-	State     string `json:"state"`
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	QueueID   string `json:"queue_id,omitempty"`
-	Steered   bool   `json:"steered,omitempty"`
+	Receipt   *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	State     string                        `json:"state"`
+	SessionID string                        `json:"session_id"`
+	TurnID    string                        `json:"turn_id,omitempty"`
+	QueueID   string                        `json:"queue_id,omitempty"`
+	Steered   bool                          `json:"steered,omitempty"`
 }
 
 type SessionListParams struct {
-	ParentSessionID string `json:"parent_session_id,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ParentSessionID        string                           `json:"parent_session_id,omitempty"`
 	// Scope defaults to owned for compatibility. shared exposes active,
 	// non-private session metadata without exposing conversation history.
 	Scope string `json:"scope,omitempty"`
 }
 
 type SessionSummary struct {
+	UserSpaceID     string `json:"user_space_id,omitempty"`
+	ProductDomain   string `json:"product_domain,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
 	SessionID       string `json:"session_id"`
 	Name            string `json:"name,omitempty"`
 	ParentSessionID string `json:"parent_session_id,omitempty"`
@@ -371,8 +433,9 @@ type SessionListResult struct {
 }
 
 type SessionCancelParams struct {
-	ControlRevision int64  `json:"control_revision,omitempty"`
-	SessionID       string `json:"session_id"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ControlRevision        int64                            `json:"control_revision,omitempty"`
+	SessionID              string                           `json:"session_id"`
 	// TurnID narrows cancellation to one exact accepted turn. Empty preserves
 	// the legacy session-scoped operation for callers that intentionally own
 	// the whole session.
@@ -389,11 +452,12 @@ type SessionCancelResult struct {
 }
 
 type SessionInspectParams struct {
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
-	Wait      string `json:"wait,omitempty"`
-	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	TurnID                 string                           `json:"turn_id,omitempty"`
+	RequestID              string                           `json:"request_id,omitempty"`
+	Wait                   string                           `json:"wait,omitempty"`
+	TimeoutMS              int                              `json:"timeout_ms,omitempty"`
 	// Requires an explicit request ID. Progress is an optional display snapshot,
 	// not a delivery receipt, event stream or durable execution result.
 	IncludeProgress bool `json:"include_progress,omitempty"`
@@ -402,9 +466,10 @@ type SessionInspectParams struct {
 // SessionControlParams coordinates automatic execution without changing Owner
 // or ParentID. Omit State to read; writes compare Revision with durable state.
 type SessionControlParams struct {
-	SessionID string `json:"session_id"`
-	State     string `json:"state,omitempty"`
-	Revision  int64  `json:"revision,omitempty"`
+	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	SessionID              string                           `json:"session_id"`
+	State                  string                           `json:"state,omitempty"`
+	Revision               int64                            `json:"revision,omitempty"`
 }
 
 type SessionControlResult struct {
@@ -414,12 +479,23 @@ type SessionControlResult struct {
 	Revision  int64  `json:"revision"`
 }
 
+type SessionAcceptedInput struct {
+	Receipt     providers.ClientInputReceipt `json:"receipt"`
+	Prompt      string                       `json:"prompt"`
+	Relation    *providers.MessageRelation   `json:"relation,omitempty"`
+	Attachments []SessionInputAttachment     `json:"attachments,omitempty"`
+}
+
 type SessionInspectResult struct {
-	Session   SessionSummary           `json:"session"`
-	Turn      *SessionTurnInspection   `json:"turn,omitempty"`
-	Workspace *SessionWorkspaceSummary `json:"workspace,omitempty"`
-	TimedOut  bool                     `json:"timed_out,omitempty"`
-	Progress  *SessionProgressSnapshot `json:"progress,omitempty"`
+	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
+
+	Receipt       *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	PendingInputs []SessionAcceptedInput        `json:"pending_inputs,omitempty"`
+	Session       SessionSummary                `json:"session"`
+	Turn          *SessionTurnInspection        `json:"turn,omitempty"`
+	Workspace     *SessionWorkspaceSummary      `json:"workspace,omitempty"`
+	TimedOut      bool                          `json:"timed_out,omitempty"`
+	Progress      *SessionProgressSnapshot      `json:"progress,omitempty"`
 }
 
 // SessionProgressSnapshot projects only an exclusively correlated turn in a
@@ -839,13 +915,15 @@ type RequestTransformOutput struct {
 // Messages include durable plugin contributions so a plugin can own its own
 // emit-on-change policy without host-managed state.
 type AgentPreStepInput struct {
-	SessionID string               `json:"session_id,omitempty"`
-	ThreadID  string               `json:"thread_id,omitempty"`
-	CWD       string               `json:"cwd,omitempty"`
-	Provider  string               `json:"provider,omitempty"`
-	Model     string               `json:"model,omitempty"`
-	StepIndex int                  `json:"step_index"`
-	Messages  []ModelMessageViewV1 `json:"messages"`
+	SourceMessage   *providers.MessageRef      `json:"source_message,omitempty"`
+	MessageRelation *providers.MessageRelation `json:"message_relation,omitempty"`
+	SessionID       string                     `json:"session_id,omitempty"`
+	ThreadID        string                     `json:"thread_id,omitempty"`
+	CWD             string                     `json:"cwd,omitempty"`
+	Provider        string                     `json:"provider,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	StepIndex       int                        `json:"step_index"`
+	Messages        []ModelMessageViewV1       `json:"messages"`
 }
 
 // AgentPreStepMessage is appended after the current transcript and persisted
@@ -962,7 +1040,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnInterrupted:
 		requiredKind = SeamObserve
-	case CapabilityPluginClientRequest, CapabilityModelAdapter, CapabilityModelMiddleware:
+	case CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter, CapabilityModelMiddleware:
 		requiredKind = SeamDecision
 	}
 	if c.ID == CapabilityModelMiddleware && policy != ErrorPolicyPropagate {
@@ -1091,7 +1169,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelRequestMetrics, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelRequestMetrics, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}

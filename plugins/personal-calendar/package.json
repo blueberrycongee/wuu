@@ -1,0 +1,11 @@
+{
+  "name": "@wuu/personal-calendar-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=personal-calendar",
+    "test": "node --test test/*.test.mjs"
+  },
+  "wuu": { "dev": { "watch": ["../../packages/plugin-sdk/src", "../../scripts/build-bundled-plugins.mjs", "../../internal/plugin/bundled/personal-calendar/plugin.json"] } }
+}

@@ -102,6 +102,21 @@
   -webkit-app-region: no-drag;
 }
 
+.workspace-tool-rail-contributions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  width: var(--control-size-toolbar);
+  min-width: 0;
+  contain: inline-size;
+}
+
+.workspace-tool-rail-contributions:empty {
+  display: none;
+}
+
 .workspace-tool-rail .icon-button,
 .workspace-tool-rail-collapsed .icon-button {
   flex-shrink: 0;

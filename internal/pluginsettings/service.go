@@ -10,6 +10,8 @@ import (
 	"io"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
@@ -46,13 +48,23 @@ type UpdateStateRequest struct {
 // files. Subject identity is supplied by an admitted consumer; ordinary plugin
 // requests still pass through that consumer's manifest ownership checks.
 type Service struct {
-	mu                sync.RWMutex
-	id, home, project string
-	state             pluginhost.State
+	mu                           sync.RWMutex
+	id, home, stateRoot, project string
+	state                        pluginhost.State
+	guardMu                      sync.Mutex
+	guards                       map[string]bool
+	guardChanged                 chan struct{}
 }
 
 func NewService(id, home, project string) *Service {
-	return &Service{id: id, home: home, project: project, state: pluginhost.StatePrepared}
+	return NewServiceWithStateRoot(id, home, home, project)
+}
+
+// NewServiceWithStateRoot keeps configuration and business storage scopes
+// explicit. A selected local provider may share settings across product spaces
+// without copying or exposing their isolated opaque state through that home.
+func NewServiceWithStateRoot(id, home, stateRoot, project string) *Service {
+	return &Service{id: id, home: home, stateRoot: stateRoot, project: project, state: pluginhost.StatePrepared, guards: make(map[string]bool), guardChanged: make(chan struct{})}
 }
 func (s *Service) ID() string { return s.id }
 func (s *Service) Status() pluginhost.Status {
@@ -63,8 +75,8 @@ func (s *Service) Status() pluginhost.Status {
 func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
-	for _, method := range []string{"read", "update", "read-state", "update-state"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state"})
+	for _, method := range []string{"read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state", Cleanup: method == "release-inspection" || method == "reconcile-inspection"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }
@@ -80,12 +92,26 @@ func (s *Service) Activate(ctx context.Context) error {
 	s.state = pluginhost.StateActive
 	return nil
 }
-func (s *Service) Close(context.Context) error {
+func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.state = pluginhost.StateStopped
-	return nil
+	s.mu.Unlock()
+	for {
+		s.guardMu.Lock()
+		active := len(s.guards)
+		changed := s.guardChanged
+		s.guardMu.Unlock()
+		if active == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+	}
 }
+
 func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -93,12 +119,53 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	readOnly := params.Method == "read" || params.Method == "read-state"
-	if (s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && readOnly)) || params.Service != ServiceName {
+	if (s.state != pluginhost.StateActive && params.Method != "release-inspection" && params.Method != "reconcile-inspection" && params.Method != "list-inspections" && !(s.state == pluginhost.StatePrepared && readOnly)) || params.Service != ServiceName {
 		return nil, settingsError("service_unavailable", "settings provider is unavailable")
+	}
+	if params.Method == "list-inspections" || params.Method == "reconcile-inspection" {
+		action := "state/inspections/list"
+		if params.Method == "reconcile-inspection" {
+			action = "state/inspections/reconcile"
+		}
+		if err := persistence.ValidateInspectionAdmission(params, action); err != nil {
+			return nil, err
+		}
 	}
 	var result any
 	var err error
 	switch params.Method {
+	case "inspection-authority":
+		var request struct{}
+		if err = decodeSettingsRequest(params.Params, &request); err != nil {
+			return nil, err
+		}
+		result = persistence.InspectionTopology{Version: 1, StorageTopology: persistence.SingleHost, ExecutionTopology: persistence.SingleHost}
+
+	case "list-inspections":
+		var request struct {
+			Scope Scope `json:"scope"`
+		}
+		if err = decodeSettingsRequest(params.Params, &request); err != nil {
+			return nil, err
+		}
+		result, err = s.listInspections(ctx, request.Scope)
+	case "reconcile-inspection":
+		var request InspectionResolution
+		if err = decodeSettingsRequest(params.Params, &request); err != nil {
+			return nil, err
+		}
+		result, err = s.reconcileInspection(ctx, persistence.InspectionReconciler(params), request)
+
+	case "acquire-inspection", "release-inspection":
+		var request InspectionRequest
+		if err = decodeSettingsRequest(params.Params, &request); err != nil {
+			return nil, err
+		}
+		result, err = s.inspectState(ctx, params.Caller, request, params.Method == "release-inspection")
+		if params.Method == "release-inspection" {
+			result = struct{}{}
+		}
+
 	case "read", "read-state":
 		var request ReadRequest
 		if err = decodeSettingsRequest(params.Params, &request); err != nil {
@@ -109,9 +176,13 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			document, err = Read(s.home, s.project, request.Subject, request.Scope)
 			result = SettingsView{Document: document, Revision: documentRevision(document)}
 		} else {
-			var document StateDocument
-			document, err = ReadState(s.home, s.project, request.Subject, request.Scope)
-			result = StateView{Document: document, Revision: documentRevision(document)}
+			var path string
+			path, _, err = stateDocumentPath(s.stateRoot, s.project, request.Subject, request.Scope)
+			if err == nil {
+				var record stateRecord
+				record, err = readStateRecord(path, request.Subject)
+				result = StateView{Document: visibleStateDocument(record), Revision: documentRevision(record)}
+			}
 		}
 	case "update":
 		var request UpdateRequest
@@ -125,10 +196,29 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			return nil, err
 		}
 		result, err = s.updateState(ctx, request)
+	case "transfer-state":
+		var request StateTransfer
+		if err = decodeSettingsRequest(params.Params, &request); err != nil {
+			return nil, err
+		}
+		if err = validateStateTransfer(request); err != nil {
+			return nil, settingsError("invalid_params", "invalid state ownership transfer")
+		}
+		err = moveStatePrefixContext(ctx, s.stateRoot, s.project, request, nil)
+		result = struct{}{}
 	default:
 		return nil, settingsError("method_not_found", "settings method is unavailable")
 	}
 	if err != nil {
+		if errors.Is(err, inspectionjournal.ErrActive) {
+			return nil, settingsError("inspection_active", err.Error())
+		}
+		if errors.Is(err, inspectionjournal.ErrReleased) {
+			return nil, settingsError("inspection_released", err.Error())
+		}
+		if errors.Is(err, inspectionjournal.ErrConflict) {
+			return nil, settingsError("inspection_conflict", err.Error())
+		}
 		var hostErr *pluginhost.HostServiceError
 		if errors.As(err, &hostErr) {
 			return nil, hostErr
@@ -179,7 +269,7 @@ func (s *Service) updateState(ctx context.Context, request UpdateStateRequest) (
 	if validateStateDocument(document, request.Subject) != nil {
 		return StateView{}, settingsError("invalid_params", "invalid state document")
 	}
-	path, dir, err := stateDocumentPath(s.home, s.project, request.Subject, request.Scope)
+	path, dir, err := stateDocumentPath(s.stateRoot, s.project, request.Subject, request.Scope)
 	if err != nil {
 		return StateView{}, settingsError("invalid_params", "invalid settings subject or scope")
 	}
@@ -191,25 +281,27 @@ func (s *Service) updateState(ctx context.Context, request UpdateStateRequest) (
 	if err := ctx.Err(); err != nil {
 		return StateView{}, err
 	}
-	current, err := readStateDocument(path, request.Subject)
+	current, err := readStateRecord(path, request.Subject)
 	if err != nil {
 		return StateView{}, err
 	}
 	if request.ExpectedRevision != documentRevision(current) {
 		return StateView{}, settingsError("settings_conflict", "plugin state changed")
 	}
-	data, err := json.MarshalIndent(document, "", "  ")
+	if err := checkStateInspection(dir, request.Subject); err != nil {
+		return StateView{}, err
+	}
+	if err := replaceVisibleStateValues(&current, request.Values); err != nil {
+		return StateView{}, settingsError("state_ownership_changed", "plugin state prefix has transferred ownership")
+	}
+	data, err := encodeStateRecord(current, request.Subject)
 	if err != nil {
+		return StateView{}, settingsError("invalid_params", "invalid state document or size limit")
+	}
+	if err := writeStateFile(path, data); err != nil {
 		return StateView{}, err
 	}
-	data = append(data, '\n')
-	if len(data) > maxDocumentBytes+MaxStateValueBytes {
-		return StateView{}, settingsError("invalid_params", "state document exceeds the size limit")
-	}
-	if err := securefs.WriteFileAtomic(path, data); err != nil {
-		return StateView{}, err
-	}
-	return StateView{Document: document, Revision: documentRevision(document)}, nil
+	return StateView{Document: visibleStateDocument(current), Revision: documentRevision(current)}, nil
 }
 func documentRevision(document any) string {
 	raw, _ := json.Marshal(document)

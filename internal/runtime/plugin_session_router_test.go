@@ -55,6 +55,12 @@ func TestPluginHostSessionSendUsesGenerationBoundOwner(t *testing.T) {
 	if owner != "alpha" || result.TurnID != "opaque" {
 		t.Fatalf("owner = %q, result = %+v", owner, result)
 	}
+	for _, invalid := range []string{`"true"`, `1`, `{}`, `[]`} {
+		raw := json.RawMessage(`{"request_id":"invalid","session_id":"thread-1","input":{"prompt":"work"},"disable_tools":` + invalid + `}`)
+		if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionSend, raw); err == nil {
+			t.Fatalf("accepted non-boolean disable_tools: %s", invalid)
+		}
+	}
 	if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionSend, json.RawMessage(`{"plugin_id":"beta","request_id":"opaque","session_id":"thread-1","input":{"prompt":"work"}}`)); err == nil {
 		t.Fatal("caller-supplied plugin identity was accepted")
 	}

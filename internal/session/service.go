@@ -16,16 +16,17 @@ import (
 // Service owns the default session algorithms and their resources. All callers,
 // including native callers, cross the same serialized domain contract.
 type Service struct {
-	mu        sync.Mutex
-	id        string
-	state     pluginhost.State
-	store     *documentStore
-	resources map[string]domainResource
-	active    sync.WaitGroup
-	pending   map[uint64]context.CancelFunc
-	nextCall  uint64
-	closed    chan struct{}
-	closeErr  error
+	mu          sync.Mutex
+	id          string
+	state       pluginhost.State
+	store       *documentStore
+	resources   map[string]domainResource
+	active      sync.WaitGroup
+	pending     map[uint64]context.CancelFunc
+	nextCall    uint64
+	closed      chan struct{}
+	closeErr    error
+	inspections map[string]bool
 }
 type domainResource struct {
 	caller string
@@ -33,7 +34,7 @@ type domainResource struct {
 }
 
 func NewService(id string, documents persistence.Documents) *Service {
-	return &Service{id: id, state: pluginhost.StatePrepared, store: newDocumentStore(context.Background(), documents), resources: make(map[string]domainResource), pending: make(map[uint64]context.CancelFunc)}
+	return &Service{id: id, state: pluginhost.StatePrepared, store: newDocumentStore(context.Background(), documents), resources: make(map[string]domainResource), pending: make(map[uint64]context.CancelFunc), inspections: make(map[string]bool)}
 }
 
 // NewServiceWithJournalBackgroundDocuments supplies authority for journal-owned
@@ -50,9 +51,14 @@ func (s *Service) Status() pluginhost.Status {
 	return pluginhost.Status{ID: s.id, State: s.state}
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
-	methods := make([]pluginhost.ServiceMethodDescriptor, 0, len(domainMethods)+len(resourceMethods))
-	for _, name := range append(append([]string{}, domainMethods...), resourceMethods...) {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1", Cleanup: name == "Journal.Close"})
+	names := append([]string{}, domainMethods...)
+	names = append(names, clientInputDomainMethods...)
+	names = append(names, inspectionDomainMethods...)
+	names = append(names, activeHistoryDomainMethods...)
+	names = append(names, resourceMethods...)
+	methods := make([]pluginhost.ServiceMethodDescriptor, 0, len(names))
+	for _, name := range names {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1", Cleanup: name == "Journal.Close" || name == "ReleaseInspection" || name == "ReconcileInspection"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }
@@ -121,7 +127,7 @@ func containsMethod(methods []string, method string) bool {
 }
 func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
-	if s.state != pluginhost.StateActive {
+	if s.state != pluginhost.StateActive && p.Method != "ReleaseInspection" && p.Method != "ListInspections" && p.Method != "ReconcileInspection" {
 		s.mu.Unlock()
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "session provider is not active"}
 	}
@@ -142,7 +148,20 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	if err := json.Unmarshal(p.Params, &request); err != nil || request.Args == nil {
 		return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "session arguments must be an array"}
 	}
-	var receiver any = s.store.WithContext(ctx)
+	native := s.store.WithContext(ctx)
+	native.caller = p.Caller
+	native.providerID = s.id
+	if p.Method == "ListInspections" || p.Method == "ReconcileInspection" {
+		action := "state/inspections/list"
+		if p.Method == "ReconcileInspection" {
+			action = "state/inspections/reconcile"
+		}
+		if err := persistence.ValidateInspectionAdmission(p, action); err != nil {
+			return nil, err
+		}
+		native.admission = p.Admission
+	}
+	var receiver any = native
 	method := p.Method
 	var releaseHandle string
 	if containsMethod(resourceMethods, method) {
@@ -179,8 +198,39 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			releaseHandle = id
 		}
 
-	} else if !containsMethod(domainMethods, method) {
+	} else if !containsMethod(domainMethods, method) && !containsMethod(clientInputDomainMethods, method) && !containsMethod(inspectionDomainMethods, method) && !containsMethod(activeHistoryDomainMethods, method) {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown session domain method"}
+	}
+	guardKey := ""
+	guardCreated := false
+	if method == "AcquireInspection" || method == "ReleaseInspection" {
+		if len(request.Args) != 1 {
+			return nil, encodeDomainError(persistence.ErrInvalid)
+		}
+		var id string
+		if json.Unmarshal(request.Args[0], &id) != nil || id == "" || len(id) > 256 {
+			return nil, encodeDomainError(persistence.ErrInvalid)
+		}
+		guardKey = sessionInspectionID(p.Caller, id)
+		if method == "AcquireInspection" {
+			s.mu.Lock()
+			if !s.inspections[guardKey] {
+				s.inspections[guardKey] = true
+				guardCreated = true
+				s.active.Add(1)
+			}
+			s.mu.Unlock()
+		}
+	}
+	if method == "ReconcileInspection" {
+		if len(request.Args) != 1 {
+			return nil, encodeDomainError(persistence.ErrInvalid)
+		}
+		var resolution persistence.InspectionResolution
+		if json.Unmarshal(request.Args[0], &resolution) != nil {
+			return nil, encodeDomainError(persistence.ErrInvalid)
+		}
+		guardKey = resolution.ID
 	}
 	var values []any
 	var err error
@@ -193,7 +243,23 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		values, err = invokeDomainMethod(ctx, receiver, method, request.Args)
 	}
 	if err != nil {
+		if guardCreated && (errors.Is(err, persistence.ErrInspectionUnsupported) || errors.Is(err, persistence.ErrInspectionReleased) || errors.Is(err, persistence.ErrInvalid) || errors.Is(err, persistence.ErrNamespaceOwnership)) {
+			s.mu.Lock()
+			if s.inspections[guardKey] {
+				delete(s.inspections, guardKey)
+				s.active.Done()
+			}
+			s.mu.Unlock()
+		}
 		return nil, encodeDomainError(err)
+	}
+	if method == "ReleaseInspection" || method == "ReconcileInspection" {
+		s.mu.Lock()
+		if s.inspections[guardKey] {
+			delete(s.inspections, guardKey)
+			s.active.Done()
+		}
+		s.mu.Unlock()
 	}
 	if releaseHandle != "" {
 		s.mu.Lock()

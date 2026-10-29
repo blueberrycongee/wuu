@@ -20,7 +20,14 @@ import java.util.UUID
 class AppModel(application: Application) : AndroidViewModel(application) {
     private val vault = Vault(application)
     val push = PushNotifications(application)
+    val personal = PersonalModel()
+    var isPersonalHost by mutableStateOf(false); private set
+    private var remoteDomain: String? = null
+    var personalSelected by mutableStateOf(false); private set
+    fun selectArea(personalArea: Boolean) { personalSelected = personalArea; personal.active = personalArea; rememberLocation() }
     private val directory = File(application.cacheDir, "wuu-history")
+    private val personalDirectory = File(application.cacheDir, "wuu-personal-history")
+    private val personalDraftDirectory = File(application.noBackupFilesDir, "wuu-personal-drafts")
     var account by mutableStateOf<AccountSession?>(null); private set
     var devices by mutableStateOf<List<JSONObject>>(emptyList()); private set
     var host by mutableStateOf<JSONObject?>(null); private set
@@ -76,6 +83,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private var generation = 0L
     private var authGeneration = 0L
     private var openGeneration = 0L
+    private var personalOpening = 0L
     init { try {
         account = vault.read("session")?.let(AccountSession::decode)
         resetRecovery = vault.read("recovery")?.getString("key")
@@ -89,6 +97,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 activeID = location.optString("thread").takeIf { it.isNotEmpty() }
                 history = History(session, location.getString("host"), directory)
                 restoreHistory = true
+                personalSelected = location.optBoolean("personal"); personal.active = personalSelected
             }
         }
     } catch (e: Exception) { error = e.message }
@@ -97,7 +106,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     fun rememberLocation() {
         val session = account ?: return; val selected = host ?: return
         try {
-            vault.write("location", NavigationLocation.encode(session, selected.getString("pub"), workspace, activeID))
+            vault.write("location", NavigationLocation.encode(session, selected.getString("pub"), workspace, activeID, personalSelected))
         } catch (e: Exception) { error = e.message }
     }
     fun perform(block: suspend () -> Unit) {
@@ -111,6 +120,9 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private fun check(stamp: Long) { if (generation != stamp) throw CancellationException() }
     private suspend fun accept(session: AccountSession, stamp: Long) {
         if (stamp != authGeneration) throw CancellationException()
+        background(); personalOpening++; selectArea(false); personal.reset(true)?.let { error = it }
+        check(personalDirectory.deleteRecursively()) { "无法清除 Personal 历史" }
+        check(personalDraftDirectory.deleteRecursively()) { "无法清除 Personal 未确认消息" }
         vault.delete("directory"); vault.write("session", session.encode()); vault.delete("github")
         account = session; push.bind(session); browserURL = null; githubURL = null; loadDevices(); foreground()
     }
@@ -222,18 +234,22 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 leaveHost(removeCache = true)
                 if (account == session) {
                     History.prune(session, devices.filter { it.optString("role") == "host" }.map { it.getString("pub") }, directory)
+                    PersonalHistoryCache.prune(personalDirectory, devices.filter { it.optString("role") == "host" }.map { listOf(session.server, session.username, session.pub, session.token, it.getString("pub")) })
+                    PersonalHistoryCache.prune(personalDraftDirectory, devices.filter { it.optString("role") == "host" }.map { listOf(session.server, session.username, session.pub, session.token, it.getString("pub")) })
                     foreground()
                 }
             }
             return
         }
         History.prune(session, devices.filter { it.optString("role") == "host" }.map { it.getString("pub") }, directory)
+        PersonalHistoryCache.prune(personalDirectory, devices.filter { it.optString("role") == "host" }.map { listOf(session.server, session.username, session.pub, session.token, it.getString("pub")) })
+        PersonalHistoryCache.prune(personalDraftDirectory, devices.filter { it.optString("role") == "host" }.map { listOf(session.server, session.username, session.pub, session.token, it.getString("pub")) })
     }
-    fun selectHost(device: JSONObject) = selectHostFor(device, account)
-    private fun selectHostFor(device: JSONObject, previous: AccountSession?) = perform {
-        if (account != previous) return@perform
-        val selection = leaveHost(); val session = account ?: return@perform
-        if (selection != openGeneration || session != previous) return@perform
+    fun selectHost(device: JSONObject) = perform { selectHostFor(device, account) }
+    private suspend fun selectHostFor(device: JSONObject, previous: AccountSession?, preservingPersonalRoute: Boolean = false) {
+        if (account != previous) return
+        val selection = leaveHost(preservingPersonalRoute = preservingPersonalRoute); val session = account ?: return
+        if (selection != openGeneration || session != previous) return
         require(device.optString("role") == "host" && devices.any { it.optString("pub") == device.optString("pub") })
         host = device
         rememberLocation()
@@ -246,6 +262,26 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         loadDevices()
         if (account != session || !push.mayOpenNotification() || directoryCached) return@perform
         devices.firstOrNull { it.optString("pub") == pub && it.optString("role") == "host" }?.let { selectHostFor(it, session) }
+    }
+    fun openPersonal(location: PersonalLocation) = perform { openPersonalLocation(location) }
+    private suspend fun openPersonalLocation(location: PersonalLocation) {
+        val session = account ?: return
+        val ticket = ++personalOpening
+        val navigation = openGeneration
+        loadDevices()
+        if (account != session || personalOpening != ticket || openGeneration != navigation || directoryCached) return
+        val device = devices.firstOrNull { it.optString("pub") == location.host && it.optString("role") == "host" } ?: return
+        if (host?.optString("pub") != location.host) selectHostFor(device, session, preservingPersonalRoute = true)
+        if (account != session || personalOpening != ticket || host?.optString("pub") != location.host) return
+        selectArea(true); personal.locate(location)
+    }
+    fun openNotification(payload: Map<String, String>) {
+        if (payload["product_domain"] == "personal") {
+            val session = account ?: return
+            if (!push.mayOpenNotification()) return
+            val location = PersonalLocation.notification(payload, session.pub) ?: return
+            perform { openPersonalLocation(location) }
+        } else if (listOf("product_domain", "agent_id", "task_id", "message_seq").none { payload.containsKey(it) }) payload["host"]?.let(::openPushHost)
     }
     private fun showHistory() {
         val snapshot = history?.snapshot
@@ -302,8 +338,9 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun background() {
+        personal.disconnect()
         generation++; refresh?.cancel(); refresh = null; reconnectJob?.cancel(); reconnectJob = null; eventJob?.cancel(); eventJob = null
-        remote?.close(); remote = null; connected = false; connecting = false; approval = null; sending = false
+        remote?.close(); remote = null; remoteDomain = null; connected = false; connecting = false; approval = null; sending = false
         imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
         questions = emptyList(); questionRevision++
     }
@@ -314,20 +351,24 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (connected || connecting) return
         val session = account ?: return; val selected = host ?: return
         connecting = true
-        val transport = Remote(session, selected.getString("pub")); remote = transport
+        personal.configureCache(personalDirectory, personalDraftDirectory, listOf(session.server, session.username, session.pub, session.token, selected.getString("pub")))
+        check(stamp)
+        val transport = Remote(session, selected.getString("pub")); remote = transport; remoteDomain = null
         try {
             eventJob = viewModelScope.launch {
                 for (event in transport.events) {
                     if (generation != stamp || remote !== transport) break
                     when (event) {
-                        is Remote.Event.Snapshot -> if (event.tag == openGeneration) {
+                        is Remote.Event.Snapshot -> if (remoteDomain == "coding" && event.tag == openGeneration) {
                             val result = event.result
                             live = ChatThread(result.getJSONObject("thread"), result.optJSONArray("pending_user_messages")?.objects() ?: emptyList(), result.optJSONArray("held_user_messages")?.objects() ?: emptyList())
                             showLive()
                         }
-                        is Remote.Event.Disconnected -> { connected = false; approval = null; connectionStatus = event.reason }
-                        is Remote.Event.Approval -> { approval = event.line }
+                        is Remote.Event.Disconnected -> { personal.disconnect(event.reason); connected = false; approval = null; connectionStatus = event.reason }
+                        is Remote.Event.Approval -> { if (remoteDomain == "coding") approval = event.line }
                         is Remote.Event.Notification -> {
+                            if (event.method == "plugin/inventory/changed") personal.inventoryChanged(event.params)
+                            if (remoteDomain != "coding") continue
                             if (event.method == "user-question/requested") {
                                 questionRevision++
                                 event.params.optJSONObject("request")?.let { request ->
@@ -344,13 +385,18 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             transport.connect(); check(stamp)
-            transport.call("initialize"); check(stamp)
+            val initialized = transport.call("initialize"); check(stamp)
+            remoteDomain = if (initialized.optString("product_domain") == "personal") "personal" else "coding"
+            if (remoteDomain == "personal" && !isPersonalHost) selectArea(true)
+            isPersonalHost = remoteDomain == "personal"
             connected = true; connectionStatus = "已连接"
+            personal.bind(transport, initialized)
         } catch (e: Exception) {
             transport.close()
-            if (remote === transport) { remote = null; connected = false; connecting = false }
+            if (remote === transport) { personal.disconnect(e.message); remote = null; connected = false; connecting = false }
             throw e
         }
+        if (isPersonalHost) { if (generation == stamp) connecting = false; return }
         // A missing conversation or failed directory read is not a transport failure.
         try {
             loadQuestions(); check(stamp)
@@ -512,16 +558,21 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         checkNotNull(remote).call(if (answers == null) "user-question/cancel" else "user-question/respond", params)
         check(stamp); questions = questions.filterNot { it.optString("request_id") == id }
     }
-    suspend fun leaveHost(removeCache: Boolean = false): Long {
-        vault.delete("location")
+    suspend fun leaveHost(removeCache: Boolean = false, preservingPersonalRoute: Boolean = false): Long {
+        if (!preservingPersonalRoute) personalOpening++
+        // Close the transport before filesystem cleanup, including vault deletion.
+        background()
+        selectArea(false); val personalWarning = personal.reset(removeCache)
+        val locationFailure = runCatching { vault.delete("location") }.exceptionOrNull()
         restoreHistory = false
         val oldHistory = history
         conversationDrafts.clear(); conversationAttachments.clear()
-        background(); history = null; host = null; activeID = null; live = null; openGeneration++
+        history = null; host = null; isPersonalHost = false; activeID = null; live = null; openGeneration++
         liveRows = emptyList(); rows = emptyList(); messages = emptyList(); workspace = ""; workspaces = emptyList(); historyEnabled = false; threadSettings = null; threadEngine = ""
         running = false; sending = false; readOnly = true; pending = emptyList(); search = ""; archivedList = false
         val selection = openGeneration
-        withContext(NonCancellable) { oldHistory?.invalidate(removeCache) }
+        val historyFailure = runCatching { withContext(NonCancellable) { oldHistory?.invalidate(removeCache) } }.exceptionOrNull()
+        (personalWarning ?: locationFailure?.message ?: historyFailure?.message)?.let { error = it }
         return selection
     }
     fun logout() {
@@ -544,11 +595,14 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             authGeneration++; loginJob?.cancel(); loginJob = null
             account = null; devices = emptyList(); authMethod = ""; directoryCached = false; githubURL = null; browserURL = null
             push.bind(null)
+            background(); personal.reset(removeCache = true)?.let { error = it }
             vault.delete("session"); vault.delete("github"); vault.delete("directory")
-            leaveHost()
+            leaveHost(removeCache = true)
+            check(personalDirectory.deleteRecursively()) { "无法清除 Personal 历史" }
+            check(personalDraftDirectory.deleteRecursively()) { "无法清除 Personal 未确认消息" }
             check(directory.deleteRecursively()) { "无法清除会话缓存" }
             check(File(getApplication<Application>().cacheDir, "exports").deleteRecursively()) { "无法清除导出缓存" }
         } finally { busy = false }
     }
-    override fun onCleared() { remote?.close(); super.onCleared() }
+    override fun onCleared() { personal.reset(); remote?.close(); super.onCleared() }
 }

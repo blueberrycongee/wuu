@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { ArtifactSources } from "./artifactSources";
+import { RemoteAppServerClient } from "./remoteAppServerClient";
 import { AppServerClientPool } from "./appServerClients";
 import { requestTrustedRemote, type TrustedRemotePeer } from "./trustedRemoteTransport";
 import { ProtocolClient, type ProtocolEnvelope } from "../../../clients/core/src/rpc";
@@ -45,6 +46,90 @@ describe("desktop remote session routing", () => {
     const { pool, spawn } = fixture(() => ({ kind: "disabled", reason: "provider disabled" }));
     await expect(pool.request("thread/list")).rejects.toThrow("disabled");
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { user_space_id: "other", product_domain: "personal" },
+    { user_space_id: "local", product_domain: "coding" },
+    {},
+  ])("rejects unverified remote user hosts before publishing or admitting data (%j)", async identity => {
+    const { pool, peers, events, spawn } = fixture();
+    const user = { kind: "user" as const, cwd: "/display/personal", user_space_id: "local", product_domain: "personal" as const, composition_profile: "personal" };
+    await expect(pool.requestInContext(user, "user-question/list")).rejects.toThrow("user_host_initialization_required");
+    expect(peers[0].sent).toHaveLength(0);
+    const observed = vi.fn();
+    const initialized = pool.requestInContext(user, "initialize", { protocol_version: "wuu-app-server/v0.1" }, observed);
+    const refused = expect(initialized).rejects.toThrow("user_host_binding_mismatch");
+    const peer = await sent(() => peers[0]);
+    const request = peer.sent.at(-1)!;
+    expect(request.params).toMatchObject({ user_space_id: "local", product_domain: "personal", composition_profile: "personal" });
+    peer.notify("item/agentMessage/delta", { thread_id: "private", delta: "unverified" });
+    expect(events.some(event => event.kind === "notification")).toBe(false);
+    const reverse = await peer.hooks.onServerRequest({ id: "unverified", method: "approval/request" });
+    expect(reverse.error?.code).toBe("permission_denied");
+    peer.proto.feed({ id: request.id, result: { ...identity, workspace_root: "/remote/project", extension_inventory: [] } });
+    await refused;
+    expect(observed).not.toHaveBeenCalled();
+    const count = peer.sent.length;
+    await expect(pool.requestInContext(user, "plugin/client/request", { id: "personal" })).rejects.toThrow("user_host_binding_mismatch");
+    await expect(pool.requestInContext(user, "initialize", {})).rejects.toThrow("user_host_binding_mismatch");
+    expect(peer.sent).toHaveLength(count); expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("captures immutable user identity and never revives a rejected RPC with a concurrent handshake", async () => {
+    const user = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
+    let peer!: Peer;
+    const route = remote("host-a"); if (route.kind !== "remote") throw new Error("remote fixture required");
+    const client = new RemoteAppServerClient("/display/personal", "", route, (_route, hooks) => peer = new Peer(hooks), () => {}, () => {}, () => true, user);
+    user.userSpaceId = "changed"; user.compositionProfile = "changed";
+    try {
+      const observed = vi.fn();
+      const first = client.request("initialize", {}, observed), rejected = expect(first).rejects.toThrow("user_host_binding_mismatch");
+      await sent(() => peer);
+      expect(peer.sent[0].params).toMatchObject({ user_space_id: "local", product_domain: "personal", composition_profile: "personal" });
+      const second = client.request("initialize", {}, observed), alsoRejected = expect(second).rejects.toThrow("user_host_binding_mismatch");
+      await vi.waitFor(() => expect(peer.sent).toHaveLength(2));
+      peer.proto.feed({ id: peer.sent[0].id, result: { user_space_id: "foreign", product_domain: "personal" } }); await rejected;
+      peer.proto.feed({ id: peer.sent[1].id, result: { user_space_id: "local", product_domain: "personal" } }); await alsoRejected;
+      expect(observed).not.toHaveBeenCalled();
+      await expect(client.request("user-question/list")).rejects.toThrow("user_host_binding_mismatch");
+      expect(peer.sent).toHaveLength(2);
+    } finally { await client.dispose(); }
+  });
+
+  it("keeps user verification on resumed RPCs and requires a new handshake for a replacement RPC", async () => {
+    const { pool, peers, events, spawn } = fixture();
+    const user = { kind: "user" as const, cwd: "/display/personal", user_space_id: "local", product_domain: "personal" as const, composition_profile: "personal" };
+    const initialize = () => pool.requestInContext(user, "initialize", { protocol_version: "wuu-app-server/v0.1" });
+    const first = initialize(); const peer = await sent(() => peers[0]);
+    peer.reply({ user_space_id: "local", product_domain: "personal", workspace_root: "/remote/project" });
+    expect(await first).toMatchObject({ workspace_root: user.cwd });
+    const bound = pool.bindContextRequest(user); await Promise.resolve();
+    const beforeConflict = peer.sent.length;
+    await expect(bound("user-question/list", { user_space_id: "foreign" })).rejects.toThrow("user_host_binding_mismatch");
+    await expect(bound("initialize", { composition_profile: "coding" })).rejects.toThrow("user_host_binding_mismatch");
+    expect(peer.sent).toHaveLength(beforeConflict);
+    const pending = bound("user-question/list");
+    await vi.waitFor(() => expect(peer.sent.at(-1)?.method).toBe("user-question/list"));
+    peer.hooks.onDetach(); peer.hooks.onAttach({ session: "connection-1", resumed: true });
+    peer.reply({ questions: [] }); expect(await pending).toEqual({ questions: [] });
+    expect(peer.sent.filter(frame => frame.method === "initialize")).toHaveLength(1);
+    const old = peer.proto;
+    peer.proto = new ProtocolClient(env => peer.sent.push(env), { onNotification: (method, params, workdir) => peer.hooks.onNotification(method, params, workdir) });
+    old.close("fresh generation"); peer.hooks.onAttach({ session: "connection-2", resumed: false });
+    await expect(bound("user-question/list")).rejects.toThrow(/generation|owning/);
+    const sentCount = peer.sent.length;
+    await expect(pool.requestInContext(user, "user-question/list")).rejects.toThrow("user_host_initialization_required");
+    peer.notify("item/agentMessage/delta", { thread_id: "private", delta: "before-revalidation" });
+    expect(events.some(event => event.kind === "notification")).toBe(false);
+    expect(peer.sent).toHaveLength(sentCount);
+    const second = initialize();
+    await vi.waitFor(() => expect(peer.sent.length).toBe(sentCount + 1));
+    peer.reply({ user_space_id: "local", product_domain: "personal" }); await second;
+    const read = pool.requestInContext(user, "user-question/list");
+    await vi.waitFor(() => expect(peer.sent.at(-1)?.method).toBe("user-question/list"));
+    peer.reply({ questions: [] }); expect(await read).toEqual({ questions: [] });
+    expect(spawn).not.toHaveBeenCalled(); expect(peers).toHaveLength(1);
   });
 
   it("routes same-named sessions to their execution host and binds attachment reads to the owner", async () => {

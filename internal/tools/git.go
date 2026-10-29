@@ -557,6 +557,9 @@ func runGit(env *Env, ctx context.Context, subcmd string, gitArgs []string) (str
 	cmd := exec.CommandContext(runCtx, "git", gitArgs...)
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return "", err
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -587,7 +590,7 @@ func runGit(env *Env, ctx context.Context, subcmd string, gitArgs []string) (str
 		"exit_code":          exitCode,
 		"output":             trimmed,
 		"timed_out":          timedOut,
-		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
+		"workspace_revision": env.workspaceRevision(ctx, env.RevisionRoot(ctx)),
 		"next_suggestions":   gitNextSuggestions(subcmd, exitCode, timedOut),
 	}
 	if subcmd == "commit" && exitCode == 0 && !timedOut {
@@ -653,6 +656,9 @@ func latestCommitMetadata(env *Env, ctx context.Context) (gitCommitMetadata, err
 	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "log", "-1", "--format=%H%x00%s")
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return gitCommitMetadata{}, err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return gitCommitMetadata{}, fmt.Errorf("read latest commit: %w", err)
@@ -711,6 +717,9 @@ func gitStatus(env *Env, ctx context.Context, userArgs []string) (string, error)
 	cmd := exec.CommandContext(runCtx, "git", gitArgs...)
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return "", err
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -746,7 +755,7 @@ func gitStatus(env *Env, ctx context.Context, userArgs []string) (string, error)
 		"untracked":          untracked,
 		"output":             trimmed,
 		"timed_out":          timedOut,
-		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
+		"workspace_revision": env.workspaceRevision(ctx, env.RevisionRoot(ctx)),
 		"next_suggestions":   gitStatusNextSuggestions(staged, unstaged, untracked, exitCode, timedOut),
 	}
 	if truncated {
@@ -1153,6 +1162,9 @@ func changedPathsForPathspecs(env *Env, ctx context.Context, pathspecs []string)
 	cmd := exec.CommandContext(runCtx, "git", args...)
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return nil, err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect paths before git add: %w", err)
@@ -1182,6 +1194,9 @@ func gitStatusSnapshot(env *Env, ctx context.Context) (staged, unstaged []fileEn
 	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "status", "--porcelain=v1", "-z")
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return nil, nil, nil, err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("read git status snapshot: %w", err)
@@ -1204,6 +1219,9 @@ func rejectSensitiveStagedCommitPaths(env *Env, ctx context.Context) error {
 	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "diff", "--cached", "--name-only", "-z")
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("inspect staged paths before commit: %w", err)
@@ -1463,6 +1481,9 @@ func currentBranch(env *Env, ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+	if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+		return "", err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("resolve current branch: %w", err)

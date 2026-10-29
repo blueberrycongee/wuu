@@ -27,11 +27,13 @@ var denialSignatures = []string{
 	"read-only file system",
 }
 
-// Policy is the complete filesystem-effect policy for one subprocess. Network
-// access and process visibility are deliberately outside this contract.
+// Policy controls subprocess filesystem contents and directory access. Network,
+// process visibility, and metadata-only queries are outside this contract.
 type Policy struct {
 	Mode          Mode
 	WritableRoots []string
+	// ProtectedPaths denies reads and writes independently of writable grants.
+	ProtectedPaths []string
 }
 
 type Enforcement string
@@ -42,8 +44,11 @@ const (
 )
 
 type ConfinedCommand struct {
-	Argv                    []string
-	Enforcement             Enforcement
+	Argv        []string
+	Enforcement Enforcement
+	// ProtectedPathsEnforced explicitly acknowledges the protected-path contract.
+	// Older providers reporting only full write confinement are rejected.
+	ProtectedPathsEnforced  bool
 	DenialSignatures        []string
 	RunnerFailureSignatures []string
 }
@@ -72,7 +77,11 @@ func Apply(cmd *exec.Cmd, policy Policy) error {
 	if err := validatePolicy(policy); err != nil {
 		return err
 	}
-	return applyPlatform(cmd, normalizedPolicy(policy))
+	normalized, err := normalizedPolicy(policy)
+	if err != nil {
+		return err
+	}
+	return applyPlatform(cmd, normalized)
 }
 
 // ApplyWithProvider applies an alternate provider when configured, otherwise
@@ -90,7 +99,11 @@ func ApplyWithProvider(ctx context.Context, cmd *exec.Cmd, policy Policy, provid
 	}
 	argv := append([]string(nil), cmd.Args...)
 	argv[0] = cmd.Path
-	confined, err := provider.Confine(ctx, argv, normalizedPolicy(policy))
+	normalized, err := normalizedPolicy(policy)
+	if err != nil {
+		return ResultClassifier{}, err
+	}
+	confined, err := provider.Confine(ctx, argv, normalized)
 	if err != nil {
 		return ResultClassifier{}, fmt.Errorf("custom filesystem process sandbox failed: %w", err)
 	}
@@ -102,6 +115,9 @@ func ApplyWithProvider(ctx context.Context, cmd *exec.Cmd, policy Policy, provid
 	}
 	if confined.Enforcement != EnforcementFull {
 		return ResultClassifier{}, fmt.Errorf("custom filesystem process sandbox reported %q enforcement; full enforcement is required", confined.Enforcement)
+	}
+	if len(policy.ProtectedPaths) > 0 && !confined.ProtectedPathsEnforced {
+		return ResultClassifier{}, fmt.Errorf("custom filesystem process sandbox does not enforce protected read/write paths")
 	}
 	cmd.Path = confined.Argv[0]
 	cmd.Args = append([]string(nil), confined.Argv...)
@@ -172,6 +188,14 @@ func normalizedSignatures(signatures []string) []string {
 }
 
 func validatePolicy(policy Policy) error {
+	for _, root := range policy.ProtectedPaths {
+		if !filepath.IsAbs(root) {
+			return fmt.Errorf("protected filesystem path must be absolute: %q", root)
+		}
+		if _, err := CanonicalPath(root); err != nil {
+			return fmt.Errorf("resolve protected filesystem path: %w", err)
+		}
+	}
 	switch policy.Mode {
 	case ModeReadOnly, ModeWorkspaceWrite:
 		return nil
@@ -180,10 +204,25 @@ func validatePolicy(policy Policy) error {
 	}
 }
 
-func normalizedPolicy(policy Policy) Policy {
+func normalizedPolicy(policy Policy) (Policy, error) {
+	protected := make([]string, 0, len(policy.ProtectedPaths)*2)
+	seenProtected := make(map[string]bool)
+	for _, root := range policy.ProtectedPaths {
+		canonical, err := CanonicalPath(root)
+		if err != nil {
+			return Policy{}, fmt.Errorf("resolve protected filesystem path: %w", err)
+		}
+		for _, path := range []string{filepath.Clean(root), canonical} {
+			if !seenProtected[path] {
+				protected = append(protected, path)
+				seenProtected[path] = true
+			}
+		}
+	}
+	policy.ProtectedPaths = protected
 	if policy.Mode != ModeWorkspaceWrite {
 		policy.WritableRoots = nil
-		return policy
+		return policy, nil
 	}
 
 	seen := make(map[string]struct{}, len(policy.WritableRoots))
@@ -209,7 +248,7 @@ func normalizedPolicy(policy Policy) Policy {
 	}
 	sort.Strings(roots)
 	policy.WritableRoots = roots
-	return policy
+	return policy, nil
 }
 
 func seatbeltString(value string) string {
@@ -236,6 +275,9 @@ func seatbeltProfile(policy Policy) string {
 		for _, root := range policy.WritableRoots {
 			forms = append(forms, fmt.Sprintf("(allow file-write* (subpath %s))", seatbeltString(root)))
 		}
+	}
+	for _, root := range policy.ProtectedPaths {
+		forms = append(forms, fmt.Sprintf("(deny file-read* file-write* (subpath %s))", seatbeltString(root)))
 	}
 	return strings.Join(forms, "\n")
 }
