@@ -180,6 +180,18 @@ func SettlementHasParticipants(ctx context.Context) bool {
 	return s.hadActions || len(s.actions) != 0
 }
 
+// SettlementHasUnfinishedChildren is read after the scope is closed, so no new
+// child can be admitted while deciding whether nested projection is safe.
+func SettlementHasUnfinishedChildren(ctx context.Context) bool {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.children != 0
+}
+
 func RegisterSettlement(ctx context.Context, commit func(context.Context) error, abort func()) error {
 	if commit == nil {
 		return errors.New("host settlement scope unavailable")

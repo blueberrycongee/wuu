@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +50,50 @@ func TestSettlementRejectsParentWithUnfinishedNestedCall(t *testing.T) {
 	require.True(t, messages[0].ToolResult.IsError)
 	require.Contains(t, messages[0].ToolResult.TextProjection(), "pending remote read output was discarded")
 	require.NotContains(t, messages[0].ToolResult.TextProjection(), "premature parent success")
+}
+
+func TestLateRemoteChildCannotProjectAfterParentCompletes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	entered, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	executor := orchestrationTestTools{run: func(ctx context.Context, call providers.ToolCall) (string, error) {
+		if call.Name != "orchestrate" {
+			defer close(exited)
+			close(entered)
+			<-release
+			toolctx.MarkRemoteReadExposure(ctx)
+			return "late SECRET", nil
+		}
+		scope, ok := toolctx.Nested(ctx)
+		if !ok {
+			return "", context.Canceled
+		}
+		go func() { _, _ = scope.Invoke(ctx, providers.ToolCall{ID: "child", Name: "read", Arguments: `{}`}) }()
+		<-entered
+		return "parent success", nil
+	}}
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "owner")
+	require.NoError(t, err)
+	run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "turn"})
+	var mu sync.Mutex
+	var details []string
+	run.SetResultCallback(func(_ providers.ToolCall, result toolresult.Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		details = append(details, result.TextProjection())
+	})
+	messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
+	require.NoError(t, err)
+	require.False(t, messages[0].ToolResult.IsError)
+	close(release)
+	<-exited
+	run.Close()
+	mu.Lock()
+	output, _ := json.Marshal(details)
+	mu.Unlock()
+	require.NotContains(t, string(output), "SECRET")
+	segments, _ := json.Marshal(run.TakeRequestContextSegments())
+	require.NotContains(t, string(segments), "SECRET")
 }
 
 func TestSettlementLateChildAbortsWithoutChangingParentSuccess(t *testing.T) {

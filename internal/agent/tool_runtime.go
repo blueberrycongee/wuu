@@ -50,6 +50,8 @@ type toolRun struct {
 	deferredProjection     bool
 	projectionDelivered    bool
 	hadParticipants        bool
+	completedAfterRoot     bool
+	suppressNested         bool
 }
 
 // TurnToolRuntime owns tool executions for one model turn. Streaming can
@@ -439,6 +441,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 					success = false
 				}
 			}
+			if run.parent == nil && toolctx.SettlementHasUnfinishedChildren(runCtx) {
+				run.mu.Lock()
+				run.suppressNested = true
+				run.mu.Unlock()
+			}
 			if toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx) {
 				run.mu.Lock()
 				run.hadParticipants = true
@@ -650,6 +657,17 @@ func (run *toolRun) complete(result toolresult.Result, err error) {
 	if run.state == toolRunDone {
 		return
 	}
+	if run.parent != nil {
+		root := run.parent
+		for root.parent != nil {
+			root = root.parent
+		}
+		select {
+		case <-root.done:
+			run.completedAfterRoot = true
+		default:
+		}
+	}
 	run.result = result
 	run.err = err
 	run.state = toolRunDone
@@ -844,14 +862,14 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 	for _, run := range r.runs {
 		if run.parent != nil {
 			run.mu.Lock()
-			deferred := run.deferredProjection
+			deferred, delivered := run.deferredProjection, run.projectionDelivered
 			run.mu.Unlock()
 			if deferred {
 				done, accepted := rootSettlementOutcome(run)
 				if !done {
 					continue
 				}
-				if !accepted {
+				if !accepted || !delivered {
 					run.clearFinalization()
 					continue
 				}
@@ -1129,7 +1147,7 @@ func rootSettlementOutcome(run *toolRun) (bool, bool) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	done := run.state == toolRunDone
-	return done, done && (!run.hadParticipants || (run.err == nil && !run.result.IsError))
+	return done, done && !run.suppressNested && (!run.hadParticipants || (run.err == nil && !run.result.IsError))
 }
 
 func (r *TurnToolRuntime) publishDeferredResults(root *toolRun) {
@@ -1149,7 +1167,7 @@ func (r *TurnToolRuntime) publishDeferredResults(root *toolRun) {
 			continue
 		}
 		run.mu.Lock()
-		if !run.deferredProjection || run.projectionDelivered || run.state != toolRunDone || run.err != nil {
+		if !run.deferredProjection || run.projectionDelivered || run.completedAfterRoot || run.state != toolRunDone || run.err != nil {
 			run.mu.Unlock()
 			continue
 		}
