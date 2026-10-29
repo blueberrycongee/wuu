@@ -575,6 +575,99 @@ it("shows the resource and saved scopes without presenting the authorized servic
   expect(connectorRow().getAttribute("data-authorized")).toBe("true");
 });
 
+const identifiedConnector: MCPServerStatus = {
+  ...connector, ...connected, name: connector.name, configuration_enabled: true,
+  connector: { ...connector.connector!, identity_probe: {
+    tool: "account-self", arguments: {}, result: "single_text_json",
+    account: { id: "/user/id", label: "/user/name", email: "/user/email", kind: "/user/type" },
+    workspace: { id: "/workspace/id", label: "/workspace/name" },
+  } },
+};
+const verifiedIdentity = {
+  state: "verified" as const, verified_at: "2026-10-29T10:00:00Z",
+  account: { id: "person-123", label: "Ada <script>safe</script>", email: "ada@example.test", kind: "person" },
+  workspace: { id: "workspace-123", label: "Research workspace" },
+};
+
+it("shows only provider-verified account and workspace data, as text, without refreshing identity on render", async () => {
+  const source = connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true, identity: verifiedIdentity }),
+    refreshMCPIdentity: vi.fn(),
+  });
+  await render(source);
+  expect(connectorRow().textContent).toContain(verifiedIdentity.account.label);
+  expect(connectorRow().textContent).toContain(verifiedIdentity.workspace.label);
+  expect(connectorRow().querySelector("script")).toBeNull();
+  expect(source.refreshMCPIdentity).not.toHaveBeenCalled();
+  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
+  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.getAttribute("data-verified")).toBe("true");
+  expect(connectorRow().querySelector('[data-connector-detail="account-id"]')?.textContent).toBe("person-123");
+  expect(connectorRow().querySelector('[data-connector-detail="workspace-id"]')?.textContent).toBe("workspace-123");
+  expect(connectorRow().querySelector('[data-connector-detail="email"]')?.textContent).toBe("ada@example.test");
+  expect(connectorRow().querySelector('[data-connector-detail="verified-at"]')).not.toBeNull();
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+});
+
+it("retries identity without replacing OAuth and keeps a failed identity separate from transport health", async () => {
+  const retry = deferred<Awaited<ReturnType<Controls["refreshMCPIdentity"]>>>();
+  const source = connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true, identity: { state: "unavailable", error_code: "identity_invalid_response" } }),
+    refreshMCPIdentity: vi.fn(() => retry.promise),
+  });
+  await render(source);
+  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
+  const button = connectorRow().querySelector<HTMLButtonElement>('[data-connector-action="identity"]')!;
+  expect(button).not.toBeNull();
+  await act(async () => { button.click(); button.click(); });
+  expect(source.refreshMCPIdentity).toHaveBeenCalledExactlyOnceWith(connector.name);
+  expect(button.disabled).toBe(true);
+  vi.mocked(source.getMCPAuthStatus).mockResolvedValue({ name: connector.name, authenticated: true });
+  await act(async () => retry.resolve({ name: connector.name, authenticated: true, identity: { state: "unavailable", error_code: "identity_credentials_unavailable" } }));
+  expect(connectorRow().getAttribute("data-connected")).toBe("true");
+  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.getAttribute("data-verified")).toBe("false");
+  expect(connectorRow().querySelector(".settings-mcp-diagnostic")).not.toBeNull();
+  expect(connectorRow().textContent).not.toContain(translateCurrent("mcp.connectionFailed"));
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+  expect(source.configureMCPServers).not.toHaveBeenCalled();
+  expect(source.removeMCPAuth).not.toHaveBeenCalled();
+});
+
+it("discards a late identity result after the connection context changes", async () => {
+  const retry = deferred<Awaited<ReturnType<Controls["refreshMCPIdentity"]>>>();
+  const previous = connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true }),
+    refreshMCPIdentity: vi.fn(() => retry.promise),
+  });
+  await render(previous);
+  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
+  await click(connectorRow().querySelector('[data-connector-action="identity"]')!);
+  const next = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }) });
+  await render(next);
+  await act(async () => retry.resolve({ name: connector.name, authenticated: true, identity: verifiedIdentity }));
+  expect(connectorRow().textContent).not.toContain(verifiedIdentity.account.label);
+  expect(next.startMCPLogin).not.toHaveBeenCalled();
+});
+
+it("does not present a bot as the authorizing person or stale identity as authenticated", async () => {
+  const source = connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true, identity: { ...verifiedIdentity, account: { id: "bot-1", kind: "bot" } } }),
+  });
+  await render(source);
+  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
+  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.textContent).toContain("bot");
+  expect(connectorRow().querySelector('[data-connector-detail="email"]')).toBeNull();
+  await render(connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: false, identity: verifiedIdentity }),
+  }));
+  expect(connectorRow().textContent).not.toContain(verifiedIdentity.account.label);
+  expect(connectorRow().querySelector('[data-connector-action="identity"]')).toBeNull();
+});
+
 it("confirms connector disconnect, then stops runtime, removes local credentials and saves disabled", async () => {
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }) });
   await render(source);

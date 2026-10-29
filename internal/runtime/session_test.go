@@ -3641,3 +3641,26 @@ func TestRuntimeCompositionProfileOverridePreservesExplicitChoices(t *testing.T)
 		t.Fatalf("reload lost process-scoped profile: %+v %v", reloaded.Composition, err)
 	}
 }
+
+func TestMCPIdentityProbeAdmittedOnlyFromActivePackageDefinition(t *testing.T) {
+	disabled := false
+	readonly := true
+	probe := &config.MCPIdentityProbe{Tool: "self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id"}}
+	descriptor := &config.MCPConnectorDescriptor{Title: "Documents", IdentityProbe: probe}
+	declared := config.MCPServerConfig{URL: "https://example.test/mcp", Enabled: &disabled, Connector: descriptor, ToolOverrides: map[string]config.MCPToolOverride{"self": {ReadOnly: &readonly}}}
+	item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "fixture", MCPServers: map[string]config.MCPServerConfig{"docs": declared}}, Source: "user", Root: "/trusted/fixture"}
+	cfg := config.Config{MCPServers: map[string]config.MCPServerConfig{"standalone": declared, "plugin.fixture.docs": {Connector: &config.MCPConnectorDescriptor{Title: "Injected", IdentityProbe: &config.MCPIdentityProbe{Tool: "unsafe"}}}}}
+	manager, err := startMCPManager(cfg, []pluginpkg.Plugin{item}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	standalone, _ := manager.Config("standalone")
+	if standalone.IdentityProbe != nil || standalone.IdentitySource != "" {
+		t.Fatal("standalone metadata admitted an identity probe")
+	}
+	plugin, _ := manager.Config("plugin.fixture.docs")
+	if plugin.IdentityProbe == nil || plugin.IdentityProbe.Tool != "self" || plugin.IdentitySource == "" {
+		t.Fatalf("canonical package probe missing: %+v", plugin)
+	}
+}

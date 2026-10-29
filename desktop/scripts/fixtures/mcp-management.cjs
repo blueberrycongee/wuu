@@ -12,7 +12,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   let pauseToolList = null;
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
-  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, checks: [] };
+  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, checks: [] };
   const peer = createServer(async (request, response) => {
     const url = new URL(request.url, endpoint);
     if (url.pathname === "/connector-mcp") evidence.connectorRequests++;
@@ -65,7 +65,24 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     }
     const reply = result => json({ jsonrpc: "2.0", id: rpc.id, result });
     if (rpc.method === "initialize") { response.setHeader("Mcp-Session-Id", "fixture-session"); reply({ protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "fixture", version: "1" } }); }
-    else if (rpc.method === "tools/list") { if (pauseToolList) await pauseToolList; evidence.authenticatedLists++; reply({ tools: [{ name: "echo", description: "Echo fixture", inputSchema: { type: "object", properties: {} } }] }); }
+    else if (rpc.method === "tools/list") {
+      if (pauseToolList) await pauseToolList;
+      evidence.authenticatedLists++;
+      const tools = [{ name: "echo", description: "Echo fixture", inputSchema: { type: "object", properties: {} } }];
+      if (url.pathname === "/connector-mcp") tools.push({ name: "account-self", description: "Read this connection's account and workspace", inputSchema: { type: "object", properties: {} } });
+      reply({ tools });
+    }
+    else if (rpc.method === "tools/call" && rpc.params.name === "account-self") {
+      assert.equal(url.pathname, "/connector-mcp");
+      assert.deepEqual(rpc.params.arguments, {});
+      evidence.identityCalls++;
+      // The first response is deliberately incomplete: identity failure must not
+      // undo successful OAuth or transport setup, and retry must not reauthorize.
+      reply({ content: [{ type: "text", text: JSON.stringify({
+        user: { ...(evidence.identityCalls > 1 ? { id: "fixture-user-42" } : {}), name: "Fixture researcher", type: "person", email: "fixture@example.test" },
+        workspace: { id: "fixture-workspace-42", name: "Fixture research workspace" },
+      }) }] });
+    }
     else if (rpc.method === "tools/call") reply({ content: [{ type: "text", text: "fixture-ok" }] });
     else if (rpc.id !== undefined) json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "unsupported" } });
     else response.writeHead(202).end();
@@ -78,7 +95,10 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   fs.mkdirSync(pluginDir);
   fs.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify({ schema_version: 1, id: "mcp-journey", name: "MCP Journey", mcp_servers: {
     docs: { url: `${endpoint}/mcp` },
-    account: { url: `${endpoint}/connector-mcp`, enabled: false, connector: { title: "Fixture workspace", description: "A user-installed connector, not a bundled product ID.", documentation_url: "https://example.test/connector" } },
+    account: { url: `${endpoint}/connector-mcp`, enabled: false, tool_overrides: { "account-self": { read_only: true } }, connector: {
+      title: "Fixture workspace", description: "A user-installed connector, not a bundled product ID.", documentation_url: "https://example.test/connector",
+      identity_probe: { tool: "account-self", arguments: {}, result: "single_text_json", account: { id: "/user/id", label: "/user/name", email: "/user/email", kind: "/user/type" }, workspace: { id: "/workspace/id", label: "/workspace/name" } },
+    } },
     gated: { url: `${endpoint}/setup-required`, enabled: false, connector: { title: "Registration required", setup_required: "Register your client before this service can be connected.", documentation_url: "https://example.test/setup" } },
   } }));
 
@@ -294,10 +314,23 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await fetch(authorizationURL);
       await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
+      assert.equal(evidence.identityCalls, 1, "Only user Connect runs the admitted account probe");
       await capture("connector-connected-compact-light");
       await evaluate(selector => document.querySelector(`${selector} [data-connector-details-toggle]`).click(), connectorRow);
       await until(selector => document.querySelector(`${selector} [data-connector-detail="scopes"]`)?.textContent.includes("tools:read"), connectorRow);
-      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified"), connectorRow), "false", "Endpoint authorization must not fabricate a verified account identity");
+      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified"), connectorRow), "false", "An incomplete provider result must not fabricate identity");
+      await capture("connector-identity-unavailable");
+      const exchangesBeforeIdentity = evidence.exchanges;
+      await connectorAction("identity");
+      await until(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified") === "true", connectorRow);
+      assert.equal(evidence.identityCalls, 2);
+      assert.equal(evidence.exchanges, exchangesBeforeIdentity, "Identity retry must reuse the grant, not sign in again");
+      const verified = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
+      assert.equal(verified.identity.account.id, "fixture-user-42");
+      assert.equal(verified.identity.workspace.id, "fixture-workspace-42");
+      assert.equal(verified.identity.account.email, "fixture@example.test");
+      await evaluate(name => Promise.all([window.wuu.getMCPAuthStatus(name), window.wuu.listMCPServers(), window.wuu.getMCPAuthStatus(name)]), connectorName);
+      assert.equal(evidence.identityCalls, 2, "Status and list reads must not run identity tools");
       await capture("connector-connected-light");
       await evaluate(() => window.wuu.setThemePreference("dark"));
       win.setSize(800, 900);
@@ -306,6 +339,16 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => window.wuu.setThemePreference("light"));
       win.setSize(1280, 900);
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
+      await connectorAction("reconnect");
+      await until(() => document.querySelector('[data-confirm-action="confirm"]'));
+      await evaluate(() => document.querySelector('[data-confirm-action="confirm"]').click());
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      const reconnecting = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
+      assert.equal(reconnecting.authenticated, true, "Reconnect keeps the accepted grant until replacement succeeds");
+      assert.equal(reconnecting.identity, undefined, "Reconnect clears the prior identity, not the accepted credentials");
+      await click(['[role="dialog"]', "取消登录"]);
+      await until(() => !document.querySelector('[role="dialog"]'));
+      assert.equal(evidence.exchanges, exchangesBeforeIdentity);
       await connectorAction("disconnect");
       await until(() => document.querySelector('[data-confirm-action="confirm"]'));
       await evaluate(() => document.querySelector('[data-confirm-action="confirm"]').click());
@@ -313,7 +356,8 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
       const connectorPreference = await evaluate(name => window.wuu.readMCPDefinition(name), connectorName);
       assert.deepEqual(connectorPreference.config, { enabled: false });
-      evidence.checks.push("External plugin connector stays lazy, cancels OAuth safely, verifies tools/scopes without invented identity, and disconnect removes local authorization plus startup preference");
+      evidence.checks.push("External plugin connector stays lazy, reads only its declared identity tool on Connect or explicit retry, rejects incomplete identity without losing authorization, persists verified account/workspace, performs no probe on status/list, and clears identity on cancelled reconnect while retaining accepted credentials");
+      evidence.checks.push("Connector disconnect removes local authorization plus startup preference");
       await until(() => document.querySelector('[data-plugin="mcp-journey"]'));
       await evaluate(() => document.querySelector('[data-plugin="mcp-journey"] .catalog-row-open').click());
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]'));

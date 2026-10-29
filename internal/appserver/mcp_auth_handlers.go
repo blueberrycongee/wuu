@@ -136,6 +136,7 @@ func parseMCPAuthFinishParams(req Request) (MCPAuthFinishParams, error) {
 func mcpAuthStatusResult(status mcp.OAuthStatus) MCPAuthStatusResult {
 	result := MCPAuthStatusResult{
 		Name:          status.ServerID,
+		Identity:      status.Identity,
 		Authenticated: status.Authenticated,
 		Scopes:        append([]string(nil), status.Scopes...),
 	}
@@ -143,4 +144,20 @@ func mcpAuthStatusResult(status mcp.OAuthStatus) MCPAuthStatusResult {
 		result.ExpiresAt = status.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return result
+}
+
+func (s *Server) handleMCPIdentityRefresh(ctx context.Context, req Request) error {
+	params, err := parseMCPServerActionParams(req)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	mgr, err := s.mcpManager()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	status, err := mgr.RefreshIdentity(ctx, params.Name)
+	return s.writeResponse(req.ID, mcpAuthStatusResult(status), err)
 }

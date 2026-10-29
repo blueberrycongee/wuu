@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +55,8 @@ import (
 )
 
 func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
+	var identityCalls atomic.Int32
+	var identityFailure atomic.Bool
 	var baseURL string
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -66,7 +69,41 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 		case "/token":
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "app-server-secret", "refresh_token": "refresh-secret", "expires_in": 3600})
 		default:
-			http.NotFound(w, r)
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer app-server-secret" {
+				http.NotFound(w, r)
+				return
+			}
+			var req struct {
+				ID     int64  `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				return
+			}
+			var result any
+			switch req.Method {
+			case "initialize":
+				result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "fixture", "version": "1"}}
+			case "tools/list":
+				result = map[string]any{"tools": []any{map[string]any{"name": "get-self", "inputSchema": map[string]any{"type": "object"}}}}
+			case "tools/call":
+				identityCalls.Add(1)
+				if identityFailure.Load() {
+					result = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "app-server-secret"}}}
+				} else {
+					result = map[string]any{"content": []any{}, "structuredContent": map[string]any{"id": "owner", "name": "Account", "raw_secret": "app-server-secret"}}
+				}
+			default:
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 		}
 	}))
 	defer authServer.Close()
@@ -74,10 +111,13 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 
 	rt := newTestRuntime(t, &fakeClient{})
 	manager := mcp.NewManager()
+	defer manager.Close()
+	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name: "docs",
-			URL:  baseURL,
+			Name:           "docs",
+			URL:            baseURL,
+			IdentitySource: "trusted-fixture", IdentityProbe: &config.MCPIdentityProbe{Tool: "get-self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id", Label: "/name"}}, ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
 				RedirectURI: "http://127.0.0.1/callback",
@@ -124,6 +164,29 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	finish := remarshal[MCPAuthFinishResult](t, responseByID(t, parseOutput(t, out.String()), "finish")["result"])
 	if !finish.Auth.Authenticated || finish.Server.AuthStatus != string(mcp.MCPAuthStatusOAuth) {
 		t.Fatalf("finish result = %+v", finish)
+	}
+	if identityCalls.Load() != 0 {
+		t.Fatal("OAuth or status triggered identity probe")
+	}
+	for _, raw := range []string{`{"id":"connect","method":"mcp/connect","params":{"name":"docs"}}`, `{"id":"verified","method":"mcp/auth/status","params":{"name":"docs"}}`} {
+		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if response := responseByID(t, parseOutput(t, out.String()), "connect"); response["error"] != nil {
+		t.Fatal(response)
+	}
+	verified := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "verified")["result"])
+	if identityCalls.Load() != 1 || verified.Identity == nil || verified.Identity.State != "verified" || verified.Identity.Account.ID != "owner" {
+		t.Fatalf("verified=%+v, calls=%d", verified, identityCalls.Load())
+	}
+	identityFailure.Store(true)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"identity-retry","method":"mcp/identity/refresh","params":{"name":"docs","tool":"unsafe","arguments":{"override":true}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	retry := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "identity-retry")["result"])
+	if identityCalls.Load() != 2 || !retry.Authenticated || retry.Identity == nil || retry.Identity.State != "unavailable" || !manager.Status()["docs"].Connected {
+		t.Fatalf("retry=%+v, calls=%d", retry, identityCalls.Load())
 	}
 	if strings.Contains(out.String(), "app-server-secret") || strings.Contains(out.String(), "refresh-secret") {
 		t.Fatalf("OAuth RPC leaked credentials: %s", out.String())

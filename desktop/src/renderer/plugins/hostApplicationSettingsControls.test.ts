@@ -36,6 +36,19 @@ describe("public settings control boundary", () => {
     window.wuu = {} as typeof window.wuu;
     await expect(controls.getMCPAuthStatus(status.name)).rejects.toThrow("unavailable");
   });
+  it("retries connector identity through the active host without starting authorization", async () => {
+    const status = { name: "plugin.external.docs", authenticated: true, identity: { state: "unavailable" } };
+    window.wuu = { refreshMCPIdentity: vi.fn().mockResolvedValue(status), startMCPAuth: vi.fn() } as unknown as typeof window.wuu;
+    const controls = createApplicationSettingsControls();
+    await expect(controls.refreshMCPIdentity(status.name)).resolves.toBe(status);
+    expect(window.wuu.refreshMCPIdentity).toHaveBeenCalledExactlyOnceWith(status.name);
+    expect(window.wuu.startMCPAuth).not.toHaveBeenCalled();
+    const failure = new Error("connection changed");
+    vi.mocked(window.wuu.refreshMCPIdentity).mockRejectedValue(failure);
+    await expect(controls.refreshMCPIdentity(status.name)).rejects.toBe(failure);
+    window.wuu = {} as typeof window.wuu;
+    await expect(controls.refreshMCPIdentity(status.name)).rejects.toThrow("unavailable");
+  });
   it("only applies a conflict preference after persistence succeeds", async () => {
     const host = new PluginHost({
       react: React

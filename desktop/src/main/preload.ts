@@ -355,6 +355,7 @@ const api: WuuDesktopApi = {
   refreshMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-refresh", name),
   startMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-start", name),
   getMCPAuthStatus: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-status", name),
+  refreshMCPIdentity: (name: string) => ipcRenderer.invoke("wuu:mcp-identity-refresh", name),
   finishMCPAuth: (name: string, state: string, code: string) =>
     ipcRenderer.invoke("wuu:mcp-auth-finish", name, state, code),
   removeMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-remove", name),

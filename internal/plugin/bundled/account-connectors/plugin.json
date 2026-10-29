@@ -15,8 +15,16 @@
       "connector": {
         "title": "Notion",
         "description": "Search and work with the Notion workspace you authorize.",
-        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
-      }
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "identity_probe": {
+          "tool": "notion-get-self",
+          "arguments": {},
+          "result": "single_text_json",
+          "account": { "id": "/user/id", "label": "/user/name", "email": "/user/email", "kind": "/user/type" },
+          "workspace": { "id": "/workspace/id", "label": "/workspace/name" }
+        }
+      },
+      "tool_overrides": { "notion-get-self": { "read_only": true } }
     },
     "github": {
       "url": "https://api.githubcopilot.com/mcp/",

@@ -1717,3 +1717,35 @@ func TestConfigValidatesMCPConnectorDescriptor(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigRejectsUnsafeConnectorIdentityProbe(t *testing.T) {
+	valid := `{"tool":"get-self","arguments":{},"result":"single_text_json","account":{"id":"/user/id","label":"/user/name","email":"/user/email","kind":"/user/type"},"workspace":{"id":"/workspace/id","label":"/workspace/name"}}`
+	for _, tc := range []struct {
+		name, probe string
+		valid       bool
+	}{
+		{"valid", valid, true}, {"structured", strings.Replace(valid, "single_text_json", "structured_content", 1), true},
+		{"missing account", `{"tool":"self","arguments":{},"result":"structured_content"}`, false},
+		{"missing arguments", strings.Replace(valid, `"arguments":{},`, "", 1), false},
+		{"null arguments", strings.Replace(valid, `"arguments":{}`, `"arguments":null`, 1), false},
+		{"expression", strings.Replace(valid, "/user/id", "$.user.id", 1), false},
+		{"bad escape", strings.Replace(valid, "/user/id", "/user/~2id", 1), false},
+		{"magic pointer", strings.Replace(valid, "/user/id", "/__proto__/id", 1), false},
+		{"magic argument", strings.Replace(valid, `"arguments":{}`, `"arguments":{"x":{"constructor":{}}}`, 1), false},
+		{"unsupported result", strings.Replace(valid, "single_text_json", "text", 1), false},
+		{"empty tool", strings.Replace(valid, "get-self", "", 1), false},
+		{"long pointer", strings.Replace(valid, "/user/id", "/"+strings.Repeat("a", 1024), 1), false},
+		{"large arguments", strings.Replace(valid, `"arguments":{}`, `"arguments":{"x":"`+strings.Repeat("a", 16384)+`"}`, 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var d MCPConnectorDescriptor
+			err := json.Unmarshal([]byte(`{"title":"Documents","identity_probe":`+tc.probe+`}`), &d)
+			if err == nil {
+				err = d.Validate()
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}

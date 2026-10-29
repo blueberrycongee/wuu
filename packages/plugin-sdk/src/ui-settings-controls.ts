@@ -164,6 +164,7 @@ export interface ApplicationSettingsControlsV1 {
   setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
   getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
+  refreshMCPIdentity: (name: string) => Promise<MCPAuthStatusResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
   startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
@@ -275,6 +276,24 @@ interface PluginContributionDiagnostic {
 type MCPListResult = {
   servers: MCPServerStatus[];
 };
+/** Fixed read-only tool probe admitted only from the owning active plugin package. */
+export type MCPIdentityProbe = {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result: "structured_content" | "single_text_json";
+  /** Bounded RFC 6901 JSON pointers; no expressions or executable mappings. */
+  account: { id: string; label?: string; email?: string; kind?: string };
+  workspace?: { id: string; label?: string };
+};
+/** Provider-reported connection identity, not OAuth application branding or permissions. */
+export type MCPIdentityStatus = {
+  state: "verified" | "unavailable";
+  verified_at?: string;
+  account?: { id: string; label?: string; email?: string; kind?: string };
+  workspace?: { id: string; label?: string };
+  error_code?: string;
+};
+
 /** Non-secret onboarding information; standalone MCP metadata is informational only. */
 export type MCPConnectorDescriptor = {
   title: string;
@@ -282,6 +301,7 @@ export type MCPConnectorDescriptor = {
   documentation_url?: string;
   /** Package setup required before a plugin-owned connector can be enabled. */
   setup_required?: string;
+  identity_probe?: MCPIdentityProbe;
 };
 export type MCPServerConfig = {
   connector?: MCPConnectorDescriptor;
@@ -338,6 +358,7 @@ type MCPAuthFinishResult = {
 export type MCPAuthStatusResult = {
   name: string;
   authenticated: boolean;
+  identity?: MCPIdentityStatus;
   expires_at?: string;
   scopes?: string[];
 };

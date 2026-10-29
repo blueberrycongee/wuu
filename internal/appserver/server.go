@@ -1538,6 +1538,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleMCPRefresh(ctx, req)
 	case MethodMCPAuthStart:
 		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPIdentityRefresh:
+		return s.handleMCPIdentityRefresh(ctx, req)
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
