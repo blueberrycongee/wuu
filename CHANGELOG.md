@@ -238,6 +238,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let a canceled tool-service caller stop waiting for shared native initialization without canceling other conversations, and retire the initialization when its generation closes.
+
 - Keep each conversation's toolkit and worker control bound together through retirement, and remove worker subscriptions from the control that created them.
 - Release each conversation's native tool scopes after its admitted main, worker, and side work drains, while rejecting calls after retirement and retaining in-flight cleanup.
 - Keep external tool providers usable when their native backend was not admitted, and reject late native delegation instead of crashing or executing with incomplete thread authority.

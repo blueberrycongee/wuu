@@ -94,7 +94,7 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 
 // newThreadNativeToolkit creates a thread toolkit using dependencies shared by
 // its pinned generation. Call it only when the selected provider delegates.
-func (s *Session) newThreadNativeToolkit(generation *PluginGeneration, root string) (*tools.Toolkit, func(context.Context) error, error) {
+func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *PluginGeneration, root string) (*tools.Toolkit, func(context.Context) error, error) {
 	if generation == nil {
 		return nil, nil, errors.New("native toolkit requires a captured plugin generation")
 	}
@@ -130,7 +130,7 @@ func (s *Session) newThreadNativeToolkit(generation *PluginGeneration, root stri
 	kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 	bindToolkitHooks(kit, generation.hooks)
 	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
-	manager, codeMode, err := generation.nativeDependencies.get(generation)
+	manager, codeMode, err := generation.nativeDependencies.get(ctx, generation)
 	if err != nil {
 		return nil, nil, err
 	}
