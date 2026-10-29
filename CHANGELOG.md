@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep selected remote MCP services registered when they require authorization, so refreshing plugins or signing out does not remove the local login manager or sibling connectors. Hard connection failures still fail required startup.
+
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
 - Keep Personal task cancellation recoverable across interrupted dispatch and queue promotion, preserve unanswered questions during concurrent completion, and recover tool-disabled main-conversation replies without repeating worker execution. Stopping an undelivered terminal update preserves its saved outcome.

@@ -285,8 +285,14 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("connector-picker-light");
       const connectorAction = async action => {
         const selector = `${connectorRow} [data-connector-action="${action}"]`;
-        await until(selector => document.querySelector(selector) && !document.querySelector(selector).disabled, selector);
-        await evaluate(selector => document.querySelector(selector).click(), selector);
+        // A graph publication can replace this row between separate IPC calls.
+        // Check and dispatch once in the same renderer turn, without a sleep.
+        await until(selector => {
+          const button = document.querySelector(selector);
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        }, selector);
       };
       const registrationsBefore = evidence.registration;
       authorizationURL = undefined;

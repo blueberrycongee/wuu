@@ -14,6 +14,8 @@ Open **Plugins → Account Connectors**. The bundled plugin is enabled by defaul
 
 Connect saves the enabled preference through the selected configuration provider and checks its revision. If another window changed the configuration, reload it before trying again. Authorization uses the [remote OAuth flow](#remote-oauth), including cancellation and expiry; a canceled or failed login does not grant access. Provider account and workspace policies can still prevent authorization.
 
+A selected remote service that requires authorization remains registered after plugin refresh or sign-out, so you can sign in without losing sibling connectors. It exposes no tools until connected; a hard startup failure is not treated as a successful connection.
+
 A connector's **Disconnect** removes its saved OAuth credentials and saves the service as disabled, retaining the definition. Projects using the same canonical connector name and credential provider share that login: replacing it or disconnecting affects those projects too. Current-project enablement does not imply a separate account per project. Disconnect does not revoke the grant at the provider; use the provider's connected-app settings when you also want to revoke access there.
 
 Expand the connection details to inspect the endpoint, local authorization state, and reported scopes. These describe the MCP authorization, not a verified person's identity. The resource URL identifies the remote service; it does not determine where the card appears or which personal/work domain owns the connection.
