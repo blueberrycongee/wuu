@@ -45,3 +45,11 @@ export function delegateService(
     return await host.call('host.service.call', {service, method:input.method, params:input.params});
   };
 }
+
+/** The optional, callback-bound original operation for a selected tool replacement. */
+export const NATIVE_TOOL_CONTINUATION_SERVICE = 'execution.native-tool-continuation';
+
+/** Continue the exact host-admitted native call once. No arguments may be changed. */
+export async function continueNativeTool(host: RuntimeHost): Promise<import('./index.js').ToolResult> {
+  return await host.call('host.service.call', {service:NATIVE_TOOL_CONTINUATION_SERVICE, method:'call', params:{}}) as import('./index.js').ToolResult;
+}

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let a selected web search replacement continue its original native search once with the same arguments and authorization, then publish its validated final evidence.
+
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
 - Select a trusted plugin tool as the replacement for the native `web_search` tool while retaining the remaining tool registry, execution policy and lifecycle.
 

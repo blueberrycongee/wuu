@@ -23,13 +23,14 @@ import (
 // replacementTool retains the native name and surface while using the selected
 // plugin's schema, classification and authenticated host execution.
 type replacementTool struct {
-	original     tools.Tool
-	definition   providers.ToolDefinition
-	registration pluginhost.ToolRegistration
-	publicName   string
-	owner        string
-	executor     *pluginToolExecutor
-	toolkit      *tools.Toolkit
+	original       tools.Tool
+	definition     providers.ToolDefinition
+	registration   pluginhost.ToolRegistration
+	publicName     string
+	owner          string
+	executor       *pluginToolExecutor
+	toolkit        *tools.Toolkit
+	continueNative func(context.Context, providers.ToolCall) (toolresult.Result, error)
 }
 
 func (r *replacementTool) ToolAvailable() bool {
@@ -107,6 +108,19 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		return toolresult.Result{}, err
 	}
 	ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, r.toolkit)
+	continuation := newNativeToolContinuation(ctx, func(nativeCtx context.Context) (toolresult.Result, error) {
+		if !r.ToolAvailable() {
+			return toolresult.Result{}, fmt.Errorf("replacement for %q is unavailable", r.Name())
+		}
+		metadata, _ := r.executor.ToolMetadata(pluginCall)
+		if err := r.toolkit.AuthorizeTool(nativeCtx, pluginCall, metadata); err != nil {
+			return toolresult.Result{}, err
+		}
+		return r.continueNative(nativeCtx, call)
+	})
+	defer continuation.close()
+	ctx = context.WithValue(ctx, nativeToolContinuationKey{}, continuation)
+	ctx = pluginhost.WithNativeToolContinuationBinding(ctx, r.owner)
 	result, err := r.executor.host.ExecuteTool(ctx, r.publicName, input)
 	if err != nil || result.IsError {
 		return result, err
@@ -238,7 +252,10 @@ func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, 
 		}
 		definition.Name = name
 		replacements[name] = func(original tools.Tool) tools.Tool {
-			return &replacementTool{original: original, definition: definition, registration: registration, publicName: publicName, executor: e, toolkit: kit, owner: binding.PluginID}
+			return &replacementTool{original: original, definition: definition, registration: registration, publicName: publicName, executor: e, toolkit: kit, owner: binding.PluginID,
+				continueNative: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+					return kit.ContinueNativeWebSearch(ctx, original, call)
+				}}
 		}
 	}
 	if err := kit.SetNativeToolReplacements(replacements); err != nil {
