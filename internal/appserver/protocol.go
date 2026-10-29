@@ -1395,10 +1395,8 @@ type SkillListResult struct {
 
 // ProcessTrigger describes the host-owned wakeups associated with a process.
 type ProcessTrigger struct {
-	Status         string     `json:"status"`
-	OnExit         bool       `json:"on_exit"`
-	RecheckMinutes int        `json:"recheck_minutes,omitempty"`
-	NextRecheckAt  *time.Time `json:"next_recheck_at,omitempty"`
+	Status string `json:"status"`
+	OnExit bool   `json:"on_exit"`
 }
 
 type ManagedProcessSummary struct {

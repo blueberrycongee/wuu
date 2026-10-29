@@ -61,7 +61,7 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Background process " + started.ID + " exited with code 0: printf 'hello-tail\\n'",
-		"hello-tail\n[last 2048 of " + strconv.Itoa(len(logOutput)) + " output bytes; read earlier output with process action=read process_id=" + started.ID + " offset_bytes=0]",
+		"hello-tail\n[last 2048 of " + strconv.Itoa(len(logOutput)) + " output bytes; read earlier output with bash action=read process_id=" + started.ID + " offset_bytes=0]",
 		"without polling",
 	} {
 		if !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(want)) {

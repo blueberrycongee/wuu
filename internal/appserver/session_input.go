@@ -47,7 +47,7 @@ func isHumanUserMessage(msg providers.ChatMessage) bool {
 		strings.TrimSpace(msg.Name) == "main-task-snapshot" {
 		return false
 	}
-	for _, prefix := range []string{agentCompletionClientIDPrefix, processCompletionClientIDPrefix, processRecheckClientIDPrefix} {
+	for _, prefix := range []string{agentCompletionClientIDPrefix, processCompletionClientIDPrefix, "wuu-process-recheck:"} {
 		if strings.HasPrefix(strings.TrimSpace(msg.ClientID), prefix) {
 			return false
 		}

@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,10 +34,6 @@ const (
 // Bound how long one shell command can hold the leaf execution gate. The
 // command keeps running under the process manager after this foreground wait.
 const maxForegroundShellWait = 10 * time.Second
-
-// Promoted commands retain a progress wake-up even if they never exit. The
-// model can change or clear this schedule with process action=update.
-const defaultPromotedRecheckMinutes = 30
 
 type synchronizedBuffer struct {
 	mu  sync.Mutex
@@ -293,14 +288,13 @@ waitForeground:
 		// same process, log, ownership and completion notification.
 		if logf != nil && ctx.Err() == nil && len(env.ProtectedPaths) == 0 {
 			adopted, adoptErr := mgr.Adopt(reservedID, cmd, handle, logf, proc.AdoptOptions{
-				Command:        command,
-				CWD:            workDir,
-				OwnerKind:      proc.OwnerKind(defaultProcessOwnerKind(env, "")),
-				OwnerID:        defaultProcessOwnerID(env),
-				RootThreadID:   processRootThreadID(env),
-				Lifecycle:      proc.LifecycleManaged,
-				StartedAt:      startedAt,
-				RecheckMinutes: defaultPromotedRecheckMinutes,
+				Command:      command,
+				CWD:          workDir,
+				OwnerKind:    proc.OwnerKind(defaultProcessOwnerKind(env, "")),
+				OwnerID:      defaultProcessOwnerID(env),
+				RootThreadID: processRootThreadID(env),
+				Lifecycle:    proc.LifecycleManaged,
+				StartedAt:    startedAt,
 				SandboxMode: func() processsandbox.Mode {
 					if sandboxPolicy == nil {
 						return ""
@@ -381,7 +375,7 @@ waitForeground:
 	if promotedID != "" {
 		nextSuggestions = []string{
 			"the foreground wait ended; the command keeps running as background process " + promotedID + " with its output so far attached; do NOT rerun the same command — its completion will start a new turn automatically",
-			"progress wake-ups are scheduled every " + strconv.Itoa(defaultPromotedRecheckMinutes) + " minutes as a safety net; use process action=read with process_id for a snapshot, action=stop to cancel it, or action=update with recheck_minutes to change or clear the schedule",
+			"use bash action=read with process_id for a snapshot, or action=stop to cancel the command; do not poll while waiting for its exit",
 		}
 	}
 

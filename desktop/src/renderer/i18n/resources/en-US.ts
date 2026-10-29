@@ -1629,8 +1629,6 @@ export const enUS = {
   "triggers.cancelled": "Cancelled",
   "triggers.stopped": "Stopped",
   "triggers.onExit": "Continue on exit",
-  "triggers.interval": "Check every {minutes} min",
-  "triggers.next": "Next: {time}",
   "triggers.source": "View output",
   "triggers.outputFailed": "Could not load output. Close and reopen to retry.",
   "triggers.noOutput": "No output yet.",

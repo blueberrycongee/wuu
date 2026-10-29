@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "scripts": { "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=monitor" },
-  "wuu": { "dev": { "watch": ["../../packages/plugin-sdk/src", "../../scripts/build-bundled-plugins.mjs", "../../internal/plugin/bundled/monitor/plugin.json", "../../internal/plugin/bundled/monitor/desktop.js"] } }
+  "wuu": { "dev": { "watch": ["../../packages/plugin-sdk/src", "../../scripts/build-bundled-plugins.mjs", "../../internal/plugin/bundled/monitor/plugin.json"] } }
 }

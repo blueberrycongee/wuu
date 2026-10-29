@@ -220,7 +220,7 @@ func TestProtectedPathsDenyUnconfinedShellWithoutSupportingBackend(t *testing.T)
 			t.Fatalf("shell escaped protected boundary: %s %v", out, err)
 		}
 	}
-	if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: `{"action":"list"}`}); err == nil {
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"action":"list"}`}); err == nil {
 		t.Fatal("unverified process policy accepted")
 	}
 	codeKit := newCodeModeTestToolkit(t)

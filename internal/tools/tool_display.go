@@ -33,7 +33,7 @@ func (t *Toolkit) displayCapabilityForTool(call providers.ToolCall) string {
 	switch name {
 	case "bash":
 		var args bashArgs
-		if err := decodeArgs(call.Arguments, &args); err == nil && args.RunInBackground {
+		if err := decodeArgs(call.Arguments, &args); err == nil && (args.RunInBackground || args.Action != "" && args.Action != "run") {
 			return "command.background"
 		}
 		return "command.bash"
@@ -154,6 +154,9 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 }
 
 func displayBashLabel(args map[string]any) providers.ToolCallDisplay {
+	if action := strings.TrimSpace(displayString(args, "action")); action != "" && action != "run" {
+		return displayProcessLabel(args)
+	}
 	command := displayString(args, "command")
 	if displayBool(args, "run_in_background") {
 		if command == "" {

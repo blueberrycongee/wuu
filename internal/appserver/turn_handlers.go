@@ -72,18 +72,10 @@ var errQueuedTurnCancelled = errors.New("queued turn was cancelled before admiss
 
 const maxCancelledPendingSubmissions = 1024
 
-type agentCompletionTurnKind string
-
-const (
-	agentCompletionTurnKindCompletion agentCompletionTurnKind = "completion"
-	agentCompletionTurnKindRecheck    agentCompletionTurnKind = "recheck"
-)
-
 type agentCompletionTurn struct {
 	agentID   string
 	resultID  string
 	processID string
-	kind      agentCompletionTurnKind
 	msg       providers.ChatMessage
 	snapshot  *subagent.SubAgentSnapshot
 }
@@ -5477,7 +5469,7 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
 			completionResultIDs = append(completionResultIDs, resultID)
 		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" && turn.kind != agentCompletionTurnKindRecheck {
+		if processID := strings.TrimSpace(turn.processID); processID != "" {
 			processCompletionIDs = append(processCompletionIDs, processID)
 		}
 	}
@@ -5501,20 +5493,6 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 				}
 				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
 					return errCompletionDeliveryPaused
-				}
-				// Rechecks belong to live processes, so they must not pass through
-				// the natural-exit completion gate or acquire its delivery marker.
-				for _, entry := range pending {
-					if entry.kind != agentCompletionTurnKindRecheck {
-						continue
-					}
-					p, err := threadRuntime.ProcessManager.Get(entry.processID)
-					if err != nil {
-						return errors.Join(errRetryableTurnAdmission, err)
-					}
-					if p.RecheckMinutes <= 0 || (p.Status != process.StatusStarting && p.Status != process.StatusRunning) {
-						return errAgentCompletionAlreadyDelivered
-					}
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)
 				if clientID := agentCompletionClientID(pending); clientID != "" {
@@ -5807,7 +5785,6 @@ func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTur
 	out := make([]agentCompletionTurn, 0, len(turns))
 	for i, turn := range turns {
 		out = append(out, agentCompletionTurn{
-			kind:      turn.kind,
 			agentID:   turn.agentID,
 			resultID:  turn.resultID,
 			processID: turn.processID,

@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidate background command control into `bash` and remove timed model rechecks. Code Mode uses the same actions and discovers optional observation tools through its catalog.
+- Make Monitor headless: stdout carries events, stderr retains diagnostics, and `monitor_tasks` inspects or stops watches. Add explicit stdout/stderr reads to `host.process` 1.2, including support acknowledgement for remote execution backends.
+
 ### Added
 
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.

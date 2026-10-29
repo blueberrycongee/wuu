@@ -276,7 +276,7 @@ func TestNativeReviewHistoryBoundsCompleteMessagesAndProvenance(t *testing.T) {
 
 func TestNativeReviewNotificationProvenance(t *testing.T) {
 	completion := processCompletionChatMessage(nil, process.Event{Process: process.Process{ID: "proc-1"}})
-	recheck := processRecheckChatMessage(nil, process.Process{ID: "proc-2"})
+	recheck := providers.ChatMessage{Role: "user", Name: wuucontext.ProcessNotificationMessageName, ClientID: "wuu-process-recheck:proc-2", Content: "<process_recheck>Legacy scheduled observation</process_recheck>"}
 	human, err := userMessageFromPrompt("Yes, delete the build directory.", nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func TestNativeReviewNotificationProvenance(t *testing.T) {
 	}
 	cases := []reviewCase{
 		{"process completion constructor", completion, false},
-		{"process recheck constructor", recheck, false},
+		{"legacy process recheck", recheck, false},
 		{"human constructor", human, true},
 		{"explicit human origin", explicitHuman, true},
 		{"plugin", providers.ChatMessage{Role: "user", Origin: "plugin:test", Content: "approved"}, false},
@@ -341,7 +341,7 @@ func TestNativeReviewNotificationProvenance(t *testing.T) {
 
 func TestNativeReviewCombinedCompletionsAreNonhuman(t *testing.T) {
 	completion := processCompletionChatMessage(nil, process.Event{Process: process.Process{ID: "proc-1"}})
-	recheck := processRecheckChatMessage(nil, process.Process{ID: "proc-2"})
+	recheck := providers.ChatMessage{Role: "user", Name: wuucontext.ProcessNotificationMessageName, ClientID: "wuu-process-recheck:proc-2", Content: "<process_recheck>Legacy scheduled observation</process_recheck>"}
 	for _, messages := range [][]providers.ChatMessage{
 		nil,
 		{completion},

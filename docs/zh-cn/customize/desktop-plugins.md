@@ -62,7 +62,7 @@ api.registerUIContribution({
 
 Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接收排序后的 `items`（`key`、`pluginId`、`id`、`title`、`node`）及 `context`；使用各项的 `key` 渲染选中的 `node`。贡献可选的 `title` 默认使用 ID。布局可以分组或过滤内容，无需另一套注册表。包装位于布局结果外层，空 Slot 使用 `fallback`。服务图选择的 Slot 直接渲染选中的 provider，忽略自定义布局。
 
-默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal、Monitor 已改用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
+默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal 使用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。Monitor 不再提供桌面 UI。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
 
 `workspace.rail` Slot 由默认预览 provider 提供，在右侧工具栏展开时显示。贡献按垂直方向排列，共享一个工具栏控件的宽度。使用紧凑的读数或控件，并通过无障碍标签提供完整含义。贡献可通过 `application` 观察活动标签，再通过 `application.composerPresentation` 读取对应的会话、轮次和运行状态。
 

@@ -164,7 +164,7 @@ async function makeServer(name, config) {
       // The terminal notification precedes execution-lease release. Retry only
       // the protocol's definite pre-admission rejection, never an unknown turn.
       while (method === "turn/start" && Date.now() < deadline &&
-        (response.error?.message?.includes("thread execution is owned by another app-server") || response.error?.message?.includes("turn admission can be retried"))) {
+        (response.error?.message?.includes("thread execution is owned by another app-server") || response.error?.message?.includes("turn admission can be retried") || response.error?.message?.includes("already has a running turn"))) {
         await new Promise(resolve => setTimeout(resolve, 20));
         response = await server.raw(method, params);
       }
@@ -500,31 +500,41 @@ async function nativeDelegationShutdown() {
 
 async function monitorConsumer(endpoint) {
   const remote = join(independent, "monitor-worker-root");
-  await mkdir(remote); await writeFile(join(remote, "world.txt"), "MONITOR-REMOTE-WORLD");
+  await mkdir(remote); await writeFile(join(remote, "world.txt"), "MONITOR-REMOTE-WORLD\n");
   const app = await makeServer("monitor", {
     default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: endpoint + "/v1", api_key: "synthetic", model: "fixture" } },
     composition: { version: 4, profile: "headless", patches: [{ modules: { monitor: true } }] },
     extensions: { enabled: { "plugin:bundled:monitor": true } },
     execution_environments: { default: "remote", profiles: { remote: { backend: "command", command: [binary, "execution-worker"], workspace: remote } } },
-    skills: { enabled: false }, ptc: { enabled: false },
+    skills: { enabled: false },
   });
   await writeFile(join(app.workspace, "world.txt"), "MONITOR-HOST-WORLD");
   const catalog = await app.start();
   const plugin = catalog.extension_inventory.find(item => item.id === "plugin:bundled:monitor" || item.name.toLowerCase() === "monitor");
   assert.equal(plugin?.runtime_state, "active", JSON.stringify(plugin));
   const { thread } = await app.rpc("thread/start", { permission_mode: "unconfined" });
-  const tag = "bundled-monitor-start";
-  completed(await app.turn(thread, `ACCEPTANCE_CALL:${JSON.stringify({ tag, tool: "monitor", input: {
-    command: "cat world.txt; while :; do sleep 1; done", description: "Acceptance remote monitor", persistent: true,
-  } })}`));
-  const result = observations.find(item => item.phase === "tool-result" && item.tag === tag);
-  assert(result, "monitor did not return a start receipt");
-  const { task_id } = JSON.parse(result.text.split("\n")[0]);
-  assert(task_id, result.text);
+  let sequence = 0;
+  async function monitorTool(tool, input) {
+    const tag = `monitor-code-mode-${++sequence}`;
+    const code = `const found = await searchTools(${JSON.stringify(tool)}, {limit:8, offset:0});
+const match = found.tools.find(item => item.name === ${JSON.stringify(tool)} || new RegExp("_" + ${JSON.stringify(tool)} + "_[a-f0-9]+$").test(item.name));
+if (!match) throw new Error("monitor tool was not discoverable");
+await describeTool(match.name);
+const result = await tools[match.name](${JSON.stringify(input)});
+return result.structured_content ?? result.content;`;
+    completed(await app.turn(thread, `ACCEPTANCE_CALL:${JSON.stringify({ tag, tool: "run_code", input: { input: code } })}`));
+    const observed = observations.find(item => item.phase === "tool-result" && item.tag === tag);
+    assert(observed, "monitor tool did not return a receipt");
+    return JSON.parse(observed.text);
+  }
+  const { task_id } = await monitorTool("monitor", {
+    command: "cat world.txt; printf 'remote diagnostic\\n' >&2; while :; do sleep 1; done", description: "Acceptance remote monitor", persistent: true,
+  });
+  assert(task_id);
   let read;
   const deadline = Date.now() + 30000;
   do {
-    read = await app.client(plugin, "monitor.tasks", { action: "read", task_id, thread_id: thread.id });
+    read = await monitorTool("monitor_tasks", { action: "read", task_id, thread_id: thread.id });
     assert(!read.output.includes("MONITOR-HOST-WORLD"), "Monitor forwarded host callback cwd into the remote process");
     if (read.output.includes("MONITOR-REMOTE-WORLD")) break;
     assert(Date.now() < deadline, "monitor did not publish remote output");
@@ -534,15 +544,23 @@ async function monitorConsumer(endpoint) {
   } while (true);
   assert(!read.output.includes("MONITOR-HOST-WORLD"));
   assert.equal(read.process.environment.root, remote);
-  await app.client(plugin, "monitor.tasks", { action: "stop", task_id, thread_id: thread.id });
+  assert.equal(read.stream, "stdout");
+  assert(!read.output.includes("remote diagnostic"));
+  const diagnostic = await monitorTool("monitor_tasks", { action: "read", task_id, stream: "stderr" });
+  assert.equal(diagnostic.stream, "stderr");
+  assert(diagnostic.output.includes("remote diagnostic"));
+  assert(!diagnostic.output.includes("MONITOR-REMOTE-WORLD"));
+  await monitorTool("monitor_tasks", { action: "stop", task_id, thread_id: thread.id });
   const stopDeadline = Date.now() + 30000;
   do {
-    read = await app.client(plugin, "monitor.tasks", { action: "read", task_id, thread_id: thread.id });
+    read = await monitorTool("monitor_tasks", { action: "read", task_id, thread_id: thread.id });
     if (["stopped", "failed"].includes(read.process.state)) break;
     assert(Date.now() < stopDeadline, "monitor process did not stop");
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (true);
   assert.equal(read.process.reason, "requested_stop");
+  const event = await waitFor("observation", observations, item => item.phase === "model" && item.body.messages.some(message => typeof message.content === "string" && message.content.includes("A background monitor produced an event.") && message.content.includes("MONITOR-REMOTE-WORLD")), "stdout event reached the model");
+  assert(!event.body.messages.some(message => typeof message.content === "string" && message.content.includes("A background monitor produced an event.") && message.content.includes("remote diagnostic")));
   report.checks.push("second independent consumer (bundled Monitor) starts, reads and stops in the captured remote workspace through public host.process");
   await app.stop();
 }

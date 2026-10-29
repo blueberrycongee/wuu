@@ -24,6 +24,8 @@ export interface PluginProcessSnapshot {
   environment?: PluginProcessEnvironment;
 }
 export interface PluginProcessOutput {
+  /** Present when a separate stream was requested (host.process 1.2). */
+  stream?: "stdout" | "stderr";
   process: PluginProcessSnapshot;
   output: string;
   next_offset: number;
@@ -44,6 +46,8 @@ export interface PluginProcessStartInput {
 }
 
 export interface PluginProcessReadInput {
+  /** Independent byte cursor for this stream; omission reads merged output. */
+  stream?: "stdout" | "stderr";
   process_id: string;
   offset_bytes?: number;
   max_bytes?: number;
@@ -85,11 +89,15 @@ export async function startProcess(host: RuntimeHost, input: PluginProcessStartI
   return await host.call("host.service.call", { service: "host.process", method: "start", params: input }, options) as PluginProcessSnapshot;
 }
 
-/** Read merged stdout/stderr with a byte cursor; 4 bytes to 1 MiB and a 30s wait.
+/** Read output with a byte cursor; 4 bytes to 1 MiB and a 30s wait.
+ * Separate stdout/stderr requires host.process 1.2 and backend support.
+ * Unsupported stream selection fails explicitly; it never returns merged data.
  * Only processes owned by this plugin generation can be accessed.
  */
 export async function readProcess(host: RuntimeHost, input: PluginProcessReadInput, options?: PluginProcessCallOptions): Promise<PluginProcessOutput> {
-  return await host.call("host.service.call", { service: "host.process", method: "read", params: input }, options) as PluginProcessOutput;
+  const result = await host.call("host.service.call", { service: "host.process", method: "read", params: input }, options) as PluginProcessOutput;
+  if (input.stream && result.stream !== input.stream) throw new Error("host.process does not support separate output streams");
+  return result;
 }
 
 /** Deliver an event to the process's captured conversation, including private

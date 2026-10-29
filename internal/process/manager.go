@@ -39,10 +39,6 @@ const (
 	EventFailed    EventType = "failed"
 	EventStopped   EventType = "stopped"
 	EventCleanedUp EventType = "cleaned_up"
-	// EventRecheckDue marks a scheduled progress recheck firing for a live
-	// process. It is a low-latency hint only; consumers pull the persisted
-	// obligation through PendingRechecks.
-	EventRecheckDue EventType = "recheck_due"
 
 	EventCauseNaturalExit   EventCause = "natural_exit"
 	EventCauseRequestedStop EventCause = "requested_stop"
@@ -90,6 +86,9 @@ type Process struct {
 	ProcessStartTime string         `json:"process_start_time,omitempty"`
 	TTY              bool           `json:"tty,omitempty"`
 	LogPath          string         `json:"log_path"`
+	SeparateStreams  bool           `json:"separate_streams,omitempty"`
+	StdoutBaseOffset int64          `json:"stdout_base_offset,omitempty"`
+	StderrBaseOffset int64          `json:"stderr_base_offset,omitempty"`
 	// LogBaseOffset is the logical offset represented by byte zero of LogPath.
 	// Terminal log compaction advances it so continuation offsets issued before
 	// compaction resume at the retained tail or receive the compaction marker.
@@ -110,15 +109,6 @@ type Process struct {
 	CompletionDeliveredAt          time.Time           `json:"completion_delivered_at,omitempty"`
 	CompletionConsumedBy           string              `json:"completion_consumed_by,omitempty"`
 	NotificationsCancelledAt       time.Time           `json:"notifications_cancelled_at,omitempty"`
-	// RecheckMinutes is the model-declared progress recheck interval. Zero
-	// disables scheduled rechecks. NextRecheckAt is the persisted deadline of
-	// the next scheduled wake; PendingRecheckAt marks a fired recheck that has
-	// not been delivered to the owning thread yet. Unlike the one-shot
-	// completion obligation, a lost recheck is self-healing: the next interval
-	// fires again while the process stays live.
-	RecheckMinutes   int       `json:"recheck_minutes,omitempty"`
-	NextRecheckAt    time.Time `json:"next_recheck_at,omitempty"`
-	PendingRecheckAt time.Time `json:"pending_recheck_at,omitempty"`
 }
 
 type StartOptions struct {
@@ -141,7 +131,6 @@ type StartOptions struct {
 	CompletionMode        CompletionMode
 	TTY                   bool
 	AllowOutsideWorkspace bool
-	RecheckMinutes        int
 	// Env overrides the inherited environment when non-nil. Callers use this
 	// to pin sandboxed jobs to their private writable temporary directory.
 	Env []string
@@ -165,6 +154,8 @@ type CleanupResult struct {
 }
 
 type OutputReadOptions struct {
+	// Stream selects stdout or stderr. Empty preserves merged output.
+	Stream      string
 	MaxBytes    int
 	OffsetBytes *int64
 	Wait        time.Duration
@@ -177,6 +168,7 @@ type OutputReadOptions struct {
 }
 
 type OutputSnapshot struct {
+	Stream      string
 	Process     Process
 	Output      string
 	Truncated   bool
@@ -200,7 +192,6 @@ type Manager struct {
 	subMu            sync.Mutex
 	handles          map[string]*processHandle
 	subscribers      []chan<- Event
-	recheckWake      chan struct{}
 }
 
 // newHostGenerationID mints an identifier for one app-server lifetime. Time
@@ -227,9 +218,9 @@ type processHandle struct {
 	stdin   io.WriteCloser
 	ptyFile *os.File
 	done    chan struct{}
-	// An adopted command may outlive its leader while a descendant owns an
-	// output pipe. Retain launch identity, not just a persisted process-group ID.
-	command          *CommandHandle
+	// A command may outlive its leader while a descendant owns an output pipe.
+	// Retain launch identity, not just a persisted process-group ID.
+	tree             ProcessTree
 	pid              int
 	processStartTime string
 }
@@ -297,7 +288,6 @@ func NewManagerWithHostGeneration(rootDir, hostGenerationID string, runtimeDirs 
 		registryDir:      filepath.Join(runtimeDir, "processes"),
 		logDir:           filepath.Join(runtimeDir, "logs"),
 		handles:          make(map[string]*processHandle),
-		recheckWake:      make(chan struct{}, 1),
 	}
 	if err := ensurePrivateProcessDir(m.registryDir); err != nil {
 		return nil, err
@@ -311,7 +301,6 @@ func NewManagerWithHostGeneration(rootDir, hostGenerationID string, runtimeDirs 
 	if err := m.maintainTerminalStorage(time.Now()); err != nil {
 		log.Printf("wuu: process storage maintenance: %v", err)
 	}
-	go m.recheckScheduler()
 	return m, nil
 }
 
@@ -372,9 +361,6 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	if opt.CompletionMode != CompletionModeResume && opt.CompletionMode != CompletionModeDetached {
 		return nil, errors.New("completion_mode must be resume or detached")
 	}
-	if opt.RecheckMinutes < 0 || opt.RecheckMinutes > MaxRecheckMinutes {
-		return nil, fmt.Errorf("recheck_minutes must be between 0 and %d", MaxRecheckMinutes)
-	}
 	m.mu.Lock()
 	rootDir := m.rootDir
 	m.mu.Unlock()
@@ -393,12 +379,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		opt.TTY = false
 	}
 	id := "proc-" + randomHex(4)
-	p := &Process{ID: id, OperationID: opt.OperationID, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1, RecheckMinutes: opt.RecheckMinutes}
+	p := &Process{ID: id, OperationID: opt.OperationID, OwnerKind: opt.OwnerKind, OwnerID: opt.OwnerID, RootThreadID: strings.TrimSpace(opt.RootThreadID), HostGenerationID: m.hostGenerationID, Lifecycle: opt.Lifecycle, CompletionMode: opt.CompletionMode, Status: StatusStarting, Command: opt.Command, CWD: cwd, TTY: opt.TTY, LogPath: filepath.Join(m.logDir, id+".log"), StartedAt: time.Now(), UpdatedAt: time.Now(), ExitCode: -1}
 	if opt.SandboxPolicy != nil {
 		p.SandboxMode = opt.SandboxPolicy.Mode
-	}
-	if opt.RecheckMinutes > 0 {
-		p.NextRecheckAt = p.StartedAt.Add(time.Duration(opt.RecheckMinutes) * time.Minute)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -458,6 +441,15 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	if opt.TTY {
 		cmd.Env = terminalCommandEnv(cmd.Env)
 	}
+	var streamFiles []*os.File
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			for _, file := range streamFiles {
+				_ = file.Close()
+			}
+		}
+	}()
 	var stdin io.WriteCloser
 	var ptyFile *os.File
 	var tty *ptySession
@@ -485,8 +477,26 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 			m.publish(Event{Type: EventFailed, Process: *p})
 			return p, fmt.Errorf("stdin pipe: %w", err)
 		}
-		cmd.Stdout = logf
-		cmd.Stderr = logf
+		for _, stream := range []string{"stdout", "stderr"} {
+			file, openErr := os.OpenFile(p.LogPath+"."+stream+".log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+			if openErr != nil {
+				_ = stdin.Close()
+				_ = logf.Close()
+				p.Status = StatusFailed
+				p.LastError = openErr.Error()
+				p.UpdatedAt = time.Now()
+				_ = m.save(p)
+				m.publish(Event{Type: EventFailed, Process: *p})
+				return p, fmt.Errorf("open %s log: %w", stream, openErr)
+			}
+			streamFiles = append(streamFiles, file)
+		}
+		p.SeparateStreams = true
+		cmd.Stdout = io.MultiWriter(logf, streamFiles[0])
+		cmd.Stderr = io.MultiWriter(logf, streamFiles[1])
+		// Descendants can inherit these pipes after the shell exits. Bound
+		// their drain so Wait reaches process-tree cleanup and settlement.
+		cmd.WaitDelay = DefaultStopGracePeriod
 		PrepareCommand(cmd)
 		if err := cmd.Start(); err != nil {
 			_ = stdin.Close()
@@ -524,22 +534,23 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	p.Status = StatusRunning
 	p.UpdatedAt = time.Now()
 	_ = m.save(p)
-	handle := &processHandle{stdin: stdin, ptyFile: ptyFile, done: make(chan struct{})}
+	handle := &processHandle{
+		stdin: stdin, ptyFile: ptyFile, done: make(chan struct{}),
+		tree: ProcessTreeFromID(p.PGID), pid: p.PID, processStartTime: p.ProcessStartTime,
+	}
 	m.handles[id] = handle
 	m.publish(Event{Type: EventStarted, Process: *p})
+	handedOff = true
 	if opt.TTY {
 		go func() {
 			defer close(handle.done)
 			m.waitPTY(id, cmd, logf, tty)
 		}()
 	} else {
-		go func() {
+		go func(launch Process) {
 			defer close(handle.done)
-			m.wait(id, cmd, logf)
-		}()
-	}
-	if p.RecheckMinutes > 0 {
-		m.signalRecheckScheduler()
+			m.wait(launch, cmd, logf, streamFiles...)
+		}(*p)
 	}
 	return p, nil
 }
@@ -639,8 +650,22 @@ func terminalCommandEnv(env []string) []string {
 	return result
 }
 
-func (m *Manager) wait(id string, cmd *exec.Cmd, logf *os.File) {
+func (m *Manager) wait(launch Process, cmd *exec.Cmd, logf *os.File, streams ...*os.File) {
 	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The shell exited successfully; only inherited output pipes outlived
+		// the drain window. Preserve its exit result while cleaning its tree.
+		err = nil
+	}
+	if _, identityErr := processMatchesRecord(&launch); identityErr != nil {
+		err = errors.Join(err, identityErr)
+	} else {
+		err = errors.Join(err, ProcessTreeFromID(launch.PGID).Kill())
+	}
+	id := launch.ID
+	for _, file := range streams {
+		_ = file.Close()
+	}
 	_ = logf.Close()
 	_, discarded, _ := compactProcessLog(filepath.Join(m.logDir, id+".log"), terminalProcessLogMaxBytes)
 	m.finishWait(id, cmd, err, discarded)
@@ -671,6 +696,9 @@ func (m *Manager) finishWait(id string, cmd *exec.Cmd, err error, discardedLogBy
 	}
 	if discardedLogBytes > 0 {
 		p.LogBaseOffset += discardedLogBytes
+	}
+	if err := compactProcessStreams(p); err != nil {
+		log.Printf("wuu: process stream compaction: %v", err)
 	}
 	alreadyTerminal := p.Status == StatusStopped || p.Status == StatusFailed
 	requestedStop := p.Status == StatusStopping || p.Status == StatusStopped
@@ -774,6 +802,9 @@ func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputR
 	if m.remote != nil {
 		var result OutputSnapshot
 		err := m.remote.Request(ctx, "read", map[string]any{"id": id, "options": opt}, &result)
+		if err == nil && opt.Stream != "" && result.Stream != opt.Stream {
+			return OutputSnapshot{}, errors.New("execution backend does not support separate output streams")
+		}
 		return result, err
 	}
 	started := time.Now()
@@ -787,6 +818,10 @@ func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputR
 	if err != nil {
 		return OutputSnapshot{}, err
 	}
+	logPath, baseOffset, err := p.outputLog(opt.Stream)
+	if err != nil {
+		return OutputSnapshot{}, err
+	}
 	timedOut := false
 	if opt.Wait > 0 && opt.OffsetBytes != nil {
 		deadline := time.Now().Add(opt.Wait)
@@ -795,7 +830,7 @@ func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputR
 		}
 		minDwellAt := started.Add(opt.MinDwell)
 		for {
-			size, sizeErr := fileSize(p.LogPath)
+			size, sizeErr := fileSize(logPath)
 			if sizeErr != nil {
 				return OutputSnapshot{}, sizeErr
 			}
@@ -809,7 +844,7 @@ func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputR
 			if !isLiveStatus(p.Status) {
 				break
 			}
-			if p.LogBaseOffset+size > offset && !time.Now().Before(minDwellAt) {
+			if baseOffset+size > offset && !time.Now().Before(minDwellAt) {
 				break
 			}
 			if !time.Now().Before(deadline) {
@@ -827,17 +862,26 @@ func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputR
 			}
 			if latest, loadErr := m.load(id); loadErr == nil {
 				p = latest
+				logPath, baseOffset, err = p.outputLog(opt.Stream)
+				if err != nil {
+					return OutputSnapshot{}, err
+				}
 			}
 		}
 	}
 	if latest, loadErr := m.load(id); loadErr == nil {
 		p = latest
+		logPath, baseOffset, err = p.outputLog(opt.Stream)
+		if err != nil {
+			return OutputSnapshot{}, err
+		}
 	}
-	output, truncated, startOffset, endOffset, totalBytes, err := readLogWindow(p.LogPath, opt.MaxBytes, opt.OffsetBytes, p.LogBaseOffset)
+	output, truncated, startOffset, endOffset, totalBytes, err := readLogWindow(logPath, opt.MaxBytes, opt.OffsetBytes, baseOffset)
 	if err != nil {
 		return OutputSnapshot{}, err
 	}
 	return OutputSnapshot{
+		Stream:      opt.Stream,
 		Process:     *p,
 		Output:      output,
 		Truncated:   truncated,
@@ -995,8 +1039,8 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		m.mu.Unlock()
 		return p, waitForProcessMonitor(handle)
 	}
-	ownedCommand := handle != nil && handle.command != nil
-	if ownedCommand && (handle.pid != p.PID || handle.command.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
+	ownedCommand := handle != nil && handle.pid > 0
+	if ownedCommand && (handle.pid != p.PID || handle.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
 		m.mu.Unlock()
 		return p, fmt.Errorf("process %q record does not match its owned command; refusing to signal it", id)
 	}
@@ -1357,166 +1401,6 @@ func (m *Manager) MarkCompletionDelivered(id, consumer string) (*Process, error)
 	return p, nil
 }
 
-// MaxRecheckMinutes bounds the model-declared recheck interval (24h).
-const MaxRecheckMinutes = 24 * 60
-
-const recheckSchedulerIdleInterval = time.Hour
-
-// recheckScheduler is the single timer loop for persisted recheck deadlines.
-// It sleeps until the earliest NextRecheckAt (or an idle interval when
-// nothing is armed) and recomputes whenever signalRecheckScheduler fires.
-// Deadlines live on the process record, so a manager restart rebuilds the
-// schedule simply by scanning the registry on its first pass.
-func (m *Manager) recheckScheduler() {
-	for {
-		next, due := m.scanRechecks()
-		for _, id := range due {
-			m.fireRecheck(id)
-		}
-		delay := recheckSchedulerIdleInterval
-		if !next.IsZero() {
-			delay = time.Until(next)
-			if delay < time.Second {
-				delay = time.Second
-			}
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-m.recheckWake:
-			timer.Stop()
-		case <-timer.C:
-		}
-	}
-}
-
-// scanRechecks returns the earliest future recheck deadline and the ids whose
-// deadline has passed. Terminal records carrying stale recheck state are
-// cleaned up lazily here, which is what auto-cancels schedules on completion
-// without touching every terminal transition.
-func (m *Manager) scanRechecks() (time.Time, []string) {
-	processes, err := m.List()
-	if err != nil {
-		return time.Time{}, nil
-	}
-	now := time.Now()
-	var next time.Time
-	var due []string
-	for _, p := range processes {
-		armed := p.RecheckMinutes > 0 || !p.NextRecheckAt.IsZero() || !p.PendingRecheckAt.IsZero()
-		if !armed {
-			continue
-		}
-		if !isLiveStatus(p.Status) {
-			_ = m.clearRecheckState(p.ID)
-			continue
-		}
-		if p.RecheckMinutes <= 0 || p.NextRecheckAt.IsZero() {
-			continue
-		}
-		if !p.NextRecheckAt.After(now) {
-			due = append(due, p.ID)
-			continue
-		}
-		if next.IsZero() || p.NextRecheckAt.Before(next) {
-			next = p.NextRecheckAt
-		}
-	}
-	return next, due
-}
-
-// fireRecheck stamps a due recheck as pending delivery and arms the next
-// interval. The persisted PendingRecheckAt is the delivery obligation; the
-// published event is only a low-latency hint for subscribers.
-func (m *Manager) fireRecheck(id string) {
-	m.mu.Lock()
-	p, err := m.load(id)
-	if err != nil {
-		m.mu.Unlock()
-		return
-	}
-	if !isLiveStatus(p.Status) || p.RecheckMinutes <= 0 {
-		m.mu.Unlock()
-		return
-	}
-	now := time.Now()
-	p.PendingRecheckAt = now
-	p.NextRecheckAt = now.Add(time.Duration(p.RecheckMinutes) * time.Minute)
-	p.UpdatedAt = now
-	if err := m.save(p); err != nil {
-		m.mu.Unlock()
-		return
-	}
-	proc := *p
-	m.mu.Unlock()
-	m.publish(Event{Type: EventRecheckDue, Process: proc})
-	m.signalRecheckScheduler()
-}
-
-func (m *Manager) clearRecheckState(id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p, err := m.load(id)
-	if err != nil {
-		return err
-	}
-	if p.RecheckMinutes == 0 && p.NextRecheckAt.IsZero() && p.PendingRecheckAt.IsZero() {
-		return nil
-	}
-	p.RecheckMinutes = 0
-	p.NextRecheckAt = time.Time{}
-	p.PendingRecheckAt = time.Time{}
-	p.UpdatedAt = time.Now()
-	return m.save(p)
-}
-
-func (m *Manager) signalRecheckScheduler() {
-	select {
-	case m.recheckWake <- struct{}{}:
-	default:
-	}
-}
-
-// SetRecheck updates a live process's recheck schedule. Zero minutes cancels
-// the schedule and drops any fired-but-undelivered recheck.
-func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
-	if m.remote != nil {
-		var result Process
-		err := m.remoteRequest("recheck", map[string]any{"id": id, "minutes": minutes}, &result)
-		return &result, err
-	}
-	if minutes < 0 || minutes > MaxRecheckMinutes {
-		return nil, fmt.Errorf("recheck_minutes must be between 0 and %d", MaxRecheckMinutes)
-	}
-	m.mu.Lock()
-	p, err := m.load(id)
-	if err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	if !isLiveStatus(p.Status) {
-		m.mu.Unlock()
-		return p, fmt.Errorf("process %q is not running", id)
-	}
-	p.RecheckMinutes = minutes
-	if minutes > 0 {
-		p.NotificationsCancelledAt = time.Time{}
-	}
-	if minutes <= 0 {
-		p.NextRecheckAt = time.Time{}
-		p.PendingRecheckAt = time.Time{}
-	} else {
-		p.NextRecheckAt = time.Now().Add(time.Duration(minutes) * time.Minute)
-	}
-	p.UpdatedAt = time.Now()
-	if err := m.save(p); err != nil {
-		m.mu.Unlock()
-		return p, err
-	}
-	m.mu.Unlock()
-	m.signalRecheckScheduler()
-	return p, nil
-}
-
 // SetCompletionMode changes whether a live process's natural exit resumes its
 // conversation. A process started in resume mode keeps the owning turn (and
 // wuu exec) waiting; switching a long-lived service to detached releases it.
@@ -1549,7 +1433,7 @@ func (m *Manager) SetCompletionMode(id string, mode CompletionMode) (*Process, e
 	return p, nil
 }
 
-// CancelNotifications revokes future completion and recheck wakeups without
+// CancelNotifications revokes future completion wakeups without
 // stopping the process. An already admitted turn is allowed to finish.
 func (m *Manager) CancelNotifications(id string) (*Process, error) {
 	if m.remote != nil {
@@ -1564,58 +1448,12 @@ func (m *Manager) CancelNotifications(id string) (*Process, error) {
 		return nil, err
 	}
 	p.CompletionMode = CompletionModeDetached
-	p.RecheckMinutes = 0
-	p.NextRecheckAt = time.Time{}
-	p.PendingRecheckAt = time.Time{}
 	p.NotificationsCancelledAt = time.Now().UTC()
 	p.UpdatedAt = p.NotificationsCancelledAt
 	err = m.save(p)
 	m.mu.Unlock()
 	if err != nil {
 		return nil, err
-	}
-	m.signalRecheckScheduler()
-	return p, nil
-}
-
-// PendingRechecks returns live processes with a fired-but-undelivered
-// recheck. Terminal processes never appear here: their completion obligation
-// supersedes any stale recheck.
-func (m *Manager) PendingRechecks() ([]Process, error) {
-	processes, err := m.List()
-	if err != nil {
-		return nil, err
-	}
-	pending := make([]Process, 0)
-	for _, p := range processes {
-		if isLiveStatus(p.Status) && !p.PendingRecheckAt.IsZero() {
-			pending = append(pending, p)
-		}
-	}
-	return pending, nil
-}
-
-// MarkRecheckDelivered clears the pending obligation once the recheck has
-// been queued for the owning thread. Rechecks are periodic, so a delivery
-// lost after this point self-heals at the next interval.
-func (m *Manager) MarkRecheckDelivered(id string) (*Process, error) {
-	if m.remote != nil {
-		var result Process
-		err := m.remoteRequest("recheck_delivered", map[string]any{"id": id}, &result)
-		return &result, err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p, err := m.load(id)
-	if err != nil {
-		return nil, err
-	}
-	if !p.PendingRecheckAt.IsZero() {
-		p.PendingRecheckAt = time.Time{}
-		p.UpdatedAt = time.Now()
-		if err := m.save(p); err != nil {
-			return p, err
-		}
 	}
 	return p, nil
 }
@@ -1642,11 +1480,6 @@ type AdoptOptions struct {
 	Lifecycle      Lifecycle
 	CompletionMode CompletionMode
 	StartedAt      time.Time
-	// RecheckMinutes arms a progress recheck schedule on the adopted
-	// process. Promoted commands are by definition underestimates — the
-	// caller asked for a bounded run and the bound was wrong — so a default
-	// reminder schedule replaces the kill safety net the timeout used to be.
-	RecheckMinutes int
 	SandboxMode    processsandbox.Mode
 }
 
@@ -1686,9 +1519,6 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 	if opt.CompletionMode != CompletionModeResume && opt.CompletionMode != CompletionModeDetached {
 		return nil, errors.New("completion_mode must be resume or detached")
 	}
-	if opt.RecheckMinutes < 0 || opt.RecheckMinutes > MaxRecheckMinutes {
-		return nil, fmt.Errorf("recheck_minutes must be between 0 and %d", MaxRecheckMinutes)
-	}
 	now := time.Now()
 	startedAt := opt.StartedAt
 	if startedAt.IsZero() {
@@ -1711,10 +1541,6 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		ExitCode:         -1,
 		SandboxMode:      opt.SandboxMode,
 	}
-	if opt.RecheckMinutes > 0 {
-		p.RecheckMinutes = opt.RecheckMinutes
-		p.NextRecheckAt = now.Add(time.Duration(opt.RecheckMinutes) * time.Minute)
-	}
 	p.PID = cmd.Process.Pid
 	p.PGID = ProcessTreeForPID(p.PID).ID()
 	var err error
@@ -1728,7 +1554,7 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		return nil, err
 	}
 	adopted := &processHandle{
-		done: make(chan struct{}), command: handle,
+		done: make(chan struct{}), tree: handle.tree,
 		pid: p.PID, processStartTime: p.ProcessStartTime,
 	}
 	m.handles[id] = adopted
@@ -1742,9 +1568,6 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		_, discarded, _ := compactProcessLog(filepath.Join(m.logDir, id+".log"), terminalProcessLogMaxBytes)
 		m.finishWait(id, cmd, waitErr, discarded)
 	}()
-	if p.RecheckMinutes > 0 {
-		m.signalRecheckScheduler()
-	}
 	return p, nil
 }
 

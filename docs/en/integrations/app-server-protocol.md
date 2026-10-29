@@ -642,9 +642,9 @@ browser surface and makes permission decisions without a client approval exchang
 
 ## Background process triggers
 
-`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`, and optional `recheck_minutes` and `next_recheck_at`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without scheduled checks or a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
+`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
 
-`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit and recheck notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
+`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
 
 ## Hosted processes
 

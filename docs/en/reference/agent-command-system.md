@@ -1,6 +1,6 @@
 # Agent command system
 
-The built-in Wuu engine starts every command with `bash`: tests, builds, lint, git, scripts, and, with `run_in_background`, servers and watchers. `process` inspects and controls commands that are already running in the background. Both run on the host machine in the session's workspace and share one process manager. External engines have their own command implementations; this page describes Wuu's tools.
+The built-in Wuu engine uses `bash` to run commands and control background work in the session's selected execution environment. Ordinary commands deliver their exit result; the optional Monitor extension observes ongoing changes in CI, APIs and logs. External engines have their own command implementations; this page describes Wuu's tools.
 
 ## Task completion and context
 
@@ -19,7 +19,9 @@ context changes are appended. Provider-native response items are retained for
 continuation, including after a session restart. Cache hits still depend on the
 provider and are measured from returned usage.
 
-## Code Mode output budget
+## Code Mode calls and output budget
+
+Code Mode is enabled by default. `tools.bash` exposes the same run and control actions as the direct tool. Await the background start before returning from a program; save its handle with `store` if another program needs it. Use `searchTools("monitor")` and `describeTool(name)` to discover the extension's exact names and schemas, then call `tools[name](args)`. The extension owns the accepted watcher after the program returns. Disabled extensions contribute neither tools nor guidance.
 
 Inside `run_code`, tools return producer data for filtering and computation. Printing a tool result emits its `structured_content`, or its content when structured data is absent; it does not substitute the direct tool's compact display. Set `max_output_tokens` in the first-line `// @run_code:` options to bound the combined text sent to the model. Output beyond that budget is saved with a recovery reference. Completed observations remain unchanged on replay.
 
@@ -27,7 +29,7 @@ Producer limits still apply: file/search pagination, process read ranges, comman
 
 ## Run a command
 
-`bash` takes `command`, `timeout_seconds`, `cwd`, `run_in_background`, `purpose`, and `scope`:
+`bash` defaults to `action=run` and takes `command`, `timeout_seconds`, `cwd`, `run_in_background`, `completion_mode`, `purpose`, and `scope`:
 
 ```json
 {
@@ -55,11 +57,11 @@ Start a server, watcher, or interactive command with `run_in_background` rather 
 }
 ```
 
-The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit is delivered at the next model step when the owning conversation is active; otherwise it starts a continuation, which `wuu exec` waits for. Results already read by the model do not trigger another delivery. Successful consumption is persisted with the answer so restart recovery does not repeat an acknowledged result. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
+The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit is delivered at the next model step when the owning conversation is active; otherwise it starts a continuation, which `wuu exec` waits for. Results already read by the model do not trigger another delivery. Successful consumption is persisted with the answer so restart recovery does not repeat an acknowledged result. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` at background launch or with `bash action=update`.
 
 If a completion continuation fails or is interrupted, its notification stays pending. Provider retries use the existing bounded backoff policy; reaching a terminal failure does not start another automatic turn. Reopening the conversation or receiving another process event does not retry the failed notification. A later human message permits recovery. Paused notifications do not keep unrelated successful work waiting for an automatic continuation.
 
-`process` works on running processes:
+`bash` also controls running commands:
 
 | Action | Use |
 | --- | --- |
@@ -67,19 +69,19 @@ If a completion continuation fails or is interrupted, its notification stays pen
 | `write` | Send `input` to a process with a live input handle; include a newline when needed |
 | `stop` | Stop the process tree |
 | `list` | Inspect the session's managed processes |
-| `update` | Change `completion_mode` (`resume` or `detached`) or `recheck_minutes` (`0` cancels) |
+| `update` | Change `completion_mode` (`resume` or `detached`) |
 
-Reads return up to 32 KiB by default. Without `wait_ms`, a read is a snapshot. With it, the call waits for new output or exit, up to 300,000 ms. Continuously arriving output is paced rather than returning on every byte. Like `bash`, `process` results reach the model as short plain text, while clients keep the JSON envelope.
+Reads return up to 32 KiB by default. Without `wait_ms`, a read is a snapshot. With it, the call waits for new output or exit, up to 300,000 ms. Continuously arriving output is paced rather than returning on every byte. Control results reach the model as short plain text, while clients keep the JSON envelope.
 
-Use `recheck_minutes` from 1 to 1440 for progress wake-ups on long or quiet tasks. Completion cancels the schedule. Do not chain waits just to keep a turn open: use a foreground `bash` run for an immediate dependency, or let completion and scheduled wake-ups resume the conversation. Completion and recheck notifications are also plain text: the outcome, the output tail, and how to read earlier output.
+Command completion is event-driven; there are no timed model rechecks. Use Monitor for ongoing observation. Its script owns polling intervals, filtering, transient retries and stop conditions. Complete stdout lines produce events; stderr retains diagnostics without waking the model.
 
-Sessions recorded before this change show background actions under `bash` (`start_background`, `read_background`, and so on). The desktop still renders those items; a model that repeats them gets an error naming the replacement.
+Historical `process` and legacy `bash` records remain renderable. New calls use `bash` control actions; the standalone `process` tool is no longer registered.
 
 ### Inspect triggers in the desktop
 
-The **Trigger** button beside Copy, Fork, and the timestamp on the latest assistant reply opens this conversation's background process triggers. It shows whether each trigger is waiting, has received a notification, has been handled, or was cancelled or stopped. Scheduled checks show their interval and next time. Expand **Source and recent output** to inspect the command and its output tail; viewing output here does not consume the model's notification.
+The Trigger entry is currently hidden by the desktop feature flag. When enabled, the **Trigger** button beside Copy, Fork, and the timestamp on the latest assistant reply opens this conversation's background process triggers. It shows whether each trigger is waiting, has received a notification, has been handled, or was cancelled or stopped. Expand **Source and recent output** to inspect the command and its output tail; viewing output here does not consume the model's notification.
 
-**Cancel automatic continuation** cancels future exit and scheduled wakeups without stopping the background task. A turn that has already started continues. These controls cover Wuu-managed processes; plugin schedules and external engines' own watchers are not listed.
+**Cancel automatic continuation** cancels future exit notifications without stopping the background task. A turn that has already started continues. These controls cover Wuu-managed processes; plugin schedules and external engines' own watchers are not listed.
 
 ## Directory, environment, and permissions
 

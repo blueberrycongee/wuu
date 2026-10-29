@@ -8,8 +8,7 @@ import (
 )
 
 // The managed-process helpers below are shared by bash (which starts
-// background processes) and the process tool (which observes and controls
-// them). The former standalone process tools (start_process / list_processes /
+// background processes) and its control actions. The former standalone process tools (start_process / list_processes /
 // stop_process / read_process_output / write_stdin) were removed.
 
 func defaultProcessOwnerKind(env *Env, ownerKind string) string {

@@ -36,11 +36,20 @@ func (m *Manager) maintainTerminalStorage(now time.Time) error {
 	var maintenanceErr error
 	for _, p := range processes {
 		known[p.ID] = struct{}{}
+		if p.SeparateStreams {
+			known[p.ID+".log.stdout"] = struct{}{}
+			known[p.ID+".log.stderr"] = struct{}{}
+		}
 		if !isTerminalStatus(p.Status) {
 			continue
 		}
 		expectedLog := filepath.Join(m.logDir, p.ID+".log")
 		if samePath(p.LogPath, expectedLog) {
+			beforeOut, beforeErr := p.StdoutBaseOffset, p.StderrBaseOffset
+			maintenanceErr = errors.Join(maintenanceErr, compactProcessStreams(&p))
+			if beforeOut != p.StdoutBaseOffset || beforeErr != p.StderrBaseOffset {
+				maintenanceErr = errors.Join(maintenanceErr, m.save(&p))
+			}
 			if changed, discarded, err := compactProcessLog(expectedLog, terminalProcessLogMaxBytes); err != nil && !os.IsNotExist(err) {
 				maintenanceErr = errors.Join(maintenanceErr, fmt.Errorf("compact process log %q: %w", p.ID, err))
 			} else if changed {
@@ -58,6 +67,13 @@ func (m *Manager) maintainTerminalStorage(now time.Time) error {
 			continue
 		}
 		if samePath(p.LogPath, expectedLog) {
+			if p.SeparateStreams {
+				for _, stream := range []string{"stdout", "stderr"} {
+					if err := os.Remove(expectedLog + "." + stream + ".log"); err != nil && !os.IsNotExist(err) {
+						maintenanceErr = errors.Join(maintenanceErr, err)
+					}
+				}
+			}
 			if err := os.Remove(expectedLog); err != nil && !os.IsNotExist(err) {
 				maintenanceErr = errors.Join(maintenanceErr, fmt.Errorf("remove process log %q: %w", p.ID, err))
 				continue
