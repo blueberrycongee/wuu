@@ -238,22 +238,38 @@ func (c *AgentControl) HasOwnedWorkerExecutions() bool {
 // acknowledged. A successful physical probe releases its temporary lease
 // before returning.
 func WorkerExecutionActive(rootDir, workerID string) (bool, error) {
+	return workerExecutionActive(rootDir, workerID, tryAcquireWorkerExecutionLease)
+}
+
+func workerExecutionActive(rootDir, workerID string, acquire func(string, string) (*workerExecutionLease, bool, error)) (bool, error) {
 	if pendingPath := workerTerminalFinalizationPath(rootDir, workerID); pendingPath != "" {
-		if _, statErr := os.Stat(pendingPath); statErr == nil {
+		if _, err := os.Stat(pendingPath); err == nil {
 			return true, nil
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			return false, fmt.Errorf("inspect worker terminal ownership: %w", statErr)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect worker terminal ownership: %w", err)
 		}
 	}
-	lease, acquired, err := tryAcquireWorkerExecutionLease(rootDir, workerID)
+	lease, acquired, err := acquire(rootDir, workerID)
 	if err != nil {
 		return false, err
 	}
 	if !acquired {
 		return true, nil
 	}
-	if err := lease.release(); err != nil {
-		return false, fmt.Errorf("release worker execution probe: %w", err)
+	// Terminal preparation writes its durable record while the worker lease is
+	// still held. Inspect it under that same lease, so a finalizing worker cannot
+	// publish the record between an earlier stat and this ownership check.
+	active := false
+	var inspectErr error
+	if pendingPath := workerTerminalFinalizationPath(rootDir, workerID); pendingPath != "" {
+		if _, err := os.Stat(pendingPath); err == nil {
+			active = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			inspectErr = fmt.Errorf("inspect worker terminal ownership: %w", err)
+		}
 	}
-	return false, nil
+	if err := lease.release(); err != nil {
+		return false, errors.Join(inspectErr, fmt.Errorf("release worker execution probe: %w", err))
+	}
+	return active, inspectErr
 }
