@@ -29,10 +29,52 @@ type Backend struct {
 // Scope carries an inert factory for one authenticated conversation/actor.
 // Allocating it must not initialize tools, MCP connections or Code Mode.
 type Scope struct {
-	factory func(context.Context) (Backend, error)
+	factory       func(context.Context) (Backend, error)
+	mu            sync.Mutex
+	closed        bool
+	entries       map[*Service]*backendEntry
+	closeDone     chan struct{}
+	closeErr      error
+	cleanupErrors []error
 }
 
 func NewScope(factory func(context.Context) (Backend, error)) *Scope { return &Scope{factory: factory} }
+
+// Close stops scope admission immediately and waits for admitted calls and
+// initialization to finish before releasing the backend. Caller cancellation
+// only stops waiting; cleanup continues and later calls observe its outcome.
+func (scope *Scope) Close(ctx context.Context) error {
+	scope.mu.Lock()
+	if scope.closeDone == nil {
+		scope.closed = true
+		scope.closeDone = make(chan struct{})
+		entries := scope.entries
+		scope.entries = nil
+		cleanupCtx := context.WithoutCancel(ctx)
+		go func() {
+			for service, entry := range entries {
+				service.retire(entry, cleanupCtx)
+			}
+			for _, entry := range entries {
+				<-entry.closeDone
+			}
+			scope.mu.Lock()
+			scope.closeErr = errors.Join(scope.cleanupErrors...)
+			close(scope.closeDone)
+			scope.mu.Unlock()
+		}()
+	}
+	done := scope.closeDone
+	scope.mu.Unlock()
+	select {
+	case <-done:
+		scope.mu.Lock()
+		defer scope.mu.Unlock()
+		return scope.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 type scopeKey struct{}
 
@@ -42,9 +84,16 @@ func WithScope(ctx context.Context, scope *Scope) context.Context {
 }
 
 type backendEntry struct {
-	ready   chan struct{}
-	backend Backend
-	err     error
+	scope     *Scope
+	ready     chan struct{}
+	backend   Backend
+	err       error
+	active    int
+	retiring  bool
+	drained   chan struct{}
+	closeOnce sync.Once
+	closeDone chan struct{}
+	closeErr  error
 }
 
 // Service owns scoped default backend initialization and teardown. External
@@ -91,33 +140,19 @@ func (s *Service) Close(ctx context.Context) error {
 	if s.closeDone == nil {
 		s.state = pluginhost.StateStopped
 		s.closeDone = make(chan struct{})
-		backends := s.backends
-		s.backends = nil
-		// Late resources need a live cleanup context even after the graph's drain
-		// deadline. Never restart or repeat a cleanup callback after cancellation.
+		entries := make([]*backendEntry, 0, len(s.backends))
+		for _, entry := range s.backends {
+			entries = append(entries, entry)
+		}
 		cleanupCtx := context.WithoutCancel(ctx)
 		go func() {
-			outcomes := make(chan error, len(backends))
-			for _, entry := range backends {
-				go func() {
-					var err error
-					defer func() {
-						// Preserve the host lifecycle panic boundary after moving
-						// cleanup out of its synchronous Close call stack.
-						if value := recover(); value != nil {
-							err = fmt.Errorf("tool backend cleanup panicked: %v", value)
-						}
-						outcomes <- err
-					}()
-					<-entry.ready
-					if entry.backend.Close != nil {
-						err = entry.backend.Close(cleanupCtx)
-					}
-				}()
-			}
 			var errs []error
-			for range backends {
-				errs = append(errs, <-outcomes)
+			for _, entry := range entries {
+				s.retire(entry, cleanupCtx)
+			}
+			for _, entry := range entries {
+				<-entry.closeDone
+				errs = append(errs, entry.closeErr)
 			}
 			s.mu.Lock()
 			s.closeErr = errors.Join(errs...)
@@ -136,48 +171,122 @@ func (s *Service) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (s *Service) backend(ctx context.Context) (Backend, error) {
+
+func (s *Service) retire(entry *backendEntry, ctx context.Context) {
+	s.mu.Lock()
+	if !entry.retiring {
+		entry.retiring = true
+		if entry.active == 0 {
+			close(entry.drained)
+		}
+	}
+	s.mu.Unlock()
+	entry.closeOnce.Do(func() {
+		go func() {
+			defer func() {
+				if value := recover(); value != nil {
+					entry.closeErr = fmt.Errorf("tool backend cleanup panicked: %v", value)
+				}
+				s.mu.Lock()
+				if s.backends[entry.scope] == entry {
+					delete(s.backends, entry.scope)
+				}
+				s.mu.Unlock()
+				entry.scope.mu.Lock()
+				if entry.closeErr != nil {
+					entry.scope.cleanupErrors = append(entry.scope.cleanupErrors, entry.closeErr)
+				}
+				if entry.scope.entries[s] == entry {
+					delete(entry.scope.entries, s)
+				}
+				entry.scope.mu.Unlock()
+				close(entry.closeDone)
+			}()
+			<-entry.drained
+			if entry.backend.Close != nil {
+				entry.closeErr = entry.backend.Close(ctx)
+			}
+		}()
+	})
+}
+
+func (s *Service) backend(ctx context.Context) (Backend, func(), error) {
 	scope, _ := ctx.Value(scopeKey{}).(*Scope)
 	if scope == nil || scope.factory == nil {
-		return Backend{}, &pluginhost.HostServiceError{Code: "invalid_execution_scope", Message: "tool service requires a host-bound scope"}
+		return Backend{}, nil, &pluginhost.HostServiceError{Code: "invalid_execution_scope", Message: "tool service requires a host-bound scope"}
+	}
+	scope.mu.Lock()
+	if scope.closed {
+		scope.mu.Unlock()
+		return Backend{}, nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool scope is closed"}
 	}
 	s.mu.Lock()
 	if s.state != pluginhost.StateActive {
 		s.mu.Unlock()
-		return Backend{}, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool provider is not active"}
+		scope.mu.Unlock()
+		return Backend{}, nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool provider is not active"}
 	}
 	entry, exists := s.backends[scope]
 	if !exists {
-		entry = &backendEntry{ready: make(chan struct{})}
+		entry = &backendEntry{scope: scope, ready: make(chan struct{}), drained: make(chan struct{}), closeDone: make(chan struct{})}
 		s.backends[scope] = entry
+		if scope.entries == nil {
+			scope.entries = make(map[*Service]*backendEntry)
+		}
+		scope.entries[s] = entry
 	}
+	entry.active++
 	s.mu.Unlock()
-	if exists {
+	scope.mu.Unlock()
+	finish := func() {
+		s.mu.Lock()
+		entry.active--
+		if entry.active == 0 && entry.retiring {
+			close(entry.drained)
+		}
+		s.mu.Unlock()
+	}
+	if !exists {
+		func() {
+			defer func() {
+				if value := recover(); value != nil {
+					entry.err = fmt.Errorf("tool backend initialization panicked: %v", value)
+				}
+				close(entry.ready)
+			}()
+			entry.backend, entry.err = scope.factory(ctx)
+			if entry.err == nil && entry.backend.Executor == nil {
+				entry.err = errors.New("tool backend factory returned no executor")
+			}
+		}()
+	} else {
 		select {
 		case <-ctx.Done():
-			return Backend{}, ctx.Err()
+			finish()
+			return Backend{}, nil, ctx.Err()
 		case <-entry.ready:
-			return s.initializedBackend(entry)
 		}
 	}
-	// Factories can call other selected services; never hold the provider lock
-	// across them. Concurrent calls share this one outcome, including failure.
-	entry.backend, entry.err = scope.factory(ctx)
-	if entry.err == nil && entry.backend.Executor == nil {
-		entry.err = errors.New("tool backend factory returned no executor")
-	}
-	close(entry.ready)
-	return s.initializedBackend(entry)
-}
-
-// Initialization is not dispatch admission after the provider has stopped.
-func (s *Service) initializedBackend(entry *backendEntry) (Backend, error) {
+	scope.mu.Lock()
+	closed := scope.closed
+	scope.mu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.state != pluginhost.StateActive {
-		return Backend{}, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool provider stopped during initialization"}
+	active := s.state == pluginhost.StateActive
+	s.mu.Unlock()
+	if closed || !active {
+		finish()
+		return Backend{}, nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool scope or provider stopped during initialization"}
 	}
-	return entry.backend, entry.err
+	if entry.err != nil {
+		// A failed factory may return partially constructed resources. Close
+		// admission immediately and retire them without blocking this call.
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = scope.Close(canceled)
+		finish()
+		return Backend{}, nil, entry.err
+	}
+	return entry.backend, finish, nil
 }
 func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
@@ -228,10 +337,11 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			return nil, err
 		}
 	}
-	backend, err := s.backend(ctx)
+	backend, finish, err := s.backend(ctx)
 	if err != nil {
 		return nil, err
 	}
+	defer finish()
 	executor := backend.Executor
 	var result any
 	switch p.Method {
