@@ -80,6 +80,8 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
         const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
         return { session_id, created };
       }
+      case "host.session.route": return {version:1,operation_id:params.operation_id,locator:params.locator,status:"completed",result:params.operation==="list" ? {sessions:[{session_id:"coding-existing",visibility:"user",state:"idle",locator:{version:1,execution_host:"desktop-project:registered",session_id:"coding-existing"}}]} : params.operation==="inspect" ? {session:{session_id:params.locator.session_id},turn:{state:"running",turn_id:"sent-only"}} : params.operation==="cancel" ? {cancelled:true,turn_id:params.params.turn_id} : {state:"running",turn_id:"sent-only"}};
+      case "host.session.list": return {sessions:Object.values(contexts).filter(c=>params.scope==="owned" ? c.visibility==="plugin" : c.visibility!=="plugin")};
       case "host.session.inspect": return { session: contexts[params.session_id], ...(params.request_id ? {receipt:{request_id:"receipt-client",receipt_id:"receipt-one",host_request_id:params.request_id,client_id:"client",queue_id:"queue",session_id:params.session_id,plugin_id:"personal",accepted_at:"2026-10-23T00:00:00Z",revision:2,receipt_state:"accepted",execution_state:"held"}}:{}) };
       case "host.session.send": return {state:"running",receipt:{receipt_id:params.resume_receipt_id}};
       case "host.session.cancel": return {session_id:params.session_id,queue_id:params.queue_id,cancelled:true};
@@ -125,7 +127,7 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
       pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
       send({ id, method, params });
     });
-    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_features: ["session.handoff.v1"], supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
     if (pluginID === "personal") assert.equal(definition.provided_services.filter(service => service.name === "memory.records").length, 1);
     else { assert.equal(definition.provided_services?.length ?? 0, 0); assert.equal(definition.tools?.length ?? 0, 0); assert.equal(definition.capabilities?.length ?? 0, 0); }
     assert(!definition.provided_services?.some(service => service.name === "memory.notebook"));
@@ -160,6 +162,30 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   const resumed=frames.filter(f=>f.frame?.params?.service==="host.session.send").at(-1).frame.params.params;
   assert.equal(resumed.resume_receipt_id,"receipt-one");assert.equal(resumed.user_input_request_id,"receipt-client");assert.equal(resumed.input.prompt,"");
   assert.equal((await receiptClient("agents.messages.cancel",{request_id:"receipt-client",receipt_id:"receipt-one"})).queue_id,"queue");
+
+  // Model input cannot replace authenticated source references. Public tools
+  // pass stable IDs to the existing host and never claim to submit owner text.
+  contexts["visible-session"]={session_id:"visible-session",user_space_id:"local",product_domain:"personal",visibility:"user",state:"idle"};
+  assert((await runtime.tool("list_sessions",{})).sessions.some(s=>s.session_id==="visible-session"));
+  assert.equal((await runtime.tool("inspect_session",{session_id:"visible-session"})).session.session_id,"visible-session");
+  await assert.rejects(runtime.tool("send_to_session",{session_id:"visible-session",request_id:"send-original",instruction:"Agent synthesis"}),/original user|source message/);
+  const sendOriginal=()=>runtime.call("tool.execute",{tool_id:"send_to_session",arguments:{session_id:"visible-session",request_id:"send-original",instruction:"Agent synthesis",source_message_seqs:[1]},source_message:{session_id:mainSession,seq:2},session_id:mainSession,thread_id:mainSession,cwd:scratch,call_id:"send-tool",execution_id:"send-execution"});
+  await sendOriginal();await sendOriginal();
+  const handoffs=frames.filter(f=>f.frame?.params?.service==="host.session.send" && f.frame.params.params.input?.handoff).map(f=>f.frame.params.params);
+  assert.equal(handoffs.length,2);assert.equal(handoffs[0].request_id,handoffs[1].request_id);
+  assert.equal(handoffs[0].input.prompt,"Agent synthesis");
+  assert.deepEqual(handoffs[0].input.handoff.source_messages,[{session_id:mainSession,seq:1},{session_id:mainSession,seq:2}]);
+  assert.equal(handoffs[0].user_input_request_id,undefined);
+  assert.equal(handoffs[0].if_running,"queue");
+  assert.equal(handoffs[0].presentation.related_session_id,mainSession);
+
+  const allSessions=await runtime.tool("list_sessions",{});
+  const coding=allSessions.sessions.find(value=>value.session_id==="coding-existing");assert.equal(coding.locator.execution_host,"desktop-project:registered");
+  await runtime.call("tool.execute",{tool_id:"send_to_session",arguments:{session_id:coding.session_id,locator:coding.locator,request_id:"coding-original",instruction:"Agent synthesis",source_message_seqs:[3]},source_message:{session_id:mainSession,seq:2},session_id:mainSession,thread_id:mainSession,cwd:scratch,call_id:"cross-send",execution_id:"cross-execution"});
+  const routedSend=frames.filter(({direction,frame})=>direction==="plugin" && frame.params?.service==="host.session.route" && frame.params.params.operation==="send").at(-1).frame.params.params;
+  assert.deepEqual(routedSend.locator,coding.locator);assert.deepEqual(routedSend.params.input.handoff.source_messages,[{session_id:mainSession,seq:2},{session_id:mainSession,seq:3}]);assert.equal(routedSend.params.user_input_request_id,undefined);
+  assert.equal((await runtime.tool("inspect_session",{session_id:coding.session_id,locator:coding.locator})).session.session_id,coding.session_id);
+  assert.equal((await runtime.tool("cancel_session_message",{session_id:coding.session_id,locator:coding.locator,request_id:"coding-original"})).turn_id,"sent-only");
 
   const source = (ref, seconds) => [{ kind: "message", ref, occurred_at: new Date(Date.now() - 60_000 + seconds * 1000).toISOString() }];
   const record = (await runtime.tool("personal_memory_create", { key: "address.home", expected_revision: 0, content: "Synthetic Old Street", evidence: "explicit", sources: source("synthetic-message:1", 0) })).record;
@@ -285,7 +311,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
       pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
       send({ id, method, params });
     });
-    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_features: ["session.handoff.v1"], supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
     if (pluginID === "personal") assert.equal(definition.provided_services.filter(service => service.name === "memory.records").length, 1);
     else { assert.equal(definition.provided_services?.length ?? 0, 0); assert.equal(definition.tools?.length ?? 0, 0); assert.equal(definition.capabilities?.length ?? 0, 0); }
     assert(!definition.provided_services?.some(service => service.name === "memory.notebook"));

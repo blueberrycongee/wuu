@@ -150,3 +150,128 @@ endpoint, the existing encrypted relay connection, and a synthetic model. It
 checks local defaults, remote creation, narrowed permissions, idempotent retries,
 disconnect/reconnect, final output, exact cancellation, and revocation. It does
 not validate physical-machine networking, installed engines, or GUI rendering.
+
+## Personal messages to local Coding sessions
+
+The desktop's selected `wuu.desktop-session-transport` provider implements the
+same `session.transport` contract for Personal and other trusted extensions. It
+is **not remote federation** and does not enable `session_federation` or pairing.
+Disable or replace that provider through the existing composition settings to
+stop or replace desktop routing; an unavailable provider has no built-in fallback.
+
+Personal's main conversation exposes `list_sessions`, `inspect_session`,
+`send_to_session`, and `cancel_session_message`. Discovery includes shared active
+Coding sessions in registered, non-missing local projects and already known
+no-project contexts. It does not scan arbitrary directories, connect configured
+remote hosts, read another user's domain, or expose another plugin's private
+sessions. `scope: "local"` lists Personal sessions without a desktop connection.
+Inspection without a request ID returns bounded session metadata; an owned send
+request can additionally expose its status/result. It is not unrestricted history
+access. Copy the returned **locator**, not only the session ID.
+
+Discovery returns logical `desktop-project:<registered-id>` or opaque
+`desktop-context:<scope-token>` addresses. The main-process coordinator acquires
+only the selected local host, retains its exact connection generation for the
+operation, then releases it. Discovery across more than four projects does not
+increase the desktop pool's resident-host limit. A replaced host or unavailable
+registered context fails explicitly; no old signature or in-flight request is
+silently retargeted or replayed.
+
+This capability requires the exact live, admitted local-owner Personal desktop
+connection that initiated the turn. A second desktop connection, a detached
+background task, delegated remote peer, or a renderer-supplied owner flag cannot
+borrow it. Existing explicitly paired full-owner clients may control Personal
+through its admitted desktop pipe; this does not grant access to arbitrary remote
+targets or the coordinator RPC namespace. The `session/desktop/*` RPC namespace and reverse-response
+capabilities are reserved to the main-process coordinator. Ordinary renderer and
+remote RPC forwarding cannot call or answer them.
+
+### Original material, not a rewritten user instruction
+
+`session.handoff.v1` adds `input.handoff.source_messages` to `host.session.send`.
+Each entry is an exact persisted `{session_id, seq}`. The host authenticates
+visible, complete, original user records and resolves one-hop reply context;
+plugins cannot supply replacement quotation text. The delivered structured
+message separates `agent_instruction`, `original_user_messages`, `reply_context`,
+source locators, and attachment metadata. It remains a read-only **plugin** input,
+not a new owner submission. Attachments, pasted/quoted third-party content and
+reply context are source material, never authorization to execute their text.
+
+Personal automatically includes the host-bound user input that started the
+current turn. Explicitly include every relevant additional requirement or later
+user steer/correction using `source_message_seqs`; the host verifies these
+addresses too. The task-creation path uses the same handoff primitive. Deferred
+tasks retain separate, read-only execution grants per source session; root-main
+corrections to a named agent's task do not replace or drop the original source.
+
+Only selected references and their direct replies are transferred, not unrelated
+history. Limits are 64 original messages, 16 attachments, 20 MiB attachment bytes,
+and a 1 MiB structured text envelope. Missing, retracted, hidden, truncated,
+unreadable, oversized, or unsupported artifact-backed material fails explicitly;
+it is never silently summarized or omitted. Authored content parts preserve their
+ordered text exactly. An older attachment-bearing record without recoverable
+original text fails explicitly and must be resubmitted; expanded model content
+is not guessed to be the original quotation. Current captionless attachments
+recover their explicitly empty text from the exact authenticated input receipt,
+matched to the source message and owner/session binding. Selected session-domain
+providers retain optional `OriginalText` at authenticated history settlement
+(including `""`); caller-supplied values are ignored. A provider without this
+provenance cannot forward an ambiguous captionless record, and is not silently
+replaced by the built-in provider. The receiver verifies retained bytes
+and SHA-256, then creates its own local working copies. Sender filesystem paths
+are neither attachment handles nor permission to read arbitrary files.
+
+A source host mints an invocation-bound opaque ticket for the selected provider.
+The exact admitted desktop connection exports the source-host-signed JSON string,
+resolves a registered logical target, and asks the source to bind that ticket once
+to the destination's current host identity. The receiving host checks signature,
+source provenance, its exact signed target identity, session scope, and operation.
+Relays must forward the signed payload string unchanged, not parse and reserialize
+it. No credentials or execution grants cross this boundary.
+
+The destination's existing selected model, tools, and permission settings remain
+in force. The sender cannot override its engine, model, permissions, control
+revision, or resume/steer another turn. A queued message follows normal target
+policy at activation; this is not a frozen per-message tool ceiling.
+
+### Delivery and cancellation
+
+Persist and reuse the same `request_id` for one immutable intent. Concurrent or
+sequential retries do not create another active delivery; changed work with the
+same ID conflicts. The source durably binds that ID to the logical target, so it
+cannot send the work again to another project/session. Reconnection may acquire
+a fresh process generation for the same logical target. Inspect the returned
+queue/turn lifecycle: a queued input may become a turn, and an explicitly
+retryable shutdown discard may receive a replacement queue ID on retry. The
+request identity stays stable; queueing/running is not completion.
+
+Cancellation before export prevents admission. Once dispatch may have reached
+the target, cancellation, timeout, or disconnection means **unknown outcome**,
+not proof that nothing ran. Inspect or retry the same identity to reconcile; do
+not mint a new request ID. In a later Personal user turn, use `inspect_session`
+with the original request ID: `send_to_session` includes that new turn's original
+wording and therefore conflicts with an older immutable send intent.
+`cancel_session_message` separately targets only that
+source plugin's exact turn or queue and cannot cancel unrelated user work. This
+stage adds no archive, deletion, cross-host creation, or automatic offline queue.
+
+### Synthetic verification
+
+```bash
+WUU_SESSION_HANDOFF_E2E=1 go test -p 1 \
+  -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=$(cat VERSION)" \
+  ./internal/appserver -run '^TestPersonalRealBundleSessionHandoff' -count=1 -v
+```
+
+The fixture runs the real bundled Personal process and selected provider graph,
+an admitted persistent UserHost, and a separate existing Coding session with
+synthetic model/relay data. It checks list/inspect/send, stable retry, verbatim
+original text, and target-local byte-identical attachments. The desktop pool and
+coordinator tests separately cover registered target resolution, more than four
+projects, replacement, cancellation, and renderer/remote forgery. These are not
+physical desktop or real-account acceptance tests.
+
+The required **Public provider conformance** CI job explicitly enables this real-bundle test
+and requires both captioned and captionless attachment cases to execute and pass;
+a skipped fixture cannot satisfy the gate. Its `personal-session-handoff-evidence`
+artifact records the checked-out source commit and JSON test events.

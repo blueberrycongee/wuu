@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -100,7 +102,8 @@ func TestAuthenticatedQueueCrashHelper(t *testing.T) {
 		t.Skip("subprocess only")
 	}
 	client := &fakeClient{}
-	admitted := os.Getenv("WUU_RECEIPT_CRASH_MODE") == "admitted"
+	mode := os.Getenv("WUU_RECEIPT_CRASH_MODE")
+	admitted := strings.HasPrefix(mode, "admitted")
 	started := make(chan struct{})
 	if admitted {
 		client.onChat = func(_ int, _ providers.ChatRequest) { close(started); select {} }
@@ -121,11 +124,15 @@ func TestAuthenticatedQueueCrashHelper(t *testing.T) {
 	th.mu.Unlock()
 	proof := runtime.ClientUserInput{RequestID: "client-request", Prompt: "synthetic immutable input"}
 	params := pluginhost.SessionSendParams{RequestID: "host-request", UserInputRequestID: proof.RequestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: proof.Prompt}}
-	if os.Getenv("WUU_RECEIPT_CRASH_MODE") == "attachment" {
+	if mode == "attachment" || mode == "admitted-captionless" {
 		raw := []byte("synthetic attachment bytes")
 		digest := fmt.Sprintf("%x", sha256.Sum256(raw))
 		proof.Attachments = []runtime.ClientInputAttachment{{SHA256: digest, Filename: "fixture.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString(raw)}}
 		params.Input.Attachments = []pluginhost.SessionInputAttachment{{SHA256: digest, Filename: "fixture.txt", MediaType: "text/plain"}}
+	}
+	if mode == "admitted-captionless" {
+		proof.Prompt = ""
+		params.Input.Prompt = ""
 	}
 	if err := runtime.ValidateClientUserInput(proof); err != nil {
 		t.Fatal(err)
@@ -418,43 +425,108 @@ func TestAcceptedClientDrainRejectsRevocation(t *testing.T) {
 }
 
 func TestAdmittedClientCrashRemainsUnconfirmedWithoutReplay(t *testing.T) {
-	dir := t.TempDir()
-	output := filepath.Join(dir, "ack.json")
-	cmd := exec.Command(os.Args[0], "-test.run=^TestAuthenticatedQueueCrashHelper$")
-	cmd.Env = append(os.Environ(), "WUU_RECEIPT_CRASH_ACK="+output, "WUU_RECEIPT_CRASH_MODE=admitted", "TMPDIR="+dir)
-	if logs, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("helper: %v %s", err, logs)
+	for _, mode := range []string{"admitted", "admitted-captionless"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			output := filepath.Join(dir, "ack.json")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestAuthenticatedQueueCrashHelper$")
+			cmd.Env = append(os.Environ(), "WUU_RECEIPT_CRASH_ACK="+output, "WUU_RECEIPT_CRASH_MODE="+mode, "TMPDIR="+dir)
+			if logs, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("helper: %v %s", err, logs)
+			}
+			var evidence crashQueueEvidence
+			raw, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(raw, &evidence); err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeClient{response: providersResponse("forwarded")}
+			rt := newTestRuntime(t, client)
+			rt.SessionDir, rt.RootDir, rt.StateDir = evidence.SessionDir, evidence.RootDir, evidence.StateDir
+			rebindPersonalTestDocuments(t, rt)
+			rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+			rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
+			attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			defer srv.Close()
+			result, err := srv.inspectPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: evidence.Ack.SessionID, RequestID: evidence.HostRequestID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Receipt == nil || result.Receipt.ExecutionState != "unconfirmed" || result.Receipt.MessageSeq == 0 {
+				t.Fatalf("lost execution ambiguity: %+v", result)
+			}
+			proof := runtime.ClientUserInput{RequestID: evidence.RequestID, ResumeReceiptID: result.Receipt.ReceiptID}
+			resumed, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, runtime.WithClientUserInput(context.Background(), "fixture", proof)), "fixture", pluginhost.SessionSendParams{RequestID: evidence.HostRequestID, UserInputRequestID: evidence.RequestID, SessionID: evidence.Ack.SessionID, ResumeAccepted: true, ResumeReceiptID: proof.ResumeReceiptID})
+			if err != nil || resumed.Receipt == nil || resumed.Receipt.ExecutionState != "unconfirmed" {
+				t.Fatalf("unsafe replay: %+v %v", resumed, err)
+			}
+			assertFakeClientRequestCount(t, client, 0)
+			if mode == "admitted-captionless" {
+				ctx := pluginInvocationContext(t, rt, context.Background())
+				target, err := srv.createPluginSession(ctx, "fixture", pluginhost.SessionCreateParams{RequestID: "forward-target", Visibility: "plugin", ContextSource: "fresh", AgentID: "assistant"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				params := pluginhost.SessionSendParams{SessionID: target.SessionID, RequestID: "forward-after-restart", Input: pluginhost.SessionInput{Prompt: "Forward the original attachment without inventing user text", Handoff: &pluginhost.SessionHandoffInput{SourceMessages: []providers.MessageRef{{SessionID: evidence.Ack.SessionID, Seq: result.Receipt.MessageSeq}}}}}
+				if _, err := srv.sendPluginSession(ctx, "fixture", params); err != nil {
+					t.Fatal(err)
+				}
+				waitForMethod(t, out, NotificationTurnCompleted)
+				history, err := loadChatMessages(rt.Sessions, target.SessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, message := range history {
+					if message.Origin != "plugin" {
+						continue
+					}
+					body, _, _ := strings.Cut(message.Content, "\n\nAttached files (")
+					var envelope sessionHandoffEnvelope
+					if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+						t.Fatal(err)
+					}
+					if len(envelope.OriginalMessages) != 1 || envelope.OriginalMessages[0].Text != "" || len(message.Files) != 1 {
+						t.Fatalf("restart lost original: %+v", envelope)
+					}
+					data, err := os.ReadFile(message.Files[0].LocalPath)
+					if err != nil || string(data) != "synthetic attachment bytes" {
+						t.Fatalf("restart bytes: %q %v", data, err)
+					}
+					found = true
+				}
+				if !found {
+					t.Fatal("restart did not forward original")
+				}
+				// Emulate an older settled receipt: its identity and original attachment
+				// selection remain authentic, but it lacks exact original-text evidence.
+				binding := testRuntimeState(t, rt)
+				key := base64.RawURLEncoding.EncodeToString([]byte(evidence.Ack.SessionID)) + "/" + result.Receipt.ClientID
+				view, err := binding.Documents.Read(ctx, persistence.Query{Namespace: "wuu.client_input_payloads.v1", Keys: []string{key}})
+				if err != nil || len(view.Documents) != 1 {
+					t.Fatalf("legacy fixture: %v", err)
+				}
+				var payload map[string]json.RawMessage
+				if err = json.Unmarshal(view.Documents[0].Value, &payload); err != nil {
+					t.Fatal(err)
+				}
+				delete(payload, "OriginalText")
+				encoded, _ := json.Marshal(payload)
+				if _, err = binding.Documents.Commit(ctx, persistence.Transaction{ID: "fixture-legacy-marker", ExpectedRevision: view.Revision, Writes: []persistence.Write{{Namespace: "wuu.client_input_payloads.v1", Key: key, Value: encoded}}}); err != nil {
+					t.Fatal(err)
+				}
+				params.RequestID = "legacy-missing-original"
+				if _, err = srv.sendPluginSession(ctx, "fixture", params); err == nil || !strings.Contains(err.Error(), "original text is unavailable") {
+					t.Fatalf("legacy ambiguous original admitted: %v", err)
+				}
+				assertFakeClientRequestCount(t, client, 1)
+			}
+		})
 	}
-	var evidence crashQueueEvidence
-	raw, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal(raw, &evidence); err != nil {
-		t.Fatal(err)
-	}
-	client := &fakeClient{}
-	rt := newTestRuntime(t, client)
-	rt.SessionDir, rt.RootDir, rt.StateDir = evidence.SessionDir, evidence.RootDir, evidence.StateDir
-	rebindPersonalTestDocuments(t, rt)
-	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
-	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
-	attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
-	srv := New(rt, &lockedBuffer{})
-	defer srv.Close()
-	result, err := srv.inspectPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: evidence.Ack.SessionID, RequestID: evidence.HostRequestID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Receipt == nil || result.Receipt.ExecutionState != "unconfirmed" || result.Receipt.MessageSeq == 0 {
-		t.Fatalf("lost execution ambiguity: %+v", result)
-	}
-	proof := runtime.ClientUserInput{RequestID: evidence.RequestID, ResumeReceiptID: result.Receipt.ReceiptID}
-	resumed, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, runtime.WithClientUserInput(context.Background(), "fixture", proof)), "fixture", pluginhost.SessionSendParams{RequestID: evidence.HostRequestID, UserInputRequestID: evidence.RequestID, SessionID: evidence.Ack.SessionID, ResumeAccepted: true, ResumeReceiptID: proof.ResumeReceiptID})
-	if err != nil || resumed.Receipt == nil || resumed.Receipt.ExecutionState != "unconfirmed" {
-		t.Fatalf("unsafe replay: %+v %v", resumed, err)
-	}
-	assertFakeClientRequestCount(t, client, 0)
 }
 
 func TestAuthenticatedClientTerminalReceiptUsesExecutedTurnIdentity(t *testing.T) {

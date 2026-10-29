@@ -715,3 +715,8 @@ registry 请求不占用串行 RPC 分派循环，无关发送和读取无需等
 下载；RPC 下载继承请求 context，连接对应的 server 关闭时会取消并等待其退出。
 没有独立的包下载取消 RPC。
 官方和社区 npm 包都走这些公开契约，安装不会授予内置包特权。
+
+
+### 保留用户原始材料的转交
+
+声明宿主特性 `session.handoff.v1`，在 `host.session.send` 中通过 `input.handoff.source_messages: [{session_id, seq}]` 选择原文，并将代理编写的任务说明单独放在 `input.prompt`。宿主验证原始用户记录、直接回复和保留的附件字节。可选的 `source_authorizations` 将每个来源会话映射到其准确的只读授权，不可用目标执行授权读取无关来源。作用域、来源标注、限额、重试和可替换的 `host.desktop.session` 提供者网关见[本机桌面转交](../automation/session-federation.md#personal-向本机-coding-会话发送消息)。

@@ -174,7 +174,9 @@ import type {
   SideThreadSendParams,
   SideThreadSendResult,
 } from "../shared/protocol";
-import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
+import { AppServerClientPool, assertPublicAppServerMethod, configurePackagedCUA } from "./appServerClients";
+import { DesktopSessionBridge } from "./desktopSessionBridge";
+import { DESKTOP_SESSION_DISPATCH_METHOD } from "../../../packages/plugin-sdk/src/desktop-session-bridge";
 import { ChatGPTLoginCoordinator } from "./chatgptLogin";
 import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
@@ -337,6 +339,14 @@ const appServerClientPool = new AppServerClientPool(
   desktopInitializeParams,
   { appPath: app.getAppPath(), isPackaged: app.isPackaged },
 );
+const desktopSessionBridge = new DesktopSessionBridge(appServerClientPool, () => {
+  const registered = projectManager.list();
+  return [
+    ...registered.projects.filter(project => !project.missing).map(project => ({ kind: "project" as const, project_id: project.id, cwd: project.path })),
+    ...(registered.active_context?.kind === "no_project" ? [registered.active_context] : []),
+    ...appServerClientPool.localSessionContexts().filter(context => context.kind === "no_project"),
+  ];
+});
 // Cross-workdir running state (which sessions are actively turning in any
 // workspace) is aggregated in the main process from each client's own turn
 // lifecycle tracking and broadcast to the renderer on change. The renderer's
@@ -715,7 +725,7 @@ function desktopInitializeParams() {
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
     capabilities: {
-      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, DESKTOP_SESSION_DISPATCH_METHOD] },
     },
   };
 }
@@ -824,6 +834,12 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 });
 
 function emitServerEvent(event: ServerEvent): void {
+  // Owner transfer tickets and receipts never enter renderer or paired-client
+  // fanout. Replies use an event-bound capability, not the public request ID.
+  if (event.kind === "server-request" && event.message.method.startsWith("session/desktop/")) {
+    void desktopSessionBridge.handleServerRequest(event).catch(error => console.error("Desktop session bridge request failed", error));
+    return;
+  }
   remoteAppServerBridge.publish(event);
   codexPetActivity.handleServerEvent(event);
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
@@ -906,6 +922,7 @@ const pluginRuntimeRequests = new PluginRuntimeRequests(appServerClientPool);
 // snapshot on each one.
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID, activations, peer) => {
+  assertPublicAppServerMethod(method);
   const pluginOwner = `remote:${peerID}`;
   // Existing ownership is enough to cancel; the original workspace may no
   // longer be listed by the time the paired client disconnects or switches.

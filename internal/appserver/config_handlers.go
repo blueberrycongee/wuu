@@ -71,6 +71,13 @@ func (s *Server) handleInitialize(req Request) error {
 	}
 	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
+		DesktopSessionTransport: func() *desktopSessionIdentity {
+			if s.ConnectionPrincipal().DurableAuthority() != "local-installation" {
+				return nil
+			}
+			identity := s.desktopSessionIdentity()
+			return &identity
+		}(),
 		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
 		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
 		Status:          status,

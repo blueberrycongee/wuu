@@ -104,7 +104,7 @@ func (s *Server) authorizeRequest(ctx context.Context, req Request) error {
 	}
 	// Federation's validated operation envelope is authorized by its handler,
 	// with owner authority removed before any source/receipt/provider access.
-	if req.Method == "session/federation" {
+	if req.Method == "session/federation" || strings.HasPrefix(req.Method, "session/desktop/") {
 		return nil
 	}
 	resources, err := s.requestResources(req)
@@ -119,7 +119,7 @@ func (s *Server) trackAuthorizedRequest(ctx context.Context, req Request) error 
 	}
 	resources, err := s.requestResources(req)
 	// The federation handler checks the operation before and after dispatch.
-	if req.Method == "session/federation" {
+	if req.Method == "session/federation" || strings.HasPrefix(req.Method, "session/desktop/") {
 		return nil
 	}
 	if err != nil {

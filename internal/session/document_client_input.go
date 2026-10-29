@@ -21,6 +21,7 @@ type clientInputDocument struct {
 	Order       int64
 }
 type clientInputPayload struct {
+	OriginalText  *string `json:"OriginalText,omitempty"`
 	MessageJSON   []byte
 	RuntimeJSON   []byte
 	SelectionJSON []byte
@@ -48,7 +49,7 @@ func loadClientInputPayloadDocument(tx *persistence.Tx, row clientInputDocument)
 	if !found {
 		return AcceptedClientInput{}, persistence.ErrCorrupt
 	}
-	return AcceptedClientInput{Receipt: row.Receipt, Fingerprint: row.Fingerprint, LiveOwner: row.LiveOwner, MessageJSON: payload.MessageJSON, RuntimeJSON: payload.RuntimeJSON, SelectionJSON: payload.SelectionJSON}, nil
+	return AcceptedClientInput{Receipt: row.Receipt, Fingerprint: row.Fingerprint, LiveOwner: row.LiveOwner, MessageJSON: payload.MessageJSON, RuntimeJSON: payload.RuntimeJSON, SelectionJSON: payload.SelectionJSON, OriginalText: payload.OriginalText}, nil
 }
 
 func readClientInputByRequestDocument(tx *persistence.Tx, scope ClientInputScope, hostRequestID string) (clientInputDocument, bool, error) {
@@ -199,7 +200,7 @@ func saveClientInputDocument(tx *persistence.Tx, r AcceptedClientInput) error {
 	if err := tx.Put(documentNamespace("client_input_receipts"), key, row); err != nil {
 		return err
 	}
-	return tx.Put(documentNamespace("client_input_payloads"), key, clientInputPayload{r.MessageJSON, r.RuntimeJSON, r.SelectionJSON})
+	return tx.Put(documentNamespace("client_input_payloads"), key, clientInputPayload{OriginalText: r.OriginalText, MessageJSON: r.MessageJSON, RuntimeJSON: r.RuntimeJSON, SelectionJSON: r.SelectionJSON})
 }
 
 func (s *documentStore) AcceptClientInput(input AcceptedClientInput, control, baseline *Control) (AcceptedClientInput, bool, error) {
@@ -208,6 +209,7 @@ func (s *documentStore) AcceptClientInput(input AcceptedClientInput, control, ba
 	var fresh bool
 	err := s.transaction(func(tx *persistence.Tx) error {
 		result, fresh = input, false
+		result.OriginalText = nil
 		if err := validateClientInputBindingDocument(tx, input); err != nil {
 			return err
 		}
@@ -256,7 +258,7 @@ func (s *documentStore) AcceptClientInput(input AcceptedClientInput, control, ba
 		if err := tx.Put(documentNamespace("client_input_receipts"), key, clientInputDocument{result.Receipt, result.Fingerprint, result.LiveOwner, order}); err != nil {
 			return err
 		}
-		if err := tx.Put(documentNamespace("client_input_payloads"), key, clientInputPayload{result.MessageJSON, result.RuntimeJSON, result.SelectionJSON}); err != nil {
+		if err := tx.Put(documentNamespace("client_input_payloads"), key, clientInputPayload{OriginalText: result.OriginalText, MessageJSON: result.MessageJSON, RuntimeJSON: result.RuntimeJSON, SelectionJSON: result.SelectionJSON}); err != nil {
 			return err
 		}
 		fresh = true
@@ -319,7 +321,7 @@ func (s *documentStore) ChangeClientInput(expected AcceptedClientInput, state, o
 			}
 		}
 		if state == "cancelled" {
-			result.MessageJSON, result.RuntimeJSON, result.SelectionJSON = nil, nil, nil
+			result.MessageJSON, result.RuntimeJSON, result.SelectionJSON, result.OriginalText = nil, nil, nil, nil
 		}
 		return saveClientInputDocument(tx, result)
 	})
@@ -384,6 +386,15 @@ func settleClientInputDocument(tx *persistence.Tx, rec HistoryRecord, seq int) e
 	r.Receipt.MessageSeq, r.Receipt.HostTurnID = seq, rec.AcceptedClientTurnID
 	r.Receipt.ReceiptState, r.Receipt.ExecutionState = "in_history", "running"
 	r.Receipt.Revision++
+	// Retain only the exact original text, not the execution snapshot or another
+	// copy of binary attachments. The validated admission envelope, never caller
+	// OriginalText, supplies this evidence in the same transaction as history.
+	r.OriginalText = nil
+	var original providers.ChatMessage
+	if json.Unmarshal(r.MessageJSON, &original) == nil && original.Role == "user" && original.Origin == "user" && original.OriginID == "" && !original.Hidden && !original.ReadOnly && !original.Truncated && original.ClientID == r.Receipt.ClientID && original.Content == original.DisplayContent {
+		text := original.DisplayContent
+		r.OriginalText = &text
+	}
 	r.MessageJSON, r.RuntimeJSON = nil, nil
 	return saveClientInputDocument(tx, r)
 }

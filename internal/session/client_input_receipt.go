@@ -13,6 +13,10 @@ var ErrClientInputSettled = errors.New("accepted client input changed or settled
 // attachment bytes, addressed by receipt ID and ordinal, independently of expiring
 // tool working copies. Only validated live client submissions may create a row.
 type AcceptedClientInput struct {
+	// OriginalText is derived from the authenticated pre-materialization message
+	// at history settlement. nil means unavailable; a pointer to "" proves an
+	// explicitly captionless input. Callers cannot supply this evidence.
+	OriginalText  *string `json:"OriginalText,omitempty"`
 	Receipt       providers.ClientInputReceipt
 	Fingerprint   string
 	MessageJSON   []byte

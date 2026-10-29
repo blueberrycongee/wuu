@@ -442,6 +442,7 @@ type executionUpdateRecorder interface {
 const kernelHostModule = "kernel"
 
 type kernelHostServices struct {
+	sessionRouter     *PluginSessionRouter
 	requiredPlugins   map[string]bool
 	stateGeneration   *PluginGeneration
 	stateOwner        *Session
@@ -573,6 +574,7 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 			})
 	}
 	registrations = append(registrations,
+		nativeServiceRegistration{Descriptor: desktopGatewayDescriptor(), Invoker: &desktopSessionGateway{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.KernelClientInvalidationDescriptor(), Invoker: &clientInvalidationInvoker{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.KernelModelReceiptDescriptor(), Invoker: &modelReceiptInvoker{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.CompositionDescriptor(), Invoker: k.compositions},

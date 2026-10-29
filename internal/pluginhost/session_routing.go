@@ -21,12 +21,20 @@ type SessionLocatorV1 struct {
 	DisplayHost   string `json:"display_host,omitempty"`
 }
 
+// SessionTransportTicket is minted by the source host, bound to one selected
+// provider invocation, and never accepted from plugin callers.
+type SessionTransportTicket struct {
+	ID         string `json:"id"`
+	SourceHost string `json:"source_host"`
+}
+
 type SessionRouteRequest struct {
-	Version     int              `json:"version"`
-	Operation   string           `json:"operation"`
-	OperationID string           `json:"operation_id"`
-	Locator     SessionLocatorV1 `json:"locator"`
-	Params      json.RawMessage  `json:"params"`
+	TransportTicket *SessionTransportTicket `json:"transport_ticket,omitempty"`
+	Version         int                     `json:"version"`
+	Operation       string                  `json:"operation"`
+	OperationID     string                  `json:"operation_id"`
+	Locator         SessionLocatorV1        `json:"locator"`
+	Params          json.RawMessage         `json:"params"`
 }
 
 type SessionRouteError struct {

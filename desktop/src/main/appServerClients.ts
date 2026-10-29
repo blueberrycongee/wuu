@@ -77,6 +77,7 @@ export type AppServerClientEvent =
 type ServerRequestRoute = {
   client: PooledAppServerClient;
   serverID: string;
+  mainOwned: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -93,8 +94,24 @@ const OWNED_CLEANUP_TIMEOUT_MS = 5000;
 
 export type AppServerBindingOptions = { localOnly?: boolean };
 
+/** Local owner capability captured from a real pool connection. The initial
+ * handshake and request closure are fenced to the same subprocess generation. */
+export type BoundLocalAppServerHost = {
+  context: RuntimeContext;
+  request: BoundAppServerRequest;
+  initialized: Promise<unknown>;
+  check: () => void;
+  retain: () => () => void;
+};
+
+/** Reserved owner transport methods never accept renderer/remote RPC input. */
+export function assertPublicAppServerMethod(method: string): void {
+  if (method.startsWith("session/desktop/")) throw new Error("Desktop session transport is reserved for the main-process owner bridge");
+}
+
 export class AppServerClientPool {
   private closing = false;
+  private readonly retainedClients = new Map<PooledAppServerClient, number>();
   private readonly ownedCleanups = new Map<PooledAppServerClient, Set<() => Promise<void>>>();
   private readonly disposal = new Map<PooledAppServerClient, Promise<void>>();
   private readonly eventSources = new WeakMap<ServerEvent, PooledAppServerClient>();
@@ -214,6 +231,7 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse) => void,
   ): Promise<T> {
+    assertPublicAppServerMethod(method);
     // A session may execute in a resident process other than its project
     // client. Reads and controls must reach that same live runtime.
     const sessionID = isRecord(params)
@@ -231,6 +249,7 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse, workdir: string) => void,
   ): Promise<T> {
+    assertPublicAppServerMethod(method);
     const client = this.ownerForSession(context, sessionID);
     return this.guardRequest(client, client.request.bind(client))<T>(method, params, (response) => onResponse?.(response, client.workdir));
   }
@@ -246,6 +265,68 @@ export class AppServerClientPool {
     const source = this.eventSources.get(event);
     if (!source || !this.isSelectedClient(source)) throw new Error("The event's owning session connection is no longer available");
     return this.bindClientRequest(source, options);
+  }
+
+  bindLocalContextHost(context: RuntimeContext): BoundLocalAppServerHost {
+    // Check before clientForContext: a local bridge must not even connect a
+    // selected remote provider, let alone fall back to an unrelated local core.
+    if (this.sessionRoutes.select(context).kind !== "local") throw new Error("Desktop session bridge requires a selected local host");
+    const client = this.clientForContext(context);
+    return this.bindLocalHost(client, this.bindClientRequest(client, { localOnly: true }));
+  }
+
+  /** Existing sessions may execute in a resident worktree or retired project
+   * process. Use the same owner authority as ordinary session reads/controls,
+   * then capture that owner's handshake and request generation exactly once. */
+  bindLocalSessionHost(context: RuntimeContext, sessionID: string): BoundLocalAppServerHost {
+    if (this.sessionRoutes.select(context).kind !== "local") throw new Error("Desktop session bridge requires a selected local host");
+    const owner = this.ownerForSession(context, sessionID);
+    const binding = this.bindLocalHost(owner, this.bindClientRequest(owner, { localOnly: true }));
+    const key = JSON.stringify(["local", sessionID]);
+    const observedOwner = this.sessionOwners.get(key);
+    return { ...binding, check: () => {
+      binding.check();
+      const currentOwner = this.sessionOwners.get(key);
+      if (currentOwner !== observedOwner && currentOwner !== owner) throw new Error("The session execution owner changed after target binding");
+    } };
+  }
+
+  bindLocalEventHost(event: ServerEvent): BoundLocalAppServerHost {
+    const request = this.bindEventRequest(event, { localOnly: true });
+    return this.bindLocalHost(this.eventSources.get(event)!, request);
+  }
+
+  /** Only already-resident local contexts; never discover directories. */
+  localSessionContexts(): RuntimeContext[] {
+    return this.allClients().flatMap(client => {
+      const metadata = this.clientRoutes.get(client);
+      return metadata?.route.kind === "local" && this.isSelectedClient(client) ? [{ ...metadata.context }] : [];
+    });
+  }
+
+  private bindLocalHost(client: PooledAppServerClient, request: BoundAppServerRequest): BoundLocalAppServerHost {
+    if (!(client instanceof AppServerClient)) throw new Error("Desktop session bridge requires a local stdio owner");
+    const context = this.clientRoutes.get(client)!.context;
+    const generationCheck = client.bindConnectionCheck();
+    const check = () => {
+      generationCheck();
+      if (this.disposal.has(client) || !this.isSelectedClient(client)) throw new Error("The owning local host route is no longer available");
+    };
+    const initialized = client.bindInitialization();
+    void initialized.catch(() => {});
+    return { context: { ...context }, request, initialized, check, retain: () => {
+      check();
+      this.retainedClients.set(client, (this.retainedClients.get(client) ?? 0) + 1);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const count = (this.retainedClients.get(client) ?? 1) - 1;
+        if (count > 0) this.retainedClients.set(client, count);
+        else this.retainedClients.delete(client);
+        this.evictIdleClients();
+      };
+    } };
   }
 
   private bindClientRequest(client: PooledAppServerClient, options?: AppServerBindingOptions): BoundAppServerRequest {
@@ -375,6 +456,7 @@ export class AppServerClientPool {
   }
 
   requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
+    assertPublicAppServerMethod(method);
     const current = this.clients.get(resolve(workdir));
     const metadata = current && this.clientRoutes.get(current);
     if (!current || !metadata || !this.isSelectedClient(current)) {
@@ -401,11 +483,31 @@ export class AppServerClientPool {
       .flatMap(client => client.knownThreadCwds()))];
   }
 
+  /** Unforgeable event capability: even a guessed public ID cannot complete a
+   * reserved bridge request through the renderer's generic response endpoint. */
+  bindMainServerRequest(event: ServerEvent): { respond: (result: unknown) => void; reject: (message: string) => void } {
+    const source = this.eventSources.get(event);
+    if (!source || event.kind !== "server-request") throw new Error("The owning server-request source is unavailable");
+    const id = event.message.id;
+    const route = this.serverRequestRoutes.get(id);
+    if (!route || route.client !== source || !route.mainOwned) throw new Error("The owning main-process request is unavailable");
+    const complete = (value: unknown, reject: boolean) => {
+      // Disconnection expires the capability; it must never answer a new
+      // request on a replacement subprocess, even if its server ID repeats.
+      if (this.serverRequestRoutes.get(id) !== route) return;
+      this.serverRequestRoutes.delete(id);
+      if (reject) route.client.reject(route.serverID, String(value));
+      else route.client.respond(route.serverID, value);
+    };
+    return { respond: result => complete(result, false), reject: message => complete(message, true) };
+  }
+
   respondToServerRequest(id: string, result: unknown): void {
     const route = this.serverRequestRoutes.get(id);
     if (!route) {
       throw new Error("server request is no longer active");
     }
+    if (route.mainOwned) throw new Error("Reserved request belongs to the main-process bridge");
     this.serverRequestRoutes.delete(id);
     route.client.respond(route.serverID, result);
   }
@@ -415,6 +517,7 @@ export class AppServerClientPool {
     if (!route) {
       throw new Error("server request is no longer active");
     }
+    if (route.mainOwned) throw new Error("Reserved request belongs to the main-process bridge");
     this.serverRequestRoutes.delete(id);
     route.client.reject(route.serverID, message);
   }
@@ -551,6 +654,7 @@ export class AppServerClientPool {
         if (route) this.sessionOwners.set(JSON.stringify([sessionRouteHost(route), id]), client);
       }
     } else if (event.kind === "server-exit") {
+      this.dropServerRequestRoutesForClient(client);
       this.forgetSessionOwner(client);
     }
     const routed = this.routeServerEvent(client, event);
@@ -587,6 +691,7 @@ export class AppServerClientPool {
     this.serverRequestRoutes.set(publicID, {
       client,
       serverID: event.message.id,
+      mainOwned: event.message.method.startsWith("session/desktop/"),
     });
     return {
       ...event,
@@ -601,7 +706,7 @@ export class AppServerClientPool {
 
   private evictIdleClients(admittingClient?: PooledAppServerClient): void {
     for (const client of this.retiredClients) {
-      if (!client.userBinding && !client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
+      if (!this.retainedClients.has(client) && !client.userBinding && !client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
         this.disposeClient(client);
       }
     }
@@ -613,6 +718,7 @@ export class AppServerClientPool {
       .filter(
         (client) =>
           client !== admittingClient &&
+          !this.retainedClients.has(client) &&
           client.workdir !== activeWorkdir &&
           !client.userBinding &&
           !client.isBusy() &&
@@ -665,6 +771,7 @@ export class AppServerClient {
   private lastStderr = "";
   private stoppedActivityIDs = new Set<string>();
   private userHostReady?: Promise<unknown>;
+  private initialization?: Promise<unknown>;
   private userHostVerified = false;
   private readonly canonicalWorkdir: string;
 
@@ -711,6 +818,23 @@ export class AppServerClient {
       }
       return this.request<T>(method, params, onResponse);
     };
+  }
+
+  bindConnectionCheck(): () => void {
+    const child = this.child;
+    return () => {
+      if (!child || this.child !== child || child.killed || this.disposing) throw new Error("The owning app-server generation is no longer available");
+    };
+  }
+
+  bindInitialization(): Promise<unknown> {
+    const child = this.child;
+    const initialization = this.initialization;
+    if (!child || !initialization) return Promise.reject(new Error("The local host has not negotiated a desktop session bridge"));
+    return initialization.then(result => {
+      if (this.child !== child || child.killed || this.disposing) throw new Error("The owning app-server generation is no longer available");
+      return result;
+    });
   }
 
   bindCleanup(): (method: string, params?: unknown) => () => Promise<void> {
@@ -935,6 +1059,7 @@ export class AppServerClient {
     this.child = child;
     this.userHostVerified = false;
     this.userHostReady = undefined;
+    this.initialization = undefined;
     this.stdoutChunks = [];
     this.lastStderr = "";
 
@@ -1001,6 +1126,7 @@ export class AppServerClient {
     // renderer opens that project. Negotiate host routing on every spawn.
     if (this.userBinding || this.getInitializeParams) {
       const initialization = this.sendRequest("initialize", this.getInitializeParams?.());
+      this.initialization = initialization;
       if (this.userBinding) this.userHostReady = initialization;
       void initialization.catch(error => {
         if (this.child === child && !this.disposing) {

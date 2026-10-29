@@ -45,6 +45,9 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 		// implementation is activated by the default product.
 		base["wuu.session-sharing-access"] = true
 	}
+	if version >= 5 {
+		desktop["wuu.desktop-session-transport"] = true
+	}
 	profiles := map[string]Profile{
 		"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},
 		"headless": {Bundles: []string{"wuu.base"}},
