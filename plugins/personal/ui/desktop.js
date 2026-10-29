@@ -229,8 +229,8 @@ export async function activate(api) {
     .mosaic-profile-copy { min-width:0;flex:1; }
     .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.45; }
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
-    .mosaic-profile-trigger { position:relative;width:56px;height:56px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
-    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-2);z-index:31; }
+    .mosaic-profile-trigger { position:relative;width:40px;height:40px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
+    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);z-index:31; }
     .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:240px;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
@@ -272,18 +272,19 @@ export async function activate(api) {
     .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
-    /* The identity owns a real grid row: its name/status must never cover the scrollport. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:max-content minmax(0,1fr); }
-    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
+    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
-    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;box-shadow:none; }
+    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none; }
+    .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
+    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
     .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
-    .mosaic-profile-trigger .mosaic-avatar { width:56px;height:56px; }
+    .mosaic-profile-trigger .mosaic-avatar { width:40px;height:40px; }
     .mosaic-profile-head .mosaic-avatar { width:64px;height:64px; }
     .mosaic-sidebar .mosaic-task { align-items:center;min-height:28px;padding:4px 8px;margin:0 -8px;width:calc(100% + 16px);gap:8px;border-radius:8px;font-size:calc(var(--font-ui) * .9333); }
     .mosaic-sidebar .mosaic-task-mark { width:20px;height:20px; }
@@ -319,6 +320,7 @@ export async function activate(api) {
     .mosaic-status-dot { width:6px;height:6px;background:var(--accent);border-radius:50%; }
     .mosaic-actions { display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap; }
     .mosaic-error { display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-5);overflow-wrap:anywhere; }
+    .mosaic-main > .mosaic-error:first-child { margin-top:var(--window-titlebar-height);flex:none; }
     .mosaic-error > span { flex:1;min-width:0; }
     .mosaic-empty { display:grid;place-items:center;min-height:240px;padding:var(--space-6); }
     .mosaic-empty .plugin-ui-empty-state { max-width:440px; }
@@ -1287,7 +1289,7 @@ export async function activate(api) {
     const displayName = agent?.name || "twin";
     const avatarStatus = running ? liveMessages.some(message => message.streaming && message.content) ? "responding" : "thinking" : queuedCount > 0 ? "queued" : "idle";
     const statusText = running ? t(avatarStatus) : queuedCount > 0 ? `${queuedCount} · ${t("queued")}` : t("ready");
-    const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 56, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
+    const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 40, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
     const sidebar = h("aside", { ref: panelRef, id: panelID, className: "mosaic-sidebar", "data-personal-panel": true, hidden: !panelPresent, inert: !panelOpen, "aria-hidden": !panelOpen, "data-panel-phase": panelPhase, "data-panel-visible": panelVisible, tabIndex: -1, role: "dialog", "aria-label": t("profile"), onKeyDown: event => {
       if (event.key === "Escape") { event.stopPropagation(); event.preventDefault(); if (selection) closeDetail(); else closePanel(); }
       if (event.key === "Tab") {
@@ -1370,7 +1372,7 @@ export async function activate(api) {
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
-        actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName), h("small", null, statusText))),
+        actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h("div", { hidden: Boolean(replySelection) }, h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,

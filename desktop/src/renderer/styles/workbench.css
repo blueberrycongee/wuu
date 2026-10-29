@@ -277,14 +277,9 @@
 .conversation-pane[data-workbench-layout="user-space"] > .plugin-workbench-view-primary {
   grid-row: 1;
 }
-.conversation-pane[data-workbench-layout="user-space"] > .titlebar {
-  position: absolute;
-  inset: 0 auto auto 0;
-  z-index: 126;
-  box-shadow: none;
-  pointer-events: none;
+.conversation-pane[data-workbench-layout="user-space"] > .titlebar[hidden] {
+  display: none;
 }
-.conversation-pane[data-workbench-layout="user-space"] > .titlebar button { pointer-events: auto; }
 /* The host lifts its drawer toggle over independent conversation headers.
  * Reserve that occupied slot only while the collapsed shell renders it. */
 .app-shell.sidebar-collapsed[data-workbench-layout="user-space"] .plugin-conversation-titlebar {
