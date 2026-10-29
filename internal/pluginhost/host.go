@@ -1111,6 +1111,7 @@ func cloneToolRegistration(registration ToolRegistration) ToolRegistration {
 	clone := registration
 	clone.InputSchema = cloneSchema(registration.InputSchema)
 	clone.ExecutionScopes = append([]string(nil), registration.ExecutionScopes...)
+	clone.ReplacementContracts = append([]string(nil), registration.ReplacementContracts...)
 	if registration.Activity != nil {
 		activity := *registration.Activity
 		clone.Activity = &activity

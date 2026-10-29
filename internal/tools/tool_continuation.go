@@ -17,6 +17,7 @@ type readFileContinuation struct {
 	ExpectedSHA256 string `json:"expected_sha256"`
 	ByteOffset     *int   `json:"byte_offset,omitempty"`
 	ByteEndOffset  *int   `json:"byte_end_offset,omitempty"`
+	ResultSource   string `json:"result_source,omitempty"`
 }
 
 func encodeReadFileContinuation(path string, offset, limit int, expectedSHA256 string) string {
@@ -24,8 +25,12 @@ func encodeReadFileContinuation(path string, offset, limit int, expectedSHA256 s
 	return base64.RawURLEncoding.EncodeToString(payload)
 }
 
-func encodeReadFileByteContinuation(path string, offset, limit, endOffset int, expectedSHA256 string) string {
-	payload, _ := json.Marshal(readFileContinuation{Path: path, Limit: limit, ExpectedSHA256: expectedSHA256, ByteOffset: &offset, ByteEndOffset: &endOffset})
+func encodeReadFileByteContinuation(path string, offset, limit, endOffset int, expectedSHA256 string, source ...string) string {
+	origin := ""
+	if len(source) > 0 && source[0] == "extension" {
+		origin = "extension"
+	}
+	payload, _ := json.Marshal(readFileContinuation{Path: path, Limit: limit, ExpectedSHA256: expectedSHA256, ByteOffset: &offset, ByteEndOffset: &endOffset, ResultSource: origin})
 	return base64.RawURLEncoding.EncodeToString(payload)
 }
 

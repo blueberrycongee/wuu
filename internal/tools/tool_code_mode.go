@@ -108,6 +108,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	}
 	return codeModeResponseResult(result), nil
 }
+
 func codeModeResponseResult(response codemode.RunResult) toolresult.Result {
 	parts := append([]string{}, response.Logs...)
 	if len(response.Value) > 0 {
@@ -169,6 +170,11 @@ func (t *Toolkit) codeModeToolCatalog() string {
 	shown := 0
 	for _, tool := range nested {
 		if t.CodeModeDirectCallAllowed(tool.Name) {
+			if tool.Name == "read_file" && !t.SupportsTool(tool.Name) {
+				fmt.Fprintf(&b, "\n- tools.read_file({continuation: token}) only continues a previous host read; fresh reads are unavailable.\n")
+				shown++
+				continue
+			}
 			if tool.Freeform {
 				fmt.Fprintf(&b, "\n- tools.%s({input: literalText}) invokes the directly advertised %s tool.\n", tool.Name, tool.Name)
 			} else {
@@ -243,8 +249,20 @@ func (t *Toolkit) codeModeNestedDefinitions() []providers.ToolDefinition {
 	}
 	out := make([]providers.ToolDefinition, 0, len(all))
 	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.DirectOnly || d.Name == "tool_search" || !t.SupportsTool(d.Name) {
+		if d.Name == codeModeExecToolName || d.DirectOnly || d.Name == "tool_search" {
 			continue
+		}
+		if !t.SupportsTool(d.Name) {
+			routed, ok := t.registry.Lookup(d.Name).(NativeToolForCall)
+			if !ok || d.Name != "read_file" {
+				continue
+			}
+			native, found := routed.NativeToolForCall(`{"continuation":"host-cursor"}`)
+			if !found || t.nativeReadExposure(native) == ToolExposureHidden {
+				continue
+			}
+			d.Description = "Use a previous host read_file continuation. Fresh file reads are unavailable because the selected reader is unavailable."
+			d.InputSchema = map[string]any{"type": "object", "properties": map[string]any{"continuation": map[string]any{"type": "string", "description": "A previously issued host read_file continuation."}}, "required": []string{"continuation"}, "additionalProperties": false}
 		}
 		out = append(out, d)
 	}

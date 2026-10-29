@@ -26,7 +26,7 @@ func finalizeGenericToolResult(sessionDir, callID string, raw toolresult.Result,
 	})
 }
 
-func finalizeGenericToolResultWithArchive(sessionDir, callID string, raw toolresult.Result, budgetTokens int, persist func(string, string) (string, error)) (toolresult.Result, string, bool) {
+func finalizeGenericToolResultWithArchive(sessionDir, callID string, raw toolresult.Result, budgetTokens int, persist func(string, string) (string, error), source ...string) (toolresult.Result, string, bool) {
 	if raw.ModelText != nil {
 		return raw, "", false
 	}
@@ -44,7 +44,7 @@ func finalizeGenericToolResultWithArchive(sessionDir, callID string, raw toolres
 	if err != nil {
 		return raw, "", false
 	}
-	preview, ok := buildBoundedResultReference(path, contextual, raw.IsError, budgetTokens)
+	preview, ok := buildBoundedResultReference(path, contextual, raw.IsError, budgetTokens, source...)
 	if !ok {
 		return raw, "", false
 	}
@@ -59,7 +59,7 @@ func settleModelText(raw toolresult.Result, text string) toolresult.Result {
 	return out
 }
 
-func buildBoundedResultReference(path, contextual string, isError bool, budgetTokens int) (string, bool) {
+func buildBoundedResultReference(path, contextual string, isError bool, budgetTokens int, source ...string) (string, bool) {
 	contentSHA := sha256Hex([]byte(contextual))
 	envelope := map[string]any{
 		"kind":           "archived_tool_result",
@@ -68,21 +68,34 @@ func buildBoundedResultReference(path, contextual string, isError bool, budgetTo
 		"total_bytes":    len(contextual),
 		"is_error":       isError,
 	}
-	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), len(contextual), contentSHA, budgetTokens, true); ok {
+	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), len(contextual), contentSHA, budgetTokens, true, source...); ok {
 		return page, true
 	}
 	// A tiny requested budget must not expose the full output or prevent an
 	// otherwise valid program from running. Keep only enough to recover it.
-	return marshalEnvelope(map[string]any{
-		"kind": "archived_tool_result", "artifact_ref": path,
-		"total_bytes": len(contextual), "is_error": isError,
-	})
+	fallback := map[string]any{"kind": "archived_tool_result", "artifact_ref": path, "total_bytes": len(contextual), "is_error": isError}
+	fallback["source"] = "tool_result_archive"
+	if len(source) > 0 && source[0] == "extension" {
+		fallback["source"] = "extension"
+	}
+	fallback["content_verified"] = false
+	return marshalEnvelope(fallback)
 }
 
 // buildResultPage is shared by the first archived page and read_file recovery.
 // Prefer complete lines, but split an oversized line at a rune boundary so a
 // cursor always advances. Binary ranges retain the existing base64 contract.
-func buildResultPage(envelope map[string]any, path string, data []byte, offset, end, limit int, contentSHA string, budgetTokens int, recoveryTool bool) (string, bool) {
+func buildResultPage(envelope map[string]any, path string, data []byte, offset, end, limit int, contentSHA string, budgetTokens int, recoveryTool bool, source ...string) (string, bool) {
+	origin := ""
+	if len(source) > 0 && source[0] == "extension" {
+		origin = "extension"
+	} else if recoveryTool || len(source) > 0 {
+		origin = "tool_result_archive"
+	}
+	if origin != "" {
+		envelope["source"] = origin
+		envelope["content_verified"] = false
+	}
 	text := utf8.Valid(data) && !strings.ContainsRune(string(data), '\x00')
 	if _, width := utf8.DecodeRune(data); width > limit {
 		text = false
@@ -107,7 +120,7 @@ func buildResultPage(envelope map[string]any, path string, data []byte, offset, 
 		}
 		if hasMore {
 			continuation["next"] = map[string]any{
-				"continuation": encodeReadFileByteContinuation(path, offset+keep, min(limit, maxRecoveryPageBytes), end, contentSHA),
+				"continuation": encodeReadFileByteContinuation(path, offset+keep, min(limit, maxRecoveryPageBytes), end, contentSHA, origin),
 			}
 		}
 		envelope["continuation"] = continuation

@@ -111,7 +111,7 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 }
 
 func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
-	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
+	info := t.toolInfoForCall(tool, call.Arguments)
 	startedAt := time.Now()
 	remoteWorkspace := t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name)
 	revisionBefore := ""
@@ -188,6 +188,11 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	}
 	if info.Kind == ToolKindMCP {
 		result = redactRichToolText(result)
+	}
+	if orchestrator, ok := tool.(OrchestratorTool); ok && orchestrator.IsOrchestrator(call.Arguments) {
+		if source := toolctx.UnverifiedSource(ctx); source != "" {
+			result = toolresult.MarkUnverifiedSource(result, source)
+		}
 	}
 	rawProjection := result.TextProjection()
 	returned := result.Clone()

@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type resultRecoveryContextKey struct{}
+type resultArchiveSourceKey struct{}
 
 var archivedResultName = regexp.MustCompile(`^[a-f0-9]{64}\.txt$`)
 
@@ -53,12 +55,13 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 	if err != nil || !managed || filepath.Clean(filepath.Dir(resolved)) != filepath.Clean(resultDir) || !archivedResultName.MatchString(filepath.Base(resolved)) || !pathWithinRoot(resultDir, resolved) {
 		return toolresult.Result{}, errors.New("continuation is not a current-session result archive")
 	}
-	if kit.IsToolDisabled("read_file") || !kit.SupportsTool("read_file") {
+	native := NewReadFileTool(kit.env)
+	exposure := kit.nativeReadExposure(native)
+	if kit.IsToolDisabled("read_file") || exposure == ToolExposureHidden {
 		return toolresult.Result{}, errors.New("result recovery requires read_file permission")
 	}
-	native := NewReadFileTool(kit.env)
 	call := providers.ToolCall{Name: "read_file", Arguments: args}
-	if err := kit.checkPermission(ctx, buildToolInfoForArgs(native, kit.toolExposure("read_file"), args), call); err != nil {
+	if err := kit.checkPermission(ctx, buildToolInfoForArgs(native, exposure, args), call); err != nil {
 		return toolresult.Result{}, fmt.Errorf("result recovery: %w", err)
 	}
 	if kit.env.sessionArtifactRoot == nil {
@@ -74,9 +77,26 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 		return toolresult.Result{}, errors.New("result archive is unavailable")
 	}
 	display := kit.env.normalizeSessionDisplayPath(resolved)
+	ctx = context.WithValue(ctx, resultArchiveSourceKey{}, cursor.ResultSource)
 	page, err := readFileByteWindowFromOpen(context.WithValue(ctx, resultRecoveryContextKey{}, true), kit.env, file, display, *cursor.ByteOffset, cursor.Limit, *cursor.ByteEndOffset, strings.TrimSpace(cursor.ExpectedSHA256), info.Size())
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	toolctx.MarkUnverified(ctx, cursor.ResultSource)
 	return toolresult.FromText(page), nil
+}
+
+// Native read admission depends on its own surface, not extension health.
+func (t *Toolkit) nativeReadExposure(native Tool) ToolExposure {
+	if t.IsToolDisabled("read_file") {
+		return ToolExposureHidden
+	}
+	surface := t.activeCompiledSurface()
+	if surface.ProfileName == "" {
+		return ToolExposureDirect
+	}
+	if !activeSurfaceAllowsKnownTool(surface, native) {
+		return ToolExposureHidden
+	}
+	return activeSurfaceToolExposure(surface, "read_file")
 }

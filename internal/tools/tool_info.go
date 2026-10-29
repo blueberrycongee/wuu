@@ -80,6 +80,15 @@ func (t *Toolkit) ToolInfos() []ToolInfo {
 	return out
 }
 
+func (t *Toolkit) toolInfoForCall(tool Tool, args string) ToolInfo {
+	if routed, ok := tool.(NativeToolForCall); ok {
+		if native, selected := routed.NativeToolForCall(args); selected {
+			return buildToolInfoForArgs(native, t.nativeReadExposure(native), args)
+		}
+	}
+	return buildToolInfoForArgs(tool, t.toolExposure(tool.Name()), args)
+}
+
 func buildToolInfo(tool Tool, exposure ToolExposure) ToolInfo {
 	return buildToolInfoForArgs(tool, exposure, "")
 }

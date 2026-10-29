@@ -1198,6 +1198,8 @@ export interface ToolDisplayMetadata {
 }
 
 export interface ToolRegistration {
+  /** Public replacement contracts implemented by this tool. */
+  replacement_contracts?: string[];
   /** Keep interaction/lifecycle controls directly visible; reject nested invocation. */
   direct_only?: boolean;
   id: string;

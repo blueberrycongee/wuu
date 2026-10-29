@@ -336,6 +336,9 @@ func (e *pluginToolExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMe
 func (e *pluginToolExecutor) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
 	if kit, ok := e.inner.(*tools.Toolkit); ok {
 		if replacement, found := kit.LookupTool(call.Name).(*replacementTool); found {
+			if _, native := replacement.NativeToolForCall(call.Arguments); native {
+				return kit.ToolDisplay(call)
+			}
 			if replacement.registration.Display == nil {
 				return providers.ToolCallDisplay{}, false
 			}
