@@ -181,3 +181,18 @@ for (const failingOutput of ["reply", "event"] as const) {
     assert.equal(input.destroyed, true);
   });
 }
+
+test("stateless Code Mode capability is explicit and forwards the enforcement flag", { timeout: 5000 }, async () => {
+  await assert.rejects(runExecutionBackendV4({ capabilities: ["code.stateless.v1"], initialize: () => {}, methods: {} }, {}), /requires run_code/);
+  let flag: boolean | undefined;
+  const io = fixture({ capabilities: ["code.stateless.v1"], initialize: () => {}, methods: {
+    run_code(input) { flag = input.disable_state; return { Logs: [], Value: null, Error: "", Media: [] }; },
+  } });
+  try {
+    io.send("hello", "initialize", binding);
+    assert.deepEqual((await io.next()).data.capabilities, ["code.stateless.v1"]);
+    io.send("code", "run_code", { actor: "thread-1", permission_mode: "standard", timeout_ms: 0, disable_state: true, program: { code: "", tools: [] } });
+    assert.equal((await io.next()).id, "code");
+    assert.equal(flag, true);
+  } finally { await io.close(); }
+});

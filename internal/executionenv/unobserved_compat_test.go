@@ -22,7 +22,7 @@ func TestOldUnobservedWorkerHelper(t *testing.T) {
 		if json.Unmarshal(scanner.Bytes(), &req) != nil {
 			os.Exit(2)
 		}
-		if req.Method == "execute" {
+		if req.Method == "execute" || req.Method == "run_code" {
 			_ = os.WriteFile(os.Getenv("WUU_OLD_WORKER_RECEIPT"), []byte("unexpected"), 0600)
 		}
 		hello, _ := json.Marshal(map[string]any{"version": ProtocolVersion, "capabilities": []string{ProcessStartCapability}})
@@ -40,4 +40,20 @@ func TestUnobservedReadRejectsOlderWorkerBeforeDispatch(t *testing.T) {
 	require.ErrorContains(t, err, "does not support unobserved reads")
 	_, err = os.Stat(receipt)
 	require.True(t, os.IsNotExist(err), "unsupported worker must never receive the read request")
+}
+
+func TestStatelessCodeRejectsOlderWorkerBeforeDispatch(t *testing.T) {
+	t.Setenv("WUU_OLD_WORKER_HELPER", "1")
+	receipt := filepath.Join(t.TempDir(), "run-code")
+	t.Setenv("WUU_OLD_WORKER_RECEIPT", receipt)
+	env := NewEnvironment(Profile{Backend: "command", Command: []string{os.Args[0], "-test.run=^TestOldUnobservedWorkerHelper$"}, Workspace: t.TempDir()}, "old-worker", "thread", t.TempDir())
+	defer env.Close()
+	_, err := env.RunCode(context.Background(), CodeRequest{DisableState: true}, nil)
+	require.ErrorContains(t, err, "does not support stateless Code Mode")
+	_, err = os.Stat(receipt)
+	require.True(t, os.IsNotExist(err), "unsupported worker must not run the program")
+	_, err = env.RunCode(context.Background(), CodeRequest{}, nil)
+	require.NoError(t, err, "ordinary Code Mode remains compatible with old workers")
+	_, err = os.Stat(receipt)
+	require.NoError(t, err, "ordinary Code Mode is dispatched")
 }

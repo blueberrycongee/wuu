@@ -22,6 +22,9 @@ type Init struct {
 const UnobservedReadCapability = "read.unobserved.v1"
 const ReadObservationCommitCapability = "read.observation-commit.v1"
 
+// CodeStatelessCapability enforces disabled PTC session state for a whole program.
+const CodeStatelessCapability = "code.stateless.v1"
+
 type ToolRequest struct {
 	SuppressReadObservation   bool               `json:"suppress_read_observation,omitempty"`
 	ShellEarlyHandoffDisabled bool               `json:"shell_early_handoff_disabled,omitempty"`
@@ -65,6 +68,7 @@ func WorkspaceTool(name string) bool {
 }
 
 type CodeRequest struct {
+	DisableState          bool                `json:"disable_state,omitempty"`
 	GitAttributionEnabled bool                `json:"git_attribution_enabled,omitempty"`
 	Program               codemode.RunRequest `json:"program"`
 	TimeoutMS             int                 `json:"timeout_ms"`

@@ -37,6 +37,7 @@ type Response struct {
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
+	codeStateless     bool
 	processStart      bool
 	unobservedRead    bool
 	observationCommit bool

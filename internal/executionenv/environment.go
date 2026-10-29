@@ -212,6 +212,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
+	client.codeStateless = slices.Contains(hello.Capabilities, CodeStatelessCapability)
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
 	client.observationCommit = slices.Contains(hello.Capabilities, ReadObservationCommitCapability)
@@ -460,6 +461,9 @@ func (e *Environment) RunCode(ctx context.Context, request CodeRequest, executor
 	client, err := e.connect(ctx)
 	if err != nil {
 		return codemode.RunResult{}, err
+	}
+	if request.DisableState && !client.codeStateless {
+		return codemode.RunResult{}, errors.New("execution worker does not support stateless Code Mode; update the environment worker")
 	}
 	data, err := client.CallWithHandler(ctx, "run_code", request, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 		var call providers.ToolCall

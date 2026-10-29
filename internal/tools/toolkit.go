@@ -2154,10 +2154,14 @@ func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) 
 
 // RunEnvironmentCode runs the isolated interpreter in the selected environment;
 // nested tools return through the host execution scope and permission checks.
-func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Service, request codemode.RunRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
+func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Service, request codemode.RunRequest, executor toolctx.NestedExecutor, disableState bool) (codemode.RunResult, error) {
 	policy, _, err := t.env.processSandboxPolicy(ctx)
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	scope := t.codeModeStateScope(t.env.RootDir)
+	if disableState {
+		scope = ""
+	}
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: scope, StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
 }
