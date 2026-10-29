@@ -23,7 +23,8 @@ const (
 )
 
 type nativeToolReviewer struct {
-	server *Server
+	systemPrompt string
+	server       *Server
 	// Use the active thread's provider/model, not the workspace default.
 	runner *agent.StreamRunner
 }
@@ -132,11 +133,15 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		"user_messages":   request.UserMessages,
 		"conversation":    messages, "earlier_history_omitted": omitted,
 	})
+	prompt := r.systemPrompt
+	if prompt == "" {
+		prompt = nativeReviewSystemPrompt
+	}
 	response, err := modelrequest.Execute(reviewCtx, runner.Client, providers.ChatRequest{
 		Provider: runner.ProviderName,
 		Model:    model,
 		Messages: []providers.ChatMessage{
-			{Role: "system", Content: nativeReviewSystemPrompt},
+			{Role: "system", Content: prompt},
 			{Role: "user", Content: string(payload)},
 		},
 		Temperature:     runner.Temperature,

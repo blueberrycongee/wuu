@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
@@ -21,15 +22,17 @@ const (
 // lifecycle as a process provider. Preparing a composition does not create a
 // backend generation or write logical records.
 type Service struct {
-	mu            sync.Mutex
-	id, dir, kind string
-	state         pluginhost.State
-	store         *Store
-	prepared      preparedStore
+	mu                sync.Mutex
+	id, dir, kind     string
+	state             pluginhost.State
+	store             *Store
+	prepared          preparedStore
+	inspections       map[string]bool
+	inspectionChanged chan struct{}
 }
 
 func NewService(id, dir, kind string) *Service {
-	return &Service{id: id, dir: dir, kind: kind, state: pluginhost.StatePrepared}
+	return &Service{id: id, dir: dir, kind: kind, state: pluginhost.StatePrepared, inspections: make(map[string]bool), inspectionChanged: make(chan struct{})}
 }
 func (s *Service) ID() string { return s.id }
 func (s *Service) Status() pluginhost.Status {
@@ -42,6 +45,11 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 		{Name: "authority", InputSchema: AuthorityInputSchema, OutputSchema: AuthorityOutputSchema, Preparation: true},
 		{Name: "checkpoint", InputSchema: CheckpointInputSchema, OutputSchema: CheckpointOutputSchema, Preparation: true},
 		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1", Preparation: true},
+		{Name: "list-inspections", InputSchema: ServiceName + ".list-inspections.input.v1", OutputSchema: ServiceName + ".list-inspections.output.v1"},
+		{Name: "reconcile-inspection", InputSchema: ServiceName + ".reconcile-inspection.input.v1", OutputSchema: ServiceName + ".reconcile-inspection.output.v1", Cleanup: true},
+		{Name: "claim-namespaces", InputSchema: ServiceName + ".claim-namespaces.input.v1", OutputSchema: ServiceName + ".claim-namespaces.output.v1"},
+		{Name: "acquire-inspection", InputSchema: ServiceName + ".acquire-inspection.input.v1", OutputSchema: ServiceName + ".acquire-inspection.output.v1"},
+		{Name: "release-inspection", InputSchema: ServiceName + ".release-inspection.input.v1", OutputSchema: ServiceName + ".release-inspection.output.v1", Cleanup: true},
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
 		{Name: "import", InputSchema: "state.documents.import.input.v1", OutputSchema: "state.documents.import.output.v1"},
 		{Name: "compact", InputSchema: "state.documents.compact.input.v1", OutputSchema: "state.documents.compact.output.v1"},
@@ -79,10 +87,20 @@ func (s *Service) Activate(ctx context.Context) error {
 	s.state = pluginhost.StateActive
 	return nil
 }
-func (s *Service) Close(context.Context) error {
+func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.state = pluginhost.StateStopped
+	for len(s.inspections) > 0 {
+		changed := s.inspectionChanged
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+		s.mu.Lock()
+	}
+	defer s.mu.Unlock()
 	preparedErr := s.prepared.close()
 	if s.store == nil {
 		return preparedErr
@@ -95,12 +113,77 @@ func (s *Service) Close(context.Context) error {
 func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "authority" || params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")) {
+	if s.state != pluginhost.StateActive && !((params.Method == "release-inspection" || params.Method == "reconcile-inspection" || params.Method == "list-inspections") && s.store != nil) && !(s.state == pluginhost.StatePrepared && (params.Method == "authority" || params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")) {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "state provider is not active"}
+	}
+	var authorizationErr error
+	ctx, authorizationErr = namespaceInvocationContext(ctx, s.id, params)
+	if authorizationErr != nil {
+		return nil, &pluginhost.HostServiceError{Code: "permission_denied", Message: authorizationErr.Error()}
 	}
 	var result any
 	var err error
 	switch params.Method {
+	case "claim-namespaces":
+		var request struct {
+			Namespaces []string `json:"namespaces"`
+		}
+		if err = decode(params.Params, &request); err == nil {
+			err = s.store.ClaimNamespaces(ctx, request.Namespaces)
+			result = struct{}{}
+		}
+
+	case "list-inspections":
+		var request struct{}
+		if err = decode(params.Params, &request); err == nil {
+			result, err = s.store.ListInspections(ctx)
+		}
+	case "reconcile-inspection":
+		var request InspectionResolution
+		if err = decode(params.Params, &request); err == nil {
+			if params.Caller == "" {
+				err = ErrInvalid
+				break
+			}
+			result, err = s.store.reconcileInspection(ctx, InspectionReconciler(params), request)
+			if err == nil {
+				delete(s.inspections, request.ID)
+				close(s.inspectionChanged)
+				s.inspectionChanged = make(chan struct{})
+			}
+		}
+
+	case "acquire-inspection", "release-inspection":
+		var request InspectionRequest
+		if err = decode(params.Params, &request); err == nil {
+			if params.Caller == "" {
+				err = fmt.Errorf("%w: inspection caller required", ErrInvalid)
+				break
+			}
+			if err = inspectionjournal.Validate(request.ID, request.Namespaces); err != nil {
+				err = fmt.Errorf("%w: %v", ErrInvalid, err)
+				break
+			}
+			if params.Method == "acquire-inspection" {
+				existed := s.inspections[request.ID]
+				s.inspections[request.ID] = true
+				result, err = s.store.acquireInspection(ctx, params.Caller, request)
+				if !existed && (errors.Is(err, ErrInspectionReleased) || errors.Is(err, inspectionjournal.ErrConflict) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNamespaceOwnership)) {
+					delete(s.inspections, request.ID)
+					close(s.inspectionChanged)
+					s.inspectionChanged = make(chan struct{})
+				}
+			} else {
+				err = s.store.releaseInspection(ctx, params.Caller, request)
+				result = struct{}{}
+				if err == nil {
+					delete(s.inspections, request.ID)
+					close(s.inspectionChanged)
+					s.inspectionChanged = make(chan struct{})
+				}
+			}
+		}
+
 	case "authority":
 		var request struct{}
 		if err = decode(params.Params, &request); err == nil {
@@ -161,6 +244,14 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	if err != nil {
 		code := "state_io_error"
 		switch {
+		case errors.Is(err, ErrNamespaceOwnership):
+			code = "namespace_ownership"
+		case errors.Is(err, ErrInspectionActive):
+			code = "inspection_active"
+		case errors.Is(err, ErrInspectionReleased):
+			code = "inspection_released"
+		case errors.Is(err, inspectionjournal.ErrConflict):
+			code = "inspection_conflict"
 		case errors.Is(err, ErrConflict):
 			code = "state_conflict"
 		case errors.Is(err, ErrOperationConflict):

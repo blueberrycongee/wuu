@@ -46,6 +46,26 @@ Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有
 更改目录。Linux 与托管 macOS CI 运行此门禁；分层截图不替代完整桌面截图或实体
 macOS 验收。
 
+已有的 macOS focused-controls CI 任务也会使用合成传输验证 Personal 电脑端
+主页、设置与动作权限界面。安装锁定的 desktop、plugins 和共享客户端依赖后，
+可在 macOS 复现：
+
+```bash
+node scripts/build-personal-desktop.mjs --check
+node desktop/scripts/build-personal-fixture.cjs
+desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs
+clients/mobile-web/node_modules/.bin/playwright install chromium
+WUU_REVIEW_PLAYWRIGHT_PATH="$PWD/clients/mobile-web/node_modules/playwright" \
+  node desktop/scripts/personal-approval-ui-e2e.cjs
+```
+
+两个渲染器均保留沙箱。检查覆盖明暗主题、宽窄窗口、大字号、服务不可用、
+同意与拒绝、撤回、响应丢失后的恢复，以及显式开启 Auto Review。CI 将截图、
+报告、日志、准确的检出与 PR 身份、夹具哈希和失败证据上传为
+`personal-desktop-hosted-macos-evidence-<PR head SHA>`，不上传浏览器配置目录，
+不使用真实账户、模型或外部操作。应同时检查截图与断言；这不代表手机端、
+原生宿主授权、真实提供商或实体设备验收。
+
 只开发 CLI 时可以运行：
 
 ```bash

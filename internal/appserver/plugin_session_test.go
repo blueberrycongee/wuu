@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -1015,6 +1016,150 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 	}
 }
 
+// A plugin delivery reference does not make an authenticated user submission a
+// generated wakeup. Stopping one reply must preserve later Personal messages,
+// their idempotency identity, and their eventual lifecycle receipt.
+func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
+	for _, tc := range []struct{ name, mode, prompt string }{
+		{name: "queue", mode: pluginhost.SessionIfRunningQueue, prompt: "another independent request"},
+		{name: "steer", mode: pluginhost.SessionIfRunningSteer, prompt: "another independent request"},
+		{name: "literal user text", mode: pluginhost.SessionIfRunningQueue, prompt: "<process_recheck>literal user request</process_recheck>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mode := tc.mode
+			firstStarted, releaseFirst, secondStarted, releaseSecond := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var release, releaseNext sync.Once
+			client := &fakeClient{responses: []providers.ChatResponse{providersResponse("interrupted"), providersResponse("next reply")}, onChat: func(call int, _ providers.ChatRequest) {
+				if call == 1 {
+					close(firstStarted)
+					<-releaseFirst
+				}
+				if call == 2 {
+					close(secondStarted)
+					<-releaseSecond
+				}
+			}}
+			rt := newTestRuntime(t, client)
+			rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+			owner := &pluginTurnLifecycleClient{id: "fixture", calls: make(chan pluginhost.AgentTurnLifecycleInput, 32)}
+			rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: owner.id}}}
+			attachTestModelGeneration(t, rt, owner)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(func() {
+				release.Do(func() { close(releaseFirst) })
+				releaseNext.Do(func() { close(releaseSecond) })
+				srv.Close()
+			})
+			created, err := srv.createPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "persistent-main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, AgentID: "assistant"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first reply"}})
+			if err != nil || first.State != pluginhost.TurnLifecycleRunning {
+				t.Fatalf("first send: %+v %v", first, err)
+			}
+			select {
+			case <-firstStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("first reply not running")
+			}
+			background, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "background", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "generated continuation"}})
+			if err != nil || background.State != pluginhost.TurnLifecycleQueued {
+				t.Fatalf("background send: %+v %v", background, err)
+			}
+			proof := runtime.ClientUserInput{RequestID: "foreground", Prompt: tc.prompt}
+			ctx := runtime.WithClientUserInput(context.Background(), owner.id, proof)
+			params := pluginhost.SessionSendParams{IfRunning: mode, RequestID: "user-next", UserInputRequestID: proof.RequestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: proof.Prompt}}
+			if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, params); err == nil {
+				t.Fatal("untrusted generated call impersonated a user")
+			}
+			queued, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params)
+			wantState := pluginhost.TurnLifecycleQueued
+			if mode == pluginhost.SessionIfRunningSteer {
+				wantState = pluginhost.TurnLifecycleRunning
+			}
+			if err != nil || queued.State != wantState || (mode == pluginhost.SessionIfRunningQueue && queued.QueueID == "") || (mode == pluginhost.SessionIfRunningSteer && (!queued.Steered || queued.TurnID != first.TurnID)) {
+				t.Fatalf("user send: %+v %v", queued, err)
+			}
+			cancelled, err := srv.cancelPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), owner.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: first.TurnID})
+			if err != nil || !cancelled.Cancelled {
+				t.Fatalf("stop reply: %+v %v", cancelled, err)
+			}
+			// Hold the successor inside the provider so the retry deterministically
+			// observes queue promotion, not a scheduling-dependent pending entry.
+			release.Do(func() { close(releaseFirst) })
+			select {
+			case <-secondStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("queued user message did not resume after stopped reply")
+			}
+			retry, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), owner.id, params)
+			// Live non-receipt lookup identifies an admitted turn by TurnID;
+			// QueueID is optional there, but the promotion and receipt retain it.
+			if err != nil || retry.State != pluginhost.TurnLifecycleRunning || retry.TurnID == "" || retry.TurnID == first.TurnID || retry.Steered || (mode == pluginhost.SessionIfRunningQueue && retry.QueueID != queued.QueueID) {
+				t.Fatalf("stop lost promoted identity: %+v %+v %v", queued, retry, err)
+			}
+			promotedQueueID := queued.QueueID
+			if mode == pluginhost.SessionIfRunningSteer {
+				promotedQueueID = pluginSessionRequestClientID(owner.id, params.RequestID)
+			}
+			promoted := false
+			for _, message := range parseOutput(t, out.String()) {
+				if message["method"] != NotificationTurnStarted {
+					continue
+				}
+				started := remarshal[TurnStartedNotification](t, message["params"])
+				if started.ThreadID == created.SessionID && started.Turn.ID == retry.TurnID && started.QueueID == promotedQueueID {
+					promoted = true
+				}
+			}
+			if !promoted {
+				t.Fatalf("queued identity %q did not promote into %q", promotedQueueID, retry.TurnID)
+			}
+			releaseNext.Do(func() { close(releaseSecond) })
+			deadline := time.After(5 * time.Second)
+			for {
+				select {
+				case receipt := <-owner.calls:
+					if receipt.RequestID == "background" && receipt.State == pluginhost.TurnLifecycleRunning {
+						t.Fatal("generated wakeup survived cancellation")
+					}
+					if receipt.RequestID == params.RequestID {
+						if receipt.State == pluginhost.TurnLifecycleDiscarded {
+							t.Fatalf("user message discarded: %+v", receipt)
+						}
+						if receipt.State == pluginhost.TurnLifecycleCompleted {
+							if receipt.TurnID != retry.TurnID || receipt.QueueID != promotedQueueID {
+								t.Fatalf("completion lost promoted identity: %+v", receipt)
+							}
+							history, err := loadChatMessages(rt.Sessions, created.SessionID)
+							if err != nil {
+								t.Fatal(err)
+							}
+							count := 0
+							for _, msg := range history {
+								if msg.ClientID == pluginSessionRequestClientID(owner.id, params.RequestID) {
+									count++
+									if msg.Origin != "user" || msg.Content != proof.Prompt {
+										t.Fatalf("user provenance changed: %+v", msg)
+									}
+								}
+							}
+							if count != 1 {
+								t.Fatalf("user input admitted %d times", count)
+							}
+							return
+						}
+					}
+				case <-deadline:
+					t.Fatal("preserved user input never completed")
+				}
+			}
+		})
+	}
+}
+
 func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 	for _, activity := range []string{"durable_lease", "admission", "claimed_queue"} {
 		t.Run(activity, func(t *testing.T) {
@@ -1269,5 +1414,43 @@ func TestHandoffPreservesSelectedUnlimitedPlan(t *testing.T) {
 	result, err := srv.prepareHandoffSeed(binding, context.Background(), pluginhost.SessionCreateParams{ContextSource: pluginhost.SessionContextSourceSeed, Seed: &pluginhost.SessionContextSeed{Source: pluginhost.SessionHistorySnapshot{SessionID: "source"}}})
 	if err != nil || result.Seed.Body != body || attempts != 1 {
 		t.Fatalf("selected unlimited handoff rejected: bytes=%d attempts=%d err=%v", len(result.Seed.Body), attempts, err)
+	}
+}
+
+func TestDelegatedChildResolvedModelPreservesParentOptions(t *testing.T) {
+	for _, inherit := range []bool{true, false} {
+		t.Run(map[bool]string{true: "omitted", false: "explicit"}[inherit], func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			parent := session.Session{ID: "model-parent", Owner: "plugin:subagent", Visibility: "plugin", CWD: rt.RootDir,
+				Provider: "fake-provider", Model: "fake-model", Variant: "retained-variant", Effort: "high", Speed: "fast", ModelOptions: map[string]string{"reasoning": "retained"}, PermissionMode: "standard"}
+			if _, err := rt.Sessions.CreateInitialized(parent, nil); err != nil {
+				t.Fatal(err)
+			}
+			binding := testRuntimeState(t, rt)
+			defer binding.Close()
+			created, err := srv.createPluginSessionThread(binding, parent.Owner, pluginhost.SessionCreateParams{
+				RequestID: "resolved-child", ParentSessionID: parent.ID, ContextSource: "fresh", Visibility: "plugin",
+				Provider: parent.Provider, Model: parent.Model, PermissionMode: parent.PermissionMode,
+			}, inherit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, found, err := rt.Sessions.Find(created.ID)
+			if err != nil || !found {
+				t.Fatalf("created child missing: %v", err)
+			}
+			if child.Provider != parent.Provider || child.Model != parent.Model || child.PermissionMode != parent.PermissionMode {
+				t.Fatalf("admitted selection changed: %+v", child)
+			}
+			if inherit {
+				if child.Variant != parent.Variant || child.Effort != parent.Effort || child.Speed != parent.Speed || !reflect.DeepEqual(child.ModelOptions, parent.ModelOptions) {
+					t.Fatalf("omitted selection lost inherited options: %+v", child)
+				}
+			} else if child.Variant != "" || child.Effort != "" || child.Speed != "" || len(child.ModelOptions) != 0 {
+				t.Fatalf("explicit model selection no longer resets inherited options: %+v", child)
+			}
+		})
 	}
 }

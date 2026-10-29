@@ -609,6 +609,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 // PluginCatalogPreparation owns immutable, unpublished package inputs between
 // catalog observation and cancellable process initialization.
 type PluginCatalogPreparation struct {
+	storageTransfers  []pluginStorageTransfer
 	session           *Session
 	settings          config.Config
 	discovered        []pluginpkg.Plugin
@@ -637,6 +638,11 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 }
 
 func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginCatalogPreparation, error) {
+	var err error
+	cfg, err = s.applyRuntimeConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	var selectedPluginIDs []string
@@ -680,6 +686,10 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 			}
 		}
 	}
+	storageTransfers, err := resolveStorageTransfers(cfg, discovered, active, s.UserBinding())
+	if err != nil {
+		return nil, err
+	}
 	var snapshotRoots []string
 	var snapshotErr error
 	active, snapshotRoots, snapshotErr = snapshotMutableExecutionPackages(active)
@@ -688,7 +698,7 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 	}
 	ownedRoots = append(ownedRoots, snapshotRoots...)
 	return &PluginCatalogPreparation{
-		session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
+		storageTransfers: storageTransfers, session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
 		selectedPluginIDs: selectedPluginIDs, required: required, ownedRoots: ownedRoots, factories: factories, start: start,
 	}, nil
 }
@@ -707,7 +717,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		requiredRuntimes[id] = value
 	}
 	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
-	host, kernel, err := buildPluginHostWithSelection(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, factories...)
+	host, kernel, err := buildPluginHostForBinding(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, s.UserBinding(), p.storageTransfers, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
@@ -732,6 +742,10 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		return nil, errors.Join(err, closeErr)
 	}
 	pluginSkills := discoverPluginSkills(active)
+	var discoveredSkills []skills.Skill
+	if !s.UserBinding().IsUser() {
+		discoveredSkills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills)
+	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
 		id:                generationID,
@@ -743,7 +757,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
+		skills:            discoveredSkills,
 		pluginSkills:      pluginSkills,
 		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
@@ -883,7 +897,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		candidate.revokeMissingPlugins(candidate.availableModuleIDs(), s.TitleClient, s.Model)
 		candidate.active = available
 		candidate.pluginSkills = discoverPluginSkills(available)
-		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
+		if !s.UserBinding().IsUser() {
+			candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
+		} else {
+			candidate.skills = nil
+		}
 		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available, candidate.id)
 	}
 	// Preparation materializes native contributions before the effectful

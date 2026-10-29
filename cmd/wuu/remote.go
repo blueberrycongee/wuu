@@ -20,7 +20,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/server"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	wuusdk "github.com/blueberrycongee/wuu/internal/sdk"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // remoteStorePath is remote.json inside the unified wuu home: the host's
@@ -125,6 +127,10 @@ func runRemoteHost(args []string) error {
 	modelOverride := fs.String("model", "", "model override")
 	workdir := fs.String("workdir", "", "workspace directory")
 	workspaceID := fs.String("workspace-id", "", "stable workspace identity")
+	userSpaceID := fs.String("user-space", "", "persistent user space (requires trusted host isolation)")
+	productDomain := fs.String("product-domain", "", "user host product domain")
+	configFile := fs.String("config", "", "explicit user-host runtime config")
+	compositionProfile := fs.String("composition-profile", "", "explicit composition profile override")
 	relayURL := fs.String("relay", "", "relay url override")
 	pair := fs.Bool("pair", false, "open a pairing window and print the pairing URI")
 	reportReady := fs.Bool("ready", false, "print a JSON readiness event after the relay registers this host")
@@ -135,10 +141,39 @@ func runRemoteHost(args []string) error {
 		return err
 	}
 
+	binding := userspace.Binding{UserSpaceID: strings.TrimSpace(*userSpaceID), ProductDomain: strings.TrimSpace(*productDomain)}
+	if err := binding.Validate(); err != nil {
+		return err
+	}
+	var embedded *wuusdk.Runtime
+	var userHome string
+	if binding.IsUser() {
+		if *workspaceID != "" || *workdir != "" {
+			return errors.New("user host cannot inherit a project binding")
+		}
+		if os.Getenv("WUU_DESKTOP_APP_SERVER_ADDR") != "" || os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN") != "" {
+			return errors.New("user host cannot borrow a Coding desktop execution bridge")
+		}
+		var err error
+		// No CLI/environment flag can assert isolation. This gate runs before
+		// loading or creating a remote identity, pairing grant, or private state.
+		embedded, err = wuusdk.New(wuusdk.Options{CompositionProfile: *compositionProfile, UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, HomeDir: os.Getenv("HOME"), ConfigPath: *configFile, Provider: *providerName, Model: *modelOverride, NonInteractive: true})
+		if err != nil {
+			return err
+		}
+		defer embedded.Close()
+		userHome, err = statepath.Home(os.Getenv("HOME"))
+		if err != nil {
+			return err
+		}
+	}
 	if *delegatedOnly && !*pair {
 		return errors.New("--delegate-only requires --pair")
 	}
 	storePath, err := remoteStorePath()
+	if binding.IsUser() {
+		storePath = filepath.Join(binding.State(userHome), "remote.json")
+	}
 	if err != nil {
 		return err
 	}
@@ -151,6 +186,9 @@ func runRemoteHost(args []string) error {
 	if err != nil {
 		return err
 	}
+	if binding.IsUser() {
+		rootDir = binding.Root(userHome)
+	}
 	var rt *runtime.Session
 	opts := host.Options{
 		Store:    store,
@@ -161,7 +199,12 @@ func runRemoteHost(args []string) error {
 	if *reportReady {
 		opts.OnConnected = func() { fmt.Println(`{"event":"remote/ready"}`) }
 	}
-	if address := os.Getenv("WUU_DESKTOP_APP_SERVER_ADDR"); address != "" || os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN") != "" {
+	if embedded != nil {
+		opts.AppServer = embedded.Serve
+		opts.AppServerForDevice = embedded.ServeForDevice
+		opts.SubscribeUserAttention = embedded.SubscribeUserAttention
+		opts.AuthorizeUserAttention = embedded.AuthorizeUserAttention
+	} else if address := os.Getenv("WUU_DESKTOP_APP_SERVER_ADDR"); address != "" || os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN") != "" {
 		opts.AppServer, err = host.DesktopAppServer(address, os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN"))
 		if err != nil {
 			return err
@@ -174,6 +217,7 @@ func runRemoteHost(args []string) error {
 		}
 		bindings := appserver.NewRuntimeBindings()
 		rt, err = runtime.NewSession(runtime.Options{
+			Overrides:       runtime.ConfigOverrides{CompositionProfile: *compositionProfile},
 			NativeProviders: bindings.NativeProviders(),
 			RootDir:         rootDir,
 			WorkspaceID:     *workspaceID,

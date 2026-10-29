@@ -22,6 +22,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -31,6 +33,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -76,7 +79,8 @@ func run(args []string) error {
 		return runComposition(args[1:], os.Stdout)
 	}
 
-	// Explicit store maintenance must not initialize or alter the app home.
+	// Direct store maintenance bypasses ordinary app startup. Product migrations
+	// perform their own authenticated, stopped-host provider bootstrap.
 	if args[0] == "state" {
 		return runState(args[1:])
 	}
@@ -105,6 +109,10 @@ func run(args []string) error {
 		return runInit(args[1:])
 	case "login":
 		return runLogin(args[1:])
+	case "connector-client":
+		return runConnectorClient(args[1:])
+	case "calendar-client":
+		return runCalendarClient(args[1:])
 	case "models":
 		return runModels(args[1:])
 	case "run":
@@ -2152,12 +2160,17 @@ func runAppServer(args []string) (runErr error) {
 	modelOverride := fs.String("model", "", "model override")
 	workdir := fs.String("workdir", "", "workspace directory")
 	workspaceID := fs.String("workspace-id", "", "stable workspace identity (survives the workspace moving on disk)")
+	userSpaceID := fs.String("user-space", "", "stable user space identity, independent of projects")
+	productDomain := fs.String("product-domain", "", "user host product domain: personal or coding")
 	configFile := fs.String("config", "", "explicit runtime config file")
+	compositionProfile := fs.String("composition-profile", "", "explicit composition profile override")
 	hostKind := fs.String("host", string(runtime.HostLocal), "runtime host: local or cloud")
 	instanceID := fs.String("instance-id", "", "cloud runtime instance identity")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	safeMode := fs.Bool("safe-mode", false, "start without activating plugins")
 	desktopExecutionDefaults := fs.Bool("desktop-execution-defaults", false, "use unlimited steps and automatic temperature for desktop conversations")
+	desktopOwnerPipe := fs.Bool("desktop-owner-pipe", false, "read desktop-parent admission from inherited descriptor 3")
+	calendarClientID := fs.String("personal-calendar-client-id", "", "approved desktop Calendar client ID; credentials remain in the host secure store")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2178,7 +2191,49 @@ func runAppServer(args []string) (runErr error) {
 	if host.Kind == runtime.HostLocal {
 		enginecatalog.InstallUserPath()
 	}
+	connectionCtx, closeConnection := context.WithCancel(context.Background())
+	defer closeConnection()
+	if *desktopOwnerPipe {
+		if host.Kind != runtime.HostLocal {
+			return errors.New("desktop owner admission requires a local host")
+		}
+		bootstrap, err := openDesktopAdmissionPipe(3)
+		if err != nil {
+			return fmt.Errorf("open desktop parent admission pipe: %w", err)
+		}
+		info, statErr := bootstrap.Stat()
+		if statErr != nil || info.Mode()&(os.ModeNamedPipe|os.ModeSocket) == 0 {
+			bootstrap.Close()
+			return errors.New("desktop parent admission requires an inherited pipe")
+		}
+		connectionCtx, err = admitDesktopParent(connectionCtx, userspace.Binding{UserSpaceID: *userSpaceID, ProductDomain: *productDomain}, bootstrap)
+		bootstrap.Close()
+		if err != nil {
+			return err
+		}
+	}
 	rt, err := wuusdk.New(wuusdk.Options{
+		CompositionProfile: *compositionProfile,
+		PersonalCalendar:   personalcalendar.DesktopOptions{ClientID: *calendarClientID},
+		OpenPersonalConnectorAuthorizationURL: func(ctx context.Context, raw string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := personalconnectors.ValidateAuthorizationURL(raw); err != nil {
+				return err
+			}
+			return openBrowser(raw)
+		},
+		OpenPersonalCalendarAuthorizationURL: func(ctx context.Context, raw string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := personalcalendar.ValidateAuthorizationURL(raw); err != nil {
+				return err
+			}
+			return openBrowser(raw)
+		},
+		UserSpaceID: *userSpaceID, ProductDomain: *productDomain,
 		WorkDir:                  *workdir,
 		WorkspaceID:              *workspaceID,
 		HomeDir:                  os.Getenv("HOME"),
@@ -2202,9 +2257,9 @@ func runAppServer(args []string) (runErr error) {
 	}()
 
 	if *authentication == "provider" {
-		return rt.ServeProviderAuthenticated(context.Background(), os.Stdin, os.Stdout, *authenticationAudience)
+		return rt.ServeProviderAuthenticated(connectionCtx, os.Stdin, os.Stdout, *authenticationAudience)
 	}
-	return rt.Serve(context.Background(), os.Stdin, os.Stdout)
+	return rt.Serve(connectionCtx, os.Stdin, os.Stdout)
 }
 
 func resolveAppServerHost(kind, instanceID, workspaceID, configFile string) (runtime.Host, error) {
@@ -2320,6 +2375,7 @@ Usage:
   wuu plugin create|validate|build|test|pack [flags]
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
   wuu state check|export|import|migrate --dir DIRECTORY [flags]
+  wuu state migrate-personal-review --user-space ID [--composition-profile NAME] [--apply --expect-source-digest SHA256]
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
   wuu debug protocol events [flags] THREAD_ID

@@ -151,9 +151,9 @@ func TestPluginPackageMutationKeepsRunningConversationReadable(t *testing.T) {
 				call("install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
 			} else if action == "disable_deleted_source" {
 				developmentSource = filepath.Join(source, "clock.ts")
-				writePluginPackageFile(t, developmentSource, `import type { RuntimePlugin } from "@wuu/plugin-sdk";
+				writePluginPackageFile(t, developmentSource, `import { requirePersonalMemory, type RuntimePlugin } from "@wuu/plugin-sdk";
 export default {
- initialize() { return { tools: [{ id: "clock", description: "Read fixture time", input_schema: { type: "object" } }] }; },
+ initialize() { return { tools: [{ id: "clock", description: "Read fixture time with " + requirePersonalMemory().name, input_schema: { type: "object" } }] }; },
  executeTool() { return { result: { content: [{ type: "text", text: "fixture time" }] } }; }
 } satisfies RuntimePlugin;`)
 				prepared, cleanup, err := pluginprogram.PrepareSingleFile(context.Background(), developmentSource)

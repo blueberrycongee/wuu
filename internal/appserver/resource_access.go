@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -78,7 +79,7 @@ func (s *Server) authorizeResource(ctx context.Context, action string, delegated
 	if !caller.Valid() {
 		return &access.Denied{Action: action, Reason: "unauthenticated"}
 	}
-	request := access.Request{Principal: caller.Identity(), Owner: caller.IsOwner() && !delegated, Action: action, Resources: resources, Attributes: access.AttributesFromContext(ctx)}
+	request := access.Request{Delegation: access.DelegationFromContext(ctx), Principal: caller.Identity(), Owner: caller.IsOwner() && !delegated, Action: action, Resources: resources, Attributes: access.AttributesFromContext(ctx)}
 	deadline := time.Now().Add(5 * time.Second)
 	if expiry := caller.ExpiresAt(); !expiry.IsZero() && expiry.Before(deadline) {
 		deadline = expiry
@@ -195,6 +196,44 @@ func (s *Server) AppendAuthorizedResponseGuard(req Request, action string, deleg
 	return nil
 }
 
+// The request capture stays host-only and is generation-bound so a nested
+// service cannot append its scopes to a later reused JSON-RPC request ID.
+type authorizedResponseContextKey struct{}
+type authorizedResponseCapture struct {
+	server     *Server
+	id         string
+	generation uint64
+}
+
+func (s *Server) captureAuthorizedResponse(ctx context.Context, req Request) context.Context {
+	s.access.mu.Lock()
+	pending, ok := s.access.pending[string(req.ID)]
+	s.access.mu.Unlock()
+	if !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, authorizedResponseContextKey{}, authorizedResponseCapture{s, string(req.ID), pending.generation})
+}
+func (s *Server) appendContextResponseScope(ctx context.Context, action string, resources ...access.Resource) {
+	capture, ok := ctx.Value(authorizedResponseContextKey{}).(authorizedResponseCapture)
+	if !ok || capture.server != s {
+		return
+	}
+	s.access.mu.Lock()
+	defer s.access.mu.Unlock()
+	pending, ok := s.access.pending[capture.id]
+	if !ok || pending.generation != capture.generation {
+		return
+	}
+	for _, scope := range pending.extra {
+		if scope.action == action && !scope.delegated && slices.Equal(scope.resources, resources) {
+			return
+		}
+	}
+	pending.extra = append(pending.extra, authorizedScope{action: action, resources: append([]access.Resource(nil), resources...)})
+	s.access.pending[capture.id] = pending
+}
+
 // requestEffectContext exposes only execution intent; message bodies, tokens,
 // provider credentials and arbitrary request fields never enter policy input.
 func requestEffectContext(ctx context.Context, req Request) (context.Context, error) {
@@ -230,6 +269,9 @@ func requestResources(req Request) ([]access.Resource, error) {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return nil, err
 		}
+	}
+	if rule == "plugin-client" {
+		return pluginClientRouteResources(req)
 	}
 	if rule == "global" && req.Method != MethodThreadStart {
 		return []access.Resource{{Kind: "global"}}, nil
@@ -331,6 +373,24 @@ func notificationResources(params any) ([]access.Resource, error) {
 		}
 	}
 	if len(resources) == 0 {
+		if raw, ok := fields["user_space_id"]; ok {
+			var id string
+			if json.Unmarshal(raw, &id) != nil {
+				return nil, errors.New("invalid user-space event resource")
+			}
+			if strings.TrimSpace(id) == "" {
+				// Coding invalidations have no user binding. They retain their
+				// owner-only global scope, never a delegated user-space scope.
+				var domain string
+				if json.Unmarshal(fields["product_domain"], &domain) != nil || domain != "coding" {
+					return nil, errors.New("invalid user-space event resource")
+				}
+			} else {
+				resources = append(resources, access.Resource{Kind: "user-space", ID: id})
+			}
+		}
+	}
+	if len(resources) == 0 {
 		return []access.Resource{{Kind: "global"}}, nil
 	}
 	return resources, nil
@@ -406,7 +466,7 @@ func (s *Server) authorizeOutbound(ctx context.Context, value any) (any, func() 
 		}
 		if !s.Principal(ctx).IsOwner() {
 			scope, known := delegatedEventScopes[envelope.Method]
-			if !known || scope == "session" && (len(resources) == 0 || resources[0].Kind != "session") {
+			if !known || scope != "global" && (len(resources) == 0 || resources[0].Kind != scope) {
 				return nil, nil, false
 			}
 		}

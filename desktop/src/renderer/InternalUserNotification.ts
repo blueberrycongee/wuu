@@ -22,6 +22,8 @@ export function isProcessNotificationItem(
   if (!item) {
     return false;
   }
+  // Explicit user provenance wins over legacy content-shaped envelopes.
+  if (item.origin === "user") return false;
   if ((item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message") return false;
   if (item.name === PROCESS_NOTIFICATION_NAME) {
     return true;
@@ -65,6 +67,8 @@ export function isAgentNotificationItem(
   if (!item) {
     return false;
   }
+  // Explicit user provenance wins over legacy content-shaped envelopes.
+  if (item.origin === "user") return false;
   if ((item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message") return false;
   if (item.name === AGENT_NOTIFICATION_NAME) {
     return true;

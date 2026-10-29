@@ -64,6 +64,17 @@ func (f mobileChatFilter) notification(env map[string]json.RawMessage, method st
 		if !f.itemParam(env) {
 			return nil, false
 		}
+	case appserver.NotificationPluginInventoryChanged:
+		// Activity clients expose extension views and must refresh their request
+		// fingerprints after reload, disable or replacement.
+		if !f.tools {
+			return nil, false
+		}
+	case appserver.NotificationUserAttention:
+		// Policy-admitted Personal attention is part of the native activity stream.
+		if !f.tools {
+			return nil, false
+		}
 	case appserver.NotificationTurnQueued,
 		appserver.NotificationTurnDequeued,
 		appserver.NotificationTurnHeld,
