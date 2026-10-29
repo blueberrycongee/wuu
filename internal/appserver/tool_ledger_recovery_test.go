@@ -66,7 +66,7 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 		th.releaseThreadExecutionLeaseLocked()
 		th.mu.Unlock()
 	}()
-	if _, err := srv.ensureThreadRuntimeAfterAdmission(th); err != nil {
+	if _, err := srv.ensureThreadRuntimeAfterAdmission(context.Background(), th); err != nil {
 		t.Fatal(err)
 	}
 	assertToolInvocationState(t, rt.Documents, invocation.ID, toolledger.InvocationInterruptedUnknown)
@@ -143,7 +143,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 		t.Fatal("thread execution lease was not acquired")
 	}
 
-	threadRuntime, err := srv.ensureThreadRuntimeAfterAdmission(th)
+	threadRuntime, err := srv.ensureThreadRuntimeAfterAdmission(context.Background(), th)
 	if err != nil {
 		t.Fatal(err)
 	}

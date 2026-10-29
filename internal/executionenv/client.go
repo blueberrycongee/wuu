@@ -40,6 +40,7 @@ type Client struct {
 	processStart      bool
 	unobservedRead    bool
 	observationCommit bool
+	workerInstance    string
 	closeGrace        time.Duration
 	event             func(json.RawMessage)
 	handlers          map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)

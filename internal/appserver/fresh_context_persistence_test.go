@@ -162,7 +162,7 @@ func TestFreshContextRecoverySurvivesTurnAndReload(t *testing.T) {
 
 	runTurn := func(name string, reset bool) requestSnapshot {
 		t.Helper()
-		if _, err := srv.ensureThreadRuntimeAfterAdmission(th); err != nil {
+		if _, err := srv.ensureThreadRuntimeAfterAdmission(context.Background(), th); err != nil {
 			t.Fatalf("%s admission: %v", name, err)
 		}
 		appendHistory(providers.ChatMessage{Role: "user", Content: name})

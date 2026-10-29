@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,4 +39,30 @@ func TestRemoteObservationCommitIsVersionedAndActorScoped(t *testing.T) {
 	require.False(t, first.hasBeenRead("/worker/a"))
 	require.True(t, first.hasBeenRead("/worker/other"))
 	require.True(t, other.hasBeenRead("/worker/a"))
+}
+
+func TestRemoteObservationCaptureBoundsAndCancellation(t *testing.T) {
+	root := t.TempDir()
+	original := filepath.Join(root, "file")
+	require.NoError(t, os.WriteFile(original, []byte("x"), 0600))
+	info, err := os.Stat(original)
+	require.NoError(t, err)
+	var state readFileState
+	for i := 0; i <= maxObservationAliases; i++ {
+		path := filepath.Join(root, fmt.Sprint(i))
+		require.NoError(t, os.Link(original, path))
+		state.record(path, ReadFileEntry{})
+	}
+	_, err = state.capturePathObservation(context.Background(), original, info)
+	require.ErrorContains(t, err, "alias limit")
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	_, err = state.capturePathObservation(canceled, original, info)
+	require.ErrorIs(t, err, context.Canceled)
+	var overloaded readFileState
+	for i := 0; i <= maxObservationScan; i++ {
+		overloaded.record(fmt.Sprintf("missing-%d", i), ReadFileEntry{})
+	}
+	_, err = overloaded.capturePathObservation(context.Background(), original, info)
+	require.ErrorContains(t, err, "scan limit")
 }

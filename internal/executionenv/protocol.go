@@ -36,10 +36,12 @@ type ToolRequest struct {
 // PreparedRead retains its private worker receipt in a host-only closure.
 // Once Commit is sent, a lost acknowledgement is reported as unknown.
 type PreparedRead struct {
+	handle         *preparedReadHandle
 	PermissionMode string
 	Result         toolresult.Result
 	Commit         func(context.Context) (bool, error)
 	Abort          func(context.Context) error
+	Release        func(context.Context) error
 }
 type PreparedReadExecutor interface {
 	PrepareUnobservedRead(context.Context, ToolRequest) (PreparedRead, error)

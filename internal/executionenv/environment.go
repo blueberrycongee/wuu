@@ -3,7 +3,6 @@ package executionenv
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,14 +88,9 @@ func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolReq
 	if err = json.Unmarshal(data, &response); err != nil || response.Receipt == "" {
 		return PreparedRead{}, errors.New("invalid prepared remote read receipt")
 	}
-	receipt := struct {
-		Receipt                   string `json:"receipt"`
-		Actor                     string `json:"actor"`
-		PermissionMode            string `json:"permission_mode"`
-		GitAttributionEnabled     bool   `json:"git_attribution_enabled,omitempty"`
-		ShellEarlyHandoffDisabled bool   `json:"shell_early_handoff_disabled,omitempty"`
-	}{response.Receipt, request.Actor, request.PermissionMode, request.GitAttributionEnabled, request.ShellEarlyHandoffDisabled}
-	return PreparedRead{PermissionMode: request.PermissionMode, Result: response.Result, Commit: func(ctx context.Context) (bool, error) {
+	receipt := preparedReadBinding{Receipt: response.Receipt, Actor: request.Actor, PermissionMode: request.PermissionMode, GitAttributionEnabled: request.GitAttributionEnabled, ShellEarlyHandoffDisabled: request.ShellEarlyHandoffDisabled}
+	handle := &preparedReadHandle{client: client, binding: receipt, workerInstance: client.workerInstance, environmentIdentity: e.identity}
+	return PreparedRead{handle: handle, PermissionMode: request.PermissionMode, Result: response.Result, Commit: func(ctx context.Context) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
@@ -114,6 +108,9 @@ func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolReq
 		return ack.Changed, nil
 	}, Abort: func(ctx context.Context) error {
 		_, err := client.Call(ctx, "read/abort", receipt)
+		return err
+	}, Release: func(ctx context.Context) error {
+		_, err := client.Call(ctx, "read/release", receipt)
 		return err
 	}}, nil
 }
@@ -174,19 +171,11 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	tokenPath := filepath.Join(tokenDir, "transport-token")
-	token, err := os.ReadFile(tokenPath)
-	if errors.Is(err, os.ErrNotExist) {
-		secret := make([]byte, 32)
-		if _, err = rand.Read(secret); err != nil {
-			return nil, err
-		}
-		token = []byte(hex.EncodeToString(secret))
-		err = securefs.WriteFileAtomic(tokenPath, token)
-	}
+	token, err := loadTransportToken(ctx, tokenPath)
 	if err != nil {
 		return nil, err
 	}
-	client.token = string(token)
+	client.token = token
 	if e.processes == nil {
 		e.processes = process.NewRemoteManager(e.Root(), e)
 	}
@@ -215,8 +204,9 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	var hello struct {
-		Version      int      `json:"version"`
-		Capabilities []string `json:"capabilities"`
+		Version        int      `json:"version"`
+		Capabilities   []string `json:"capabilities"`
+		WorkerInstance string   `json:"worker_instance"`
 	}
 	if err = json.Unmarshal(data, &hello); err != nil || hello.Version != ProtocolVersion {
 		_ = client.Close()
@@ -225,6 +215,11 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
 	client.observationCommit = slices.Contains(hello.Capabilities, ReadObservationCommitCapability)
+	if client.observationCommit && hello.WorkerInstance == "" {
+		_ = client.Close()
+		return nil, errors.New("execution worker did not provide an instance identity")
+	}
+	client.workerInstance = hello.WorkerInstance
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err

@@ -196,7 +196,7 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 		ctx, th, msg, snapshot, false, turnReadOnlyFail,
 		turnAdmissionHooks{afterLease: func(admitted *threadState, input *providers.ChatMessage) error {
 			var runtimeErr error
-			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(ctx, admitted)
 			if runtimeErr == nil {
 				s.foldFrozenWorkerTree(admitted, threadRuntime)
 			}

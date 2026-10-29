@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
@@ -29,21 +30,22 @@ type Manager struct {
 	// updated together so the provenance stamped onto worker-produced native
 	// state (Responses item ids, reasoning signatures) always matches the
 	// client that produced it.
-	defaultProviderName    string
-	defaultModel           string
-	defaultEffort          string
-	defaultProviderOptions map[string]any
-	defaultContextWindow   int
-	defaultMaxInputTokens  int
-	defaultOutputReserve   int
-	defaultCompactTokens   int
-	defaultTemperature     float64
-	defaultCompactPct      float64
-	defaultKeepRecent      int
-	defaultDisableCompact  bool
-	defaultJournal         providers.InferenceJournal
-	BeginModelReceipts     agent.BeginModelReceiptsFunc
-	toolLedgerFactory      func(string) (*toolledger.Ledger, error)
+	defaultProviderName     string
+	defaultModel            string
+	defaultEffort           string
+	defaultProviderOptions  map[string]any
+	defaultContextWindow    int
+	defaultMaxInputTokens   int
+	defaultOutputReserve    int
+	defaultCompactTokens    int
+	defaultTemperature      float64
+	defaultCompactPct       float64
+	defaultKeepRecent       int
+	defaultDisableCompact   bool
+	defaultJournal          providers.InferenceJournal
+	BeginModelReceipts      agent.BeginModelReceiptsFunc
+	toolLedgerFactory       func(string) (*toolledger.Ledger, error)
+	recoverToolObservations func(context.Context, *toolledger.Ledger) error
 
 	mu        sync.Mutex
 	agents    map[string]*SubAgent
@@ -89,9 +91,10 @@ type ManagerOptions struct {
 	DisableAutoCompact      bool
 	// InferenceJournal is an infrastructure dependency fixed at manager
 	// construction. UpdateDefaults intentionally does not replace it.
-	InferenceJournal   providers.InferenceJournal
-	BeginModelReceipts agent.BeginModelReceiptsFunc
-	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
+	InferenceJournal        providers.InferenceJournal
+	BeginModelReceipts      agent.BeginModelReceiptsFunc
+	ToolLedgerFactory       func(ownerID string) (*toolledger.Ledger, error)
+	RecoverToolObservations func(context.Context, *toolledger.Ledger) error
 	// AcquireLoopDriver is required for execution. Missing configuration
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	SelectedCompaction *compactionservice.Client
@@ -136,28 +139,29 @@ func NewManager(client providers.StreamClient, defaultModel string, driver loopd
 // workers that do not override them per spawn.
 func NewManagerWithOptions(client providers.StreamClient, defaultModel string, opts ManagerOptions) *Manager {
 	return &Manager{
-		client:                 client,
-		defaultProviderName:    strings.TrimSpace(opts.DefaultProviderName),
-		defaultModel:           defaultModel,
-		defaultEffort:          strings.TrimSpace(opts.DefaultEffort),
-		defaultProviderOptions: provideroptions.Clone(opts.DefaultProviderOptions),
-		defaultContextWindow:   opts.ContextWindowOverride,
-		defaultMaxInputTokens:  opts.MaxInputTokens,
-		defaultOutputReserve:   opts.OutputReserveTokens,
-		defaultCompactTokens:   opts.CompactThresholdTokens,
-		defaultTemperature:     opts.Temperature,
-		defaultCompactPct:      opts.CompactThresholdPct,
-		defaultKeepRecent:      opts.CompactKeepRecentTokens,
-		defaultDisableCompact:  opts.DisableAutoCompact,
-		defaultJournal:         opts.InferenceJournal,
-		BeginModelReceipts:     opts.BeginModelReceipts,
-		toolLedgerFactory:      opts.ToolLedgerFactory,
-		acquireLoopDriver:      opts.AcquireLoopDriver,
-		configureRunner:        opts.ConfigureRunner,
-		selectedCompaction:     opts.SelectedCompaction,
-		onSubagentStart:        opts.OnSubagentStart,
-		onSubagentStop:         opts.OnSubagentStop,
-		agents:                 make(map[string]*SubAgent),
+		client:                  client,
+		defaultProviderName:     strings.TrimSpace(opts.DefaultProviderName),
+		defaultModel:            defaultModel,
+		defaultEffort:           strings.TrimSpace(opts.DefaultEffort),
+		defaultProviderOptions:  provideroptions.Clone(opts.DefaultProviderOptions),
+		defaultContextWindow:    opts.ContextWindowOverride,
+		defaultMaxInputTokens:   opts.MaxInputTokens,
+		defaultOutputReserve:    opts.OutputReserveTokens,
+		defaultCompactTokens:    opts.CompactThresholdTokens,
+		defaultTemperature:      opts.Temperature,
+		defaultCompactPct:       opts.CompactThresholdPct,
+		defaultKeepRecent:       opts.CompactKeepRecentTokens,
+		defaultDisableCompact:   opts.DisableAutoCompact,
+		defaultJournal:          opts.InferenceJournal,
+		BeginModelReceipts:      opts.BeginModelReceipts,
+		toolLedgerFactory:       opts.ToolLedgerFactory,
+		recoverToolObservations: opts.RecoverToolObservations,
+		acquireLoopDriver:       opts.AcquireLoopDriver,
+		configureRunner:         opts.ConfigureRunner,
+		selectedCompaction:      opts.SelectedCompaction,
+		onSubagentStart:         opts.OnSubagentStart,
+		onSubagentStop:          opts.OnSubagentStop,
+		agents:                  make(map[string]*SubAgent),
 	}
 }
 
@@ -1088,7 +1092,13 @@ func (m *Manager) ReconcileToolLedger(ctx context.Context, id string) error {
 	if ledger == nil {
 		return nil
 	}
-	return ledger.Reconcile(ctx)
+	if err := ledger.Reconcile(ctx); err != nil {
+		return err
+	}
+	if m.recoverToolObservations != nil {
+		return m.recoverToolObservations(ctx, ledger)
+	}
+	return executionenv.RecoverLedgerObservations(ctx, ledger, nil)
 }
 
 func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (SubAgentSnapshot, error) {

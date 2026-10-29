@@ -45,6 +45,18 @@ type Invocation struct {
 	RunningAt          int64
 	SettledAt          int64
 	ProjectedAt        int64
+	Observation        *Observation `json:",omitempty"`
+}
+
+// Observation stores recovery identifiers and a validated result, never the
+// worker transport credential or individual prepared-read receipts.
+type Observation struct {
+	OperationID         string
+	WorkerInstance      string
+	Actor               string
+	EnvironmentIdentity string
+	Outcome             string             `json:",omitempty"`
+	Result              *toolresult.Result `json:",omitempty"`
 }
 
 // Project joins history admission and result disposal in the caller's atomic

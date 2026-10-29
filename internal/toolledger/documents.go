@@ -251,6 +251,9 @@ func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolres
 		if err != nil {
 			return err
 		}
+		if invocation.Observation != nil && invocation.Observation.Outcome == "" {
+			return errors.New("remote observation outcome requires confirmation")
+		}
 		existing, err := json.Marshal(invocation.Result)
 		if err != nil {
 			return err

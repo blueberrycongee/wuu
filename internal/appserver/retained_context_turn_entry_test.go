@@ -71,7 +71,7 @@ func TestEnsureThreadRuntimeAfterAdmission_PreservesRetainedContext(t *testing.T
 	srv := &Server{rt: newTestRuntime(t, &fakeClient{})}
 	th.state = testRuntimeState(t, srv.rt)
 
-	if _, err := srv.ensureThreadRuntimeAfterAdmission(th); err != nil {
+	if _, err := srv.ensureThreadRuntimeAfterAdmission(context.Background(), th); err != nil {
 		t.Fatalf("ensureThreadRuntimeAfterAdmission: %v", err)
 	}
 

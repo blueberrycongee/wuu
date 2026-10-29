@@ -140,7 +140,9 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 对于固定的远程工作区，可信文本提供者还可声明 `read_file.remote.v1` 并依赖 `execution.native-tool-continuation@1`。通过 `wuu plugin dev` 安装[远程读取示例](../../../examples/plugins/remote-text-reader.ts)，在可信用户设置的 `agent.tool_replacements.read_file` 中绑定实际插件 ID 和工具 ID `read`。回调内的 `getProcessEnvironment(host)` 返回宿主选定的后端、根目录和身份，`input.cwd` 是该远端根目录。调用一次无参数的 `continueNativeTool(host)`，由固定的 worker 执行原始读取，再返回有界的 `structured_content: {text, total_lines}`。宿主和 worker 分别复查权限，插件只收到校验后的文本。worker 不支持能力、actor 或环境变化、取消、目标禁用或插件退役时调用失败，不回退本地。同一受信插件可主动把仍存活的回调 host 分享给进程内其他回调；宿主绑定原始权限，不隔离插件进程内部的代码。
 
-远程替换目前只接受工作区相对路径的新鲜 UTF-8 文本读取，可指定行偏移和行数；图片、字节选择器和所有续读 token（包括插件分页 token）均被拒绝。worker 必须支持 `read.unobserved.v1`；如果该 worker actor 已有任何原生读取观察，则拒绝扩展调用并保留旧观察。新 actor 或新会话拥有独立读取状态。此保守限制避免删除并发产生的原生观察；扩展输出仍未验证，也不建立原生新鲜度观察。运行 `node scripts/remote-read-e2e.mjs` 可验证打包 SDK 插件与真实 command backend worker、PTC 和失败路径；该测试不验证生产远程服务或真实模型。
+远程替换目前只接受工作区相对路径的新鲜 UTF-8 文本读取，可指定行偏移和行数；图片、字节选择器和所有续读 token（包括插件分页 token）均被拒绝。worker 必须支持带版本的无观察读取和观察提交能力。宿主验证最终结果后，会有条件地失效同一文件的旧原生观察；并发产生的较新原生观察会保留。直接调用和 Code Mode 遵循同一规则。同一父调用中的嵌套读取必须属于同一个 worker 和 actor，宿主会批量提交；不兼容的批次会安全拒绝。宿主在提交前重新检查每个参与项的权限；此后撤权不会追溯撤销已准入的提交。扩展输出仍未验证，也不建立原生新鲜度观察。
+
+如果结算期间连接或存储确认丢失，结果可能未知，受影响的会话不能重放该调用。重新打开会话时，只有经过认证的原 worker 实例及其保留的凭据仍然可用，才能协调未决结果；不同实例或已过期的记录不能用于确认。已准备但未提交的决定会先确认撤销，再记为已撤销。如果原 worker 已退出或记录已过期，请在新会话中继续；Wuu 不假定分布式提交具有原子性。恢复依赖所选 `state.documents` 提供者保持记录完整并遵守原子事务语义；此机制不能防御恶意存储提供者篡改记录。新 actor 或新会话拥有独立读取状态。运行 `node scripts/remote-read-e2e.mjs` 可验证打包 SDK 插件与真实 command backend worker、Code Mode 和失败路径；该测试不验证生产远程服务或真实模型。
 
 文本提供者还可声明 `read_file.pagination.v1`：当所请求范围仍有剩余行时，在 `text` 和 `total_lines` 外返回非空 `next_cursor`。每页必须向前推进、不超出请求范围，且 `total_lines` 保持一致；范围读完后必须省略 `next_cursor`。宿主返回不透明的 `continuation.next` 供下一次 `read_file` 调用，插件游标不会直接交给模型。续读时宿主验证 token，并针对还原出的路径重新检查原生及插件授权，再将原插件游标、下一行偏移及剩余限制交给提供者。提供者必须支持对同一快照重放续读；内容变化时应拒绝过期游标。宿主无法验证外部提供者所声称的快照。[本地读取示例](../../../examples/plugins/local-text-reader.ts)在页间校验内容摘要。
 

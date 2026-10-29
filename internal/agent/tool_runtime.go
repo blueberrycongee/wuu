@@ -38,14 +38,15 @@ type toolRun struct {
 	parent                 *toolRun
 	depth                  int
 
-	mu              sync.Mutex
-	state           toolRunState
-	done            chan struct{}
-	cancel          context.CancelFunc
-	result          toolresult.Result
-	err             error
-	requestContext  *ContextSegment
-	discoveredTools []providers.LoadableToolDefinition
+	mu                     sync.Mutex
+	state                  toolRunState
+	done                   chan struct{}
+	cancel                 context.CancelFunc
+	result                 toolresult.Result
+	err                    error
+	requestContext         *ContextSegment
+	discoveredTools        []providers.LoadableToolDefinition
+	releaseSettlementChild func()
 }
 
 // TurnToolRuntime owns tool executions for one model turn. Streaming can
@@ -408,21 +409,142 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if source := toolctx.UnverifiedSource(runCtx); source != "" {
 				result = toolresult.MarkUnverifiedSource(result, source)
 			}
+			valid := result.Validate()
+			success := executionErr == nil && !result.IsError
+			var prepared *toolctx.PreparedSettlement
+			if run.parent == nil || !success || valid != nil {
+				var prepareErr error
+				prepared, prepareErr = toolctx.PrepareSettlement(runCtx, success && valid == nil)
+				if valid != nil && toolctx.SettlementHasParticipants(runCtx) {
+					result = toolresult.FromErrorText(errorJSON(fmt.Errorf("validate finalized tool result: %w", valid)))
+					run.clearFinalization()
+					success = false
+				}
+				if prepareErr != nil {
+					result = toolresult.FromErrorText(errorJSON(prepareErr))
+					run.clearFinalization()
+					success = false
+				}
+			}
+			if prepared != nil && prepared.Identity != nil {
+				cleanup := func(fn func(context.Context) error) error {
+					ctx, done := context.WithTimeout(context.Background(), time.Second)
+					defer done()
+					return fn(ctx)
+				}
+				if r.ledger == nil {
+					_ = cleanup(prepared.Abort)
+					run.complete(toolresult.Result{}, errors.New("durable tool ledger required for remote observation"))
+					return
+				}
+				// Each durable write gets its own bounded cancellation-independent
+				// window; remote execution time must not consume that window.
+				durable := func(fn func(context.Context) error) error {
+					ctx, done := context.WithTimeout(context.WithoutCancel(runCtx), 5*time.Second)
+					defer done()
+					return fn(ctx)
+				}
+				identity := prepared.Identity
+				intent := toolledger.ObservationIntent{OperationID: identity.OperationID, WorkerInstance: identity.WorkerInstance, Actor: identity.Actor, EnvironmentIdentity: identity.EnvironmentIdentity}
+				markUnknown := func() {
+					_ = durable(func(ctx context.Context) error { return r.ledger.MarkObservationUnknown(ctx, run.invocationID, intent) })
+				}
+				abortAndResolve := func() error {
+					if err := cleanup(prepared.Abort); err != nil {
+						markUnknown()
+						return err
+					}
+					if err := durable(func(ctx context.Context) error {
+						return r.ledger.ResolveObservation(ctx, run.invocationID, intent, false)
+					}); err != nil {
+						markUnknown()
+						return err
+					}
+					_ = cleanup(prepared.Release)
+					return nil
+				}
+				if err := durable(func(ctx context.Context) error {
+					return r.ledger.StageObservation(ctx, run.invocationID, intent, result)
+				}); err != nil {
+					// Stage may have succeeded without an acknowledgement. Preserve an
+					// abort tombstone unless resolution is confirmed.
+					markUnknown()
+					_ = abortAndResolve()
+					run.complete(toolresult.Result{}, fmt.Errorf("stage remote observation outcome unknown: %w", err))
+					return
+				}
+				if err := runCtx.Err(); err != nil {
+					if abortErr := abortAndResolve(); abortErr != nil {
+						run.complete(toolresult.Result{}, fmt.Errorf("remote observation cancellation outcome unknown: %w", abortErr))
+					} else {
+						run.complete(toolresult.Result{}, err)
+					}
+					return
+				}
+				if err := prepared.Commit(runCtx); err != nil {
+					if !errors.Is(err, toolctx.ErrSettlementOutcomeUnknown) {
+						if abortErr := abortAndResolve(); abortErr != nil {
+							run.complete(toolresult.Result{}, fmt.Errorf("remote observation outcome unknown: %w", abortErr))
+						} else {
+							run.complete(toolresult.Result{}, err)
+						}
+					} else {
+						markUnknown()
+						run.complete(toolresult.Result{}, fmt.Errorf("remote observation outcome unknown: %w", err))
+					}
+					return
+				}
+				if err := durable(func(ctx context.Context) error {
+					return r.ledger.ResolveObservation(ctx, run.invocationID, intent, true)
+				}); err != nil {
+					markUnknown()
+					run.complete(toolresult.Result{}, fmt.Errorf("remote observation settlement outcome unknown: %w", err))
+					return
+				}
+				_ = cleanup(prepared.Release)
+				run.complete(result, nil)
+				return
+			}
+			committed := false
+			if prepared != nil {
+				defer func() { _ = prepared.Abort(context.Background()) }()
+				if err := prepared.Commit(runCtx); err != nil {
+					result = toolresult.FromErrorText(errorJSON(err))
+				} else {
+					committed = true
+				}
+			}
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
-					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
+					if run.parent != nil {
+						_, _ = toolctx.FinishSettlement(runCtx, false)
+					}
+					if committed {
+						run.complete(toolresult.Result{}, fmt.Errorf("tool settlement outcome unknown after remote observation commit: %w", settleErr))
+					} else {
+						run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
+					}
+					return
+				}
+			}
+			if run.parent != nil && success {
+				_, err := toolctx.FinishSettlement(runCtx, true)
+				if err != nil {
+					run.complete(toolresult.Result{}, fmt.Errorf("nested settlement unavailable: %w", err))
 					return
 				}
 			}
 			run.complete(result, nil)
 		}
+		// Establish the invocation's own scope before any cancellation path can
+		// finalize it; a canceled child must not close its parent's scope.
+		runCtx = toolctx.WithSettlement(toolctx.WithProvenance(runCtx), r.ledger != nil)
 		select {
 		case <-runCtx.Done():
 			finish(toolresult.Result{}, runCtx.Err())
 			return
 		default:
 		}
-		runCtx = toolctx.WithProvenance(runCtx)
 		if run.parent != nil {
 			runCtx = toolctx.WithNestedCall(runCtx)
 		}
@@ -503,6 +625,10 @@ func (run *toolRun) complete(result toolresult.Result, err error) {
 	run.result = result
 	run.err = err
 	run.state = toolRunDone
+	if run.releaseSettlementChild != nil {
+		run.releaseSettlementChild()
+		run.releaseSettlementChild = nil
+	}
 	close(run.done)
 }
 
@@ -518,6 +644,13 @@ func (run *toolRun) finalize(executor ToolExecutor, call providers.ToolCall, res
 	}
 	run.mu.Unlock()
 	return settled.Result
+}
+
+func (run *toolRun) clearFinalization() {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	run.discoveredTools = nil
+	run.requestContext = nil
 }
 
 func (run *toolRun) message(result toolresult.Result) providers.ChatMessage {

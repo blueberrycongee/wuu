@@ -121,11 +121,28 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "remote-read", ExecutionID: "turn"})
 	thread.Toolkit.SetPermissionMode("read_only")
 	thread.Toolkit.SetGitAttributionEnabled(true)
+	var directSequence atomic.Int64
+	executeSettled := func(callCtx context.Context, call providers.ToolCall) (string, error) {
+		run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: thread.StreamRunner.ToolLedger, OperationID: fmt.Sprintf("direct-%d", directSequence.Add(1)), RunContext: callCtx})
+		defer run.Close()
+		messages, err := run.ExecuteFinalCalls(callCtx, []providers.ToolCall{call}, nil)
+		if err != nil {
+			return "", err
+		}
+		if len(messages) != 1 || messages[0].ToolResult == nil {
+			return "", fmt.Errorf("missing direct tool result")
+		}
+		text := messages[0].ToolResult.TextProjection()
+		if messages[0].ToolResult.IsError {
+			return text, fmt.Errorf("%s", text)
+		}
+		return text, nil
+	}
 	actor, _ := thread.Toolkit.ExecutionActor()
 	nativeReq := executionenv.ToolRequest{Actor: actor, PermissionMode: "read_only", GitAttributionEnabled: true, Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"shared.txt"}`}}
 	_, err = thread.Toolkit.ExecutionEnvironment().Execute(ctx, nativeReq)
 	require.NoError(t, err)
-	text, err := thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "read", Name: "read_file", Arguments: `{"path":"shared.txt"}`})
+	text, err := executeSettled(ctx, providers.ToolCall{ID: "read", Name: "read_file", Arguments: `{"path":"shared.txt"}`})
 	require.NoError(t, err)
 	require.Contains(t, text, "plugin:REMOTE-ONLY")
 	require.NotContains(t, text, "LOCAL-ONLY")
@@ -142,7 +159,7 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 		req.Call.Arguments = fmt.Sprintf(`{"path":%q}`, name)
 		_, err = thread.Toolkit.ExecutionEnvironment().Execute(ctx, req)
 		require.NoError(t, err)
-		_, err = thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: name, Name: "read_file", Arguments: req.Call.Arguments})
+		_, err = executeSettled(ctx, providers.ToolCall{ID: name, Name: "read_file", Arguments: req.Call.Arguments})
 		require.Error(t, err)
 		check, err = remoteExec.PrepareUnobservedRead(ctx, req)
 		require.NoError(t, err)
@@ -207,7 +224,7 @@ func TestRemoteReadOnlyContinuationPluginProcess(t *testing.T) {
 		callCtx, stopCall := context.WithCancel(ctx)
 		done := make(chan error, 1)
 		go func() {
-			_, e := thread.StreamRunner.Tools.Execute(callCtx, providers.ToolCall{ID: name, Name: "read_file", Arguments: req.Call.Arguments})
+			_, e := executeSettled(callCtx, providers.ToolCall{ID: name, Name: "read_file", Arguments: req.Call.Arguments})
 			done <- e
 		}()
 		select {

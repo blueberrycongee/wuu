@@ -5,12 +5,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // ReadObservationTicket contains only worker-owned versioned observations.
 // The worker retains it; its contents never cross into the plugin process.
+var observationTicketSequence atomic.Uint64
+
 type ReadObservationTicket struct {
+	id        uint64
 	mu        sync.Mutex
 	state     *readFileState
 	entries   map[string]readFileObservation
@@ -27,7 +33,7 @@ func (r *readFileState) prepareInvalidation(paths []string) *ReadObservationTick
 			entries[path] = value
 		}
 	}
-	return &ReadObservationTicket{state: r, entries: entries}
+	return &ReadObservationTicket{id: observationTicketSequence.Add(1), state: r, entries: entries}
 }
 
 func (t *ReadObservationTicket) commit(ctx context.Context) (bool, error) {
@@ -39,7 +45,17 @@ func (t *ReadObservationTicket) commit(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	t.state.mu.Lock()
+	for !t.state.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	defer t.state.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -93,8 +109,73 @@ func (r *readFileState) capturePathObservation(ctx context.Context, resolved str
 			entries[path] = value
 		}
 	}
-	return &ReadObservationTicket{state: r, entries: entries}, nil
+	return &ReadObservationTicket{id: observationTicketSequence.Add(1), state: r, entries: entries}, nil
 }
 
 // Commit invalidates only the exact captured observation revisions.
 func (t *ReadObservationTicket) Commit(ctx context.Context) (bool, error) { return t.commit(ctx) }
+
+// CommitReadObservationBatch applies a bounded set of tickets to exactly one
+// actor store under one lock. Different stores or mixed terminal states fail
+// before any observation changes.
+func CommitReadObservationBatch(ctx context.Context, tickets []*ReadObservationTicket) ([]bool, error) {
+	if len(tickets) == 0 || len(tickets) > 128 {
+		return nil, errors.New("invalid remote observation batch size")
+	}
+	ordered := append([]*ReadObservationTicket(nil), tickets...)
+	for _, ticket := range ordered {
+		if ticket == nil || ticket.id == 0 {
+			return nil, errors.New("invalid remote observation ticket")
+		}
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].id < ordered[j].id })
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i] == ordered[i-1] {
+			return nil, errors.New("duplicate remote observation ticket")
+		}
+	}
+	for _, ticket := range ordered {
+		ticket.mu.Lock()
+	}
+	defer func() {
+		for i := len(ordered) - 1; i >= 0; i-- {
+			ordered[i].mu.Unlock()
+		}
+	}()
+	state := ordered[0].state
+	if state == nil {
+		return nil, errors.New("observation store unavailable")
+	}
+	for _, ticket := range ordered {
+		if ticket.state != state || ticket.committed {
+			return nil, errors.New("incompatible remote observation batch")
+		}
+	}
+	for !state.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer state.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	results := make([]bool, len(tickets))
+	for i, ticket := range tickets {
+		for path, observation := range ticket.entries {
+			if current, ok := state.state[path]; ok && observation.revision != 0 && current.revision == observation.revision {
+				delete(state.state, path)
+				results[i] = true
+			}
+		}
+		ticket.committed = true
+		ticket.changed = results[i]
+	}
+	return results, nil
+}
