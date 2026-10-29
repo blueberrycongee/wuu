@@ -127,6 +127,7 @@ export function compileSource(source, preview = false) {
 export function evaluateSource(compiled, saved = {}, options = {}) {
   const values = Object.create(null), defaults = Object.create(null), calls = new WeakSet();
   let remaining = 30000, depth = 0, inEvent = false, nodeCount = 0;
+  let assignedBindings;
   class Scope {
     constructor(parent = null) { this.parent = parent; this.bindings = new Map(); }
     has(name) { return this.bindings.has(name) || Boolean(this.parent?.has(name)); }
@@ -135,7 +136,9 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
     assign(name, value) {
       const binding = this.bindings.get(name);
       if (!binding) { check(this.parent, `Unknown name: ${name}`); return this.parent.assign(name, value); }
-      check(binding.mutable, `Cannot assign to constant ${name}`); binding.value = value;
+      check(binding.mutable, `Cannot assign to constant ${name}`);
+      if (inEvent && !assignedBindings.has(binding)) assignedBindings.set(binding, binding.value);
+      binding.value = value;
     }
   }
   const root = new Scope();
@@ -147,7 +150,7 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
     if (pattern.type === "Identifier") { env.set(safeKey(pattern.name), value, mutable); return; }
     if (pattern.type === "AssignmentPattern") { bind(pattern.left, value === undefined ? expr(pattern.right, env) : value, env, mutable); return; }
     if (pattern.type === "ArrayPattern") { check(Array.isArray(value), "Expected an array to unpack"); pattern.elements.forEach((p, i) => { if (p) bind(p, value[i], env, mutable); }); return; }
-    if (pattern.type === "ObjectPattern") { for (const p of pattern.properties) { check(p.type === "ObjectProperty", "Object rest is unavailable"); bind(p.value, member(value, p.key.name ?? p.key.value), env, mutable); } return; }
+    if (pattern.type === "ObjectPattern") { for (const p of pattern.properties) { check(p.type === "ObjectProperty", "Object rest is unavailable"); bind(p.value, member(value, p.computed ? expr(p.key, env) : p.key.name ?? p.key.value), env, mutable); } return; }
     throw new Error("Unsupported binding");
   }
   function member(value, key) {
@@ -157,7 +160,7 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
       if (key === "length") return value.length;
       if (/^(0|[1-9]\d*)$/.test(key)) return value[Number(key)];
       if (["map", "filter", "find", "some", "every"].includes(key)) return capability(fn => value[key]((item, i) => call(fn, [item, i])));
-      if (key === "reduce") return capability((fn, initial) => value.reduce((acc, item, i) => call(fn, [acc, item, i]), initial));
+      if (key === "reduce") return capability((fn, ...initial) => value.reduce((acc, item, i) => call(fn, [acc, item, i]), ...initial));
       if (key === "join") return capability((separator = ",") => { value.forEach(primitive); return bounded(value.join(primitive(separator))); });
       if (["slice", "includes", "indexOf"].includes(key)) return capability((...args) => bounded(value[key](...args.map(primitive))));
     }
@@ -215,6 +218,27 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
       else check(node.type === "EmptyStatement", `Unsupported statement: ${node.type}`);
     }
   }
+  function argumentsFor(nodes, env) {
+    const args = [];
+    for (const node of nodes) {
+      if (node.type === "SpreadElement") { const value = expr(node.argument, env); check(Array.isArray(value), "Spread expects an array"); args.push(...value); }
+      else args.push(expr(node, env));
+    }
+    return args;
+  }
+  const shortCircuited = Symbol();
+  function optionalChain(node, env) {
+    tick();
+    const receiver = node.type === "OptionalMemberExpression" ? node.object : node.callee;
+    // Only adjacent optional-chain nodes share a short circuit. Parentheses
+    // finish the chain, so a following ordinary property access can still fail.
+    const value = ["OptionalMemberExpression", "OptionalCallExpression"].includes(receiver.type) && !receiver.extra?.parenthesized
+      ? optionalChain(receiver, env) : expr(receiver, env);
+    if (value === shortCircuited || node.optional && value == null) return shortCircuited;
+    return node.type === "OptionalMemberExpression"
+      ? member(value, node.computed ? expr(node.property, env) : node.property.name)
+      : call(value, argumentsFor(node.arguments, env));
+  }
   function expr(node, env) {
     tick();
     check(node, "Missing expression");
@@ -226,8 +250,9 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
       case "ArrayExpression": result = []; for (const item of node.elements) { if (item?.type === "SpreadElement") { const items = expr(item.argument, env); check(Array.isArray(items), "Spread expects an array"); result.push(...items); } else result.push(item ? expr(item, env) : null); bounded(result); } return result;
       case "ObjectExpression": result = Object.create(null); for (const p of node.properties) { if (p.type === "SpreadElement") { const value = expr(p.argument, env); check(value && typeof value === "object" && !Array.isArray(value), "Spread expects an object"); for (const [key, child] of Object.entries(value)) result[safeKey(key)] = child; } else result[safeKey(p.computed ? expr(p.key, env) : p.key.name ?? p.key.value)] = expr(p.value, env); } return result;
       case "ArrowFunctionExpression": case "FunctionExpression": return closure(node, env);
-      case "MemberExpression": case "OptionalMemberExpression": { const value = expr(node.object, env); if (node.optional && value == null) return undefined; return member(value, node.computed ? expr(node.property, env) : node.property.name); }
-      case "CallExpression": case "OptionalCallExpression": { const fn = expr(node.callee, env); if (node.optional && fn == null) return undefined; const args = []; for (const a of node.arguments) { if (a.type === "SpreadElement") { const value = expr(a.argument, env); check(Array.isArray(value), "Spread expects an array"); args.push(...value); } else args.push(expr(a, env)); } return call(fn, args); }
+      case "MemberExpression": return member(expr(node.object, env), node.computed ? expr(node.property, env) : node.property.name);
+      case "CallExpression": return call(expr(node.callee, env), argumentsFor(node.arguments, env));
+      case "OptionalMemberExpression": case "OptionalCallExpression": { const value = optionalChain(node, env); return value === shortCircuited ? undefined : value; }
       case "UnaryExpression": { const value = expr(node.argument, env); if (!["!", "typeof"].includes(node.operator)) primitive(value); if (node.operator === "!") return !value; if (node.operator === "-") return bounded(-value); if (node.operator === "+") return bounded(+value); if (node.operator === "typeof") return typeof value; throw new Error("Unsupported unary operator"); }
       case "BinaryExpression": { const a = expr(node.left, env), b = expr(node.right, env); if (!["===", "!=="].includes(node.operator)) { primitive(a); primitive(b); } switch (node.operator) { case "+": return bounded(a + b); case "-": return bounded(a - b); case "*": return bounded(a * b); case "/": return bounded(a / b); case "%": return bounded(a % b); case "**": return bounded(a ** b); case "===": return a === b; case "==": return a == b; case "!==": return a !== b; case "!=": return a != b; case "<": return a < b; case "<=": return a <= b; case ">": return a > b; case ">=": return a >= b; default: throw new Error("Unsupported binary operator"); } }
       case "LogicalExpression": { const a = expr(node.left, env); return node.operator === "&&" ? a && expr(node.right, env) : node.operator === "||" ? a || expr(node.right, env) : a ?? expr(node.right, env); }
@@ -260,9 +285,16 @@ export function evaluateSource(compiled, saved = {}, options = {}) {
   validateSourceState(values); validateSourceState(defaults);
   const nodes = compiled.tree ? expr(compiled.tree, root) : [];
   return { nodes, values, defaults, invoke(handler, args = []) {
-    remaining = 30000; nodeCount = 0; inEvent = true;
-    try { call(handler, args); validateSourceState(values); return values; }
-    finally { inEvent = false; }
+    const previous = { ...values };
+    remaining = 30000; nodeCount = 0; inEvent = true; assignedBindings = new Map();
+    try { call(handler, args); validateSourceState(values); return { ...values }; }
+    finally {
+      // A handler only proposes a snapshot. Rendering/validation can still reject
+      // it, and repeated failures need not cause React to render a new evaluator.
+      Object.assign(values, previous);
+      for (const [binding, value] of assignedBindings) binding.value = value;
+      assignedBindings = undefined; inEvent = false; depth = 0;
+    }
   } };
 }
 

@@ -11,6 +11,7 @@ const svgProperties = {
 };
 const svgCommon = "id fill stroke strokeWidth opacity fillOpacity strokeOpacity strokeDasharray strokeLinecap strokeLinejoin markerEnd markerStart clipPath".split(" ");
 const tones = { accent: "var(--wuu-color-accent,currentColor)", text: "var(--wuu-color-text,currentColor)", muted: "var(--wuu-color-text-muted,currentColor)", surface: "var(--wuu-color-surface-muted,transparent)", border: "var(--genui-border)", success: "var(--wuu-color-success,#137a3d)", warning: "var(--wuu-color-warning,#8a5b10)", danger: "var(--wuu-color-danger,#b42318)", info: "var(--wuu-color-info,#0068da)" };
+const encoder = new TextEncoder();
 function check(ok, message) { if (!ok) throw new Error(message); }
 function text(value) { check(value == null || ["string", "number", "boolean"].includes(typeof value), "Expected display text"); return value == null ? "" : String(value); }
 function color(value, prefix) {
@@ -20,8 +21,14 @@ function color(value, prefix) {
   return value;
 }
 export function validateSourceTree(nodes) {
-  let count = 0;
+  let count = 0, expanded = 0, textBytes = 0;
   const svgIds = new Set();
+  function charge(amount) { expanded += amount; check(expanded <= 10000, "Rendered data limit reached"); }
+  function display(value) {
+    const result = text(value);
+    textBytes += encoder.encode(result).length;
+    check(textBytes <= 1024 * 1024, "Rendered text exceeds 1 MiB");
+  }
   function checkKeys(children) {
     const seen = new Set();
     let expanded = 0, index = 0;
@@ -43,7 +50,7 @@ export function validateSourceTree(nodes) {
     check(++count <= 2048 && depth <= 32, "Rendered view is too large");
     if (node == null || typeof node === "boolean") return;
     if (Array.isArray(node)) { check(node.length <= 200, "Too many repeated children"); checkKeys(node); node.forEach(child => visit(child, depth, inSVG)); return; }
-    if (typeof node !== "object") { text(node); return; }
+    if (typeof node !== "object") { display(node); return; }
     const { tag, props, children } = node;
     check(Object.hasOwn(components, tag) || Object.hasOwn(svgProperties, tag), `Unknown component: ${tag}`);
     check(props && typeof props === "object" && Array.isArray(children), "Invalid component result");
@@ -54,8 +61,9 @@ export function validateSourceTree(nodes) {
       check(keys.includes(key), `Unknown ${tag} property: ${key}`);
       if (key.startsWith("on")) check(typeof value === "function", `${key} expects a function`);
       else if (["options", "rows", "columns", "points", "series"].includes(key) && tag !== "Grid") check(Array.isArray(value), `${key} expects an array`);
-      else check(value == null || ["string", "number", "boolean"].includes(typeof value), `Invalid ${key} value`);
+      else { check(value == null || ["string", "number", "boolean"].includes(typeof value), `Invalid ${key} value`); display(value); }
     }
+    charge(4 + (props.options?.length ?? 0) * 3);
     for (const key of ["disabled", "required", "invalid", "checked", "open", "stacked"]) if (props[key] !== undefined) check(typeof props[key] === "boolean", `${key} expects a boolean`);
     if (tag === "Slider") check(typeof props.value === "number" && props.value >= props.min && props.value <= props.max, "Slider value must be within its range");
     if (tag === "Input" && props.inputType === "number") check(typeof props.value === "number" && Number.isFinite(props.value), "Number input needs a finite number");
@@ -78,7 +86,17 @@ export function validateSourceTree(nodes) {
       if (tag === "Checkbox") check(typeof props.checked === "boolean", "Checkbox expects checked");
       else check(["string", "number", "boolean"].includes(typeof props.value), `${tag} needs a controlled value`);
     }
-    if (props.options) { check(props.options.length > 0 && props.options.length <= 20, "Use 1–20 options"); props.options.forEach(option => { check(option && typeof option.label === "string", "An option needs a label"); text(option.value); }); }
+    if (["Select", "Radio", "Segmented"].includes(tag)) {
+      check(Array.isArray(props.options) && props.options.length > 0 && props.options.length <= 20, "Use 1–20 options");
+      const values = new Set();
+      for (const option of props.options) {
+        check(option && typeof option.label === "string" && option.label.trim(), "An option needs a label");
+        check(["string", "number", "boolean"].includes(typeof option.value), "An option needs a scalar value");
+        check(!values.has(option.value), "Options need distinct values"); values.add(option.value);
+        display(option.label); display(option.value);
+      }
+      check(values.has(props.value), "Selection is not an available option");
+    }
     if (tag === "svg") check(typeof props.viewBox === "string" && /^[-\d.e+\s,]+$/.test(props.viewBox) && props.viewBox.trim().split(/[\s,]+/).length === 4 && props.viewBox.trim().split(/[\s,]+/).map(Number).every(Number.isFinite), "svg needs a numeric viewBox");
     if (Object.hasOwn(svgProperties, tag)) for (const [key, value] of Object.entries(props)) {
       if (["fill", "stroke", "stopColor", "markerEnd", "markerStart", "clipPath"].includes(key)) color(String(value), "validate");
@@ -86,8 +104,9 @@ export function validateSourceTree(nodes) {
     }
     if (tag === "Table") {
       check(props.columns?.length > 0 && props.columns.length <= 8 && props.rows?.length <= 200, "Invalid table dimensions");
-      props.columns.forEach(column => check(column && typeof column.key === "string" && typeof column.label === "string", "Invalid table column"));
-      props.rows.forEach(row => { check(Array.isArray(row) && row.length === props.columns.length, "Table row width differs from columns"); row.forEach(text); });
+      charge((props.rows.length + 1) * (props.columns.length + 1));
+      props.columns.forEach(column => { check(column && typeof column.key === "string" && typeof column.label === "string", "Invalid table column"); display(column.key); display(column.label); });
+      props.rows.forEach(row => { check(Array.isArray(row) && row.length === props.columns.length, "Table row width differs from columns"); row.forEach(display); });
     }
     if (tag === "Chart") {
       check(["bar", "line", "area", "scatter", "pie", "donut"].includes(props.chartType), "Invalid chart type");
@@ -97,6 +116,7 @@ export function validateSourceTree(nodes) {
         const ids = new Set();
         for (const item of props.series) {
           check(typeof item.id === "string" && item.id.trim() && !ids.has(item.id) && typeof item.label === "string", "Series need unique ids and labels"); ids.add(item.id);
+          display(item.id); display(item.label);
           check(item.chartType === undefined || ["bar", "line", "area", "scatter"].includes(item.chartType), "Invalid series type");
         }
         if (!props.series.some(item => (item.chartType ?? props.chartType) === "scatter")) {
@@ -106,7 +126,15 @@ export function validateSourceTree(nodes) {
       }
       const series = props.series ?? [{ points: props.points }];
       check(series.length > 0 && series.length <= 8, "Invalid chart series");
-      for (const item of series) { check(item.points?.length > 0 && item.points.length <= 100, "Invalid chart points"); for (const p of item.points) check(typeof p.label === "string" && Number.isFinite(p.value) && Math.abs(p.value) <= 1e12 && (!["pie", "donut"].includes(props.chartType) || p.value >= 0) && ((item.chartType ?? props.chartType) !== "scatter" || Number.isFinite(p.x)), "Invalid chart point"); }
+      charge(series.length * 4);
+      for (const item of series) {
+        check(item.points?.length > 0 && item.points.length <= 100, "Invalid chart points");
+        charge(item.points.length * 7);
+        for (const p of item.points) {
+          check(typeof p.label === "string" && Number.isFinite(p.value) && Math.abs(p.value) <= 1e12 && (!["pie", "donut"].includes(props.chartType) || p.value >= 0) && ((item.chartType ?? props.chartType) !== "scatter" || Number.isFinite(p.x)), "Invalid chart point");
+          display(p.label);
+        }
+      }
     }
     checkKeys(children);
     children.forEach(child => visit(child, depth + 1, inSVG || tag === "svg"));
@@ -122,7 +150,7 @@ export function renderSourceTree(nodes, runtime) {
       if (typeof node !== "object") return text(node);
       const { tag, props: p, children } = node;
       const key = p.key ?? `${node.address ?? index}`;
-      const address = `${path}/${key}`;
+      const address = `${path}/${String(key).replace(/~/g, "~0").replace(/\//g, "~1")}`;
       const props = { key, "data-genui-node": address };
       const child = () => render(children, address, inSVG || tag === "svg");
       const event = (handler, args, e, action = false) => runtime.run(handler, args, e, { id: address, label: p.label ?? children.filter(c => typeof c === "string").join(" "), action });

@@ -79,6 +79,9 @@ JavaScript in the desktop realm. There are no imports, DOM APIs, network request
 async functions, or unrestricted loops. Limits are 120 KiB of source within
 128 KiB of arguments, 4,096 syntax nodes, 512 rendered components, 200 items per
 collection, 30,000 calculation steps per render or interaction, and 16 KiB of state.
+Expanded tables, charts, and controls share a 10,000-unit rendering budget;
+rendered text and attribute values together are limited to 1 MiB. Reusing the
+same data in multiple components counts each rendered occurrence.
 The runtime and desktop validate the same source and initial view.
 
 Text and complete children appear while their enclosing JSX is still streaming.

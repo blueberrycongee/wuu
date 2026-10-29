@@ -42,19 +42,13 @@ const spec = {
   ],
 };
 const actionSpec = {
-  version: 2, title: 'Follow-up', fallback: 'Send owner',
-  state: [{ id: 'owner', value: 'Design' }],
-  body: [
-    { id: 'ownerInput', type: 'input', label: 'Owner', state: 'owner' },
-    { id: 'send', type: 'button', label: 'Send owner', onClick: [
-      { type: 'sendMessage', text: { op: 'concat', args: ['GENUI_RESPONSE ', { op: 'state', key: 'owner' }] } },
-    ] },
-    { id: 'ownerForm', type: 'form', label: 'Send owner form', children: [
-      { id: 'formOwner', type: 'input', label: 'Required owner', state: 'owner', required: true },
-    ], onSubmit: [
-      { type: 'sendMessage', text: { op: 'concat', args: ['GENUI_RESPONSE ', { op: 'state', key: 'owner' }] } },
-    ] },
-  ],
+  version: 3, title: 'Follow-up', fallback: 'Send owner',
+  source: `{@body const [owner, setOwner] = DIL.useState("Design"); }
+    <Input key="ownerInput" label="Owner" value={owner} onChange={setOwner}/>
+    <Button key="send" onClick={() => DIL.sendMessage("GENUI_RESPONSE " + owner)}>Send owner</Button>
+    <Form key="ownerForm" label="Send owner form" onSubmit={() => DIL.sendMessage("GENUI_RESPONSE " + owner)}>
+      <Input key="formOwner" label="Required owner" value={owner} onChange={setOwner} required/>
+    </Form>`,
 };
 const requests = [];
 const rpc = [];
@@ -486,7 +480,7 @@ async function run() {
   await capture('07-app-reenabled-history.png', '[data-genui-block="draft"]');
   pass('re-enabled historical renderer retains local edits without model activity');
   await submit('GENUI_ACTION', 'The follow-up form is ready.');
-  const sendAction = '[data-genui-node="send"] button';
+  const sendAction = 'button[data-genui-node="root/send"]';
   await wait(selector => document.querySelector(selector) && !document.querySelector(selector).matches(':disabled'), sendAction);
   const actionOrigin = rpc.filter(entry => entry.channel === 'wuu:turn-start').at(-1).args[0];
   const actionHistory = await evaluate(id => window.wuu.resumeThread(id), actionOrigin);
@@ -498,7 +492,7 @@ async function run() {
   actionSource = { threadId: actionOrigin, turnId: sourceTurn.id, itemId: sourceItem.id, artifactId: sourcePart.artifact.ref, title: actionSpec.title };
   const beforeAction = rpc.filter(entry => entry.channel === 'wuu:turn-start').length;
   const stopActionRecording = recordFrames('continuation-frames');
-  await trustedType('input[data-genui-node="ownerInput"]', 'Engineering follow-up');
+  await trustedType('input[data-genui-node="root/ownerInput"]', 'Engineering follow-up');
   await type('.composer textarea', 'Unsent composer draft');
   await evaluate(() => {
     const picker = document.querySelector('.composer-file-input[type="file"]:not([capture])');
@@ -521,35 +515,37 @@ async function run() {
   assert.equal(afterAction.at(-1).args[0], actionOrigin, 'The host binds the originating thread');
   assert.ok(JSON.stringify(afterAction.at(-1).args).includes('Engineering follow-up'));
   assert.ok(!JSON.stringify(afterAction.at(-1).args).includes('draft-only.txt'), 'Content actions do not consume draft attachments');
-  assert.ok(await evaluate(selector => document.querySelector(selector).matches(':disabled'), sendAction));
+  // Source handlers can mix local edits and continuation, so availability is
+  // enforced when their effect is dispatched rather than disabling every button.
+  assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, beforeAction + 1);
   assert.equal(await evaluate(() => document.querySelector('.composer textarea').value), 'Unsent composer draft');
   assert.ok(await evaluate(() => [...document.querySelectorAll('.composer-shell .composer-attachment-tray-item:not([data-exiting]) .composer-document-card')].some(node => node.textContent.includes('draft-only.txt'))));
-  await capture('08-app-action-running.png', '[data-genui-node="send"]');
+  await capture('08-app-action-running.png', '[data-genui-node="root/send"]');
   followupResponse();
   await wait(() => [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes('Follow-up accepted for Engineering.')));
   await wait(() => !document.querySelector('.composer-stop-button'));
-  assert.equal(await evaluate(() => document.querySelector('input[data-genui-node="ownerInput"]').value), 'Engineering follow-up');
+  assert.equal(await evaluate(() => document.querySelector('input[data-genui-node="root/ownerInput"]').value), 'Engineering follow-up');
   stopActionRecording();
-  pass('explicit trusted UI action starts one origin-bound normal turn with values and retains local form, composer draft and attachment');
+  pass('version 3 source trusted UI action starts one origin-bound normal turn with values and retains local form, composer draft and attachment');
   const beforeActionReload = rpc.filter(entry => entry.channel === 'wuu:turn-start').length;
   const actionReloaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   main.reload(); await withDeadline(actionReloaded, 'Reload action history');
   await reopenConversation();
-  await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Engineering follow-up');
+  await wait(() => document.querySelector('input[data-genui-node="root/ownerInput"]')?.value === 'Engineering follow-up');
   assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, beforeActionReload, 'Restoring action history must not replay submission');
-  await capture('09-app-action-history.png', '[data-genui-node="send"]');
+  await capture('09-app-action-history.png', '[data-genui-node="root/send"]');
   pass('restored interactive action values do not replay agent requests');
-  const form = '[data-genui-node="ownerForm"]';
+  const form = '[data-genui-node="root/ownerForm"]';
   const formButton = `${form} button[type="submit"]`;
   const beforeForm = rpc.filter(entry => entry.channel === 'wuu:turn-start').length;
-  await trustedType('input[data-genui-node="formOwner"]', '');
-  await wait(() => document.querySelector('input[data-genui-node="formOwner"]').value === '');
+  await trustedType('input[data-genui-node="root/ownerForm/formOwner"]', '');
+  await wait(() => document.querySelector('input[data-genui-node="root/ownerForm/formOwner"]').value === '');
   await trustedClick(formButton);
   await settle();
   assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, beforeForm, 'Invalid native forms cannot start a turn');
-  await trustedType('input[data-genui-node="formOwner"]', 'Engineering follow-up');
-  await wait(() => document.querySelector('input[data-genui-node="formOwner"]').validity.valid
-    && document.querySelector('input[data-genui-node="formOwner"]').value === 'Engineering follow-up');
+  await trustedType('input[data-genui-node="root/ownerForm/formOwner"]', 'Engineering follow-up');
+  await wait(() => document.querySelector('input[data-genui-node="root/ownerForm/formOwner"]').validity.valid
+    && document.querySelector('input[data-genui-node="root/ownerForm/formOwner"]').value === 'Engineering follow-up');
   await evaluate(target => document.querySelector(target).requestSubmit(), form);
   await settle();
   assert.equal(rpc.filter(entry => entry.channel === 'wuu:turn-start').length, beforeForm, 'requestSubmit without a native gesture cannot start a turn');
@@ -563,7 +559,7 @@ async function run() {
     const before = rpc.filter(entry => entry.channel === 'wuu:turn-start').length;
     if (method === 'click') await trustedClick(formButton);
     else {
-      await evaluate(() => document.querySelector('input[data-genui-node="formOwner"]').focus());
+      await evaluate(() => document.querySelector('input[data-genui-node="root/ownerForm/formOwner"]').focus());
       main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
       main.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
       main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
@@ -576,39 +572,49 @@ async function run() {
     await wait(selector => !document.querySelector(selector).matches(':disabled'), formButton);
   }
   await capture('10-app-native-form.png', form);
-  pass('native form click and Enter send once while invalid, canceled and programmatic submissions remain inert');
+  pass('version 3 source native form click and Enter send once while invalid, canceled and programmatic submissions remain inert');
   const devDir = path.join(fixture, 'dev-generative-ui');
   fs.cpSync(path.join(root, 'internal/plugin/bundled/generative-ui'), devDir, { recursive: true });
   const devManifest = JSON.parse(fs.readFileSync(path.join(devDir, 'plugin.json'), 'utf8'));
   devManifest.defaultEnabled = true;
   fs.writeFileSync(path.join(devDir, 'plugin.json'), JSON.stringify(devManifest));
   fs.writeFileSync(path.join(devDir, 'package.json'), JSON.stringify({ name: 'generative-ui-reload-fixture', private: true, type: 'module', scripts: { build: 'node -e "process.exit(0)"' } }));
-  const desktopSource = fs.readFileSync(path.join(devDir, 'desktop.js'), 'utf8');
-  const observedSource = desktopSource.replace('export async function activate(api) {', `export async function activate(api) {
-    const base = api;
-    api = { ...api, registerRenderer(definition) { return base.registerRenderer({ ...definition, render(props) {
-      window.__genuiReproHost = props.host;
-      window.__genuiReproGeneration = 'initial';
-      return base.react.createElement(definition.render, props);
-    } }); } };
-  `);
-  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource);
+  // Wrap the public export instead of patching generated source text: the
+  // production entry may be bundled/minified without retaining function names.
+  fs.copyFileSync(path.join(devDir, 'desktop.js'), path.join(devDir, 'desktop-implementation.js'));
+  const desktopFixture = (generation, failure = false) => require('esbuild').buildSync({
+    stdin: { resolveDir: devDir, sourcefile: 'desktop-fixture.js', contents: `
+      import { activate as activateImplementation } from './desktop-implementation.js';
+      export async function activate(api) {
+        if (${JSON.stringify(failure)}) throw new Error('Synthetic desktop activation failure');
+        return activateImplementation({ ...api, registerRenderer(definition) {
+          return api.registerRenderer({ ...definition, render(props) {
+            window.__genuiReproHost = props.host;
+            window.__genuiReproGeneration = ${JSON.stringify(generation)};
+            return api.react.createElement(definition.render, props);
+          } });
+        } });
+      }
+    ` },
+    bundle: true, platform: 'browser', format: 'esm', write: false,
+  }).outputFiles[0].contents;
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), desktopFixture('initial'));
   const publish = () => childProcess.execFileSync(process.env.WUU_DESKTOP_CORE, ['plugin', 'dev', '--watch=false', devDir], {
     env: { ...process.env, WUU_NODE_EXECUTABLE: process.execPath }, encoding: 'utf8', timeout: 30000,
   });
   console.log(publish());
   await wait(() => Boolean(window.__genuiReproHost));
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-busy') === 'false', '.plugin-genui-program');
-  await trustedType('input[data-genui-node="ownerInput"]', 'Persisted before failed replacement');
+  await trustedType('input[data-genui-node="root/ownerInput"]', 'Persisted before failed replacement');
   await until(() => rpc.some(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0]?.id?.startsWith('plugin:dev:') && entry.args[0].value.includes('Persisted before failed replacement')), 'development renderer storage written');
   const prior = rpc.findLast(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0]?.id?.startsWith('plugin:dev:'));
   await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
-  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace('export async function activate(api) {', "export async function activate(api) { throw new Error('Synthetic desktop activation failure');"));
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), desktopFixture('failed', true));
   console.log(publish());
   await until(() => errors.some(error => String(error).includes('Synthetic desktop activation failure')), 'failed desktop replacement observed');
   const registrationFailure = await until(() => rpc.find(entry => entry.channel === 'wuu:plugin-desktop-activation' && entry.completed && entry.args[0]?.status === 'failed'), 'failed registration reaches production diagnostics');
   const beforeFailedEdit = rpc.length;
-  await trustedType('input[data-genui-node="ownerInput"]', 'Edited retained renderer');
+  await trustedType('input[data-genui-node="root/ownerInput"]', 'Edited retained renderer');
   const retainedWrite = await until(() => rpc.slice(beforeFailedEdit).find(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0].value.includes('Edited retained renderer')), 'retained renderer storage written');
   assert.notEqual(retainedWrite.args[0].fingerprint, prior.args[0].fingerprint, 'State uses the currently approved same-source package');
   await catalog();
@@ -617,12 +623,12 @@ async function run() {
   await capture('11-app-failed-replacement.png', '[data-wuu-component="plugin-settings"]');
   await click('[data-testid="plugin-page-back"]');
   await conversation();
-  await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Edited retained renderer');
+  await wait(() => document.querySelector('input[data-genui-node="root/ownerInput"]')?.value === 'Edited retained renderer');
   await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
-  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace("window.__genuiReproGeneration = 'initial'", "window.__genuiReproGeneration = 'recovered'"));
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), desktopFixture('recovered'));
   console.log(publish());
   await wait(() => window.__genuiReproGeneration === 'recovered');
-  await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Edited retained renderer');
+  await wait(() => document.querySelector('input[data-genui-node="root/ownerInput"]')?.value === 'Edited retained renderer');
   const beforeRetired = rpc.length;
   const oldStorageError = await evaluate(async () => {
     try { await window.__genuiRetiredHost.setStorage('stale-write', 'forbidden', 'user'); return null; }
