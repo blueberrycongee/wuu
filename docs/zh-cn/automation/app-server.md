@@ -43,6 +43,12 @@ wuu app-server --workdir /path/to/project
 Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束。用 `run/interrupt`
 停止运行；关闭由客户端启动的服务前，先请求 `shutdown`。
 
+内置匿名 worker 的进程退出时，如果已保存候选终态但最终结果尚未确认，恢复会报告
+`interrupted` 和未确认原因，并保留候选证据；宿主不会根据该候选结果自动重跑 worker
+或唤醒父任务。工具效果可能已经发生，请检查证据后再明确请求续接；续接还需要可用的
+worker 保存快照。旧版宿主无法识别未确认标记，应先用新版完成恢复，再让旧版访问相同
+worker 状态。这里处理的是进程退出，不保证断电持久性，也不能确定外部存储提交的回执。
+
 ## 归档正在运行的会话
 
 `thread/archive` 接收 `thread_id` 和 `archived`。归档运行中的会话需要用户明确确认，

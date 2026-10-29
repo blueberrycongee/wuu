@@ -26,6 +26,9 @@ func (s *Server) forwardAgentNotifications(binding *runtime.State, threadID stri
 				return
 			}
 			if subagent.IsTerminal(n.Status) {
+				if n.SnapshotOnly {
+					continue
+				}
 				// This is an idempotent fallback for controls that completed before
 				// the reliable terminal finalizer was attached. In the normal path
 				// AgentControl already ran the same finalizer synchronously while it
@@ -59,6 +62,7 @@ type agentTerminalFinalizationKey struct {
 	agentID     string
 	status      subagent.Status
 	completedAt int64
+	generation  string
 }
 
 const (
@@ -86,6 +90,7 @@ func (s *Server) finalizeAgentTerminalWithCompleter(binding *runtime.State, thre
 		agentID:     agentID,
 		status:      n.Status,
 		completedAt: n.Snapshot.CompletedAt.UnixNano(),
+		generation:  n.TerminalGeneration,
 	}
 	s.agentTerminalFinalizationMu.Lock()
 	if s.agentTerminalFinalizations == nil {
@@ -162,7 +167,7 @@ func (s *Server) finalizeAgentTerminalWithCompleter(binding *runtime.State, thre
 			ThreadID: threadID,
 			Message:  mailboxMessage,
 		})
-		if control != nil {
+		if control != nil && !n.TerminalUnconfirmed {
 			resultID := control.AgentResultDeliveryID(n.Snapshot)
 			msg := control.AgentCompletionChatMessage(n.Snapshot, agentthread.RootPath)
 			consumer, _ := control.AgentResultDeliveryConsumer(resultID)

@@ -29,6 +29,9 @@ const (
 // infer it from a later best-effort notification or a mutable manager entry.
 type workerTerminalFinalizationRecord struct {
 	SchemaVersion string                             `json:"schema_version"`
+	Phase         string                             `json:"phase,omitempty"`
+	Generation    string                             `json:"generation,omitempty"`
+	Unconfirmed   bool                               `json:"unconfirmed,omitempty"`
 	AgentID       string                             `json:"agent_id"`
 	Status        subagent.Status                    `json:"status"`
 	Snapshot      workerTerminalFinalizationSnapshot `json:"snapshot"`
@@ -127,7 +130,7 @@ func (r workerTerminalFinalizationRecord) notification() subagent.Notification {
 	if strings.TrimSpace(r.Snapshot.Error) != "" {
 		snap.Error = errors.New(r.Snapshot.Error)
 	}
-	return subagent.Notification{AgentID: r.AgentID, Status: r.Status, Snapshot: snap}
+	return subagent.Notification{AgentID: r.AgentID, Status: r.Status, Snapshot: snap, TerminalGeneration: r.Generation, TerminalUnconfirmed: r.Unconfirmed}
 }
 
 func workerTerminalFinalizationPath(rootDir, workerID string) string {
@@ -141,10 +144,17 @@ func workerTerminalFinalizationPath(rootDir, workerID string) string {
 }
 
 func (c *AgentControl) persistWorkerTerminalFinalization(n subagent.Notification) error {
+	return c.persistWorkerTerminalPhase(n, "")
+}
+
+func (c *AgentControl) persistWorkerTerminalPhase(n subagent.Notification, phase string) error {
 	if c == nil || strings.TrimSpace(c.harnessDir) == "" {
 		return nil
 	}
 	rec := newWorkerTerminalFinalizationRecord(n)
+	rec.Phase = phase
+	rec.Generation = n.TerminalGeneration
+	rec.Unconfirmed = n.TerminalUnconfirmed
 	if rec.AgentID == "" {
 		return errors.New("persist worker terminal finalization: agent id is required")
 	}
@@ -160,6 +170,53 @@ func (c *AgentControl) persistWorkerTerminalFinalization(n subagent.Notification
 		return fmt.Errorf("write worker terminal finalization %s: %w", rec.AgentID, err)
 	}
 	return nil
+}
+
+var errTerminalDraftMismatch = errors.New("terminal intent does not match the prepared generation")
+
+func unconfirmedTerminalDeliveryID(n subagent.Notification) string {
+	base := agentResultDeliveryID(n.Snapshot)
+	if base == "" || n.TerminalGeneration == "" {
+		return base
+	}
+	sum := sha256.Sum256([]byte(base + "\x00" + n.TerminalGeneration))
+	return "agent_result_" + hex.EncodeToString(sum[:12])
+}
+
+func (c *AgentControl) confirmWorkerTerminal(n subagent.Notification) error {
+	if c == nil || strings.TrimSpace(c.harnessDir) == "" {
+		return nil
+	}
+	if !n.TerminalPrepared || strings.TrimSpace(n.TerminalGeneration) == "" {
+		return errTerminalDraftMismatch
+	}
+	path := workerTerminalFinalizationPath(c.harnessDir, n.AgentID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var draft workerTerminalFinalizationRecord
+	if err := json.Unmarshal(data, &draft); err != nil {
+		return err
+	}
+	expected := newWorkerTerminalFinalizationRecord(n)
+	draft.Snapshot.StartedAt = draft.Snapshot.StartedAt.UTC()
+	draft.Snapshot.CompletedAt = draft.Snapshot.CompletedAt.UTC()
+	expected.Snapshot.StartedAt = expected.Snapshot.StartedAt.UTC()
+	expected.Snapshot.CompletedAt = expected.Snapshot.CompletedAt.UTC()
+	if draft.SchemaVersion != workerTerminalFinalizationSchema || draft.Phase != "draft" || draft.Generation != n.TerminalGeneration || draft.AgentID != expected.AgentID || draft.Status != expected.Status || draft.Snapshot != expected.Snapshot {
+		return errTerminalDraftMismatch
+	}
+	return c.persistWorkerTerminalFinalization(n)
+}
+
+// persistUnconfirmedTerminalEvidence preserves the original candidate before
+// its queue and terminal records can be acknowledged. It is content addressed
+// and retries always use the same bytes.
+func (c *AgentControl) persistUnconfirmedTerminalEvidence(data []byte) error {
+	digest := sha256.Sum256(data)
+	path := filepath.Join(c.harnessDir, "terminal-unknown", hex.EncodeToString(digest[:])+".json")
+	return securefs.WriteFileAtomic(path, data)
 }
 
 func (c *AgentControl) acknowledgeWorkerTerminalFinalization(workerID string) error {
@@ -249,14 +306,15 @@ func (c *AgentControl) retryWorkerTerminalStep(workerID, step string, allowDurab
 }
 
 // prepareWorkerTerminal is the first phase installed on subagent.Manager. It
-// runs before the final worker snapshot is persisted, making this exact
-// terminal generation the crash-recovery authority for every later phase.
+// runs before the final worker snapshot is persisted. The result may still
+// change if that snapshot fails, so a draft is a durable barrier but cannot be
+// delivered by recovery until the terminal observer confirms the outcome.
 // After YieldWorkerTerminalFinalizations a persist failure stops the manager's
 // prepare retries: the durable launch intent (queue payload) or startup task
 // reconciliation is then the restart recovery authority instead of a terminal
 // record this process can no longer write.
 func (c *AgentControl) prepareWorkerTerminal(n subagent.Notification) error {
-	err := c.persistWorkerTerminalFinalization(n)
+	err := c.persistWorkerTerminalPhase(n, "draft")
 	if err != nil && c.workerTerminalYieldRequested() {
 		return fmt.Errorf("%w: agent control yielded terminal finalizations: %v", subagent.ErrTerminalPrepareStopped, err)
 	}
@@ -431,6 +489,11 @@ func (c *AgentControl) scanPendingWorkerTerminals() {
 			providers.DebugLogf("agentcontrol: invalid terminal finalization %s: %v", entry.Name(), decodeErr)
 			continue
 		}
+		// Drafts are reconciled only after acquiring the worker lease. Unknown
+		// phases are retained as barriers for a newer implementation.
+		if rec.Phase != "" && rec.Phase != "draft" {
+			continue
+		}
 		expected := filepath.Base(workerTerminalFinalizationPath(c.harnessDir, rec.AgentID))
 		if entry.Name() != expected {
 			providers.DebugLogf("agentcontrol: terminal finalization %s does not match worker %s", entry.Name(), rec.AgentID)
@@ -509,13 +572,48 @@ func (c *AgentControl) startPendingWorkerTerminalRecovery(rec workerTerminalFina
 		if beforeRecovery != nil {
 			beforeRecovery(workerID)
 		}
+		// The directory scan is only a hint. Another execution can replace the
+		// record before this process acquires the lease, including replacing a
+		// final record with an unconfirmed draft for its next turn.
+		data, err := os.ReadFile(workerTerminalFinalizationPath(c.harnessDir, workerID))
+		if err != nil {
+			return
+		}
+		var current workerTerminalFinalizationRecord
+		if err := json.Unmarshal(data, &current); err != nil || current.SchemaVersion != workerTerminalFinalizationSchema || current.AgentID != workerID || (current.Phase != "" && current.Phase != "draft") || !subagent.IsTerminal(current.Status) {
+			return
+		}
+		if current.Phase == "draft" {
+			// The original owner no longer holds the worker lease. Its outcome
+			// was never confirmed: preserve the candidate output but expose the
+			// uncertainty as an interrupted finalization, not a completed result.
+			if err := c.persistUnconfirmedTerminalEvidence(data); err != nil {
+				return
+			}
+			n := current.notification()
+			n.TerminalGeneration = current.Generation
+			n.TerminalUnconfirmed = true
+			candidate := current.Status
+			n.Status, n.Snapshot.Status = subagent.StatusInterrupted, subagent.StatusInterrupted
+			if n.Snapshot.Error != nil {
+				n.Snapshot.Error = fmt.Errorf("terminal outcome was not confirmed (candidate %s); tool effects may already have occurred: %w", candidate, n.Snapshot.Error)
+			} else {
+				n.Snapshot.Error = fmt.Errorf("terminal outcome was not confirmed (candidate %s); tool effects may already have occurred", candidate)
+			}
+			if err := c.persistWorkerTerminalFinalization(n); err != nil {
+				return
+			}
+			current = newWorkerTerminalFinalizationRecord(n)
+			current.Generation = n.TerminalGeneration
+			current.Unconfirmed = true
+		}
 		// The lease was acquired after the earlier checks. If shutdown yielded
 		// while acquire was in progress, hand the durable intent back without
 		// invoking an external finalizer that may be about to retire.
 		if c.workerTerminalYieldRequested() {
 			return
 		}
-		if outcome := c.finalizeWorkerTerminalWithAck(rec.notification()); outcome == workerTerminalContinued {
+		if outcome := c.finalizeWorkerTerminalWithAck(current.notification()); outcome == workerTerminalContinued {
 			// A requires_report completion admitted its closing turn. That new
 			// generation owns the same lease and its normal terminal observer will
 			// release it; recovery must not expose the in-flight turn to contenders.

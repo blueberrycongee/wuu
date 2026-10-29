@@ -519,11 +519,11 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 			sa.Error = errors.Join(receiptErr, fmt.Errorf("worker panic: %v", r))
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
-			m.prepareTerminal(sa, StatusFailed)
+			preparedNotice, prepared := m.prepareTerminal(sa, StatusFailed)
 			if sa.historyPath != "" || sa.historyDocuments != nil {
 				_ = persistHistory(sa)
 			}
-			m.notify(sa, StatusFailed)
+			m.notifyTerminal(sa, preparedNotice, prepared)
 		}
 	}()
 
@@ -783,7 +783,7 @@ func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefa
 
 // finishTerminal is shared by a running turn and cancellation of a parked turn.
 func (m *Manager) finishTerminal(ctx context.Context, sa *SubAgent, finalStatus Status, nextHistory []providers.ChatMessage) {
-	m.prepareTerminal(sa, finalStatus)
+	preparedNotice, prepared := m.prepareTerminal(sa, finalStatus)
 
 	if sa.historyPath != "" || sa.historyDocuments != nil {
 		if persistErr := persistHistory(sa); persistErr != nil {
@@ -795,14 +795,14 @@ func (m *Manager) finishTerminal(ctx context.Context, sa *SubAgent, finalStatus 
 			// The failed persistence changes the terminal generation. Prepare that
 			// exact failure before a best-effort second snapshot write or terminal
 			// observer can expose it.
-			m.prepareTerminal(sa, finalStatus)
+			preparedNotice, prepared = m.prepareTerminal(sa, finalStatus)
 			_ = persistHistory(sa)
 		} else if sa.toolLedger != nil {
 			_ = sa.toolLedger.MarkProjected(context.WithoutCancel(ctx), toolInvocationIDs(nextHistory))
 		}
 	}
 
-	m.notify(sa, finalStatus)
+	m.notifyTerminal(sa, preparedNotice, prepared)
 }
 
 // Terminal-prepare retries are bounded so a persistently failing observer
@@ -819,26 +819,27 @@ const (
 // prepare retry loop stops immediately instead of waiting out its bound.
 var ErrTerminalPrepareStopped = errors.New("terminal prepare observer stopped")
 
-func (m *Manager) prepareTerminal(sa *SubAgent, status Status) {
+func (m *Manager) prepareTerminal(sa *SubAgent, status Status) (Notification, bool) {
 	if m == nil || sa == nil || !IsTerminal(status) {
-		return
+		return Notification{}, false
 	}
+	generation := rand.Text()
+	n := Notification{AgentID: sa.ID, Status: status, Snapshot: sa.Snapshot(), TerminalGeneration: generation}
 	var lastErr error
 	for attempt := 1; attempt <= terminalPrepareRetryAttempts; attempt++ {
 		m.mu.Lock()
 		prepare := m.terminalPrepare
 		m.mu.Unlock()
 		if prepare == nil {
-			return
+			return n, false
 		}
-		n := Notification{AgentID: sa.ID, Status: status, Snapshot: sa.Snapshot()}
 		lastErr = prepare(n)
 		if lastErr == nil {
-			return
+			return n, true
 		}
 		if errors.Is(lastErr, ErrTerminalPrepareStopped) {
 			providers.DebugLogf("subagent: terminal prepare for %s stopped: %v", sa.ID, lastErr)
-			return
+			return n, false
 		}
 		if attempt == 1 || attempt%10 == 0 {
 			providers.DebugLogf("subagent: prepare terminal intent for %s attempt %d: %v", sa.ID, attempt, lastErr)
@@ -846,6 +847,7 @@ func (m *Manager) prepareTerminal(sa *SubAgent, status Status) {
 		time.Sleep(terminalPrepareRetryDelay)
 	}
 	providers.DebugLogf("subagent: prepare terminal intent for %s abandoned after %d attempts: %v", sa.ID, terminalPrepareRetryAttempts, lastErr)
+	return n, false
 }
 
 func toolInvocationIDs(messages []providers.ChatMessage) []string {
@@ -936,8 +938,16 @@ func (m *Manager) notify(sa *SubAgent, status Status) error {
 	return m.notifySnapshot(sa, status, sa.Snapshot())
 }
 
+func (m *Manager) notifyTerminal(sa *SubAgent, n Notification, prepared bool) error {
+	return m.notifyWithGeneration(sa, n.Status, n.Snapshot, n.TerminalGeneration, prepared)
+}
+
 func (m *Manager) notifySnapshot(sa *SubAgent, status Status, snap SubAgentSnapshot) error {
-	n := Notification{AgentID: sa.ID, Status: status, Snapshot: snap}
+	return m.notifyWithGeneration(sa, status, snap, "", false)
+}
+
+func (m *Manager) notifyWithGeneration(sa *SubAgent, status Status, snap SubAgentSnapshot, generation string, prepared bool) error {
+	n := Notification{AgentID: sa.ID, Status: status, Snapshot: snap, TerminalGeneration: generation, TerminalPrepared: prepared}
 
 	m.mu.Lock()
 	listeners := append([]chan<- Notification(nil), m.listeners...)
@@ -965,7 +975,24 @@ func (m *Manager) BroadcastSnapshot(sa *SubAgent) {
 	if sa == nil {
 		return
 	}
-	m.notify(sa, sa.Snapshot().Status)
+	snap := sa.Snapshot()
+	if IsTerminal(snap.Status) {
+		// Usage/activity callbacks may arrive after the terminal outcome has
+		// been prepared. Preserve listener snapshots without re-entering the
+		// reliable terminal observer with an unprepared generation.
+		n := Notification{AgentID: sa.ID, Status: snap.Status, Snapshot: snap, SnapshotOnly: true}
+		m.mu.Lock()
+		listeners := append([]chan<- Notification(nil), m.listeners...)
+		m.mu.Unlock()
+		for _, ch := range listeners {
+			select {
+			case ch <- n:
+			default:
+			}
+		}
+		return
+	}
+	m.notifySnapshot(sa, snap.Status, snap)
 }
 
 func (m *Manager) notifyStream(sa *SubAgent, ev providers.StreamEvent) {
