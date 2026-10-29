@@ -128,6 +128,14 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 `agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
 
+### 替换单个提示词分段
+
+原生提示词提供者在主会话和 worker 结果的分段符合布局要求时，声明可选的 `wuu.prompt.sections.v1` 布局。装饰器可以调用 `promptService(host).assemble(request)`，再使用 `@wuu/plugin-sdk` 的 `await replacePromptSection(result, key, replacement)`。该方法返回新结果，保留其他分段及其元数据。[提示词分段装饰器](../../../examples/plugins/prompt-section-decorator.ts) 展示了如何替换 `environment`，同时保留委托提供者的其他提示词。
+
+将装饰器选为全局 `agent.prompt@1` 提供者，并将装饰器自身的 `agent.prompt@1` 依赖绑定到 `wuu.prompt.default`，绑定方式与前面的提供者部分扩展相同。也可以将多个装饰器依次绑定，每层都必须保留声明的布局。委托提供者缺失或替换失败时，请求会报错，不会回退到原生提供者。
+
+该布局以两个 LF 字节连接 UTF-8 分段内容；每个分段记录 UTF-8 字节数及 SHA-256 前 16 字节的小写十六进制值。替换前，方法会校验布局声明、非空且唯一的 key、元数据、分隔符、字节边界、哈希和完整内容；目标 key 必须存在，替换文本不能为空。结果会更新目标分段的长度和哈希。未声明布局或布局不兼容的结果会被拒绝；普通 `agent.prompt@1` 消费者仍可使用未声明该布局的提供者。提示词分段是行为指引，不能替代权限控制。
+
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
 这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
