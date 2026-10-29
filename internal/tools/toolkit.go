@@ -1734,7 +1734,7 @@ func (t *Toolkit) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, boo
 	if tool == nil {
 		return agent.ToolMetadata{}, false
 	}
-	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
+	info := t.toolInfoForCall(tool, call.Arguments)
 	orchestrator := false
 	if marker, ok := tool.(OrchestratorTool); ok {
 		orchestrator = marker.IsOrchestrator(call.Arguments)

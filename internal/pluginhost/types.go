@@ -43,6 +43,7 @@ type InitializeResult struct {
 
 // ToolRegistration is one model-visible tool owned by a plugin process.
 type ToolRegistration struct {
+	ReplacementContracts []string `json:"replacement_contracts,omitempty"`
 	// DirectOnly exposes control tools directly and rejects nested invocation.
 	DirectOnly      bool                       `json:"direct_only,omitempty"`
 	ID              string                     `json:"id"`
@@ -94,6 +95,16 @@ func validateToolRegistrations(tools []ToolRegistration) error {
 			return fmt.Errorf("duplicate tool id %q", tool.ID)
 		}
 		seen[tool.ID] = struct{}{}
+		if len(tool.ReplacementContracts) > 16 {
+			return fmt.Errorf("%s declares too many replacement contracts", prefix)
+		}
+		contracts := map[string]bool{}
+		for _, contract := range tool.ReplacementContracts {
+			if strings.TrimSpace(contract) == "" || len(contract) > 128 || strings.TrimSpace(contract) != contract || contracts[contract] {
+				return fmt.Errorf("%s has invalid replacement contract", prefix)
+			}
+			contracts[contract] = true
+		}
 		description := strings.TrimSpace(tool.Description)
 		if description == "" {
 			return fmt.Errorf("%s description is required", prefix)

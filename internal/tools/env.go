@@ -64,6 +64,14 @@ func (r *readFileState) delete(absPath string) {
 	delete(r.state, absPath)
 }
 
+func (r *readFileState) deleteIfUnchanged(absPath string, entry ReadFileEntry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if current, ok := r.state[absPath]; ok && current == entry {
+		delete(r.state, absPath)
+	}
+}
+
 func (r *readFileState) hasBeenRead(absPath string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

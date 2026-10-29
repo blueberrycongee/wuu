@@ -106,6 +106,12 @@ func ClassifyTool(tool Tool, args string) ToolClassification {
 	return classifyToolCall(tool, classifyToolKind(tool.Name()), args)
 }
 
+// NativeToolForCall identifies a host-owned operation selected by its input.
+// The host uses its original classification for policy and scheduling.
+type NativeToolForCall interface {
+	NativeToolForCall(args string) (Tool, bool)
+}
+
 // ToolAvailability reports live admission for generation-bound tools.
 type ToolAvailability interface{ ToolAvailable() bool }
 

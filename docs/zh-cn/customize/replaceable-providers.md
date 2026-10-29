@@ -116,7 +116,7 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
 
 
-## 替换网页搜索
+## 替换单个内置工具
 
 选择原生 `agent.tools@1` 注册表时，可以用受信任的插件工具替换 `web_search`，其他工具保留原实现。先安装并启用插件，再在可信用户的 agent 配置中填写实际的插件清单 ID 和声明的工具 ID；项目设置不能选择替代实现：
 
@@ -130,13 +130,19 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 }
 ```
 
-[合成搜索示例](../../../examples/plugins/synthetic-web-search.ts)可直接运行，用于说明插件编写；它返回固定的演示结果，并不进行真实搜索。使用 `wuu plugin dev` 安装后，将上方的 `example-search` 替换成 Wuu 返回的插件 ID。目前只支持 `web_search`。替代实现必须声明与原工具完全相同的输入 schema、freeform 和 direct-only 设置，不能是编排工具。插件描述以 `web_search` 名称暴露，插件自身的命名空间名称则隐藏。目标缺失、禁用或不兼容时会失败，不会回退；删除绑定是显式选择，后续准备的 generation 使用原生实现。
+[合成搜索示例](../../../examples/plugins/synthetic-web-search.ts)可直接运行，用于说明插件编写；它返回固定的演示结果，并不进行真实搜索。使用 `wuu plugin dev` 安装后，将上方的 `example-search` 替换成 Wuu 返回的插件 ID。目前支持 `web_search` 和下述受限的 `read_file` 文本契约。替代实现必须声明与原工具完全相同的输入 schema、freeform 和 direct-only 设置，不能是编排工具。插件描述以所选原生工具的名称暴露，插件自身的命名空间名称则隐藏。目标缺失、禁用或不兼容时会失败，不会回退；删除绑定是显式选择，后续准备的 generation 使用原生实现。
+
+对于 `read_file`，在同一 `tool_replacements` 映射中选择插件及工具。[本地文本读取示例](../../../examples/plugins/local-text-reader.ts)读取不超过 256 KiB 的真实本地文件；使用 `wuu plugin dev` 安装，并绑定其实际插件 ID 和工具 ID `read`。它是可信本地代码，运行在宿主路径检查边界之外。注册信息必须声明 `replacement_contracts: ["read_file.text.v1"]`、只读且非编排的 activity，并与原工具的输入 schema 和执行标记完全一致。每次新读取时，提供者收到路径、可选的从 1 开始的行偏移和行数限制，以及含 `cwd` 的认证回调上下文。它只能返回 `structured_content: {text, total_lines}`：`text` 是保留原始换行的完整所请求 UTF-8 行范围，`total_lines` 是源的总行数。宿主校验范围一致性和大小上限，为模型生成行号，并向 Code Mode 提供原始文本。响应无效或失败时调用报错，不切换到其他读取者。
+
+该契约仅支持本地普通文本文件；新图片、二进制和远程读取及插件自定义续读 token 均不支持。宿主在调用前执行原生路径及敏感文件检查；插件进程仍是受信任代码，这些检查不会自动限制其进程内操作。兼容原生格式的历史 `read_file` 续读和托管会话文件继续由宿主读取，即使插件已退役也一样，仍须通过原有权限检查。插件退役后，Code Mode 只暴露历史续读入口，新读取会失败。扩展返回的文本标记为 `source: "extension"`、`content_verified: false`，不会建立原生的活动文件新鲜度记录；成功读取后，同一文件的旧记录会失效。该记录是上下文信息，并不是编辑权限。提供者应在工具描述中向模型说明这些限制。
+
+运行 `node scripts/extension-read-e2e.mjs` 可验证独立进程及受控模型、直接和 Code Mode 调用、历史续读、权限和退役。该测试不证明任意提供者受到进程隔离，也不证明其文本与本地文件一致。
 
 成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
 
-如果会话设置了工具允许列表，必须同时允许 `web_search` 和该插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
+如果会话设置了工具允许列表，插件执行时必须同时允许所选原生工具名称和插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
 
-工具调度采用原工具和替代实现中更严格的活动声明，调用经过原工具策略与插件工具授权；禁用任一名称都会阻止执行。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
+工具调度采用原工具和替代实现中更严格的活动声明，插件执行经过原工具策略与插件工具授权；禁用任一名称都会阻止该执行。由宿主处理的 `read_file` 续读和托管文件调用使用原生工具授权，不依赖插件的可用性或授权。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
 
 运行 `node scripts/tool-replacement-e2e.mjs`，可验证打包 SDK 合成插件、受控模型、直接和 code mode 调用、worker 与侧会话、授权及 generation 更新。该测试不验证外部搜索服务、真实模型质量或界面呈现。
 

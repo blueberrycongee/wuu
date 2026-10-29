@@ -54,6 +54,12 @@ func (r *replacementTool) DeclaredCapability() (capability.Capability, bool) {
 	}
 	return "", false
 }
+func (r *replacementTool) NativeToolForCall(args string) (tools.Tool, bool) {
+	if r.Name() == "read_file" && r.toolkit.IsNativeReadRequest(args) {
+		return r.original, true
+	}
+	return nil, false
+}
 func (r *replacementTool) Classify(args string) tools.ToolClassification {
 	original := tools.ClassifyTool(r.original, args)
 	activity := r.registration.Activity
@@ -83,6 +89,21 @@ func (r *replacementTool) Execute(ctx context.Context, args string) (string, err
 	return result.TextProjection(), err
 }
 func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	var externalRead *tools.ExternalReadScope
+	if r.Name() == "read_file" {
+		var err error
+		externalRead, err = r.toolkit.PrepareExternalRead(ctx, call.Arguments)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		if externalRead.UseNative() {
+			original, ok := r.original.(tools.RichTool)
+			if !ok {
+				return toolresult.Result{}, fmt.Errorf("native read_file implementation unavailable")
+			}
+			return original.ExecuteResult(ctx, call.Arguments)
+		}
+	}
 	if r.toolkit.IsToolDisabled(r.publicName) {
 		return toolresult.Result{}, fmt.Errorf("plugin tool %q is disabled", r.publicName)
 	}
@@ -110,6 +131,12 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	result, err := r.executor.host.ExecuteTool(ctx, r.publicName, input)
 	if err != nil || result.IsError {
 		return result, err
+	}
+	if externalRead != nil {
+		if err := ctx.Err(); err != nil {
+			return toolresult.Result{}, err
+		}
+		return externalRead.Render(result)
 	}
 	text, err := validateSearchReplacement(result, call.Arguments)
 	if err != nil {
@@ -213,7 +240,7 @@ func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, 
 	replacements := make(map[string]func(tools.Tool) tools.Tool, len(bindings))
 	definitions := e.host.ToolDefinitions()
 	for name, binding := range bindings {
-		if name != "web_search" {
+		if name != "web_search" && name != "read_file" {
 			return fmt.Errorf("tool %q cannot be replaced", name)
 		}
 		var definition providers.ToolDefinition
@@ -235,6 +262,11 @@ func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, 
 		}
 		if registration.Activity != nil && registration.Activity.Orchestrator {
 			return fmt.Errorf("replacement for %q cannot be an orchestrator", name)
+		}
+		if name == "read_file" {
+			if err := validateExternalReadRegistration(registration); err != nil {
+				return err
+			}
 		}
 		definition.Name = name
 		replacements[name] = func(original tools.Tool) tools.Tool {
@@ -273,7 +305,7 @@ func validateToolReplacements(root string, host *pluginhost.Host, bindings map[s
 	}
 	replacements := make(map[string]func(tools.Tool) tools.Tool, len(bindings))
 	for name, binding := range bindings {
-		if name != "web_search" {
+		if name != "web_search" && name != "read_file" {
 			return fmt.Errorf("tool %q cannot be replaced", name)
 		}
 		tool, ok := host.DeclaredTool(binding.PluginID, binding.ToolID)
@@ -283,8 +315,27 @@ func validateToolReplacements(root string, host *pluginhost.Host, bindings map[s
 		if tool.Registration.Activity != nil && tool.Registration.Activity.Orchestrator {
 			return fmt.Errorf("replacement for %q cannot be an orchestrator", name)
 		}
+		if name == "read_file" {
+			if err := validateExternalReadRegistration(tool.Registration); err != nil {
+				return err
+			}
+		}
 		d := providers.ToolDefinition{Name: name, Description: tool.Registration.Description, InputSchema: tool.Registration.InputSchema, DirectOnly: tool.Registration.DirectOnly}
 		replacements[name] = func(original tools.Tool) tools.Tool { return &replacementTool{original: original, definition: d} }
 	}
 	return kit.SetNativeToolReplacements(replacements)
+}
+
+// read_file.text.v1 is a read-only extension text provider; old host cursors
+// and host-managed session artifacts retain their original native reader.
+func validateExternalReadRegistration(registration pluginhost.ToolRegistration) error {
+	if registration.Activity == nil || !registration.Activity.ReadOnly || registration.Activity.Orchestrator {
+		return fmt.Errorf("read_file replacement requires a read-only leaf")
+	}
+	for _, contract := range registration.ReplacementContracts {
+		if contract == "read_file.text.v1" {
+			return nil
+		}
+	}
+	return fmt.Errorf("read_file replacement requires read_file.text.v1")
 }

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Select a trusted text provider for `read_file` while preserving host-owned historical continuations and native read authorization.
+
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
 
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.

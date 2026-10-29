@@ -53,12 +53,13 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 	if err != nil || !managed || filepath.Clean(filepath.Dir(resolved)) != filepath.Clean(resultDir) || !archivedResultName.MatchString(filepath.Base(resolved)) || !pathWithinRoot(resultDir, resolved) {
 		return toolresult.Result{}, errors.New("continuation is not a current-session result archive")
 	}
-	if kit.IsToolDisabled("read_file") || !kit.SupportsTool("read_file") {
+	native := NewReadFileTool(kit.env)
+	exposure := kit.nativeReadExposure(native)
+	if kit.IsToolDisabled("read_file") || exposure == ToolExposureHidden {
 		return toolresult.Result{}, errors.New("result recovery requires read_file permission")
 	}
-	native := NewReadFileTool(kit.env)
 	call := providers.ToolCall{Name: "read_file", Arguments: args}
-	if err := kit.checkPermission(ctx, buildToolInfoForArgs(native, kit.toolExposure("read_file"), args), call); err != nil {
+	if err := kit.checkPermission(ctx, buildToolInfoForArgs(native, exposure, args), call); err != nil {
 		return toolresult.Result{}, fmt.Errorf("result recovery: %w", err)
 	}
 	if kit.env.sessionArtifactRoot == nil {
@@ -79,4 +80,19 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 		return toolresult.Result{}, err
 	}
 	return toolresult.FromText(page), nil
+}
+
+// Native read admission depends on its own surface, not extension health.
+func (t *Toolkit) nativeReadExposure(native Tool) ToolExposure {
+	if t.IsToolDisabled("read_file") {
+		return ToolExposureHidden
+	}
+	surface := t.activeCompiledSurface()
+	if surface.ProfileName == "" {
+		return ToolExposureDirect
+	}
+	if !activeSurfaceAllowsKnownTool(surface, native) {
+		return ToolExposureHidden
+	}
+	return activeSurfaceToolExposure(surface, "read_file")
 }
