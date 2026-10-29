@@ -247,6 +247,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Recheck remote read authorization after a direct replacement finishes before returning its content.
+
 - Keep managed session file reads and active-file freshness checks inside the session directory admitted for the conversation, even if its path is replaced while work is running. Relative links within that directory remain usable; absolute links are rejected.
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 

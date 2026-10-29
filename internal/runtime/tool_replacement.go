@@ -326,10 +326,28 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return toolresult.Result{}, err
 		}
 	}
+	authorizeRemote := func(settleCtx context.Context) (string, error) {
+		if !r.ToolAvailable() {
+			return "", fmt.Errorf("replacement for %q is unavailable", r.Name())
+		}
+		metadata, _ := r.executor.ToolMetadata(pluginCall)
+		if err := r.toolkit.AuthorizeRemoteTool(settleCtx, remoteEnv, pluginCall, metadata); err != nil {
+			return "", err
+		}
+		return r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, call)
+	}
 	if result.IsError {
 		if externalRead != nil {
 			if len(result.Content) != 1 || result.Content[0].Type != toolresult.ContentTypeText {
 				return toolresult.Result{}, fmt.Errorf("external read_file returned an invalid error result")
+			}
+			if remoteRead && remoteCompleted.Load() {
+				if _, err := authorizeRemote(ctx); err != nil {
+					return toolresult.Result{}, err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return toolresult.Result{}, err
 			}
 			return toolresult.FromErrorText(result.Content[0].Text), nil
 		}
@@ -361,17 +379,13 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return rendered, err
 		}
 		if !useSettlement {
-			return rendered, nil
+			if _, err := authorizeRemote(ctx); err != nil {
+				return toolresult.Result{}, err
+			}
+			return rendered, ctx.Err()
 		}
 		commit := func(settleCtx context.Context) error {
-			if !r.ToolAvailable() {
-				return fmt.Errorf("replacement for %q is unavailable", r.Name())
-			}
-			metadata, _ := r.executor.ToolMetadata(pluginCall)
-			if err := r.toolkit.AuthorizeRemoteTool(settleCtx, remoteEnv, pluginCall, metadata); err != nil {
-				return err
-			}
-			mode, err := r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, call)
+			mode, err := authorizeRemote(settleCtx)
 			if err != nil {
 				return err
 			}

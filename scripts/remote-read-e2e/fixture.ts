@@ -17,7 +17,8 @@ const plugin: RuntimePlugin = {
   const remote=await continueNativeTool(host);
   if(name==='fail-after.txt') throw Error('failure after native read');
   if(name==='bad-after.txt') return {result:{structured_content:{text:'broken',total_lines:-1}}};
-  if(name==='after-pause.txt' || name==='cancel-after.txt') await fetch(readFileSync(new URL('./control.txt',import.meta.url),'utf8'));
+  if(name==='after-pause.txt' || name==='cancel-after.txt' || name==='error-after-pause.txt') await fetch(readFileSync(new URL('./control.txt',import.meta.url),'utf8'));
+  if(name==='error-after-pause.txt') return {result:{is_error:true,content:[{type:'text',text:String((remote.structured_content as {text:string}).text)}]}};
   if(name==='duplicate.txt') {
    let rejected=false;
    try {await continueNativeTool(host);} catch {rejected=true;}
