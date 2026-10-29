@@ -2,17 +2,42 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-type generationModelSelection struct{ provider, model string }
+var ErrStaleModelPublication = errors.New("model runtime changed before publication")
+
+type ResolvedModelPublication struct {
+	RuleProviderName   string
+	RuleProviderConfig config.ProviderConfig
+	Selection          modelvariant.Selection
+	Roles              modelroles.Set
+	Explicit           bool
+}
+
+type generationModelSelection struct {
+	basisVersion    uint64
+	provider, model string
+	permissions     *config.ResolvedPermissions
+	resolved        *ResolvedModelPublication
+	expectedConfig  *config.Config
+}
+
+type generationToolLoading struct {
+	preference, mode config.ToolLoadingMode
+	search, native   bool
+	catalog          string
+}
 
 type generationModelBindings struct {
 	selection    *generationModelSelection
@@ -57,9 +82,15 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 		models.main, models.worker, models.title, models.config = client, client, client, cfg
 		return nil
 	}
-	providerName, model := s.ProviderName, s.Model
+	var providerName, model string
 	if g.modelSelection != nil {
 		providerName, model = g.modelSelection.provider, g.modelSelection.model
+	} else {
+		basis, captureErr := s.CaptureAdvancedRuntime()
+		if captureErr != nil {
+			return captureErr
+		}
+		providerName, model = basis.ProviderName, basis.Model
 	}
 	provider, name, err := cfg.ResolveProvider(providerName)
 	if err != nil {
@@ -68,6 +99,24 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: name, ProviderConfig: provider, Model: model, Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant})
 	if err != nil {
 		return err
+	}
+	if selection := g.modelSelection; selection != nil && selection.resolved != nil {
+		expected, compareErr := s.applyRuntimeConfig(*selection.expectedConfig)
+		if compareErr != nil {
+			return compareErr
+		}
+		if !reflect.DeepEqual(cfg, expected) {
+			return ErrStaleModelPublication
+		}
+		resolved := selection.resolved
+		roles = cloneStateModels(StateModels{Roles: resolved.Roles}).Roles
+		if resolved.Explicit {
+			roles.Main.APIModel = modelcatalog.APIModel(resolved.RuleProviderConfig, model)
+			roles.Main.RuleProvider = resolved.RuleProviderName
+			roles.Main.RuleProviderConfig = resolved.RuleProviderConfig
+			roles.Main.LegacyEffort, roles.Main.Variant = resolved.Selection.LegacyEffort, resolved.Selection.Variant
+			roles.Main.ProviderOptions = modelvariant.CloneOptions(resolved.Selection.ProviderOptions)
+		}
 	}
 	build := func(role modelroles.Selection) (providers.StreamClient, error) {
 		client, err := selectedRouteClient(g.host, role.RuleProviderConfig, role.Provider, providerfactory.Bindings{Credentials: g.credentials, ChatGPT: g.chatGPTManager})
@@ -90,7 +139,12 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 		return err
 	}
 	models.roles, models.config = roles, cfg
-	g.hooks = buildHookDispatcher(g.settings, g.active, models.title, s.Model, nil)
+	if g.modelSelection != nil {
+		preference := cfg.Agent.ToolLoadingPreference()
+		mode, search, native := resolveToolLoadingModeForProvider(preference, roles.Main.RuleProviderConfig, roles.Main.APIModel, roles.Main.ProviderOptions)
+		g.modelToolLoading = &generationToolLoading{preference: preference, mode: mode, search: search, native: native}
+	}
+	g.hooks = buildHookDispatcher(g.settings, g.active, models.title, model, nil)
 	return nil
 }
 
@@ -114,6 +168,7 @@ func (s *Session) applyGenerationModels(models *generationModelBindings) {
 		}
 	}
 	s.ModelRoles = models.roles
+	s.ProjectModels = models.config.Agent.ProjectModels
 	s.ModelBudget = ResolveModelBudget(s.Model, models.roles.Main.RuleProviderConfig, models.config.Agent.MaxContextTokens)
 	s.WorkerModelBudget = ResolveModelBudget(models.roles.Worker.Model, models.roles.Worker.RuleProviderConfig, models.config.Agent.MaxContextTokens)
 	if runner := s.StreamRunner; runner != nil {
@@ -134,11 +189,36 @@ func (s *Session) applyGenerationModels(models *generationModelBindings) {
 // RefreshModelConfiguration prepares the saved provider configuration without
 // changing live selection. Selection and clients publish with the generation;
 // existing consumers continue using their captured configuration and clients.
-func (s *Session) RefreshModelConfiguration(cfg config.Config, provider, model string) error {
-	candidate, err := s.PreflightExtensions(cfg)
+func (s *Session) RefreshModelConfiguration(cfg config.Config, provider, model string, permissions ...config.ResolvedPermissions) error {
+	return s.refreshResolvedModelConfiguration(cfg, provider, model, nil, permissions...)
+}
+
+// RefreshResolvedModelConfiguration includes host-resolved dynamic model data
+// while preserving the selected configuration provider as the authority.
+func (s *Session) RefreshResolvedModelConfiguration(cfg config.Config, provider, model string, resolved ResolvedModelPublication, permissions ...config.ResolvedPermissions) error {
+	resolved.Roles = cloneStateModels(StateModels{Roles: resolved.Roles}).Roles
+	resolved.Selection.ProviderOptions = modelvariant.CloneOptions(resolved.Selection.ProviderOptions)
+	return s.refreshResolvedModelConfiguration(cfg, provider, model, &resolved, permissions...)
+}
+
+func (s *Session) refreshResolvedModelConfiguration(cfg config.Config, provider, model string, resolved *ResolvedModelPublication, permissions ...config.ResolvedPermissions) error {
+	basisVersion := s.runtimePublicationVersion.Load()
+	preparation, err := s.preparePluginCatalog(cfg, discoverPlugins(s.RootDir, s.WuuHome), nil, nil, startPluginClient)
 	if err != nil {
 		return err
 	}
-	candidate.modelSelection = &generationModelSelection{provider: provider, model: model}
+	selection := &generationModelSelection{provider: provider, model: model, basisVersion: basisVersion, resolved: resolved}
+	if resolved != nil {
+		selection.expectedConfig = &cfg
+	}
+	if len(permissions) != 0 {
+		value := permissions[0]
+		selection.permissions = &value
+	}
+	preparation.modelSelection = selection
+	candidate, err := preparation.Build(context.Background())
+	if err != nil {
+		return err
+	}
 	return s.ActivatePluginGeneration(candidate, nil)
 }

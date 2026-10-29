@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -220,12 +221,14 @@ type Session struct {
 	// (Claude, Codex) register as they are added.
 	engines *agentengine.Registry
 	// Engine settings updates may run alongside thread creation and model clones.
-	engineSettingsMu   sync.Mutex
-	defaultEngineMu    sync.RWMutex
-	defaultEngine      agentengine.EngineID
-	pluginTransitionMu sync.Mutex
-	pluginGenerationMu sync.Mutex
-	pluginGeneration   *PluginGeneration
+	engineSettingsMu           sync.Mutex
+	defaultEngineMu            sync.RWMutex
+	defaultEngine              agentengine.EngineID
+	pluginTransitionMu         sync.Mutex
+	pluginGenerationMu         sync.Mutex
+	runtimePublicationVersion  atomic.Uint64
+	advancedPropagationVersion atomic.Uint64
+	pluginGeneration           *PluginGeneration
 	// Thread-model shadows release a reference without stopping the root host.
 	borrowedPluginGeneration bool
 	// mcpOAuth outlives individual connection managers, including retained turns.
@@ -3034,46 +3037,59 @@ func (s *Session) RefreshSystemPrompt(providerName, model string) (string, error
 	if s == nil {
 		return "", nil
 	}
+	// Snapshot and retain the graph before asking a selected prompt provider;
+	// providers may synchronously call back into state capture.
 	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	generation := s.pluginGeneration
-	prompt, err := s.refreshSystemPromptWithSkills(providerName, model, generation.filterSkills(s.Skills))
-	if err != nil {
-		return "", err
-	}
-	if generation != nil {
-		generation.revokedMu.Lock()
-		generation.systemPrompt = prompt
-		generation.revokedMu.Unlock()
-	}
-	return prompt, nil
-}
-
-// applyPluginGeneration already holds the session publication lock. Its caller
-// supplies the generation-filtered skills instead of recursively reading it.
-func (s *Session) refreshSystemPromptWithSkills(providerName, model string, discovered []skills.Skill) (string, error) {
 	if s.SafeMode {
+		s.pluginGenerationMu.Unlock()
 		return "", nil
 	}
+	generation := s.pluginGeneration
+	generation.retain()
+	version := s.runtimePublicationVersion.Load()
+	host, assembler, toolkit := s.PluginHost, s.systemPrompts, s.Toolkit
+	root, date, catalog := s.RootDir, s.SessionDate, s.DeferredToolCatalogPrompt
+	instructionFiles := append([]instructions.File(nil), s.InstructionFiles...)
+	discovered := generation.filterSkills(s.Skills)
 	var executor agent.ToolExecutor
 	if s.StreamRunner != nil {
 		executor = s.StreamRunner.Tools
 	}
+	s.pluginGenerationMu.Unlock()
+	defer s.releasePluginGeneration(generation)
 	surface, err := selectedToolSurface(context.Background(), executor)
 	if err != nil {
 		return "", err
 	}
-	if s.PluginHost == nil {
-		surface = activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt)
+	if host == nil {
+		surface = activeSurfaceWithDeferredToolCatalog(toolkit, catalog)
 	}
-	result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: providerName, Model: model, Surface: surface, Instructions: s.InstructionFiles, Skills: discovered}, s.systemPrompts)
+	result, err := assembleSelectedPrompt(context.Background(), host, promptservice.Request{Role: "main", CWD: root, Date: date, Provider: providerName, Model: model, Surface: surface, Instructions: instructionFiles, Skills: discovered}, assembler)
 	if err != nil {
 		return "", err
+	}
+	// A graph activation can call this provider synchronously. Never wait on
+	// that transition; refuse to overwrite either graph with an old prompt.
+	if !s.pluginTransitionMu.TryLock() {
+		return "", ErrStateGenerationChanged
+	}
+	defer s.pluginTransitionMu.Unlock()
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	if generation != s.pluginGeneration || version != s.runtimePublicationVersion.Load() {
+		return "", ErrStateGenerationChanged
 	}
 	s.BaseSystemPrompt, s.BaseSystemPromptSections = result.Content, result.Sections
 	if s.StreamRunner != nil {
 		s.StreamRunner.UpdateSystemPromptWithSections(result.Content, agentPromptSections(result.Sections))
 	}
+	if generation != nil {
+		generation.revokedMu.Lock()
+		generation.systemPrompt = result.Content
+		generation.promptSections = result.Sections
+		generation.revokedMu.Unlock()
+	}
+	s.runtimePublicationVersion.Add(1)
 	return result.Content, nil
 }
 

@@ -50,6 +50,7 @@ type PluginGeneration struct {
 	toolkit           *tools.Toolkit
 	codeMode          *codemode.Service
 	modelSelection    *generationModelSelection
+	modelToolLoading  *generationToolLoading
 	models            *generationModelBindings
 	id                string
 	state             *runtimeState
@@ -619,6 +620,7 @@ type PluginCatalogPreparation struct {
 	ownedRoots        []string
 	factories         []NativeProviderFactory
 	start             pluginClientStarter
+	modelSelection    *generationModelSelection
 }
 
 // Close discards a snapshot that has not been consumed by Build.
@@ -736,7 +738,18 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		}
 	}
 	active = availablePluginPackages(active, host)
-	systemPrompts, compactions, err := buildPluginAgentCapabilities(ctx, host, s.ProviderName, s.Model, s.RootDir)
+	var promptProvider, promptModel string
+	if p.modelSelection != nil {
+		promptProvider, promptModel = p.modelSelection.provider, p.modelSelection.model
+	} else {
+		basis, err := s.CaptureAdvancedRuntime()
+		if err != nil {
+			closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
+			return nil, errors.Join(err, closeErr)
+		}
+		promptProvider, promptModel = basis.ProviderName, basis.Model
+	}
+	systemPrompts, compactions, err := buildPluginAgentCapabilities(ctx, host, promptProvider, promptModel, s.RootDir)
 	if err != nil {
 		closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
 		return nil, errors.Join(err, closeErr)
@@ -748,6 +761,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		modelSelection:    p.modelSelection,
 		id:                generationID,
 		state:             kernel.state,
 		settings:          cfg,
@@ -798,7 +812,20 @@ func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 		}
 	}
 	if selectsRuntimeModule(host, sessionExecutionConsumer) {
-		result, err := assembleSelectedPrompt(context.Background(), host, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: s.ProviderName, Model: s.Model, Surface: surface, Instructions: s.InstructionFiles, Skills: generation.skills}, generation.systemPrompts)
+		var provider, model string
+		if generation.modelSelection != nil {
+			provider, model = generation.modelSelection.provider, generation.modelSelection.model
+			if generation.models != nil && generation.models.err == nil && generation.models.roles.Main.APIModel != "" {
+				model = generation.models.roles.Main.APIModel
+			}
+		} else {
+			basis, err := s.CaptureAdvancedRuntime()
+			if err != nil {
+				return err
+			}
+			provider, model = basis.ProviderName, basis.Model
+		}
+		result, err := assembleSelectedPrompt(context.Background(), host, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: provider, Model: model, Surface: surface, Instructions: s.InstructionFiles, Skills: generation.skills}, generation.systemPrompts)
 		if err != nil {
 			return err
 		}
@@ -863,9 +890,25 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	if candidate == nil || candidate.host == nil || candidate.hooks == nil {
 		return errors.New("plugin candidate generation is not initialized")
 	}
-	s.pluginTransitionMu.Lock()
+	if candidate.modelSelection != nil {
+		// A selected provider can reenter model configuration from its own
+		// activation callback. Do not wait on the transition that invoked it.
+		if !s.pluginTransitionMu.TryLock() {
+			closeErr := candidate.close()
+			s.persistRevocationReport(candidate)
+			return errors.Join(ErrStaleModelPublication, closeErr)
+		}
+	} else {
+		s.pluginTransitionMu.Lock()
+	}
 	defer s.pluginTransitionMu.Unlock()
 	s.pluginGenerationMu.Lock()
+	if selection := candidate.modelSelection; selection != nil && selection.basisVersion != s.runtimePublicationVersion.Load() {
+		s.pluginGenerationMu.Unlock()
+		closeErr := candidate.close()
+		s.persistRevocationReport(candidate)
+		return errors.Join(ErrStaleModelPublication, closeErr)
+	}
 	old := s.pluginGeneration
 	if old == nil {
 		old = s.capturePluginGeneration()
@@ -1284,11 +1327,21 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	if generation == nil {
 		return
 	}
+	s.runtimePublicationVersion.Add(1)
+	s.advancedPropagationVersion.Add(1)
 	s.Plugins = append([]pluginpkg.Plugin(nil), generation.plugins...)
 	s.ActivePlugins = append([]pluginpkg.Plugin(nil), generation.active...)
 	s.ExtensionSettings = generation.settings.Extensions
 	s.PluginHost = generation.host
 	s.applyGenerationModels(generation.models)
+	if selection := generation.modelSelection; selection != nil && selection.permissions != nil {
+		s.Permissions = *selection.permissions
+	}
+	if loading := generation.modelToolLoading; loading != nil {
+		s.ToolLoadingPreference, s.ToolLoadingMode = loading.preference, loading.mode
+		s.ToolSearchEnabled, s.NativeDeferredToolDiscovery = loading.search, loading.native
+		s.DeferredToolCatalogPrompt = loading.catalog
+	}
 	s.credentials, s.configClient, s.chatGPTManager, s.artifactClient, s.mcpOAuth = generation.credentials, generation.configClient, generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth
 	if generation.state != nil {
 		s.Documents, s.Sessions, s.InferenceJournalRuntime = generation.state.documents, generation.state.sessions, generation.state.journal
@@ -1300,6 +1353,9 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		if generation.tools != nil {
 			s.StreamRunner.Tools = generation.tools
 			s.Toolkit, s.CodeMode = generation.toolkit, generation.codeMode
+			if generation.modelToolLoading != nil {
+				s.StreamRunner.NativeDeferredToolDiscovery = generation.modelToolLoading.native
+			}
 		} else if generation.driverGateways != nil {
 			s.StreamRunner.Tools = nil
 			s.Toolkit, s.CodeMode = nil, nil
