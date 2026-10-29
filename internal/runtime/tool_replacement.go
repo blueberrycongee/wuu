@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/readcursor"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -90,13 +91,62 @@ func (r *replacementTool) Execute(ctx context.Context, args string) (string, err
 }
 func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	var externalRead *tools.ExternalReadScope
+	var resumed *pluginhost.ReadCursorState
+	var pagination bool
+	var path string
+	var providerArguments = call.Arguments
 	if r.Name() == "read_file" {
+		var input struct {
+			Path         string `json:"path"`
+			Continuation string `json:"continuation"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &input); err != nil {
+			return toolresult.Result{}, err
+		}
+		path = input.Path
 		var err error
 		allowImage := false
 		for _, contract := range r.registration.ReplacementContracts {
 			allowImage = allowImage || contract == "read_file.image.v1"
+			pagination = pagination || contract == "read_file.pagination.v1"
 		}
-		externalRead, err = r.toolkit.PrepareExternalRead(ctx, call.Arguments, allowImage)
+		prepareArguments := call.Arguments
+		if strings.HasPrefix(input.Continuation, readcursor.Prefix) {
+			if !pagination {
+				return toolresult.Result{}, fmt.Errorf("external read continuation unavailable")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(call.Arguments), &fields); err != nil || len(fields) != 1 {
+				return toolresult.Result{}, fmt.Errorf("external read continuation must be used alone")
+			}
+			actorID, actorPath := r.toolkit.ExecutionActor()
+			owner := pluginhost.ReadCursorOwner{SessionID: r.executor.threadID, ActorID: actorID, ActorPath: actorPath, CWD: r.executor.cwd, PluginID: r.owner, ToolID: r.registration.ID}
+			state, err := r.executor.host.ResolveReadCursor(input.Continuation, owner)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			resumed = &state
+			path = state.Path
+			args := map[string]any{"path": state.Path, "offset": state.Offset}
+			if state.Limit > 0 {
+				args["limit"] = state.Limit
+			}
+			encoded, err := json.Marshal(args)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			prepareArguments = string(encoded)
+			if err := r.toolkit.AuthorizeExternalReadContinuation(ctx, providers.ToolCall{ID: call.ID, Name: call.Name, Arguments: prepareArguments}); err != nil {
+				return toolresult.Result{}, err
+			}
+			args["continuation"] = state.PluginCursor
+			encoded, err = json.Marshal(args)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			providerArguments = string(encoded)
+		}
+		externalRead, err = r.toolkit.PrepareExternalRead(ctx, prepareArguments, allowImage)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -123,6 +173,7 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 	}
 	pluginCall := call
 	pluginCall.Name = r.publicName
+	pluginCall.Arguments = providerArguments
 	metadata, _ := r.executor.ToolMetadata(pluginCall)
 	if err := r.toolkit.AuthorizeTool(ctx, pluginCall, metadata); err != nil {
 		return toolresult.Result{}, err
@@ -154,6 +205,23 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		return result, nil
 	}
 	if externalRead != nil {
+		if pagination {
+			var expected *int
+			if resumed != nil {
+				expected = &resumed.TotalLines
+			}
+			result, err := externalRead.RenderPaginated(ctx, result, expected, func(cursor string, next, limit, total int) (string, error) {
+				actorID, actorPath := r.toolkit.ExecutionActor()
+				return r.executor.host.IssueReadCursor(pluginhost.ReadCursorState{SessionID: r.executor.threadID, ActorID: actorID, ActorPath: actorPath, CWD: r.executor.cwd, PluginID: r.owner, ToolID: r.registration.ID, Path: path, Offset: next, Limit: limit, TotalLines: total, PluginCursor: cursor})
+			})
+			if err != nil || ctx.Err() != nil {
+				if err == nil {
+					err = ctx.Err()
+				}
+				return toolresult.Result{}, err
+			}
+			return result, nil
+		}
 		return externalRead.Render(ctx, result)
 	}
 	text, err := validateSearchReplacement(result, call.Arguments)

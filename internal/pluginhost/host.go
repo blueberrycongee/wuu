@@ -67,6 +67,7 @@ type RegisteredTool struct {
 
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
+	readCursors     readCursorStore
 	modelReceipts   sync.Map
 	modelMetrics    map[string]*modelMetricsDelivery
 	sensitiveOwners sync.Map
@@ -707,6 +708,7 @@ func (h *Host) retirePluginKeepingFailure(ctx context.Context, pluginID string, 
 		h.mu.Unlock()
 		return ClientShutdownOutcome{}, false
 	}
+	h.retireReadCursors(pluginID)
 	h.clients = keptClients
 	for name, tool := range h.tools {
 		if tool.PluginID == pluginID {
@@ -996,6 +998,7 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	done := h.shutdownDone
 	start := h.shutdown == nil
 	if start {
+		h.closeReadCursors()
 		h.shutdown = &hostShutdown{clients: h.orderedClientsLocked()}
 		h.tools = nil
 		h.toolOrder = nil
