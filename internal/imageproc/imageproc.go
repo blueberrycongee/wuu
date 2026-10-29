@@ -43,6 +43,9 @@ const (
 	// MaxInputBytes is a sanity guard, not a protocol requirement. Mirrors
 	// Codex's MAX_PROMPT_IMAGE_INPUT_BYTES.
 	MaxInputBytes = 1 << 30
+
+	// MaxDecodedPixels is the pixel limit used for untrusted GIF decoding and file reads.
+	MaxDecodedPixels = 40_000_000
 )
 
 // Mode controls how Encode handles the input image.
@@ -191,6 +194,13 @@ func encodeUncached(path string, data []byte, opts Options) (*Result, error) {
 	}
 
 	if format == formatGIF {
+		config, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			return nil, &Error{Kind: KindDecode, Path: path, Cause: err}
+		}
+		if uint64(config.Width)*uint64(config.Height) > MaxDecodedPixels {
+			return nil, &Error{Kind: KindTooLarge, Path: path, Reason: fmt.Sprintf("image dimensions %dx%d exceed %d pixels", config.Width, config.Height, MaxDecodedPixels)}
+		}
 		animated, err := isAnimatedGIF(data)
 		if err != nil {
 			return nil, &Error{Kind: KindDecode, Path: path, Reason: "decode GIF", Cause: err}
@@ -463,9 +473,87 @@ func max64(a, b uint32) uint32 {
 // isAnimatedGIF returns true when the GIF has more than one frame. Mirrors
 // Codex's "non-animated GIF support only" stance.
 func isAnimatedGIF(data []byte) (bool, error) {
-	g, err := gif.DecodeAll(bytes.NewReader(data))
-	if err != nil {
-		return false, err
+	// Walk GIF container blocks without decoding their compressed pixels. A
+	// full DecodeAll retains each frame before it can reject animation, letting
+	// a small input allocate memory proportional to the total frame count.
+	if len(data) < 13 || (string(data[:6]) != "GIF87a" && string(data[:6]) != "GIF89a") {
+		return false, errors.New("invalid GIF header")
 	}
-	return len(g.Image) > 1, nil
+	pos := 13
+	if data[10]&0x80 != 0 {
+		pos += 3 * (1 << ((data[10] & 7) + 1))
+	}
+	if pos > len(data) {
+		return false, io.ErrUnexpectedEOF
+	}
+	skipBlocks := func() error {
+		for {
+			if pos >= len(data) {
+				return io.ErrUnexpectedEOF
+			}
+			size := int(data[pos])
+			pos++
+			if size == 0 {
+				return nil
+			}
+			if size > len(data)-pos {
+				return io.ErrUnexpectedEOF
+			}
+			pos += size
+		}
+	}
+	seen := false
+	for pos < len(data) {
+		marker := data[pos]
+		pos++
+		switch marker {
+		case 0x3b:
+			if !seen {
+				return false, errors.New("GIF contains no image")
+			}
+			return false, nil
+		case 0x21:
+			if pos >= len(data) {
+				return false, io.ErrUnexpectedEOF
+			}
+			label := data[pos]
+			pos++
+			// Match the standard decoder's recognized extension types.
+			if label != 0x01 && label != 0xf9 && label != 0xfe && label != 0xff {
+				return false, errors.New("unknown GIF extension")
+			}
+			if label == 0xf9 && (len(data)-pos < 6 || data[pos] != 4 || data[pos+5] != 0) {
+				return false, errors.New("invalid GIF graphic control extension")
+			}
+			if label == 0x01 && (pos >= len(data) || data[pos] != 12) {
+				return false, errors.New("invalid GIF text extension")
+			}
+			if err := skipBlocks(); err != nil {
+				return false, err
+			}
+		case 0x2c:
+			if seen {
+				return true, nil
+			}
+			seen = true
+			if len(data)-pos < 9 {
+				return false, io.ErrUnexpectedEOF
+			}
+			packed := data[pos+8]
+			pos += 9
+			if packed&0x80 != 0 {
+				pos += 3 * (1 << ((packed & 7) + 1))
+			}
+			if pos >= len(data) {
+				return false, io.ErrUnexpectedEOF
+			}
+			pos++ // LZW minimum code size.
+			if err := skipBlocks(); err != nil {
+				return false, err
+			}
+		default:
+			return false, errors.New("invalid GIF block")
+		}
+	}
+	return false, io.ErrUnexpectedEOF
 }
