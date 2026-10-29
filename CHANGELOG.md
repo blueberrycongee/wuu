@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Allow trusted text readers to transform reads from a pinned remote workspace using an authorized, one-use native continuation.
+
 - Allow trusted text reader replacements to paginate using authenticated, generation-bound continuation tokens.
 
 - Let trusted `read_file` replacements opt in to bounded image responses that use the native image processing and model projection paths.
@@ -17,6 +19,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Select a trusted text provider for `read_file` while preserving host-owned historical continuations and native read authorization.
 
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
+- Let a selected web search replacement continue its original native search once with the same arguments and authorization, then publish its validated final evidence.
 - Add an optional OpenDesign Presets plugin with a searchable, revision-pinned library of design systems, templates, workflows, craft references and media prompts.
 
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.

@@ -62,6 +62,31 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 	return result, nil
 }
 
+// ExecuteUnobservedRead requires an explicitly negotiated worker capability;
+// older workers must not silently record the delegated read as model-visible.
+func (e *Environment) ExecuteUnobservedRead(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
+	if request.Call.Name != "read_file" {
+		return toolresult.Result{}, errors.New("unobserved continuation requires read_file")
+	}
+	client, err := e.connect(ctx)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	if !client.unobservedRead {
+		return toolresult.Result{}, errors.New("execution worker does not support unobserved reads")
+	}
+	request.SuppressReadObservation = true
+	data, err := client.Call(ctx, "execute", request)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	var result toolresult.Result
+	if err = json.Unmarshal(data, &result); err != nil {
+		return result, fmt.Errorf("decode execution result: %w", err)
+	}
+	return result, nil
+}
+
 func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -142,6 +167,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
+	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err

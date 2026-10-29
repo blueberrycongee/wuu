@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -21,6 +22,25 @@ import (
 // explicit native context to the common process scope. External dispatch
 // supplies pluginProcessScopeKey directly and never creates a Toolkit.
 type pluginProcessToolkitKey struct{}
+
+type remoteProcessBindingKey struct{}
+type remoteProcessBinding struct {
+	root, backend, identity, actor, actorPath string
+	executor                                  executionenv.Executor
+}
+
+func validateRemoteProcessBinding(kit *tools.Toolkit, binding remoteProcessBinding) error {
+	env, ok := kit.ExecutionEnvironment().(interface {
+		Root() string
+		Backend() string
+		Identity() string
+	})
+	actor, actorPath := kit.ExecutionActor()
+	if !ok || env.Root() != binding.root || env.Backend() != binding.backend || env.Identity() != binding.identity || actor != binding.actor || actorPath != binding.actorPath {
+		return errors.New("remote plugin execution scope changed")
+	}
+	return nil
+}
 
 type pluginProcessStart struct {
 	Key          string `json:"key"`
@@ -263,10 +283,21 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		processScope, _ := scope.Context.Value(pluginProcessScopeKey{}).(*tools.ProcessScope)
 		if processScope == nil {
 			if kit, ok := scope.Context.Value(pluginProcessToolkitKey{}).(*tools.Toolkit); ok {
+				if binding, ok := scope.Context.Value(remoteProcessBindingKey{}).(remoteProcessBinding); ok {
+					if err := validateRemoteProcessBinding(kit, binding); err != nil {
+						return nil, serviceError("invalid_execution_scope", err.Error())
+					}
+				}
 				var err error
 				processScope, err = kit.PluginProcessScope()
 				if err != nil {
 					return nil, err
+				}
+				if binding, ok := scope.Context.Value(remoteProcessBindingKey{}).(remoteProcessBinding); ok {
+					processScope, err = processScope.WithExecutionEnvironment(binding.executor, binding.actor, binding.actorPath)
+					if err != nil {
+						return nil, serviceError("invalid_execution_scope", err.Error())
+					}
 				}
 			}
 		}

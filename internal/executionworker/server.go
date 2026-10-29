@@ -32,19 +32,20 @@ type actor struct {
 }
 
 type Server struct {
-	code          *codemode.Service
-	token         string
-	requireToken  bool
-	mu            sync.Mutex
-	init          *executionenv.Init
-	actors        map[string]*actor
-	artifactRoots *tools.SessionArtifactManager
-	processes     *process.Manager
-	exports       map[string]exportFile
+	code            *codemode.Service
+	token           string
+	requireToken    bool
+	mu              sync.Mutex
+	init            *executionenv.Init
+	actors          map[string]*actor
+	actorReadOwners map[string]*tools.Toolkit
+	artifactRoots   *tools.SessionArtifactManager
+	processes       *process.Manager
+	exports         map[string]exportFile
 }
 
 func New() *Server {
-	return &Server{actors: make(map[string]*actor), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
+	return &Server{actors: make(map[string]*actor), actorReadOwners: make(map[string]*tools.Toolkit), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
 }
 
 func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
@@ -85,7 +86,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -105,7 +106,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.UnobservedReadCapability}})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -138,6 +139,12 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			return nil, err
 		}
 
+		if request.SuppressReadObservation {
+			if request.Call.Name != "read_file" {
+				return nil, errors.New("unobserved mode requires read_file")
+			}
+			ctx = toolctx.WithUnobservedRead(ctx)
+		}
 		result, err := a.kit.ExecuteEnvironmentResult(ctx, request.Call)
 		if err != nil {
 			return nil, err
@@ -197,6 +204,14 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 	kit.SetFileScopeRoots([]string{s.init.Root})
 	kit.SetGitAttributionEnabled(attribution)
 	kit.SetArtifactPublisher(s.publish)
+	if owner := s.actorReadOwners[id]; owner != nil {
+		if err := kit.ShareWorkerReadState(owner); err != nil {
+			_ = releaseArtifacts()
+			return nil, err
+		}
+	} else {
+		s.actorReadOwners[id] = kit
+	}
 	a := &actor{kit: kit, releaseArtifacts: releaseArtifacts}
 	s.actors[key] = a
 	return a, nil
@@ -213,6 +228,7 @@ func (s *Server) Close() error {
 		}
 		delete(s.actors, key)
 	}
+	clear(s.actorReadOwners)
 	for token, file := range s.exports {
 		_ = file.file.Close()
 		_ = os.Remove(file.file.Name())

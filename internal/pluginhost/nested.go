@@ -21,3 +21,9 @@ func KernelInvokeToolDescriptor() ServiceDescriptor {
 		Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: "execution.invoke-tool.input.v1", OutputSchema: "execution.invoke-tool.output.v1"}},
 	}
 }
+
+// KernelNativeToolContinuationDescriptor grants an admitted replacement one
+// attempt to continue its original host-bound native invocation.
+func KernelNativeToolContinuationDescriptor() ServiceDescriptor {
+	return ServiceDescriptor{Name: "execution.native-tool-continuation", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: "execution.native-tool-continuation.input.v1", OutputSchema: "execution.native-tool-continuation.output.v1"}}}
+}

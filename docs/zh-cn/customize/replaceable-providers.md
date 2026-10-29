@@ -136,7 +136,11 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 提供者还可在 `replacement_contracts` 中声明 `read_file.image.v1`，接受本地图片的新读取请求。宿主识别所请求的本地文件为图片，并拒绝行范围。提供者只返回一个内联 `image` 内容项，包含匹配的 `mime_type` 和 base64 数据；插件结果协议将解码后的输入限制为 2 MiB。宿主检查格式与解码尺寸、拒绝动态图 GIF，并使用原生图片处理路径，再向支持图片的模型与 Code Mode 转发。小图可能保留原始元数据和字节；该处理不等于清除元数据。响应标记为未经验证的扩展内容。仅声明文本契约的提供者仍会拒绝图片请求。
 
-仅支持本地普通文本与受支持的图片，其他二进制、远程读取及直接使用插件自定义续读 token 均不支持。宿主在调用前执行原生路径及敏感文件检查；插件进程仍是受信任代码，这些检查不会自动限制其进程内操作。兼容原生格式的历史 `read_file` 续读和托管会话文件继续由宿主读取，即使插件已退役也一样，仍须通过原有权限检查。插件退役后，Code Mode 只暴露历史续读入口，新读取会失败。扩展返回的内容标记为 `source: "extension"`、`content_verified: false`，不会建立原生的活动文件新鲜度记录；成功读取后，同一文件的旧记录会失效。该记录是上下文信息，并不是编辑权限。提供者应在工具描述中向模型说明这些限制。
+本地契约仅支持普通文本与受支持的图片，其他二进制及直接使用插件自定义续读 token 均不支持。宿主在调用前执行原生路径及敏感文件检查；插件进程仍是受信任代码，这些检查不会自动限制其进程内操作。兼容原生格式的历史 `read_file` 续读和托管会话文件继续由宿主读取，即使插件已退役也一样，仍须通过原有权限检查。插件退役后，Code Mode 只暴露历史续读入口，新读取会失败。扩展返回的内容标记为 `source: "extension"`、`content_verified: false`，不会建立原生的活动文件新鲜度记录；成功读取后，同一文件的旧记录会失效。该记录是上下文信息，并不是编辑权限。提供者应在工具描述中向模型说明这些限制。
+
+对于固定的远程工作区，可信文本提供者还可声明 `read_file.remote.v1` 并依赖 `execution.native-tool-continuation@1`。通过 `wuu plugin dev` 安装[远程读取示例](../../../examples/plugins/remote-text-reader.ts)，在可信用户设置的 `agent.tool_replacements.read_file` 中绑定实际插件 ID 和工具 ID `read`。回调内的 `getProcessEnvironment(host)` 返回宿主选定的后端、根目录和身份，`input.cwd` 是该远端根目录。调用一次无参数的 `continueNativeTool(host)`，由固定的 worker 执行原始读取，再返回有界的 `structured_content: {text, total_lines}`。宿主和 worker 分别复查权限，插件只收到校验后的文本。worker 不支持能力、actor 或环境变化、取消、目标禁用或插件退役时调用失败，不回退本地。同一受信插件可主动把仍存活的回调 host 分享给进程内其他回调；宿主绑定原始权限，不隔离插件进程内部的代码。
+
+远程替换目前只接受工作区相对路径的新鲜 UTF-8 文本读取，可指定行偏移和行数；图片、字节选择器和所有续读 token（包括插件分页 token）均被拒绝。worker 必须支持 `read.unobserved.v1`；如果该 worker actor 已有任何原生读取观察，则拒绝扩展调用并保留旧观察。新 actor 或新会话拥有独立读取状态。此保守限制避免删除并发产生的原生观察；扩展输出仍未验证，也不建立原生新鲜度观察。运行 `node scripts/remote-read-e2e.mjs` 可验证打包 SDK 插件与真实 command backend worker、PTC 和失败路径；该测试不验证生产远程服务或真实模型。
 
 文本提供者还可声明 `read_file.pagination.v1`：当所请求范围仍有剩余行时，在 `text` 和 `total_lines` 外返回非空 `next_cursor`。每页必须向前推进、不超出请求范围，且 `total_lines` 保持一致；范围读完后必须省略 `next_cursor`。宿主返回不透明的 `continuation.next` 供下一次 `read_file` 调用，插件游标不会直接交给模型。续读时宿主验证 token，并针对还原出的路径重新检查原生及插件授权，再将原插件游标、下一行偏移及剩余限制交给提供者。提供者必须支持对同一快照重放续读；内容变化时应拒绝过期游标。宿主无法验证外部提供者所声称的快照。[本地读取示例](../../../examples/plugins/local-text-reader.ts)在页间校验内容摘要。
 
@@ -146,7 +150,13 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
 
-如果会话设置了工具允许列表，插件执行时必须同时允许所选原生工具名称和插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
+被选中的 `web_search` 替代实现可通过 `execution.native-tool-continuation@1` 继续一次原生搜索。在 `required_services` 中声明 `{name: NATIVE_TOOL_CONTINUATION_SERVICE, major_version: 1, required: true}`，然后在 `executeTool` 回调中调用 `await continueNativeTool(host)`；两者均由 `@wuu/plugin-sdk` 导出。 [原生搜索装饰器示例](../../../examples/plugins/native-search-decorator.ts)展示了为返回标题添加标记的完整替代实现。宿主将调用绑定到精确的替代执行、原始参数和 generation，调用方不能选择其他工具、路径、身份或参数。普通插件工具和后代执行不会获得自己的续调。同一受信插件可以主动把仍存活的回调 host 分享给其进程内的其他并发回调；使用该 host 会消耗原回调的续调机会。宿主检查原始所有者、参数和生命周期，但不隔离插件进程内部的并发。失败也会消耗这次机会，宿主不会自动重试或回退。取消或回调结束后权限失效，但已发往搜索服务的请求可能已经发生。
+
+原生结果返回给插件时不会发布中间 evidence。宿主校验替代实现的最终结果，并将有效 evidence 写入现有上下文；替代实现失败或取消时不会发布中间 evidence。现有工具账本记录外层替代调用，不会额外创建原生调用回执。此续调也支持上述受限远程 `read_file` 契约，但不是通用工作区 API。
+
+运行 `node scripts/native-continuation-e2e.mjs` 可验证受控原生搜索替身与独立插件进程，包括直接和代码模式调用、单次使用、身份、撤权、取消及保留的 generation。受控搜索是测试替身；该检查不覆盖真实搜索服务、真实模型推理或渲染界面。
+
+如果会话设置了工具允许列表，必须同时允许 `web_search` 和该插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
 
 工具调度采用原工具和替代实现中更严格的活动声明，插件执行经过原工具策略与插件工具授权；禁用任一名称都会阻止该执行。由宿主处理的 `read_file` 续读和托管文件调用使用原生工具授权，不依赖插件的可用性或授权。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
 

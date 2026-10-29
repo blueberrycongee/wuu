@@ -141,3 +141,15 @@ func WaitInterrupt(ctx context.Context) <-chan struct{} {
 	interrupt, _ := ctx.Value(waitInterruptKey{}).(<-chan struct{})
 	return interrupt
 }
+
+type unobservedReadKey struct{}
+
+// WithUnobservedRead marks a host-authorized worker read whose raw result will
+// be transformed by an extension before it is presented to the model.
+func WithUnobservedRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unobservedReadKey{}, true)
+}
+func IsUnobservedRead(ctx context.Context) bool {
+	v, _ := ctx.Value(unobservedReadKey{}).(bool)
+	return v
+}

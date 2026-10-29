@@ -154,7 +154,8 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 
 	var result toolresult.Result
 	var err error
-	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+	marker, isRemoteReplacement := tool.(interface{ RemoteWorkspaceReplacement() bool })
+	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) && (!isRemoteReplacement || !marker.RemoteWorkspaceReplacement()) {
 		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{
 			ShellEarlyHandoffDisabled: t.env.ShellEarlyHandoffDisabled,
 			GitAttributionEnabled:     !t.env.GitAttributionDisabled,

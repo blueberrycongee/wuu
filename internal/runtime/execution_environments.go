@@ -102,6 +102,10 @@ func (e *environmentToolExecutor) Execute(ctx context.Context, request execution
 	return toolresult.Result{Content: []toolresult.ContentPart{part}}, err
 }
 
+func (e *environmentToolExecutor) ExecuteUnobservedRead(ctx context.Context, request executionenv.ToolRequest) (toolresult.Result, error) {
+	return e.environment.ExecuteUnobservedRead(ctx, request)
+}
+
 func (e *environmentToolExecutor) RunCode(ctx context.Context, request executionenv.CodeRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
 	return e.environment.RunCode(ctx, request, executor)
 }

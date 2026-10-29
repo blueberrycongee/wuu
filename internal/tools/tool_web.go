@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // ---------------------------------------------------------------------------
@@ -203,4 +204,40 @@ func WebSearchEvidenceVersion(argsJSON string) (string, error) {
 		return "unknown", nil
 	}
 	return version, nil
+}
+
+// ContinueNativeWebSearch performs an admitted native search without publishing
+// an intermediate evidence entry. The replacement commits its final evidence.
+func (t *Toolkit) ContinueNativeWebSearch(ctx context.Context, original Tool, call providers.ToolCall) (toolresult.Result, error) {
+	return t.continueNativeWebSearch(ctx, original, call, duckDuckGoSearch)
+}
+
+func (t *Toolkit) continueNativeWebSearch(ctx context.Context, original Tool, call providers.ToolCall, search func(context.Context, string, int) ([]searchResult, error)) (toolresult.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
+	native, ok := original.(*WebSearchTool)
+	if !ok || native.env != t.env || call.Name != "web_search" {
+		return toolresult.Result{}, errors.New("invalid native search continuation")
+	}
+	if t.IsToolDisabled(call.Name) {
+		return toolresult.Result{}, errors.New("native search is disabled")
+	}
+	if err := native.ValidateInput(call.Arguments); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err := t.checkPermission(ctx, buildToolInfoForArgs(native, t.toolExposure(call.Name), call.Arguments), call); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
+	value, err := webSearchExecuteWith(ctx, call.Arguments, search)
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	return toolresult.FromText(value), nil
 }

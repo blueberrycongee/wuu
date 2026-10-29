@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -54,6 +55,17 @@ type readFileState struct {
 type readFileObservation struct {
 	entry    ReadFileEntry
 	revision uint64
+}
+
+// beginUnobservedRead holds native observation admission until the read
+// finishes. Later native observations remain intact and are never cleared.
+func (r *readFileState) beginUnobservedRead() (func(), error) {
+	r.mu.RLock()
+	if len(r.state) > 0 {
+		r.mu.RUnlock()
+		return nil, errors.New("unobserved remote read cannot follow an existing native read observation")
+	}
+	return r.mu.RUnlock, nil
 }
 
 func (r *readFileState) record(absPath string, entry ReadFileEntry) {
@@ -266,8 +278,9 @@ type Env struct {
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error
 
-	readState readFileState
-	webState  webEvidenceState
+	readState       readFileState
+	sharedReadState *readFileState
+	webState        webEvidenceState
 
 	toolTelemetry toolTelemetry
 }
@@ -386,9 +399,16 @@ type BrowserTabStore interface {
 	Delete(tabID string) error
 }
 
+func (e *Env) readStateStore() *readFileState {
+	if e.sharedReadState != nil {
+		return e.sharedReadState
+	}
+	return &e.readState
+}
+
 // RecordRead records a successful read_file invocation.
 func (e *Env) RecordRead(absPath string, entry ReadFileEntry) {
-	e.readState.record(absPath, entry)
+	e.readStateStore().record(absPath, entry)
 }
 
 // RecordWriteState records content just written by a mutating file tool without
@@ -414,16 +434,16 @@ func (e *Env) ForgetRead(absPath string) {
 	if e == nil {
 		return
 	}
-	e.readState.delete(absPath)
+	e.readStateStore().delete(absPath)
 }
 
 // HasBeenRead reports whether a file has been read via read_file.
 func (e *Env) HasBeenRead(absPath string) bool {
-	return e.readState.hasBeenRead(absPath)
+	return e.readStateStore().hasBeenRead(absPath)
 }
 
 func (e *Env) ReadEntries() map[string]ReadFileEntry {
-	return e.readState.snapshot()
+	return e.readStateStore().snapshot()
 }
 
 func (e *Env) RecordWebEvidence(entry webEvidenceEntry) {
