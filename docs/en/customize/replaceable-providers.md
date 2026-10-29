@@ -148,6 +148,14 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
+When an external provider supplies its own tool surface without continuing the
+native `list` during thread admission, that thread has no admitted native
+Toolkit. Its own tools remain available, but a later `continueService` call to
+the native tool backend fails explicitly. To use the native backend, delegate
+the `list` call during admission; this binds the thread's permissions and
+worker control before execution. A later call does not create a Toolkit with
+workspace defaults or fall back to another implementation.
+
 `finalize` receives the normalized result once, including execution failures and
 rejections settled through selected batch resources. Its `additional_context` follows that call's execute context;
 `discovered_tools` merge by name, with finalization definitions taking precedence.
