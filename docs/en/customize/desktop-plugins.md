@@ -33,6 +33,7 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
 | `wuu.default-composer/composer.above`, `wuu.default-composer/composer.toolbar` | Above the composer or in its toolbar |
+| `wuu.default-preview/workspace.rail` | Compact controls and meters in the expanded right tool rail; fixed to one toolbar control's width |
 
 Use an explicitly qualified slot target to compose a region. The default conversation provider declares `wuu.default-conversation/conversation.turn` and `wuu.default-conversation/conversation.message`; the preview provider declares its own message slots under `wuu.default-preview`. The turn boundary includes that turn’s messages and process group, not the entire scroll container.
 
@@ -62,6 +63,12 @@ A contribution receives `locale` and `translate(key, values?)` alongside `contex
 Slot owners may pass a React component through `<Slot layout={Layout} ... />`. It receives the ordered `items` (`key`, `pluginId`, `id`, `title`, `node`) and `context`; render each selected `node` using its `key`. A contribution's optional `title` defaults to its ID. Layouts can group or filter content without creating another registry. Wrappers surround the result; empty slots use `fallback`. Graph-selected service slots render their selected provider directly and ignore custom layouts.
 
 The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal and Monitor now use `registerUIContribution`; remove their old `contributes.slots` entries. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
+
+The `workspace.rail` slot belongs to the default preview provider and appears while the right tool rail is expanded. Contributions share one toolbar control's width and stack vertically. Use compact readouts or controls, and expose their full meaning through accessible labels. A contribution can observe the active tab through `application` and read its thread, turn, and running state through `application.composerPresentation`.
+
+[Token Speed](../../../examples/plugins/token-speed/README.md) is an independently installable example using this slot. It estimates observable output over a two-second window from streamed text, reasoning, and tool-call arguments; hidden output and model-specific tokenization are not measured. The fixed-width readout uses compact units on a separate line and eases number changes over 320 ms, respecting reduced motion. It shows a dash before output arrives or after the turn ends, and returns to zero when an active stream pauses. Its accessible label and hover description explain the estimate.
+
+From a checkout containing this slot, run `wuu plugin install ./examples/plugins/token-speed`, or `wuu plugin dev ./examples/plugins/token-speed` for hot updates. Disabling the plugin removes its readout.
 
 ## Presenters and actions
 
@@ -108,6 +115,23 @@ Conversations and primary plugin views use sidebar navigation, including API-ope
 Workspace header tabs can report `closable: false` when their provider does not support closing that entry. The field is absent on older hosts. Application providers that support closing the expanded conversation publish `previewWorkspace.conversationOpen` and implement `preview.open-conversation` and `preview.close-conversation`; older V1 providers omit the field and retain the always-open conversation entry. Check the field before invoking those actions.
 
 Conversation cards are transient interaction, not saved history or durable pages. A card handle can update its state or dismiss it. For composer status, return structured items from `getSnapshot(context)` and notify through `subscribe`; keep snapshots stable until data changes. Wuu renders the row and handles overflow and the optional `open-session` action, rather than accepting arbitrary React content for each status item.
+
+
+### Independent conversations
+
+A primary view may use `layout: "user-space"` to suppress Coding workspace panels while retaining Wuu's normal navigation. This presentation hint grants no runtime authority. Activating an existing view publishes a `workbench.view.activated` host event with its `pluginId` and `viewTypeId`; scope handlers to both identifiers.
+
+Desktop hosts provide `api.ui.ConversationMessage` and `api.ui.ConversationComposer` using Wuu's native message renderer and composer, including the normal attachment picker, paste/drop handling, previews, and send/stop controls. Supply conversation identity, a controlled prompt, attachments, and transport callbacks. The caller owns admission, error handling and when a successfully admitted draft is cleared. A failed send must retain its original text and attachments. Hosts without native conversation components report the composer as unavailable rather than silently rendering a substitute.
+
+`api.ui.ConversationView` provides the same reading column, native titlebar/search dialog, composer docking, scroll following and per-conversation reading restoration. Supply the title, optional avatar/status, search content, message children and composer. `ConversationMessage` accepts a stable `id`, optional timestamp, latest-answer indication and attachment content; independent conversations expose copy/time without unsupported Coding actions. `api.ui.ConversationAttachment` uses a compact native attachment card with caller-owned loading and verified local Blob URLs. Supply a scoped stable `resourceId` (including message/file identity and digest) and return the verified Blob URL from async `onLoad` to open the body in the existing workspace file-tab strip. The separate download action does not activate a tab. Remote attachments remain read-only byte snapshots, not workspace paths or Coding artifacts; raster images and bounded text are previewed, HTML/SVG/scripts are inert source, and unsupported formats offer download. Hosts without the preview context retain the loading action. These presentation components never load Coding history, choose a workspace or read attachment paths. The caller retains its scoped transport and authorization checks.
+
+`ConversationView` accepts `presentation: "bubbles"` for messaging surfaces such as twin. This opt-in preserves the native message content, attachments and streaming while removing message action rows. Swipe left on touch, drag the conversation background with a mouse, or scroll horizontally on a trackpad to reveal persisted timestamps; reverse the gesture to hide them. A keyboard-focus-only toggle provides the same action, with Alt+Left/Right and Escape shortcuts. Unknown timestamps are not invented. Standard presentation remains the default.
+
+`ConversationView` can receive a `sessionId` and `sessionScope` to present host questions through the same validated user-space/domain route for list, answer, cancel and hold. For non-tool offers, `onQuestionReply(requestId, prompt)` must admit the answer to that conversation with a stable request identity before resolving the offer. Keep unrelated composer text and attachments intact. A hold keeps the question unresolved; it is not an answer.
+
+Live messages must reconcile with persisted history using stable item identities and the final sequence in the terminal turn snapshot, never by matching text. Reply cancellation must retain the selected turn ID across retries so a delayed stop cannot cancel the next reply.
+
+Independent conversations do not pass drafts, messages or workspace selections to Coding-scoped presenters or completion providers. Use `linkPolicy: "external-only"` for messages that must not resolve Coding workspace paths. This UI boundary does not replace runtime scope checks. The default Personal contract provides logical memory-domain isolation; verified OS/host isolation is a separate optional embedding mode.
 
 ## Composer inline completions
 
@@ -162,6 +186,12 @@ The response includes runtime contribution failures and reported renderer regist
 
 Use `api.react` and `api.ui` so controls follow the host's theme, spacing, and typography. Keep UI size separate from code size. Prefer declarative theme tokens for appearance-only changes; the [surface matrix](theme-surface-matrix.md) lists the public contract.
 
+`api.ui.Avatar` and the public `mascot` icon share Wuu's circular headset identity on desktop. Avatar accepts `size` in pixels, `className`, `status` (`idle`, `thinking`, `sending`, `responding`, `queued`, `waiting`, `failed`, or `interrupted`), and `motion` (`static` by default, or `ambient`). Use static avatars in compact navigation and ambient motion for larger visible identity surfaces. Status changes retain the sphere, face, and headset; ambient motion respects reduced-motion preferences and page visibility. The avatar is decorative, so label its surrounding control. Hosts without the desktop avatar renderer provide a static agent mark. Feature-detect `api.ui.Avatar` when supporting older hosts.
+
 Standard browser APIs such as selection and resize observers are available. Public `data-wuu-component`, `data-wuu-slot`, and `data-wuu-surface` anchors are preferable to private class names or React internals. They do not make surrounding DOM structure stable. Register cleanup for listeners, observers, timers, and other resources you create outside React's own effect cleanup.
 
 Registrations belong to a plugin generation and are removed when it unloads. On native desktop quit, Wuu first unmounts React consumers, aborts pending activation, cleans up plugins in reverse dependency order, and flushes activation reports before disconnecting the renderer and stopping backend processes. A renderer that cannot acknowledge cleanup within ten seconds is closed and the failure is logged. That lifecycle is not a security sandbox: trusted renderer code and CSS can still misbehave. Keep the default-UI recovery path available, handle asynchronous action errors, and test disable/reload as well as initial rendering. Package trust and update behavior are described in [plugin management](plugins.md).
+
+### Runtime navigation display names
+
+`api.setNavigationTitle(id, title)` updates only a navigation entry declared by the calling plugin generation. The title is trimmed and must contain 1–64 Unicode characters. It returns `false` for an undeclared entry; invalid titles and calls from an unloaded generation fail. The override is presentation-only, resets on reload, and never changes routes, settings-page labels, or other plugins. Persist user preferences through the plugin's existing runtime service, then republish the stored title after loading or saving it.

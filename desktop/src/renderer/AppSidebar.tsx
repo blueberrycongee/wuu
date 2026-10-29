@@ -1718,7 +1718,7 @@ export function AppSidebar({
             ) : null}
           </nav>
         ) : activePluginMain && !settingsActive && !(navigation ? publicActive?.webPage : workbenchSnapshot!.webPageViewIds.includes(activePluginMain.view.id)) ? (
-          <nav className="sidebar-section-navigation" aria-label={activePluginMain.definition.title}>
+          <nav className="sidebar-section-navigation" data-plugin-context-navigation="" aria-label={activePluginMain.definition.title}>
             <h2 className="sidebar-section-title">{extensionInventory?.find((record) =>
               record.provenance.plugin_id === activePluginMain.view.pluginId)?.name ?? activePluginMain.definition.title}</h2>
             <div className="sidebar-section-scroll">

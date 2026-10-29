@@ -100,9 +100,9 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [drafting, setDrafting] = useState(false);
   const offer = request.mode === "offer";
-  // A single-question offer is a compact choice. Several questions need every
-  // answer collected before submitting, so they use the full form.
-  const offerQuestion = offer && request.questions.length === 1 ? request.questions[0] : undefined;
+  // Only a single-choice offer can submit immediately. Multiple selections or
+  // questions need an explicit submit action after the full answer is collected.
+  const offerQuestion = offer && request.questions.length === 1 && !request.questions[0].multi_select ? request.questions[0] : undefined;
   const held = useRef(false);
   const offerLead = offerQuestion
     ? approvalQuestionText(request, offerQuestion, t)?.header

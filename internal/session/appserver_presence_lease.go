@@ -26,6 +26,7 @@ type AppServerPresenceLease struct {
 	presence  *os.File
 	first     bool
 	finalized bool
+	directory string
 }
 
 // AcquireAppServerPresence enters the serialized startup section. first is
@@ -37,6 +38,18 @@ func AcquireAppServerPresence(sessDir string) (*AppServerPresenceLease, bool, er
 	if sessDir == "" {
 		return nil, false, errors.New("session directory is required")
 	}
+	resolved, err := filepath.Abs(sessDir)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := securefs.Mkdir(resolved); err != nil {
+		return nil, false, err
+	}
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return nil, false, err
+	}
+	sessDir = resolved
 	gate, err := securefs.OpenFile(filepath.Join(sessDir, appServerStartupGateFile), os.O_CREATE|os.O_RDWR, securefs.FileMode)
 	if err != nil {
 		return nil, false, fmt.Errorf("open app-server startup gate: %w", err)
@@ -66,7 +79,54 @@ func AcquireAppServerPresence(sessDir string) (*AppServerPresenceLease, bool, er
 			return nil, false, fmt.Errorf("join app-server presence: %w", err)
 		}
 	}
-	return &AppServerPresenceLease{gate: gate, presence: presence, first: first}, first, nil
+	return &AppServerPresenceLease{gate: gate, presence: presence, first: first, directory: resolved}, first, nil
+}
+
+// WithExclusiveStartup reuses this exact unfinalized first-host capability
+// during nested initialization. It neither downgrades nor releases presence.
+// Release and FinalizeStartup wait until use returns; use must not call them.
+// Directory and inode checks reject a moved/rebound lock path, not merely a
+// caller-provided claim that writers were stopped.
+func (l *AppServerPresenceLease) WithExclusiveStartup(sessDir string, use func() error) error {
+	if l == nil || use == nil {
+		return errors.New("exclusive startup capability is required")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.first || l.finalized || l.gate == nil || l.presence == nil {
+		return errors.New("exclusive startup capability is not active")
+	}
+	if strings.TrimSpace(sessDir) == "" {
+		return errors.New("exclusive startup directory is required")
+	}
+	resolved, err := filepath.Abs(strings.TrimSpace(sessDir))
+	if err != nil {
+		return err
+	}
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return err
+	}
+	if resolved != l.directory {
+		return errors.New("exclusive startup capability belongs to another directory")
+	}
+	for _, locked := range []struct {
+		file *os.File
+		name string
+	}{{l.gate, appServerStartupGateFile}, {l.presence, appServerPresenceFile}} {
+		held, err := locked.file.Stat()
+		if err != nil {
+			return err
+		}
+		current, err := os.Stat(filepath.Join(resolved, locked.name))
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(held, current) {
+			return errors.New("exclusive startup lock path was rebound")
+		}
+	}
+	return use()
 }
 
 // FinalizeStartup converts the first process's exclusive lock to shared

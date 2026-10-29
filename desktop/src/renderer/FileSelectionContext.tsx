@@ -24,6 +24,11 @@ export const usePdfSelectionNavigation = () => useContext(PdfSelectionNavigation
 const FileSelectionContext = createContext<FileSelectionActions | null>(null);
 export const useFileSelectionActions = () => useContext(FileSelectionContext);
 
+/** Explicitly exclude workspace selection authority from independent transports. */
+export function FileSelectionIsolation({ children }: { children: ReactNode }): JSX.Element {
+  return <PdfSelectionNavigationContext.Provider value={undefined}><FileSelectionContext.Provider value={null}>{children}</FileSelectionContext.Provider></PdfSelectionNavigationContext.Provider>;
+}
+
 export interface FileSelectionApplication {
   readonly fileSelection: ApplicationFileSelectionServiceV1;
   getSnapshot(): Pick<ApplicationSnapshotV1, "connection">;

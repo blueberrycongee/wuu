@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -108,6 +110,25 @@ func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
 			if len(notifications) == 0 {
 				t.Fatalf("file edit did not publish config/changed: %s", out.String())
 			}
+			publications := notificationsByMethod(parseOutput(t, out.String()), NotificationPluginInventoryChanged)
+			if len(publications) == 0 {
+				t.Fatal("config watcher replaced the desktop graph without publishing inventory")
+			}
+			published := remarshal[PluginInventoryChangedNotification](t, publications[len(publications)-1]["params"])
+			if len(published.ExtensionInventory) == 0 {
+				t.Fatal("config watcher published empty inventory")
+			}
+			for _, item := range published.ExtensionInventory {
+				if item.Kind == extensions.KindPlugin && item.GraphGeneration != rt.ExtensionSnapshot().GenerationID {
+					t.Fatalf("config watcher left desktop routes on stale graph: %+v", item)
+				}
+			}
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(notificationsByMethod(parseOutput(t, out.String()), NotificationPluginInventoryChanged)); got != len(publications) {
+				t.Fatal("unchanged configuration churned desktop inventory")
+			}
 			// The watcher may publish intermediate edits before the explicit refresh.
 			// The last notification must describe the final saved selection.
 			changed := remarshal[ConfigChangedNotification](t, notifications[len(notifications)-1]["params"])
@@ -178,76 +199,94 @@ func TestConfigWatchUsesEventsInsteadOfContinuousReloads(t *testing.T) {
 }
 
 func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	valid := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}}}`
-	write := func(contents string) {
-		t.Helper()
-		if err := os.WriteFile(rt.ConfigPath, []byte(contents), 0o600); err != nil {
-			t.Fatal(err)
+	for _, watcherFirst := range []bool{false, true} {
+		name := "explicit first"
+		if watcherFirst {
+			name = "watcher first"
 		}
-	}
-	write(valid)
-	rt = newConfigRefreshRuntime(t, rt)
-	configured, err := os.ReadFile(rt.ConfigPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	valid = string(configured)
-	bindConfigSourceForTest(t, rt)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-	t.Cleanup(srv.Close)
-	before := srv.providerSummaries()
-	if len(before) != 1 {
-		t.Fatalf("expected configured provider: %+v", before)
-	}
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatal(err)
-	}
+		t.Run(name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			valid := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}}}`
+			write := func(contents string) {
+				t.Helper()
+				if err := os.WriteFile(rt.ConfigPath, []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(valid)
+			rt = newConfigRefreshRuntime(t, rt)
+			configured, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			valid = string(configured)
+			bindConfigSourceForTest(t, rt)
+			out := &lockedBuffer{}
+			// Prevent an independent watcher from racing this ordering test. The
+			// watcher event path is covered by TestConfigWatchUsesEventsInsteadOfContinuousReloads.
+			srv := New(rt, nil)
+			srv.out = out
+			t.Cleanup(srv.Close)
+			before := srv.providerSummaries()
+			if len(before) != 1 {
+				t.Fatalf("expected configured provider: %+v", before)
+			}
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
 
-	// A newer build can add a field unknown to this reader.
-	write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
-	var configErr *pluginhost.HostServiceError
-	if err := srv.refreshConfigIfChanged(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
-		t.Fatalf("expected strict config error, got %v", err)
-	}
-	messages := parseOutput(t, out.String())
-	if len(notificationsByMethod(messages, NotificationConfigError)) != 1 {
-		t.Fatalf("expected one visible configuration error: %s", out.String())
-	}
-	if got := srv.providerSummaries(); !reflect.DeepEqual(got, before) {
-		t.Fatalf("invalid refresh erased inventory: %+v", got)
-	}
-	for i := 0; i < 3; i++ {
-		if err := srv.refreshConfigIfChanged(); err != nil {
-			t.Fatalf("unchanged rejected document was retried: %v", err)
-		}
-	}
-	if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigError)) != 1 {
-		t.Fatal("unchanged rejected document emitted repeated errors")
-	}
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"blocked","method":"config/model/update","params":{"model":"other-model"}}`)); err != nil {
-		t.Fatal(err)
-	}
-	rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
-	if rejection.Code == "" {
-		t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
-	}
+			// A newer build can add a field unknown to this reader.
+			write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
+			first, second := srv.refreshConfigIfChanged, srv.refreshObservedConfigChange
+			if watcherFirst {
+				first, second = second, first
+			}
+			var configErr *pluginhost.HostServiceError
+			if err := first(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
+				t.Fatalf("first observer must report a strict config error, got %v", err)
+			}
+			if err := second(); err != nil {
+				t.Fatalf("second observer must suppress the already reported error: %v", err)
+			}
+			messages := parseOutput(t, out.String())
+			if len(notificationsByMethod(messages, NotificationConfigError)) != 1 {
+				t.Fatalf("expected one visible configuration error: %s", out.String())
+			}
+			if got := srv.providerSummaries(); !reflect.DeepEqual(got, before) {
+				t.Fatalf("invalid refresh erased inventory: %+v", got)
+			}
+			for i := 0; i < 3; i++ {
+				if err := srv.refreshConfigIfChanged(); err != nil {
+					t.Fatalf("unchanged rejected document was retried: %v", err)
+				}
+			}
+			if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigError)) != 1 {
+				t.Fatal("unchanged rejected document emitted repeated errors")
+			}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"blocked","method":"config/model/update","params":{"model":"other-model"}}`)); err != nil {
+				t.Fatal(err)
+			}
+			rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
+			if rejection.Code == "" {
+				t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
+			}
 
-	// Restoring the exact previous contents must clear the error too.
-	write(valid)
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatalf("repair did not recover: %v", err)
-	}
-	if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigChanged)) != 1 {
-		t.Fatal("repair did not publish the recovered configuration")
-	}
-	write(strings.Replace(valid, "fake-model", "repaired-model", 1))
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatal(err)
-	}
-	if got := srv.providerSummaries(); len(got) != 1 || got[0].Model != "repaired-model" {
-		t.Fatalf("inventory did not recover: %+v", got)
+			// Restoring the exact previous contents must clear the error too.
+			write(valid)
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatalf("repair did not recover: %v", err)
+			}
+			if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigChanged)) != 1 {
+				t.Fatal("repair did not publish the recovered configuration")
+			}
+			write(strings.Replace(valid, "fake-model", "repaired-model", 1))
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			if got := srv.providerSummaries(); len(got) != 1 || got[0].Model != "repaired-model" {
+				t.Fatalf("inventory did not recover: %+v", got)
+			}
+		})
 	}
 }
 
@@ -307,3 +346,68 @@ func TestModelConfigurationPublicationAdmission(t *testing.T) {
 		t.Fatal("publication leaked admission fence")
 	}
 }
+
+// A failed activation may already have committed a new graph. Its inventory
+// must still revoke the previous desktop handles while preserving the error.
+func TestModelConfigurationPublishesCommittedFailure(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	preparePluginRuntimePathsForTest(t, rt)
+	var fail atomic.Bool
+	rt = newConfigRefreshRuntime(t, rt, runtime.NativeProviderFactory{
+		ID: "fixture.config-publication", DefaultEnabled: true,
+		Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return &configPublicationFailureClient{fail: fail.Load()}, nil
+		},
+	})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	before := rt.ExtensionSnapshot().GenerationID
+	fail.Store(true)
+	callPluginPackageRPC(t, srv, "failed-model", MethodConfigModelUpdate, ConfigModelUpdateParams{Model: "new-model"})
+	messages := parseOutput(t, out.String())
+	if message := responseErrorMessage(t, responseByID(t, messages, "failed-model")); !strings.Contains(message, "fixture activation failed") {
+		t.Fatalf("committed activation failure was hidden: %s", message)
+	}
+	if rt.ExtensionSnapshot().GenerationID == before {
+		t.Fatal("fixture did not exercise a committed graph replacement")
+	}
+	publications := notificationsByMethod(messages, NotificationPluginInventoryChanged)
+	if len(publications) == 0 {
+		t.Fatal("failed replacement left the previous desktop inventory live")
+	}
+	published := remarshal[PluginInventoryChangedNotification](t, publications[len(publications)-1]["params"])
+	if len(published.ExtensionInventory) == 0 {
+		t.Fatal("failed replacement published empty desktop inventory")
+	}
+	for _, item := range published.ExtensionInventory {
+		if item.Kind == extensions.KindPlugin && item.GraphGeneration != rt.ExtensionSnapshot().GenerationID {
+			t.Fatalf("failed replacement published stale routes: %+v", item)
+		}
+	}
+}
+
+type configPublicationFailureClient struct {
+	fail   bool
+	active atomic.Bool
+}
+
+func (*configPublicationFailureClient) ID() string { return "fixture.config-publication" }
+func (c *configPublicationFailureClient) Status() pluginhost.Status {
+	state := pluginhost.StatePrepared
+	if c.active.Load() {
+		state = pluginhost.StateActive
+		if c.fail {
+			state = pluginhost.StateFailed
+		}
+	}
+	return pluginhost.Status{ID: c.ID(), State: state}
+}
+func (c *configPublicationFailureClient) Activate(context.Context) error {
+	c.active.Store(true)
+	if c.fail {
+		return errors.New("fixture activation failed")
+	}
+	return nil
+}
+func (*configPublicationFailureClient) Close(context.Context) error { return nil }

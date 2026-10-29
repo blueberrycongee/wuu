@@ -1,4 +1,4 @@
-import type { RuntimeHost, ServiceDescriptor, ServiceRequirement } from "./index.js";
+import type { RuntimeHost, RuntimeHostCallOptions, ServiceDescriptor, ServiceRequirement } from "./index.js";
 
 export const DOCUMENT_STORE_SERVICE = "state.documents";
 /** Required host semantics for any authority-aware descriptor. The SDK checks
@@ -66,6 +66,44 @@ export interface StateTransaction<Value = unknown> {
   readonly expected_revision: StateRevision;
   readonly writes: readonly StateWrite<Value>[];
 }
+/** Durable check-through-effect fence. No time-based expiry: release the same
+ * ID in cleanup even after an uncertain acquire. Released IDs are tombstoned,
+ * so a delayed acquire cannot resurrect a guard. Never replay an external effect.
+ * Unsupported providers fail explicitly; all guarded namespace writes reject
+ * with inspection_active while held. */
+export interface StateInspectionTopology {
+  readonly version: 1;
+  readonly storage_topology: "single-host" | "multi-host";
+  readonly execution_topology: "single-host" | "multi-host";
+}
+/** Ownership belongs to the authenticated service caller, never request JSON.
+ * Claims on existing unowned rows require an explicit migration. Providers must
+ * preserve protected ownership metadata in portable snapshots/checkpoints. */
+export interface StateNamespaceClaim { readonly namespaces: readonly string[]; }
+
+export interface StateInspectionRequest {
+  readonly id: string;
+  readonly namespaces: readonly string[];
+}
+export interface StateInspection extends StateInspectionRequest {
+  readonly revision: StateRevision;
+}
+
+/** Operator-only crash recovery metadata. Unknown outcomes cannot unlock a guard. */
+export interface StateInspectionStatus extends StateInspectionRequest {
+ readonly owner: string;
+ readonly reconciled_by?: string;
+ readonly outcome?: "completed" | "not-dispatched";
+ readonly reason?: string;
+}
+export interface StateInspectionList { readonly inspections: readonly StateInspectionStatus[]; }
+export interface StateInspectionResolution extends StateInspectionRequest {
+ readonly expected_owner: string;
+ readonly outcome: "completed" | "not-dispatched";
+ /** Evidence establishing terminal disposition; not permission supplied by a model. */
+ readonly reason: string;
+}
+
 export interface StateReceipt {
   readonly id: string;
   readonly revision: StateRevision;
@@ -133,9 +171,11 @@ export function requireDocumentStore(): ServiceRequirement {
  * existing v1 providers retain the documented same-host journal contract.
  * An advertised authority failure never falls back to that legacy contract.
  */
-export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean; checkpoint?: boolean; authority?: boolean } = {}): ServiceDescriptor {
+export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean; checkpoint?: boolean; authority?: boolean; inspection?: boolean; owned_namespaces?: boolean } = {}): ServiceDescriptor {
   const methods = ["read", "commit", "export"];
   if (options.authority) methods.push("authority");
+  if (options.owned_namespaces) methods.push("claim-namespaces");
+  if (options.inspection) methods.push("acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection");
   if (options.compact) methods.push("compact");
   if (options.import) methods.push("import");
   if (options.checkpoint) methods.push("checkpoint");
@@ -148,6 +188,7 @@ export function documentStoreDescriptor(options: { compact?: boolean; import?: b
         name,
         input_schema: `state.documents.${name}.input.v${schemaVersion}`,
         output_schema: `state.documents.${name}.output.v${schemaVersion}`,
+        ...(name === "release-inspection" || name === "reconcile-inspection" ? { cleanup: true } : {}),
         ...(name === "read" || name === "export" || name === "checkpoint" || name === "authority" ? { preparation: true } : {}),
       };
     }),
@@ -161,14 +202,19 @@ export function documentStoreDescriptor(options: { compact?: boolean; import?: b
  * merely because a storage operation is retryable.
  */
 export function documentStore(host: RuntimeHost) {
-  async function call<T>(method: string, params: object): Promise<T> {
+  async function call<T>(method: string, params: object, options?: RuntimeHostCallOptions): Promise<T> {
     return await host.call("host.service.call", {
       service: DOCUMENT_STORE_SERVICE, method, params,
-    }) as T;
+    }, options) as T;
   }
   return {
     /** Requires an advertised authority capability; errors never select a fallback. */
     authority: () => call<StateAuthority>("authority", {}),
+    claimNamespaces: (namespaces:readonly string[]) => call<Record<string,never>>("claim-namespaces",{namespaces}),
+    listInspections: () => call<StateInspectionList>("list-inspections", {}),
+    reconcileInspection: (request: StateInspectionResolution) => call<StateInspectionStatus>("reconcile-inspection", request, {cleanup: true}),
+    acquireInspection: (request: StateInspectionRequest) => call<StateInspection>("acquire-inspection", request),
+    releaseInspection: (request: StateInspectionRequest) => call<Record<string, never>>("release-inspection", request, {cleanup: true}),
     read: <Value = unknown>(query: StateQuery) => call<StateView<Value>>("read", query),
     commit: <Value = unknown>(transaction: StateTransaction<Value>) => call<StateReceipt>("commit", transaction),
     checkpoint: () => call<StateCheckpoint>("checkpoint", {}),

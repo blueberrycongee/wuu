@@ -18,6 +18,10 @@ func (s *Session) bindLocalSkillRefresh(kit *tools.Toolkit, root string, generat
 	if kit == nil {
 		return
 	}
+	if s.UserBinding().IsUser() {
+		kit.SetSkillRefresh(nil)
+		return
+	}
 	plugins, cfg := s.pluginSkills, s.skillsConfig
 	if generation != nil {
 		plugins, cfg = generation.pluginSkills, generation.settings.Skills

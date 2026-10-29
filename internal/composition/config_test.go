@@ -499,6 +499,72 @@ func TestSharingConsumerIsCurrentProductOnly(t *testing.T) {
 	}
 }
 
+func TestPersonalProfileSelectsReplaceablePrompt(t *testing.T) {
+	for _, version := range []int{2, 3, Version} {
+		legacy := &Config{Version: version, Profile: "personal"}
+		resolved, err := legacy.Resolve()
+		if err != nil || !resolved.Includes("personal") || !resolved.Includes("wuu.resource-access") {
+			t.Fatalf("explicit Personal selection required rewriting config v%d: %v", version, err)
+		}
+	}
+	cfg := DefaultConfig("personal")
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Includes("personal") || !resolved.Includes("automation") || !resolved.Includes("personal-calendar") || resolved.Includes("wuu.prompt.default") {
+		t.Fatal("Personal profile did not select its complete provider composition")
+	}
+	found := false
+	for _, binding := range resolved.Services {
+		if binding.Service == "agent.prompt" && binding.Major == 1 && binding.Provider == "personal" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Personal prompt is not an explicit service binding")
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"replacement.prompt": true}, Services: []Binding{{Service: "agent.prompt", Major: 1, Provider: "replacement.prompt"}}}}
+	resolved, err = cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range resolved.Services {
+		if binding.Service == "agent.prompt" && binding.Provider != "replacement.prompt" {
+			t.Fatal("Personal prompt cannot be replaced")
+		}
+	}
+	cfg.Patches = append(cfg.Patches, Patch{Modules: map[string]bool{"replacement.prompt": false}})
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("missing selected prompt restored native or Personal fallback")
+	}
+}
+
+// Durable grants are product capability selection, not an implicit mutation of
+// every Coding/minimal document provider's storage and namespace contract.
+func TestExecutionAuthorizationRequiresExplicitProductSelection(t *testing.T) {
+	for _, profile := range []string{"desktop", "headless", "minimal"} {
+		resolved, err := DefaultConfig(profile).Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, module := range []string{"wuu.execution-access", "wuu.execution-authorization.default"} {
+			if resolved.Includes(module) {
+				t.Errorf("%s implicitly selected %s", profile, module)
+			}
+		}
+	}
+	resolved, err := DefaultConfig("personal").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, module := range []string{"wuu.execution-access", "wuu.execution-authorization.default"} {
+		if !resolved.Includes(module) {
+			t.Errorf("explicit Personal product omitted %s", module)
+		}
+	}
+}
+
 // Splitting optional presentation from business providers must preserve old
 // desktop selections without enabling a feature the user omitted or removed.
 func TestLegacyFeaturePresentationMigration(t *testing.T) {

@@ -67,6 +67,11 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 		return "", fmt.Errorf("skill %q not found. available: %s", args.Name, strings.Join(t.env.SkillNames(), ", "))
 	}
 
+	if strings.TrimSpace(skill.Dir) != "" {
+		if err := t.env.rejectProtectedPath(skill.Dir, true); err != nil {
+			return "", err
+		}
+	}
 	skill, err := skills.ReloadLocal(ctx, skill)
 	if err != nil {
 		return "", err

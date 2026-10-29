@@ -5,7 +5,9 @@
 // do not need this package.
 //
 // A Runtime owns the provider clients, durable session mechanisms, tools,
-// plugin generations, and recovery services for one workspace. Applications
+// plugin generations, and recovery services for one workspace or isolated user
+// binding. A user host retains one execution authority across client connections.
+// Applications
 // can either serve the versioned app-server protocol to another process or use
 // Client and Session to drive that same protocol in-process. Neither path
 // imports or replaces agent-loop, persistence, permission, or plugin internals.

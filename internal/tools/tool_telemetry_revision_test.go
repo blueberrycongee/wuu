@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,6 +32,13 @@ func countWorkspaceRevisionAttempts(t *testing.T) func() int {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("WUU_TEST_REVISION_ATTEMPTS", log)
 	t.Setenv("WUU_HOME", t.TempDir())
+	// First execution of a newly created script can incur OS security scanning,
+	// longer than the production snapshot deadline. Prime it outside that
+	// deadline, then count only invocations made by the tool under test.
+	_ = exec.Command(filepath.Join(bin, "git")).Run()
+	if err := os.Remove(log); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
 	return func() int {
 		t.Helper()
 		data, err := os.ReadFile(log)
@@ -257,5 +265,36 @@ func TestToolTelemetryRejectedCallsDoNotReadWorkspace(t *testing.T) {
 				t.Fatalf("rejected call changed workspace: %v", err)
 			}
 		})
+	}
+}
+
+// Mutation telemetry must honor the same domain exclusion as file tools:
+// it must not start Git or digest private content while recording evidence.
+func TestToolTelemetryMutationRespectsProtectedPaths(t *testing.T) {
+	attempts := countWorkspaceRevisionAttempts(t)
+	root := t.TempDir()
+	private := filepath.Join(root, "private")
+	mustWriteFile(t, filepath.Join(private, "memory.txt"), "secret")
+	public := filepath.Join(root, "public.txt")
+	mustWriteFile(t, public, "before")
+	leaf := &revisionOwnershipTool{name: "protected_mutation", execute: func(context.Context, string) (string, error) {
+		return `{}`, os.WriteFile(public, []byte("after"), 0600)
+	}}
+	kit := &Toolkit{env: &Env{RootDir: root}, registry: NewRegistry(leaf), boundary: StandardBoundary()}
+	kit.SetProtectedPaths([]string{private})
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: leaf.Name(), Arguments: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if got := attempts(); got != 0 {
+		t.Fatalf("protected telemetry started Git %d times", got)
+	}
+	records := kit.ToolTelemetry()
+	if len(records) != 1 || records[0].RevisionBefore == "" || records[0].RevisionAfter == "" || records[0].RevisionBefore == records[0].RevisionAfter {
+		t.Fatalf("missing guarded mutation evidence: %+v", records)
+	}
+	before := kit.env.workspaceRevision(context.Background(), root)
+	mustWriteFile(t, filepath.Join(private, "memory.txt"), "changed secret")
+	if after := kit.env.workspaceRevision(context.Background(), root); before != after {
+		t.Fatal("private content changed the visible revision")
 	}
 }

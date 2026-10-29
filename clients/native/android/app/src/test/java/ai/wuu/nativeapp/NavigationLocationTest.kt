@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NavigationLocationTest {
+    @Test fun personalAreaRestoresWithoutChangingLegacyProjectsDefault() {
+        val account = AccountSession("https://example.test", "token", "alice", "phone", "seed")
+        val hosts = listOf(json("pub" to "host", "role" to "host"))
+        val location = NavigationLocation.encode(account, "host", "", null, personal = true)
+        assertTrue(NavigationLocation.restore(account, hosts, JSONObject(location.toString()))!!.getBoolean("personal"))
+        assertFalse(NavigationLocation.encode(account, "host", "", null).optBoolean("personal"))
+    }
     @Test fun coldBookmarkRequiresSameLoginAndAuthorizedHost() {
         val account = AccountSession("https://example.test", "token", "alice", "phone", "seed")
         val devices = listOf(json("pub" to "host", "role" to "host", "online" to false))

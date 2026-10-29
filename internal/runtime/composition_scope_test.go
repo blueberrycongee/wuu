@@ -13,6 +13,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionauth"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -194,7 +196,7 @@ func TestCompositionInheritance(t *testing.T) {
 		"first":  {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "model-one"},
 		"second": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "model-two"},
 	}
-	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless"}
+	cfg.Composition = composition.DefaultConfig("headless", executionauth.ConsumerModule, executionauth.NativeModule)
 	catalog := []pluginpkg.Plugin{}
 	opts := Options{RootDir: t.TempDir(), WuuHome: t.TempDir(), HomeDir: t.TempDir(), Config: cfg, DiscoveredPlugins: &catalog, NonInteractive: true}
 	owner, err := NewSession(opts)
@@ -278,6 +280,15 @@ func TestCompositionInheritance(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharedRuntime := scopes.scopes[shared.ID].runtime
+	if provider, ok := sharedRuntime.PluginHost.ServiceRegistry().ProviderPluginIDFor(executionauth.ConsumerModule, executionauth.ServiceName, 1); !ok || provider != parentStateModule {
+		t.Fatalf("shared product created a second grant authority: %q, %v", provider, ok)
+	}
+	if _, err := sharedRuntime.PluginHost.CallService(context.Background(), executionauth.ConsumerModule, executionauth.ServiceName, "describe", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("imported selected grant service unavailable: %v", err)
+	}
+	if _, err := sharedRuntime.Documents.Read(context.Background(), persistence.Query{Namespace: "wuu.execution_grants.v1"}); err == nil {
+		t.Fatal("general imported documents gained access to owned grant records")
+	}
 	if _, found, err := sharedRuntime.Sessions.Find("product-main"); err != nil || !found {
 		t.Fatalf("product scope lost parent history: found=%v err=%v", found, err)
 	}
@@ -453,5 +464,48 @@ func TestCompositionInheritance(t *testing.T) {
 	}
 	if _, err := invoke("bind", fmt.Sprintf(`{"session":"product-main","id":"","expected":%q}`, shared.ID)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Child compositions cannot erase the owner's user-domain context boundary,
+// including when their selected state provider imports the parent dataset.
+func TestCompositionInheritsUserHostBoundary(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultProvider = "test"
+	cfg.Providers = map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "model"}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless"}
+	catalog := []pluginpkg.Plugin{}
+	owner, err := NewSession(Options{RootDir: t.TempDir(), WuuHome: t.TempDir(), HomeDir: t.TempDir(), Config: cfg, DiscoveredPlugins: &catalog, NonInteractive: true, UserSpaceID: "alice", ProductDomain: "personal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = owner.Cleanup() })
+	kernel := newKernelHostServices(nil, nil)
+	kernel.bindStateGeneration(owner.pluginGeneration, owner)
+	scopes := kernel.compositions
+	t.Cleanup(func() {
+		if err := scopes.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, state := range []string{"isolated", "parent"} {
+		raw, err := scopes.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Caller: "controller", Method: "create", Params: json.RawMessage(`{"inherit":true,"state":"` + state + `"}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var view pluginhost.CompositionView
+		if err := json.Unmarshal(raw, &view); err != nil {
+			t.Fatal(err)
+		}
+		child := scopes.scopes[view.ID].runtime
+		if !owner.UserBinding().Matches(child.UserBinding()) {
+			t.Fatal("composition discarded domain binding")
+		}
+		if len(child.InstructionFiles) != 0 || len(child.Skills) != 0 {
+			t.Fatal("composition rediscovered ambient context")
+		}
+		if child.ProductDataRoot() == child.WuuHome {
+			t.Fatal("composition discarded isolated product state root")
+		}
 	}
 }

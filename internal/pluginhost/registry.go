@@ -1033,6 +1033,7 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 	}
 	defer func() { callErr = serviceCompletionError(callErr, release()) }()
 	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
+		Admission:   serviceAdmission(ctx, consumerPluginID, service, method, params.Params),
 		Service:     service,
 		Method:      method,
 		Caller:      consumerPluginID,

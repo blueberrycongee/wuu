@@ -1,14 +1,13 @@
-import { removePendingComposerMessage, materializedComposerMessageIDs, type PendingComposerMessageRemovalScope } from "../shared/pendingComposerMessages";
+import { removePendingComposerMessage, materializedComposerMessageIDs as sharedMaterializedComposerMessageIDs, type PendingComposerMessageRemovalScope } from "../shared/pendingComposerMessages";
 export {
   appendPendingComposerMessage,
   applyAuthoritativeComposerSnapshot,
   applyHeldComposerSnapshot,
-  materializedComposerMessageIDs,
   type PendingComposerMessageRemovalScope,
   type PendingComposerMessageKind,
 } from "../shared/pendingComposerMessages";
 import type { Thread } from "../shared/protocol";
-import type { QueuedComposerMessage } from "./ComposerMessages";
+import { OPTIMISTIC_TURN_ID_PREFIX, type QueuedComposerMessage } from "./ComposerMessages";
 
 export type ThreadPendingComposerMessages = {
   queued: QueuedComposerMessage[];
@@ -98,6 +97,23 @@ export function pendingComposerMessageCount(
   pending: ThreadPendingComposerMessages,
 ): number {
   return pending.queued.length + pending.guides.length;
+}
+
+/**
+ * Collect the ids of user messages that have already MATERIALIZED as
+ * user_message turn items in a thread. A queued/guide composer message keeps
+ * the same id (the server stamps the item's `source_id` with the queue/steer
+ * client id — see startQueuedTurn / steer), so any pending entry whose id is
+ * in this set has already been sent.
+ */
+export function materializedComposerMessageIDs(
+  thread: Thread | undefined | null,
+): Set<string> {
+  if (!thread) return new Set<string>();
+  return sharedMaterializedComposerMessageIDs({
+    ...thread,
+    turns: (thread.turns ?? []).filter(turn => !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)),
+  });
 }
 
 /**

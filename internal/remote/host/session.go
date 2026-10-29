@@ -132,7 +132,11 @@ func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 	s.h.appWG.Add(2)
 	go func() {
 		defer s.h.appWG.Done()
-		if s.h.appServer != nil {
+		if s.h.appServerForDevice != nil {
+			if err := s.h.appServerForDevice(ctx, serverInR, output, devicePushRegistrar{store: s.h.store, devPub: s.devPub}); err != nil && ctx.Err() == nil {
+				s.h.logf("remote user-host connection: %v", err)
+			}
+		} else if s.h.appServer != nil {
 			if err := s.h.appServer(ctx, serverInR, output); err != nil && ctx.Err() == nil {
 				s.h.logf("remote app-server connection: %v", err)
 			}
@@ -220,11 +224,21 @@ func (s *deviceSession) onAuthorizedAppLine(app *appConn, line []byte, guard fun
 		s.mu.Unlock()
 		return
 	}
-	hint, pushThread := classifyPushHint(outLine)
-	shouldPush := s.tryConsumePushSlot(hint, pushThread)
+	hint, pushThread, location := classifyPushHint(outLine)
+	if location != nil && s.h.subscribeUserAttention != nil {
+		// The host-lifetime observer owns admitted attention, including phones
+		// without an app connection. Do not race it or consume its throttle slot.
+		s.mu.Unlock()
+		return
+	}
+	throttleKey := pushThread
+	if location != nil {
+		throttleKey = "personal:" + location.AgentID
+	}
+	shouldPush := s.tryConsumePushSlot(hint, throttleKey)
 	s.mu.Unlock()
 	if shouldPush {
-		s.h.sendPush(s.devPub, hint, pushThread)
+		s.h.sendPush(s.devPub, hint, pushThread, location)
 	}
 }
 
@@ -269,28 +283,49 @@ func (a *appConn) observeLine(line []byte) bool {
 // classifyPushHint maps an outbound line that arrives while the phone is
 // away to a content-free push hint. Server requests (the app-server asking
 // its client something) mean the agent is blocked on input; turn completion
-// and errors mean attention is wanted but nothing is blocked. Turn-bound
-// hints also carry the thread id so a pusher can deep-link to the thread;
-// needs_input is process-wide and returns no thread.
-func classifyPushHint(line []byte) (hint, threadID string) {
+// and errors route Coding attention. Personal pushes require an admitted
+// user/attention event; a raw scoped terminal event never bypasses policy.
+// Coding hints carry a thread id; Personal uses only the named-agent locator.
+func classifyPushHint(line []byte) (hint, threadID string, location *wire.UserLocation) {
 	var probe struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 		Params struct {
-			ThreadID string `json:"thread_id"`
+			ThreadID      string          `json:"thread_id"`
+			TurnID        string          `json:"turn_id"`
+			Outcome       string          `json:"outcome"`
+			UserSpaceID   json.RawMessage `json:"user_space_id"`
+			ProductDomain json.RawMessage `json:"product_domain"`
+			UserLocation  json.RawMessage `json:"user_location"`
 		} `json:"params"`
 	}
 	if err := json.Unmarshal(line, &probe); err != nil {
-		return "", ""
+		return "", "", nil
+	}
+	// Only the UserHost's policy-admitted event can produce Personal push.
+	// Raw scoped terminal events and malformed locators never use Coding fallback.
+	if probe.Method == appserver.NotificationUserAttention || len(probe.Params.UserSpaceID) > 0 || len(probe.Params.ProductDomain) > 0 || len(probe.Params.UserLocation) > 0 {
+		if len(probe.ID) > 0 || probe.Method != appserver.NotificationUserAttention || probe.Params.TurnID == "" || len(probe.Params.TurnID) > 256 || (probe.Params.Outcome != "completed" && probe.Params.Outcome != "failed") {
+			return "", "", nil
+		}
+		var loc wire.UserLocation
+		if err := json.Unmarshal(probe.Params.UserLocation, &loc); err != nil {
+			return "", "", nil
+		}
+		var space, domain string
+		if json.Unmarshal(probe.Params.UserSpaceID, &space) != nil || json.Unmarshal(probe.Params.ProductDomain, &domain) != nil || space != loc.UserSpaceID || domain != loc.ProductDomain {
+			return "", "", nil
+		}
+		return wire.PushAgentDone, "", &loc
 	}
 	if len(probe.ID) > 0 && probe.Method != "" {
-		return wire.PushNeedsInput, ""
+		return wire.PushNeedsInput, "", nil
 	}
 	switch probe.Method {
 	case appserver.NotificationTurnCompleted, appserver.NotificationTurnError:
-		return wire.PushAgentDone, probe.Params.ThreadID
+		return wire.PushAgentDone, probe.Params.ThreadID, nil
 	}
-	return "", ""
+	return "", "", nil
 }
 
 // setChannel installs a freshly handshaken channel. The phone still has to

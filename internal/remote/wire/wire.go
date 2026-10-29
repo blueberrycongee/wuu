@@ -111,6 +111,8 @@ type RelayMsg struct {
 	// ThreadID deep-links a turn-bound push hint to its thread; empty for
 	// process-wide hints (needs_input).
 	ThreadID string `json:"thread_id,omitempty"`
+	// UserLocation replaces ThreadID for Personal pushes; it contains no identity or content.
+	UserLocation *UserLocation `json:"user_location,omitempty"`
 
 	// errors
 	Code string `json:"code,omitempty"`
