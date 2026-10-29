@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -258,5 +259,53 @@ func TestCorruptGeneratedResultIsNotReturnedAsArtifact(t *testing.T) {
 		if path == first.ResultPath {
 			t.Fatalf("corrupt result remains in artifact list: %+v", msg)
 		}
+	}
+}
+
+func TestOversizedCorruptArtifactsDoNotCauseUnboundedAllocation(t *testing.T) {
+	for _, target := range []string{"result", "report"} {
+		t.Run(target, func(t *testing.T) {
+			root := t.TempDir()
+			c := newDormantQueuedSpawnConcurrencyControl(t, root, filepath.Join(root, "control"), filepath.Join(root, "harness"), 1, &fakeClient{resp: providers.ChatResponse{Content: "small result"}}, nil)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			first, err := c.Spawn(ctx, SpawnRequest{Type: DefaultSubagentType, TaskName: "large_corrupt", Prompt: "finish", Synchronous: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, ok, err := c.HarnessStore().ReportForTask(first.AgentID)
+			if err != nil || !ok {
+				t.Fatal("generated report missing")
+			}
+			path := sessionRefPath(t, c, first.ResultPath)
+			if target == "report" {
+				path = report.ReportPath
+			}
+			f, err := os.OpenFile(path, os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Truncate(64 << 20); err != nil {
+				f.Close()
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			msg := c.AgentMailboxMessage(c.Manager().Get(first.AgentID).Snapshot())
+			runtime.ReadMemStats(&after)
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= 32<<20 {
+				t.Fatalf("corrupt %s allocated %d bytes", target, allocated)
+			}
+			if target == "result" && msg.ResultPath != "" {
+				t.Fatalf("returned corrupted result: %+v", msg)
+			}
+			if target == "report" && msg.ReportPath != "" {
+				t.Fatalf("returned corrupted report: %+v", msg)
+			}
+		})
 	}
 }

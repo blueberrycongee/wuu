@@ -74,8 +74,8 @@ func (c *AgentControl) recordAgentResultArtifact(snap subagent.SubAgentSnapshot)
 		if !info.Mode().IsRegular() {
 			return ""
 		}
-		current, readErr := os.ReadFile(path)
-		if readErr != nil || !bytes.Equal(current, content) {
+		matches, readErr := securefs.RegularFileMatches(path, content)
+		if readErr != nil || !matches {
 			return ""
 		}
 	case errors.Is(err, os.ErrNotExist):
@@ -140,16 +140,8 @@ func filterUnavailableGeneratedResults(paths []string) []string {
 			if err != nil {
 				continue
 			}
-			info, err := os.Lstat(path)
-			if err != nil || !info.Mode().IsRegular() {
-				continue
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			actual := sha256.Sum256(data)
-			if !bytes.Equal(actual[:], expected) {
+			actual, _, err := securefs.HashRegularFile(path)
+			if err != nil || !bytes.Equal(actual[:], expected) {
 				continue
 			}
 		}

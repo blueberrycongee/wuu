@@ -2,7 +2,6 @@ package harness
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -892,12 +891,8 @@ func (s *Store) ListReports() ([]Report, error) {
 // GeneratedReportReady verifies that a derived report still represents its
 // authoritative record. Missing or altered artifacts must not be advertised.
 func GeneratedReportReady(report Report) bool {
-	info, err := os.Lstat(report.ReportPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	content, err := os.ReadFile(report.ReportPath)
-	return err == nil && bytes.Equal(content, []byte(renderReportMarkdown(report)))
+	matches, err := securefs.RegularFileMatches(report.ReportPath, []byte(renderReportMarkdown(report)))
+	return err == nil && matches
 }
 
 // writeGeneratedReport publishes a generated handoff without replacing an
@@ -908,11 +903,11 @@ func writeGeneratedReport(path string, data []byte) error {
 		if !info.Mode().IsRegular() {
 			return errors.New("generated report path is not a regular file")
 		}
-		current, readErr := os.ReadFile(path)
+		matches, readErr := securefs.RegularFileMatches(path, data)
 		if readErr != nil {
 			return readErr
 		}
-		if !bytes.Equal(current, data) {
+		if !matches {
 			return errors.New("generated report path contains different content")
 		}
 		return nil
