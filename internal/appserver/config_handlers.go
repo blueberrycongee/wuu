@@ -55,10 +55,12 @@ func (s *Server) handleInitialize(req Request) error {
 	s.pinLegacyRuntimeSelections()
 	core := version.Info()
 	runtimeHost := s.rt.HostInfo()
-	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	modelProfile, toolSurface := modelSurfaceSummariesFor(presentation.Toolkit)
 	status := "ready"
-	issues := make([]RuntimeIssue, 0, len(s.rt.ReadinessIssues))
-	for _, issue := range s.rt.ReadinessIssues {
+	issues := make([]RuntimeIssue, 0, len(presentation.ReadinessIssues))
+	for _, issue := range presentation.ReadinessIssues {
 		status = "needs_setup"
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
@@ -82,26 +84,26 @@ func (s *Server) handleInitialize(req Request) error {
 			Date:    core.Date,
 			Dirty:   core.Dirty,
 		},
-		Provider:    s.rt.ProviderName,
-		Model:       s.rt.Model,
-		Effort:      s.currentDisplayEffort(),
-		Variant:     s.currentVariant(),
+		Provider:    presentation.ProviderName,
+		Model:       presentation.Model,
+		Effort:      presentationDisplayEffort(presentation),
+		Variant:     strings.TrimSpace(presentation.Variant),
 		MaxParallel: s.rt.MaxParallel(),
 		RuntimeHost: RuntimeHostSummary{
 			Kind:       string(runtimeHost.Kind),
 			InstanceID: runtimeHost.InstanceID,
 		},
 		WorkspaceRoot:      s.rt.RootDir,
-		Permissions:        s.currentPermissionSummary(),
+		Permissions:        permissionSummaryForPresentation(presentation),
 		ExtensionTrust:     s.currentExtensionTrustSummary(),
 		ExtensionInventory: s.currentExtensionInventory(),
 		ModelProfile:       modelProfile,
 		ToolSurface:        toolSurface,
-		ModelRoles:         s.currentModelRoleSummaries(),
+		ModelRoles:         modelRoleSummariesFor(presentation.Roles),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
+		ProjectModels:      presentation.ProjectModels,
 		Providers:          s.providerSummaries(),
-		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
+		AdvancedSettings:   s.advancedSettingsSummaryFor(presentation),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
 		CatalogProviders:   catalogProviderSummaries(),
 		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode, ProjectAgent: projectAgentEnabled},
@@ -109,35 +111,46 @@ func (s *Server) handleInitialize(req Request) error {
 }
 
 func (s *Server) handleConfigRead(req Request) error {
-	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	modelProfile, toolSurface := modelSurfaceSummariesFor(presentation.Toolkit)
 	return s.writeResponse(req.ID, ConfigReadResult{
-		Provider:           s.rt.ProviderName,
-		Model:              s.rt.Model,
-		Effort:             s.currentDisplayEffort(),
-		Variant:            s.currentVariant(),
+		Provider:           presentation.ProviderName,
+		Model:              presentation.Model,
+		Effort:             presentationDisplayEffort(presentation),
+		Variant:            strings.TrimSpace(presentation.Variant),
 		MaxParallel:        s.rt.MaxParallel(),
 		ConfigPath:         s.rt.ConfigPath,
 		WorkspaceRoot:      s.rt.RootDir,
 		SessionDir:         s.rt.SessionDir,
-		Permissions:        s.currentPermissionSummary(),
+		Permissions:        permissionSummaryForPresentation(presentation),
 		ExtensionTrust:     s.currentExtensionTrustSummary(),
 		ExtensionInventory: s.currentExtensionInventory(),
 		ModelProfile:       modelProfile,
 		ToolSurface:        toolSurface,
-		ModelRoles:         s.currentModelRoleSummaries(),
+		ModelRoles:         modelRoleSummariesFor(presentation.Roles),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
+		ProjectModels:      presentation.ProjectModels,
 		Providers:          s.providerSummaries(),
-		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
+		AdvancedSettings:   s.advancedSettingsSummaryFor(presentation),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
 	}, nil)
 }
 
 func (s *Server) currentModelRoleSummaries() []ModelRoleSummary {
-	if s == nil || s.rt == nil || s.rt.ModelRoles.Empty() {
+	if s == nil || s.rt == nil {
 		return nil
 	}
-	selections := s.rt.ModelRoles.List()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return modelRoleSummariesFor(presentation.Roles)
+}
+
+func modelRoleSummariesFor(roles modelroles.Set) []ModelRoleSummary {
+	if roles.Empty() {
+		return nil
+	}
+	selections := roles.List()
 	out := make([]ModelRoleSummary, 0, len(selections))
 	for _, selection := range selections {
 		out = append(out, ModelRoleSummary{
@@ -170,7 +183,13 @@ func (s *Server) currentPermissionSummary() PermissionSummary {
 	if s == nil || s.rt == nil {
 		return PermissionSummary{}
 	}
-	permissions := s.rt.Permissions
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return permissionSummaryForPresentation(presentation)
+}
+
+func permissionSummaryForPresentation(presentation runtime.RuntimePresentation) PermissionSummary {
+	permissions := presentation.Permissions
 	if strings.TrimSpace(permissions.Mode) == "" {
 		permissions = config.ResolvedPermissions{Mode: config.PermissionModeStandard}
 	}
@@ -197,14 +216,13 @@ func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
 	if s == nil || s.rt == nil {
 		return AdvancedSettingsSummary{}
 	}
-	summary := AdvancedSettingsSummary{}
-	if s.rt.StreamRunner != nil {
-		summary.MaxSteps = s.rt.StreamRunner.MaxSteps
-		summary.Temperature = s.rt.StreamRunner.Temperature
-		summary.CompactThresholdPct = s.rt.StreamRunner.CompactThresholdPct
-		summary.CompactKeepRecentTokens = s.rt.StreamRunner.CompactKeepRecentTokens
-		summary.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
-	}
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return s.advancedSettingsSummaryFor(presentation)
+}
+
+func (s *Server) advancedSettingsSummaryFor(presentation runtime.RuntimePresentation) AdvancedSettingsSummary {
+	summary := AdvancedSettingsSummary{MaxSteps: presentation.MaxSteps, Temperature: presentation.Temperature, CompactThresholdPct: presentation.CompactThresholdPct, CompactKeepRecentTokens: presentation.CompactKeepRecentTokens, DisableAutoCompact: presentation.DisableAutoCompact}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
 		summary.MaxSteps = cfg.Agent.MaxSteps
 		summary.MaxContextTokens = cfg.Agent.MaxContextTokens
@@ -212,11 +230,11 @@ func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
 		summary.CompactThresholdPct = cfg.Agent.CompactThresholdPct
 		summary.CompactKeepRecentTokens = cfg.Agent.CompactKeepRecentTokens
 		summary.DisableAutoCompact = cfg.Agent.DisableAutoCompact
-		if provider, _, err := cfg.ResolveProvider(s.rt.ProviderName); err == nil {
+		if provider, _, err := cfg.ResolveProvider(presentation.ProviderName); err == nil {
 			summary.ProviderContextWindow = provider.ContextWindow
 		}
 	}
-	budget := s.rt.ModelBudget
+	budget := presentation.ModelBudget
 	contextWindowTokens, contextWindowSource := budget.EffectiveContextWindow()
 	summary.ContextWindowTokens = contextWindowTokens
 	summary.ContextWindowSource = string(contextWindowSource)
@@ -279,10 +297,19 @@ func advancedCompactThresholdTokens(budget modelbudget.Budget, pct float64) int 
 }
 
 func (s *Server) currentModelSurfaceSummaries() (*ModelProfileSummary, *ToolSurfaceSummary) {
-	if s == nil || s.rt == nil || s.rt.Toolkit == nil {
+	if s == nil || s.rt == nil {
 		return nil, nil
 	}
-	surface := s.rt.Toolkit.ActiveSurface()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return modelSurfaceSummariesFor(presentation.Toolkit)
+}
+
+func modelSurfaceSummariesFor(kit *tools.Toolkit) (*ModelProfileSummary, *ToolSurfaceSummary) {
+	if kit == nil {
+		return nil, nil
+	}
+	surface := kit.ActiveSurface()
 	if surface.ProfileName == "" {
 		return nil, nil
 	}
@@ -300,16 +327,18 @@ func (s *Server) currentModelSurfaceSummaries() (*ModelProfileSummary, *ToolSurf
 func (s *Server) currentExtensionTrustSummary() ExtensionTrustSummary {
 	main := ExtensionSessionTrustSummary{}
 	if s != nil && s.rt != nil {
+		presentation, release := s.rt.CaptureRuntimePresentation()
+		defer release()
 		mcpKnownTools := 0
-		if s.rt.Toolkit != nil {
-			if manager := s.rt.Toolkit.MCPManager(); manager != nil {
+		if presentation.Toolkit != nil {
+			if manager := presentation.Toolkit.MCPManager(); manager != nil {
 				mcpKnownTools = len(manager.AllTools())
 			}
 		}
 		snapshot := s.rt.ExtensionSnapshot()
 		main.MCP = extensionSurfaceSummary(mcpKnownTools > 0, mcpKnownTools)
 		main.Skills = extensionSurfaceSummary(len(snapshot.Skills) > 0, len(snapshot.Skills))
-		main.Hooks = ExtensionSurfaceTrustSummary{Allowed: s.rt.HookDispatcher != nil, Active: hookDispatcherHasAny(s.rt.HookDispatcher)}
+		main.Hooks = ExtensionSurfaceTrustSummary{Allowed: presentation.HookDispatcher != nil, Active: hookDispatcherHasAny(presentation.HookDispatcher)}
 		main.Plugins = ExtensionSurfaceTrustSummary{Allowed: true, Active: len(snapshot.ActivePlugins) > 0, Count: len(snapshot.ActivePlugins)}
 		main.ExternalTools = main.MCP
 	}
@@ -1159,6 +1188,10 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
+	basis, err := s.rt.CaptureAdvancedRuntime()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
 	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
@@ -1185,7 +1218,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		}
 	}
 	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
-		return config.UpdateAdvancedRuntimeSource(source, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
+		return config.UpdateAdvancedRuntimeSource(source, basis.ProviderName, config.AdvancedRuntimeUpdate{
 			MaxSteps:                params.MaxSteps,
 			MaxContextTokens:        params.MaxContextTokens,
 			Temperature:             params.Temperature,
@@ -1203,44 +1236,47 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 
 	cfg := view.Config
-	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
+	var published runtime.AdvancedRuntimeBasis
+	for attempt := 0; attempt < 3; attempt++ {
+		providerCfg, resolvedName, resolveErr := cfg.ResolveProvider(basis.ProviderName)
+		if resolveErr != nil {
+			return s.writeResponse(req.ID, nil, resolveErr)
+		}
+		providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+		_, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, basis.Model)
+		roles, resolveErr := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: resolvedName, ProviderConfig: providerCfg, Model: basis.Model, Effort: basis.Effort, Variant: basis.Variant})
+		if resolveErr != nil {
+			return s.writeResponse(req.ID, nil, resolveErr)
+		}
+		modelBudget := runtime.ResolveModelBudget(basis.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
+		workerBudget := runtime.ResolveModelBudget(roles.Worker.Model, roles.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
+		published, err = s.rt.PublishAdvancedRuntime(basis, cfg.Agent, roles, modelBudget, workerBudget)
+		if !errors.Is(err, runtime.ErrStaleAdvancedRuntime) || attempt == 2 {
+			break
+		}
+		// The saved source may have advanced too. Resolve again against the
+		// currently selected authority, never replay the old candidate values.
+		basis, err = s.rt.CaptureAdvancedRuntime()
+		if err != nil {
+			break
+		}
+		services, release, readErr := s.rt.RetainStateServices()
+		if readErr != nil {
+			err = readErr
+			break
+		}
+		fresh, readErr := services.Config.Read(context.Background())
+		release()
+		if readErr != nil {
+			err = readErr
+			break
+		}
+		cfg = fresh.Config
+	}
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return s.writeResponse(req.ID, nil, fmt.Errorf("advanced settings were saved but runtime publication failed: %w", err))
 	}
-	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
-	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, s.rt.Model)
-	apiModel := modelcatalog.APIModel(ruleProviderCfg, s.rt.Model)
-	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-		ProviderName:   resolvedName,
-		ProviderConfig: providerCfg,
-		Model:          s.rt.Model,
-		Effort:         s.currentEffort(),
-		Variant:        s.currentVariant(),
-	})
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
-	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
-	s.rt.ModelBudget = modelBudget
-	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
-	s.rt.WorkerModelBudget = workerBudget
-	if s.rt.StreamRunner != nil {
-		s.rt.StreamRunner.MaxSteps = cfg.Agent.MaxSteps
-		s.rt.StreamRunner.Temperature = cfg.Agent.Temperature
-		s.rt.StreamRunner.CompactThresholdPct = cfg.Agent.CompactThresholdPct
-		s.rt.StreamRunner.CompactKeepRecentTokens = cfg.Agent.CompactKeepRecentTokens
-		s.rt.StreamRunner.DisableAutoCompact = cfg.Agent.DisableAutoCompact
-		s.rt.StreamRunner.ContextWindowOverride = modelBudget.ContextWindowTokens
-		s.rt.StreamRunner.MaxInputTokens = modelBudget.InputLimitTokens
-		s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
-		s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
-	}
-	s.updateIdleThreadAdvancedRuntime(cfg)
-	if s.rt.Toolkit != nil {
-		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
-	}
+	s.updateIdleThreadAdvancedRuntime(cfg, published)
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
@@ -1752,24 +1788,23 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	var permissionUpdate []config.ResolvedPermissions
 	if params.PermissionMode != nil {
-		permissions := config.ResolvedPermissions{Mode: config.NormalizePermissionMode(*params.PermissionMode)}
-		s.rt.Permissions = permissions
-		if s.rt.Toolkit != nil {
-			runtime.ConfigureToolkitPermissions(s.rt.Toolkit, s.rt.Permissions)
-		}
+		permissionUpdate = append(permissionUpdate, config.ResolvedPermissions{Mode: config.NormalizePermissionMode(*params.PermissionMode)})
 	}
-	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, explicitSelection); err != nil {
+	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, explicitSelection, permissionUpdate...); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
 	if keepSelection {
 		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 	}
-	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	modelProfile, toolSurface := modelSurfaceSummariesFor(presentation.Toolkit)
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
+		ProjectModels:    presentation.ProjectModels,
 		Provider:         resolvedName,
 		Model:            model,
 		Effort:           effort,
@@ -1827,6 +1862,7 @@ func (s *Server) applyModelSelectionToRuntime(
 	roleSelections modelroles.Set,
 	connectionChanged bool,
 	explicitSelection bool,
+	permissions ...config.ResolvedPermissions,
 ) (err error) {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
@@ -1846,52 +1882,14 @@ func (s *Server) applyModelSelectionToRuntime(
 			ExtensionInventory: s.extensionInventory(snapshot), Skills: s.skillSummaries(snapshot.Skills, s.rt.RootDir),
 		}))
 	}()
-	if err := s.rt.RefreshModelConfiguration(cfg, resolvedName, model); err != nil {
-		return err
-	}
-	if explicitSelection {
-		s.rt.ProviderName = resolvedName
-		s.rt.Model = model
-	}
-
-	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
-	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
-	if explicitSelection && s.rt.Toolkit != nil {
-		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
-	}
-	if explicitSelection {
-		if err := s.rt.ReconfigureToolLoading(cfg.Agent, ruleProviderCfg, apiModel, selection.ProviderOptions); err != nil {
-			return fmt.Errorf("reconfigure tool loading: %w", err)
+	// The selected generation constructs its model, toolkit and prompt outside
+	// the publication lock and publishes them as one captured state.
+	resolved := runtime.ResolvedModelPublication{RuleProviderName: ruleProviderName, RuleProviderConfig: ruleProviderCfg, Selection: selection, Roles: roleSelections, Explicit: explicitSelection}
+	if err := s.rt.RefreshResolvedModelConfiguration(cfg, resolvedName, model, resolved, permissions...); err != nil {
+		if runtime.PluginGenerationWasCommitted(err) {
+			return fmt.Errorf("model settings were saved and runtime activated with errors: %w", err)
 		}
-	}
-	if explicitSelection {
-		if _, err := s.rt.RefreshSystemPrompt(resolvedName, apiModel); err != nil {
-			return err
-		}
-		modelBudget := runtime.ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
-		s.rt.ModelBudget = modelBudget
-		s.rt.WorkerModelBudget = runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
-		if s.rt.StreamRunner != nil {
-			s.rt.StreamRunner.ProviderName = resolvedName
-			s.rt.StreamRunner.Model = model
-			s.rt.StreamRunner.APIModel = apiModel
-			s.rt.StreamRunner.MediaInput = providers.MediaInputPolicy{
-				Image:      roleSelections.Main.Capabilities.ImageInput,
-				File:       roleSelections.Main.Capabilities.FileInput,
-				ImageKnown: roleSelections.Main.Capabilities.ImageInputKnown,
-				FileKnown:  roleSelections.Main.Capabilities.FileInputKnown,
-				Video:      roleSelections.Main.Capabilities.VideoInput,
-				VideoKnown: roleSelections.Main.Capabilities.VideoInputKnown,
-			}
-			s.rt.StreamRunner.Effort = selection.LegacyEffort
-			s.rt.StreamRunner.Variant = selection.Variant
-			s.rt.StreamRunner.ProviderOptions = modelvariant.CloneOptions(selection.ProviderOptions)
-			s.rt.StreamRunner.ContextWindowOverride = modelBudget.ContextWindowTokens
-			s.rt.StreamRunner.MaxInputTokens = modelBudget.InputLimitTokens
-			s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
-			s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
-		}
+		return fmt.Errorf("model settings were saved but runtime publication failed: %w", err)
 	}
 	if connectionChanged {
 		// Connection credentials/endpoints are workspace configuration, so every
@@ -1926,22 +1924,24 @@ func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
 }
 
 func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
-	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	modelProfile, toolSurface := modelSurfaceSummariesFor(presentation.Toolkit)
 	return ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
-		Provider:         s.rt.ProviderName,
-		Model:            s.rt.Model,
-		Effort:           s.currentDisplayEffort(),
-		Variant:          s.currentVariant(),
+		ProjectModels:    presentation.ProjectModels,
+		Provider:         presentation.ProviderName,
+		Model:            presentation.Model,
+		Effort:           presentationDisplayEffort(presentation),
+		Variant:          strings.TrimSpace(presentation.Variant),
 		MaxParallel:      s.rt.MaxParallel(),
-		Permissions:      s.currentPermissionSummary(),
+		Permissions:      permissionSummaryForPresentation(presentation),
 		ExtensionTrust:   s.currentExtensionTrustSummary(),
 		ModelProfile:     modelProfile,
 		ToolSurface:      toolSurface,
-		ModelRoles:       s.currentModelRoleSummaries(),
+		ModelRoles:       modelRoleSummariesFor(presentation.Roles),
 		Providers:        s.providerSummaries(),
-		AdvancedSettings: s.currentAdvancedSettingsSummary(),
+		AdvancedSettings: s.advancedSettingsSummaryFor(presentation),
 	}
 }
 
@@ -2644,8 +2644,9 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 }
 
 // updateIdleThreadAdvancedRuntime propagates an advanced-settings change to
-// idle cached runtimes without rebuilding them (which would churn their
-// prompt-cache prefixes). Advanced settings split into two kinds, and the split
+// idle cached runtimes in place when their graph is current. Running or retired
+// runtimes rebuild after their admitted work drains. Advanced settings split into
+// two kinds, and the split
 // is the whole point of this function (issue #81):
 //
 //   - Behavior knobs (MaxSteps, Temperature, compact percentage/keep-recent,
@@ -2656,114 +2657,136 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 //     pinned to a smaller-window model, swap in the workspace model's window
 //     (miscomputing compaction) and repoint the thread's worker at the
 //     workspace worker provider.
-func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
-	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config, basis runtime.AdvancedRuntimeBasis) {
+	if s == nil || s.rt == nil {
 		return
 	}
+	s.propagateIdleThreadAdvancedRuntime(cfg, basis, s.rt.PrepareAdvancedThreadDerivation)
+}
+
+func (s *Server) propagateIdleThreadAdvancedRuntime(cfg config.Config, basis runtime.AdvancedRuntimeBasis, derive func(runtime.AdvancedRuntimeBasis, config.Config, runtime.ThreadModelSelection) (runtime.ThreadModelDerivation, error)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	threads := make([]*threadState, 0, len(s.threads))
 	for _, th := range s.threads {
+		threads = append(threads, th)
+	}
+	s.mu.Unlock()
+	for _, th := range threads {
 		th.mu.Lock()
-		if th.running || th.execRuntime == nil {
+		if th.execRuntime == nil {
 			th.mu.Unlock()
 			continue
 		}
-		derivation, err := s.rt.DeriveThreadModel(cfg, th.execRuntime.Selection)
+		thread := th.execRuntime
+		if !s.rt.AdvancedRuntimeBasisCurrent(basis) {
+			th.mu.Unlock()
+			return
+		}
+		if th.running {
+			// Admission may start after the settings request checked for
+			// active turns. Preserve that turn and rebuild after it drains.
+			th.pendingRuntimeReset = true
+			th.mu.Unlock()
+			continue
+		}
+		if !s.rt.AdvancedRuntimeCurrent(basis, thread) {
+			// The thread retains a different graph. Preserve its admitted work
+			// and rebuild its defaults at the next idle admission.
+			th.pendingRuntimeReset = true
+			th.mu.Unlock()
+			continue
+		}
+		selection := thread.Selection
+		th.mu.Unlock()
+		// Provider work is prepared against the retained graph without either
+		// the server or thread mutex held.
+		derivation, err := derive(basis, cfg, selection)
 		if err != nil {
-			// The thread pins a model that no longer resolves (e.g. a removed
-			// provider). Leave its existing derived budgets/worker in place;
-			// admission self-heals the dead pin on the next turn.
 			providers.DebugLogf("advanced update: re-derive thread %q model: %v", th.ID, err)
+			th.mu.Lock()
+			if th.execRuntime == thread && s.rt.AdvancedRuntimeBasisCurrent(basis) {
+				th.pendingRuntimeReset = true
+			}
 			th.mu.Unlock()
 			continue
 		}
-		if th.execRuntime.StreamRunner != nil {
-			runner := th.execRuntime.StreamRunner
-			// Workspace behavior knobs: uniform, copied verbatim.
-			runner.MaxSteps = s.rt.StreamRunner.MaxSteps
-			runner.Temperature = s.rt.StreamRunner.Temperature
-			runner.CompactThresholdPct = s.rt.StreamRunner.CompactThresholdPct
-			runner.CompactKeepRecentTokens = s.rt.StreamRunner.CompactKeepRecentTokens
-			runner.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
-			// Derived budget: recomputed from this thread's own pin.
+		th.mu.Lock()
+		if th.execRuntime != thread || !s.rt.AdvancedRuntimeBasisCurrent(basis) {
+			th.mu.Unlock()
+			continue
+		}
+		if th.running || !s.rt.AdvancedRuntimeCurrent(basis, thread) {
+			th.pendingRuntimeReset = true
+			th.mu.Unlock()
+			continue
+		}
+		if runner := thread.StreamRunner; runner != nil {
+			runner.MaxSteps = cfg.Agent.MaxSteps
+			runner.Temperature = cfg.Agent.Temperature
+			runner.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+			runner.CompactKeepRecentTokens = cfg.Agent.CompactKeepRecentTokens
+			runner.DisableAutoCompact = cfg.Agent.DisableAutoCompact
 			runner.ContextWindowOverride = derivation.ModelBudget.ContextWindowTokens
 			runner.MaxInputTokens = derivation.ModelBudget.InputLimitTokens
 			runner.OutputReserveTokens = derivation.ModelBudget.OutputReserveTokens
 			runner.CompactThresholdTokens = derivation.ModelBudget.CompactThresholdTokens
 		}
-		th.execRuntime.ModelBudget = derivation.ModelBudget
-		th.execRuntime.WorkerModelBudget = derivation.WorkerModelBudget
-		if th.execRuntime.AgentControl != nil {
-			th.execRuntime.AgentControl.UpdateWorkerDefaults(
-				derivation.WorkerClient,
-				derivation.WorkerAPIModel,
-				s.workerManagerOptionsForDerivation(derivation),
-			)
+		thread.ModelBudget, thread.WorkerModelBudget = derivation.ModelBudget, derivation.WorkerModelBudget
+		if thread.AgentControl != nil {
+			thread.AgentControl.UpdateWorkerDefaults(derivation.WorkerClient, derivation.WorkerAPIModel, workerManagerOptionsForDerivation(cfg.Agent, derivation))
 		}
 		th.mu.Unlock()
 	}
 }
 
-// workerManagerOptionsForDerivation builds worker manager options from a
-// thread's own derived worker role, layering the workspace behavior knobs
-// (temperature, compaction cadence) that apply uniformly.
-func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadModelDerivation) subagent.ManagerOptions {
-	temperature := 0.0
-	compactPct := 0.0
-	keepRecent := 0
-	disableCompact := false
-	if s.rt != nil && s.rt.StreamRunner != nil {
-		temperature = s.rt.StreamRunner.Temperature
-		compactPct = s.rt.StreamRunner.CompactThresholdPct
-		keepRecent = s.rt.StreamRunner.CompactKeepRecentTokens
-		disableCompact = s.rt.StreamRunner.DisableAutoCompact
-	}
+func workerManagerOptionsForDerivation(cfg config.AgentConfig, derivation runtime.ThreadModelDerivation) subagent.ManagerOptions {
 	return subagent.ManagerOptions{
-		DefaultProviderName:     derivation.WorkerProvider,
-		DefaultEffort:           derivation.WorkerEffort,
-		DefaultProviderOptions:  derivation.WorkerOptions,
-		ContextWindowOverride:   derivation.WorkerModelBudget.ContextWindowTokens,
-		MaxInputTokens:          derivation.WorkerModelBudget.InputLimitTokens,
-		OutputReserveTokens:     derivation.WorkerModelBudget.OutputReserveTokens,
-		CompactThresholdTokens:  derivation.WorkerModelBudget.CompactThresholdTokens,
-		Temperature:             temperature,
-		CompactThresholdPct:     compactPct,
-		CompactKeepRecentTokens: keepRecent,
-		DisableAutoCompact:      disableCompact,
+		DefaultProviderName: derivation.WorkerProvider, DefaultEffort: derivation.WorkerEffort, DefaultProviderOptions: derivation.WorkerOptions,
+		ContextWindowOverride: derivation.WorkerModelBudget.ContextWindowTokens, MaxInputTokens: derivation.WorkerModelBudget.InputLimitTokens,
+		OutputReserveTokens: derivation.WorkerModelBudget.OutputReserveTokens, CompactThresholdTokens: derivation.WorkerModelBudget.CompactThresholdTokens,
+		Temperature: cfg.Temperature, CompactThresholdPct: cfg.CompactThresholdPct, CompactKeepRecentTokens: cfg.CompactKeepRecentTokens,
+		DisableAutoCompact: cfg.DisableAutoCompact,
 	}
 }
 
 func (s *Server) currentEffort() string {
-	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+	if s == nil || s.rt == nil {
 		return ""
 	}
-	return strings.TrimSpace(s.rt.StreamRunner.Effort)
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return strings.TrimSpace(presentation.Effort)
 }
-
 func (s *Server) currentVariant() string {
-	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+	if s == nil || s.rt == nil {
 		return ""
 	}
-	return strings.TrimSpace(s.rt.StreamRunner.Variant)
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return strings.TrimSpace(presentation.Variant)
 }
-
-func (s *Server) currentDisplayEffort() string {
-	if variant := s.currentVariant(); variant != "" {
+func presentationDisplayEffort(presentation runtime.RuntimePresentation) string {
+	if variant := strings.TrimSpace(presentation.Variant); variant != "" {
 		return variant
 	}
-	return s.currentEffort()
+	return strings.TrimSpace(presentation.Effort)
+}
+func (s *Server) currentDisplayEffort() string {
+	if s == nil || s.rt == nil {
+		return ""
+	}
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return presentationDisplayEffort(presentation)
 }
 
 func (s *Server) currentSessionRuntimeSelection() session.RuntimeSelection {
-	selection := session.RuntimeSelection{}
-	if s != nil && s.rt != nil {
-		selection.Provider = s.rt.ProviderName
-		selection.Model = s.rt.Model
-		selection.Variant = s.currentVariant()
-		selection.Effort = s.currentEffort()
-		selection.PermissionMode = config.NormalizePermissionMode(s.rt.Permissions.Mode)
+	if s == nil || s.rt == nil {
+		return session.RuntimeSelection{}
 	}
-	return selection
+	presentation, release := s.rt.CaptureRuntimePresentation()
+	defer release()
+	return session.RuntimeSelection{Provider: presentation.ProviderName, Model: presentation.Model, Variant: strings.TrimSpace(presentation.Variant), Effort: strings.TrimSpace(presentation.Effort), PermissionMode: config.NormalizePermissionMode(presentation.Permissions.Mode)}
 }
 
 // pinLegacyRuntimeSelections backfills this workspace's persisted sessions

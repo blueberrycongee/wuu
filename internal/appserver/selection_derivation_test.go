@@ -155,7 +155,12 @@ func TestAdvancedUpdateReDerivesPinnedThreadBudgetAndWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	srv.updateIdleThreadAdvancedRuntime(cfg)
+	cfg.Agent.Temperature, cfg.Agent.MaxSteps = 0.42, 99
+	basis, err := srv.rt.CaptureAdvancedRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.updateIdleThreadAdvancedRuntime(cfg, basis)
 
 	// Derived budgets stay the conversation's own, not the workspace 400k.
 	if built.StreamRunner.ContextWindowOverride != pinnedWindow {

@@ -37,12 +37,38 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		}
 		kit.SetArtifactPublisher(NewArtifactPublisher(generation.artifactClient))
 		kit.SetSkillsWithAvailability(generation.skills, generation.skillAvailable)
-		ConfigureToolkitPermissions(kit, s.Permissions)
+		permissions := s.Permissions
+		provider, model := s.ProviderName, s.Model
+		search, native := s.ToolSearchEnabled, s.NativeDeferredToolDiscovery
+		if selection := generation.modelSelection; selection != nil {
+			provider, model = selection.provider, selection.model
+			if selection.permissions != nil {
+				permissions = *selection.permissions
+			}
+			if generation.models != nil && generation.models.err == nil {
+				if generation.models.roles.Main.APIModel != "" {
+					model = generation.models.roles.Main.APIModel
+				}
+				if generation.models.roles.Main.RuleProvider != "" {
+					provider = generation.models.roles.Main.RuleProvider
+				}
+			}
+		}
+		if loading := generation.modelToolLoading; loading != nil {
+			search, native = loading.search, loading.native
+		}
+		ConfigureToolkitPermissions(kit, permissions)
 		configureToolkitSecurityExtensions(kit, generation.host)
-		kit.ConfigureSurfaceForProviderModel(s.ProviderName, s.Model, true)
+		kit.ConfigureSurfaceForProviderModel(provider, model, true)
 		kit.SetBrowserEnabled(browserEnabledFromEnv())
-		kit.SetToolSearchEnabled(s.ToolSearchEnabled)
-		kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
+		kit.SetToolSearchEnabled(search)
+		kit.SetNativeDeferredToolDiscovery(native)
+		if generation.modelToolLoading != nil {
+			generation.modelToolLoading.catalog, err = deferredToolCatalogPromptForToolkit(kit)
+			if err != nil {
+				return toolservice.Backend{}, err
+			}
+		}
 		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		bindToolkitHooks(kit, generation.hooks)
 		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
