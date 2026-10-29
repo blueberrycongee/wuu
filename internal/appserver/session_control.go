@@ -63,9 +63,21 @@ func (s *Server) lockSessionControls(ids ...string) func() {
 	}
 }
 
-func (s *Server) controlPluginSession(binding *runtime.State, _ context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
+func (s *Server) controlPluginSession(binding *runtime.State, ctx context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
+	var restoreErr error
+	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, p.ExecutionAuthorization, "control", p.SessionID)
+	if restoreErr != nil {
+		return pluginhost.SessionControlResult{}, restoreErr
+	}
+	if err := s.authorizeUserSessionOperation(ctx, "control", p.SessionID); err != nil {
+		return pluginhost.SessionControlResult{}, err
+	}
 	unlock := s.lockSessionControls(p.SessionID)
 	defer unlock()
+	// Authority may have been revoked while waiting for a same-session fence.
+	if err := s.authorizeUserSessionOperation(ctx, "control", p.SessionID); err != nil {
+		return pluginhost.SessionControlResult{}, err
+	}
 	manager := "plugin:" + strings.TrimSpace(pluginID)
 	m, ok, err := binding.Sessions.Find(p.SessionID)
 	if err != nil {
@@ -73,6 +85,9 @@ func (s *Server) controlPluginSession(binding *runtime.State, _ context.Context,
 	}
 	if !ok {
 		return pluginhost.SessionControlResult{}, session.ErrSessionNotFound
+	}
+	if err := s.requireUserSessionBinding(m); err != nil {
+		return pluginhost.SessionControlResult{}, err
 	}
 	if m.Visibility == "plugin" && m.Owner != manager {
 		return pluginhost.SessionControlResult{}, errors.New("session control requires a shared or owned ordinary session")

@@ -64,6 +64,8 @@ func (h *Host) OpenServiceScope(ctx context.Context, consumer string, services .
 	}
 	registry := h.serviceRegistry
 	ctx = context.WithValue(ctx, inheritedInvocationKey{}, (*nativeInvocation)(nil))
+	// This is a new host-admitted consumer scope, not the enclosing callback.
+	ctx = context.WithValue(ctx, nativeInvocationKey{}, struct{}{})
 	ctx = context.WithValue(ctx, retainedServiceScopeAdmissionKey{}, true)
 	id, root := h.executions.begin(consumer, ctx, ToolExecuteInput{}, false)
 	h.mu.RUnlock()

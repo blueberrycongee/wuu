@@ -123,6 +123,7 @@ func CloneChatMessages(messages []ChatMessage) []ChatMessage {
 }
 
 func CloneChatMessage(msg ChatMessage) ChatMessage {
+	msg.Relation = CloneMessageRelation(msg.Relation)
 	msg.Images = append([]InputImage(nil), msg.Images...)
 	msg.Files = append([]InputFile(nil), msg.Files...)
 	msg.ReasoningBlocks = append([]ReasoningBlock(nil), msg.ReasoningBlocks...)

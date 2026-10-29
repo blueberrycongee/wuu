@@ -141,7 +141,7 @@ Omitting `model` preserves the captured parent choice. An explicit model object 
 
 Product session bindings support the native Wuu engine only. Binding an external-engine session is rejected. If a bound session later selects an external engine, new turns fail before dispatch; explicitly unbind its composition first.
 
-A scope with `state: "parent"` imports the parent's selected session, document and artifact services. This explicit import overrides state-service selection patches. The service graph, model configuration and plugin processes remain separate. Bind an existing product conversation using its session ID:
+A scope with `state: "parent"` imports the parent's selected session, document and artifact services, plus its selected execution-authorization service when present. Grant ownership stays with that product authority; the child does not create a second grant store through the general document bridge. This explicit import overrides state-service selection patches. The service graph, model configuration and plugin processes remain separate. Bind an existing product conversation using its session ID:
 
 ```ts
 const candidate = await scopes.create({
@@ -161,6 +161,14 @@ The candidate's model takes precedence over the conversation's saved model defau
 A side conversation captures the running parent's admitted composition, or the current durable selection when the parent is idle. It retains that scope through its own completion, including when the parent finishes, rebinds or disposes the scope. Its tools use the parent's workspace and its native toolkit remains read-only. The selected graph's step and request policies also apply. Missing compositions or explicit models fail admission instead of falling back to workspace defaults.
 
 A background lifecycle callback returns to the plugin instance that sent the request, even after the parent turn ends or its next turn selects another composition. Admitted child execution and callback delivery keep that origin alive through disposal; its private resources drain afterward. Request IDs are plugin-wide within the shared state authority: reusing one from another composition or for another target session fails before admission. Terminal observations remain durable if their origin is unavailable after restart; replay cannot deliver them to the default plugin instance.
+
+Direct calls from an imported child graph to its own grant-aware resource policy
+have a remaining authority-routing limitation: the bridge provider ID differs
+from the original opaque grant's provider ID. Such calls fail closed; the host
+does not rewrite grant references or relax provider identity checks. The verified
+product session/effect paths retain the parent's authority and are not this
+unsupported direct-child path. Preserving logical authority separately from the
+bridge routing identity is a future composition boundary, not a current guarantee.
 
 Product selection is authoritative in `state.documents` and survives disposal, generation retirement and process restart. Runtime resources are temporary. If they are missing or their parent state generation has changed, new turns fail before inference. `inspectSession` returns `default`, `active`, or `unavailable`, the selected ID, selecting caller, and the live composition or saved binding snapshot. Explicitly rebind a newly created scope, or unbind using the old ID. Storage errors and unknown commit outcomes propagate; inspect before retrying a write. An isolated scope cannot bind a product session.
 

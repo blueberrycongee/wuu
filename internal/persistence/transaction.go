@@ -110,6 +110,9 @@ func Update(ctx context.Context, store Documents, body func(*Tx) error) error {
 		if errors.Is(err, ErrConflict) {
 			continue
 		}
+		if errors.Is(err, ErrInspectionActive) || errors.Is(err, ErrNamespaceOwnership) {
+			return err
+		}
 		if err != nil {
 			return &CommitError{Transaction: request, Err: err}
 		}

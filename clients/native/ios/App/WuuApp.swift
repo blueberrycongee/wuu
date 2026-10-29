@@ -10,13 +10,14 @@ import WuuCore
             RootView(model: model)
                 .modifier(MobileTypography())
                 .task { model.foreground() }
-                .onChange(of: pushDelegate.openedHost, initial: true) { _, host in
-                    if let host { pushDelegate.openedHost = nil; model.perform { try await model.openPushHost(host) } }
+                .onChange(of: pushDelegate.openedNotification, initial: true) { _, payload in
+                    if let payload { pushDelegate.openedNotification = nil; model.perform { try await model.openNotification(payload) } }
                 }
                 .onOpenURL { url in
                     guard url.scheme == "wuu" else { return }
                     // A pairing link only fills the pairing sheet; the user still chooses to connect.
-                    if url.host == "pair" { model.receivedPairingLink = url.absoluteString }
+                    if let location = PersonalLocation(url: url) { model.perform { try await model.openPersonal(location) } }
+                    else if url.host == "pair" { model.receivedPairingLink = url.absoluteString }
                     else if url.host == "account", url.path == "/github" { model.foreground() }
                 }
                 .onChange(of: phase) { _, value in
@@ -69,7 +70,11 @@ struct RootView: View {
     }
     @ViewBuilder private var fixture: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--native-personal-fixture") {
+            PersonalUIFixtureView()
+                .frame(width: ProcessInfo.processInfo.arguments.contains("--native-menu-narrow") ? 280 : nil)
+                .preferredColorScheme(ProcessInfo.processInfo.arguments.contains("--native-menu-dark") ? .dark : nil)
+        } else if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
             ConversationView(model: model, drafts: drafts)
                 .task {
                     let arguments = ProcessInfo.processInfo.arguments
@@ -90,7 +95,21 @@ struct RootView: View {
         Group {
             if isFixture { fixture }
             else if model.recovery != nil { RecoveryView(model: model) }
-            else if model.host != nil { ConversationView(model: model, drafts: drafts).id(model.host?.pub) }
+            else if model.host != nil {
+                TabView(selection: $model.personalSelected) {
+                    Group {
+                        if model.isPersonalHost {
+                            ContentUnavailableView {
+                                Label("请选择项目电脑", systemImage: "folder")
+                            } description: { Text("此宿主用于 Personal。返回电脑列表以访问 Projects。") }
+                            actions: { Button("电脑列表") { model.perform { await model.leaveHost(); model.foreground() } } }
+                        } else { ConversationView(model: model, drafts: drafts) }
+                    }
+                        .tabItem { Label("Projects", systemImage: "folder") }.tag(false)
+                    PersonalView(model: model, personal: model.personal)
+                        .tabItem { Label("Personal", systemImage: "person.crop.circle") }.tag(true)
+                }.id(model.host?.pub)
+            }
             else if model.hasSavedConnections { ComputersView(model: model, addComputer: pair) }
             else { WelcomeView(model: model, openPairing: pair) }
         }

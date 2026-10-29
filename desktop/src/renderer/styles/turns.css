@@ -327,7 +327,8 @@
 
 .user-message-block {
   display: grid;
-  grid-template-columns: auto;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   max-width: var(--user-message-max-width);
   align-self: flex-end;
   justify-items: end;
@@ -3285,6 +3286,17 @@
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+/* A genuine inline formula may be wider than the message; keep it readable
+ * without letting it push the surrounding text or bubble off screen. */
+.rich-content :not(.katex-display) > .katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+  white-space: normal;
 }
 
 /* Compact Markdown fallback. Conversation reading surfaces refine the

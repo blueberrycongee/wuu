@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
@@ -105,6 +106,9 @@ func (s *Store) Read(ctx context.Context, q Query) (View, error) {
 		return View{}, err
 	}
 	defer lock.Release()
+	if err := s.checkNamespaceAccess(ctx, []string{q.Namespace}); err != nil {
+		return View{}, err
+	}
 	return s.backend.read(ctx, q)
 }
 
@@ -124,12 +128,29 @@ func (s *Store) Commit(ctx context.Context, tx Transaction) (Receipt, error) {
 		return Receipt{}, err
 	}
 	defer lock.Release()
+	namespaces := make([]string, 0, len(tx.Writes))
+	for _, write := range tx.Writes {
+		if write.Namespace == NamespaceOwnershipNamespace {
+			return Receipt{}, ErrNamespaceOwnership
+		}
+		namespaces = append(namespaces, write.Namespace)
+	}
+	if err := s.checkNamespaceAccess(ctx, namespaces); err != nil {
+		return Receipt{}, err
+	}
 	view, err := s.backend.read(ctx, Query{Namespace: ServiceName, Keys: []string{}})
 	if err != nil {
 		return Receipt{}, err
 	}
 	var after *Checkpoint
 	if view.Revision == tx.ExpectedRevision {
+		namespaces := make([]string, 0, len(tx.Writes))
+		for _, write := range tx.Writes {
+			namespaces = append(namespaces, write.Namespace)
+		}
+		if err := inspectionjournal.Check(s.dir, namespaces); err != nil {
+			return Receipt{}, err
+		}
 		cached, err := readCachedCheckpoint(s.dir, s.binding.Generation, view.Revision)
 		if err != nil {
 			return Receipt{}, err
@@ -162,6 +183,14 @@ func (s *Store) Export(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	defer lock.Release()
+	if namespaceIdentityFrom(ctx).migration {
+		if err := inspectionjournal.Check(s.dir, nil); err != nil {
+			return Snapshot{}, err
+		}
+	}
+	if err := s.checkNamespaceAccess(ctx, nil); err != nil {
+		return Snapshot{}, err
+	}
 	return s.backend.export(ctx)
 }
 
@@ -213,6 +242,9 @@ func Migrate(ctx context.Context, dir, from, to string) error {
 	}
 	if current.Backend != from {
 		return ErrBindingChanged
+	}
+	if err := inspectionjournal.Check(dir, nil); err != nil {
+		return err
 	}
 	source, err := openBackend(dir, current, false)
 	if err != nil {

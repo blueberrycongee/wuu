@@ -114,8 +114,10 @@
           "pages": [
             "zh-cn/automation/app-server.md",
             "en/automation/jsonl-events.md",
-            "zh-cn/integrations/resource-access.md",
-            "en/integrations/app-server-protocol.md"
+"en/integrations/app-server-protocol.md",
+"zh-cn/integrations/user-hosts.md",
+"zh-cn/integrations/native-personal.md",
+"zh-cn/integrations/resource-access.md"
           ]
         },
         {
@@ -230,8 +232,10 @@
           "pages": [
             "en/automation/app-server.md",
             "en/automation/jsonl-events.md",
-            "en/integrations/resource-access.md",
-            "en/integrations/app-server-protocol.md"
+"en/integrations/app-server-protocol.md",
+"en/integrations/user-hosts.md",
+"en/integrations/native-personal.md",
+"en/integrations/resource-access.md"
           ]
         },
         {

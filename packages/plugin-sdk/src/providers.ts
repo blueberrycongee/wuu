@@ -1,6 +1,7 @@
+import type { StateInspectionTopology } from "./persistence.js";
 import type {
-  ArtifactImportParams, ImportedArtifact, AuthorizationRequest, AuthorizationDecision,
-  RuntimeHost, ServiceDescriptor,
+  ArtifactImportParams, ImportedArtifact, AuthorizationRequest, AuthorizationDecision, AuthorizationAcquireRequest, AuthorizationLease, AuthorizationReleaseRequest,
+  RuntimeHost, RuntimeHostCallOptions, ServiceDescriptor,
 } from './index.js';
 
 export const CREDENTIAL_STORE_SERVICE = 'state.credentials';
@@ -13,11 +14,12 @@ function descriptor(name: string, methods: readonly string[], preparation: reado
   return { name, version: '1.0.0', methods: methods.map(method => ({
     name: method, input_schema: `${name}.${method}.input.v1`, output_schema: `${name}.${method}.output.v1`,
     ...(preparation.includes(method) ? { preparation: true } : {}),
+    ...(['release-inspection','reconcile-inspection'].includes(method) ? {cleanup:true} : {}),
   })) };
 }
 export const CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ['get', 'set', 'delete', 'compare-exchange']);
 export const CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ['read', 'compare-exchange'], ['read']);
-export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state'], ['read', 'read-state']);
+export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state', 'transfer-state', 'acquire-inspection', 'release-inspection','list-inspections','reconcile-inspection','inspection-authority'], ['read', 'read-state']);
 export const ARTIFACT_STORE_DESCRIPTOR: ServiceDescriptor = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'read-range', 'fork', 'delete-thread']),
   version: '1.2.0',
@@ -85,9 +87,42 @@ export interface PluginSettingsUpdate extends PluginSettingsAddress {
   /** Complete replacement, not a merge patch. */
   values: Record<string, unknown>;
 }
+/** Optional durable subject-state fence; no expiry or local fallback. The
+ * provider rejects writes with inspection_active while held. Release the exact
+ * ID as cleanup after any uncertain acquire; a released ID cannot be reacquired. */
+export interface PluginStateInspectionRequest extends PluginSettingsAddress { readonly id: string; }
+export interface PluginStateInspection extends PluginStateView { readonly id: string; }
+export interface PluginStateInspectionStatus extends PluginStateInspectionRequest {
+ readonly owner: string;
+ readonly reconciled_by?: string;
+ readonly outcome?: "completed" | "not-dispatched";
+ readonly reason?: string;
+}
+export interface PluginStateInspectionList { readonly inspections: readonly PluginStateInspectionStatus[]; }
+export interface PluginStateInspectionResolution extends PluginStateInspectionRequest {
+ readonly expected_owner: string;
+ readonly outcome: "completed" | "not-dispatched";
+ readonly reason: string;
+}
+
 export interface PluginStateUpdate extends PluginSettingsAddress {
   expected_revision: string;
   values: Record<string, string>;
+}
+
+/** One-time transfer of opaque user-state ownership. Both subjects must be
+ * authorized by the host; these IDs are not bearer grants. The provider fences
+ * the source prefix permanently and preserves an exact-intent receipt. Existing
+ * target keys conflict, including equal values. After an uncertain result, only
+ * an explicit identical retry may recover the receipt; it never recopies backups
+ * over subsequent target writes/deletions. Unsupported providers fail explicitly.
+ */
+export interface StateTransfer {
+  readonly id: string;
+  readonly source_subject_id: string;
+  readonly target_subject_id: string;
+  readonly key_prefix: string;
+  readonly scope: 'user';
 }
 
 /** Scope supplied by an admitted consumer; domain IDs do not grant authority.
@@ -159,8 +194,8 @@ export interface DataAppendTurnResult {
   diagnostic_path?: string;
 }
 
-async function call<T>(host: RuntimeHost, service: string, method: string, params: object): Promise<T> {
-  return await host.call('host.service.call', {service, method, params}) as T;
+async function call<T>(host: RuntimeHost, service: string, method: string, params: object, options?: RuntimeHostCallOptions): Promise<T> {
+  return await host.call('host.service.call', {service, method, params}, options) as T;
 }
 
 /** Bind to the RuntimeHost passed to the current callback. Helpers never resolve
@@ -184,10 +219,17 @@ export function configurationStore(host: RuntimeHost) {
 }
 export function pluginSettingsStore(host: RuntimeHost) {
   return {
+    inspectionAuthority: () => call<StateInspectionTopology>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'inspection-authority', {}),
+    listInspections: (scope: PluginSettingsAddress['scope']) => call<PluginStateInspectionList>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'list-inspections', {scope}),
+    reconcileInspection: (input: PluginStateInspectionResolution) => call<PluginStateInspectionStatus>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'reconcile-inspection', input, {cleanup:true}),
+    acquireInspection: (input: PluginStateInspectionRequest) => call<PluginStateInspection>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'acquire-inspection', input),
+    releaseInspection: (input: PluginStateInspectionRequest) => call<Record<string, never>>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'release-inspection', input, {cleanup:true}),
     read: (input: PluginSettingsAddress) => call<PluginSettingsView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'read', input),
     update: (input: PluginSettingsUpdate) => call<PluginSettingsView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'update', input),
     readState: (input: PluginSettingsAddress) => call<PluginStateView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'read-state', input),
     updateState: (input: PluginStateUpdate) => call<PluginStateView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'update-state', input),
+    /** No local fallback, emulated read/update sequence or automatic retry. */
+    transferState: (input: StateTransfer) => call<Record<string, never>>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'transfer-state', input),
   };
 }
 export function artifactStore(host: RuntimeHost) {
@@ -222,4 +264,15 @@ export function queryData(host: RuntimeHost, input: DataQuery): Promise<DataQuer
 }
 export function authorize(host: RuntimeHost, input: AuthorizationRequest): Promise<AuthorizationDecision> {
   return call(host, 'security.authorize', 'authorize', input);
+}
+
+/** Optional exact caller-bound policy fence. The lease has no automatic timeout;
+ * retain it through the one admitted effect and release even after cancellation.
+ * A deny is not permission to perform an effect. Missing support/errors fail
+ * closed without invoking snapshot authorize or replaying a write. */
+export function acquireAuthorization(host: RuntimeHost, input: AuthorizationAcquireRequest): Promise<AuthorizationLease> {
+  return call(host, 'security.authorize', 'acquire-authorization', input);
+}
+export function releaseAuthorization(host: RuntimeHost, input: AuthorizationReleaseRequest): Promise<Record<string, never>> {
+  return call(host, 'security.authorize', 'release-authorization', input, {cleanup:true});
 }

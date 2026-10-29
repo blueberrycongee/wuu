@@ -52,6 +52,9 @@ func browserActionContextFrom(ctx context.Context) (browserActionContext, bool) 
 // a KindBrowser activity lease via the shared runActivityBoundAction spine, and
 // routes the thread-global actions (tabs list, finalize) around it.
 func (t *Toolkit) executeBrowserToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
+	if t.env != nil && len(t.env.ProtectedPaths) > 0 {
+		return toolresult.Result{}, errBrowserProtectedPaths
+	}
 	// Gate the top-level action on the workspace boundary before acquiring any
 	// lease: a read-only session must block navigate/click/type/sequence/finalize
 	// (mutating) while still allowing observe/screenshot/tabs/wait_for, and a

@@ -34,17 +34,37 @@ type AuthorizationDecision struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+// Authorization leases bind one exact request to an authenticated registry caller.
+// A selected provider must keep its verdict valid through explicit release;
+// absence of these optional methods never permits a snapshot-only fallback.
+type AuthorizationAcquireRequest struct {
+	ID      string               `json:"id"`
+	Request AuthorizationRequest `json:"request"`
+}
+type AuthorizationLease struct {
+	ID       string                `json:"id"`
+	Decision AuthorizationDecision `json:"decision"`
+}
+type AuthorizationReleaseRequest struct {
+	ID string `json:"id"`
+}
+
 type ProcessSandboxRequest struct {
 	Argv   []string             `json:"argv"`
 	Policy ProcessSandboxPolicy `json:"policy"`
 }
 
 type ProcessSandboxPolicy struct {
-	Mode          string   `json:"mode"`
-	WritableRoots []string `json:"writable_roots,omitempty"`
+	// ProtectedPaths must remain inaccessible regardless of broader writable roots.
+	ProtectedPaths []string `json:"protected_paths,omitempty"`
+	Mode           string   `json:"mode"`
+	WritableRoots  []string `json:"writable_roots,omitempty"`
 }
 
 type ProcessSandboxResult struct {
+	// ProtectedPathsEnforced attests that every requested protected path is enforced.
+	// False or absence cannot satisfy a request containing protected paths.
+	ProtectedPathsEnforced  bool     `json:"protected_paths_enforced,omitempty"`
 	Argv                    []string `json:"argv"`
 	Enforcement             string   `json:"enforcement"`
 	DenialSignatures        []string `json:"denial_signatures,omitempty"`

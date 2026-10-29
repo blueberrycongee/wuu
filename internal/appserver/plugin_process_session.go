@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Server) resolvePluginProcessSession(ctx context.Context, id string, followParent bool) (string, bool, error) {
+	if err := s.authorizeUserSessionOperation(ctx, "inspect", id); err != nil {
+		return id, false, err
+	}
 	binding, err := runtime.RetainProductInvocationState(ctx)
 	if err != nil {
 		return id, false, err
@@ -19,9 +22,17 @@ func (s *Server) resolvePluginProcessSession(ctx context.Context, id string, fol
 		if err := ctx.Err(); err != nil {
 			return id, false, err
 		}
+		if err := s.authorizeUserSessionOperation(ctx, "inspect", id); err != nil {
+			return id, false, err
+		}
 		metadata, found, err := binding.Sessions.Find(id)
 		if err != nil {
 			return id, false, err
+		}
+		if found {
+			if err := s.requireUserSessionBinding(metadata); err != nil {
+				return id, false, err
+			}
 		}
 		if !found || metadata.ArchivedAt != nil {
 			return id, true, nil
