@@ -2,7 +2,10 @@ package harness
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,15 +318,59 @@ func (s *Store) AddArtifact(artifact Artifact) error {
 }
 
 func (s *Store) SubmitReport(report Report) (Report, error) {
+	return s.submitReport(report, false)
+}
+
+// SubmitGeneratedReport retains distinct automatic handoffs while preserving
+// the precedence of any explicit structured report. A stable ID and path
+// identify each immutable generated report across retries.
+func (s *Store) SubmitGeneratedReport(report Report) (Report, error) {
+	if NormalizeReportKind(report.Kind) != ReportKindFinalText || report.ID == "" || report.ReportPath == "" {
+		return Report{}, errors.New("generated report requires a stable ID, path and final_text kind")
+	}
+	return s.submitReport(report, true)
+}
+
+func (s *Store) submitReport(report Report, generated bool) (Report, error) {
 	if s != nil && s.documentKey != "" && s.image == nil {
+		if generated {
+			if _, statErr := os.Lstat(report.ReportPath); statErr == nil {
+				reports, listErr := s.ListReports()
+				if listErr != nil {
+					return Report{}, listErr
+				}
+				ownsPath := false
+				for i := len(reports) - 1; i >= 0; i-- {
+					existing := reports[i]
+					if existing.TaskID != report.TaskID {
+						continue
+					}
+					if NormalizeReportKind(existing.Kind) == ReportKindStructured {
+						return existing, nil
+					}
+					if existing.ID == report.ID && existing.ReportPath == report.ReportPath {
+						ownsPath = true
+					}
+				}
+				if !ownsPath {
+					return Report{}, errors.New("generated report path is already occupied")
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				return Report{}, statErr
+			}
+		}
 		var result0 Report
 		err := s.access(func(view *Store) error {
 			var err error
-			result0, err = view.SubmitReport(report)
+			result0, err = view.submitReport(report, generated)
 			return err
 		})
 		if err == nil && result0.ReportPath != "" {
-			err = s.materializeReport(result0.TaskID)
+			targetID := ""
+			if generated && NormalizeReportKind(result0.Kind) == ReportKindFinalText {
+				targetID = result0.ID
+			}
+			err = s.materializeReport(result0.TaskID, targetID)
 		}
 
 		return result0, err
@@ -347,7 +394,8 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	if report.ID == "" {
 		report.ID = report.TaskID + "-report"
 	}
-	if report.ReportPath == "" && s.dir != "" {
+	defaultPath := report.ReportPath == ""
+	if defaultPath && s.dir != "" {
 		report.ReportPath = filepath.Join(s.dir, "reports", report.TaskID+".md")
 	}
 	reports, err := s.loadReports()
@@ -355,6 +403,17 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 		return Report{}, err
 	}
 	report.Kind = NormalizeReportKind(report.Kind)
+	if !generated && defaultPath && report.Kind == ReportKindStructured {
+		for _, existing := range reports {
+			if existing.TaskID == report.TaskID && NormalizeReportKind(existing.Kind) == ReportKindFinalText && existing.ReportPath == report.ReportPath {
+				// Keep the prior legacy report readable when an explicit
+				// structured handoff supersedes its index entry.
+				digest := sha256.Sum256([]byte(report.ID))
+				report.ReportPath = filepath.Join(s.dir, "reports", report.TaskID, fmt.Sprintf("structured-%x", digest[:]), "report.md")
+				break
+			}
+		}
+	}
 	// A synthesized final_text report is a stand-in, never a competitor: it
 	// is only stored while the task has no report at all, and a structured
 	// agent_report submission supersedes any stand-in already recorded.
@@ -362,9 +421,24 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	// structured submissions deterministic regardless of arrival order.
 	var supersededReportIDs []string
 	if report.Kind == ReportKindFinalText {
-		for i := range reports {
-			if reports[i].TaskID == report.TaskID {
-				return reports[i], nil
+		for i := len(reports) - 1; i >= 0; i-- {
+			existing := reports[i]
+			if existing.TaskID != report.TaskID {
+				continue
+			}
+			if generated && NormalizeReportKind(existing.Kind) == ReportKindFinalText && existing.ID == report.ID {
+				if s.image == nil {
+					if err := os.MkdirAll(filepath.Dir(existing.ReportPath), securefs.DirMode); err != nil {
+						return Report{}, err
+					}
+					if err := writeGeneratedReport(existing.ReportPath, []byte(renderReportMarkdown(existing))); err != nil {
+						return Report{}, fmt.Errorf("restore generated report: %w", err)
+					}
+				}
+				return existing, nil
+			}
+			if !generated || NormalizeReportKind(existing.Kind) != ReportKindFinalText {
+				return existing, nil
 			}
 		}
 	} else {
@@ -385,8 +459,15 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 		if err := os.MkdirAll(filepath.Dir(report.ReportPath), securefs.DirMode); err != nil {
 			return Report{}, fmt.Errorf("create report dir: %w", err)
 		}
-		if err := os.WriteFile(report.ReportPath, []byte(renderReportMarkdown(report)), securefs.FileMode); err != nil {
-			return Report{}, fmt.Errorf("write report: %w", err)
+		data := []byte(renderReportMarkdown(report))
+		var writeErr error
+		if generated {
+			writeErr = writeGeneratedReport(report.ReportPath, data)
+		} else {
+			writeErr = os.WriteFile(report.ReportPath, data, securefs.FileMode)
+		}
+		if writeErr != nil {
+			return Report{}, fmt.Errorf("write report: %w", writeErr)
 		}
 	}
 	replaced := false
@@ -460,7 +541,16 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 		if tasks[i].ID != report.TaskID {
 			continue
 		}
-		tasks[i].ReportPath = report.ReportPath
+		latestPath := report.ReportPath
+		if generated {
+			for j := len(reports) - 1; j >= 0; j-- {
+				if reports[j].TaskID == report.TaskID {
+					latestPath = reports[j].ReportPath
+					break
+				}
+			}
+		}
+		tasks[i].ReportPath = latestPath
 		if !contains(tasks[i].ArtifactPaths, report.ReportPath) {
 			tasks[i].ArtifactPaths = append(tasks[i].ArtifactPaths, report.ReportPath)
 		}
@@ -797,6 +887,40 @@ func (s *Store) ListReports() ([]Report, error) {
 		return nil, nil
 	}
 	return s.loadReports()
+}
+
+// GeneratedReportReady verifies that a derived report still represents its
+// authoritative record. Missing or altered artifacts must not be advertised.
+func GeneratedReportReady(report Report) bool {
+	info, err := os.Lstat(report.ReportPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	content, err := os.ReadFile(report.ReportPath)
+	return err == nil && bytes.Equal(content, []byte(renderReportMarkdown(report)))
+}
+
+// writeGeneratedReport publishes a generated handoff without replacing an
+// existing reference. Callers serialize publication with the harness lock.
+func writeGeneratedReport(path string, data []byte) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("generated report path is not a regular file")
+		}
+		current, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(current, data) {
+			return errors.New("generated report path contains different content")
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return securefs.WriteFileAtomic(path, data)
 }
 
 func (s *Store) ReportForTask(taskID string) (Report, bool, error) {

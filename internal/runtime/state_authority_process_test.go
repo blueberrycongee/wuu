@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -256,6 +257,37 @@ func TestProviderAuthorityHTTPProcess(t *testing.T) {
 		t.Fatalf("native domain remote reopen: %+v %v %v", restored, found, err)
 	}
 	verifyNoLocalData(home)
+	// Generated handoffs retain their exact generation through the selected
+	// out-of-process document service and local derived artifacts.
+	reportDir := t.TempDir()
+	store := harness.NewDocumentStore(client, "generated-report-scope", reportDir)
+	firstReport := harness.Report{ID: "generated-first", TaskID: "worker", Kind: harness.ReportKindFinalText, Summary: "first generation", ReportPath: filepath.Join(reportDir, "first", "report.md"), SubmittedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	nextReport := harness.Report{ID: "generated-next", TaskID: "worker", Kind: harness.ReportKindFinalText, Summary: "next generation", ReportPath: filepath.Join(reportDir, "next", "report.md"), SubmittedAt: firstReport.SubmittedAt.Add(time.Second)}
+	if _, err := store.SubmitGeneratedReport(firstReport); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(firstReport.ReportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitGeneratedReport(nextReport); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitGeneratedReport(firstReport); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok, err := store.ReportForTask("worker")
+	if err != nil || !ok || latest.ID != nextReport.ID {
+		t.Fatalf("latest generated=%+v ok=%v err=%v", latest, ok, err)
+	}
+	oldData, err := os.ReadFile(firstReport.ReportPath)
+	if err != nil || !bytes.Equal(oldData, original) {
+		t.Fatalf("prior generated artifact changed: %v", err)
+	}
+	nextData, err := os.ReadFile(nextReport.ReportPath)
+	if err != nil || !strings.Contains(string(nextData), "next generation") {
+		t.Fatalf("next generated artifact=%q %v", nextData, err)
+	}
 	targetStop()
 	if _, err := client.Read(ctx, persistence.Query{Namespace: "business"}); err == nil {
 		t.Fatal("offline backend fell back")

@@ -3589,8 +3589,15 @@ func (c *AgentControl) synthesizeFinalTextReport(snap subagent.SubAgentSnapshot)
 	if taskID == "" {
 		return
 	}
-	if _, ok, err := c.harnessStore.ReportForTask(taskID); err != nil || ok {
-		// A structured report was filed (or the store errored); leave it alone.
+	if !safeResultWorkerID(taskID) {
+		return
+	}
+	if report, ok, err := c.harnessStore.ReportForTask(taskID); err != nil || (ok && harness.NormalizeReportKind(report.Kind) == harness.ReportKindStructured) {
+		// Explicit structured handoffs remain authoritative across follow-ups.
+		return
+	}
+	generation := agentResultDeliveryID(snap)
+	if generation == "" {
 		return
 	}
 	summary := strings.TrimSpace(snap.Result)
@@ -3601,7 +3608,8 @@ func (c *AgentControl) synthesizeFinalTextReport(snap subagent.SubAgentSnapshot)
 	changed := c.worktreeChangedFiles(task)
 	_, artifacts := c.harnessReportForTask(taskID)
 	report := harness.Report{
-		ID:           taskID + "-final-text-report",
+		ID:           taskID + "-final-text-" + generation,
+		ReportPath:   filepath.Join(c.harnessDir, "reports", taskID, generation, "report.md"),
 		TaskID:       taskID,
 		RunID:        harnessRunID(taskID),
 		AgentID:      taskID,
@@ -3612,9 +3620,9 @@ func (c *AgentControl) synthesizeFinalTextReport(snap subagent.SubAgentSnapshot)
 		ChangedFiles: changed,
 		Artifacts:    artifacts,
 		RawResult:    snap.Result,
-		SubmittedAt:  time.Now().UTC(),
+		SubmittedAt:  snap.CompletedAt,
 	}
-	if _, err := c.harnessStore.SubmitReport(report); err != nil {
+	if _, err := c.harnessStore.SubmitGeneratedReport(report); err != nil {
 		return
 	}
 }
@@ -3662,13 +3670,39 @@ func (c *AgentControl) harnessReportForTask(taskID string) (string, []string) {
 			}
 		}
 	}
+	taskArtifactPaths = filterUnavailableGeneratedResults(taskArtifactPaths)
 	report, ok, err := c.harnessStore.ReportForTask(taskID)
 	if err == nil && ok {
 		paths := append([]string(nil), report.Artifacts...)
+		paths = filterUnavailableGeneratedResults(paths)
 		reportPath := strings.TrimSpace(report.ReportPath)
 		for _, path := range taskArtifactPaths {
 			if path != "" && !stringSliceContains(paths, path) {
 				paths = append(paths, path)
+			}
+		}
+		if harness.NormalizeReportKind(report.Kind) == harness.ReportKindFinalText && strings.HasPrefix(report.ID, taskID+"-final-text-agent_result_") {
+			reports, listErr := c.harnessStore.ListReports()
+			if listErr != nil {
+				return "", nil
+			}
+			invalid := make(map[string]bool)
+			for _, generated := range reports {
+				if generated.TaskID == taskID && harness.NormalizeReportKind(generated.Kind) == harness.ReportKindFinalText && strings.HasPrefix(generated.ID, taskID+"-final-text-agent_result_") && !harness.GeneratedReportReady(generated) {
+					invalid[generated.ReportPath] = true
+				}
+			}
+			if len(invalid) > 0 {
+				kept := paths[:0]
+				for _, candidate := range paths {
+					if !invalid[candidate] {
+						kept = append(kept, candidate)
+					}
+				}
+				paths = kept
+			}
+			if invalid[reportPath] {
+				return "", paths
 			}
 		}
 		if reportPath == "" {
@@ -3680,6 +3714,45 @@ func (c *AgentControl) harnessReportForTask(taskID string) (string, []string) {
 		return reportPath, paths
 	}
 	return resultArtifactPath(taskArtifactPaths), taskArtifactPaths
+}
+
+// harnessReportForSnapshot selects the matching generated handoff when old
+// notifications are replayed after a follow-up. Explicit structured reports
+// remain task-wide and take precedence.
+func (c *AgentControl) harnessReportForSnapshot(snap subagent.SubAgentSnapshot) (string, []string) {
+	path, paths := c.harnessReportForTask(snap.ID)
+	if c == nil || c.harnessStore == nil {
+		return path, paths
+	}
+	latest, ok, err := c.harnessStore.ReportForTask(snap.ID)
+	if err != nil || !ok || harness.NormalizeReportKind(latest.Kind) == harness.ReportKindStructured {
+		return path, paths
+	}
+	reports, err := c.harnessStore.ListReports()
+	if err != nil {
+		return "", paths
+	}
+	generationID := snap.ID + "-final-text-" + agentResultDeliveryID(snap)
+	prefix := snap.ID + "-final-text-agent_result_"
+	versioned := false
+	for _, report := range reports {
+		if report.TaskID != snap.ID || harness.NormalizeReportKind(report.Kind) != harness.ReportKindFinalText {
+			continue
+		}
+		if strings.HasPrefix(report.ID, prefix) {
+			versioned = true
+		}
+		if report.ID == generationID {
+			if !harness.GeneratedReportReady(report) {
+				return "", paths
+			}
+			return report.ReportPath, paths
+		}
+	}
+	if versioned {
+		return "", paths
+	}
+	return path, paths // legacy reports have no generation identity
 }
 
 func (c *AgentControl) recordWorktreeArtifacts(snap subagent.SubAgentSnapshot) {
@@ -4574,7 +4647,7 @@ func (c *AgentControl) isRootChildSnapshot(snap subagent.SubAgentSnapshot) bool 
 }
 
 func (c *AgentControl) newAgentCompletionCommunication(snap subagent.SubAgentSnapshot, recipientPath string) agentthread.InterAgentCommunication {
-	reportPath, artifacts := c.harnessReportForTask(snap.ID)
+	reportPath, artifacts := c.harnessReportForSnapshot(snap)
 	return newAgentCompletionCommunicationWithMessage(snap, recipientPath, c.agentMailboxMessageWithRefs(snap, reportPath, artifacts))
 }
 
@@ -4584,7 +4657,7 @@ func (c *AgentControl) AgentCompletionChatMessage(snap subagent.SubAgentSnapshot
 	if _, err := c.ensureAgentResultDelivery(snap); err != nil {
 		providers.DebugLogf("agentcontrol: persist completion handoff result-ready for %s: %v", snap.ID, err)
 	}
-	reportPath, artifacts := c.harnessReportForTask(snap.ID)
+	reportPath, artifacts := c.harnessReportForSnapshot(snap)
 	communication := newAgentCompletionCommunicationWithMessageAndTrigger(
 		snap,
 		recipientPath,
@@ -4609,7 +4682,7 @@ func (c *AgentControl) AgentCompletionChatMessage(snap subagent.SubAgentSnapshot
 }
 
 func (c *AgentControl) AgentMailboxMessage(snap subagent.SubAgentSnapshot) AgentMailboxMessage {
-	reportPath, artifacts := c.harnessReportForTask(snap.ID)
+	reportPath, artifacts := c.harnessReportForSnapshot(snap)
 	return c.agentMailboxMessageWithRefs(snap, reportPath, artifacts)
 }
 
@@ -5213,9 +5286,11 @@ func stringSliceContains(values []string, needle string) bool {
 }
 
 func resultArtifactPath(paths []string) string {
-	for _, path := range paths {
-		if filepath.Base(path) == "result.md" {
-			return path
+	// The task keeps older immutable references; its most recently recorded
+	// result is the fallback when no explicit report path is present.
+	for i := len(paths) - 1; i >= 0; i-- {
+		if filepath.Base(paths[i]) == "result.md" {
+			return paths[i]
 		}
 	}
 	return ""

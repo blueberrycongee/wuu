@@ -47,6 +47,17 @@ func TestServerThreadDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(artifactDir, "workers"), 0o755); err != nil {
 		t.Fatalf("seed artifact dir: %v", err)
 	}
+	// Versioned worker outputs remain under the session harness and must be
+	// removed with the session, including nested immutable generations.
+	for _, rel := range []string{"harness/artifacts/worker/result.md", "harness/artifacts/worker/results/digest/result.md", "harness/reports/worker/generation/report.md"} {
+		target := filepath.Join(artifactDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("result"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	deletePayload, err := json.Marshal(map[string]any{
 		"id":     "2",
