@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,36 @@ func (r attributionReplacement) NativeToolForCall(args string) (Tool, bool) {
 	}
 	_ = json.Unmarshal([]byte(args), &request)
 	return r.Tool, request.Continuation != ""
+}
+
+func TestManagedArchiveImageKeepsUnverifiedSource(t *testing.T) {
+	root, session := t.TempDir(), t.TempDir()
+	kit, err := New(root)
+	require.NoError(t, err)
+	require.NoError(t, kit.SetSessionDir(session))
+	defer kit.CloseSessionArtifacts()
+	archiveDir := filepath.Join(session, "tool-results")
+	require.NoError(t, os.Mkdir(archiveDir, 0700))
+	path := filepath.Join(archiveDir, strings.Repeat("a", 64)+".txt")
+	require.NoError(t, os.WriteFile(path, readImagePNG(t, 2, 2), 0600))
+	args, err := json.Marshal(map[string]string{"path": path})
+	require.NoError(t, err)
+	call := providers.ToolCall{Name: "read_file", Arguments: string(args)}
+	ctx := toolctx.WithProvenance(context.Background())
+	result, err := kit.ExecuteResult(ctx, call)
+	require.NoError(t, err)
+	projection := providers.ProjectToolResult(result)
+	require.Len(t, projection.ObservationImages, 1)
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(projection.ToolText), &metadata))
+	require.Equal(t, "tool_result_archive", metadata["source"])
+	require.Equal(t, false, metadata["content_verified"])
+	require.Equal(t, "tool_result_archive", toolctx.UnverifiedSource(ctx))
+	kit.DisableTools("read_file")
+	denied := toolctx.WithProvenance(context.Background())
+	_, err = kit.ExecuteResult(denied, call)
+	require.Error(t, err)
+	require.Empty(t, toolctx.UnverifiedSource(denied), "denied calls must not taint their context")
 }
 
 func TestExternalReadArchivedPagesKeepUnverifiedSource(t *testing.T) {
