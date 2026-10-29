@@ -13,6 +13,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Recover archived tool-result pages through a session-scoped tool, including from plugin orchestrators, while retaining existing `read_file` continuations.
 
 - Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
+- Select a trusted plugin tool as the replacement for the native `web_search` tool while retaining the remaining tool registry, execution policy and lifecycle.
 
 - Route plugin-owned processes through the conversation's selected execution environment, retaining their location and ownership across configuration changes. Remote start admission does not block unrelated process reads or stops, and uncertain starts retain reconciliation identities without automatic replay.
 - Publish an execution-backend TypeScript SDK for the existing versioned worker transport, including authenticated binding, tool callbacks, cancellation, process receipts and transport cleanup, so independent backends do not import Wuu's Go internals.
