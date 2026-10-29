@@ -941,7 +941,7 @@ func TestStreamRunnerAnnotatesProviderStateWithStepIndex(t *testing.T) {
 		defs:    []providers.ToolDefinition{{Name: "read_file"}},
 		results: map[string]string{"call-read": `{"content":"hi"}`},
 	}
-	var states []providers.ProviderStateSummary
+	var states []*providers.ProviderStateSummary
 	runner := StreamRunner{
 		LoopDriver: DefaultDriver{},
 
@@ -950,7 +950,7 @@ func TestStreamRunnerAnnotatesProviderStateWithStepIndex(t *testing.T) {
 		Tools:  tools,
 		OnEvent: func(ev providers.StreamEvent) {
 			if ev.Type == providers.EventProviderState && ev.ProviderState != nil {
-				states = append(states, *ev.ProviderState)
+				states = append(states, ev.ProviderState)
 			}
 		},
 	}
@@ -967,6 +967,15 @@ func TestStreamRunnerAnnotatesProviderStateWithStepIndex(t *testing.T) {
 	}
 	if states[0].StepIndex != 0 || states[1].StepIndex != 1 {
 		t.Fatalf("provider state step indexes not aligned with model steps: %+v", states)
+	}
+	for i, attempt := range client.attempts {
+		original := attempt.events[0].ProviderState
+		if original.StepIndex != 0 {
+			t.Fatalf("consumer mutated provider-owned state for step %d: %+v", i, original)
+		}
+		if states[i] == original {
+			t.Fatalf("callback received provider-owned state for step %d", i)
+		}
 	}
 }
 

@@ -100,6 +100,15 @@ func classifyToolCall(tool Tool, kind ToolKind, argsJSON string) ToolClassificat
 	return classification
 }
 
+// ClassifyTool preserves the built-in tool's argument-sensitive policy when an
+// external executor is bound to its name.
+func ClassifyTool(tool Tool, args string) ToolClassification {
+	return classifyToolCall(tool, classifyToolKind(tool.Name()), args)
+}
+
+// ToolAvailability reports live admission for generation-bound tools.
+type ToolAvailability interface{ ToolAvailable() bool }
+
 // Registry holds the set of available tools and provides name-based
 // lookup. It replaces the old switch-case dispatch in Toolkit.Execute.
 //
