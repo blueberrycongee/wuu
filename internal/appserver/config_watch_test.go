@@ -178,76 +178,94 @@ func TestConfigWatchUsesEventsInsteadOfContinuousReloads(t *testing.T) {
 }
 
 func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	valid := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}}}`
-	write := func(contents string) {
-		t.Helper()
-		if err := os.WriteFile(rt.ConfigPath, []byte(contents), 0o600); err != nil {
-			t.Fatal(err)
+	for _, watcherFirst := range []bool{false, true} {
+		name := "explicit first"
+		if watcherFirst {
+			name = "watcher first"
 		}
-	}
-	write(valid)
-	rt = newConfigRefreshRuntime(t, rt)
-	configured, err := os.ReadFile(rt.ConfigPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	valid = string(configured)
-	bindConfigSourceForTest(t, rt)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-	t.Cleanup(srv.Close)
-	before := srv.providerSummaries()
-	if len(before) != 1 {
-		t.Fatalf("expected configured provider: %+v", before)
-	}
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatal(err)
-	}
+		t.Run(name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			valid := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}}}`
+			write := func(contents string) {
+				t.Helper()
+				if err := os.WriteFile(rt.ConfigPath, []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(valid)
+			rt = newConfigRefreshRuntime(t, rt)
+			configured, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			valid = string(configured)
+			bindConfigSourceForTest(t, rt)
+			out := &lockedBuffer{}
+			// Prevent an independent watcher from racing this ordering test. The
+			// watcher event path is covered by TestConfigWatchUsesEventsInsteadOfContinuousReloads.
+			srv := New(rt, nil)
+			srv.out = out
+			t.Cleanup(srv.Close)
+			before := srv.providerSummaries()
+			if len(before) != 1 {
+				t.Fatalf("expected configured provider: %+v", before)
+			}
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
 
-	// A newer build can add a field unknown to this reader.
-	write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
-	var configErr *pluginhost.HostServiceError
-	if err := srv.refreshConfigIfChanged(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
-		t.Fatalf("expected strict config error, got %v", err)
-	}
-	messages := parseOutput(t, out.String())
-	if len(notificationsByMethod(messages, NotificationConfigError)) != 1 {
-		t.Fatalf("expected one visible configuration error: %s", out.String())
-	}
-	if got := srv.providerSummaries(); !reflect.DeepEqual(got, before) {
-		t.Fatalf("invalid refresh erased inventory: %+v", got)
-	}
-	for i := 0; i < 3; i++ {
-		if err := srv.refreshConfigIfChanged(); err != nil {
-			t.Fatalf("unchanged rejected document was retried: %v", err)
-		}
-	}
-	if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigError)) != 1 {
-		t.Fatal("unchanged rejected document emitted repeated errors")
-	}
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"blocked","method":"config/model/update","params":{"model":"other-model"}}`)); err != nil {
-		t.Fatal(err)
-	}
-	rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
-	if rejection.Code == "" {
-		t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
-	}
+			// A newer build can add a field unknown to this reader.
+			write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
+			first, second := srv.refreshConfigIfChanged, srv.refreshObservedConfigChange
+			if watcherFirst {
+				first, second = second, first
+			}
+			var configErr *pluginhost.HostServiceError
+			if err := first(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
+				t.Fatalf("first observer must report a strict config error, got %v", err)
+			}
+			if err := second(); err != nil {
+				t.Fatalf("second observer must suppress the already reported error: %v", err)
+			}
+			messages := parseOutput(t, out.String())
+			if len(notificationsByMethod(messages, NotificationConfigError)) != 1 {
+				t.Fatalf("expected one visible configuration error: %s", out.String())
+			}
+			if got := srv.providerSummaries(); !reflect.DeepEqual(got, before) {
+				t.Fatalf("invalid refresh erased inventory: %+v", got)
+			}
+			for i := 0; i < 3; i++ {
+				if err := srv.refreshConfigIfChanged(); err != nil {
+					t.Fatalf("unchanged rejected document was retried: %v", err)
+				}
+			}
+			if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigError)) != 1 {
+				t.Fatal("unchanged rejected document emitted repeated errors")
+			}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"blocked","method":"config/model/update","params":{"model":"other-model"}}`)); err != nil {
+				t.Fatal(err)
+			}
+			rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
+			if rejection.Code == "" {
+				t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
+			}
 
-	// Restoring the exact previous contents must clear the error too.
-	write(valid)
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatalf("repair did not recover: %v", err)
-	}
-	if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigChanged)) != 1 {
-		t.Fatal("repair did not publish the recovered configuration")
-	}
-	write(strings.Replace(valid, "fake-model", "repaired-model", 1))
-	if err := srv.refreshConfigIfChanged(); err != nil {
-		t.Fatal(err)
-	}
-	if got := srv.providerSummaries(); len(got) != 1 || got[0].Model != "repaired-model" {
-		t.Fatalf("inventory did not recover: %+v", got)
+			// Restoring the exact previous contents must clear the error too.
+			write(valid)
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatalf("repair did not recover: %v", err)
+			}
+			if len(notificationsByMethod(parseOutput(t, out.String()), NotificationConfigChanged)) != 1 {
+				t.Fatal("repair did not publish the recovered configuration")
+			}
+			write(strings.Replace(valid, "fake-model", "repaired-model", 1))
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			if got := srv.providerSummaries(); len(got) != 1 || got[0].Model != "repaired-model" {
+				t.Fatalf("inventory did not recover: %+v", got)
+			}
+		})
 	}
 }
 
