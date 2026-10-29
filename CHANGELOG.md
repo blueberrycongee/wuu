@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent failed Code Mode calls from exposing output from uncommitted remote reads while preserving ordinary media.
+
 ### Added
 
 - Preserve newer remote file observations while allowing trusted text replacements to run after earlier native reads, with durable recovery of uncertain settlements.

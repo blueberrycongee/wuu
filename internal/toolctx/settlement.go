@@ -2,9 +2,13 @@ package toolctx
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 var ErrSettlementOutcomeUnknown = errors.New("tool settlement outcome unknown")
@@ -31,6 +35,78 @@ type settlement struct {
 	children   int
 	hadActions bool
 	actions    []settlementAction
+	media      [][32]byte
+}
+
+func settlementMediaKey(part toolresult.ContentPart) [32]byte {
+	encoded, _ := json.Marshal(part)
+	return sha256.Sum256(encoded)
+}
+
+// TrackSettlementMedia associates a leaf's final media with its provisional
+// settlement. Counts matter when an ordinary call returns the same image.
+func TrackSettlementMedia(ctx context.Context, parts []toolresult.ContentPart) {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished || len(s.actions) == 0 {
+		return
+	}
+	s.media = nil
+	for _, part := range parts {
+		if part.Type == toolresult.ContentTypeImage || part.Type == toolresult.ContentTypeAudio {
+			s.media = append(s.media, settlementMediaKey(part))
+		}
+	}
+}
+
+// FailedSettlementOutput discards uncommitted free text and media after the
+// settlement has failed. Ordinary media already present in the input survives,
+// including copies byte-identical to a provisional image. A finalizer cannot
+// introduce new media whose provenance is unknown on the failed path.
+func FailedSettlementOutput(ctx context.Context, before, after toolresult.Result) toolresult.Result {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return after
+	}
+	s.mu.Lock()
+	participated := s.hadActions || len(s.actions) != 0
+	media := append([][32]byte(nil), s.media...)
+	s.mu.Unlock()
+	if !participated {
+		return after
+	}
+	provisional := make(map[[32]byte]int, len(media))
+	for _, key := range media {
+		provisional[key]++
+	}
+	allowed := make(map[[32]byte]int)
+	for _, part := range before.Content {
+		if part.Type != toolresult.ContentTypeImage && part.Type != toolresult.ContentTypeAudio {
+			continue
+		}
+		key := settlementMediaKey(part)
+		if provisional[key] > 0 {
+			provisional[key]--
+			continue
+		}
+		allowed[key]++
+	}
+	result := toolresult.FromErrorText("The tool failed; pending remote read output was discarded.")
+	for _, part := range after.Content {
+		if part.Type != toolresult.ContentTypeImage && part.Type != toolresult.ContentTypeAudio {
+			continue
+		}
+		key := settlementMediaKey(part)
+		if allowed[key] > 0 {
+			result.Content = append(result.Content, part)
+			allowed[key]--
+		}
+	}
+	return result
 }
 
 // WithSettlement binds host-only deferred work to one invocation. A child
@@ -123,6 +199,7 @@ func PrepareSettlement(ctx context.Context, success bool) (*PreparedSettlement, 
 	}
 	s.finished = true
 	actions := s.actions
+	media := append([][32]byte(nil), s.media...)
 	s.hadActions = len(actions) != 0
 	children := s.children
 	s.actions = nil
@@ -150,6 +227,7 @@ func PrepareSettlement(ctx context.Context, success bool) (*PreparedSettlement, 
 			return nil, errors.New("parent settlement unavailable or full")
 		}
 		s.parent.actions = append(s.parent.actions, actions...)
+		s.parent.media = append(s.parent.media, media...)
 		s.parent.mu.Unlock()
 		return nil, nil
 	}

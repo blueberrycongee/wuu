@@ -40,13 +40,13 @@ func TestSettlementRejectsParentWithUnfinishedNestedCall(t *testing.T) {
 	require.NoError(t, err)
 	run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "turn"})
 	defer run.Close()
+	defer func() { close(release); <-childDone }()
 	messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "parent", Name: "orchestrate", Arguments: `{}`}}, nil)
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.True(t, messages[0].ToolResult.IsError)
-	require.Contains(t, messages[0].ToolResult.TextProjection(), "unfinished child")
-	close(release)
-	<-childDone
+	require.Contains(t, messages[0].ToolResult.TextProjection(), "pending remote read output was discarded")
+	require.NotContains(t, messages[0].ToolResult.TextProjection(), "premature parent success")
 }
 
 func TestSettlementLateChildAbortsWithoutChangingParentSuccess(t *testing.T) {
