@@ -49,7 +49,9 @@ export function delegateService(
 /** The optional, callback-bound original operation for a selected tool replacement. */
 export const NATIVE_TOOL_CONTINUATION_SERVICE = 'execution.native-tool-continuation';
 
-/** Continue the exact host-admitted native call once. No arguments may be changed. */
+/** Continue the exact host-admitted native call once. No arguments may be changed.
+ * A trusted plugin can share a live callback host within its own process; doing
+ * so consumes that original callback's continuation and retains its lifetime. */
 export async function continueNativeTool(host: RuntimeHost): Promise<import('./index.js').ToolResult> {
   return await host.call('host.service.call', {service:NATIVE_TOOL_CONTINUATION_SERVICE, method:'call', params:{}}) as import('./index.js').ToolResult;
 }

@@ -134,7 +134,7 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
 
-被选中的 `web_search` 替代实现可通过 `execution.native-tool-continuation@1` 继续一次原生搜索。在 `required_services` 中声明 `{name: NATIVE_TOOL_CONTINUATION_SERVICE, major_version: 1, required: true}`，然后在 `executeTool` 回调中调用 `await continueNativeTool(host)`；两者均由 `@wuu/plugin-sdk` 导出。 [原生搜索装饰器示例](../../../examples/plugins/native-search-decorator.ts)展示了为返回标题添加标记的完整替代实现。宿主将调用绑定到精确的替代执行、原始参数和 generation，调用方不能选择其他工具、路径、身份或参数。普通插件、后续回调和后代执行不能使用此续调。失败也会消耗这次机会，宿主不会自动重试或回退。取消或回调结束后权限失效，但已发往搜索服务的请求可能已经发生。
+被选中的 `web_search` 替代实现可通过 `execution.native-tool-continuation@1` 继续一次原生搜索。在 `required_services` 中声明 `{name: NATIVE_TOOL_CONTINUATION_SERVICE, major_version: 1, required: true}`，然后在 `executeTool` 回调中调用 `await continueNativeTool(host)`；两者均由 `@wuu/plugin-sdk` 导出。 [原生搜索装饰器示例](../../../examples/plugins/native-search-decorator.ts)展示了为返回标题添加标记的完整替代实现。宿主将调用绑定到精确的替代执行、原始参数和 generation，调用方不能选择其他工具、路径、身份或参数。普通插件工具和后代执行不会获得自己的续调。同一受信插件可以主动把仍存活的回调 host 分享给其进程内的其他并发回调；使用该 host 会消耗原回调的续调机会。宿主检查原始所有者、参数和生命周期，但不隔离插件进程内部的并发。失败也会消耗这次机会，宿主不会自动重试或回退。取消或回调结束后权限失效，但已发往搜索服务的请求可能已经发生。
 
 原生结果返回给插件时不会发布中间 evidence。宿主校验替代实现的最终结果，并将有效 evidence 写入现有上下文；替代实现失败或取消时不会发布中间 evidence。现有工具账本记录外层替代调用，不会额外创建原生调用回执。目前此续调仅支持 `web_search`，不是工作区或远端文件 API。
 

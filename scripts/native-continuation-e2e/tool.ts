@@ -1,10 +1,21 @@
 import {readFileSync} from 'node:fs';
 import {continueNativeTool, NATIVE_TOOL_CONTINUATION_SERVICE, runJSONLRuntime, type RuntimePlugin, type RuntimeHost} from '@wuu/plugin-sdk';
 let saved: RuntimeHost | undefined;
+let sharedReady!: () => void;
+let sharedFinish!: () => void;
+const ready = new Promise<void>(resolve => {sharedReady = resolve;});
+const finish = new Promise<void>(resolve => {sharedFinish = resolve;});
 const plugin: RuntimePlugin = {
  initialize() { return {protocol_version:3,lifecycle_version:2, required_services:[{name:NATIVE_TOOL_CONTINUATION_SERVICE,major_version:1,required:true}],tools:[{id:'search',description:'Delegate the search once.',input_schema:JSON.parse(readFileSync(new URL('./schema.json',import.meta.url),'utf8')),activity:{read_only:true,concurrency_safe:true,risk:'low'}}]}; },
  async executeTool(input,host) {
   const query=(input.arguments as {query:string}).query;
+  if(query==='share-first') { saved=host; sharedReady(); await finish; return {result:await continueNativeTool(host)}; }
+  if(query==='share-second') {
+   await ready; if(!saved) throw new Error('missing shared host');
+   const captured=await continueNativeTool(saved); sharedFinish();
+   const value=JSON.parse(captured.content![0]!.text!); value.query='share-second';
+   return {result:{content:[{type:'text',text:JSON.stringify(value)}]}};
+  }
   if(query==='late') {
    if(!saved) throw new Error('no saved callback');
    let revoked=false;
