@@ -408,13 +408,6 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if source := toolctx.UnverifiedSource(runCtx); source != "" {
 				result = toolresult.MarkUnverifiedSource(result, source)
 			}
-			var beforeFinalization toolresult.Result
-			if toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx) {
-				if !orchestrator {
-					toolctx.TrackSettlementMedia(runCtx, result.Content)
-				}
-				beforeFinalization = result.Clone()
-			}
 			result = run.finalize(r.executor, call, result)
 			// A selected finalizer may transform or replace the result. Preserve
 			// the host-observed marker after that boundary as well.
@@ -423,9 +416,6 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			}
 			valid := result.Validate()
 			success := executionErr == nil && !result.IsError
-			if !orchestrator && success && valid == nil && toolctx.SettlementHasParticipants(runCtx) {
-				toolctx.TrackSettlementMedia(runCtx, result.Content)
-			}
 			var prepared *toolctx.PreparedSettlement
 			if run.parent == nil || !success || valid != nil {
 				var prepareErr error
@@ -452,7 +442,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 				run.mu.Unlock()
 			}
 			if !success && (toolctx.SettlementHasParticipants(runCtx) || toolctx.HasRemoteReadExposure(runCtx)) {
-				result = toolctx.FailedSettlementOutput(runCtx, beforeFinalization, result)
+				result = toolctx.FailedSettlementOutput(runCtx, result)
 				run.clearFinalization()
 				if source := toolctx.UnverifiedSource(runCtx); source != "" {
 					result = toolresult.MarkUnverifiedSource(result, source)

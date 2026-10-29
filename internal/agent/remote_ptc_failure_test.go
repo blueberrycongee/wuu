@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +20,11 @@ import (
 )
 
 type partialOutputExecutor struct {
-	remote, nested, fail, finalizerFail, commitFail bool
-	echo                                            bool
-	committed, aborted                              atomic.Int32
-	entered                                         chan struct{}
-	childComplete, parentRelease                    chan struct{}
+	remote, nested, fail, finalizerFail, commitFail, omitRemoteMedia, derivedMedia bool
+	echo                                                                           bool
+	committed, aborted                                                             atomic.Int32
+	entered                                                                        chan struct{}
+	childComplete, parentRelease                                                   chan struct{}
 }
 
 var identicalMedia = toolresult.ContentPart{Type: toolresult.ContentTypeImage, MIMEType: "image/png", Data: "eA==", Name: "same.png"}
@@ -39,6 +40,8 @@ func (*partialOutputExecutor) Execute(context.Context, providers.ToolCall) (stri
 }
 func (e *partialOutputExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	switch call.Name {
+	case "derived":
+		return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeImage, MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString([]byte(call.Arguments))}}}, nil
 	case "ordinary":
 		return toolresult.Result{Content: []toolresult.ContentPart{identicalMedia}}, nil
 	case "remote":
@@ -79,8 +82,17 @@ func (e *partialOutputExecutor) ExecuteResult(ctx context.Context, call provider
 			if err != nil {
 				return toolresult.Result{}, err
 			}
+			if e.derivedMedia {
+				derived, err := n.Invoke(ctx, providers.ToolCall{ID: "derived", Name: "derived", Arguments: fmt.Sprintf(`{"value":%q}`, child.TextProjection())})
+				if err != nil {
+					return toolresult.Result{}, err
+				}
+				output.Content = append(output.Content, derived.Content...)
+			}
 			output.Content[0].Text += " remote SECRET"
-			output.Content = append(output.Content, child.Content[1:]...)
+			if !e.omitRemoteMedia {
+				output.Content = append(output.Content, child.Content[1:]...)
+			}
 			if e.echo {
 				if _, err := n.Invoke(ctx, providers.ToolCall{ID: "echo", Name: "ordinary", Arguments: `{"value":"remote SECRET"}`}); err != nil {
 					return toolresult.Result{}, err
@@ -120,9 +132,9 @@ func TestFailedRemotePTCSuppressesOnlyUncommittedMediaAndText(t *testing.T) {
 		wantErr                                         bool
 	}{
 		{name: "ordinary-failure", fail: true, wantImages: 1, wantText: true},
-		{name: "mixed-failure", remote: true, fail: true, wantImages: 1},
-		{name: "nested-failure", remote: true, nested: true, fail: true, wantImages: 1},
-		{name: "finalizer-failure", remote: true, finalizerFail: true, wantImages: 1},
+		{name: "mixed-failure", remote: true, fail: true, wantImages: 0},
+		{name: "nested-failure", remote: true, nested: true, fail: true, wantImages: 0},
+		{name: "finalizer-failure", remote: true, finalizerFail: true, wantImages: 0},
 		{name: "committed-success", remote: true, wantImages: 2, wantText: true},
 		{name: "commit-failure", remote: true, commitFail: true, wantErr: true},
 	} {
@@ -151,7 +163,7 @@ func TestFailedRemotePTCSuppressesOnlyUncommittedMediaAndText(t *testing.T) {
 					count++
 				}
 			}
-			require.Equal(t, tc.wantImages, count, "ordinary identical media must survive while provisional media is removed")
+			require.Equal(t, tc.wantImages, count, "failed remote parents suppress all media, while ordinary and successful parents retain it")
 			if tc.wantText {
 				require.Contains(t, output.TextProjection(), "ORDINARY LOG")
 			} else {
@@ -253,4 +265,28 @@ func TestCanceledRemotePTCDiscardsPendingOutput(t *testing.T) {
 	for _, invocation := range pending {
 		require.NotContains(t, invocation.Result.JSONProjection(), "SECRET")
 	}
+}
+
+func TestFailedRemotePTCSuppressesIdenticalOrdinaryMediaWhenRemoteMediaWasNotAdmitted(t *testing.T) {
+	executor := &partialOutputExecutor{remote: true, fail: true, omitRemoteMedia: true}
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread")
+	require.NoError(t, err)
+	run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "omitted-media"})
+	defer run.Close()
+	messages, err := run.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "parent", Name: "parent", Arguments: `{}`}}, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].ToolResult.Content, 1, "all media is suppressed after remote exposure")
+}
+
+func TestFailedRemotePTCSuppressesMediaDerivedByOrdinaryChild(t *testing.T) {
+	executor := &partialOutputExecutor{remote: true, fail: true, derivedMedia: true}
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread")
+	require.NoError(t, err)
+	run := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "derived-media"})
+	defer run.Close()
+	messages, err := run.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "parent", Name: "parent", Arguments: `{}`}}, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].ToolResult.Content, 1, "ordinary media derived from remote text is not safe on failure")
 }
