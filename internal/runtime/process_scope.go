@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/providers"
-
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -67,14 +68,30 @@ func (t *ThreadRuntime) ConfigureExecutionPermissions(permissions config.Resolve
 	if t.StreamRunner != nil {
 		executor = t.StreamRunner.Tools
 	}
-	for {
-		wrapped, ok := executor.(*hooks.HookedExecutor)
-		if !ok {
+	var selected *selectedToolExecutor
+	// Only host-owned decorators can expose their underlying executor. Bound
+	// traversal prevents a malformed decorator from blocking turn admission.
+	for depth := 0; depth < 32 && executor != nil; depth++ {
+		if target, ok := executor.(*selectedToolExecutor); ok {
+			selected = target
 			break
 		}
-		executor = wrapped.Inner()
+		if wrapped, ok := executor.(*hooks.HookedExecutor); ok {
+			executor = wrapped.Inner()
+			continue
+		}
+		if wrapped, ok := executor.(interface{ UnwrapToolExecutor() agent.ToolExecutor }); ok {
+			executor = wrapped.UnwrapToolExecutor()
+			continue
+		}
+		break
 	}
-	if selected, ok := executor.(*selectedToolExecutor); ok {
+	if selected != nil {
+		t.processScopeTarget.Store(selected)
+	} else {
+		selected = t.processScopeTarget.Load()
+	}
+	if selected != nil {
 		selected.mu.Lock()
 		selected.identity.processScope = newHostProcessScope(t.PluginHost, cfg)
 		selected.mu.Unlock()

@@ -106,8 +106,8 @@ func (p *externalProcessTools) InvokeService(ctx context.Context, call pluginhos
 }
 
 func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
-	for _, mode := range []string{"local", "denied", "remote", "remote-denied", "remote-blocked", "remote-timeout", "remote-failure"} {
-		deny := strings.Contains(mode, "denied")
+	for _, mode := range []string{"local", "denied", "remote", "remote-denied", "remote-blocked", "remote-timeout", "remote-failure", "wrapped-readonly", "wrapped-first-readonly", "wrapped-first-allow", "wrapped-allow", "remote-wrapped-readonly", "direct-readonly"} {
+		deny := strings.Contains(mode, "denied") || strings.Contains(mode, "readonly")
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			root := t.TempDir()
@@ -134,7 +134,7 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 			kernel.add(provider.ID(), service)
 			gateway := &processGatewayFixture{&processServiceInvoker{parent: kernel}}
 			security := &securityServiceProvider{descriptors: []pluginhost.ServiceDescriptor{pluginhost.SecurityAuthorizeDescriptor()}, decision: json.RawMessage(`{"outcome":"allow"}`)}
-			if deny {
+			if strings.Contains(mode, "denied") {
 				security.decision = json.RawMessage(`{"outcome":"deny","reason":"fixture denial"}`)
 			}
 			consumer := &runtimeServiceConsumer{id: toolExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: toolservice.ServiceName, MajorVersion: 1, Required: true}, {Name: pluginhost.SecurityAuthorizeService, MajorVersion: 1, Required: true}}}
@@ -165,7 +165,19 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 				return toolservice.Backend{}, errors.New("must not initialize default toolkit")
 			}), selectedToolIdentity{threadID: "thread", actorID: "actor", cwd: root})
 			runtime := &ThreadRuntime{PluginHost: host, StreamRunner: &agent.StreamRunner{Tools: executor}, processScopeConfig: processConfig}
+			if strings.HasPrefix(mode, "wrapped-first-") {
+				runtime.StreamRunner.Tools = &processScopeToolWrapper{ToolExecutor: executor}
+			}
 			runtime.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: "unconfined"}, false, nil)
+			if strings.Contains(mode, "wrapped") && !strings.HasPrefix(mode, "wrapped-first-") {
+				runtime.StreamRunner.Tools = &processScopeToolWrapper{ToolExecutor: executor}
+			}
+			if strings.Contains(mode, "readonly") || mode == "wrapped-allow" {
+				runtime.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: "read_only"}, false, nil)
+			}
+			if mode == "wrapped-allow" {
+				runtime.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: "unconfined"}, false, nil)
+			}
 			if mode == "remote-timeout" {
 				provider.command = "printf external-host-process; read value"
 				provider.timeoutMS = 30
@@ -516,3 +528,9 @@ func TestProcessHandlesSeparateBackendIdentity(t *testing.T) {
 		t.Fatalf("wrong backend control counts: first=%d/%d second=%d/%d", firstReads, firstStops, secondReads, secondStops)
 	}
 }
+
+// processScopeToolWrapper models a host policy decorator and preserves its
+// underlying selected provider identity without granting tool authority.
+type processScopeToolWrapper struct{ agent.ToolExecutor }
+
+func (w *processScopeToolWrapper) UnwrapToolExecutor() agent.ToolExecutor { return w.ToolExecutor }
