@@ -6,10 +6,12 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -41,6 +43,62 @@ func stagedProjection(t *testing.T) (*toolledger.Ledger, toolledger.Invocation, 
 	require.NoError(t, ledger.StageObservation(ctx, inv.ID, intent, toolresult.FromText("SECRET")))
 	require.NoError(t, ledger.ResolveObservation(ctx, inv.ID, intent, true))
 	return ledger, inv, id, &denied
+}
+
+type blockingProjectionExecutor struct {
+	checks  atomic.Int32
+	entered chan struct{}
+}
+
+func (e *blockingProjectionExecutor) Definitions() []providers.ToolDefinition {
+	return []providers.ToolDefinition{{Name: "remote"}}
+}
+func (e *blockingProjectionExecutor) Execute(ctx context.Context, _ providers.ToolCall) (string, error) {
+	err := toolctx.RegisterGroupedSettlement(ctx, "worker", nil, func(context.Context, []any) (*toolctx.PreparedSettlement, error) {
+		return &toolctx.PreparedSettlement{Identity: &toolctx.SettlementIdentity{OperationID: "blocked-projection", WorkerInstance: "worker", Actor: "actor", EnvironmentIdentity: "env"}, Authorize: func(ctx context.Context) error {
+			if e.checks.Add(1) == 2 {
+				close(e.entered)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}, Commit: func(context.Context) error { return nil }, Abort: func(context.Context) error { return nil }, Release: func(context.Context) error { return nil }}, nil
+	}, func() {})
+	return "SECRET", err
+}
+func TestSelectedBatchProjectionAuthorizationCancelsAfterPhysicalCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "actor")
+	require.NoError(t, err)
+	executor := &blockingProjectionExecutor{entered: make(chan struct{})}
+	done := make(chan error, 1)
+	var delivered atomic.Bool
+	go func() {
+		messages, _, err := executeSelectedToolBatch(ctx, toolbatch.V1Adapter{}, toolbatch.Request{ID: "batch", Calls: []providers.ToolCall{{ID: "call", Name: "remote", Arguments: `{}`}}, MaxParallel: 1}, ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "turn", RunContext: ctx}, func(providers.ToolCall, toolresult.Result) { delivered.Store(true) })
+		if len(messages) != 0 {
+			done <- errors.New("result escaped after cancellation")
+			return
+		}
+		done <- err
+	}()
+	select {
+	case <-executor.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("post-completion authorization did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("projection cancellation did not drain")
+	}
+	require.False(t, delivered.Load())
+	pending, err := ledger.PendingProjection(context.Background())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Contains(t, pending[0].Result.TextProjection(), "SECRET")
 }
 
 type failedProjectionReceipt struct {
