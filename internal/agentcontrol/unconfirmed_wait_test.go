@@ -2,6 +2,7 @@ package agentcontrol
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -452,5 +453,75 @@ func TestUnconfirmedHistorySurvivesProcessExit(t *testing.T) {
 	}
 	if client.calls.Load() != 1 {
 		t.Fatalf("explicit followup model calls=%d", client.calls.Load())
+	}
+}
+
+type orderedTerminalClient struct{ calls atomic.Int32 }
+
+func (*orderedTerminalClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, nil
+}
+func (c *orderedTerminalClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	content := "first result"
+	if c.calls.Add(1) > 1 {
+		content = "followup result"
+	}
+	ch := make(chan providers.StreamEvent, 2)
+	ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: content}
+	ch <- providers.StreamEvent{Type: providers.EventDone}
+	close(ch)
+	return ch, nil
+}
+
+func TestSynchronousFirstTurnKeepsItsOwnConfirmedResult(t *testing.T) {
+	for _, fork := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fork_%t", fork), func(t *testing.T) {
+			root := t.TempDir()
+			client := &orderedTerminalClient{}
+			c := newDormantQueuedSpawnConcurrencyControl(t, root, filepath.Join(root, "control"), filepath.Join(root, "harness"), 1, client, nil)
+			released := make(chan string, 1)
+			resume := make(chan struct{})
+			var once sync.Once
+			t.Cleanup(func() { once.Do(func() { close(resume) }) })
+			var first atomic.Bool
+			c.Manager().SetTerminalObserver(func(n subagent.Notification) error {
+				err := c.consumeWorkerTerminal(n)
+				if first.CompareAndSwap(false, true) {
+					released <- n.AgentID
+					<-resume
+				}
+				return err
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			type outcome struct {
+				value *SpawnResult
+				err   error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				var v *SpawnResult
+				var err error
+				if fork {
+					v, err = c.Fork(ctx, ForkRequest{TaskName: "first", Prompt: "finish", Synchronous: true}, []providers.ChatMessage{{Role: "user", Content: "delegate"}})
+				} else {
+					v, err = c.Spawn(ctx, SpawnRequest{Type: DefaultSubagentType, TaskName: "first", Prompt: "finish", Synchronous: true})
+				}
+				done <- outcome{v, err}
+			}()
+			id := <-released
+			if _, err := c.FollowupTask(ctx, id, "second"); err != nil {
+				t.Fatal(err)
+			}
+			second, err := c.Wait(ctx, id)
+			if err != nil || second.Result != "followup result" {
+				t.Fatalf("followup=%+v err=%v", second, err)
+			}
+			once.Do(func() { close(resume) })
+			got := <-done
+			if got.err != nil || got.value == nil || got.value.Status != "completed" || got.value.Result != "first result" {
+				t.Fatalf("initial synchronous outcome=%+v err=%v", got.value, got.err)
+			}
+		})
 	}
 }

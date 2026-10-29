@@ -224,9 +224,11 @@ type SpawnOptions struct {
 // terminalWaitState retains an unconfirmed outcome for waiters of one turn.
 // It remains valid when an explicit follow-up starts another turn.
 type terminalWaitState struct {
-	done     chan struct{}
-	err      error
-	snapshot SubAgentSnapshot
+	done       chan struct{}
+	err        error
+	settled    bool
+	generation string
+	snapshot   SubAgentSnapshot
 }
 
 // SubAgent is an isolated agent instance managed by Manager.

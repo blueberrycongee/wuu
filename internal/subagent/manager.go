@@ -828,7 +828,13 @@ func (m *Manager) prepareTerminal(sa *SubAgent, status Status) (Notification, bo
 		return Notification{}, false
 	}
 	generation := rand.Text()
-	n := Notification{AgentID: sa.ID, Status: status, Snapshot: sa.CoordinatorSnapshot(), TerminalGeneration: generation}
+	sa.mu.Lock()
+	snapshot := snapshotLocked(sa)
+	if sa.waitState != nil {
+		sa.waitState.generation = generation
+	}
+	sa.mu.Unlock()
+	n := Notification{AgentID: sa.ID, Status: status, Snapshot: snapshot, TerminalGeneration: generation}
 	var lastErr error
 	for attempt := 1; attempt <= terminalPrepareRetryAttempts; attempt++ {
 		m.mu.Lock()
@@ -952,6 +958,7 @@ func (m *Manager) notifyTerminal(sa *SubAgent, n Notification, prepared bool) er
 			_ = m.MarkTerminalUnconfirmed(n, err)
 		}
 	} else {
+		m.MarkTerminalConfirmed(n)
 		sa.mu.Lock()
 		if sa.Status == n.Status && sa.CompletedAt.Equal(n.Snapshot.CompletedAt) {
 			sa.terminalPending = false
@@ -959,6 +966,26 @@ func (m *Manager) notifyTerminal(sa *SubAgent, n Notification, prepared bool) er
 		sa.mu.Unlock()
 	}
 	return err
+}
+
+// MarkTerminalConfirmed pins the exact finished turn for its synchronous
+// waiters before the coordinator releases execution ownership. A mechanical
+// continuation or parked parent is not a final outcome.
+func (m *Manager) MarkTerminalConfirmed(n Notification) {
+	if m == nil {
+		return
+	}
+	sa := m.Get(n.AgentID)
+	if sa == nil {
+		return
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	if sa.Status != n.Status || !sa.CompletedAt.Equal(n.Snapshot.CompletedAt) || sa.waitState == nil || sa.waitState.generation != n.TerminalGeneration {
+		return
+	}
+	sa.waitState.snapshot = n.Snapshot
+	sa.waitState.settled = true
 }
 
 // MarkTerminalUnconfirmed is called before releasing the execution lease when
@@ -974,7 +1001,7 @@ func (m *Manager) MarkTerminalUnconfirmed(n Notification, cause error) error {
 	}
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
-	if !sa.CompletedAt.Equal(n.Snapshot.CompletedAt) {
+	if !sa.CompletedAt.Equal(n.Snapshot.CompletedAt) || sa.waitState == nil || sa.waitState.generation != n.TerminalGeneration {
 		return nil
 	}
 	if sa.Status == n.Status {
@@ -1016,6 +1043,10 @@ func (m *Manager) notifyWithGeneration(sa *SubAgent, status Status, snap SubAgen
 		if err := terminalObserver(n); err != nil {
 			return err
 		}
+	} else if IsTerminal(status) {
+		// Without a coordinating observer there is no later admission
+		// barrier; pin the result before publishing it to listeners.
+		m.MarkTerminalConfirmed(n)
 	}
 
 	for _, ch := range listeners {
@@ -1528,7 +1559,7 @@ func (m *Manager) wait(ctx context.Context, id string, initial bool) (SubAgentSn
 			return sa.Snapshot(), ctx.Err()
 		}
 		sa.mu.Lock()
-		if state != nil && state.err != nil {
+		if state != nil && (state.err != nil || state.settled) {
 			snap, err := state.snapshot, state.err
 			sa.mu.Unlock()
 			return snap, err

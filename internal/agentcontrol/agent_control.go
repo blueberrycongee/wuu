@@ -3957,8 +3957,12 @@ func (c *AgentControl) consumeWorkerTerminal(n subagent.Notification) error {
 			time.Sleep(workerTerminalRetryDelay)
 		}
 	}
-	if confirmed && c.finalizeWorkerTerminalWithAck(n) == workerTerminalContinued {
-		return nil
+	if confirmed {
+		outcome := c.finalizeWorkerTerminalWithAck(n)
+		if outcome == workerTerminalContinued {
+			return nil
+		}
+		c.manager.MarkTerminalConfirmed(n)
 	}
 	c.workerReleaseHookMu.Lock()
 	hook := c.beforeWorkerExecutionReleaseForTest
