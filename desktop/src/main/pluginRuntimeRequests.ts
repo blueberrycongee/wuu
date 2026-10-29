@@ -21,7 +21,7 @@ export class PluginRuntimeRequests {
     onResponse?: (response: AppServerResponse) => void,
     onOwnerCreated?: () => void,
   ): Promise<PluginClientRequestResult> {
-    const { workspace_id: _workspaceID, workspace_root: _workspaceRoot, ...request } = params;
+    const { workspace_id: _workspaceID, workspace_root: _workspaceRoot, composition_profile: _compositionProfile, ...request } = params;
     const requestInOwner = typeof context === "function" ? context : this.pool.bindContextRequest(context);
     if (params.request_id === undefined) {
       return requestInOwner<PluginClientRequestResult>("plugin/client/request", request, onResponse);

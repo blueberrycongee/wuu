@@ -50,6 +50,14 @@ func (s *documentStore) ReadHistoryPage(id string, startSeq, limit int) (History
 }
 
 func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
+	return s.readHistoryQuery(query, false)
+}
+
+func (s *documentStore) ReadActiveHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
+	return s.readHistoryQuery(query, true)
+}
+
+func (s *documentStore) readHistoryQuery(query HistoryReadQuery, activeOnly bool) (HistoryPage, error) {
 	if query.StartSeq < 1 && query.Cursor == nil {
 		return HistoryPage{}, errors.New("history start sequence must be positive")
 	}
@@ -76,6 +84,12 @@ func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, e
 		if end < start {
 			return nil
 		}
+		var retractions []historyRetraction
+		if activeOnly {
+			if _, err := tx.Get(documentNamespace("session_history_retractions"), id, &retractions); err != nil {
+				return err
+			}
+		}
 		scan := persistence.Query{Namespace: documentNamespace("session_messages"), Prefix: documentPrefix(id), Start: historyDocumentKey(id, start), End: historyDocumentKey(id, end+1), Limit: min(query.Limit+1, 256)}
 		for {
 			view, err := tx.ReadView(scan)
@@ -86,6 +100,9 @@ func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, e
 				var record HistoryRecord
 				if err := json.Unmarshal(document.Value, &record); err != nil {
 					return err
+				}
+				if historySequenceRetracted(record.Seq, retractions) {
+					continue
 				}
 				if strings.EqualFold(record.Role, "meta") {
 					continue
@@ -114,6 +131,12 @@ func (s *documentStore) SearchHistoryPage(id, query string, beforeSeq, limit int
 }
 
 func (s *documentStore) SearchHistoryQuery(query HistorySearchQuery) (HistoryPage, error) {
+	if !query.TimeMin.IsZero() && !query.TimeMax.IsZero() && !query.TimeMax.After(query.TimeMin) {
+		return HistoryPage{}, errors.New("history time_max must follow time_min")
+	}
+	if query.View != "" && query.View != "conversation" {
+		return HistoryPage{}, errors.New("unsupported history search view")
+	}
 	query.Query = strings.TrimSpace(query.Query)
 	if query.Query == "" {
 		return HistoryPage{}, errors.New("history search query is required")
@@ -160,7 +183,28 @@ func (s *documentStore) SearchHistoryQuery(query HistorySearchQuery) (HistoryPag
 					continue
 				}
 				hydrateHistoryRecordFromStorage(&record)
+				if !query.TimeMin.IsZero() && (record.At.IsZero() || record.At.Before(query.TimeMin)) || !query.TimeMax.IsZero() && (record.At.IsZero() || !record.At.Before(query.TimeMax)) {
+					continue
+				}
 				text := strings.Join([]string{record.Content, record.DisplayContent, record.ReasoningContent, string(record.ToolCalls), string(record.ToolResult), record.Name}, "\n")
+				if query.View == "conversation" {
+					role := strings.ToLower(record.Role)
+					if record.Hidden || (role != "user" && role != "assistant") || role == "user" && (record.ReadOnly || record.Origin != "" && record.Origin != "user") {
+						continue
+					}
+					content := record.DisplayContent
+					if content == "" {
+						content = record.Content
+					}
+					attachments := len(record.Files) > 0 || len(record.Images) > 0
+					if content == "" && !attachments {
+						continue
+					}
+					if role == "user" && record.Origin == "user" && attachments {
+						content = record.DisplayContent
+					}
+					text = content + "\n" + record.Name
+				}
 				if !strings.Contains(strings.ToLower(text), needle) {
 					continue
 				}

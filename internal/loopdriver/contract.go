@@ -29,8 +29,11 @@ type Binding = pluginprotocol.DriverBinding
 type AcquireFunc func(ctx context.Context, expected *Binding) (driver Driver, binding Binding, release func(), err error)
 
 type ExecutionContext struct {
-	SessionID   string
-	ExecutionID string
+	// SourceMessage is captured when the human input is admitted, not inferred from history.
+	SourceMessage   *providers.MessageRef
+	MessageRelation *providers.MessageRelation
+	SessionID       string
+	ExecutionID     string
 }
 
 type PersistedInput struct {

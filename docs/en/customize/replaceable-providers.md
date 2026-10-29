@@ -174,7 +174,20 @@ Run `node scripts/tool-replacement-e2e.mjs` for a packed-SDK synthetic plugin, a
 
 `session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
 
+`ReadActiveHistoryQuery` is an additive `session.domain@1` operation using the existing `HistoryReadQuery` and `HistoryPage` types. It reads a bounded sequence range while excluding currently retracted records, including when a caller supplies an older snapshot or cursor. Desktop attention uses this operation to revalidate its exact admitted input and any result target before delivery. Unsupported providers fail closed; the host does not substitute physical history or its cached projection. The native provider reads the indexed range and current retraction spans without loading the full transcript.
+
 Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispatch their typed argument/value arrays. `sessionDomain(host).call(method, args)` is the bound consumer. Preserve the exported record field names, including Go-style casing where specified. Journal handles belong to the authenticated caller and provider generation. `session_outcome_unknown` requires durable inspection before replay; it is not proof that a mutation failed. OS locks and execution identity remain host mechanisms, while the provider owns atomic membership and domain decisions.
+
+The additive receipt methods (`AcceptClientInput`, `ReadClientInput`,
+`ChangeClientInput`, `AppendAcceptedClientHistoryRecord`,
+`SettleClientInputExecution` and the scoped list/recovery methods) use the same
+selected `session.domain` authority. `SessionDomainAcceptedClientInput` retains
+Go field casing and base64 byte slices, including the distinction between `null`
+and empty bytes. Receipt acceptance, execution state and durable history admission
+are separate facts; none implies that a model saw or read the message. The host
+supplies `SessionDomainClientInputScope` from its immutable binding. Recovery
+reconciles receipt state without replaying tools or external effects. Unsupported
+methods fail explicitly; consumers never reopen a native receipt store.
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
@@ -192,6 +205,12 @@ serial leaf-tool consumers without speculative streaming or nested execution.
 
 `agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Conversation titles use the independently selected `session.title` service below. Plugin-command side-conversation prompts remain separate from the main/worker contract; replacing `agent.prompt` alone does not replace either behavior.
 
+Personal policy is an ordinary `agent.prompt@1` provider exported by `personal`.
+A composition selects it explicitly with `{ "service": "agent.prompt", "major": 1,
+"provider": "personal" }`. It assembles a complete non-Coding base from explicit
+request facts and contributions, preserving the `main` / `worker` execution roles.
+User-space identity does not silently switch prompt providers or add another role.
+
 ### Replace one prompt section
 
 The native prompt provider declares the optional `wuu.prompt.sections.v1` layout for main and worker results when their sections satisfy that layout. A decorator can call `promptService(host).assemble(request)` and then `await replacePromptSection(result, key, replacement)` from `@wuu/plugin-sdk`. The helper returns a new result, preserving the other sections and their metadata. The [prompt section decorator](../../../examples/plugins/prompt-section-decorator.ts) replaces `environment` while retaining the delegate's remaining prompt.
@@ -203,6 +222,17 @@ The layout joins UTF-8 section contents with two LF bytes. Each section records 
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
 
 These contracts keep the Go host and public SDK. Authors implement a process plugin through the ordinary service declarations and callback-bound `RuntimeHost`; they do not need a replacement kernel, private source imports or privileged native APIs.
+
+### Process read/write exclusions
+
+`sandbox.process@1` receives optional `ProcessSandboxPolicy.protected_paths`:
+absolute filesystem paths excluded from both reads and writes independently of
+`writable_roots`. If this list is nonempty, the provider must return
+`ProcessSandboxResult.protected_paths_enforced: true`; `enforcement: "full"`
+alone is not sufficient. Missing support is rejected before the process starts,
+without a native or unconfined fallback. Empty exclusions preserve the existing
+contract. This protects filesystem content access, not network access, process
+visibility or metadata-only queries.
 
 ## Complete tool batches
 
@@ -406,6 +436,18 @@ Consume pages incrementally instead of accumulating another full snapshot. Host 
 
 A missing native config file reads as `source: null`; a present zero-byte file reads as `source: ""`. Check for `null` before decoding. These values must not be normalized into each other by the client. A config CAS with `source: null` supplies zero replacement bytes: native file mode writes an empty file, rather than deleting it; trusted project mode rejects empty JSON. The CAS response can retain `null` even though the empty file now exists, so it describes returned source bytes rather than file existence.
 
+`pluginSettingsStore(host).transferState(transfer)` calls the selected provider's
+optional `transfer-state` method with `StateTransfer`: `{ id, source_subject_id,
+target_subject_id, key_prefix, scope: "user" }`. The admitted host must authorize
+both exact subjects. Ownership moves once: the source prefix is permanently fenced,
+existing target keys conflict even when values match, and an exact-intent receipt
+prevents a retry from overwriting later target updates or deletions. After an
+uncertain result, reconcile or explicitly retry the identical transfer; the SDK
+never retries automatically or emulates a move with reads and writes. Unsupported
+providers return an explicit method error, with no native storage fallback. The
+full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method; a provider that
+cannot implement it must omit it from its advertised methods.
+
 Configuration revisions and settings revisions are opaque strings, distinct from document-store revision numbers. Neither service offers the document store's transaction receipt protocol. Retry only a definite compare-and-exchange conflict after rereading; reconcile an unavailable/canceled write before attempting another write. Do not log credential bytes, raw configuration or secret-bearing effective configuration.
 
 Native configuration modes preserve their source boundaries: explicit-file mode uses that file; embedded mode starts from the supplied configuration; explicit project mode uses the project's base and settings layers, falling back from `.wuu.json` to `wuu.json` only when the primary is missing. Restricted project overlays on user configuration do not gain permission to replace credentials or grants.
@@ -555,10 +597,14 @@ There is no second host-side policy registry.
 | `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
 | `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
 
-A policy cannot replay visible partial output, accepted tool effects, an unknown
-submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
-potentially billable outcomes; the selected policy may permit a bounded model
-reattempt, but cannot replay accepted or uncertain tool effects.
+A loop retry cannot replay partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. For `transport_retry`, the host may
+set `partial_output_resettable` when the consumer can discard the failed attempt
+and a replay guard is installed. A recovery decision still passes that guard,
+which protects completed checkpoints and accepted or uncertain tool effects.
+Without this capability, partial output blocks transport recovery. Transport
+recovery retains physical submission receipts, including unknown but potentially
+billable outcomes; the selected policy may permit a bounded model reattempt.
 Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
 receipts survive failed attempts. Credential refresh, transport changes and
 retries still require their existing write-ahead receipts and adapter support.
@@ -623,6 +669,14 @@ potentially completed rather than silently replayed or reported successful.
 registry is an inventory projection, not another provider selector. A replacement
 may provide `engine.wuu` without inheriting any native implementation or identity
 privileges. Missing or disabled selections never create a substitute engine.
+
+An engine may advertise the string capability `explicit-context` in its
+`EngineDescriptor.capabilities`. It promises that execution uses only the host's
+explicit context, supplied history and tools, without discovering or injecting
+ambient home/workspace instructions, skills or memory. Consumers requiring
+isolated context check this capability, not engine IDs, and reject missing support
+or failures rather than selecting a substitute. This is a logical context contract,
+not an OS sandbox or a claim that tools cannot read files when explicitly authorized.
 
 The version 1 `descriptor` response may declare `requires_host_model: boolean`.
 The native Wuu loop declares `true`; engines that own model access and credentials

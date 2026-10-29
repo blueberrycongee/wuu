@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/persistence/inspectionjournal"
 )
 
 // Import explicitly installs a verified portable snapshot into an empty selected
@@ -12,6 +13,9 @@ import (
 // This does not stop writers of the SOURCE: the host must drain and fence those
 // before transfer and atomically publish its authority checkpoint afterwards.
 func (s *Store) Import(ctx context.Context, snapshot Snapshot) (ImportResult, error) {
+	if err := validateSnapshotOwners(ctx, snapshot); err != nil {
+		return ImportResult{}, err
+	}
 	expected, err := SnapshotCheckpoint(snapshot)
 	if err != nil {
 		return ImportResult{}, err
@@ -23,6 +27,9 @@ func (s *Store) Import(ctx context.Context, snapshot Snapshot) (ImportResult, er
 		return ImportResult{}, err
 	}
 	defer lock.Release()
+	if err := s.checkNamespaceAccess(ctx, nil); err != nil {
+		return ImportResult{}, err
+	}
 	current, err := s.backend.export(ctx)
 	if err != nil {
 		return ImportResult{}, err
@@ -33,6 +40,9 @@ func (s *Store) Import(ctx context.Context, snapshot Snapshot) (ImportResult, er
 	}
 	if actual == expected {
 		return ImportResult{Revision: actual.Revision}, nil
+	}
+	if err := inspectionjournal.Check(s.dir, nil); err != nil {
+		return ImportResult{}, err
 	}
 	if current.Revision != 0 || len(current.Documents) != 0 || len(current.Receipts) != 0 {
 		return ImportResult{}, fmt.Errorf("%w: snapshot import requires an empty target or an exact retry", ErrConflict)

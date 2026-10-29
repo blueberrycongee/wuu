@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
 
 // HostPushEvent is a content-free notification request: the host tells the
@@ -18,15 +19,17 @@ import (
 // end-to-end encrypted and is fetched by the phone after it reconnects.
 //
 // Token and Platform come from the device's stored push registration. ThreadID
-// is set when the hint comes from a turn/completed or turn/error notification
-// and lets the pusher deep-link directly to the relevant thread.
+// is set for Coding turn/completed or turn/error notifications. Personal uses
+// UserLocation only after a policy-admitted user/attention notification.
 type HostPushEvent struct {
-	Device   string // device pub
-	Token    string // push token (opaque to the host)
-	Platform string // "ios" | "android"
-	Hint     string // wire.PushAgentDone | wire.PushNeedsInput
-	ThreadID string // optional, present for turn-bound hints
-	At       time.Time
+	Host         string             // authenticated host public key
+	UserLocation *wire.UserLocation // Personal destination; excludes ThreadID
+	Device       string             // device pub
+	Token        string             // push token (opaque to the host)
+	Platform     string             // "ios" | "android"
+	Hint         string             // wire.PushAgentDone | wire.PushNeedsInput
+	ThreadID     string             // optional, present for turn-bound hints
+	At           time.Time
 }
 
 // HostPusher delivers a content-free notification to one paired device.
@@ -156,7 +159,19 @@ func (p *ExpoPusher) Push(ctx context.Context, ev HostPushEvent) {
 
 	title, body := expoCopy(ev.Hint, ev.ThreadID)
 	data := map[string]any{"thread_id": ev.ThreadID, "hint": ev.Hint}
-	if ev.ThreadID != "" {
+	if ev.UserLocation != nil {
+		if ev.Hint != wire.PushAgentDone || ev.ThreadID != "" {
+			return
+		}
+		fields, err := ev.UserLocation.PushData(ev.Host, ev.Device)
+		if err != nil {
+			return
+		}
+		data = make(map[string]any, len(fields))
+		for key, value := range fields {
+			data[key] = value
+		}
+	} else if ev.ThreadID != "" {
 		// The mobile tap handler consumes data.url as a wuu:// deep link
 		// (clients/mobile startPushListeners); thread_id stays alongside it
 		// for consumers that want the raw id.

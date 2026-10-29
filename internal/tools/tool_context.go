@@ -210,7 +210,13 @@ func (t *Toolkit) ActiveFilesContextBlock() (wuucontext.Block, bool) {
 	}
 	paths := make([]string, 0, len(entries))
 	for path := range entries {
+		if t.env.rejectProtectedPath(path, false) != nil {
+			continue
+		}
 		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		return wuucontext.Block{}, false
 	}
 	sort.Slice(paths, func(i, j int) bool {
 		return t.env.NormalizeDisplayPath(paths[i]) < t.env.NormalizeDisplayPath(paths[j])
@@ -393,7 +399,7 @@ func (t *Toolkit) ToolResultSummaryContextBlock() (wuucontext.Block, bool) {
 	if len(records) > maxRenderedRecords {
 		start = len(records) - maxRenderedRecords
 	}
-	currentRevision := workspaceRevision(context.Background(), t.env.RootDir, t.env.RuntimeHome)
+	currentRevision := t.env.workspaceRevision(context.Background(), t.env.RootDir)
 	if wuucontext.DynamicContextProjectionEnabled() {
 		return wuucontext.Block{
 			Kind:        wuucontext.BlockToolResultSummary,

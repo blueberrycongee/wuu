@@ -150,13 +150,29 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 
 `session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
 
+`ReadActiveHistoryQuery` 是 `session.domain@1` 的新增操作，使用现有的 `HistoryReadQuery` 和 `HistoryPage` 类型。它读取限定的序列范围并排除当前已撤回的记录；即使调用者传入旧快照或游标，也不会恢复已撤回的内容。桌面端注意力通知通过该操作在投递前重新核验对应的已准入输入和结果定位目标。提供者不支持该方法时安全拒绝；宿主不改用物理历史或缓存投影。原生提供者读取索引范围和当前撤回区间，无需加载完整对话。
+
 使用 `sessionDomainProvider(handlers)` 声明已实现的方法，并分发类型化参数数组和结果数组；`sessionDomain(host).call(method, args)` 是绑定消费者。保留导出记录的字段名，包括明确规定的 Go 大小写。日志句柄属于认证调用者及提供者 generation。遇到 `session_outcome_unknown`，应先检查持久结果再决定是否重试，不能把它当作写入失败的证明。OS 锁和执行身份仍由宿主负责，原子成员变更与领域决策由提供者负责。
+
+新增回执方法（`AcceptClientInput`、`ReadClientInput`、`ChangeClientInput`、
+`AppendAcceptedClientHistoryRecord`、`SettleClientInputExecution` 及作用域内的
+列表/恢复方法）使用同一个所选 `session.domain` 权威。
+`SessionDomainAcceptedClientInput` 保留 Go 字段大小写及 base64 字节片段，区分
+`null` 与空字节。回执接收、执行状态与持久历史准入是不同事实，都不表示模型已看到
+或读过消息。宿主从不可变绑定生成 `SessionDomainClientInputScope`；恢复只核对
+回执状态，不重放工具或外部操作。不支持的方法明确失败，消费者不能重新打开
+原生回执存储。
 
 `agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
 
 `finalize` 对归一化后的结果只执行一次，包括执行失败和通过所选批次资源结算的拒绝。其 `additional_context` 追加在同一次调用的 execute 上下文之后；`discovered_tools` 按名称合并，同名时采用 finalize 定义。即使并行调用乱序完成，这些补充信息仍绑定到对应的已结算调用。发现的工具定义仅附在该调用对模型可见的工具结果中。上下文也适用于嵌套调用，并保存在下一次模型输入回执中，不进入普通会话历史，也不泄漏到之后的新回合。hook 装饰器、原生服务适配器和所选批次不会从旧式共享的“最后一次结果”上下文槽推断调用归属；这些集成必须提供按调用归属的上下文。共享槽 API 仅保留给没有流式推测或嵌套执行的直接串行叶子工具消费方使用。
 
 `agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
+
+Personal 策略是 `personal` 提供的普通 `agent.prompt@1` 服务。
+组合通过 `{ "service": "agent.prompt", "major": 1, "provider": "personal" }`
+显式选择它。该提供者从显式请求事实及贡献组装完整的非 Coding 基础提示，保留
+`main` / `worker` 执行角色。用户空间身份不会悄悄切换提示提供者或新增执行角色。
 
 ### 替换单个提示词分段
 
@@ -169,6 +185,15 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
 这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
+
+### 进程读写排除路径
+
+`sandbox.process@1` 接收可选的 `ProcessSandboxPolicy.protected_paths`：
+绝对文件系统路径，同时禁止读取和写入，独立于 `writable_roots` 的写入授权。
+列表非空时，提供者必须返回 `ProcessSandboxResult.protected_paths_enforced: true`；
+仅有 `enforcement: "full"` 不够。缺少支持时在启动进程前拒绝，不回退到原生或
+未受约束的执行。空列表保留现有契约。它保护文件内容访问，不承诺网络、进程
+可见性或仅元数据查询的隔离。
 
 ## 完整工具批次
 
@@ -333,6 +358,15 @@ const page = await documentStore(host).exportPage({
 
 原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
 
+`pluginSettingsStore(host).transferState(transfer)` 调用所选提供者可选的
+`transfer-state` 方法，使用 `StateTransfer`：`{ id, source_subject_id,
+target_subject_id, key_prefix, scope: "user" }`。准入宿主必须授权两个精确的主体。
+所有权仅转移一次：永久封禁来源前缀的读写；目标已有键即使值相同也会冲突；
+精确意图回执防止重试覆盖目标后续更新或删除。不确定结果需先核对，或显式重试
+完全相同的转移；SDK 不自动重试，也不通过读写序列模拟迁移。不支持的提供者
+必须返回明确的方法错误，不能回退到原生存储。完整的
+`PLUGIN_SETTINGS_STORE_DESCRIPTOR` 包含该方法；无法实现的提供者不得声明它。
+
 配置和设置 revision 都是不透明字符串，与文档存储的数字 revision 不同。这两个服务不提供文档事务回执协议。只有确定的 CAS 冲突可以在重读后重试；不可用或已取消的写入需要先核对结果。不要记录凭据字节、原始配置或包含秘密的有效配置。
 
 原生配置模式保留来源边界：显式文件模式使用指定文件，嵌入模式从传入配置开始，显式项目模式使用项目基础配置和设置层，仅在 `.wuu.json` 不存在时回退到 `wuu.json`。叠加在用户配置上的受限项目覆盖不会获得替换凭据或授权的权限。
@@ -470,9 +504,11 @@ provider 会停止这些调用；错误或空决策不会切换到另一实现�
 | `retry` | 失败的循环步骤可选择 `fail`、使用有界上下文溢出恢复的 `recover`，或对证明尚未提交的请求显式 `retry`。重试必须提供 `max_attempts`，首次值固定总尝试上限，后续决策不能续领预算。 |
 | `transport_retry` | 接收已结束物理尝试的失败、提交次数、尝试预算及退避配置。`fail` 终止；`recover` 给出 `recovery_action`（`replay_same_payload`、`wait_then_replay`、`refresh_credential` 或 `switch_transport`）及可选 `delay_ms`。仍须满足适配器能力及持久化工作流预算。 |
 
-策略不能重放已显示的部分输出、已接纳工具副作用、提交结果不明的操作，或重置
-耗尽的推理预算。传输恢复保留物理提交回执，包括结果不明但可能计费的提交；选中策略可以在
-预算内重新尝试模型调用，但不能重放已接纳或结果不明的工具副作用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
+循环重试不能重放部分输出、已接纳的工具副作用、提交结果不明的操作，也不能重置
+耗尽的推理预算。对于 `transport_retry`，当消费者能够丢弃失败尝试且已安装重放安全检查时，
+宿主可设置 `partial_output_resettable`。恢复决策仍须通过安全检查，以保护已完成的检查点及
+已接纳或结果不明的工具副作用；没有此能力时，部分输出会阻止传输恢复。传输恢复保留物理
+提交回执，包括结果不明但可能计费的提交；选中策略可以在预算内重新尝试模型调用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
 会保留；刷新凭证、切换传输和重试仍需既有的预写回执及适配器支持。
 
 完整循环替换通过 `driverTurn(host, execution).evaluatePolicy()` 使用策略，
@@ -520,6 +556,12 @@ SDK，验证两个并行策略实现、子 Agent 继承及移除，证据保存�
 Wuu 循环及外部 CLI 适配器；`wuu.engine-execution` 消费所选服务。生产引擎注册表只是
 组合图的清单投影，不是第二套选择机制。替换插件可以提供 `engine.wuu`，无需继承原生
 实现或身份特权。所选提供方缺失或禁用时，不会生成替代实现。
+
+引擎可以在 `EngineDescriptor.capabilities` 中声明字符串能力 `explicit-context`。
+它承诺仅使用宿主显式上下文、传入历史及工具，不发现或注入环境中主目录、工作区的
+指令、技能或记忆。需要隔离上下文的消费者按能力而非引擎 ID 判断；缺少能力或调用
+失败时必须拒绝，不能自动换用其他引擎。这是逻辑上下文契约，不是操作系统沙箱，
+也不代表工具无法在明确授权后读取文件。
 
 版本 1 的 `descriptor` 响应可声明 `requires_host_model: boolean`。原生 Wuu 循环
 声明 `true`；自行管理模型访问和凭据的引擎声明 `false`，包括不需要模型的

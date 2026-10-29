@@ -669,6 +669,14 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			operationID := ev.Lifecycle.OperationID
 			if operationID != "" && (th.agentStream == nil || th.agentStream.operationID != operationID) {
 				out = append(out, th.completeActiveAgentItemLocked(turnID, now, false)...)
+				if th.activeReasoningItemID != "" {
+					if item, ok := th.itemLocked(turnID, th.activeReasoningItemID); ok {
+						item.Status = ThreadItemStatusCompleted
+						th.upsertItemLocked(turnID, item, now)
+						out = append(out, itemCompleted(th.ID, turnID, item, now))
+					}
+					th.activeReasoningItemID = ""
+				}
 				th.agentStream = &agentMessageStream{operationID: operationID}
 			}
 			return out
@@ -676,6 +684,17 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			out = append(out, th.upsertStreamReconnectItemLocked(turnID, ev.Lifecycle, now)...)
 			if !ev.Lifecycle.ResetPartial {
 				return out
+			}
+			if th.agentStream != nil && th.agentStream.operationID == ev.Lifecycle.OperationID {
+				for _, itemID := range th.agentStream.reasoningItemIDs {
+					if th.removeItemLocked(turnID, itemID, now) {
+						out = append(out, itemRemoved(th.ID, turnID, itemID, now))
+					}
+					if th.activeReasoningItemID == itemID {
+						th.activeReasoningItemID = ""
+					}
+				}
+				th.agentStream.reasoningItemIDs = nil
 			}
 			removed := make(map[string]struct{})
 			for sourceID, itemID := range th.toolItems {
@@ -1178,8 +1197,9 @@ func (th *threadState) ensureActiveAgentItemLocked(turnID string, now time.Time)
 // still producing one aggregate ChatMessage. Its replacements and final message
 // must supersede all those rows, without touching earlier model operations.
 type agentMessageStream struct {
-	operationID string
-	itemIDs     []string
+	operationID      string
+	itemIDs          []string
+	reasoningItemIDs []string
 }
 
 func (th *threadState) reconcileAgentStreamItemsLocked(turnID string, keepFirst bool, now time.Time) []outboundNotification {
@@ -1235,6 +1255,9 @@ func (th *threadState) ensureActiveReasoningItemLocked(turnID string, now time.T
 		Status: ThreadItemStatusInProgress,
 	}
 	th.activeReasoningItemID = item.ID
+	if th.agentStream != nil {
+		th.agentStream.reasoningItemIDs = append(th.agentStream.reasoningItemIDs, item.ID)
+	}
 	th.upsertItemLocked(turnID, item, now)
 	return item, true
 }
@@ -1734,6 +1757,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					ID:           nextItemID(current.ID),
 					Seq:          msg.Seq,
 					SourceID:     msg.ProviderItemID,
+					Relation:     providers.CloneMessageRelation(msg.Relation),
 					Type:         ThreadItemAgentMessage,
 					Status:       ThreadItemStatusCompleted,
 					Terminal:     assistantMessageTerminal(msg),
@@ -1881,6 +1905,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			Cause:            strings.TrimSpace(msg.Cause),
 			PresentationKind: strings.TrimSpace(msg.PresentationKind),
 			RelatedSessionID: strings.TrimSpace(msg.RelatedSessionID),
+			Relation:         providers.CloneMessageRelation(msg.Relation),
 		}
 	case "assistant":
 		if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
@@ -1888,6 +1913,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 				ID:           id,
 				Seq:          msg.Seq,
 				SourceID:     msg.ProviderItemID,
+				Relation:     providers.CloneMessageRelation(msg.Relation),
 				Type:         ThreadItemAgentMessage,
 				Status:       ThreadItemStatusCompleted,
 				Terminal:     assistantMessageTerminal(msg),
@@ -1935,6 +1961,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		OriginID:             rec.OriginID,
 		Cause:                rec.Cause,
 		PresentationKind:     rec.PresentationKind,
+		Relation:             providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:     rec.RelatedSessionID,
 		ReadOnly:             rec.ReadOnly,
 		Phase:                providers.NormalizeMessagePhase(rec.Phase),
@@ -2159,6 +2186,7 @@ func filePreview(file providers.InputFile, index int) string {
 }
 
 func cloneThreadItem(item ThreadItem) ThreadItem {
+	item.Relation = providers.CloneMessageRelation(item.Relation)
 	item.Images = append([]ThreadItemImage(nil), item.Images...)
 	item.Files = append([]ThreadItemFile(nil), item.Files...)
 	item.ContentParts = providers.CloneMessageContentParts(item.ContentParts)

@@ -1,3 +1,21 @@
+/** Durable acceptance and execution are independent; no field means Seen. */
+export interface ClientInputReceipt {
+ request_id: string; receipt_id: string; host_request_id: string; client_id: string; queue_id: string; session_id: string;
+ user_space_id?: string; product_domain?: string; agent_id?: string; plugin_id: string; owner?: string;
+ message_seq?: number; hostturn_id?: string;
+ receipt_state: "accepted" | "in_history";
+ execution_state: "queued" | "held" | "running" | "completed" | "failed" | "interrupted" | "cancelled" | "unconfirmed";
+ accepted_at: string; revision: number; error_stage?: string; error?: string;
+}
+export interface AcceptedClientInputView {
+ receipt: ClientInputReceipt; prompt: string; relation?: MessageRelation; attachments?: SessionInputAttachment[];
+}
+
+/** Stable durable message address; seq is not a provider item or turn ID. */
+export interface MessageRef { session_id: string; seq: number; }
+/** Host-validated quote target plus extension-owned context. Never encode routing in prompt text. */
+export interface MessageRelation { reply_to?: MessageRef; metadata?: Record<string, unknown>; }
+
 /**
  * @wuu/plugin-sdk
  *
@@ -105,6 +123,8 @@ export type PluginManifestIcon =
   | Readonly<{ light: string; dark: string }>;
 
 export interface ViewTypeDefinition {
+  /** Presentation-only user-space shell; never grants data or tool authority. */
+  readonly layout?: "user-space";
   id: ViewTypeId;
   title: string;
   icon?: PublicIconName;
@@ -278,7 +298,90 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 }
 
 /** Stable host-owned primitives for plugin views. */
+export interface PluginUIInteractiveAnswerProps {
+  snapshot: unknown;
+  fallbackText?: string;
+  onStateChange?(state: unknown): void;
+  onSync?(input: unknown): Promise<unknown>;
+  onAction(input: unknown): Promise<unknown>;
+  onRefresh(): Promise<unknown>;
+  onRetry(resumeHeld?: boolean): Promise<unknown>;
+}
+export interface PluginUIConversationMessageProps { interactive?: readonly PluginUIInteractiveAnswerProps[]; footer?: React.ReactNode; reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void }; replyPreview?: React.ReactNode; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: React.ReactNode; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: React.ReactNode }; messageActions?: "copy-only" | "none" }
+
+export interface PluginUIConversationViewProps {
+  presentation?: "standard" | "bubbles";
+  /** Submit an offer reply to this conversation with stable admission identity. */
+  onQuestionReply?: (requestId: string, prompt: string, relation?: MessageRelation) => Promise<void>;
+  conversationId: string;
+  sessionId?: string;
+  sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding"; compositionProfile?: string };
+  actions?: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  avatar?: React.ReactNode;
+  status?: React.ReactNode;
+  loading?: boolean;
+  /** Hide only this conversation’s history trigger; defaults to true. */
+  showHistorySearch?: boolean;
+  /** Suppress the floating control when another conversation overlays this view. */
+  showJumpToLatest?: boolean;
+  searchLabel: string;
+  searchContent: React.ReactNode;
+  children: React.ReactNode;
+  composer: React.ReactNode;
+}
+
+export interface PluginUIConversationAttachmentProps {
+  resourceId?: string;
+  onOpen?(): void;
+  /** Read a verified byte snapshot independently of the card mount/Blob URL lifetime. */
+  onRead?(): Promise<Blob>;
+  name: string;
+  mediaType: string;
+  size: number;
+  url?: string;
+  loading?: boolean;
+  error?: string;
+  loadLabel: string;
+  downloadLabel: string;
+  onLoad(): void | Promise<string | void>;
+}
+
+export interface PluginUIConversationComposerProps {
+ replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
+  conversationId: string;
+  submitting?: boolean;
+  queuedCount?: number;
+  pendingCount?: number;
+  stopState?: "pending" | "retry";
+  prompt: string;
+  placeholder?: string;
+  running: boolean;
+  disabled?: boolean;
+  sendDisabled?: boolean;
+  attachments: readonly { id: string; filename: string; media_type: string; data: string }[];
+  onChangePrompt(value: string): void;
+  onAddAttachments(files: File[]): void;
+  onRemoveAttachment(id: string): void;
+  onSend(prompt: string): void;
+  onStop(): void;
+}
+
+/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+export interface PluginUIAvatarProps {
+  readonly size?: number;
+  readonly status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
+  readonly motion?: "static" | "ambient";
+  readonly className?: string;
+}
+
 export interface PluginUIKit {
+  readonly Avatar: HostUIComponent<PluginUIAvatarProps>;
+  readonly ConversationView: HostUIComponent<PluginUIConversationViewProps>;
+  readonly ConversationAttachment: HostUIComponent<PluginUIConversationAttachmentProps>;
+  readonly ConversationComposer: HostUIComponent<PluginUIConversationComposerProps>;
+  readonly ConversationMessage: HostUIComponent<PluginUIConversationMessageProps>;
   /** Shares Wuu browser logins; closes when unmounted or the generation ends. */
   readonly WebPage: HostUIComponent<PluginUIWebPageProps>;
   readonly ComposerDrawer: HostUIComponent<PluginUIComposerDrawerProps>;
@@ -538,6 +641,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): ComposerInlineCompletionProviderHandle;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Set a declared navigation entry title for this generation only (1–64 characters). */
+  setNavigationTitle(id: string, title: string): boolean;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;
   registerThemeTokens(tokens: ThemeTokens): Disposable;
@@ -566,6 +671,15 @@ export interface PluginVisibleHistoryResult {
   }[];
 }
 
+/** Exact selected bytes, carried only in the authenticated client envelope. */
+export interface ClientInputAttachment {
+ readonly sha256: string;
+ readonly filename: string;
+ readonly media_type: string;
+ readonly data: string;
+}
+export interface SessionInputAttachment { sha256: string; filename: string; media_type: string }
+export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
 /** Renderer request envelope. Major version comes from required_services;
  * routing and execution identity remain host-owned.
  */
@@ -576,6 +690,14 @@ export interface PluginServiceCall {
 }
 
 export interface PluginRuntimeInvokeOptions {
+  /** Explicit host-configured composition profile for a scoped target runtime.
+   * The host verifies this activation's graph, plugin fingerprint and declared
+   * dependencies before admitting the target graph. This is not a graph ID or
+   * an authority grant; unavailable/unbound profiles fail without substitution. */
+  readonly compositionProfile?: string;
+ readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly relation?: MessageRelation; readonly attachments?: readonly ClientInputAttachment[] };
+  readonly userSpaceId?: string;
+  readonly productDomain?: "personal" | "coding";
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
   /** Cancel this invocation and the host work owned by its execution. */
@@ -623,6 +745,21 @@ export const SYSTEM_PROMPT_SECTION_CAPABILITY = "agent.system_prompt.section" as
 /** @experimental No distributed first-party consumer has proven this contract. */
 export const COMPACTION_CAPABILITY = "agent.compaction" as const;
 export const PLUGIN_CLIENT_REQUEST_CAPABILITY = "plugin.client.request" as const;
+/** Host-only admission after a persisted main conversation settles. */
+export const SESSION_ATTENTION_CAPABILITY = "session.attention" as const;
+export interface SessionAttentionInput {
+  /** Exact host-admitted send bound to this persisted turn; not read or execution authority. */
+  request_id: string;
+  user_space_id: string;
+  product_domain: string;
+  session_id: string;
+  agent_id: string;
+  message_seq?: number;
+  turn_id: string;
+  outcome: "completed" | "failed";
+}
+export interface SessionAttentionOutput { allowed: boolean; batch_window_seconds?: number }
+
 
 export type CapabilityKind = "observe" | "transform" | "decision";
 export type CapabilityErrorPolicy = "propagate" | "isolate" | "ignore";
@@ -652,7 +789,9 @@ export const HOST_SERVICE_METHODS = [
   "host.session.list",
   "host.session.cancel",
   "host.session.inspect",
+  "host.session.context",
   "host.session.control",
+  "host.session.attachment.read",
   "host.session.history.read",
   "host.session.history.search",
   "host.workspace.status",
@@ -693,7 +832,9 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -862,11 +1003,18 @@ export interface MemoryNotebookSnapshotV1 {
   truncated: boolean;
 }
 
-export const AUTHORIZATION_SERVICE_DESCRIPTOR: ServiceDescriptor = {
-  name: SECURITY_AUTHORIZE_SERVICE,
-  version: "1.0.0",
-  methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }],
-};
+/** Advertise the optional effect fence only when both operations retain the
+ * selected policy generation until explicit cleanup; no snapshot fallback. */
+export function authorizationServiceDescriptor(options: {effect_fence?:boolean} = {}): ServiceDescriptor {
+  return {
+    name: SECURITY_AUTHORIZE_SERVICE, version: "1.0.0",
+    methods: [{name:SECURITY_AUTHORIZE_METHOD,input_schema:"security.authorize.input.v1",output_schema:"security.authorize.output.v1"}, ...(options.effect_fence ? [
+      {name:"acquire-authorization",input_schema:"security.authorize.acquire-authorization.input.v1",output_schema:"security.authorize.acquire-authorization.output.v1"},
+      {name:"release-authorization",input_schema:"security.authorize.release-authorization.input.v1",output_schema:"security.authorize.release-authorization.output.v1",cleanup:true},
+    ] : [])],
+  };
+}
+export const AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
 
 export const PROCESS_SANDBOX_SERVICE_DESCRIPTOR: ServiceDescriptor = {
   name: PROCESS_SANDBOX_SERVICE,
@@ -881,8 +1029,39 @@ export interface ServiceRequirement {
   required?: boolean;
 }
 
+/** Host-attested authenticated, policy-approved invocation. Never accepted from
+ * service.call input. Providers verify the version/action and exact input digest;
+ * authority names the durable validity source, not ambient owner privilege. */
+export interface ServiceAdmission {
+  readonly version: 1;
+  readonly principal: import("./identity.js").PrincipalIdentity;
+  readonly action: string;
+  /** Lowercase SHA-256 of the exact admitted JSON parameter bytes. */
+  readonly input_digest: string;
+  /** Exact UTF-8 JSON used for input_digest. Verify its hash, parse it, then
+   * structurally compare with params; reserialization is not byte-stable. */
+  readonly input_json: string;
+  readonly authority: string;
+  /** Host-attested selected task-authority output for child derivation. Never
+   * accepted from issue request JSON or inferred from a persisted record. */
+  readonly lineage?: Readonly<Record<string, unknown>>;
+}
+
 /** One validated, host-routed call delivered to a service provider. */
+/** Configured host storage coordination, not a user principal. Bound to the
+ * exact selected provider/input; unavailable to service.call request JSON. */
+export interface StorageStewardship {
+  readonly version: 1;
+  readonly authority: string;
+  readonly provider: string;
+  readonly operation: 'verify' | 'migration' | 'recover';
+  readonly input_digest: string;
+  readonly input_json: string;
+  readonly consumer?: string;
+}
 export interface ServiceInvokeParams<TParams = unknown> {
+  readonly storage_stewardship?: StorageStewardship;
+  readonly admission?: ServiceAdmission;
   service: string;
   method: string;
   caller: string;
@@ -901,6 +1080,10 @@ export interface ServiceChangedParams {
 }
 
 export interface RuntimeInitializeParams {
+  /** Immutable scope selected by the host; absent fields mean legacy Coding. */
+  user_space_id?: string;
+  product_domain?: "personal" | "coding";
+  data_root?: string;
   protocol_version: number;
   plugin_id: string;
   plugin_root: string;
@@ -974,6 +1157,10 @@ export interface AuthorizationDecision {
   reason?: string;
 }
 
+export interface AuthorizationAcquireRequest { readonly id: string; readonly request: AuthorizationRequest; }
+export interface AuthorizationLease { readonly id: string; readonly decision: AuthorizationDecision; }
+export interface AuthorizationReleaseRequest { readonly id: string; }
+
 export interface ProcessSandboxRequest {
   argv: string[];
   policy: ProcessSandboxPolicy;
@@ -982,11 +1169,19 @@ export interface ProcessSandboxRequest {
 export interface ProcessSandboxPolicy {
   mode: "read-only" | "workspace-write";
   writable_roots?: string[];
+  /** Absolute read/write exclusions, independent of writable grants. These do
+   * not promise network, process-visibility or metadata-query isolation.
+   */
+  protected_paths?: string[];
 }
 
 export interface ProcessSandboxResult {
   argv: string[];
   enforcement: "full" | "partial";
+  /** Required true before spawn when protected_paths is nonempty. An older
+   * provider's "full" alone is insufficient; unsupported protection fails closed.
+   */
+  protected_paths_enforced?: boolean;
   denial_signatures?: string[];
   runner_failure_signatures?: string[];
 }
@@ -1081,6 +1276,8 @@ export interface RequestTransformOutput {
 }
 
 export interface AgentPreStepInput {
+ source_message?: MessageRef;
+ message_relation?: MessageRelation;
   session_id?: string;
   thread_id?: string;
   cwd?: string;
@@ -1173,6 +1370,9 @@ export interface CompactionOutput<TMessage extends CompactionMessage = Compactio
 }
 
 export interface ToolExecuteParams<TArguments = unknown> {
+  /** Host-attested originating human input for this turn; absent for generated wakeups. */
+  source_message?: MessageRef;
+  message_relation?: MessageRelation;
   tool_id: string;
   session_id?: string;
   thread_id?: string;
@@ -1334,6 +1534,12 @@ export interface HostServiceContracts {
   };
   "host.session.create": {
     params: {
+      /** Parent lineage proof for one persisted pending task/create receipt. */
+      execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
+      authorization_task_id?: string;
+      user_space_id?: string;
+      product_domain?: "personal" | "coding";
+      agent_id?: string;
       request_id: string;
       name?: string;
       visibility: "user" | "plugin";
@@ -1366,10 +1572,21 @@ export interface HostServiceContracts {
   };
   "host.session.send": {
     params: {
+      /** Opaque unattended grant. The host derives current scope from selected
+       * task/session authorities and validates it at admission; JSON cannot
+       * supply a principal, owner claim, or substitute task scope. */
+      execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
+      /** Prohibits all tools for this turn. Unsupported with steer or external engines. */
+      disable_tools?: boolean;
+      user_input_request_id?: string;
+      resume_accepted?: boolean;
+      resume_receipt_id?: string;
+ relation?: MessageRelation;
       request_id: string;
       session_id: string;
       input: {
         prompt: string;
+        attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
       presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
@@ -1378,13 +1595,16 @@ export interface HostServiceContracts {
       reply_to_turn_id?: string;
       control_revision?: number;
     };
-    result: { state: string; session_id: string; turn_id?: string; queue_id?: string; steered?: boolean };
+    result: { state: string; session_id: string; turn_id?: string; queue_id?: string; steered?: boolean; receipt?: ClientInputReceipt };
   };
   "host.session.list": {
-    params: { parent_session_id?: string; scope?: "owned" | "shared" };
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; parent_session_id?: string; scope?: "owned" | "shared" };
     result: {
       sessions: Array<{
         session_id: string;
+        user_space_id?: string;
+        product_domain?: "personal" | "coding";
+        agent_id?: string;
         name?: string;
         parent_session_id?: string;
         visibility: "user" | "plugin";
@@ -1396,15 +1616,17 @@ export interface HostServiceContracts {
     };
   };
   "host.session.cancel": {
-    params: { session_id: string; turn_id?: string; queue_id?: string; control_revision?: number };
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; turn_id?: string; queue_id?: string; control_revision?: number };
     result: { session_id: string; turn_id?: string; queue_id?: string; cancelled: boolean };
   };
   "host.session.control": {
-    params: { session_id: string; state?: "active" | "paused" | "released"; revision?: number };
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; state?: "active" | "paused" | "released"; revision?: number };
     result: { session_id: string; manager_id?: string; state?: string; revision: number };
   };
+  "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
   "host.session.inspect": {
     params: {
+      execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
       session_id: string;
       turn_id?: string;
       request_id?: string;
@@ -1415,8 +1637,14 @@ export interface HostServiceContracts {
       include_progress?: boolean;
     };
     result: {
+      receipt?: ClientInputReceipt;
+      accepted_input?: AcceptedClientInputView;
+      pending_inputs?: AcceptedClientInputView[];
       session: {
         session_id: string;
+        user_space_id?: string;
+        product_domain?: "personal" | "coding";
+        agent_id?: string;
         name?: string;
         parent_session_id?: string;
         visibility: "user" | "plugin";
@@ -1444,8 +1672,13 @@ export interface HostServiceContracts {
       progress?: SessionProgressSnapshotV1;
     };
   };
+  "host.session.attachment.read": {
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; seq: number; kind: "image" | "file" | "artifact"; index: number; sha256: string; offset?: number };
+    /** Offset/total count base64 characters, chunks are at most 128 KiB. */
+    result: { data: string; offset: number; total: number; content_type: string; name: string; sha256: string };
+  };
   "host.session.history.read": {
-    params: {
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
       session_id: string;
       start_seq?: number;
       end_seq?: number;
@@ -1458,11 +1691,22 @@ export interface HostServiceContracts {
       head_seq: number;
       snapshot_seq: number;
       records?: Array<{
+        receipt?: ClientInputReceipt;
+        relation?: MessageRelation;
+        at?: string;
         seq: number;
+        attachments?: SessionHistoryAttachment[];
         role: string;
+        /** Physical history includes hidden/generated model context; role alone is not authorship. */
+        hidden?: boolean;
+        read_only?: boolean;
+        origin?: string;
         name?: string;
         content?: string;
         display_content?: string;
+        /** Provider identity, not the host-generated live item or turn ID. */
+        provider_item_id?: string;
+        engine_turn_id?: string;
         reasoning_content?: string;
         tool_calls?: string;
         tool_call_id?: string;
@@ -1476,7 +1720,10 @@ export interface HostServiceContracts {
     };
   };
   "host.session.history.search": {
-    params: {
+    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
+      view?: "conversation";
+      time_min?: string;
+      time_max?: string;
       session_id: string;
       query: string;
       start_seq?: number;
@@ -1490,7 +1737,7 @@ export interface HostServiceContracts {
       session_id: string;
       head_seq: number;
       snapshot_seq: number;
-      matches?: Array<{ seq: number; role: string; name?: string; excerpt?: string }>;
+      matches?: Array<{ at?: string; seq: number; role: string; name?: string; excerpt?: string }>;
       has_more?: boolean;
       budget_exhausted?: boolean;
       next_cursor?: string;
@@ -2803,6 +3050,20 @@ export function validateManifest(manifest: Record<string, unknown>): string[] {
   return errors;
 }
 
+/** A reciprocal, host-executed one-time private storage ownership transfer. */
+export interface StorageTransferDeclaration {
+  id: string;
+  plugin: string;
+  scope: "user";
+  domain: string;
+  keyPrefix: string;
+}
+
+export interface StorageTransfers {
+  exports?: StorageTransferDeclaration[];
+  imports?: StorageTransferDeclaration[];
+}
+
 export function createManifest(options: {
   id: string;
   name?: string;
@@ -2811,6 +3072,7 @@ export function createManifest(options: {
   icon?: PluginManifestIcon;
   requires?: string[];
   dependencies?: PluginDependency[];
+  storageTransfers?: StorageTransfers;
 }): Record<string, unknown> {
   return {
     schema_version: 1,
@@ -2819,6 +3081,7 @@ export function createManifest(options: {
     version: options.version ?? "0.1.0",
     description: options.description ?? `A Wuu plugin: ${options.id}`,
     ...(options.icon ? { icon: options.icon } : {}),
+    ...(options.storageTransfers ? { storageTransfers: options.storageTransfers } : {}),
     ...(options.requires ? { requires: options.requires } : {}),
     ...(options.dependencies ? { dependencies: options.dependencies } : {}),
   };
@@ -2828,6 +3091,7 @@ export * from "./bundle-contract.js";
 
 export * from "./model.js";
 
+export * from "./client.js";
 export * from "./providers.js";
 export * from "./coordination.js";
 
@@ -2879,3 +3143,7 @@ export * from "./desktop-session-transport.js";
 export * from "./session-sharing.js";
 export * from "./identity.js";
 export * from "./resource-policy.js";
+
+export * from "./execution-authorization.js";
+
+export * from "./personal-memory.js";

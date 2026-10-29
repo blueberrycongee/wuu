@@ -338,13 +338,14 @@ func TestEngineSessionForThreadUsesRegisteredExternalFactory(t *testing.T) {
 }
 
 type testThreadBoundEngine struct {
-	id      agentengine.EngineID
-	binding agentengine.ThreadBinding
-	session *testEngineSession
+	id           agentengine.EngineID
+	capabilities []string
+	binding      agentengine.ThreadBinding
+	session      *testEngineSession
 }
 
 func (e *testThreadBoundEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	return agentengine.Descriptor{ID: e.id, Version: "test"}, nil
+	return agentengine.Descriptor{ID: e.id, Version: "test", Capabilities: e.capabilities}, nil
 }
 
 func (e *testThreadBoundEngine) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
@@ -414,5 +415,36 @@ func TestEngineSettingsUseSelectedConfigurationSource(t *testing.T) {
 	}
 	if s.DefaultEngine() != agentengine.EngineID("codex") {
 		t.Fatal("failed edit changed active engine selection")
+	}
+}
+
+// User-bound hosts select by the engine's declared context contract, never by
+// its product name. A replacement at the native name cannot inherit trust.
+func TestUserHostEngineRequiresExplicitContextCapability(t *testing.T) {
+	for _, tc := range []struct {
+		id     agentengine.EngineID
+		scoped bool
+	}{{"replacement", true}, {agentengine.EngineWuu, false}} {
+		t.Run(string(tc.id), func(t *testing.T) {
+			registry := agentengine.NewRegistry()
+			engine := &testThreadBoundEngine{id: tc.id}
+			if tc.scoped {
+				engine.capabilities = []string{userHostContextCapability}
+			}
+			if err := registry.Register(engine); err != nil {
+				t.Fatal(err)
+			}
+			rt := &Session{engines: registry, UserSpaceID: "owner", ProductDomain: "personal"}
+			if got := rt.EngineAvailable(tc.id); got != tc.scoped {
+				t.Fatalf("available = %v, want %v", got, tc.scoped)
+			}
+			bound := rt.EngineSessionForThread(context.Background(), &ThreadRuntime{EngineID: tc.id}, agentengine.ThreadBinding{ThreadID: "thread", RootDir: t.TempDir()})
+			if tc.scoped && bound != engine.session {
+				t.Fatal("explicit-context replacement was not selected")
+			}
+			if !tc.scoped && engine.session != nil {
+				t.Fatal("unscoped engine was bound")
+			}
+		})
 	}
 }

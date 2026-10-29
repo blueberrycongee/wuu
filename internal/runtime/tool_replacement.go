@@ -209,7 +209,9 @@ func validateSearchReplacement(result toolresult.Result, argsJSON string) (strin
 			}
 		}
 	}
-	return string(text), nil
+	// Preserve provider-specific output while recording only validated search evidence.
+	evidenceJSON, err := json.Marshal(response)
+	return string(evidenceJSON), err
 }
 
 func configureToolReplacements(executor agent.ToolExecutor, kit *tools.Toolkit, bindings map[string]config.ToolReplacement) error {

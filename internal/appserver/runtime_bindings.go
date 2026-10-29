@@ -12,7 +12,7 @@ func NewRuntimeBindings() *RuntimeBindings {
 	return &RuntimeBindings{project: NewProjectCoordinatorBridge()}
 }
 func (b *RuntimeBindings) NativeProviders() []runtime.NativeProviderFactory {
-	return []runtime.NativeProviderFactory{b.project.ProviderFactory(), b.project.MechanismFactory(), ProjectCoordinatorConsumerFactory()}
+	return []runtime.NativeProviderFactory{b.project.ProviderFactory(), b.project.MechanismFactory(), ProjectCoordinatorConsumerFactory(), PersonalActionsConsumerFactory()}
 }
 func WithRuntimeBindings(bindings *RuntimeBindings) ServerOption {
 	return func(server *Server) error { _, err := bindings.project.Bind(server); return err }

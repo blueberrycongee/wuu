@@ -20,7 +20,14 @@ export type DesktopSessionRouteV1 =
     };
 export type DesktopRemoteSessionRouteV1 = Extract<DesktopSessionRouteV1, { kind: "remote" }>;
 
-export type DesktopSessionContextV1 = ApplicationDesktopContextV1 & {
+export type DesktopSessionContextV1 = (ApplicationDesktopContextV1 | {
+  kind: "user";
+  user_space_id: string;
+  product_domain: "personal" | "coding";
+  cwd: string;
+}) & {
+  /** Explicit host-configured profile, never inferred from domain or cwd. */
+  composition_profile?: string;
   session_locator?: SessionLocatorV1;
 };
 export interface DesktopSessionRouteConfigV1 {
@@ -94,6 +101,9 @@ export interface DesktopSessionConnectorV1 {
   connectDesktopSession: ConnectDesktopSessionV1;
 }
 export interface DesktopSessionRoutesV1 {
+  /** Preserve the complete context identity. User spaces are not projects:
+   * unsupported context kinds must fail or select an explicit disabled route,
+   * never silently fall through to a Coding workspace/default connection. */
   select(context: DesktopSessionContextV1): DesktopSessionRouteV1;
   connect(route: DesktopRemoteSessionRouteV1, hooks: DesktopSessionConnectionHooksV1):
     DesktopSessionConnectionV1 | Promise<DesktopSessionConnectionV1>;

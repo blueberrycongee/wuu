@@ -28,6 +28,9 @@ setup:
 dev:
 	cd desktop && npm run dev
 
+.PHONY: dev-personal
+dev-personal: dev
+
 docs-dev:
 	npm --prefix docs-site run dev
 
