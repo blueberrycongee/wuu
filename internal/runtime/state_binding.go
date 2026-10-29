@@ -18,6 +18,10 @@ import (
 
 const sessionStateConsumer = "wuu.session-state"
 
+// SessionStateConsumer is the public composition identity for captured session
+// and document clients. Scoped cleanup must use this same selected consumer.
+const SessionStateConsumer = sessionStateConsumer
+
 // runtimeState is a native consumer, not a storage implementation. The captured
 // registry owns its only authority, just as it does for process consumers.
 // Its required edge keeps persistence alive through the journal's final flush.
@@ -107,12 +111,20 @@ func (s *runtimeState) Close(ctx context.Context) error {
 	return err
 }
 
+type startupPresenceKey struct{}
+
 func initializeSessionState(ctx context.Context, dir string, documents persistence.Documents, store *session.Store) error {
+	if borrowed, _ := ctx.Value(startupPresenceKey{}).(*session.AppServerPresenceLease); borrowed != nil {
+		return borrowed.WithExclusiveStartup(dir, func() error { return initializeSessionStateUnderPresence(ctx, dir, documents, store, true) })
+	}
 	lease, first, err := session.AcquireAppServerPresence(dir)
 	if err != nil {
 		return err
 	}
 	defer lease.Release()
+	return initializeSessionStateUnderPresence(ctx, dir, documents, store, first)
+}
+func initializeSessionStateUnderPresence(ctx context.Context, dir string, documents persistence.Documents, store *session.Store, first bool) error {
 	migrated, err := session.LegacySQLiteMigrationRecorded(ctx, documents)
 	if err != nil {
 		return err

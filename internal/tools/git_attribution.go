@@ -22,13 +22,21 @@ func (e *Env) gitAttributionShellPrefix() (string, error) {
 		return buildGitAttributionShellPrefix("", "")
 	}
 
+	stateDir := e.SessionDir
+	if len(e.ProtectedPaths) > 0 {
+		var err error
+		stateDir, err = e.ensureProcessSandboxTempDir()
+		if err != nil {
+			return "", err
+		}
+	}
 	e.gitAttributionShell.Lock()
 	defer e.gitAttributionShell.Unlock()
-	key := e.GitWrapperExecutable + "\x00" + e.SessionDir
+	key := e.GitWrapperExecutable + "\x00" + stateDir
 	if e.gitAttributionShell.key == key && e.gitAttributionShell.prefix != "" {
 		return e.gitAttributionShell.prefix, nil
 	}
-	prefix, err := buildGitAttributionShellPrefix(e.GitWrapperExecutable, e.SessionDir)
+	prefix, err := buildGitAttributionShellPrefix(e.GitWrapperExecutable, stateDir)
 	if err != nil {
 		return "", err
 	}

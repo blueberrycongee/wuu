@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22"
   },
-  "description": "Wuu Plugin SDK \u2014 types and helpers for building Wuu plugins",
+  "description": "Wuu Plugin SDK — types and helpers for building Wuu plugins",
   "scripts": {
     "build": "tsc",
     "typecheck": "npm run build && tsc --project tsconfig.preview.json",
@@ -31,6 +31,9 @@
     "dist/model.d.ts",
     "dist/process.js",
     "dist/process.d.ts",
+    "dist/client.js",
+    "dist/client.d.ts",
+
     "dist/execution-backend.js",
     "dist/execution-backend.d.ts",
     "dist/settings.js",
@@ -131,6 +134,10 @@
     "dist/desktop-session-transport.d.ts",
     "dist/session-sharing.js",
     "dist/session-sharing.d.ts",
+    "dist/personal-memory.js",
+    "dist/personal-memory.d.ts",
+    "dist/execution-authorization.js",
+    "dist/execution-authorization.d.ts",
     "dist/identity.js",
     "dist/identity.d.ts",
     "dist/resource-policy.js",

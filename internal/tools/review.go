@@ -24,7 +24,7 @@ type reviewAuthority struct {
 }
 
 func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
-	if t == nil || t.env == nil {
+	if t == nil || t.env == nil || (t.fileActionGate != nil && fileMutation(call.Name)) {
 		return nil
 	}
 	return reviewAuthorizedToolCall(ctx, reviewAuthority{SessionID: t.env.SessionID, PermissionMode: t.env.PermissionMode, CWD: t.env.RootDir, Enabled: t.approveForMe, Reviewer: t.reviewer}, info, call)

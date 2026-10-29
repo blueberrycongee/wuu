@@ -130,7 +130,7 @@ type Env struct {
 	WorkspaceID          string
 	StateDir             string
 	RuntimeHome          string
-	// Unconfined is the explicit escape hatch for lifting path confinement.
+	// Unconfined lifts ordinary workspace confinement, never ProtectedPaths.
 	// Default false means file tools stay inside FileScopeRoots/RootDir.
 	Unconfined     bool
 	PermissionMode string
@@ -215,6 +215,9 @@ type Env struct {
 	// Reads are rejected the same as writes. Empty keeps the ordinary
 	// workspace-confinement behavior for named-agent runs.
 	FileScopeRoots []string
+	// ProtectedPaths are mandatory domain exclusions for reads and writes, even
+	// when ordinary workspace confinement is disabled.
+	ProtectedPaths []string
 	// Skills is the immutable bootstrap catalog for directly constructed Envs.
 	// Runtime updates publish skillCatalog instead of mutating this slice.
 	Skills       []skills.Skill
@@ -415,7 +418,7 @@ func (e *Env) RedactToolOutput(text string) string {
 }
 
 // ResolvePath resolves a user-supplied relative or absolute path. Path
-// confinement is always enforced unless the runtime is explicitly unconfined.
+// confinement can be lifted by unconfined mode; protected paths cannot.
 func (e *Env) ResolvePath(input string) (string, error) {
 	candidate := strings.TrimSpace(input)
 	if candidate == "" {
@@ -432,6 +435,9 @@ func (e *Env) ResolvePath(input string) (string, error) {
 	resolved, err := filepath.Abs(abs)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if err := e.rejectProtectedPath(resolved, false); err != nil {
+		return "", err
 	}
 	if e.BypassToolHardProtections() {
 		return resolved, nil
@@ -504,6 +510,9 @@ func (e *Env) ResolveReadPath(input string) (absPath, displayPath string, manage
 		if err != nil {
 			return "", "", false, err
 		}
+		if err := e.rejectProtectedPath(expanded, false); err != nil {
+			return "", "", false, err
+		}
 		display := e.normalizeSessionDisplayPath(expanded)
 		return expanded, display, true, nil
 	}
@@ -514,6 +523,9 @@ func (e *Env) ResolveReadPath(input string) (absPath, displayPath string, manage
 			return "", "", false, fmt.Errorf("resolve path: %w", err)
 		}
 		if pathWithinRoot(e.SessionDir, resolved) {
+			if err := e.rejectProtectedPath(resolved, false); err != nil {
+				return "", "", false, err
+			}
 			display := e.normalizeSessionDisplayPath(resolved)
 			return resolved, display, true, nil
 		}
@@ -628,7 +640,22 @@ func (e *Env) NormalizeDisplayPath(absPath string) string {
 // the parent repo the user believes is isolated.
 func (e *Env) worktreeExecRoot(ctx context.Context) (string, bool, error) {
 	boundRoot, path, ok := toolctx.WorktreeBinding(ctx)
-	if !ok || filepath.Clean(boundRoot) != filepath.Clean(e.RootDir) {
+	if !ok {
+		return "", false, nil
+	}
+	// Toolkit roots are canonicalized on construction. A binding may have
+	// arrived through an equivalent symlink spelling (such as /var on macOS).
+	// Compare the same filesystem locations before treating it as unrelated.
+	canonicalRoot := func(root string) string {
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+		return filepath.Clean(root)
+	}
+	if canonicalRoot(boundRoot) != canonicalRoot(e.RootDir) {
 		return "", false, nil
 	}
 	abs, err := filepath.Abs(path)
@@ -661,7 +688,12 @@ func (e *Env) worktreeExecRoot(ctx context.Context) (string, bool, error) {
 // ExecRootDir returns the directory command-style tools (bash cwd, git,
 // search roots) execute in: the bound worktree checkout when present,
 // otherwise RootDir.
-func (e *Env) ExecRootDir(ctx context.Context) (string, error) {
+func (e *Env) ExecRootDir(ctx context.Context) (root string, err error) {
+	defer func() {
+		if err == nil {
+			err = e.rejectProtectedPath(root, false)
+		}
+	}()
 	wt, ok, err := e.worktreeExecRoot(ctx)
 	if err != nil {
 		return "", err
@@ -677,7 +709,12 @@ func (e *Env) ExecRootDir(ctx context.Context) (string, error) {
 // sensitive-path checks have accepted the workspace path. Paths outside
 // RootDir (whitelisted roots such as the user memory notebook or the
 // system temp dir) are returned unchanged.
-func (e *Env) ExecPath(ctx context.Context, resolved string) (string, error) {
+func (e *Env) ExecPath(ctx context.Context, resolved string) (path string, err error) {
+	defer func() {
+		if err == nil {
+			err = e.rejectProtectedPath(path, false)
+		}
+	}()
 	wt, ok, err := e.worktreeExecRoot(ctx)
 	if err != nil {
 		return "", err

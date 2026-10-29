@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -17,6 +18,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/externalengine"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 )
+
+// userHostContextCapability declares that an engine uses only explicit host
+// context, tools and bound history. It must not discover ambient workspace,
+// home-directory instructions, skills, memory or another product's sessions.
+// This is a trusted-provider contract, not an OS isolation attestation.
+const userHostContextCapability = "explicit-context"
 
 // WuuEngine is the built-in agent engine: the native StreamRunner loop that
 // has always driven Wuu conversations. It implements agentengine.Factory so
@@ -39,7 +46,7 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 		Version:           "1",
 		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
-			"native-tool-loop",
+			userHostContextCapability, "native-tool-loop",
 			"native-session-resume",
 			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection",
 		},
@@ -102,8 +109,12 @@ func (s *Session) EngineAvailable(id agentengine.EngineID) bool {
 	if s == nil || s.engines == nil {
 		return false
 	}
-	_, ok := s.engines.Lookup(id)
-	return ok
+	factory, ok := s.engines.Lookup(id)
+	if !ok || !s.UserBinding().IsUser() {
+		return ok
+	}
+	descriptor, err := factory.Descriptor(context.Background())
+	return err == nil && slices.Contains(descriptor.Capabilities, userHostContextCapability)
 }
 
 // Engines exposes the engine registry for settings-driven listing and
@@ -344,6 +355,15 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 	f, ok := s.engines.Lookup(id)
 	if !ok {
 		return &unavailableEngineSession{id: id}
+	}
+	if s.UserBinding().IsUser() {
+		descriptor, err := f.Descriptor(ctx)
+		if err != nil {
+			return agentengine.FailedSession(err)
+		}
+		if !slices.Contains(descriptor.Capabilities, userHostContextCapability) {
+			return agentengine.FailedSession(errors.New("engine does not enforce explicit user-host context"))
+		}
 	}
 	if native, ok := f.(*WuuEngine); ok {
 		return native.SessionForThread(rt)

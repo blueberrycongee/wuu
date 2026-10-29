@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/remote/wire"
 	"log"
 	"net/http"
 	"time"
@@ -14,11 +15,12 @@ import (
 // (needs_input, agent_done); the actual content stays end-to-end encrypted
 // and is fetched by the phone after it reconnects.
 type PushEvent struct {
-	Account string    `json:"account"`
-	Device  string    `json:"device"`
-	Hint    string    `json:"hint"`
-	At      time.Time `json:"at"`
-	Host    string    `json:"host,omitempty"`
+	UserLocation *wire.UserLocation `json:"user_location,omitempty"`
+	Account      string             `json:"account"`
+	Device       string             `json:"device"`
+	Hint         string             `json:"hint"`
+	At           time.Time          `json:"at"`
+	Host         string             `json:"host,omitempty"`
 }
 
 // Pusher delivers push notifications to enrolled devices. Production

@@ -5,7 +5,9 @@ import "encoding/json"
 // Admission fences are invocation metadata, not persisted history fields.
 type historyWire struct {
 	HistoryRecord
-	ExpectedHeldMessage []byte `json:"expected_held_message_bytes,omitempty"`
+	ExpectedHeldMessage  []byte               `json:"expected_held_message_bytes,omitempty"`
+	AcceptedClientInput  *AcceptedClientInput `json:"accepted_client_input,omitempty"`
+	AcceptedClientTurnID string               `json:"accepted_client_turn_id,omitempty"`
 }
 type receiptWire struct {
 	OperationID     string
@@ -19,14 +21,14 @@ type receiptWire struct {
 func marshalDomainValue(value any) ([]byte, error) {
 	switch v := value.(type) {
 	case HistoryRecord:
-		return json.Marshal(historyWire{v, []byte(v.ExpectedHeldMessage)})
+		return json.Marshal(historyWire{v, []byte(v.ExpectedHeldMessage), v.AcceptedClientInput, v.AcceptedClientTurnID})
 	case []HistoryRecord:
 		if v == nil {
 			return []byte("null"), nil
 		}
 		out := make([]historyWire, len(v))
 		for i, r := range v {
-			out[i] = historyWire{r, []byte(r.ExpectedHeldMessage)}
+			out[i] = historyWire{r, []byte(r.ExpectedHeldMessage), r.AcceptedClientInput, r.AcceptedClientTurnID}
 		}
 		return json.Marshal(out)
 	case ModelInputReceiptRecord:
@@ -68,6 +70,7 @@ func unmarshalDomainValue(raw []byte, target any) error {
 		}
 		*v = r.HistoryRecord
 		v.ExpectedHeldMessage = json.RawMessage(r.ExpectedHeldMessage)
+		v.AcceptedClientInput, v.AcceptedClientTurnID = r.AcceptedClientInput, r.AcceptedClientTurnID
 		return nil
 	case *[]HistoryRecord:
 		var rows []historyWire
@@ -82,6 +85,7 @@ func unmarshalDomainValue(raw []byte, target any) error {
 		for i, r := range rows {
 			(*v)[i] = r.HistoryRecord
 			(*v)[i].ExpectedHeldMessage = json.RawMessage(r.ExpectedHeldMessage)
+			(*v)[i].AcceptedClientInput, (*v)[i].AcceptedClientTurnID = r.AcceptedClientInput, r.AcceptedClientTurnID
 		}
 		return nil
 	case *ModelInputReceiptRecord:

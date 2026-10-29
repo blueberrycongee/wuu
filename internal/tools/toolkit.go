@@ -58,6 +58,9 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // registry lookup.
 type Toolkit struct {
 	sessionRootRelease      func() error
+	fileActionGate          FileActionGate
+	permissionHookLocalOnly func() bool
+	fileChangedLocalOnly    func() bool
 	env                     *Env
 	sessionStore            *session.Store
 	registry                *Registry
@@ -111,8 +114,12 @@ type Toolkit struct {
 
 // SetPermissionRequestHook installs the hook invoked immediately before the
 // workspace boundary makes its allow/deny decision.
-func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error) {
+func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error, localOnly ...func() bool) {
 	t.permissionRequestHook = hook
+	t.permissionHookLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.permissionHookLocalOnly = localOnly[0]
+	}
 }
 
 type permissionCheckedContextKey struct{}
@@ -128,11 +135,8 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	}
 	// The selected provider makes the policy decision before local enforcement
 	// or contextual review. Neither can turn its denial into an allowed action.
-	if t.authorizer != nil {
-		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
-			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
-			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
-		})
+	if t.authorizer != nil && !t.hasFileAuthorization(ctx, info, call) {
+		decision, err := t.authorizer.Authorize(ctx, t.authorizationRequest(info, call))
 		if err != nil {
 			return authorizationDenied(info.Name, "authorization provider unavailable")
 		}
@@ -174,6 +178,7 @@ func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
 	}
 	t.approveForMe = parent.approveForMe
 	t.reviewer = parent.reviewer
+	t.fileActionGate = parent.fileActionGate
 }
 
 func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
@@ -315,6 +320,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		PluginManager:             t.env.PluginManager,
 		WorkingNotesHome:          t.env.WorkingNotesHome,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
+		ProtectedPaths:            append([]string(nil), t.env.ProtectedPaths...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
 		OnSessionWorkspaceChanged: t.env.OnSessionWorkspaceChanged,
@@ -331,17 +337,20 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	env.skillCatalog.Store(catalog)
 
 	clone := &Toolkit{
-		replacementBindings:   t.ReplacementBindings(),
-		sessionStore:          t.sessionStore,
-		env:                   &env,
-		boundary:              t.boundary,
-		permissionRequestHook: t.permissionRequestHook,
-		authorizer:            t.authorizer,
-		reviewer:              t.reviewer,
-		approveForMe:          t.approveForMe,
-		mcpManager:            t.mcpManager,
-		activityRegistry:      t.activityRegistry,
-		mcpActivityBindings:   cloneMCPActivityBindings(t.mcpActivityBindings),
+		replacementBindings:     t.ReplacementBindings(),
+		sessionStore:            t.sessionStore,
+		fileActionGate:          t.fileActionGate,
+		permissionHookLocalOnly: t.permissionHookLocalOnly,
+		fileChangedLocalOnly:    t.fileChangedLocalOnly,
+		env:                     &env,
+		boundary:                t.boundary,
+		permissionRequestHook:   t.permissionRequestHook,
+		authorizer:              t.authorizer,
+		reviewer:                t.reviewer,
+		approveForMe:            t.approveForMe,
+		mcpManager:              t.mcpManager,
+		activityRegistry:        t.activityRegistry,
+		mcpActivityBindings:     cloneMCPActivityBindings(t.mcpActivityBindings),
 	}
 	t.exposureMu.RLock()
 	clone.toolSearchEnabled = t.toolSearchEnabled
@@ -754,8 +763,12 @@ func (t *Toolkit) SetAgentIdentity(id, path string) {
 
 // SetOnFileChanged sets the callback fired after write_file/edit_file
 // successfully modifies a file. Used to dispatch FileChanged hooks.
-func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string)) {
+func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string), localOnly ...func() bool) {
 	t.env.OnFileChanged = fn
+	t.fileChangedLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.fileChangedLocalOnly = localOnly[0]
+	}
 }
 
 // SetOnSessionWorkspaceChanged attaches the app-server persistence and
@@ -2057,6 +2070,9 @@ func resetRGForTests() {
 }
 
 func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -2066,6 +2082,9 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 }
 
 func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -2111,6 +2130,9 @@ func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.T
 	if err := t.checkPermission(ctx, buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call); err != nil {
 		return toolresult.Result{}, err
 	}
+	if t.fileActionGate != nil && fileMutation(call.Name) {
+		return t.fileActionGate(ctx, t, call)
+	}
 	return executeToolResult(ctx, tool, call)
 }
 
@@ -2132,5 +2154,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy, SandboxProvider: t.env.ProcessSandboxProvider})
 }

@@ -221,3 +221,49 @@ func TestMobileReplyImagesArriveInCompletionWithoutChangingLegacyChat(t *testing
 		t.Fatalf("legacy profile changed: %s", legacy)
 	}
 }
+
+func TestMobileActivityPreservesPluginInventoryInvalidation(t *testing.T) {
+	raw := []byte(`{"method":"plugin/inventory/changed","params":{"epoch":7,"extension_inventory":[{"id":"plugin:user:alternate","plugin_id":"alternate","fingerprint":"generation-two","enabled":true,"public_methods":["personal.listAgents"]}],"skills":[]}}`)
+	got, keep := (mobileChatFilter{tools: true}).line(raw)
+	if !keep {
+		t.Fatal("mobile_activity dropped the plugin generation invalidation needed to refresh request fingerprints")
+	}
+	var before, after any
+	if err := json.Unmarshal(raw, &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got, &after); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(before)
+	actual, _ := json.Marshal(after)
+	if string(want) != string(actual) {
+		t.Fatalf("plugin inventory invalidation changed in transit: %s", got)
+	}
+	if _, keep := filterMobileChatLine(raw); keep {
+		t.Fatal("legacy mobile_chat unexpectedly opted into plugin inventory")
+	}
+}
+
+func TestMobileActivityPreservesAdmittedAttention(t *testing.T) {
+	raw := []byte(`{"method":"user/attention","params":{"turn_id":"turn-1","outcome":"failed","user_space_id":"local","product_domain":"personal","user_location":{"version":1,"user_space_id":"local","product_domain":"personal","agent_id":"main"}}}`)
+	got, keep := (mobileChatFilter{tools: true}).line(raw)
+	if !keep {
+		t.Fatal("mobile_activity dropped admitted Personal attention")
+	}
+	var before, after any
+	if err := json.Unmarshal(raw, &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got, &after); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(before)
+	actual, _ := json.Marshal(after)
+	if string(want) != string(actual) {
+		t.Fatalf("admitted attention changed in transit: %s", got)
+	}
+	if _, keep := filterMobileChatLine(raw); keep {
+		t.Fatal("legacy mobile_chat unexpectedly opted into Personal attention")
+	}
+}

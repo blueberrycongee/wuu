@@ -265,7 +265,7 @@ export class ApplicationController implements HostApplicationService {
   get previewContent(): ApplicationPreviewContent {
     return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu, { openFile: ({ root, path }) => {
       const project = this.state.projects.find(project => project.path === root);
-      const context = this.state.activeContext?.cwd === root ? this.state.activeContext
+      const context = this.state.activeContext?.kind !== "user" && this.state.activeContext?.cwd === root ? this.state.activeContext
         : project ? { kind: "project" as const, project_id: project.id, cwd: root } : { kind: "no_project" as const, cwd: root };
       return this.invoke("preview.open-file", { context, path });
     } });
@@ -1739,7 +1739,7 @@ export class ApplicationController implements HostApplicationService {
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
       preview: this.preview, previewWorkspace: Object.freeze({ ...this.applicationPreview.getSnapshot(),
         ownerTabId: this.composerDraftForPane(state.activePane).ownerTabId ?? state.activeSessionTabID,
-        activeContext: state.activeContext && Object.freeze({ ...state.activeContext }),
+        activeContext: state.activeContext && state.activeContext.kind !== "user" ? Object.freeze({ ...state.activeContext }) : undefined,
         workspaceContext: workspacePanelContext(state.activeContext, thread) && Object.freeze({ ...workspacePanelContext(state.activeContext, thread)! }),
         threadId: thread?.id, conversationTitle: conversationHeadingTitle(thread,
           activeSessionTab(state)?.kind === "draft" ? activeSessionTab(state)?.title : undefined, translateCurrent("tabs.newConversation")),
