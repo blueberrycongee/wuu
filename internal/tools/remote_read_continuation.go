@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -76,6 +77,95 @@ func (t *Toolkit) RestoreRemoteNativeRead(call providers.ToolCall) (providers.To
 	}
 	call.Arguments = string(raw)
 	return call, managed, cursor.ByteOffset == nil, nil
+}
+
+type PreparedSessionRead struct {
+	Result                    toolresult.Result
+	PermissionMode            string
+	ticket                    *ReadObservationTicket
+	state                     *readFileState
+	root                      *sessionArtifactRoot
+	actor, actorPath, session string
+	Authorize                 func(context.Context) error
+}
+
+type sessionReadGroup struct {
+	state                     *readFileState
+	root                      *sessionArtifactRoot
+	actor, actorPath, session string
+}
+
+func (p PreparedSessionRead) GroupKey() any {
+	return sessionReadGroup{p.state, p.root, p.actor, p.actorPath, p.session}
+}
+
+// PrepareSessionNativeRead reads only through the pinned session root and
+// keeps its native freshness entry private until the parent settles.
+func (t *Toolkit) PrepareSessionNativeRead(ctx context.Context, actor, actorPath string, original Tool, originalCall, restored providers.ToolCall) (PreparedSessionRead, error) {
+	if t == nil || t.env == nil || original == nil {
+		return PreparedSessionRead{}, errors.New("native read unavailable")
+	}
+	verified, managed, line, err := t.RestoreRemoteNativeRead(originalCall)
+	if err != nil || !managed || !line || verified.Name != restored.Name || verified.Arguments != restored.Arguments {
+		return PreparedSessionRead{}, errors.New("invalid session line continuation")
+	}
+	mode, sessionID, session, root, state := t.env.PermissionMode, t.env.SessionID, t.env.SessionDir, t.env.sessionArtifactRoot, t.env.readStateStore()
+	check := func(checkCtx context.Context) error {
+		a, p := t.ExecutionActor()
+		if a == "" || a != actor || p != actorPath || t.env.PermissionMode != mode || t.env.SessionID != sessionID || t.env.SessionDir != session || t.env.sessionArtifactRoot != root || t.env.readStateStore() != state || root == nil || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden {
+			return errors.New("session read authority changed")
+		}
+		if _, err := root.root.Stat("."); err != nil {
+			return errors.New("session artifact root is unavailable")
+		}
+		if err := t.checkPermission(checkCtx, t.toolInfoForCall(original, restored.Arguments), restored); err != nil {
+			return err
+		}
+		a, p = t.ExecutionActor()
+		if a != actor || p != actorPath || t.env.PermissionMode != mode || t.env.SessionID != sessionID || t.env.SessionDir != session || t.env.sessionArtifactRoot != root || t.env.readStateStore() != state || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden {
+			return errors.New("session read authority changed")
+		}
+		if _, err := root.root.Stat("."); err != nil {
+			return errors.New("session artifact root is unavailable")
+		}
+		return checkCtx.Err()
+	}
+	if err := check(ctx); err != nil {
+		return PreparedSessionRead{}, err
+	}
+	native, ok := original.(RichTool)
+	if !ok {
+		return PreparedSessionRead{}, errors.New("native read unavailable")
+	}
+	var ticket *ReadObservationTicket
+	readCtx := toolctx.WithPreparedNativeRead(toolctx.WithUnobservedRead(ctx))
+	readCtx = toolctx.WithPreparedReadCapture(readCtx, func(value any) { ticket, _ = value.(*ReadObservationTicket) })
+	result, err := native.ExecuteResult(readCtx, originalCall.Arguments)
+	if err != nil {
+		return PreparedSessionRead{}, err
+	}
+	if result.IsError || ticket == nil || !ticket.HasNativeRead() {
+		return PreparedSessionRead{}, errors.New("prepared session read did not return a native line observation")
+	}
+	if err := check(ctx); err != nil {
+		return PreparedSessionRead{}, err
+	}
+	return PreparedSessionRead{Result: result, PermissionMode: mode, ticket: ticket, state: state, root: root, actor: actor, actorPath: actorPath, session: sessionID, Authorize: check}, nil
+}
+
+func PrepareSessionReadBatch(ctx context.Context, reads []PreparedSessionRead) (*executionenv.PreparedReadBatch, error) {
+	if len(reads) == 0 || reads[0].state == nil || reads[0].root == nil {
+		return nil, errors.New("invalid session read batch")
+	}
+	group := reads[0].GroupKey()
+	tickets := make([]*ReadObservationTicket, 0, len(reads))
+	for _, read := range reads {
+		if read.GroupKey() != group || read.ticket == nil {
+			return nil, errors.New("session read batch authority mismatch")
+		}
+		tickets = append(tickets, read.ticket)
+	}
+	return reads[0].state.coordinator().prepare(ctx, reads[0].state, reads[0].root, reads[0].actor, reads[0].actorPath, reads[0].session, tickets)
 }
 
 // MatchesRemoteNativeReadAuthority rejects changes to the captured authority.
@@ -147,6 +237,16 @@ func (t *Toolkit) ExecuteRemoteNativeReadOn(ctx context.Context, remote executio
 func (t *Toolkit) ExecuteNativeSessionRead(ctx context.Context, actor, actorPath string, original Tool, originalCall, restored providers.ToolCall) (toolresult.Result, error) {
 	if t == nil || t.env == nil || original == nil || t.IsToolDisabled("read_file") || t.nativeReadExposure(original) == ToolExposureHidden {
 		return toolresult.Result{}, errors.New("native read unavailable")
+	}
+	var input struct {
+		Continuation string `json:"continuation"`
+	}
+	if json.Unmarshal([]byte(originalCall.Arguments), &input) != nil {
+		return toolresult.Result{}, errors.New("invalid native session continuation")
+	}
+	cursor, err := decodeReadFileContinuation(input.Continuation)
+	if err != nil || cursor.ByteOffset == nil {
+		return toolresult.Result{}, errors.New("native session line read requires prepared settlement")
 	}
 	mode, sessionID, session, root := t.env.PermissionMode, t.env.SessionID, t.env.SessionDir, t.env.sessionArtifactRoot
 	valid := func() bool {

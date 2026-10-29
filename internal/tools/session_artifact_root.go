@@ -15,7 +15,11 @@ import (
 
 // sessionArtifactRoot is owned by the session and shared with its toolkits.
 // All filesystem access occurs relative to the pinned directory handle.
-type sessionArtifactRoot struct{ root *os.Root }
+type sessionArtifactRoot struct {
+	root      *os.Root
+	lifecycle sync.RWMutex
+	closed    bool
+}
 
 type SessionArtifactManager struct {
 	mu    sync.Mutex
@@ -109,7 +113,15 @@ func newSessionArtifactRoot(path string) (*sessionArtifactRoot, error) {
 	return &sessionArtifactRoot{root: root}, nil
 }
 
-func (s *sessionArtifactRoot) Close() error { return s.root.Close() }
+func (s *sessionArtifactRoot) Close() error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return s.root.Close()
+}
 
 // openManaged confines managed reads to the pinned session root. Root permits
 // relative links inside that root while rejecting links that escape it.

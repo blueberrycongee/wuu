@@ -165,7 +165,38 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 				return r.toolkit.ExecuteRemoteNativeReadOn(ctx, remoteEnv, actor, actorPath, r.original, restored)
 			}
 			if managed {
-				return toolresult.Result{}, fmt.Errorf("native session line continuations are unsupported")
+				if !toolctx.HasSettlement(ctx) {
+					return toolresult.Result{}, fmt.Errorf("durable tool ledger required for native line continuation")
+				}
+				toolctx.MarkRemoteReadExposure(ctx)
+				sessionID := r.toolkit.SessionID()
+				prepared, err := r.toolkit.PrepareSessionNativeRead(ctx, actor, actorPath, r.original, call, restored)
+				if err != nil {
+					return toolresult.Result{}, err
+				}
+				if _, _, err := remoteReadSnapshot(prepared.Result, restored); err != nil {
+					return toolresult.Result{}, err
+				}
+				authorize := func(checkCtx context.Context) error {
+					if !r.toolkit.MatchesRemoteNativeReadAuthority(remoteEnv, actor, actorPath, sessionID, prepared.PermissionMode) {
+						return fmt.Errorf("session read authority changed")
+					}
+					if err := prepared.Authorize(checkCtx); err != nil {
+						return err
+					}
+					if !r.toolkit.MatchesRemoteNativeReadAuthority(remoteEnv, actor, actorPath, sessionID, prepared.PermissionMode) {
+						return fmt.Errorf("session read authority changed")
+					}
+					return nil
+				}
+				if err := authorize(ctx); err != nil {
+					return toolresult.Result{}, err
+				}
+				participant := &sessionReadSettlement{prepared: prepared, authorize: authorize}
+				if err := toolctx.RegisterGroupedSettlement(ctx, prepared.GroupKey(), participant, prepareSessionReadSettlements, func() {}); err != nil {
+					return toolresult.Result{}, err
+				}
+				return prepared.Result, nil
 			}
 			if !toolctx.HasSettlement(ctx) {
 				return toolresult.Result{}, fmt.Errorf("durable tool ledger required for native line continuation")
@@ -619,6 +650,40 @@ type remoteReadSettlement struct {
 	prepared  executionenv.PreparedRead
 	authorize func(context.Context) error
 	committed *atomic.Bool
+}
+
+type sessionReadSettlement struct {
+	prepared  tools.PreparedSessionRead
+	authorize func(context.Context) error
+}
+
+func prepareSessionReadSettlements(ctx context.Context, values []any) (*toolctx.PreparedSettlement, error) {
+	reads := make([]tools.PreparedSessionRead, 0, len(values))
+	participants := make([]*sessionReadSettlement, 0, len(values))
+	for _, value := range values {
+		p, ok := value.(*sessionReadSettlement)
+		if !ok || p == nil || p.authorize == nil {
+			return nil, fmt.Errorf("invalid session read participant")
+		}
+		if err := p.authorize(ctx); err != nil {
+			return nil, err
+		}
+		reads = append(reads, p.prepared)
+		participants = append(participants, p)
+	}
+	batch, err := tools.PrepareSessionReadBatch(ctx, reads)
+	if err != nil {
+		return nil, err
+	}
+	id := batch.Identity
+	return &toolctx.PreparedSettlement{Identity: &toolctx.SettlementIdentity{OperationID: id.OperationID, WorkerInstance: id.WorkerInstance, Actor: id.Actor, EnvironmentIdentity: id.EnvironmentIdentity}, Commit: func(ctx context.Context) error {
+		for _, p := range participants {
+			if err := p.authorize(ctx); err != nil {
+				return err
+			}
+		}
+		return batch.Commit(ctx)
+	}, Abort: batch.Abort, Release: batch.Release}, nil
 }
 
 // Every participant is reauthorized before any receipt is sent. The worker

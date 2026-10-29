@@ -47,9 +47,11 @@ type ReadFileEntry struct {
 
 // readFileState is a thread-safe record of read_file calls.
 type readFileState struct {
-	mu       sync.RWMutex
-	state    map[string]readFileObservation
-	revision uint64
+	mu                 sync.RWMutex
+	state              map[string]readFileObservation
+	revision           uint64
+	localCoordinatorMu sync.Mutex
+	localCoordinator   *sessionReadCoordinator
 }
 
 type readFileObservation struct {

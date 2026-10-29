@@ -222,7 +222,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	}
 	var preparedTicket *ReadObservationTicket
 	if capture, ok := toolctx.PreparedReadCapture(ctx); ok {
-		if managedArtifact {
+		if managedArtifact && !toolctx.IsPreparedNativeRead(ctx) {
 			return toolresult.Result{}, errors.New("prepared remote read does not support managed artifacts")
 		}
 		ticket, err := t.env.readStateStore().capturePathObservation(ctx, resolved, info)

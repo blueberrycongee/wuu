@@ -16,6 +16,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Continue session-managed native line cursors through a pinned host root and recoverable observation settlement.
+
 - Continue remote native line cursors with staged observations, current authorization and durable parent settlement.
 
 - Continue compatible native byte-read cursors in remote workspaces with current native authorization and snapshot checks.

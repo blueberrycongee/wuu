@@ -404,7 +404,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(ctx context.Context, th *thre
 		}
 		var recoverer executionenv.ReadBatchRecoverer
 		if threadRuntime.Toolkit != nil {
-			recoverer, _ = threadRuntime.Toolkit.ExecutionEnvironment().(executionenv.ReadBatchRecoverer)
+			recoverer = threadRuntime.Toolkit.ObservationRecoverer()
 		}
 		if err := executionenv.RecoverLedgerObservations(ctx, threadRuntime.StreamRunner.ToolLedger, recoverer); err != nil {
 			return nil, fmt.Errorf("recover remote observations for thread %q: %w", th.ID, err)
