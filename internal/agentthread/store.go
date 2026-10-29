@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -89,6 +91,81 @@ func (s *Store) UpsertThread(meta Metadata) error {
 		Metadata:  &meta,
 		CreatedAt: s.now(),
 	})
+}
+
+// EnsureRoot preserves an existing root's identity and creation time across
+// restarts. For document stores, the lookup and optional update share one
+// transaction, so a retry after an uncertain write does not replace a
+// committed root with a new identity or append a duplicate event.
+func (s *Store) EnsureRoot(desired Metadata) (Metadata, error) {
+	if s != nil && s.documentKey != "" && s.image == nil {
+		var root Metadata
+		err := s.access(func(view *Store) error { var err error; root, err = view.EnsureRoot(desired); return err })
+		return root, err
+	}
+	if s == nil || (s.dir == "" && s.documentKey == "") {
+		return desired, nil
+	}
+	release, err := s.lockStore()
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer release()
+	if err := s.ensureDir(); err != nil {
+		return Metadata{}, err
+	}
+	threads, err := s.loadThreads()
+	if err != nil {
+		return Metadata{}, err
+	}
+	root := desired
+	index := -1
+	for i, existing := range threads {
+		if existing.ID == desired.ID {
+			if existing.Path != RootPath {
+				return Metadata{}, fmt.Errorf("root thread %q has path %q", desired.ID, existing.Path)
+			}
+			root, index = existing, i
+		} else if existing.Path == RootPath {
+			return Metadata{}, fmt.Errorf("root path already belongs to thread %q", existing.ID)
+		}
+	}
+	if index >= 0 {
+		if root.SessionID == desired.SessionID && root.CWD == desired.CWD && root.Model == desired.Model {
+			if s.image == nil {
+				events, err := s.loadEvents()
+				if err != nil {
+					return Metadata{}, err
+				}
+				matched := false
+				for i := len(events) - 1; i >= 0; i-- {
+					event := events[i]
+					if event.ThreadID == root.ID && event.Type == EventThreadUpsert {
+						matched = event.Metadata != nil && reflect.DeepEqual(*event.Metadata, root)
+						break
+					}
+				}
+				if !matched {
+					if err := s.appendEventLocked(Event{Type: EventThreadUpsert, ThreadID: root.ID, Path: root.Path, Status: root.Status, Metadata: &root, CreatedAt: s.now()}); err != nil {
+						return Metadata{}, err
+					}
+				}
+			}
+			return root, nil
+		}
+		root.SessionID, root.CWD, root.Model, root.UpdatedAt = desired.SessionID, desired.CWD, desired.Model, desired.UpdatedAt
+		threads[index] = root
+	} else {
+		threads = append(threads, root)
+	}
+	sort.Slice(threads, func(i, j int) bool { return threads[i].Path < threads[j].Path })
+	if err := s.writeThreadsLocked(threads); err != nil {
+		return Metadata{}, err
+	}
+	if err := s.appendEventLocked(Event{Type: EventThreadUpsert, ThreadID: root.ID, Path: root.Path, Status: root.Status, Metadata: &root, CreatedAt: s.now()}); err != nil {
+		return Metadata{}, err
+	}
+	return root, nil
 }
 
 func (s *Store) RecordStatus(meta Metadata) error {
@@ -513,20 +590,22 @@ func (s *Store) loadEvents() ([]Event, error) {
 	}
 	defer file.Close()
 	var events []Event
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line != "" {
+			var event Event
+			if json.Unmarshal([]byte(line), &event) == nil {
+				events = append(events, event)
+			}
 		}
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan thread events: %w", err)
+		if readErr != nil {
+			return nil, fmt.Errorf("read thread events: %w", readErr)
+		}
 	}
 	return events, nil
 }
@@ -674,11 +753,26 @@ func (s *Store) appendEventLocked(event Event) error {
 		event.CreatedAt = s.now()
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, securefs.FileMode)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, securefs.FileMode)
 	if err != nil {
 		return fmt.Errorf("open thread events: %w", err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat thread events: %w", err)
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := file.ReadAt(last[:], info.Size()-1); err != nil {
+			return fmt.Errorf("read thread event tail: %w", err)
+		}
+		if last[0] != '\n' {
+			if _, err := file.Write([]byte("\n")); err != nil {
+				return fmt.Errorf("separate thread event tail: %w", err)
+			}
+		}
+	}
 	if err := json.NewEncoder(file).Encode(event); err != nil {
 		return fmt.Errorf("write thread event: %w", err)
 	}
