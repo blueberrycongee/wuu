@@ -34,6 +34,24 @@ func TestInvocationSettlementOwnsCommitAndAbort(t *testing.T) {
 	require.Equal(t, 1, commits)
 }
 
+func TestNestedReservationRetainsEveryAncestorUntilPhysicalCompletion(t *testing.T) {
+	root := WithSettlement(context.Background())
+	releaseChild, err := ReserveSettlementChild(root)
+	require.NoError(t, err)
+	child := WithSettlement(root)
+	releaseGrandchild, err := ReserveSettlementChild(child)
+	require.NoError(t, err)
+	releaseChild()
+	require.True(t, SettlementHasUnfinishedChildren(root))
+	_, err = FinishSettlement(root, true)
+	require.NoError(t, err)
+	_, err = ReserveSettlementChild(child)
+	require.Error(t, err, "a closed ancestor rejects late descendants")
+	releaseGrandchild()
+	releaseGrandchild()
+	require.False(t, SettlementHasUnfinishedChildren(root))
+}
+
 func TestSettlementRejectsIncompatibleOrInvalidGroups(t *testing.T) {
 	ctx := WithSettlement(context.Background())
 	commits := 0
@@ -87,4 +105,23 @@ func TestSettlementAllowsUnfinishedChildWithoutParticipants(t *testing.T) {
 	require.ErrorContains(t, err, "parent settlement")
 	require.True(t, aborted)
 	release()
+}
+
+func TestRemoteReadExposurePropagatesBeforeSettlementRegistration(t *testing.T) {
+	root := WithSettlement(context.Background())
+	middle := WithSettlement(root)
+	child := WithSettlement(middle)
+	require.False(t, HasRemoteReadExposure(root))
+	MarkRemoteReadExposure(child)
+	for _, scope := range []context.Context{child, middle, root} {
+		require.True(t, HasRemoteReadExposure(scope))
+		require.False(t, SettlementHasParticipants(scope))
+	}
+	_, err := PrepareSettlement(child, false)
+	require.NoError(t, err)
+	_, err = PrepareSettlement(middle, false)
+	require.NoError(t, err)
+	_, err = PrepareSettlement(root, false)
+	require.NoError(t, err)
+	require.True(t, HasRemoteReadExposure(root), "exposure survives abort without an action")
 }

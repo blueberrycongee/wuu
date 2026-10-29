@@ -80,6 +80,10 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 		call = providers.ToolCall{ID: "nested-" + rand.Text(), Name: call.Name, Arguments: call.Arguments, Kind: call.Kind}
 		run = r.runForCallLocked(call)
 		run.parent, run.depth = s.parent, s.parent.depth+1
+		// Any later child can join a durable remote settlement and earlier
+		// children can echo its data. Keep all nested detail provisional until
+		// the root has finished and its settlement outcome is known.
+		run.deferredProjection = r.ledger != nil
 		run.releaseSettlementChild = release
 		s.calls[localID] = run
 		r.startRunLocked(childCtx, run, false)

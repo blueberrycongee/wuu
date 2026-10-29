@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent Code Mode session state from outliving failed remote reader settlements through a negotiated stateless worker capability.
+
+- Prevent failed Code Mode calls from exposing output derived from uncommitted remote reads.
+
 ### Added
 
 - Allow opted-in remote reader replacements to return validated images from an authorized worker continuation.

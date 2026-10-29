@@ -5,6 +5,8 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 var ErrSettlementOutcomeUnknown = errors.New("tool settlement outcome unknown")
@@ -24,13 +26,30 @@ type settlementAction struct {
 	abort   func()
 }
 type settlement struct {
-	mu         sync.Mutex
-	parent     *settlement
-	finished   bool
-	durable    bool
-	children   int
-	hadActions bool
-	actions    []settlementAction
+	mu             sync.Mutex
+	parent         *settlement
+	finished       bool
+	durable        bool
+	children       int
+	remoteExposure bool
+	hadActions     bool
+	actions        []settlementAction
+}
+
+// FailedSettlementOutput discards all output that could have been derived
+// from a remote read whose settlement did not commit.
+func FailedSettlementOutput(ctx context.Context, after toolresult.Result) toolresult.Result {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return after
+	}
+	s.mu.Lock()
+	exposed := s.remoteExposure || s.hadActions || len(s.actions) != 0
+	s.mu.Unlock()
+	if !exposed {
+		return after
+	}
+	return toolresult.FromErrorText("The tool failed; pending remote read output was discarded.")
 }
 
 // WithSettlement binds host-only deferred work to one invocation. A child
@@ -55,15 +74,65 @@ func ReserveSettlementChild(ctx context.Context) (func(), error) {
 	if s == nil || !s.durable {
 		return func() {}, nil
 	}
-	s.mu.Lock()
-	if s.finished {
-		s.mu.Unlock()
+	var chain []*settlement
+	for current := s; current != nil; current = current.parent {
+		chain = append(chain, current)
+	}
+	// Lock from root to leaf. Closing any ancestor and admitting a descendant
+	// are mutually exclusive, including when an intermediate child has ended.
+	for i := len(chain) - 1; i >= 0; i-- {
+		chain[i].mu.Lock()
+	}
+	closed := false
+	for _, current := range chain {
+		closed = closed || current.finished
+	}
+	if !closed {
+		for _, current := range chain {
+			current.children++
+		}
+	}
+	for _, current := range chain {
+		current.mu.Unlock()
+	}
+	if closed {
 		return nil, errors.New("parent settlement scope closed")
 	}
-	s.children++
-	s.mu.Unlock()
 	var once sync.Once
-	return func() { once.Do(func() { s.mu.Lock(); s.children--; s.mu.Unlock() }) }, nil
+	return func() {
+		once.Do(func() {
+			for _, current := range chain {
+				current.mu.Lock()
+				current.children--
+				current.mu.Unlock()
+			}
+		})
+	}, nil
+}
+
+// MarkRemoteReadExposure records that a nested invocation dispatched a remote
+// read whose contents may reach its orchestrator. Propagate immediately to all
+// ancestors even if the read, plugin, cancellation or registration fails.
+func MarkRemoteReadExposure(ctx context.Context) {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	for s != nil {
+		s.mu.Lock()
+		s.remoteExposure = true
+		parent := s.parent
+		s.mu.Unlock()
+		s = parent
+	}
+}
+
+// HasRemoteReadExposure remains true after settlement closes or aborts.
+func HasRemoteReadExposure(ctx context.Context) bool {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.remoteExposure
 }
 
 // SettlementHasParticipants reports participants captured when the scope
@@ -76,6 +145,18 @@ func SettlementHasParticipants(ctx context.Context) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hadActions || len(s.actions) != 0
+}
+
+// SettlementHasUnfinishedChildren is read after the scope is closed, so no new
+// child can be admitted while deciding whether nested projection is safe.
+func SettlementHasUnfinishedChildren(ctx context.Context) bool {
+	s, _ := ctx.Value(settlementKey{}).(*settlement)
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.children != 0
 }
 
 func RegisterSettlement(ctx context.Context, commit func(context.Context) error, abort func()) error {

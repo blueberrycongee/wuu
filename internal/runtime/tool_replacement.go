@@ -281,6 +281,9 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 			return result, nil
 		}
 		if remoteRead {
+			if useSettlement && toolctx.IsNestedCall(nativeCtx) {
+				toolctx.MarkRemoteReadExposure(nativeCtx)
+			}
 			var prepared executionenv.PreparedRead
 			prepared, err = r.toolkit.PrepareRemoteReadOnlyOn(nativeCtx, remoteEnv, actor, actorPath, r.original, call)
 			if err != nil {

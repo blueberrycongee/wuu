@@ -84,7 +84,10 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
 		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
 	}); ok {
-		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{ResultView: args.ResultView, Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
+		// Remote reader observations settle after this program returns. A stateful
+		// interpreter could otherwise persist data before that settlement fails.
+		disableState := e.toolkit.nativeReplacements["read_file"] != nil
+		result, err := remote.RunCode(ctx, executionenv.CodeRequest{DisableState: disableState, GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{ResultView: args.ResultView, Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
 		if err != nil {
 			return toolresult.Result{}, err
 		}

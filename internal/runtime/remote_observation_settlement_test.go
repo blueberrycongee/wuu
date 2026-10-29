@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -136,17 +138,89 @@ func TestRemoteObservationDoesNotCommitWhenPTCParentFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "finalize", ExecutionID: "turn"})
+	marker := filepath.Join(fixture, "observe-child")
+	observed := filepath.Join(fixture, "observed-child")
+	_ = os.Remove(observed)
+	require.NoError(t, os.WriteFile(marker, nil, 0600))
+	defer os.Remove(marker)
+	defer os.Remove(observed)
 	_, err = thread.Toolkit.ExecutionEnvironment().Execute(ctx, req)
 	require.NoError(t, err)
 	run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: thread.StreamRunner.ToolLedger, OperationID: "turn", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
 	defer run.Cancel()
-	args, err := json.Marshal(map[string]any{"code": `const r=await tools.read_file({path:"shared.txt"}); if(!r.structured_content.text.includes("plugin:REMOTE-ONLY")) throw new Error("child did not succeed"); console.log("CHILD_OK"); throw new Error("controlled outer failure")`, "description": "failed parent"})
+	args, err := json.Marshal(map[string]any{"code": `const r=await tools.read_file({path:"shared.txt"}); if(!r.structured_content.text.includes("plugin:REMOTE-ONLY")) throw new Error("child did not succeed"); console.log("CHILD_OK", r.structured_content.text); throw new Error("controlled outer failure: "+r.structured_content.text)`, "description": "failed parent"})
 	require.NoError(t, err)
 	messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "failed-parent", Name: "run_code", Arguments: string(args)}}, nil)
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.True(t, messages[0].ToolResult.IsError)
-	require.Contains(t, messages[0].Content, "CHILD_OK", "the child must complete before the parent fails")
+	_, err = os.Stat(observed)
+	require.NoError(t, err, "the provider must complete the child before the parent fails")
+	require.NotContains(t, messages[0].Content, "CHILD_OK")
+	require.NotContains(t, messages[0].Content, "REMOTE-ONLY")
+	remoteExec, ok := thread.Toolkit.ExecutionEnvironment().(executionenv.PreparedReadExecutor)
+	require.True(t, ok)
+	ticket, err := remoteExec.PrepareUnobservedRead(ctx, req)
+	require.NoError(t, err)
+	changed, err := ticket.Commit(ctx)
+	require.NoError(t, err)
+	require.True(t, changed, "failed parent must retain the prior native observation")
+}
+
+func TestRemoteErrorBeforeSettlementCannotExposeNativeText(t *testing.T) {
+	fixture, binary := os.Getenv("WUU_REMOTE_READ_FIXTURE"), os.Getenv("WUU_REMOTE_READ_WORKER_BINARY")
+	if fixture == "" || binary == "" {
+		t.Skip("run remote read acceptance")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_HOME", t.TempDir())
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	local, remote := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(remote, "error-immediate.txt"), []byte("REMOTE-ONLY\n"), 0600))
+	base, err := tools.New(local)
+	require.NoError(t, err)
+	schema, err := json.Marshal(base.LookupTool("read_file").Definition().InputSchema)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture, "schema.json"), schema, 0600))
+	plugin := testRuntimePlugin("fixture.remote-reader")
+	plugin.Root, plugin.Runtime.Command, plugin.Runtime.Args = fixture, node, []string{"fixture.js"}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "gpt-5"}}, ExecutionEnvironments: executionenv.Config{Default: "remote", Profiles: map[string]executionenv.Profile{"remote": {Backend: "command", Command: []string{binary, "execution-worker"}, Workspace: remote}}}}
+	cfg.PTC.Enabled = true
+	cfg.Agent.ToolReplacements = map[string]config.ToolReplacement{"read_file": {PluginID: plugin.ID, ToolID: "read"}}
+	owner, err := NewSession(Options{RootDir: local, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	require.NoError(t, owner.PinExecutionEnvironment("finalize", ""))
+	thread, err := owner.NewThreadRuntime("finalize")
+	require.NoError(t, err)
+	defer owner.ReleasePluginGeneration(thread.PluginGeneration)
+	defer thread.AgentControl.Close()
+	thread.Toolkit.SetPermissionMode("standard")
+	thread.Toolkit.SetGitAttributionEnabled(true)
+	actor, _ := thread.Toolkit.ExecutionActor()
+	req := executionenv.ToolRequest{Actor: actor, PermissionMode: "standard", GitAttributionEnabled: true, Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"error-immediate.txt"}`}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "finalize", ExecutionID: "turn"})
+	observed := filepath.Join(fixture, "observed-error")
+	_ = os.Remove(observed)
+	defer os.Remove(observed)
+	_, err = thread.Toolkit.ExecutionEnvironment().Execute(ctx, req)
+	require.NoError(t, err)
+	run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: thread.StreamRunner.ToolLedger, OperationID: "turn", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer run.Cancel()
+	args, err := json.Marshal(map[string]any{"code": `try { await tools.read_file({path:"error-immediate.txt"}); } catch (e) { console.log("CHILD_ERROR", String(e)); throw new Error("parent: " + String(e)); }`, "description": "failed parent"})
+	require.NoError(t, err)
+	messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "failed-parent", Name: "run_code", Arguments: string(args)}}, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.True(t, messages[0].ToolResult.IsError)
+	_, err = os.Stat(observed)
+	require.NoError(t, err, "the provider must complete the child before the parent fails")
+	require.NotContains(t, messages[0].Content, "CHILD_ERROR")
+	require.NotContains(t, messages[0].Content, "REMOTE-ONLY")
 	remoteExec, ok := thread.Toolkit.ExecutionEnvironment().(executionenv.PreparedReadExecutor)
 	require.True(t, ok)
 	ticket, err := remoteExec.PrepareUnobservedRead(ctx, req)
@@ -211,6 +285,74 @@ func TestRemoteObservationCommitsWhenPTCParentSucceeds(t *testing.T) {
 	changed, err := ticket.Commit(ctx)
 	require.NoError(t, err)
 	require.False(t, changed, "successful parent must invalidate its captured observation")
+}
+
+func TestRemoteReplacementCodeModeIsStateless(t *testing.T) {
+	fixture, binary := os.Getenv("WUU_REMOTE_READ_FIXTURE"), os.Getenv("WUU_REMOTE_READ_WORKER_BINARY")
+	if fixture == "" || binary == "" {
+		t.Skip("run remote read acceptance")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_HOME", t.TempDir())
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	local, remote := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(remote, "shared.txt"), []byte("REMOTE-ONLY\n"), 0600))
+	base, err := tools.New(local)
+	require.NoError(t, err)
+	schema, err := json.Marshal(base.LookupTool("read_file").Definition().InputSchema)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture, "schema.json"), schema, 0600))
+	plugin := testRuntimePlugin("fixture.remote-reader")
+	plugin.Root, plugin.Runtime.Command, plugin.Runtime.Args = fixture, node, []string{"fixture.js"}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "gpt-5"}}, ExecutionEnvironments: executionenv.Config{Default: "remote", Profiles: map[string]executionenv.Profile{"remote": {Backend: "command", Command: []string{binary, "execution-worker"}, Workspace: remote}}}}
+	cfg.PTC.Enabled = true
+	cfg.Agent.ToolReplacements = map[string]config.ToolReplacement{"read_file": {PluginID: plugin.ID, ToolID: "read"}}
+	owner, err := NewSession(Options{RootDir: local, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	require.NoError(t, owner.PinExecutionEnvironment("finalize", ""))
+	thread, err := owner.NewThreadRuntime("finalize")
+	require.NoError(t, err)
+	defer owner.ReleasePluginGeneration(thread.PluginGeneration)
+	defer thread.AgentControl.Close()
+	thread.Toolkit.SetPermissionMode("standard")
+	thread.Toolkit.SetGitAttributionEnabled(true)
+	actor, _ := thread.Toolkit.ExecutionActor()
+	req := executionenv.ToolRequest{Actor: actor, PermissionMode: "standard", GitAttributionEnabled: true, Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"shared.txt"}`}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "finalize", ExecutionID: "turn"})
+	_, err = thread.Toolkit.ExecutionEnvironment().Execute(ctx, req)
+	require.NoError(t, err)
+	location, ok := thread.Toolkit.ExecutionEnvironment().(interface {
+		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
+	})
+	require.True(t, ok)
+	ordinary := func(code string) codemode.RunResult {
+		t.Helper()
+		result, err := location.RunCode(ctx, executionenv.CodeRequest{Actor: actor, PermissionMode: "standard", Program: codemode.RunRequest{Code: code}}, nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Error)
+		return result
+	}
+	ordinary(`store("existing", "normal-state");`)
+	run := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: thread.StreamRunner.ToolLedger, OperationID: "turn", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer run.Cancel()
+	args, err := json.Marshal(map[string]any{"code": `const r=await tools.read_file({path:"shared.txt"}); for (const [name,f] of [["store",()=>store("secret",r.structured_content.text)],["load",()=>load("existing")],["remove",()=>remove("existing")]]) { try { f(); throw Error(name+" allowed"); } catch(e) { if(!String(e).includes("require a caller state scope")) throw e; console.log(name+" blocked"); } } console.log("read",r.structured_content.text);`, "description": "stateless read"})
+	require.NoError(t, err)
+	messages, err := run.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "stateless", Name: "run_code", Arguments: string(args)}}, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.False(t, messages[0].ToolResult.IsError, messages[0].Content)
+	for _, part := range []string{"store blocked", "load blocked", "remove blocked", "plugin:REMOTE-ONLY"} {
+		require.Contains(t, messages[0].Content, part)
+	}
+	result := ordinary(`console.log(load("existing")); console.log(load("secret"));`)
+	require.Contains(t, strings.Join(result.Logs, "\n"), "normal-state")
+	require.NotContains(t, strings.Join(result.Logs, "\n"), "REMOTE-ONLY")
+
 }
 
 func TestRemoteObservationCommitsTwoPTCChildrenAtomically(t *testing.T) {
@@ -339,7 +481,8 @@ func TestRemoteObservationRevokedChildAbortsPTCBatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.True(t, messages[0].ToolResult.IsError)
-	require.Contains(t, messages[0].Content, "second child revoked")
+	require.GreaterOrEqual(t, secondChecks.Load(), int32(3), "the second child must reach the revocation boundary")
+	require.NotContains(t, messages[0].Content, "REMOTE-ONLY")
 	thread.Toolkit.SetPermissionRequestHook(nil)
 
 	remoteExec, ok := thread.Toolkit.ExecutionEnvironment().(executionenv.PreparedReadExecutor)
