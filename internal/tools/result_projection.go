@@ -249,7 +249,7 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 		}
 	}
 	input := result
-	if builtInProjectionText(result) && builtInProjectionAllowlist[call.Name] {
+	if t.nativeReplacements[call.Name] == nil && builtInProjectionText(result) && builtInProjectionAllowlist[call.Name] {
 		// The built-in text envelope is the complete display contract. A generic
 		// structured index would duplicate source excerpts (including on small
 		// results and in shadow/off mode).

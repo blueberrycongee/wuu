@@ -527,6 +527,12 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
 
+	if err := validateToolReplacements(rootDir, pluginHost, cfg.Agent.ToolReplacements); err != nil {
+		snapshotsOwned = false
+		closeErr := (&PluginGeneration{host: pluginHost, ownedRoots: initialSnapshotRoots}).close()
+		return nil, errors.Join(err, closeErr)
+	}
+
 	initialGeneration := &PluginGeneration{
 		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
 		ownedRoots: initialSnapshotRoots, settings: cfg, requiredPlugins: pluginKernel.requiredPlugins,
@@ -699,7 +705,15 @@ func NewSession(opts Options) (*Session, error) {
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 			codeModeService = codeMode
 			kit.ConfigurePTC(codeMode, cfg.PTC)
-			return toolservice.Backend{Executor: newPluginToolExecutor(kit, pluginHost, "", rootDir), Toolkit: kit, Close: func(context.Context) error {
+			executor := newPluginToolExecutor(kit, pluginHost, "", rootDir)
+			if err := configureToolReplacements(executor, kit, cfg.Agent.ToolReplacements); err != nil {
+				if manager := kit.MCPManager(); manager != nil {
+					_ = manager.Close()
+				}
+				_ = codeMode.Close()
+				return toolservice.Backend{}, err
+			}
+			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: func(context.Context) error {
 				var closeErr error
 				if manager := kit.MCPManager(); manager != nil {
 					closeErr = manager.Close()
@@ -1437,7 +1451,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				if err := initialize(); err != nil {
 					return toolservice.Backend{}, err
 				}
-				return toolservice.Backend{Executor: newPluginToolExecutor(kit, s.PluginHost, id, threadRoot), Toolkit: kit}, nil
+				executor := newPluginToolExecutor(kit, s.PluginHost, id, threadRoot)
+				if generation != nil {
+					if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
+						return toolservice.Backend{}, err
+					}
+				}
+				return toolservice.Backend{Executor: executor, Toolkit: kit}, nil
 			})
 			toolExecutor = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: threadRoot, actorID: id})
 			if s.HookDispatcher != nil {

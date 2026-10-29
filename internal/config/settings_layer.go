@@ -252,6 +252,9 @@ func stripProjectUserSettings(overlay map[string]any, path string) {
 			ignored = append(ignored, "agent")
 			continue
 		}
+		if deleteKeysEqualFold(agent, "tool_replacements") {
+			ignored = append(ignored, "agent.tool_replacements")
+		}
 		if deleteKeysEqualFold(agent, "permission_mode") {
 			ignored = append(ignored, "agent.permission_mode")
 		}
