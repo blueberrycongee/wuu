@@ -147,7 +147,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	// protocol exists, reject rather than leave an older observation in use.
 	_, prepared := toolctx.PreparedReadCapture(ctx)
 	if toolctx.IsUnobservedRead(ctx) && !prepared {
-		release, err := t.env.readState.beginUnobservedRead()
+		release, err := t.env.readStateStore().beginUnobservedRead()
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -224,7 +224,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		if managedArtifact {
 			return toolresult.Result{}, errors.New("prepared remote read does not support managed artifacts")
 		}
-		ticket, err := t.env.readState.capturePathObservation(ctx, resolved, info)
+		ticket, err := t.env.readStateStore().capturePathObservation(ctx, resolved, info)
 		if err != nil {
 			return toolresult.Result{}, err
 		}

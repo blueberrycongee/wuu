@@ -32,21 +32,22 @@ type actor struct {
 }
 
 type Server struct {
-	code          *codemode.Service
-	token         string
-	requireToken  bool
-	mu            sync.Mutex
-	init          *executionenv.Init
-	actors        map[string]*actor
-	artifactRoots *tools.SessionArtifactManager
-	processes     *process.Manager
-	exports       map[string]exportFile
-	readReceipts  map[string]*readReceipt
-	closed        bool
+	code            *codemode.Service
+	token           string
+	requireToken    bool
+	mu              sync.Mutex
+	init            *executionenv.Init
+	actors          map[string]*actor
+	actorReadOwners map[string]*tools.Toolkit
+	artifactRoots   *tools.SessionArtifactManager
+	processes       *process.Manager
+	exports         map[string]exportFile
+	readReceipts    map[string]*readReceipt
+	closed          bool
 }
 
 func New() *Server {
-	return &Server{actors: make(map[string]*actor), readReceipts: make(map[string]*readReceipt), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
+	return &Server{actors: make(map[string]*actor), actorReadOwners: make(map[string]*tools.Toolkit), readReceipts: make(map[string]*readReceipt), artifactRoots: tools.NewSessionArtifactManager(), code: codemode.NewService(codemode.ServiceConfig{})}
 }
 
 func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
@@ -213,6 +214,14 @@ func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled b
 	kit.SetFileScopeRoots([]string{s.init.Root})
 	kit.SetGitAttributionEnabled(attribution)
 	kit.SetArtifactPublisher(s.publish)
+	if owner := s.actorReadOwners[id]; owner != nil {
+		if err := kit.ShareWorkerReadState(owner); err != nil {
+			_ = releaseArtifacts()
+			return nil, err
+		}
+	} else {
+		s.actorReadOwners[id] = kit
+	}
 	a := &actor{kit: kit, releaseArtifacts: releaseArtifacts}
 	s.actors[key] = a
 	return a, nil
@@ -231,6 +240,7 @@ func (s *Server) Close() error {
 		}
 		delete(s.actors, key)
 	}
+	clear(s.actorReadOwners)
 	for token, file := range s.exports {
 		_ = file.file.Close()
 		_ = os.Remove(file.file.Name())

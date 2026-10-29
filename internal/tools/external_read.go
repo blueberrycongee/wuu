@@ -129,7 +129,7 @@ func (t *Toolkit) PrepareExternalRead(ctx context.Context, raw string, allowImag
 	}
 	isImage := strings.HasPrefix(http.DetectContentType(sample), "image/")
 	previous := make(map[string]readFileObservation)
-	for path, entry := range t.env.readState.observationSnapshot() {
+	for path, entry := range t.env.readStateStore().observationSnapshot() {
 		if canonical, err := filepath.EvalSymlinks(path); err == nil && canonical == resolved {
 			previous[path] = entry
 		}
@@ -251,7 +251,7 @@ func (s *ExternalReadScope) render(ctx context.Context, result toolresult.Result
 		rendered, err := renderReadFileImage(ctx, data, s.path, true, part.MIMEType)
 		if err == nil {
 			for path, entry := range s.previous {
-				s.env.readState.deleteIfUnchanged(path, entry)
+				s.env.readStateStore().deleteIfUnchanged(path, entry)
 			}
 		}
 		return rendered, err
@@ -333,7 +333,7 @@ func (s *ExternalReadScope) render(ctx context.Context, result toolresult.Result
 	rendered, err := toolResultWithData(view, structured)
 	if err == nil {
 		for path, entry := range s.previous {
-			s.env.readState.deleteIfUnchanged(path, entry)
+			s.env.readStateStore().deleteIfUnchanged(path, entry)
 		}
 	}
 	return rendered, err
