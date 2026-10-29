@@ -24,7 +24,7 @@ export * from "./engine-admin.js";
 export * from "./engine.js";
 export * from "./persistence.js";
 import { DOCUMENT_AUTHORITY_HOST_FEATURE, DOCUMENT_STORE_SERVICE } from "./persistence.js";
-export { continueService, delegateService, SERVICE_CONTINUATION_HOST_FEATURE, type ServiceMethodOverride } from "./service-delegation.js";
+export { continueService, delegateService, continueNativeTool, NATIVE_TOOL_CONTINUATION_SERVICE, SERVICE_CONTINUATION_HOST_FEATURE, type ServiceMethodOverride } from "./service-delegation.js";
 export { GOAL_CONTROL_SERVICE_DESCRIPTOR, type GoalSnapshotV1, type GoalControlRequestV1, type GoalControlResultV1 } from "./goal.js";
 
 import type {

@@ -232,6 +232,10 @@ func randomAcceptLang() string {
 // ---------------------------------------------------------------------------
 
 func webSearchExecute(ctx context.Context, argsJSON string) (string, error) {
+	return webSearchExecuteWith(ctx, argsJSON, duckDuckGoSearch)
+}
+
+func webSearchExecuteWith(ctx context.Context, argsJSON string, search func(context.Context, string, int) ([]searchResult, error)) (string, error) {
 	var args struct {
 		Query          string            `json:"query"`
 		VersionHint    string            `json:"version_hint"`
@@ -253,7 +257,7 @@ func webSearchExecute(ctx context.Context, argsJSON string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, webFetchTimeout)
 	defer cancel()
 
-	results, err := duckDuckGoSearch(ctx, args.Query, maxResults)
+	results, err := search(ctx, args.Query, maxResults)
 	if err != nil {
 		return mustJSON(map[string]any{
 			"action":   "web_search",

@@ -63,6 +63,7 @@ type ExecutionScope struct {
 	// Context is the native representation of the wire scope lifetime. Process
 	// providers receive execution.cancel for this scope when its owner ends.
 	Context context.Context `json:"-"`
+	tracker *ExecutionTracker
 }
 
 type ToolExecutionScope = ExecutionScope
@@ -104,6 +105,7 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx = context.Background()
 	}
 	id := fmt.Sprintf("exec-%d", t.seq.Add(1))
+	bindNativeToolContinuation(ctx, pluginID, id, tool, t)
 	if continuation, ok := ctx.Value(serviceContinuationKey{}).(*serviceContinuation); ok && continuation.owner == pluginID && continuation.executionID == "" {
 		// Bind before publishing the scope; inherited records are already bound.
 		continuation.executionID = id
@@ -227,7 +229,7 @@ func (t *ExecutionTracker) resolve(callerPluginID, executionID string, requireTo
 	if requireTool && (record.snapshot.Kind != "tool" || strings.TrimSpace(record.snapshot.ThreadID) == "" || strings.TrimSpace(record.snapshot.TurnID) == "" || strings.TrimSpace(record.snapshot.CallID) == "") {
 		return ToolExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires a live scoped tool execution"}
 	}
-	return ToolExecutionScope{ExecutionSnapshot: *record.snapshot, Context: record.ctx}, nil
+	return ToolExecutionScope{ExecutionSnapshot: *record.snapshot, Context: record.ctx, tracker: t}, nil
 }
 
 // RecordUpdate validates that caller owns the live execution and stores its
