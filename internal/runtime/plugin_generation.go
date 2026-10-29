@@ -31,6 +31,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
@@ -42,6 +43,7 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	userBinding       userspace.Binding
 	productParent     *kernelHostServices
 	composition       productCompositionBinding
 	systemPrompt      string
@@ -752,6 +754,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		userBinding:           s.UserBinding(),
 		managedSkillDiscovery: true,
 		id:                    generationID,
 		state:                 kernel.state,
@@ -869,6 +872,9 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	}
 	if candidate == nil || candidate.host == nil || candidate.hooks == nil {
 		return errors.New("plugin candidate generation is not initialized")
+	}
+	if !candidate.userBinding.Matches(s.UserBinding()) {
+		return errors.New("plugin generation domain changed")
 	}
 	s.pluginTransitionMu.Lock()
 	defer s.pluginTransitionMu.Unlock()
@@ -1262,6 +1268,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	hookSnapshot.Replace(s.HookDispatcher)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		userBinding: s.UserBinding(),
 		models:      captureGenerationModelBindings(s),
 		id:          generationID,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient, mcpOAuth: s.mcpOAuth,

@@ -267,6 +267,9 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
+	if s.pluginGeneration != nil && !s.pluginGeneration.userBinding.Matches(s.UserBinding()) {
+		return nil, errors.New("plugin generation domain changed")
+	}
 	if len(expected) > 0 {
 		binding := expected[0]
 		if binding == nil || binding.Generation != s.pluginGeneration || binding.Sessions != s.Sessions {
@@ -680,6 +683,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	initialGeneration := &PluginGeneration{
+		userBinding:           binding,
 		managedSkillDiscovery: true,
 		id:                    newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
 		ownedRoots: initialSnapshotRoots, settings: cfg, requiredPlugins: pluginKernel.requiredPlugins,

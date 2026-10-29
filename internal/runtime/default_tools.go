@@ -102,6 +102,9 @@ func (s *Session) newThreadNativeToolkit(ctx context.Context, generation *Plugin
 	if generation == nil {
 		return nil, nil, errors.New("native toolkit requires a captured plugin generation")
 	}
+	if !generation.userBinding.Matches(s.UserBinding()) {
+		return nil, nil, errors.New("native generation domain changed")
+	}
 	kit, err := tools.New(root)
 	if err != nil {
 		return nil, nil, err
