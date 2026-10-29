@@ -12,16 +12,40 @@
   display: flex;
   min-width: 0;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
 .catalog-toolbar > .catalog-search {
-  flex: 1 1 auto;
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.catalog-toolbar > .catalog-refresh {
+  flex: none;
+}
+
+@container settings-page (max-width: 32em) {
+  .catalog-toolbar > .catalog-search {
+    flex-basis: 100%;
+  }
 }
 
 /* The search gives up width first; the actions keep their labels. */
 .catalog-toolbar > .settings-button {
   flex: none;
+}
+
+/* Keep the MCP section action aligned with its heading without overlapping
+ * the toolbar above it. */
+.skills-catalog [data-testid="mcp-services"] .settings-section-header {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.skills-catalog [data-testid="mcp-services"] .settings-section-actions {
+  align-self: center;
+  margin-block: 0;
 }
 
 /* Plugin and skill rows share the settings row grammar: the mark, the name

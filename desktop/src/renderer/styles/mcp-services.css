@@ -13,7 +13,7 @@
 .mcp-service-icon {
   align-self: flex-start;
   margin-top: 0.2em;
-  color: var(--ink-secondary);
+  color: var(--ink-soft);
 }
 
 .mcp-service-copy {
@@ -23,7 +23,10 @@
 }
 
 .mcp-service-name {
+  color: var(--ink-strong);
   font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
 }
 
 .mcp-service-status {
@@ -31,8 +34,9 @@
   align-items: baseline;
   gap: var(--space-1);
   margin-top: var(--space-1);
-  color: var(--ink-secondary);
-  font-size: var(--font-ui);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .mcp-service-status[data-attention="auth"] > .icon-sm {

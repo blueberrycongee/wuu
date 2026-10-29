@@ -687,6 +687,24 @@
   flex: 1 1 0;
 }
 
+.extensions-navigation .sidebar-section-group {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-3);
+}
+
+.extensions-navigation .sidebar-subsection-title {
+  padding-bottom: var(--space-2);
+}
+
+.extensions-navigation .sidebar-plugin-shortcut {
+  color: var(--ink-soft);
+}
+
+.extensions-navigation .sidebar-plugin-shortcut > :is(svg, .plugin-icon-asset, .plugin-icon-themed, .plugin-ui-avatar) {
+  color: var(--ink-tertiary);
+}
+
 .sidebar-section-scroll > * {
   flex-shrink: 0;
 }
